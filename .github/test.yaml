@@ -1,0 +1,45 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '**/*.go'
+  push:
+    branches: [main, develop]
+    paths:
+      - '**/*.go'
+
+jobs:
+  test:
+    name: Test (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.5'
+          cache: true
+          cache-dependency-path: ./go.sum
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests with coverage
+        run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/mocks|/wrapper")
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: feral-file/ff-indexer-v2
+          flags: ff-indexer-v2
