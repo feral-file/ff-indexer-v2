@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/philippseith/signalr"
+	"go.uber.org/zap"
 )
 
 const SUBSCRIBE_TIMEOUT = 5 * time.Second
@@ -172,14 +174,14 @@ func (s *subscriber) ReceiveTokenTransfers(transfers []TzKTTransferEvent) {
 	for _, transfer := range transfers {
 		event, err := s.parseTransfer(transfer)
 		if err != nil {
-			fmt.Printf("Error parsing transfer: %v\n", err)
+			logger.Error(fmt.Errorf("error parsing transfer: %w", err), zap.Error(err))
 			continue
 		}
 
 		// Call handler if set
 		if s.handler != nil {
 			if err := s.handler(event); err != nil {
-				fmt.Printf("Error handling event: %v\n", err)
+				logger.Error(fmt.Errorf("error handling event: %w", err), zap.Error(err))
 			}
 		}
 	}
@@ -195,14 +197,14 @@ func (s *subscriber) ReceiveBigMaps(updates []TzKTBigMapUpdate) {
 
 		event, err := s.parseBigMapUpdate(update)
 		if err != nil {
-			fmt.Printf("Error parsing big map update: %v\n", err)
+			logger.Error(fmt.Errorf("error parsing big map update: %w", err), zap.Error(err))
 			continue
 		}
 
 		// Call handler if set
 		if s.handler != nil {
 			if err := s.handler(event); err != nil {
-				fmt.Printf("Error handling metadata update event: %v\n", err)
+				logger.Error(fmt.Errorf("error handling metadata update event: %w", err), zap.Error(err))
 			}
 		}
 	}
@@ -228,7 +230,7 @@ func (s *subscriber) parseTransfer(transfer TzKTTransferEvent) (*domain.Blockcha
 	}
 
 	// Determine event type
-	eventType := s.determineEventType(fromAddress, toAddress)
+	eventType := s.determineTransferEventType(fromAddress, toAddress)
 
 	event := &domain.BlockchainEvent{
 		Chain:           s.chainID,
@@ -287,8 +289,8 @@ func (s *subscriber) parseBigMapUpdate(update TzKTBigMapUpdate) (*domain.Blockch
 	return event, nil
 }
 
-// determineEventType determines the event type based on from/to addresses
-func (s *subscriber) determineEventType(from, to string) domain.EventType {
+// determineTransferEventType determines the event type based on from/to addresses
+func (s *subscriber) determineTransferEventType(from, to string) domain.EventType {
 	if from == "" {
 		return domain.EventTypeMint
 	}
