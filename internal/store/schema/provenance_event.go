@@ -3,6 +3,7 @@ package schema
 import (
 	"time"
 
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"gorm.io/datatypes"
 )
 
@@ -27,7 +28,7 @@ type ProvenanceEvent struct {
 	// TokenID references the token this event relates to
 	TokenID int64 `gorm:"column:token_id;not null"`
 	// Chain identifies the blockchain network where this event occurred
-	Chain Chain `gorm:"column:chain;not null;type:text"`
+	Chain domain.Chain `gorm:"column:chain;not null;type:text"`
 	// EventType identifies the type of blockchain event (mint, transfer, burn, metadata_update)
 	EventType ProvenanceEventType `gorm:"column:event_type;not null;type:text"`
 	// FromAddress is the sender's blockchain address (nil for mint events)

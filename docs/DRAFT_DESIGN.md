@@ -178,11 +178,13 @@ CREATE TABLE provenance_events (
 
   * Connects to Infura WebSocket (eth_subscribe) and HTTP for backfill.
   * Listens for ERC721/1155 Transfer events.
+  * Listens for EIP-4906 events for metadata update on ERC-721 tokens. For ERC-1155 token, listen standard built-in event. 
   * Finality depth: 12 blocks.
 * **tezos-event-emitter**
 
   * Connects to TzKT WebSocket + HTTP.
   * Listens for FA2 transfer operations.
+  * Listens on the Bitmaps change event for the metadata update.
   * Finality depth: 3 blocks.
 
 Both emitters:

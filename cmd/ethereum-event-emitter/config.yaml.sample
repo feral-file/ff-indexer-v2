@@ -1,0 +1,24 @@
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  dbname: ff_indexer
+  sslmode: disable
+
+nats:
+  url: nats://localhost:4222
+  stream_name: BLOCKCHAIN_EVENTS
+  max_reconnects: 10
+  reconnect_wait: 2s
+  connection_name: ethereum-event-emitter
+
+ethereum:
+  websocket_url: wss://mainnet.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID
+  chain_id: eip155:1
+  start_block: 0  # 0 means start from latest block
+
+logger:
+  level: info  # debug, info, warn, error
+  format: json # json or text
+

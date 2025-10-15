@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+ethereum-event-emitter
+tezos-event-emitter
 
 # Test binary, built with `go test -c`
 *.test
@@ -26,6 +28,7 @@ go.work.sum
 
 # env file
 .env
+**/config.yaml
 
 # Editor/IDE
 # .idea/
