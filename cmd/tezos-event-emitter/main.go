@@ -2,23 +2,25 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/feral-file/ff-indexer-v2/internal/config"
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
-	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/getsentry/sentry-go"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/emitter"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
 var (
@@ -43,7 +45,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to initialize logger", zap.Error(err), zap.String("sentry_dsn", cfg.SentryDSN))
 	}
-	logger.Info("Starting Ethereum Event Emitter")
+	logger.Info("Starting Tezos Event Emitter")
 
 	// Connect to database
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
@@ -89,61 +91,28 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Get last processed level from cursor store
-	lastLevel, err := cursorStore.GetBlockCursor(ctx, cfg.Tezos.ChainID)
-	if err != nil {
-		logger.Fatal("Failed to get block cursor", zap.Error(err), zap.String("chain_id", cfg.Tezos.ChainID))
+	// Create emitter with common logic
+	emitterCfg := emitter.Config{
+		ChainID:         domain.Chain(cfg.Tezos.ChainID),
+		StartBlock:      cfg.Tezos.StartLevel,
+		CursorSaveFreq:  2,                // Save every 2 levels
+		CursorSaveDelay: 30 * time.Second, // Or every 30 seconds
 	}
 
-	if lastLevel > 0 {
-		logger.Info("Last processed level", zap.Uint64("level", lastLevel))
-	} else {
-		logger.Info("No previous cursor found, starting from current")
-	}
+	eventEmitter := emitter.NewEmitter(
+		tezosSubscriber,
+		natsPublisher,
+		cursorStore,
+		emitterCfg,
+	)
+	defer eventEmitter.Close()
 
-	// Channel for events
+	// Channel for emitter errors
 	errCh := make(chan error, 1)
 
-	// Start subscribing to events
+	// Start the emitter
 	go func() {
-		logger.Info("Starting event subscription")
-
-		lastSavedLevel := uint64(0)
-		lastSaveTime := time.Now()
-
-		handler := func(event *domain.BlockchainEvent) error {
-			// Log the event
-			logger.Info("Received transfer event",
-				zap.String("contract", event.ContractAddress),
-				zap.String("token_number", event.TokenNumber),
-				zap.String("event_type", string(event.EventType)),
-				zap.String("from", event.FromAddress),
-				zap.String("to", event.ToAddress),
-				zap.Uint64("level", event.BlockNumber),
-				zap.String("tx_hash", event.TxHash))
-
-			// Publish to NATS
-			if err := natsPublisher.PublishEvent(ctx, event); err != nil {
-				logger.Error(fmt.Errorf("failed to publish event: %w", err), zap.String("tx_hash", event.TxHash))
-				return err
-			}
-
-			// Save cursor periodically (every 10 levels or 30 seconds)
-			if event.BlockNumber-lastSavedLevel >= 10 || time.Since(lastSaveTime) >= 30*time.Second {
-				if err := cursorStore.SetBlockCursor(ctx, cfg.Tezos.ChainID, event.BlockNumber); err != nil {
-					logger.Error(fmt.Errorf("failed to save block cursor: %w", err), zap.String("chain_id", cfg.Tezos.ChainID))
-				} else {
-					lastSavedLevel = event.BlockNumber
-					lastSaveTime = time.Now()
-					logger.Debug("Saved level cursor", zap.Uint64("level", event.BlockNumber))
-				}
-			}
-
-			return nil
-		}
-
-		err := tezosSubscriber.SubscribeEvents(ctx, handler)
-		if err != nil {
+		if err := eventEmitter.Run(ctx); err != nil && errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
@@ -154,7 +123,7 @@ func main() {
 		logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
 		cancel()
 	case err := <-errCh:
-		logger.Error(fmt.Errorf("subscription error: %w", err))
+		logger.Error(err, zap.String("component", "emitter"))
 		cancel()
 	}
 

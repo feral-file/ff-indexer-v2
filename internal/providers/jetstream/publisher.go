@@ -7,10 +7,11 @@ import (
 	"time"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 // Publisher defines the interface for publishing events to NATS JetStream
@@ -18,7 +19,7 @@ type Publisher interface {
 	// PublishEvent publishes a blockchain event to the appropriate subject
 	PublishEvent(ctx context.Context, event *domain.BlockchainEvent) error
 	// Close closes the connection
-	Close() error
+	Close()
 }
 
 // Config holds the configuration for NATS JetStream connection
@@ -84,7 +85,7 @@ func (p *publisher) PublishEvent(ctx context.Context, event *domain.BlockchainEv
 
 	_, err = p.js.Publish(ctx, subject, data)
 	if err != nil {
-		return fmt.Errorf("%w: %v", domain.ErrPublishFailed, err)
+		return fmt.Errorf("failed to publish event: %w", err)
 	}
 
 	return nil
@@ -103,9 +104,10 @@ func (p *publisher) buildSubject(event *domain.BlockchainEvent) string {
 }
 
 // Close closes the NATS connection
-func (p *publisher) Close() error {
-	if p.nc != nil {
-		p.nc.Close()
+func (p *publisher) Close() {
+	if p.nc == nil {
+		return
 	}
-	return nil
+
+	p.nc.Close()
 }

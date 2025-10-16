@@ -3,8 +3,9 @@ package schema
 import (
 	"time"
 
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"gorm.io/datatypes"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 // ProvenanceEventType represents the type of blockchain event

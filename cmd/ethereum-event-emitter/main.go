@@ -2,23 +2,25 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/feral-file/ff-indexer-v2/internal/config"
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
-	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/getsentry/sentry-go"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/emitter"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
 var (
@@ -88,73 +90,28 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Determine starting block
-	startBlock := cfg.Ethereum.StartBlock
-	if startBlock == 0 {
-		// Get last processed block from cursor store
-		lastBlock, err := cursorStore.GetBlockCursor(ctx, cfg.Ethereum.ChainID)
-		if err != nil {
-			logger.Fatal("Failed to get block cursor", zap.Error(err), zap.String("chain_id", cfg.Ethereum.ChainID))
-		}
-
-		if lastBlock > 0 {
-			startBlock = lastBlock + 1
-			logger.Info("Resuming from last processed block", zap.Uint64("block", startBlock))
-		} else {
-			// Start from latest block
-			latestBlock, err := ethSubscriber.GetLatestBlockNumber(ctx)
-			if err != nil {
-				logger.Fatal("Failed to get latest block number", zap.Error(err), zap.String("chain_id", cfg.Ethereum.ChainID))
-			}
-			startBlock = latestBlock
-			logger.Info("Starting from latest block", zap.Uint64("block", startBlock))
-		}
-	} else {
-		logger.Info("Starting from configured block", zap.Uint64("block", startBlock))
+	// Create emitter with common logic
+	emitterCfg := emitter.Config{
+		ChainID:         domain.Chain(cfg.Ethereum.ChainID),
+		StartBlock:      cfg.Ethereum.StartBlock,
+		CursorSaveFreq:  2,                // Save every 2 blocks
+		CursorSaveDelay: 30 * time.Second, // Or every 30 seconds
 	}
 
-	// Channel for events
+	eventEmitter := emitter.NewEmitter(
+		ethSubscriber,
+		natsPublisher,
+		cursorStore,
+		emitterCfg,
+	)
+	defer eventEmitter.Close()
+
+	// Channel for emitter errors
 	errCh := make(chan error, 1)
 
-	// Start subscribing to events
+	// Start the emitter
 	go func() {
-		logger.Info("Starting event subscription")
-
-		lastSavedBlock := uint64(0)
-		lastSaveTime := time.Now()
-
-		handler := func(event *domain.BlockchainEvent) error {
-			// Log the event
-			logger.Info("Received transfer event",
-				zap.String("contract", event.ContractAddress),
-				zap.String("token_number", event.TokenNumber),
-				zap.String("event_type", string(event.EventType)),
-				zap.String("from", event.FromAddress), zap.String("to", event.ToAddress),
-				zap.Uint64("block", event.BlockNumber),
-				zap.String("tx_hash", event.TxHash))
-
-			// Publish to NATS
-			if err := natsPublisher.PublishEvent(ctx, event); err != nil {
-				logger.Error(fmt.Errorf("failed to publish event: %w", err), zap.String("tx_hash", event.TxHash))
-				return err
-			}
-
-			// Save cursor periodically (every 10 blocks or 30 seconds)
-			if event.BlockNumber-lastSavedBlock >= 10 || time.Since(lastSaveTime) >= 30*time.Second {
-				if err := cursorStore.SetBlockCursor(ctx, cfg.Ethereum.ChainID, event.BlockNumber); err != nil {
-					logger.Error(fmt.Errorf("failed to save block cursor: %w", err), zap.String("chain_id", cfg.Ethereum.ChainID))
-				} else {
-					lastSavedBlock = event.BlockNumber
-					lastSaveTime = time.Now()
-					logger.Debug("Saved block cursor", zap.Uint64("block", event.BlockNumber))
-				}
-			}
-
-			return nil
-		}
-
-		err := ethSubscriber.SubscribeEvents(ctx, startBlock, handler)
-		if err != nil {
+		if err := eventEmitter.Run(ctx); err != nil && errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
@@ -165,9 +122,12 @@ func main() {
 		logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
 		cancel()
 	case err := <-errCh:
-		logger.Error(fmt.Errorf("subscription error: %w", err))
+		logger.Error(err, zap.String("component", "emitter"))
 		cancel()
 	}
+
+	// Give some time for graceful shutdown
+	time.Sleep(2 * time.Second)
 
 	logger.Info("Ethereum Event Emitter stopped")
 }

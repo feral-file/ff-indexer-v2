@@ -13,22 +13,11 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"go.uber.org/zap"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/subscriber"
 )
-
-// EventHandler is called when a new event is received
-type EventHandler func(event *domain.BlockchainEvent) error
-
-// Subscriber defines the interface for subscribing to Ethereum events
-type Subscriber interface {
-	// SubscribeEvents subscribes to ERC721/ERC1155 transfer and metadata update events
-	SubscribeEvents(ctx context.Context, fromBlock uint64, handler EventHandler) error
-	// GetLatestBlockNumber returns the latest block number
-	GetLatestBlockNumber(ctx context.Context) (uint64, error)
-	// Close closes the connection
-	Close()
-}
 
 // Config holds the configuration for Ethereum subscription
 type Config struct {
@@ -36,7 +25,7 @@ type Config struct {
 	ChainID      domain.Chain // e.g., "eip155:1" for Ethereum mainnet
 }
 
-type subscriber struct {
+type ethSubscriber struct {
 	client  *ethclient.Client
 	chainID domain.Chain
 }
@@ -60,22 +49,22 @@ var (
 )
 
 // NewSubscriber creates a new Ethereum event subscriber
-func NewSubscriber(cfg Config) (Subscriber, error) {
+func NewSubscriber(cfg Config) (subscriber.Subscriber, error) {
 	client, err := ethclient.Dial(cfg.WebSocketURL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", domain.ErrConnectionFailed, err)
+		return nil, fmt.Errorf("failed to dial Ethereum WebSocket: %w", err)
 	}
 
-	return &subscriber{
+	return &ethSubscriber{
 		client:  client,
 		chainID: cfg.ChainID,
 	}, nil
 }
 
 // SubscribeEvents subscribes to ERC721/ERC1155 transfer and metadata update events
-func (s *subscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler EventHandler) error {
+func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler subscriber.EventHandler) error {
 	query := ethereum.FilterQuery{
-		FromBlock: big.NewInt(int64(fromBlock)),
+		FromBlock: new(big.Int).SetUint64(fromBlock),
 		Topics: [][]common.Hash{
 			{
 				transferSingleEventSignature,      // ERC721 Transfer
@@ -90,7 +79,7 @@ func (s *subscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, hand
 	logs := make(chan types.Log)
 	sub, err := s.client.SubscribeFilterLogs(ctx, query, logs)
 	if err != nil {
-		return fmt.Errorf("%w: %v", domain.ErrSubscriptionFailed, err)
+		return fmt.Errorf("failed to subscribe to filter logs: %w", err)
 	}
 	defer sub.Unsubscribe()
 
@@ -117,9 +106,9 @@ func (s *subscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, hand
 }
 
 // parseLog parses an Ethereum log into a standardized blockchain event
-func (s *subscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
+func (s *ethSubscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	// Get block to extract timestamp
-	block, err := s.client.BlockByNumber(ctx, big.NewInt(int64(vLog.BlockNumber)))
+	block, err := s.client.BlockByNumber(ctx, new(big.Int).SetUint64(vLog.BlockNumber))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get block: %w", err)
 	}
@@ -130,8 +119,8 @@ func (s *subscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.Bloc
 		TxHash:          vLog.TxHash.Hex(),
 		BlockNumber:     vLog.BlockNumber,
 		BlockHash:       vLog.BlockHash.Hex(),
-		Timestamp:       time.Unix(int64(block.Time()), 0),
-		LogIndex:        vLog.Index,
+		Timestamp:       time.Unix(int64(block.Time()), 0), //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
+		LogIndex:        uint64(vLog.Index),
 	}
 
 	// Parse based on event signature
@@ -214,7 +203,7 @@ func (s *subscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.Bloc
 }
 
 // determineTransferEventType determines the event type based on from/to addresses
-func (s *subscriber) determineTransferEventType(from, to string) domain.EventType {
+func (s *ethSubscriber) determineTransferEventType(from, to string) domain.EventType {
 	from = strings.ToLower(from)
 	to = strings.ToLower(to)
 
@@ -227,8 +216,8 @@ func (s *subscriber) determineTransferEventType(from, to string) domain.EventTyp
 	return domain.EventTypeTransfer
 }
 
-// GetLatestBlockNumber returns the latest block number
-func (s *subscriber) GetLatestBlockNumber(ctx context.Context) (uint64, error) {
+// GetLatestBlock returns the latest block number
+func (s *ethSubscriber) GetLatestBlock(ctx context.Context) (uint64, error) {
 	header, err := s.client.HeaderByNumber(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get latest block: %w", err)
@@ -237,8 +226,10 @@ func (s *subscriber) GetLatestBlockNumber(ctx context.Context) (uint64, error) {
 }
 
 // Close closes the connection
-func (s *subscriber) Close() {
-	if s.client != nil {
-		s.client.Close()
+func (s *ethSubscriber) Close() {
+	if s.client == nil {
+		return
 	}
+
+	s.client.Close()
 }

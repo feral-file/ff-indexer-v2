@@ -2,11 +2,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"gorm.io/gorm"
+
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // CursorStore defines the interface for storing and retrieving block cursors
@@ -33,7 +35,7 @@ func (s *cursorStore) GetBlockCursor(ctx context.Context, chain string) (uint64,
 	var kv schema.KeyValueStore
 	err := s.db.WithContext(ctx).Where("key = ?", key).First(&kv).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return 0, nil // Return 0 if no cursor exists
 		}
 		return 0, fmt.Errorf("failed to get block cursor: %w", err)

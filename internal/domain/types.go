@@ -48,7 +48,7 @@ type BlockchainEvent struct {
 	BlockNumber     uint64        `json:"block_number"`              // block number
 	BlockHash       string        `json:"block_hash"`                // block hash
 	Timestamp       time.Time     `json:"timestamp"`                 // block timestamp
-	LogIndex        uint          `json:"log_index"`                 // log index in the block (for ordering)
+	LogIndex        uint64        `json:"log_index"`                 // log index in the block (for ordering)
 }
 
 // TokenCID generates the canonical token ID
