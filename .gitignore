@@ -9,6 +9,9 @@
 *.dylib
 ethereum-event-emitter
 tezos-event-emitter
+event-bridge
+worker-core
+worker-media
 
 # Test binary, built with `go test -c`
 *.test
