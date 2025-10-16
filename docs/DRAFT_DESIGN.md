@@ -222,22 +222,27 @@ Both emitters:
 * Maintain an in-memory cache for watched addresses to determine to drop event or forward to workers.
 * Update the watched address by handle the NATS event `watchlist.delta`
 
-### 4.3 Worker
+### 4.3 Worker Core
 
-* Temporal worker that runs workflows and activities:
+* Temporal worker that runs workflows and activities for token indexing:
 
   * **IndexTokenWorkflow**: per-token, idempotent, long-lived, handles new events.
-  * **Activities**: ownership upsert, provenance update, metadata enrich, media cache.
+  * **Activities**: ownership upsert, provenance update, metadata enrich.
 * Activities have retry policies; workflows never hard-fail.
-* Writes to `tokens`, `balances`, `token_metadata`, `media_assets`, and `changes_journal`.
+* Writes to `tokens`, `balances`, `token_metadata` and `changes_journal`.
 
-### 4.4 Metadata Enrichment
+### 4.4 Worker Media
+* Temporal worker that runs workflows and activities for token media indexing:
+  * ***IndexTokenMedia**: per-token, idempotent, long-lived.
+  * **Activities**: download media, upload to storage provider, cache, write to `token_media`
+
+### 4.5 Metadata Enrichment
 
 * Pull original token metadata directly from blockchain (tokenURI).
 * Enrich using vendor APIs (OpenSea, ArtBlocks) with TTL + ETag checks.
 * Update only when hash changes to prevent redundant writes.
 
-### 4.5 RESTful & GraphQL API
+### 4.6 RESTful & GraphQL API
 
 * **Endpoints:**
 
@@ -256,7 +261,8 @@ Both emitters:
 ff-indexer/
 ├── cmd/
 │   ├── api/                 # REST + GraphQL server (JWT auth)
-│   ├── worker/              # Temporal worker (indexing, enrichment)
+│   ├── worker-core/         # Temporal worker (token indexing, enrichment)
+│   ├── worker-media/        # Temporal worker (media indexing)
 │   ├── ethereum-event-emitter/
 │   ├── tezos-event-emitter/
 │   ├── event-bridge/        # NATS consumer → Temporal signaler
