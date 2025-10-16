@@ -6,9 +6,9 @@ import (
 	"time"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/philippseith/signalr"
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/subscriber"
 )
@@ -26,9 +26,11 @@ type tzSubscriber struct {
 	apiURL    string
 	wsURL     string
 	chainID   domain.Chain
-	client    signalr.Client
+	client    adapter.SignalRClient
 	connected bool
 	handler   subscriber.EventHandler
+	signalR   adapter.SignalR
+	clock     adapter.Clock
 }
 
 // TzKTTransferEvent represents a transfer event from TzKT
@@ -88,11 +90,13 @@ type TzKTBigMapUpdate struct {
 }
 
 // NewSubscriber creates a new Tezos/TzKT event subscriber
-func NewSubscriber(cfg Config) (subscriber.Subscriber, error) {
+func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock) (subscriber.Subscriber, error) {
 	return &tzSubscriber{
 		apiURL:  cfg.APIURL,
 		wsURL:   cfg.WebSocketURL,
 		chainID: cfg.ChainID,
+		signalR: signalR,
+		clock:   clock,
 	}, nil
 }
 
@@ -102,17 +106,8 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	// Store handler for callback
 	s.handler = handler
 
-	// Create SignalR connection
-	conn, err := signalr.NewHTTPConnection(ctx, s.wsURL)
-	if err != nil {
-		return fmt.Errorf("failed to create connection: %w", err)
-	}
-
-	// Create SignalR client
-	client, err := signalr.NewClient(ctx,
-		signalr.WithConnection(conn),
-		signalr.WithReceiver(s),
-	)
+	// Create SignalR client with connection
+	client, err := s.signalR.NewClient(ctx, s.wsURL, s)
 	if err != nil {
 		return fmt.Errorf("failed to create SignalR client: %w", err)
 	}
@@ -123,7 +118,7 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	client.Start()
 
 	// Wait for connection
-	time.Sleep(2 * time.Second)
+	s.clock.Sleep(2 * time.Second)
 
 	// Subscribe to token transfers
 	sendErrChan := client.Send("SubscribeToTokenTransfers", map[string]interface{}{})
@@ -132,7 +127,7 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		if err != nil {
 			return fmt.Errorf("failed to subscribe to token transfers: %w", err)
 		}
-	case <-time.After(SUBSCRIBE_TIMEOUT):
+	case <-s.clock.After(SUBSCRIBE_TIMEOUT):
 		// Timeout waiting for send
 		return fmt.Errorf("timeout waiting for token transfers subscription: %w", domain.ErrSubscriptionFailed)
 	}
@@ -147,7 +142,7 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		if err != nil {
 			return fmt.Errorf("failed to subscribe to big maps: %w", err)
 		}
-	case <-time.After(SUBSCRIBE_TIMEOUT):
+	case <-s.clock.After(SUBSCRIBE_TIMEOUT):
 		// Timeout waiting for send
 		return fmt.Errorf("timeout waiting for big maps subscription: %w", domain.ErrSubscriptionFailed)
 	}
@@ -203,9 +198,9 @@ func (s *tzSubscriber) ReceiveBigMaps(updates []TzKTBigMapUpdate) {
 // parseTransfer converts a TzKT transfer to a standardized blockchain event
 func (s *tzSubscriber) parseTransfer(transfer TzKTTransferEvent) (*domain.BlockchainEvent, error) {
 	// Parse timestamp
-	timestamp, err := time.Parse(time.RFC3339, transfer.Timestamp)
+	timestamp, err := s.clock.Parse(time.RFC3339, transfer.Timestamp)
 	if err != nil {
-		timestamp = time.Now()
+		timestamp = s.clock.Now()
 	}
 
 	// Determine addresses
@@ -244,9 +239,9 @@ func (s *tzSubscriber) parseTransfer(transfer TzKTTransferEvent) (*domain.Blockc
 // parseBigMapUpdate converts a TzKT big map update to a standardized blockchain event
 func (s *tzSubscriber) parseBigMapUpdate(update TzKTBigMapUpdate) (*domain.BlockchainEvent, error) {
 	// Parse timestamp
-	timestamp, err := time.Parse(time.RFC3339, update.Timestamp)
+	timestamp, err := s.clock.Parse(time.RFC3339, update.Timestamp)
 	if err != nil {
-		timestamp = time.Now()
+		timestamp = s.clock.Now()
 	}
 
 	// Extract token ID from the key

@@ -15,6 +15,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/emitter"
@@ -57,14 +58,21 @@ func main() {
 	// Initialize cursor store
 	cursorStore := store.NewCursorStore(db)
 
+	// Initialize adapters
+	clockAdapter := adapter.NewClock()
+	jsonAdapter := adapter.NewJSON()
+	natsJS := adapter.NewNatsJetStream()
+	ethClientDialer := adapter.NewEthClientDialer()
+
 	// Initialize NATS publisher
-	natsPublisher, err := jetstream.NewPublisher(jetstream.Config{
-		URL:            cfg.NATS.URL,
-		StreamName:     cfg.NATS.StreamName,
-		MaxReconnects:  cfg.NATS.MaxReconnects,
-		ReconnectWait:  cfg.NATS.ReconnectWait,
-		ConnectionName: cfg.NATS.ConnectionName,
-	})
+	natsPublisher, err := jetstream.NewPublisher(
+		jetstream.Config{
+			URL:            cfg.NATS.URL,
+			StreamName:     cfg.NATS.StreamName,
+			MaxReconnects:  cfg.NATS.MaxReconnects,
+			ReconnectWait:  cfg.NATS.ReconnectWait,
+			ConnectionName: cfg.NATS.ConnectionName,
+		}, natsJS, jsonAdapter)
 	if err != nil {
 		logger.Fatal("Failed to create NATS publisher", zap.Error(err), zap.String("url", cfg.NATS.URL))
 	}
@@ -75,7 +83,7 @@ func main() {
 	ethSubscriber, err := ethereum.NewSubscriber(ethereum.Config{
 		WebSocketURL: cfg.Ethereum.WebSocketURL,
 		ChainID:      domain.Chain(cfg.Ethereum.ChainID),
-	})
+	}, ethClientDialer, clockAdapter)
 	if err != nil {
 		logger.Fatal("Failed to create Ethereum subscriber", zap.Error(err), zap.String("websocket_url", cfg.Ethereum.WebSocketURL))
 	}
@@ -103,6 +111,7 @@ func main() {
 		natsPublisher,
 		cursorStore,
 		emitterCfg,
+		clockAdapter,
 	)
 	defer eventEmitter.Close()
 

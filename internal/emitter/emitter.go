@@ -8,6 +8,7 @@ import (
 	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -36,6 +37,7 @@ type emitter struct {
 	publisher   jetstream.Publisher
 	cursorStore store.CursorStore
 	config      Config
+	clock       adapter.Clock
 }
 
 // NewEmitter creates a new event emitter
@@ -44,12 +46,14 @@ func NewEmitter(
 	pub jetstream.Publisher,
 	cs store.CursorStore,
 	cfg Config,
+	clock adapter.Clock,
 ) Emitter {
 	return &emitter{
 		subscriber:  sub,
 		publisher:   pub,
 		cursorStore: cs,
 		config:      cfg,
+		clock:       clock,
 	}
 }
 
@@ -88,7 +92,7 @@ func (e *emitter) Run(ctx context.Context) error {
 		logger.Info("Starting event subscription", zap.String("chain", string(e.config.ChainID)))
 
 		lastSavedBlock := uint64(0)
-		lastSaveTime := time.Now()
+		lastSaveTime := e.clock.Now()
 
 		handler := func(event *domain.BlockchainEvent) error {
 			// Publish to NATS
@@ -98,14 +102,14 @@ func (e *emitter) Run(ctx context.Context) error {
 
 			// Save cursor periodically (every N blocks or N seconds)
 			shouldSave := event.BlockNumber-lastSavedBlock >= e.config.CursorSaveFreq ||
-				time.Since(lastSaveTime) >= e.config.CursorSaveDelay
+				e.clock.Since(lastSaveTime) >= e.config.CursorSaveDelay
 
 			if shouldSave {
 				if err := e.cursorStore.SetBlockCursor(ctx, string(e.config.ChainID), event.BlockNumber); err != nil {
 					fmt.Printf("[Emitter] Failed to save block cursor: %v\n", err)
 				} else {
 					lastSavedBlock = event.BlockNumber
-					lastSaveTime = time.Now()
+					lastSaveTime = e.clock.Now()
 				}
 			}
 

@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
-	"time"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/subscriber"
 )
@@ -26,8 +25,9 @@ type Config struct {
 }
 
 type ethSubscriber struct {
-	client  *ethclient.Client
+	client  adapter.EthClient
 	chainID domain.Chain
+	clock   adapter.Clock
 }
 
 // Event signatures
@@ -49,8 +49,8 @@ var (
 )
 
 // NewSubscriber creates a new Ethereum event subscriber
-func NewSubscriber(cfg Config) (subscriber.Subscriber, error) {
-	client, err := ethclient.Dial(cfg.WebSocketURL)
+func NewSubscriber(cfg Config, ethClientDialer adapter.EthClientDialer, clock adapter.Clock) (subscriber.Subscriber, error) {
+	client, err := ethClientDialer.Dial(cfg.WebSocketURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial Ethereum WebSocket: %w", err)
 	}
@@ -58,6 +58,7 @@ func NewSubscriber(cfg Config) (subscriber.Subscriber, error) {
 	return &ethSubscriber{
 		client:  client,
 		chainID: cfg.ChainID,
+		clock:   clock,
 	}, nil
 }
 
@@ -119,7 +120,7 @@ func (s *ethSubscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.B
 		TxHash:          vLog.TxHash.Hex(),
 		BlockNumber:     vLog.BlockNumber,
 		BlockHash:       vLog.BlockHash.Hex(),
-		Timestamp:       time.Unix(int64(block.Time()), 0), //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
+		Timestamp:       s.clock.Unix(int64(block.Time()), 0), //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
 		LogIndex:        uint64(vLog.Index),
 	}
 

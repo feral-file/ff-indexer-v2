@@ -2,15 +2,14 @@ package jetstream
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
@@ -32,13 +31,14 @@ type Config struct {
 }
 
 type publisher struct {
-	nc         *nats.Conn
-	js         jetstream.JetStream
+	nc         adapter.NatsConn
+	js         adapter.JetStream
 	streamName string
+	json       adapter.JSON
 }
 
 // NewPublisher creates a new NATS JetStream publisher
-func NewPublisher(cfg Config) (Publisher, error) {
+func NewPublisher(cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.JSON) (Publisher, error) {
 	opts := []nats.Option{
 		nats.Name(cfg.ConnectionName),
 		nats.MaxReconnects(cfg.MaxReconnects),
@@ -56,27 +56,22 @@ func NewPublisher(cfg Config) (Publisher, error) {
 		}),
 	}
 
-	nc, err := nats.Connect(cfg.URL, opts...)
+	nc, js, err := natsJS.Connect(cfg.URL, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
-	}
-
-	js, err := jetstream.New(nc)
-	if err != nil {
-		nc.Close()
-		return nil, fmt.Errorf("failed to create JetStream context: %w", err)
+		return nil, fmt.Errorf("failed to connect to NATS and create JetStream: %w", err)
 	}
 
 	return &publisher{
 		nc:         nc,
 		js:         js,
 		streamName: cfg.StreamName,
+		json:       jsonAdapter,
 	}, nil
 }
 
 // PublishEvent publishes a blockchain event to NATS JetStream
 func (p *publisher) PublishEvent(ctx context.Context, event *domain.BlockchainEvent) error {
-	data, err := json.Marshal(event)
+	data, err := p.json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
