@@ -168,6 +168,26 @@ CREATE TABLE provenance_events (
 );
 ```
 
+### 3.8 Watched addresses
+```sql
+-- Watched addresses (for owner-based indexing)
+CREATE TABLE watched_addresses (
+  chain          TEXT        NOT NULL,
+  address        TEXT        NOT NULL,
+  watching       BOOLEAN     NOT NULL DEFAULT TRUE,
+  added_by       TEXT        NOT NULL,  -- system/user/tenant/source of watch request
+  reason         TEXT,                  -- e.g. "owner_index_request" | "manual"
+  last_queried_at TIMESTAMPTZ,          -- when API last queried this address
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (chain, address)
+);
+
+CREATE INDEX idx_watched_addresses_watching
+  ON watched_addresses (watching, chain, address);
+
+```
+
 ---
 
 ## 4. Services
@@ -199,6 +219,8 @@ Both emitters:
 * Invokes Temporal using `SignalWithStart(IndexTokenWorkflow)`.
 * ACK only after Temporal accepts the signal.
 * NAK or TERM on failure, parked DLQ for poison messages.
+* Maintain an in-memory cache for watched addresses to determine to drop event or forward to workers.
+* Update the watched address by handle the NATS event `watchlist.delta`
 
 ### 4.3 Worker
 

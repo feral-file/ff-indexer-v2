@@ -25,9 +25,9 @@ type Token struct {
 	// Burned indicates whether the token has been permanently destroyed
 	Burned bool `gorm:"column:burned;not null;default:false"`
 	// LastActivityTime records the timestamp of the most recent on-chain activity for this token
-	LastActivityTime time.Time `gorm:"column:last_activity_time;not null;default:now()"`
+	LastActivityTime time.Time `gorm:"column:last_activity_time;not null;default:now();type:timestamptz"`
 	// CreatedAt is the timestamp when this record was first indexed
-	CreatedAt time.Time `gorm:"column:created_at;not null;default:now()"`
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 
 	// Associations
 	Balances          []Balance          `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`

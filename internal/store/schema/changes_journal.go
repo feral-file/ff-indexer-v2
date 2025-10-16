@@ -27,7 +27,7 @@ const (
 // ChangesJournal represents the changes_journal table - audit log for tracking all changes to indexed data
 type ChangesJournal struct {
 	// Cursor is an auto-incrementing sequence number for efficient pagination and ordering
-	Cursor int64 `gorm:"column:cursor;primaryKey;autoIncrement"`
+	Cursor int64 `gorm:"column:\"cursor\";primaryKey;autoIncrement"`
 	// SubjectType identifies what kind of entity changed (token, owner, balance, metadata, media, provenance)
 	SubjectType SubjectType `gorm:"column:subject_type;not null;type:text"`
 	// SubjectID is the identifier of the changed entity (typically a token_cid or owner address)

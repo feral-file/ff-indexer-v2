@@ -15,7 +15,7 @@ type Balance struct {
 	// Quantity is the number of editions owned (stored as string to support up to 78 digits for blockchain compatibility)
 	Quantity string `gorm:"column:quantity;not null;type:numeric(78,0)"`
 	// UpdatedAt is the timestamp when this balance was last updated
-	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now()"`
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now();type:timestamptz"`
 
 	// Associations
 	Token Token `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`

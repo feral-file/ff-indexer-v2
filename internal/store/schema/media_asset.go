@@ -30,7 +30,7 @@ const (
 	StatusFailed Status = "failed"
 )
 
-// MediaAsset represents the media_assets table - manages media files with Cloudflare CDN integration
+// MediaAsset represents the media_assets table - manages media files with different storage providers integration
 type MediaAsset struct {
 	// ID is the internal database primary key
 	ID int64 `gorm:"column:id;primaryKey;autoIncrement"`
