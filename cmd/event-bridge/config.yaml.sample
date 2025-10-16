@@ -1,0 +1,26 @@
+debug: true
+sentry_dsn: ""
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  dbname: ff_indexer
+  sslmode: disable
+  
+nats:
+  url: nats://localhost:4222
+  stream_name: BLOCKCHAIN_EVENTS
+  consumer_name: event-bridge
+  connection_name: event-bridge-consumer
+  max_reconnects: 10
+  reconnect_wait: 2s
+  ack_wait: 30s
+  max_deliver: 3
+
+temporal:
+  host_port: localhost:7233
+  namespace: default
+  task_queue: token-indexing
+

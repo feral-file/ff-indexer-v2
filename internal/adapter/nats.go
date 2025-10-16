@@ -21,6 +21,8 @@ type NatsConn interface {
 //go:generate mockgen -source=nats.go -destination=../mocks/nats.go -package=mocks -mock_names=JetStream=MockJetStream
 type JetStream interface {
 	Publish(ctx context.Context, subject string, data []byte, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error)
+	CreateOrUpdateConsumer(ctx context.Context, stream string, cfg jetstream.ConsumerConfig) (jetstream.Consumer, error)
+	Consumer(ctx context.Context, stream string, consumer string) (jetstream.Consumer, error)
 }
 
 // NatsJetStream defines an interface for creating NATS connections and JetStream contexts

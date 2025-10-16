@@ -1,3 +1,6 @@
+debug: true
+sentry_dsn: ""
+
 database:
   host: localhost
   port: 5432
@@ -18,8 +21,4 @@ tezos:
   websocket_url: https://api.tzkt.io/v1/ws
   chain_id: tezos:mainnet
   start_level: 0  # 0 means start from latest level
-
-logger:
-  level: info  # debug, info, warn, error
-  format: json # json or text
 

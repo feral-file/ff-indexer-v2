@@ -33,27 +33,27 @@ type Emitter interface {
 
 // Emitter handles blockchain event subscription and publishing to NATS
 type emitter struct {
-	subscriber  subscriber.Subscriber
-	publisher   jetstream.Publisher
-	cursorStore store.CursorStore
-	config      Config
-	clock       adapter.Clock
+	subscriber subscriber.Subscriber
+	publisher  jetstream.Publisher
+	store      store.Store
+	config     Config
+	clock      adapter.Clock
 }
 
 // NewEmitter creates a new event emitter
 func NewEmitter(
 	sub subscriber.Subscriber,
 	pub jetstream.Publisher,
-	cs store.CursorStore,
+	st store.Store,
 	cfg Config,
 	clock adapter.Clock,
 ) Emitter {
 	return &emitter{
-		subscriber:  sub,
-		publisher:   pub,
-		cursorStore: cs,
-		config:      cfg,
-		clock:       clock,
+		subscriber: sub,
+		publisher:  pub,
+		store:      st,
+		config:     cfg,
+		clock:      clock,
 	}
 }
 
@@ -62,8 +62,8 @@ func (e *emitter) Run(ctx context.Context) error {
 	// Determine starting block
 	startBlock := e.config.StartBlock
 	if startBlock == 0 {
-		// Get last processed block from cursor store
-		lastBlock, err := e.cursorStore.GetBlockCursor(ctx, string(e.config.ChainID))
+		// Get last processed block from store
+		lastBlock, err := e.store.GetBlockCursor(ctx, string(e.config.ChainID))
 		if err != nil {
 			return fmt.Errorf("failed to get block cursor: %w", err)
 		}
@@ -105,7 +105,7 @@ func (e *emitter) Run(ctx context.Context) error {
 				e.clock.Since(lastSaveTime) >= e.config.CursorSaveDelay
 
 			if shouldSave {
-				if err := e.cursorStore.SetBlockCursor(ctx, string(e.config.ChainID), event.BlockNumber); err != nil {
+				if err := e.store.SetBlockCursor(ctx, string(e.config.ChainID), event.BlockNumber); err != nil {
 					fmt.Printf("[Emitter] Failed to save block cursor: %v\n", err)
 				} else {
 					lastSavedBlock = event.BlockNumber

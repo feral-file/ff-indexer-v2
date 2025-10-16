@@ -8,10 +8,11 @@ import (
 	context "context"
 	reflect "reflect"
 
-	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	gomock "github.com/golang/mock/gomock"
 	nats "github.com/nats-io/nats.go"
 	jetstream "github.com/nats-io/nats.go/jetstream"
+
+	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 )
 
 // MockNatsConn is a mock of NatsConn interface.
@@ -98,6 +99,36 @@ func NewMockJetStream(ctrl *gomock.Controller) *MockJetStream {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockJetStream) EXPECT() *MockJetStreamMockRecorder {
 	return m.recorder
+}
+
+// Consumer mocks base method.
+func (m *MockJetStream) Consumer(ctx context.Context, stream, consumer string) (jetstream.Consumer, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Consumer", ctx, stream, consumer)
+	ret0, _ := ret[0].(jetstream.Consumer)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Consumer indicates an expected call of Consumer.
+func (mr *MockJetStreamMockRecorder) Consumer(ctx, stream, consumer interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Consumer", reflect.TypeOf((*MockJetStream)(nil).Consumer), ctx, stream, consumer)
+}
+
+// CreateOrUpdateConsumer mocks base method.
+func (m *MockJetStream) CreateOrUpdateConsumer(ctx context.Context, stream string, cfg jetstream.ConsumerConfig) (jetstream.Consumer, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateOrUpdateConsumer", ctx, stream, cfg)
+	ret0, _ := ret[0].(jetstream.Consumer)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateOrUpdateConsumer indicates an expected call of CreateOrUpdateConsumer.
+func (mr *MockJetStreamMockRecorder) CreateOrUpdateConsumer(ctx, stream, cfg interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateOrUpdateConsumer", reflect.TypeOf((*MockJetStream)(nil).CreateOrUpdateConsumer), ctx, stream, cfg)
 }
 
 // Publish mocks base method.

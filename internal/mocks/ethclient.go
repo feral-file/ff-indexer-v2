@@ -11,8 +11,9 @@ import (
 
 	ethereum "github.com/ethereum/go-ethereum"
 	types "github.com/ethereum/go-ethereum/core/types"
-	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	gomock "github.com/golang/mock/gomock"
+
+	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 )
 
 // MockEthClient is a mock of EthClient interface.

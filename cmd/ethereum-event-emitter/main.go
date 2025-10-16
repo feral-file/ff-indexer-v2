@@ -55,8 +55,8 @@ func main() {
 	}
 	logger.Info("Connected to database")
 
-	// Initialize cursor store
-	cursorStore := store.NewCursorStore(db)
+	// Initialize store
+	dataStore := store.NewPGStore(db)
 
 	// Initialize adapters
 	clockAdapter := adapter.NewClock()
@@ -109,7 +109,7 @@ func main() {
 	eventEmitter := emitter.NewEmitter(
 		ethSubscriber,
 		natsPublisher,
-		cursorStore,
+		dataStore,
 		emitterCfg,
 		clockAdapter,
 	)
