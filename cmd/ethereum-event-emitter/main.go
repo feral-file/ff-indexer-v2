@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -36,6 +37,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to load config", zap.Error(err), zap.String("config_path", *configPath))
 	}
+	fmt.Println("cfg: ", cfg)
 
 	// Initialize logger
 	err = logger.Initialize(cfg.Debug,

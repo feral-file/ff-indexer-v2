@@ -1,0 +1,11 @@
+{
+  "name": "BLOCKCHAIN_EVENTS",
+  "subjects": [
+    "events.>"
+  ],
+  "storage": "file",
+  "retention": "limits",
+  "max_age": 604800000000000,
+  "num_replicas": 1,
+  "discard": "old"
+}

@@ -7,11 +7,12 @@
 *.dll
 *.so
 *.dylib
-ethereum-event-emitter
-tezos-event-emitter
-event-bridge
-worker-core
-worker-media
+!ethereum-event-emitter/
+!tezos-event-emitter/
+!event-bridge/
+!worker-core/
+!worker-media/
+!api/
 
 # Test binary, built with `go test -c`
 *.test

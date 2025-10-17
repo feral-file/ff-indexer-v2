@@ -2,6 +2,7 @@ package tezos
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -13,13 +14,30 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/subscriber"
 )
 
-const SUBSCRIBE_TIMEOUT = 5 * time.Second
+const SUBSCRIBE_TIMEOUT = 15 * time.Second
 
 // Config holds the configuration for Tezos/TzKT subscription
 type Config struct {
 	APIURL       string       // HTTP API URL (e.g., https://api.tzkt.io)
 	WebSocketURL string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
 	ChainID      domain.Chain // e.g., "tezos:mainnet"
+}
+
+// MessageType - TzKT message type
+type MessageType int
+
+const (
+	MessageTypeState MessageType = iota
+	MessageTypeData
+	MessageTypeReorg
+	MessageTypeSubscribed
+)
+
+// TzKTMessage wraps TzKT SignalR messages
+type TzKTMessage struct {
+	Type  MessageType     `json:"type"`
+	State uint64          `json:"state"`
+	Data  json.RawMessage `json:"data,omitempty"`
 }
 
 type tzSubscriber struct {
@@ -154,8 +172,48 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	return ctx.Err()
 }
 
-// ReceiveTokenTransfers handles incoming transfer events from TzKT
-func (s *tzSubscriber) ReceiveTokenTransfers(transfers []TzKTTransferEvent) {
+// Transfers handles incoming transfer events from TzKT SignalR
+// Method name must match the SignalR target name "transfers"
+func (s *tzSubscriber) Transfers(data interface{}) {
+	// Marshal data to JSON
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		logger.Error(fmt.Errorf("error marshaling transfers data: %w", err), zap.Error(err))
+		return
+	}
+
+	// Unmarshal data to TzKTMessage
+	var msg TzKTMessage
+	if err := json.Unmarshal(jsonData, &msg); err != nil {
+		logger.Error(fmt.Errorf("error unmarshaling transfers message: %w", err), zap.Error(err))
+		return
+	}
+
+	// Type 0 is state/confirmation message, ignore it
+	if msg.Type == MessageTypeState {
+		logger.Debug("Received transfers state message", zap.Any("state", msg.State))
+		return
+	}
+
+	// Only handle data messages
+	if msg.Type != MessageTypeData {
+		// FIXME: Handle other message types
+		logger.Warn("Transfers message type is not data", zap.Any("type", msg.Type))
+		return
+	}
+
+	if msg.Data == nil {
+		logger.Warn("Transfers message without data field")
+		return
+	}
+
+	// Unmarshal data array into transfer events
+	var transfers []TzKTTransferEvent
+	if err := json.Unmarshal(msg.Data, &transfers); err != nil {
+		logger.Error(fmt.Errorf("error unmarshaling transfers data: %w", err), zap.Error(err))
+		return
+	}
+
 	for _, transfer := range transfers {
 		event, err := s.parseTransfer(transfer)
 		if err != nil {
@@ -172,8 +230,48 @@ func (s *tzSubscriber) ReceiveTokenTransfers(transfers []TzKTTransferEvent) {
 	}
 }
 
-// ReceiveBigMaps handles incoming big map update events from TzKT
-func (s *tzSubscriber) ReceiveBigMaps(updates []TzKTBigMapUpdate) {
+// Bigmaps handles incoming big map update events from TzKT SignalR
+// Method name must match the SignalR target name "bigmaps"
+func (s *tzSubscriber) Bigmaps(data interface{}) {
+	// Marshal data to JSON
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		logger.Error(fmt.Errorf("error marshaling bigmaps data: %w", err), zap.Error(err))
+		return
+	}
+
+	// Unmarshal data to TzKTMessage
+	var msg TzKTMessage
+	if err := json.Unmarshal(jsonData, &msg); err != nil {
+		logger.Error(fmt.Errorf("error unmarshaling bigmaps message: %w", err), zap.Error(err))
+		return
+	}
+
+	// Type 0 is state/confirmation message, ignore it
+	if msg.Type == MessageTypeState {
+		logger.Debug("Received bigmaps state message", zap.Any("state", msg.State))
+		return
+	}
+
+	// Only handle data messages
+	if msg.Type != MessageTypeData {
+		// FIXME: Handle other message types
+		logger.Warn("Bigmaps message type is not data", zap.Any("type", msg.Type))
+		return
+	}
+
+	if msg.Data == nil {
+		logger.Warn("Bigmaps message without data field")
+		return
+	}
+
+	// Unmarshal data array into bigmap updates
+	var updates []TzKTBigMapUpdate
+	if err := json.Unmarshal(msg.Data, &updates); err != nil {
+		logger.Error(fmt.Errorf("error unmarshaling bigmaps data: %w", err), zap.Error(err))
+		return
+	}
+
 	for _, update := range updates {
 		// Only handle token_metadata updates
 		if update.Path != "token_metadata" {

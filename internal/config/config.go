@@ -60,26 +60,26 @@ type TemporalConfig struct {
 
 // EthereumEmitterConfig holds configuration for ethereum-event-emitter
 type EthereumEmitterConfig struct {
-	BaseConfig
-	Database DatabaseConfig `mapstructure:"database"`
-	NATS     NATSConfig     `mapstructure:"nats"`
-	Ethereum EthereumConfig `mapstructure:"ethereum"`
+	BaseConfig `mapstructure:",squash"`
+	Database   DatabaseConfig `mapstructure:"database"`
+	NATS       NATSConfig     `mapstructure:"nats"`
+	Ethereum   EthereumConfig `mapstructure:"ethereum"`
 }
 
 // TezosEmitterConfig holds configuration for tezos-event-emitter
 type TezosEmitterConfig struct {
-	BaseConfig
-	Database DatabaseConfig `mapstructure:"database"`
-	NATS     NATSConfig     `mapstructure:"nats"`
-	Tezos    TezosConfig    `mapstructure:"tezos"`
+	BaseConfig `mapstructure:",squash"`
+	Database   DatabaseConfig `mapstructure:"database"`
+	NATS       NATSConfig     `mapstructure:"nats"`
+	Tezos      TezosConfig    `mapstructure:"tezos"`
 }
 
 // EventBridgeConfig holds configuration for event-bridge
 type EventBridgeConfig struct {
-	BaseConfig
-	Database DatabaseConfig `mapstructure:"database"`
-	NATS     NATSConfig     `mapstructure:"nats"`
-	Temporal TemporalConfig `mapstructure:"temporal"`
+	BaseConfig `mapstructure:",squash"`
+	Database   DatabaseConfig `mapstructure:"database"`
+	NATS       NATSConfig     `mapstructure:"nats"`
+	Temporal   TemporalConfig `mapstructure:"temporal"`
 }
 
 // LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter

@@ -32,11 +32,16 @@ type ethSubscriber struct {
 
 // Event signatures
 var (
-	// ERC721 Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
-	transferSingleEventSignature = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
+	// Transfer event signature - shared by ERC20 and ERC721
+	// ERC20: Transfer(address indexed from, address indexed to, uint256 value) - 3 topics
+	// ERC721: Transfer(address indexed from, address indexed to, uint256 indexed tokenId) - 4 topics
+	transferEventSignature = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
 
 	// ERC1155 TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
-	transferBatchEventSignature = crypto.Keccak256Hash([]byte("TransferSingle(address,address,address,uint256,uint256)"))
+	transferSingleEventSignature = crypto.Keccak256Hash([]byte("TransferSingle(address,address,address,uint256,uint256)"))
+
+	// ERC1155 TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
+	transferBatchEventSignature = crypto.Keccak256Hash([]byte("TransferBatch(address,address,address,uint256[],uint256[])"))
 
 	// EIP-4906 MetadataUpdate(uint256 _tokenId)
 	metadataUpdateEventSignature = crypto.Keccak256Hash([]byte("MetadataUpdate(uint256)"))
@@ -68,8 +73,9 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 		FromBlock: new(big.Int).SetUint64(fromBlock),
 		Topics: [][]common.Hash{
 			{
-				transferSingleEventSignature,      // ERC721 Transfer
-				transferBatchEventSignature,       // ERC1155 TransferSingle
+				transferEventSignature,            // ERC20/ERC721 Transfer (will filter ERC20 in parseLog)
+				transferSingleEventSignature,      // ERC1155 TransferSingle
+				transferBatchEventSignature,       // ERC1155 TransferBatch
 				metadataUpdateEventSignature,      // EIP-4906 MetadataUpdate
 				batchMetadataUpdateEventSignature, // EIP-4906 BatchMetadataUpdate
 				uriEventSignature,                 // ERC1155 URI
@@ -93,13 +99,15 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 		case vLog := <-logs:
 			event, err := s.parseLog(ctx, vLog)
 			if err != nil {
-				// Log error but continue processing
 				logger.Error(err, zap.String("message", "Error parsing log"))
 				continue
 			}
 
+			if event == nil {
+				continue
+			}
+
 			if err := handler(event); err != nil {
-				// Log error but continue processing
 				logger.Error(err, zap.String("message", "Error handling event"))
 			}
 		}
@@ -126,12 +134,24 @@ func (s *ethSubscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.B
 
 	// Parse based on event signature
 	switch vLog.Topics[0] {
-	case transferSingleEventSignature:
-		// ERC721 Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
-		if len(vLog.Topics) != 4 {
-			return nil, fmt.Errorf("invalid ERC721 transfer event: expected 4 topics, got %d", len(vLog.Topics))
+	case transferEventSignature:
+		// This signature is shared by ERC20 and ERC721
+		// ERC20 has 3 topics (signature, from, to) with value in data
+		// ERC721 has 4 topics (signature, from, to, tokenId) with no data
+
+		if len(vLog.Topics) == 3 {
+			// ERC20 Transfer - skip as we only index NFTs
+			logger.Debug("Skipping ERC20 transfer event",
+				zap.String("contract", vLog.Address.Hex()),
+				zap.String("txHash", vLog.TxHash.Hex()))
+			return nil, nil // skip ERC20 transfer events
 		}
 
+		if len(vLog.Topics) != 4 {
+			return nil, fmt.Errorf("invalid Transfer event: expected 3 or 4 topics, got %d", len(vLog.Topics))
+		}
+
+		// ERC721 Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
 		event.Standard = domain.StandardERC721
 		event.FromAddress = common.BytesToAddress(vLog.Topics[1].Bytes()).Hex()
 		event.ToAddress = common.BytesToAddress(vLog.Topics[2].Bytes()).Hex()
@@ -139,13 +159,13 @@ func (s *ethSubscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.B
 		event.Quantity = "1"
 		event.EventType = s.determineTransferEventType(event.FromAddress, event.ToAddress)
 
-	case transferBatchEventSignature:
+	case transferSingleEventSignature:
 		// ERC1155 TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
 		if len(vLog.Topics) != 4 {
-			return nil, fmt.Errorf("invalid ERC1155 transfer event: expected 4 topics, got %d", len(vLog.Topics))
+			return nil, fmt.Errorf("invalid ERC1155 TransferSingle event: expected 4 topics, got %d", len(vLog.Topics))
 		}
 		if len(vLog.Data) < 64 {
-			return nil, fmt.Errorf("invalid ERC1155 transfer event: insufficient data")
+			return nil, fmt.Errorf("invalid ERC1155 TransferSingle event: insufficient data")
 		}
 
 		event.Standard = domain.StandardERC1155
@@ -156,6 +176,15 @@ func (s *ethSubscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.B
 		event.TokenNumber = new(big.Int).SetBytes(vLog.Data[0:32]).String()
 		event.Quantity = new(big.Int).SetBytes(vLog.Data[32:64]).String()
 		event.EventType = s.determineTransferEventType(event.FromAddress, event.ToAddress)
+
+	case transferBatchEventSignature:
+		// ERC1155 TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
+		// Note: This is a batch transfer event, which transfers multiple token types in a single transaction
+		// For now, we'll return an error as batch transfers need special handling
+		logger.Debug("Skipping ERC1155 TransferBatch event",
+			zap.String("contract", vLog.Address.Hex()),
+			zap.String("txHash", vLog.TxHash.Hex()))
+		return nil, nil // skip ERC1155 TransferBatch events
 
 	case metadataUpdateEventSignature:
 		// EIP-4906 MetadataUpdate(uint256 _tokenId)

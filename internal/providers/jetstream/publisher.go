@@ -71,6 +71,8 @@ func NewPublisher(cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.
 
 // PublishEvent publishes a blockchain event to NATS JetStream
 func (p *publisher) PublishEvent(ctx context.Context, event *domain.BlockchainEvent) error {
+	logger.Debug("Publishing Nats event", zap.Any("event", event))
+
 	data, err := p.json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
