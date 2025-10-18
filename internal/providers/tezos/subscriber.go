@@ -41,14 +41,15 @@ type TzKTMessage struct {
 }
 
 type tzSubscriber struct {
-	apiURL    string
-	wsURL     string
-	chainID   domain.Chain
-	client    adapter.SignalRClient
-	connected bool
-	handler   messaging.EventHandler
-	signalR   adapter.SignalR
-	clock     adapter.Clock
+	apiURL     string
+	wsURL      string
+	chainID    domain.Chain
+	client     adapter.SignalRClient
+	connected  bool
+	handler    messaging.EventHandler
+	signalR    adapter.SignalR
+	clock      adapter.Clock
+	tzktClient TzKTClient
 }
 
 // TzKTTransferEvent represents a transfer event from TzKT
@@ -108,13 +109,14 @@ type TzKTBigMapUpdate struct {
 }
 
 // NewSubscriber creates a new Tezos/TzKT event subscriber
-func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock) (messaging.Subscriber, error) {
+func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzktClient TzKTClient) (messaging.Subscriber, error) {
 	return &tzSubscriber{
-		apiURL:  cfg.APIURL,
-		wsURL:   cfg.WebSocketURL,
-		chainID: cfg.ChainID,
-		signalR: signalR,
-		clock:   clock,
+		apiURL:     cfg.APIURL,
+		wsURL:      cfg.WebSocketURL,
+		chainID:    cfg.ChainID,
+		signalR:    signalR,
+		clock:      clock,
+		tzktClient: tzktClient,
 	}, nil
 }
 
@@ -315,18 +317,28 @@ func (s *tzSubscriber) parseTransfer(transfer TzKTTransferEvent) (*domain.Blockc
 	// Determine event type
 	eventType := s.determineTransferEventType(fromAddress, toAddress)
 
+	// Fetch actual transaction hash from TzKT API
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tx, err := s.tzktClient.GetTransactionByID(ctx, transfer.TransactionID)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", transfer.TransactionID, err))
+		return nil, fmt.Errorf("failed to get transaction hash: %w", err)
+	}
+
 	event := &domain.BlockchainEvent{
 		Chain:           s.chainID,
 		Standard:        transfer.Token.Standard,
 		ContractAddress: transfer.Token.Contract.Address,
 		TokenNumber:     transfer.Token.TokenID,
 		EventType:       eventType,
-		FromAddress:     fromAddress,
-		ToAddress:       toAddress,
+		FromAddress:     &fromAddress,
+		ToAddress:       &toAddress,
 		Quantity:        transfer.Amount,
-		TxHash:          fmt.Sprintf("%d", transfer.TransactionID), // TzKT uses transaction ID
+		TxHash:          tx.Hash,
 		BlockNumber:     transfer.Level,
-		BlockHash:       "", // TzKT doesn't provide block hash in transfer events
+		BlockHash:       nil, // Block hash is optional for Tezos
 		Timestamp:       timestamp,
 		LogIndex:        transfer.ID, // Use transfer ID as log index
 	}
@@ -345,11 +357,20 @@ func (s *tzSubscriber) parseBigMapUpdate(update TzKTBigMapUpdate) (*domain.Block
 	// Extract token ID from the key
 	tokenID := fmt.Sprintf("%v", update.Content.Key)
 
-	// Build transaction hash
-	txHash := ""
+	// Fetch actual transaction hash from TzKT API (if available)
+	var txHash string
 	if update.TransactionID != nil {
-		txHash = fmt.Sprintf("%d", *update.TransactionID)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		tx, err := s.tzktClient.GetTransactionByID(ctx, *update.TransactionID)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", *update.TransactionID, err))
+			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
+		}
+		txHash = tx.Hash
 	} else {
+		// For big map updates without a transaction ID, use a special format
 		txHash = fmt.Sprintf("bigmap_%d", update.ID)
 	}
 
@@ -359,12 +380,12 @@ func (s *tzSubscriber) parseBigMapUpdate(update TzKTBigMapUpdate) (*domain.Block
 		ContractAddress: update.Contract.Address,
 		TokenNumber:     tokenID,
 		EventType:       domain.EventTypeMetadataUpdate,
-		FromAddress:     "",
-		ToAddress:       "",
+		FromAddress:     nil,
+		ToAddress:       nil,
 		Quantity:        "1",
 		TxHash:          txHash,
 		BlockNumber:     update.Level,
-		BlockHash:       "", // TzKT doesn't provide block hash in big map events
+		BlockHash:       nil, // Block hash is optional for Tezos
 		Timestamp:       timestamp,
 		LogIndex:        update.ID,
 	}

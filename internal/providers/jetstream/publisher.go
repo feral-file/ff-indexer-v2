@@ -45,6 +45,9 @@ func NewPublisher(cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.
 			logger.Info("Reconnected to NATS", zap.String("url", nc.ConnectedUrl()))
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
+			if nc == nil {
+				return
+			}
 			logger.Error(nc.LastError(), zap.String("message", "NATS connection closed"))
 		}),
 	}

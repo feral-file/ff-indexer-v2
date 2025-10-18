@@ -41,12 +41,12 @@ type BlockchainEvent struct {
 	TokenNumber     string        `json:"token_number"`              // token ID (or start token ID for range events)
 	ToTokenNumber   string        `json:"to_token_number,omitempty"` // end token ID (only for metadata_update_range events)
 	EventType       EventType     `json:"event_type"`                // transfer, mint, burn, metadata_update, metadata_update_range
-	FromAddress     string        `json:"from_address"`              // sender address (empty for mint)
-	ToAddress       string        `json:"to_address"`                // recipient address (empty for burn)
+	FromAddress     *string       `json:"from_address"`              // sender address (empty for mint)
+	ToAddress       *string       `json:"to_address"`                // recipient address (empty for burn)
 	Quantity        string        `json:"quantity"`                  // amount transferred (1 for ERC721/FA2, N for ERC1155)
 	TxHash          string        `json:"tx_hash"`                   // transaction hash
 	BlockNumber     uint64        `json:"block_number"`              // block number
-	BlockHash       string        `json:"block_hash"`                // block hash
+	BlockHash       *string       `json:"block_hash,omitempty"`      // block hash (optional, nil if not available)
 	Timestamp       time.Time     `json:"timestamp"`                 // block timestamp
 	LogIndex        uint64        `json:"log_index"`                 // log index in the block (for ordering)
 }

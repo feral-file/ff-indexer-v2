@@ -13,6 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -103,11 +104,11 @@ func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.Blockchai
 
 	// Token not indexed, check if from/to addresses are watched
 	var addresses []string
-	if event.FromAddress != "" {
-		addresses = append(addresses, event.FromAddress)
+	if !types.StringNilOrEmpty(event.FromAddress) {
+		addresses = append(addresses, *event.FromAddress)
 	}
-	if event.ToAddress != "" {
-		addresses = append(addresses, event.ToAddress)
+	if !types.StringNilOrEmpty(event.ToAddress) {
+		addresses = append(addresses, *event.ToAddress)
 	}
 
 	if len(addresses) == 0 {
@@ -207,8 +208,8 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 	if !shouldProcess {
 		logger.Info("Dropping event - token not indexed and addresses not watched",
 			zap.String("tokenCID", event.TokenCID()),
-			zap.String("from", event.FromAddress),
-			zap.String("to", event.ToAddress),
+			zap.String("from", types.SafeString(event.FromAddress)),
+			zap.String("to", types.SafeString(event.ToAddress)),
 		)
 		// ACK to remove from queue
 		if err := msg.Ack(); err != nil {

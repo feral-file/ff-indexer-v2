@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/messaging"
+	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // Config holds the configuration for Ethereum subscription
@@ -122,12 +123,13 @@ func (s *ethSubscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.B
 		return nil, fmt.Errorf("failed to get block: %w", err)
 	}
 
+	blockHash := vLog.BlockHash.Hex()
 	event := &domain.BlockchainEvent{
 		Chain:           s.chainID,
 		ContractAddress: vLog.Address.Hex(),
 		TxHash:          vLog.TxHash.Hex(),
 		BlockNumber:     vLog.BlockNumber,
-		BlockHash:       vLog.BlockHash.Hex(),
+		BlockHash:       &blockHash,
 		Timestamp:       s.clock.Unix(int64(block.Time()), 0), //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
 		LogIndex:        uint64(vLog.Index),
 	}
@@ -153,11 +155,11 @@ func (s *ethSubscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.B
 
 		// ERC721 Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
 		event.Standard = domain.StandardERC721
-		event.FromAddress = common.BytesToAddress(vLog.Topics[1].Bytes()).Hex()
-		event.ToAddress = common.BytesToAddress(vLog.Topics[2].Bytes()).Hex()
+		event.FromAddress = internalTypes.StringPtr(common.BytesToAddress(vLog.Topics[1].Bytes()).Hex())
+		event.ToAddress = internalTypes.StringPtr(common.BytesToAddress(vLog.Topics[2].Bytes()).Hex())
 		event.TokenNumber = new(big.Int).SetBytes(vLog.Topics[3].Bytes()).String()
 		event.Quantity = "1"
-		event.EventType = s.determineTransferEventType(event.FromAddress, event.ToAddress)
+		event.EventType = s.determineTransferEventType(*event.FromAddress, *event.ToAddress)
 
 	case transferSingleEventSignature:
 		// ERC1155 TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
@@ -169,18 +171,19 @@ func (s *ethSubscriber) parseLog(ctx context.Context, vLog types.Log) (*domain.B
 		}
 
 		event.Standard = domain.StandardERC1155
-		event.FromAddress = common.BytesToAddress(vLog.Topics[2].Bytes()).Hex()
-		event.ToAddress = common.BytesToAddress(vLog.Topics[3].Bytes()).Hex()
+		event.FromAddress = internalTypes.StringPtr(common.BytesToAddress(vLog.Topics[2].Bytes()).Hex())
+		event.ToAddress = internalTypes.StringPtr(common.BytesToAddress(vLog.Topics[3].Bytes()).Hex())
 
 		// Parse data: first 32 bytes = token ID, next 32 bytes = value
 		event.TokenNumber = new(big.Int).SetBytes(vLog.Data[0:32]).String()
 		event.Quantity = new(big.Int).SetBytes(vLog.Data[32:64]).String()
-		event.EventType = s.determineTransferEventType(event.FromAddress, event.ToAddress)
+		event.EventType = s.determineTransferEventType(*event.FromAddress, *event.ToAddress)
 
 	case transferBatchEventSignature:
 		// ERC1155 TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
 		// Note: This is a batch transfer event, which transfers multiple token types in a single transaction
-		// For now, we'll return an error as batch transfers need special handling
+		// For now, we'll skip the event as batch transfers need special handling
+		// FIXME handle batch transfers properly
 		logger.Debug("Skipping ERC1155 TransferBatch event",
 			zap.String("contract", vLog.Address.Hex()),
 			zap.String("txHash", vLog.TxHash.Hex()))

@@ -63,6 +63,7 @@ func main() {
 	jsonAdapter := adapter.NewJSON()
 	natsJS := adapter.NewNatsJetStream()
 	signalR := adapter.NewSignalR()
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(
@@ -79,12 +80,15 @@ func main() {
 	defer natsPublisher.Close()
 	logger.Info("Connected to NATS JetStream")
 
+	// Initialize TzKT client
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.APIURL, httpClient)
+
 	// Initialize Tezos subscriber
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{
 		APIURL:       cfg.Tezos.APIURL,
 		WebSocketURL: cfg.Tezos.WebSocketURL,
 		ChainID:      domain.Chain(cfg.Tezos.ChainID),
-	}, signalR, clockAdapter)
+	}, signalR, clockAdapter, tzktClient)
 	if err != nil {
 		logger.Fatal("Failed to create Tezos subscriber", zap.Error(err), zap.String("websocket_url", cfg.Tezos.WebSocketURL))
 	}

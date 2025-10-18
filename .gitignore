@@ -7,6 +7,16 @@
 *.dll
 *.so
 *.dylib
+
+# Binaries to exclude
+ethereum-event-emitter
+tezos-event-emitter
+event-bridge
+worker-core
+worker-media
+api
+
+# Directories to keep
 !ethereum-event-emitter/
 !tezos-event-emitter/
 !event-bridge/
