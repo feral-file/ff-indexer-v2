@@ -321,10 +321,15 @@ func (s *tzSubscriber) parseTransfer(transfer TzKTTransferEvent) (*domain.Blockc
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tx, err := s.tzktClient.GetTransactionByID(ctx, transfer.TransactionID)
+	txs, err := s.tzktClient.GetTransactionsByID(ctx, transfer.TransactionID)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", transfer.TransactionID, err))
 		return nil, fmt.Errorf("failed to get transaction hash: %w", err)
+	}
+
+	var txHash string
+	if len(txs) > 0 {
+		txHash = txs[0].Hash
 	}
 
 	event := &domain.BlockchainEvent{
@@ -336,7 +341,7 @@ func (s *tzSubscriber) parseTransfer(transfer TzKTTransferEvent) (*domain.Blockc
 		FromAddress:     &fromAddress,
 		ToAddress:       &toAddress,
 		Quantity:        transfer.Amount,
-		TxHash:          tx.Hash,
+		TxHash:          txHash,
 		BlockNumber:     transfer.Level,
 		BlockHash:       nil, // Block hash is optional for Tezos
 		Timestamp:       timestamp,
@@ -363,12 +368,14 @@ func (s *tzSubscriber) parseBigMapUpdate(update TzKTBigMapUpdate) (*domain.Block
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		tx, err := s.tzktClient.GetTransactionByID(ctx, *update.TransactionID)
+		txs, err := s.tzktClient.GetTransactionsByID(ctx, *update.TransactionID)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", *update.TransactionID, err))
 			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
 		}
-		txHash = tx.Hash
+		if len(txs) > 0 {
+			txHash = txs[0].Hash
+		}
 	} else {
 		// For big map updates without a transaction ID, use a special format
 		txHash = fmt.Sprintf("bigmap_%d", update.ID)

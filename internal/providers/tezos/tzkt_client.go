@@ -18,7 +18,7 @@ type TzKTTransaction struct {
 //
 //go:generate mockgen -source=tzkt_client.go -destination=../../mocks/tzkt_client.go -package=mocks -mock_names=TzKTClient=MockTzKTClient
 type TzKTClient interface {
-	GetTransactionByID(ctx context.Context, txID uint64) (*TzKTTransaction, error)
+	GetTransactionsByID(ctx context.Context, txID uint64) ([]TzKTTransaction, error)
 }
 
 // tzktClient is the concrete implementation of TzKTClient
@@ -35,14 +35,14 @@ func NewTzKTClient(baseURL string, httpClient adapter.HTTPClient) TzKTClient {
 	}
 }
 
-// GetTransactionByID retrieves a transaction by its TzKT transaction ID
-func (c *tzktClient) GetTransactionByID(ctx context.Context, txID uint64) (*TzKTTransaction, error) {
-	url := fmt.Sprintf("%s/v1/operations/transactions/%d", c.baseURL, txID)
+// GetTransactionsByID retrieves transactions by its TzKT operation ID (internal database ID)
+func (c *tzktClient) GetTransactionsByID(ctx context.Context, txID uint64) ([]TzKTTransaction, error) {
+	url := fmt.Sprintf("%s/v1/operations/transactions?id=%d", c.baseURL, txID)
 
-	var tx TzKTTransaction
-	if err := c.httpClient.Get(ctx, url, &tx); err != nil {
+	var txs []TzKTTransaction
+	if err := c.httpClient.Get(ctx, url, &txs); err != nil {
 		return nil, fmt.Errorf("failed to get transaction %d: %w", txID, err)
 	}
 
-	return &tx, nil
+	return txs, nil
 }
