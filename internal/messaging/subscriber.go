@@ -1,4 +1,4 @@
-package subscriber
+package messaging
 
 import (
 	"context"
@@ -11,6 +11,8 @@ type EventHandler func(event *domain.BlockchainEvent) error
 
 // Subscriber defines the common interface for subscribing to blockchain events
 // Both Ethereum and Tezos subscribers implement this interface
+//
+//go:generate mockgen -source=subscriber.go -destination=../mocks/subscriber.go -package=mocks -mock_names=Subscriber=MockSubscriber
 type Subscriber interface {
 	// SubscribeEvents subscribes to blockchain events (transfers + metadata updates)
 	// fromBlock/fromLevel: starting point for subscription (0 for latest)

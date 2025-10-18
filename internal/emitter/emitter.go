@@ -10,9 +10,8 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
+	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
-	"github.com/feral-file/ff-indexer-v2/internal/subscriber"
 )
 
 // Config holds the configuration for the event emitter
@@ -24,6 +23,8 @@ type Config struct {
 }
 
 // Emitter defines the interface for the event emitter
+//
+//go:generate mockgen -source=emitter.go -destination=../mocks/emitter.go -package=mocks -mock_names=Emitter=MockEmitter
 type Emitter interface {
 	// Run starts the event emitter
 	Run(ctx context.Context) error
@@ -33,8 +34,8 @@ type Emitter interface {
 
 // Emitter handles blockchain event subscription and publishing to NATS
 type emitter struct {
-	subscriber subscriber.Subscriber
-	publisher  jetstream.Publisher
+	subscriber messaging.Subscriber
+	publisher  messaging.Publisher
 	store      store.Store
 	config     Config
 	clock      adapter.Clock
@@ -42,8 +43,8 @@ type emitter struct {
 
 // NewEmitter creates a new event emitter
 func NewEmitter(
-	sub subscriber.Subscriber,
-	pub jetstream.Publisher,
+	sub messaging.Subscriber,
+	pub messaging.Publisher,
 	st store.Store,
 	cfg Config,
 	clock adapter.Clock,

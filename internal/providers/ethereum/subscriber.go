@@ -15,7 +15,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/subscriber"
+	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 )
 
 // Config holds the configuration for Ethereum subscription
@@ -54,7 +54,7 @@ var (
 )
 
 // NewSubscriber creates a new Ethereum event subscriber
-func NewSubscriber(cfg Config, ethClientDialer adapter.EthClientDialer, clock adapter.Clock) (subscriber.Subscriber, error) {
+func NewSubscriber(cfg Config, ethClientDialer adapter.EthClientDialer, clock adapter.Clock) (messaging.Subscriber, error) {
 	client, err := ethClientDialer.Dial(cfg.WebSocketURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial Ethereum WebSocket: %w", err)
@@ -68,7 +68,7 @@ func NewSubscriber(cfg Config, ethClientDialer adapter.EthClientDialer, clock ad
 }
 
 // SubscribeEvents subscribes to ERC721/ERC1155 transfer and metadata update events
-func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler subscriber.EventHandler) error {
+func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler messaging.EventHandler) error {
 	query := ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(fromBlock),
 		Topics: [][]common.Hash{

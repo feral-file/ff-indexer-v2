@@ -11,7 +11,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/subscriber"
+	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 )
 
 const SUBSCRIBE_TIMEOUT = 15 * time.Second
@@ -46,7 +46,7 @@ type tzSubscriber struct {
 	chainID   domain.Chain
 	client    adapter.SignalRClient
 	connected bool
-	handler   subscriber.EventHandler
+	handler   messaging.EventHandler
 	signalR   adapter.SignalR
 	clock     adapter.Clock
 }
@@ -108,7 +108,7 @@ type TzKTBigMapUpdate struct {
 }
 
 // NewSubscriber creates a new Tezos/TzKT event subscriber
-func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock) (subscriber.Subscriber, error) {
+func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock) (messaging.Subscriber, error) {
 	return &tzSubscriber{
 		apiURL:  cfg.APIURL,
 		wsURL:   cfg.WebSocketURL,
@@ -120,7 +120,7 @@ func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock) (su
 
 // SubscribeEvents subscribes to FA2 transfer events and metadata updates via TzKT SignalR
 // Note: fromLevel parameter is ignored for Tezos as TzKT always subscribes from current
-func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler subscriber.EventHandler) error {
+func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler messaging.EventHandler) error {
 	// Store handler for callback
 	s.handler = handler
 

@@ -11,15 +11,8 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 )
-
-// Publisher defines the interface for publishing events to NATS JetStream
-type Publisher interface {
-	// PublishEvent publishes a blockchain event to the appropriate subject
-	PublishEvent(ctx context.Context, event *domain.BlockchainEvent) error
-	// Close closes the connection
-	Close()
-}
 
 // Config holds the configuration for NATS JetStream connection
 type Config struct {
@@ -38,7 +31,7 @@ type publisher struct {
 }
 
 // NewPublisher creates a new NATS JetStream publisher
-func NewPublisher(cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.JSON) (Publisher, error) {
+func NewPublisher(cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.JSON) (messaging.Publisher, error) {
 	opts := []nats.Option{
 		nats.Name(cfg.ConnectionName),
 		nats.MaxReconnects(cfg.MaxReconnects),
