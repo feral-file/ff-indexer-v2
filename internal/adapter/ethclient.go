@@ -13,9 +13,19 @@ import (
 //
 //go:generate mockgen -source=ethclient.go -destination=../mocks/ethclient.go -package=mocks -mock_names=EthClient=MockEthClient
 type EthClient interface {
+	// SubscribeFilterLogs subscribes to filter logs
 	SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
+
+	// BlockByNumber returns a block by number
 	BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error)
+
+	// HeaderByNumber returns a header by number
 	HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error)
+
+	// CallContract calls a contract function
+	CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
+
+	// Close closes the connection
 	Close()
 }
 
@@ -23,7 +33,7 @@ type EthClient interface {
 //
 //go:generate mockgen -source=ethclient.go -destination=../mocks/ethclient.go -package=mocks -mock_names=EthClientDialer=MockEthClientDialer
 type EthClientDialer interface {
-	Dial(rawurl string) (EthClient, error)
+	Dial(ctx context.Context, rawurl string) (EthClient, error)
 }
 
 // RealEthClientDialer implements EthClientDialer using the standard ethclient package
@@ -34,6 +44,6 @@ func NewEthClientDialer() EthClientDialer {
 	return &RealEthClientDialer{}
 }
 
-func (a *RealEthClientDialer) Dial(rawurl string) (EthClient, error) {
-	return ethclient.Dial(rawurl)
+func (a *RealEthClientDialer) Dial(ctx context.Context, rawurl string) (EthClient, error) {
+	return ethclient.DialContext(ctx, rawurl)
 }

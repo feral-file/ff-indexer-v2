@@ -2,6 +2,7 @@ package ethereum
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -55,8 +56,8 @@ var (
 )
 
 // NewSubscriber creates a new Ethereum event subscriber
-func NewSubscriber(cfg Config, ethClientDialer adapter.EthClientDialer, clock adapter.Clock) (messaging.Subscriber, error) {
-	client, err := ethClientDialer.Dial(cfg.WebSocketURL)
+func NewSubscriber(ctx context.Context, cfg Config, ethClientDialer adapter.EthClientDialer, clock adapter.Clock) (messaging.Subscriber, error) {
+	client, err := ethClientDialer.Dial(ctx, cfg.WebSocketURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial Ethereum WebSocket: %w", err)
 	}
@@ -99,7 +100,7 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 			return fmt.Errorf("subscription error: %w", err)
 		case vLog := <-logs:
 			event, err := s.parseLog(ctx, vLog)
-			if err != nil {
+			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error(err, zap.String("message", "Error parsing log"))
 				continue
 			}
@@ -265,4 +266,5 @@ func (s *ethSubscriber) Close() {
 	}
 
 	s.client.Close()
+	logger.Info("Ethereum WebSocket connection closed")
 }

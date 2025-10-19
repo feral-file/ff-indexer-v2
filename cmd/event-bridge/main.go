@@ -11,6 +11,7 @@ import (
 
 	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/getsentry/sentry-go"
+	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -58,15 +59,17 @@ func main() {
 	// Initialize adapters
 	jsonAdapter := adapter.NewJSON()
 	natsJS := adapter.NewNatsJetStream()
-	temporalWorkflow := adapter.NewTemporalWorkflow()
 
-	// Initialize workflow orchestration client
-	workflowClient, err := temporalWorkflow.Connect(cfg.Temporal.HostPort, cfg.Temporal.Namespace)
+	// Connect to Temporal (for triggering workflows remotely)
+	temporalClient, err := client.Dial(client.Options{
+		HostPort:  cfg.Temporal.HostPort,
+		Namespace: cfg.Temporal.Namespace,
+	})
 	if err != nil {
-		logger.Fatal("Failed to connect to workflow service", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
+		logger.Fatal("Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
 	}
-	defer workflowClient.Close()
-	logger.Info("Connected to workflow service", zap.String("namespace", cfg.Temporal.Namespace))
+	defer temporalClient.Close()
+	logger.Info("Connected to Temporal", zap.String("namespace", cfg.Temporal.Namespace))
 
 	// Create bridge
 	eventBridge, err := bridge.NewBridge(
@@ -79,12 +82,11 @@ func main() {
 			ConnectionName:    cfg.NATS.ConnectionName,
 			AckWaitTimeout:    cfg.NATS.AckWait,
 			MaxDeliver:        cfg.NATS.MaxDeliver,
-			TemporalNamespace: cfg.Temporal.Namespace,
 			TemporalTaskQueue: cfg.Temporal.TaskQueue,
 		},
 		natsJS,
 		dataStore,
-		workflowClient,
+		temporalClient,
 		jsonAdapter,
 	)
 	if err != nil {

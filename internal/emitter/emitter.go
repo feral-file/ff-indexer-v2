@@ -135,4 +135,5 @@ func (e *emitter) Run(ctx context.Context) error {
 // Close closes the emitter and cleans up resources
 func (e *emitter) Close() {
 	e.subscriber.Close()
+	logger.Info("Event emitter closed")
 }

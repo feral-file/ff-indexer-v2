@@ -39,6 +39,10 @@ func main() {
 	}
 	fmt.Println("cfg: ", cfg)
 
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Initialize logger
 	err = logger.Initialize(cfg.Debug,
 		&sentry.ClientOptions{
@@ -82,7 +86,7 @@ func main() {
 	logger.Info("Connected to NATS JetStream")
 
 	// Initialize Ethereum subscriber
-	ethSubscriber, err := ethereum.NewSubscriber(ethereum.Config{
+	ethSubscriber, err := ethereum.NewSubscriber(ctx, ethereum.Config{
 		WebSocketURL: cfg.Ethereum.WebSocketURL,
 		ChainID:      domain.Chain(cfg.Ethereum.ChainID),
 	}, ethClientDialer, clockAdapter)
@@ -91,10 +95,6 @@ func main() {
 	}
 	defer ethSubscriber.Close()
 	logger.Info("Connected to Ethereum WebSocket")
-
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Setup signal handling
 	sigCh := make(chan os.Signal, 1)

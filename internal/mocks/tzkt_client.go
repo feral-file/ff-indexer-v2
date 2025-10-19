@@ -8,8 +8,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	tezos "github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	gomock "github.com/golang/mock/gomock"
+
+	tezos "github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 )
 
 // MockTzKTClient is a mock of TzKTClient interface.
@@ -35,17 +36,47 @@ func (m *MockTzKTClient) EXPECT() *MockTzKTClientMockRecorder {
 	return m.recorder
 }
 
-// GetTransactionByID mocks base method.
-func (m *MockTzKTClient) GetTransactionByID(ctx context.Context, txID uint64) (*tezos.TzKTTransaction, error) {
+// GetTokenBalances mocks base method.
+func (m *MockTzKTClient) GetTokenBalances(ctx context.Context, contractAddress, tokenID string) ([]tezos.TzKTTokenBalance, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTransactionByID", ctx, txID)
-	ret0, _ := ret[0].(*tezos.TzKTTransaction)
+	ret := m.ctrl.Call(m, "GetTokenBalances", ctx, contractAddress, tokenID)
+	ret0, _ := ret[0].([]tezos.TzKTTokenBalance)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetTransactionByID indicates an expected call of GetTransactionByID.
-func (mr *MockTzKTClientMockRecorder) GetTransactionByID(ctx, txID interface{}) *gomock.Call {
+// GetTokenBalances indicates an expected call of GetTokenBalances.
+func (mr *MockTzKTClientMockRecorder) GetTokenBalances(ctx, contractAddress, tokenID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTransactionByID", reflect.TypeOf((*MockTzKTClient)(nil).GetTransactionByID), ctx, txID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenBalances", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenBalances), ctx, contractAddress, tokenID)
+}
+
+// GetTokenMetadata mocks base method.
+func (m *MockTzKTClient) GetTokenMetadata(ctx context.Context, contractAddress, tokenID string) (map[string]interface{}, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenMetadata", ctx, contractAddress, tokenID)
+	ret0, _ := ret[0].(map[string]interface{})
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenMetadata indicates an expected call of GetTokenMetadata.
+func (mr *MockTzKTClientMockRecorder) GetTokenMetadata(ctx, contractAddress, tokenID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadata", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenMetadata), ctx, contractAddress, tokenID)
+}
+
+// GetTransactionsByID mocks base method.
+func (m *MockTzKTClient) GetTransactionsByID(ctx context.Context, txID uint64) ([]tezos.TzKTTransaction, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTransactionsByID", ctx, txID)
+	ret0, _ := ret[0].([]tezos.TzKTTransaction)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTransactionsByID indicates an expected call of GetTransactionsByID.
+func (mr *MockTzKTClientMockRecorder) GetTransactionsByID(ctx, txID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTransactionsByID", reflect.TypeOf((*MockTzKTClient)(nil).GetTransactionsByID), ctx, txID)
 }

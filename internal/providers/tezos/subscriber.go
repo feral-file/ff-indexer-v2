@@ -427,4 +427,5 @@ func (s *tzSubscriber) Close() {
 
 	s.client.Stop()
 	s.connected = false
+	logger.Info("TzKT WebSocket connection closed")
 }

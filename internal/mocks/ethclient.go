@@ -54,6 +54,21 @@ func (mr *MockEthClientMockRecorder) BlockByNumber(ctx, number interface{}) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BlockByNumber", reflect.TypeOf((*MockEthClient)(nil).BlockByNumber), ctx, number)
 }
 
+// CallContract mocks base method.
+func (m *MockEthClient) CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CallContract", ctx, msg, blockNumber)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CallContract indicates an expected call of CallContract.
+func (mr *MockEthClientMockRecorder) CallContract(ctx, msg, blockNumber interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CallContract", reflect.TypeOf((*MockEthClient)(nil).CallContract), ctx, msg, blockNumber)
+}
+
 // Close mocks base method.
 func (m *MockEthClient) Close() {
 	m.ctrl.T.Helper()
@@ -120,16 +135,16 @@ func (m *MockEthClientDialer) EXPECT() *MockEthClientDialerMockRecorder {
 }
 
 // Dial mocks base method.
-func (m *MockEthClientDialer) Dial(rawurl string) (adapter.EthClient, error) {
+func (m *MockEthClientDialer) Dial(ctx context.Context, rawurl string) (adapter.EthClient, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Dial", rawurl)
+	ret := m.ctrl.Call(m, "Dial", ctx, rawurl)
 	ret0, _ := ret[0].(adapter.EthClient)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Dial indicates an expected call of Dial.
-func (mr *MockEthClientDialerMockRecorder) Dial(rawurl interface{}) *gomock.Call {
+func (mr *MockEthClientDialerMockRecorder) Dial(ctx, rawurl interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Dial", reflect.TypeOf((*MockEthClientDialer)(nil).Dial), rawurl)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Dial", reflect.TypeOf((*MockEthClientDialer)(nil).Dial), ctx, rawurl)
 }

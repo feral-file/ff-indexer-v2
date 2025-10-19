@@ -39,6 +39,7 @@ type NATSConfig struct {
 // EthereumConfig holds Ethereum-specific configuration
 type EthereumConfig struct {
 	WebSocketURL string `mapstructure:"websocket_url"`
+	RPCURL       string `mapstructure:"rpc_url"`
 	ChainID      string `mapstructure:"chain_id"`
 	StartBlock   uint64 `mapstructure:"start_block"`
 }
@@ -80,6 +81,15 @@ type EventBridgeConfig struct {
 	Database   DatabaseConfig `mapstructure:"database"`
 	NATS       NATSConfig     `mapstructure:"nats"`
 	Temporal   TemporalConfig `mapstructure:"temporal"`
+}
+
+// WorkerCoreConfig holds configuration for worker-core
+type WorkerCoreConfig struct {
+	BaseConfig `mapstructure:",squash"`
+	Database   DatabaseConfig `mapstructure:"database"`
+	Temporal   TemporalConfig `mapstructure:"temporal"`
+	Ethereum   EthereumConfig `mapstructure:"ethereum"`
+	Tezos      TezosConfig    `mapstructure:"tezos"`
 }
 
 // LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter
@@ -130,6 +140,59 @@ func LoadTezosEmitterConfig(configPath string) (*TezosEmitterConfig, error) {
 	return &config, nil
 }
 
+// LoadEventBridgeConfig loads configuration for event-bridge
+func LoadEventBridgeConfig(configPath string) (*EventBridgeConfig, error) {
+	v := Viper(configPath)
+
+	// Set defaults
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.sslmode", "disable")
+	v.SetDefault("nats.max_reconnects", 10)
+	v.SetDefault("nats.reconnect_wait", "2s")
+	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
+	v.SetDefault("nats.consumer_name", "event-bridge")
+	v.SetDefault("nats.ack_wait", "30s")
+	v.SetDefault("nats.max_deliver", 3)
+	v.SetDefault("temporal.host_port", "localhost:7233")
+	v.SetDefault("temporal.namespace", "default")
+	v.SetDefault("temporal.task_queue", "token-indexing")
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var config EventBridgeConfig
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	return &config, nil
+}
+
+// LoadWorkerCoreConfig loads configuration for worker-core
+func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
+	v := Viper(configPath)
+
+	// Set defaults
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.sslmode", "disable")
+	v.SetDefault("temporal.host_port", "localhost:7233")
+	v.SetDefault("temporal.namespace", "default")
+	v.SetDefault("temporal.task_queue", "token-indexing")
+	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var config WorkerCoreConfig
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	return &config, nil
+}
+
 // Viper returns a viper instance with the config file and environment variables set
 func Viper(configPath string) *viper.Viper {
 	v := viper.New()
@@ -144,34 +207,6 @@ func Viper(configPath string) *viper.Viper {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 	return v
-}
-
-// LoadEventBridgeConfig loads configuration for event-bridge
-func LoadEventBridgeConfig(configPath string) (*EventBridgeConfig, error) {
-	v := Viper(configPath)
-
-	// Set defaults
-	v.SetDefault("database.port", 5432)
-	v.SetDefault("database.sslmode", "disable")
-	v.SetDefault("nats.max_reconnects", 10)
-	v.SetDefault("nats.reconnect_wait", "2s")
-	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
-	v.SetDefault("nats.consumer_name", "event-bridge")
-	v.SetDefault("nats.ack_wait", "30s")
-	v.SetDefault("nats.max_deliver", 3)
-	v.SetDefault("temporal.namespace", "default")
-	v.SetDefault("temporal.task_queue", "token-indexing")
-
-	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
-	}
-
-	var config EventBridgeConfig
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	return &config, nil
 }
 
 // DSN returns the database connection string

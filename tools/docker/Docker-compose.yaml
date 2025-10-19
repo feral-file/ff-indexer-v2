@@ -1,0 +1,145 @@
+services:
+  # PostgreSQL database for the ff-indexer application
+  postgres:
+    image: postgres:15-alpine
+    container_name: ff-indexer-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ff_indexer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../db/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ff-indexer-network
+
+  # PostgreSQL database for Temporal
+  temporal-postgres:
+    image: postgres:15-alpine
+    container_name: temporal-postgres
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_DB: temporal
+    ports:
+      - "5433:5432"
+    volumes:
+      - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ff-indexer-network
+
+  # Temporal server
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    container_name: temporal
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-postgres
+    ports:
+      - "7233:7233"
+      - "7234:7234"
+      - "7235:7235"
+      - "7239:7239"
+    volumes:
+      - temporal_data:/etc/temporal
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ff-indexer-network
+
+  # Temporal Web UI
+  temporal-ui:
+    image: temporalio/ui:2.26.2
+    container_name: temporal-ui
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    ports:
+      - "8080:8080"
+    networks:
+      - ff-indexer-network
+
+  # NATS JetStream for event streaming
+  nats:
+    image: nats:2.10-alpine
+    container_name: ff-indexer-nats
+    command:
+      - "-js"
+      - "-m"
+      - "8222"
+      - "-sd"
+      - "/data"
+    ports:
+      - "4222:4222"  # Client connections
+      - "8222:8222"  # HTTP monitoring
+      - "6222:6222"  # Clustering
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ff-indexer-network
+
+  # NATS Stream Setup - Creates the BLOCKCHAIN_EVENTS stream
+  nats-setup:
+    image: natsio/nats-box:latest
+    container_name: ff-indexer-nats-setup
+    depends_on:
+      nats:
+        condition: service_healthy
+    volumes:
+      - ../../tools/nats/events.json:/config/events.json:ro
+    command:
+      - sh
+      - -c
+      - |
+        echo 'Creating BLOCKCHAIN_EVENTS stream from config...'
+        nats --server nats://nats:4222 stream add --config /config/events.json --defaults || echo 'Stream might already exist'
+        echo 'Verifying stream...'
+        nats --server nats://nats:4222 stream info BLOCKCHAIN_EVENTS
+        echo 'Stream setup complete!'
+    networks:
+      - ff-indexer-network
+    restart: "no"
+
+volumes:
+  postgres_data:
+    driver: local
+  temporal_postgres_data:
+    driver: local
+  temporal_data:
+    driver: local
+  nats_data:
+    driver: local
+
+networks:
+  ff-indexer-network:
+    driver: bridge
+

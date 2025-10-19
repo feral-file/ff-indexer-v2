@@ -8,10 +8,13 @@ import (
 	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -27,7 +30,6 @@ type Config struct {
 	ConnectionName    string
 	AckWaitTimeout    time.Duration
 	MaxDeliver        int
-	TemporalNamespace string
 	TemporalTaskQueue string
 }
 
@@ -40,12 +42,12 @@ type Bridge interface {
 }
 
 type bridge struct {
-	nc             adapter.NatsConn
-	js             adapter.JetStream
-	store          store.Store
-	workflowClient adapter.WorkflowClient
-	json           adapter.JSON
-	config         Config
+	nc           adapter.NatsConn
+	js           adapter.JetStream
+	store        store.Store
+	orchestrator temporal.TemporalOrchestrator
+	json         adapter.JSON
+	config       Config
 }
 
 // NewBridge creates a new event bridge
@@ -53,7 +55,7 @@ func NewBridge(
 	cfg Config,
 	natsJS adapter.NatsJetStream,
 	st store.Store,
-	workflowClient adapter.WorkflowClient,
+	orchestrator temporal.TemporalOrchestrator,
 	jsonAdapter adapter.JSON,
 ) (Bridge, error) {
 	opts := []nats.Option{
@@ -69,7 +71,7 @@ func NewBridge(
 			logger.Info("Reconnected to NATS", zap.String("url", nc.ConnectedUrl()))
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
-			logger.Error(nc.LastError(), zap.String("message", "NATS connection closed"))
+			logger.Info("NATS connection closed")
 		}),
 	}
 
@@ -79,12 +81,12 @@ func NewBridge(
 	}
 
 	b := &bridge{
-		nc:             nc,
-		js:             js,
-		store:          st,
-		workflowClient: workflowClient,
-		json:           jsonAdapter,
-		config:         cfg,
+		nc:           nc,
+		js:           js,
+		store:        st,
+		orchestrator: orchestrator,
+		json:         jsonAdapter,
+		config:       cfg,
 	}
 
 	return b, nil
@@ -194,29 +196,31 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 		zap.Uint64("deliveryCount", metadata.NumDelivered),
 	)
 
-	// Check if event should be processed
-	shouldProcess, err := b.shouldProcessEvent(ctx, &event)
-	if err != nil {
-		logger.Error(err, zap.String("message", "Failed to check if event should be processed"))
-		// NAK to retry
-		if err := msg.Nak(); err != nil {
-			logger.Error(err, zap.String("message", "Failed to NAK message"))
-		}
-		return
-	}
+	// // Check if event should be processed
+	// shouldProcess, err := b.shouldProcessEvent(ctx, &event)
+	// if err != nil {
+	// 	logger.Error(err, zap.String("message", "Failed to check if event should be processed"))
+	// 	// NAK to retry
+	// 	if err := msg.Nak(); err != nil {
+	// 		logger.Error(err, zap.String("message", "Failed to NAK message"))
+	// 	}
+	// 	return
+	// }
 
-	if !shouldProcess {
-		logger.Info("Dropping event - token not indexed and addresses not watched",
-			zap.String("tokenCID", event.TokenCID()),
-			zap.String("from", types.SafeString(event.FromAddress)),
-			zap.String("to", types.SafeString(event.ToAddress)),
-		)
-		// ACK to remove from queue
-		if err := msg.Ack(); err != nil {
-			logger.Error(err, zap.String("message", "Failed to ACK message"))
-		}
-		return
-	}
+	// if !shouldProcess {
+	// 	logger.Info("Dropping event - token not indexed and addresses not watched",
+	// 		zap.String("chain", string(event.Chain)),
+	// 		zap.String("eventType", string(event.EventType)),
+	// 		zap.String("tokenCID", event.TokenCID()),
+	// 		zap.String("from", types.SafeString(event.FromAddress)),
+	// 		zap.String("to", types.SafeString(event.ToAddress)),
+	// 	)
+	// 	// ACK to remove from queue
+	// 	if err := msg.Ack(); err != nil {
+	// 		logger.Error(err, zap.String("message", "Failed to ACK message"))
+	// 	}
+	// 	return
+	// }
 
 	// Forward to appropriate worker
 	if err := b.forwardToWorker(ctx, &event); err != nil {
@@ -234,36 +238,39 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 	}
 }
 
-// forwardToWorker forwards the event to appropriate workflow orchestrator
+// forwardToWorker forwards the event to appropriate worker based on event type
 func (b *bridge) forwardToWorker(ctx context.Context, event *domain.BlockchainEvent) error {
-	workflowID := fmt.Sprintf("token-%s", event.TokenCID())
-
-	input := workflows.IndexTokenWorkflowInput{
-		TokenCID:        event.TokenCID(),
-		Chain:           event.Chain,
-		Standard:        event.Standard,
-		ContractAddress: event.ContractAddress,
-		TokenNumber:     event.TokenNumber,
+	// Route to appropriate worker method based on event type
+	w := workflows.NewWorkerCore(nil)
+	var workflowFunc interface{}
+	switch event.EventType {
+	case domain.EventTypeMint:
+		workflowFunc = w.IndexTokenMint
+	case domain.EventTypeTransfer:
+		workflowFunc = w.IndexTokenTransfer
+	case domain.EventTypeBurn:
+		workflowFunc = w.IndexTokenBurn
+	case domain.EventTypeMetadataUpdate:
+		workflowFunc = w.IndexMetadataUpdate
+	case domain.EventTypeMetadataUpdateRange:
+		// FIXME: Implement metadata update range workflow
+		return nil
+	default:
+		return fmt.Errorf("unknown event type: %s", event.EventType)
 	}
 
-	_, err := b.workflowClient.SignalWithStartWorkflow(
-		ctx,
-		workflowID,
-		workflows.TokenEventSignal,
-		event,
-		adapter.WorkflowOptions{
-			ID:        workflowID,
-			TaskQueue: b.config.TemporalTaskQueue,
-		},
-		workflows.IndexTokenWorkflow,
-		input,
-	)
+	opt := client.StartWorkflowOptions{
+		ID:                    fmt.Sprintf("forwardToWorker-%s-%s", event.Chain, event.TxHash),
+		TaskQueue:             b.config.TemporalTaskQueue,
+		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
+		WorkflowRunTimeout:    30 * time.Minute,
+	}
+	_, err := b.orchestrator.ExecuteWorkflow(ctx, opt, workflowFunc, event)
 	if err != nil {
-		return fmt.Errorf("failed to signal workflow: %w", err)
+		return fmt.Errorf("failed to execute workflow: %w", err)
 	}
 
 	logger.Info("Event forwarded to worker",
-		zap.String("workflowID", workflowID),
 		zap.String("tokenCID", event.TokenCID()),
 		zap.String("eventType", string(event.EventType)),
 	)
@@ -273,10 +280,9 @@ func (b *bridge) forwardToWorker(ctx context.Context, event *domain.BlockchainEv
 
 // Close closes the bridge and cleans up resources
 func (b *bridge) Close() {
-	if b.workflowClient != nil {
-		b.workflowClient.Close()
+	if b.nc == nil {
+		return
 	}
-	if b.nc != nil {
-		b.nc.Close()
-	}
+
+	b.nc.Close()
 }
