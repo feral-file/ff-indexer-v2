@@ -38,6 +38,10 @@ type EnrichmentSource struct {
 	LastFetchedAt *time.Time `gorm:"column:last_fetched_at;type:timestamptz"`
 	// LastHash is the content hash from the last successful fetch to detect changes
 	LastHash *string `gorm:"column:last_hash;type:text"`
+	// CreatedAt is the timestamp when this enrichment source was created
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
+	// UpdatedAt is the timestamp when this enrichment source was last updated
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now();type:timestamptz"`
 
 	// Associations
 	Token Token `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`

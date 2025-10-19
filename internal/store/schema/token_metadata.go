@@ -40,6 +40,10 @@ type TokenMetadata struct {
 	Name *string `gorm:"column:name;type:text"`
 	// Artist is the creator's name (extracted for quick access and indexing)
 	Artist *string `gorm:"column:artist;type:text"`
+	// CreatedAt is the timestamp when this record was created
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
+	// UpdatedAt is the timestamp when this record was last updated
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now();type:timestamptz"`
 
 	// Associations
 	Token Token `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`

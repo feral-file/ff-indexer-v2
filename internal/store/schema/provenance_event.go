@@ -49,7 +49,9 @@ type ProvenanceEvent struct {
 	// Raw contains the complete raw event data as JSON for debugging and analysis
 	Raw datatypes.JSON `gorm:"column:raw;type:jsonb"`
 	// CreatedAt is the timestamp when this record was indexed
-	CreatedAt time.Time `gorm:"column:created_at;default:now();type:timestamptz"`
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
+	// UpdatedAt is the timestamp when this record was last updated
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now();type:timestamptz"`
 
 	// Associations
 	Token Token `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`

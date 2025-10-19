@@ -28,6 +28,8 @@ type Token struct {
 	LastActivityTime time.Time `gorm:"column:last_activity_time;not null;default:now();type:timestamptz"`
 	// CreatedAt is the timestamp when this record was first indexed
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
+	// UpdatedAt is the timestamp when this record was last updated
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now();type:timestamptz"`
 
 	// Associations
 	Balances          []Balance          `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`

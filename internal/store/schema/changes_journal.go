@@ -36,6 +36,10 @@ type ChangesJournal struct {
 	ChangedAt time.Time `gorm:"column:changed_at;not null;default:now();type:timestamptz"`
 	// Meta contains additional context about the change as JSON (e.g., what fields changed, event details)
 	Meta datatypes.JSON `gorm:"column:meta;type:jsonb"`
+	// CreatedAt is the timestamp when this change was created
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
+	// UpdatedAt is the timestamp when this change was last updated
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now();type:timestamptz"`
 
 	// Associations
 	Token Token `gorm:"foreignKey:SubjectID;constraint:OnDelete:CASCADE"`

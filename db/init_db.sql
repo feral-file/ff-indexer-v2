@@ -28,6 +28,7 @@ CREATE TABLE tokens (
     burned BOOLEAN NOT NULL DEFAULT FALSE,
     last_activity_time TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (chain, contract_address, token_number)
 );
 
@@ -37,6 +38,7 @@ CREATE TABLE balances (
     token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
     owner_address TEXT NOT NULL,
     quantity NUMERIC(78,0) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (token_id, owner_address)
 );
@@ -52,7 +54,9 @@ CREATE TABLE token_metadata (
     image_url TEXT,
     animation_url TEXT,
     name TEXT,
-    artist TEXT
+    artist TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Enrichment Sources table - Tracks metadata fetch attempts from various vendors
@@ -66,6 +70,8 @@ CREATE TABLE enrichment_sources (
     last_error TEXT,
     last_fetched_at TIMESTAMPTZ,
     last_hash TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (token_id, vendor)
 );
 
@@ -81,6 +87,7 @@ CREATE TABLE media_assets (
     status media_status NOT NULL DEFAULT 'pending',
     last_checked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (token_id, role)
 );
 
@@ -90,7 +97,9 @@ CREATE TABLE changes_journal (
     subject_type subject_type NOT NULL,     -- token, owner, balance, metadata, media, provenance
     subject_id TEXT NOT NULL,               -- token_cid
     changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    meta JSONB
+    meta JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Provenance Events table - Optional audit trail of blockchain events
@@ -107,7 +116,8 @@ CREATE TABLE provenance_events (
     block_hash TEXT,
     timestamp TIMESTAMPTZ NOT NULL,
     raw JSONB,
-    created_at TIMESTAMPTZ DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Watched Addresses table - For owner-based indexing
