@@ -16,7 +16,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
-	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -93,32 +92,32 @@ func NewBridge(
 }
 
 // shouldProcessEvent determines if an event should be forwarded to workers
-func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
-	// Check if token is already indexed
-	token, err := b.store.GetTokenByTokenCID(ctx, event.TokenCID())
-	if err != nil {
-		return false, fmt.Errorf("failed to check token existence: %w", err)
-	}
+// func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
+// 	// Check if token is already indexed
+// 	token, err := b.store.GetTokenByTokenCID(ctx, event.TokenCID())
+// 	if err != nil {
+// 		return false, fmt.Errorf("failed to check token existence: %w", err)
+// 	}
 
-	if token != nil {
-		return true, nil
-	}
+// 	if token != nil {
+// 		return true, nil
+// 	}
 
-	// Token not indexed, check if from/to addresses are watched
-	var addresses []string
-	if !types.StringNilOrEmpty(event.FromAddress) {
-		addresses = append(addresses, *event.FromAddress)
-	}
-	if !types.StringNilOrEmpty(event.ToAddress) {
-		addresses = append(addresses, *event.ToAddress)
-	}
+// 	// Token not indexed, check if from/to addresses are watched
+// 	var addresses []string
+// 	if !types.StringNilOrEmpty(event.FromAddress) {
+// 		addresses = append(addresses, *event.FromAddress)
+// 	}
+// 	if !types.StringNilOrEmpty(event.ToAddress) {
+// 		addresses = append(addresses, *event.ToAddress)
+// 	}
 
-	if len(addresses) == 0 {
-		return false, nil
-	}
+// 	if len(addresses) == 0 {
+// 		return false, nil
+// 	}
 
-	return b.store.IsAnyAddressWatched(ctx, event.Chain, addresses)
-}
+// 	return b.store.IsAnyAddressWatched(ctx, event.Chain, addresses)
+// }
 
 // Run starts the event bridge
 func (b *bridge) Run(ctx context.Context) error {

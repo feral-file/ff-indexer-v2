@@ -18,7 +18,6 @@ const SUBSCRIBE_TIMEOUT = 15 * time.Second
 
 // Config holds the configuration for Tezos/TzKT subscription
 type Config struct {
-	APIURL       string       // HTTP API URL (e.g., https://api.tzkt.io)
 	WebSocketURL string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
 	ChainID      domain.Chain // e.g., "tezos:mainnet"
 }
@@ -41,7 +40,6 @@ type TzKTMessage struct {
 }
 
 type tzSubscriber struct {
-	apiURL     string
 	wsURL      string
 	chainID    domain.Chain
 	client     adapter.SignalRClient
@@ -111,7 +109,6 @@ type TzKTBigMapUpdate struct {
 // NewSubscriber creates a new Tezos/TzKT event subscriber
 func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzktClient TzKTClient) (messaging.Subscriber, error) {
 	return &tzSubscriber{
-		apiURL:     cfg.APIURL,
 		wsURL:      cfg.WebSocketURL,
 		chainID:    cfg.ChainID,
 		signalR:    signalR,

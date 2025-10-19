@@ -86,7 +86,6 @@ func main() {
 
 	// Initialize Tezos subscriber
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{
-		APIURL:       cfg.Tezos.APIURL,
 		WebSocketURL: cfg.Tezos.WebSocketURL,
 		ChainID:      domain.Chain(cfg.Tezos.ChainID),
 	}, signalR, clockAdapter, tzktClient)

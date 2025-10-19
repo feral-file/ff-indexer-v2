@@ -115,13 +115,13 @@ services:
       nats:
         condition: service_healthy
     volumes:
-      - ../../tools/nats/events.json:/config/events.json:ro
+      - ../../tools/nats/stream.json:/config/stream.json:ro
     command:
       - sh
       - -c
       - |
         echo 'Creating BLOCKCHAIN_EVENTS stream from config...'
-        nats --server nats://nats:4222 stream add --config /config/events.json --defaults || echo 'Stream might already exist'
+        nats --server nats://nats:4222 stream add --config /config/stream.json --defaults || echo 'Stream might already exist'
         echo 'Verifying stream...'
         nats --server nats://nats:4222 stream info BLOCKCHAIN_EVENTS
         echo 'Stream setup complete!'

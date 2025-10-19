@@ -2,7 +2,7 @@
 set -euo pipefail
 
 STREAM_NAME=${1:-BLOCKCHAIN_EVENTS}
-CONFIG_FILE="tools/nats/events.json"
+CONFIG_FILE="tools/nats/stream.json"
 
 if ! command -v nats >/dev/null 2>&1; then
   echo "❌ Please install the NATS CLI (https://github.com/nats-io/natscli)."
