@@ -243,6 +243,32 @@ CREATE TRIGGER update_key_value_store_updated_at
 
 -- ENUM types provide automatic validation, no additional CHECK constraints needed
 
+-- Function to ensure tokens are only updated with newer or equal last_activity_time
+CREATE OR REPLACE FUNCTION check_last_activity_time()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- If last_activity_time is being updated to an older time, reject the update
+    IF NEW.last_activity_time < OLD.last_activity_time THEN
+        RAISE EXCEPTION 'Cannot update token with older last_activity_time. Current: %, Attempted: %',
+            OLD.last_activity_time, NEW.last_activity_time
+            USING ERRCODE = '23514', -- check_violation
+                  HINT = 'Token updates must have last_activity_time >= current value';
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to enforce last_activity_time progression on tokens table
+CREATE TRIGGER enforce_last_activity_time_progression
+    BEFORE UPDATE ON tokens
+    FOR EACH ROW
+    WHEN (OLD.last_activity_time IS DISTINCT FROM NEW.last_activity_time)
+    EXECUTE FUNCTION check_last_activity_time();
+
+COMMENT ON FUNCTION check_last_activity_time() IS 
+    'Ensures tokens can only be updated with newer or equal last_activity_time values to maintain temporal consistency';
+
 -- ============================================================================
 -- INITIAL DATA
 -- ============================================================================
