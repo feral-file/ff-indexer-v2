@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -34,7 +35,7 @@ func main() {
 	// Load configuration
 	cfg, err := config.LoadTezosEmitterConfig(*configPath)
 	if err != nil {
-		logger.Fatal("Failed to load config", zap.Error(err), zap.String("config_path", *configPath))
+		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
 
 	// Initialize logger
@@ -44,7 +45,7 @@ func main() {
 			Debug: cfg.Debug,
 		})
 	if err != nil {
-		logger.Fatal("Failed to initialize logger", zap.Error(err), zap.String("sentry_dsn", cfg.SentryDSN))
+		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
 	}
 	logger.Info("Starting Tezos Event Emitter")
 
