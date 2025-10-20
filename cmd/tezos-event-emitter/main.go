@@ -141,7 +141,7 @@ func main() {
 	}
 
 	// Give some time for graceful shutdown
-	time.Sleep(2 * time.Second)
+	time.Sleep(time.Second)
 
 	logger.Info("Tezos Event Emitter stopped")
 }

@@ -70,7 +70,7 @@ func main() {
 
 	// Initialize ethereum client
 	ethDialer := adapter.NewEthClientDialer()
-	adapterEthClient, err := ethDialer.Dial(ctx, cfg.Ethereum.RPCURL)
+	adapterEthClient, err := ethDialer.Dial(ctx, cfg.Ethereum.WebSocketURL)
 	if err != nil {
 		logger.Fatal("Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
@@ -145,7 +145,7 @@ func main() {
 	}
 
 	// Give some time for graceful shutdown
-	time.Sleep(2 * time.Second)
+	time.Sleep(time.Second)
 
 	logger.Info("Ethereum Event Emitter stopped")
 }

@@ -135,7 +135,7 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	client.Start()
 
 	// Wait for connection
-	s.clock.Sleep(2 * time.Second)
+	s.clock.Sleep(time.Second)
 
 	// Subscribe to token transfers
 	sendErrChan := client.Send("SubscribeToTokenTransfers", map[string]interface{}{})

@@ -123,8 +123,8 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, metadata map[str
 
 	normalizedMetadata := &NormalizedMetadata{
 		Raw:       metadata,
-		Image:     displayUri,
-		Animation: artifactUri,
+		Image:     uriToGateway(displayUri),
+		Animation: uriToGateway(artifactUri),
 		Name:      name,
 		Artists:   creators,
 	}
@@ -160,8 +160,8 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(metadata map[string]interfac
 
 	normalizedMetadata := &NormalizedMetadata{
 		Raw:       metadata,
-		Image:     image,
-		Animation: animationURL,
+		Image:     uriToGateway(image),
+		Animation: uriToGateway(animationURL),
 		Name:      name,
 		Artists:   artists,
 	}
@@ -388,4 +388,15 @@ func (r *resolver) fetchFromHTTP(ctx context.Context, url string) (map[string]in
 	}
 
 	return metadata, nil
+}
+
+// uriToGateway converts a URI to a gateway URL
+func uriToGateway(uri string) string {
+	if after, ok := strings.CutPrefix(uri, "ipfs://"); ok {
+		return fmt.Sprintf("%s/ipfs/%s", domain.DEFAULT_IPFS_GATEWAY, after)
+	}
+	if after, ok := strings.CutPrefix(uri, "ar://"); ok {
+		return fmt.Sprintf("%s/%s", domain.DEFAULT_ARWEAVE_GATEWAY, after)
+	}
+	return uri
 }
