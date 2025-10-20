@@ -83,6 +83,12 @@ func (e *executor) CreateTokenMintActivity(ctx context.Context, event *domain.Bl
 		currentOwner = nil
 	}
 
+	// Marshal raw event
+	rawEventData, err := e.json.Marshal(event)
+	if err != nil {
+		return err
+	}
+
 	// Transform domain event to store input
 	input := store.CreateTokenMintInput{
 		Token: store.CreateTokenInput{
@@ -104,6 +110,7 @@ func (e *executor) CreateTokenMintActivity(ctx context.Context, event *domain.Bl
 			TxHash:      &event.TxHash,
 			BlockNumber: &event.BlockNumber,
 			BlockHash:   event.BlockHash,
+			Raw:         rawEventData,
 			Timestamp:   event.Timestamp,
 		},
 		TokenCID:  event.TokenCID().String(),

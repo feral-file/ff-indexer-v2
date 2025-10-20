@@ -36,6 +36,7 @@ type CreateProvenanceEventInput struct {
 	TxHash      *string
 	BlockNumber *uint64
 	BlockHash   *string
+	Raw         []byte
 	Timestamp   time.Time
 }
 
