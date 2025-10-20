@@ -32,7 +32,6 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
 	// Step 1: Create the token mint in the database
-	// This activity will check if the token already exists and return an error if it does
 	err := workflow.ExecuteActivity(ctx, w.executor.CreateTokenMintActivity, event).Get(ctx, nil)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to create token mint: %w", err),
@@ -87,7 +86,6 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
 	// Step 1: Create or update the token transfer in the database
-	// This activity will create the token if it doesn't exist, or update it if it does
 	// It returns whether the token was newly created
 	var wasNewlyCreated bool
 	err := workflow.ExecuteActivity(ctx, w.executor.CreateOrUpdateTokenTransferActivity, event).Get(ctx, &wasNewlyCreated)
@@ -135,10 +133,31 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	logger.Info("Processing token burn event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
+		zap.String("from", types.SafeString(event.FromAddress)),
 		zap.String("txHash", event.TxHash),
 	)
 
-	// TODO: Implement token burn workflow
+	// Configure activity options
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	// Step 1: Update the token burn in the database
+	err := workflow.ExecuteActivity(ctx, w.executor.UpdateTokenBurnActivity, event).Get(ctx, nil)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to update token burn: %w", err),
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return err
+	}
+
+	logger.Info("Token burn processed successfully",
+		zap.String("tokenCID", event.TokenCID().String()),
+	)
 
 	return nil
 }
@@ -151,7 +170,46 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 		zap.String("txHash", event.TxHash),
 	)
 
-	// TODO: Implement metadata update workflow
+	// Configure activity options
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	// Step 1: Create the metadata update record in the database
+	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdateActivity, event).Get(ctx, nil)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to create metadata update record: %w", err),
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return err
+	}
+
+	// Step 2: Start child workflow to index token metadata
+	// This runs asynchronously without waiting for the result
+	childWorkflowOptions := workflow.ChildWorkflowOptions{
+		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
+		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+	}
+	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
+
+	// Execute the child workflow without waiting for the result
+	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
+	if err := childWorkflowExec.Get(ctx, nil); err != nil {
+		logger.Error(fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return err
+	}
+
+	logger.Info("Metadata update event recorded and metadata indexing started",
+		zap.String("tokenCID", event.TokenCID().String()),
+	)
 
 	return nil
 }

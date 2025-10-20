@@ -29,6 +29,12 @@ type Executor interface {
 	// CreateOrUpdateTokenTransferActivity creates or updates a token in the database for a transfer event
 	CreateOrUpdateTokenTransferActivity(ctx context.Context, event *domain.BlockchainEvent) (bool, error)
 
+	// UpdateTokenBurnActivity updates a token as burned in the database
+	UpdateTokenBurnActivity(ctx context.Context, event *domain.BlockchainEvent) error
+
+	// CreateMetadataUpdateActivity creates a metadata update provenance event and change journal entry
+	CreateMetadataUpdateActivity(ctx context.Context, event *domain.BlockchainEvent) error
+
 	// FetchTokenMetadataActivity fetches token metadata from blockchain/API
 	FetchTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error)
 
@@ -306,6 +312,98 @@ func (e *executor) UpsertTokenMetadataActivity(ctx context.Context, tokenCID dom
 	)
 
 	// TODO: Trigger workflow to enrich token metadata from vendor APIs (OpenSea, ArtBlocks, etc.)
+
+	return nil
+}
+
+// UpdateTokenBurnActivity updates a token as burned in the database
+func (e *executor) UpdateTokenBurnActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+	// Marshal raw event
+	rawEventData, err := e.json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	// Prepare balance update for sender (decrease)
+	var senderBalanceUpdate *store.UpdateBalanceInput
+	if !types.StringNilOrEmpty(event.FromAddress) {
+		senderBalanceUpdate = &store.UpdateBalanceInput{
+			OwnerAddress: *event.FromAddress,
+			Delta:        event.Quantity,
+		}
+	}
+
+	// Transform domain event to store input
+	input := store.CreateTokenBurnInput{
+		TokenCID:            event.TokenCID().String(),
+		SenderBalanceUpdate: senderBalanceUpdate,
+		ProvenanceEvent: store.CreateProvenanceEventInput{
+			Chain:       event.Chain,
+			EventType:   schema.ProvenanceEventTypeBurn,
+			FromAddress: event.FromAddress,
+			ToAddress:   event.ToAddress,
+			Quantity:    &event.Quantity,
+			TxHash:      &event.TxHash,
+			BlockNumber: &event.BlockNumber,
+			BlockHash:   event.BlockHash,
+			Raw:         rawEventData,
+			Timestamp:   event.Timestamp,
+		},
+		ChangedAt:        event.Timestamp,
+		LastActivityTime: event.Timestamp,
+	}
+
+	// Update the token burn atomically with balance update, provenance event, and change journal
+	if err := e.store.UpdateTokenBurn(ctx, input); err != nil {
+		return fmt.Errorf("failed to update token burn: %w", err)
+	}
+
+	logger.Info("Token burn updated successfully",
+		zap.String("tokenCID", event.TokenCID().String()),
+		zap.String("chain", string(event.Chain)),
+		zap.String("standard", string(event.Standard)),
+		zap.String("from", types.SafeString(event.FromAddress)),
+	)
+
+	return nil
+}
+
+// CreateMetadataUpdateActivity creates a metadata update provenance event and change journal entry
+func (e *executor) CreateMetadataUpdateActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+	// Marshal raw event
+	rawEventData, err := e.json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	// Transform domain event to store input
+	input := store.CreateMetadataUpdateInput{
+		TokenCID: event.TokenCID().String(),
+		ProvenanceEvent: store.CreateProvenanceEventInput{
+			Chain:       event.Chain,
+			EventType:   schema.ProvenanceEventTypeMetadataUpdate,
+			FromAddress: event.FromAddress,
+			ToAddress:   event.ToAddress,
+			Quantity:    &event.Quantity,
+			TxHash:      &event.TxHash,
+			BlockNumber: &event.BlockNumber,
+			BlockHash:   event.BlockHash,
+			Raw:         rawEventData,
+			Timestamp:   event.Timestamp,
+		},
+		ChangedAt: event.Timestamp,
+	}
+
+	// Create metadata update provenance event and change journal entry
+	if err := e.store.CreateMetadataUpdate(ctx, input); err != nil {
+		return fmt.Errorf("failed to create metadata update: %w", err)
+	}
+
+	logger.Info("Metadata update event recorded successfully",
+		zap.String("tokenCID", event.TokenCID().String()),
+		zap.String("chain", string(event.Chain)),
+		zap.String("standard", string(event.Standard)),
+	)
 
 	return nil
 }

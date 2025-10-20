@@ -85,6 +85,22 @@ type CreateOrUpdateTokenTransferResult struct {
 	WasNewlyCreated bool // true if token was created, false if it was updated
 }
 
+// CreateTokenBurnInput represents the complete input for updating a token burn with all related data
+type CreateTokenBurnInput struct {
+	TokenCID            string
+	SenderBalanceUpdate *UpdateBalanceInput // Update sender balance (decrease by quantity)
+	ProvenanceEvent     CreateProvenanceEventInput
+	ChangedAt           time.Time // For change journal
+	LastActivityTime    time.Time // For token update
+}
+
+// CreateMetadataUpdateInput represents the complete input for creating a metadata update record
+type CreateMetadataUpdateInput struct {
+	TokenCID        string
+	ProvenanceEvent CreateProvenanceEventInput
+	ChangedAt       time.Time // For change journal
+}
+
 // Store defines the interface for database operations
 type Store interface {
 	// GetTokenByTokenCID retrieves a token by its canonical ID
@@ -99,6 +115,10 @@ type Store interface {
 	CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error
 	// CreateOrUpdateTokenTransfer creates or updates a token with associated balance updates, change journal, and provenance event in a single transaction
 	CreateOrUpdateTokenTransfer(ctx context.Context, input CreateOrUpdateTokenTransferInput) (*CreateOrUpdateTokenTransferResult, error)
+	// UpdateTokenBurn updates a token as burned with associated balance update, change journal, and provenance event in a single transaction
+	UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error
+	// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
+	CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error
 	// GetTokenMetadata retrieves the metadata for a token by its ID
 	GetTokenMetadata(ctx context.Context, tokenID int64) (*schema.TokenMetadata, error)
 	// UpsertTokenMetadata creates or updates token metadata

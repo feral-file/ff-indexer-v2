@@ -131,6 +131,8 @@ func main() {
 	temporalWorker.RegisterActivity(executor.FetchTokenMetadataActivity)
 	temporalWorker.RegisterActivity(executor.UpsertTokenMetadataActivity)
 	temporalWorker.RegisterActivity(executor.CreateOrUpdateTokenTransferActivity)
+	temporalWorker.RegisterActivity(executor.UpdateTokenBurnActivity)
+	temporalWorker.RegisterActivity(executor.CreateMetadataUpdateActivity)
 	logger.Info("Registered activities")
 
 	// Start worker
