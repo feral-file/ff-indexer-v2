@@ -54,7 +54,7 @@ CREATE TABLE token_metadata (
     image_url TEXT,
     animation_url TEXT,
     name TEXT,
-    artist TEXT,
+    artists TEXT[],
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -226,6 +226,41 @@ BEGIN
     RETURN NEW;
 END;
 $$ language 'plpgsql';
+
+-- Apply updated_at trigger to tokens
+CREATE TRIGGER update_tokens_updated_at
+    BEFORE UPDATE ON tokens
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply updated_at trigger to balances
+CREATE TRIGGER update_balances_updated_at
+    BEFORE UPDATE ON balances
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply updated_at trigger to token_metadata
+CREATE TRIGGER update_token_metadata_updated_at
+    BEFORE UPDATE ON token_metadata
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply updated_at trigger to enrichment_sources
+CREATE TRIGGER update_enrichment_sources_updated_at
+    BEFORE UPDATE ON enrichment_sources
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply updated_at trigger to media_assets
+CREATE TRIGGER update_media_assets_updated_at
+    BEFORE UPDATE ON media_assets
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply updated_at trigger to changes_journal
+CREATE TRIGGER update_changes_journal_updated_at
+    BEFORE UPDATE ON changes_journal
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply updated_at trigger to provenance_events
+CREATE TRIGGER update_provenance_events_updated_at
+    BEFORE UPDATE ON provenance_events
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Apply updated_at trigger to watched_addresses
 CREATE TRIGGER update_watched_addresses_updated_at 

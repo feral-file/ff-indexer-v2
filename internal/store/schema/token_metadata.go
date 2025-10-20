@@ -38,8 +38,8 @@ type TokenMetadata struct {
 	AnimationURL *string `gorm:"column:animation_url;type:text"`
 	// Name is the token's name (extracted for quick access and indexing)
 	Name *string `gorm:"column:name;type:text"`
-	// Artist is the creator's name (extracted for quick access and indexing)
-	Artist *string `gorm:"column:artist;type:text"`
+	// Artists are the creators' names (extracted for quick access and indexing)
+	Artists []string `gorm:"column:artists;type:text[]"`
 	// CreatedAt is the timestamp when this record was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this record was last updated

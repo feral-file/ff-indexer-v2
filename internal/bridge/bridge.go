@@ -94,7 +94,7 @@ func NewBridge(
 // shouldProcessEvent determines if an event should be forwarded to workers
 // func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
 // 	// Check if token is already indexed
-// 	token, err := b.store.GetTokenByTokenCID(ctx, event.TokenCID())
+// 	token, err := b.store.GegtTokenByTokenCID(ctx, event.TokenCID())
 // 	if err != nil {
 // 		return false, fmt.Errorf("failed to check token existence: %w", err)
 // 	}
@@ -190,7 +190,7 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 	logger.Info("Received event",
 		zap.String("chain", string(event.Chain)),
 		zap.String("eventType", string(event.EventType)),
-		zap.String("tokenCID", event.TokenCID()),
+		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("txHash", event.TxHash),
 		zap.Uint64("deliveryCount", metadata.NumDelivered),
 	)
@@ -270,7 +270,7 @@ func (b *bridge) forwardToWorker(ctx context.Context, event *domain.BlockchainEv
 	}
 
 	logger.Info("Event forwarded to worker",
-		zap.String("tokenCID", event.TokenCID()),
+		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("eventType", string(event.EventType)),
 	)
 

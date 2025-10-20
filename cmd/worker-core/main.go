@@ -19,7 +19,11 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/metadata"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
@@ -62,21 +66,35 @@ func main() {
 	// Initialize store
 	dataStore := store.NewPGStore(db)
 
+	// Initialize adapters
+	jsonAdapter := adapter.NewJSON()
+	clockAdapter := adapter.NewClock()
+
 	// Initialize ethereum client
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
 	ethDialer := adapter.NewEthClientDialer()
-	ethClient, err := ethDialer.Dial(ctx, cfg.Ethereum.RPCURL)
+	adapterEthClient, err := ethDialer.Dial(ctx, cfg.Ethereum.RPCURL)
 	if err != nil {
 		logger.Fatal("Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
-	defer ethClient.Close()
+	defer adapterEthClient.Close()
+	ethereumClient := ethereum.NewClient(adapterEthClient)
+
 	logger.Info("Connected to Ethereum RPC", zap.String("rpc_url", cfg.Ethereum.RPCURL))
 
 	// Initialize Tezos client
 	tzktClient := tezos.NewTzKTClient(cfg.Tezos.APIURL, httpClient)
 
+	// Initialize vendors
+	artblocksClient := artblocks.NewClient(httpClient)
+	fxhashClient := fxhash.NewClient(httpClient)
+
+	// Initialize metadata enhancer and resolver
+	metadataEnhancer := metadata.NewEnhancer(artblocksClient, fxhashClient)
+	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, jsonAdapter, clockAdapter)
+
 	// Initialize executor for activities
-	executor := workflows.NewExecutor(dataStore, ethClient, tzktClient)
+	executor := workflows.NewExecutor(dataStore, metadataResolver, metadataEnhancer, ethereumClient, tzktClient, jsonAdapter, clockAdapter)
 
 	// Connect to Temporal
 	temporalClient, err := client.Dial(client.Options{
@@ -104,11 +122,14 @@ func main() {
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenTransfer)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenBurn)
 	temporalWorker.RegisterWorkflow(workerCore.IndexMetadataUpdate)
+	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMetadata)
 	logger.Info("Registered workflows")
 
 	// Register activities
 	// Activities will be called by workflows
-	// TODO: Register actual activity functions from executor
+	temporalWorker.RegisterActivity(executor.CreateTokenMintActivity)
+	temporalWorker.RegisterActivity(executor.FetchTokenMetadataActivity)
+	temporalWorker.RegisterActivity(executor.UpsertTokenMetadataActivity)
 	logger.Info("Registered activities")
 
 	// Start worker

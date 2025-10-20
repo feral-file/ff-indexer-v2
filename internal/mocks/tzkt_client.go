@@ -66,6 +66,21 @@ func (mr *MockTzKTClientMockRecorder) GetTokenMetadata(ctx, contractAddress, tok
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadata", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenMetadata), ctx, contractAddress, tokenID)
 }
 
+// GetTokenOwnerBalance mocks base method.
+func (m *MockTzKTClient) GetTokenOwnerBalance(ctx context.Context, contractAddress, tokenID, ownerAddress string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenOwnerBalance", ctx, contractAddress, tokenID, ownerAddress)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenOwnerBalance indicates an expected call of GetTokenOwnerBalance.
+func (mr *MockTzKTClientMockRecorder) GetTokenOwnerBalance(ctx, contractAddress, tokenID, ownerAddress interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenOwnerBalance", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenOwnerBalance), ctx, contractAddress, tokenID, ownerAddress)
+}
+
 // GetTransactionsByID mocks base method.
 func (m *MockTzKTClient) GetTransactionsByID(ctx context.Context, txID uint64) ([]tezos.TzKTTransaction, error) {
 	m.ctrl.T.Helper()

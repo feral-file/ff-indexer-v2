@@ -67,7 +67,15 @@ func main() {
 	clockAdapter := adapter.NewClock()
 	jsonAdapter := adapter.NewJSON()
 	natsJS := adapter.NewNatsJetStream()
-	ethClientDialer := adapter.NewEthClientDialer()
+
+	// Initialize ethereum client
+	ethDialer := adapter.NewEthClientDialer()
+	adapterEthClient, err := ethDialer.Dial(ctx, cfg.Ethereum.RPCURL)
+	if err != nil {
+		logger.Fatal("Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
+	}
+	defer adapterEthClient.Close()
+	ethereumClient := ethereum.NewClient(adapterEthClient)
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(
@@ -88,7 +96,7 @@ func main() {
 	ethSubscriber, err := ethereum.NewSubscriber(ctx, ethereum.Config{
 		WebSocketURL: cfg.Ethereum.WebSocketURL,
 		ChainID:      domain.Chain(cfg.Ethereum.ChainID),
-	}, ethClientDialer, clockAdapter)
+	}, ethereumClient, clockAdapter)
 	if err != nil {
 		logger.Fatal("Failed to create Ethereum subscriber", zap.Error(err), zap.String("websocket_url", cfg.Ethereum.WebSocketURL))
 	}

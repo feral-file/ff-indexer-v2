@@ -5,7 +5,13 @@
 package mocks
 
 import (
+	context "context"
+	reflect "reflect"
+
 	gomock "github.com/golang/mock/gomock"
+
+	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
+	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
 )
 
 // MockExecutor is a mock of Executor interface.
@@ -29,4 +35,47 @@ func NewMockExecutor(ctrl *gomock.Controller) *MockExecutor {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockExecutor) EXPECT() *MockExecutorMockRecorder {
 	return m.recorder
+}
+
+// CreateTokenMintActivity mocks base method.
+func (m *MockExecutor) CreateTokenMintActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateTokenMintActivity", ctx, event)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateTokenMintActivity indicates an expected call of CreateTokenMintActivity.
+func (mr *MockExecutorMockRecorder) CreateTokenMintActivity(ctx, event interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenMintActivity", reflect.TypeOf((*MockExecutor)(nil).CreateTokenMintActivity), ctx, event)
+}
+
+// FetchTokenMetadataActivity mocks base method.
+func (m *MockExecutor) FetchTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchTokenMetadataActivity", ctx, tokenCID)
+	ret0, _ := ret[0].(*metadata.NormalizedMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchTokenMetadataActivity indicates an expected call of FetchTokenMetadataActivity.
+func (mr *MockExecutorMockRecorder) FetchTokenMetadataActivity(ctx, tokenCID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchTokenMetadataActivity", reflect.TypeOf((*MockExecutor)(nil).FetchTokenMetadataActivity), ctx, tokenCID)
+}
+
+// UpsertTokenMetadataActivity mocks base method.
+func (m *MockExecutor) UpsertTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertTokenMetadataActivity", ctx, tokenCID, metadata)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertTokenMetadataActivity indicates an expected call of UpsertTokenMetadataActivity.
+func (mr *MockExecutorMockRecorder) UpsertTokenMetadataActivity(ctx, tokenCID, metadata interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenMetadataActivity", reflect.TypeOf((*MockExecutor)(nil).UpsertTokenMetadataActivity), ctx, tokenCID, metadata)
 }

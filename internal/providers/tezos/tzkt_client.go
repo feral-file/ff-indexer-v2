@@ -48,6 +48,9 @@ type TzKTClient interface {
 	// GetTransactionsByID retrieves transactions by its TzKT operation ID (internal database ID)
 	GetTransactionsByID(ctx context.Context, txID uint64) ([]TzKTTransaction, error)
 
+	// GetTokenOwnerBalance retrieves token balance for a specific owner address
+	GetTokenOwnerBalance(ctx context.Context, contractAddress string, tokenID string, ownerAddress string) (string, error)
+
 	// GetTokenBalances retrieves token balances for a specific token
 	GetTokenBalances(ctx context.Context, contractAddress string, tokenID string) ([]TzKTTokenBalance, error)
 
@@ -81,11 +84,31 @@ func (c *tzktClient) GetTransactionsByID(ctx context.Context, txID uint64) ([]Tz
 	return txs, nil
 }
 
+// GetTokenOwnerBalance retrieves token balance for a specific owner address
+func (c *tzktClient) GetTokenOwnerBalance(ctx context.Context, contractAddress string, tokenID string, ownerAddress string) (string, error) {
+	// Get all owners balance
+	balances, err := c.GetTokenBalances(ctx, contractAddress, tokenID)
+	if err != nil {
+		return "", err
+	}
+
+	// Iterate over the balances array to get the owner balance
+	for _, balance := range balances {
+		if balance.Account.Address != ownerAddress {
+			continue
+		}
+
+		return balance.Balance, nil
+	}
+
+	return "", nil
+}
+
 // GetTokenBalances retrieves token balances for a specific token
-// Returns list of holders with their balances (balance > 0)
+// Returns list of holders with their balances
 func (c *tzktClient) GetTokenBalances(ctx context.Context, contractAddress string, tokenID string) ([]TzKTTokenBalance, error) {
-	// TzKT API: GET /v1/tokens/balances?contract={address}&tokenId={id}&balance.gt=0
-	url := fmt.Sprintf("%s/v1/tokens/balances?contract=%s&tokenId=%s&balance.gt=0", c.baseURL, contractAddress, tokenID)
+	// TzKT API: GET /v1/tokens/balances?token.contract={address}&token.tokenId={id}
+	url := fmt.Sprintf("%s/v1/tokens/balances?token.contract=%s&token.tokenId=%s", c.baseURL, contractAddress, tokenID)
 
 	var balances []TzKTTokenBalance
 	if err := c.httpClient.Get(ctx, url, &balances); err != nil {

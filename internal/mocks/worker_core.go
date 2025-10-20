@@ -64,6 +64,20 @@ func (mr *MockWorkerCoreMockRecorder) IndexTokenBurn(ctx, event interface{}) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenBurn", reflect.TypeOf((*MockWorkerCore)(nil).IndexTokenBurn), ctx, event)
 }
 
+// IndexTokenMetadata mocks base method.
+func (m *MockWorkerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IndexTokenMetadata", ctx, tokenCID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IndexTokenMetadata indicates an expected call of IndexTokenMetadata.
+func (mr *MockWorkerCoreMockRecorder) IndexTokenMetadata(ctx, tokenCID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenMetadata", reflect.TypeOf((*MockWorkerCore)(nil).IndexTokenMetadata), ctx, tokenCID)
+}
+
 // IndexTokenMint mocks base method.
 func (m *MockWorkerCore) IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()

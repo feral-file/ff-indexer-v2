@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Chain represents the blockchain network identifier using CAIP-2 format
 type Chain string
@@ -32,6 +36,9 @@ const (
 	EventTypeMetadataUpdateRange EventType = "metadata_update_range"
 )
 
+// TokenCID represents the canonical token identifier in format: chain/standard:contract/tokenNumber (e.g., "eip155:1/erc721:0xabc.../1234")
+type TokenCID string
+
 // BlockchainEvent represents a normalized blockchain event
 // This is the standard format published to NATS
 type BlockchainEvent struct {
@@ -52,6 +59,17 @@ type BlockchainEvent struct {
 }
 
 // TokenCID generates the canonical token ID
-func (e *BlockchainEvent) TokenCID() string {
-	return string(e.Chain) + "/" + string(e.Standard) + ":" + e.ContractAddress + "/" + e.TokenNumber
+func (e *BlockchainEvent) TokenCID() TokenCID {
+	return TokenCID(fmt.Sprintf("%s/%s/%s/%s", e.Chain, e.Standard, e.ContractAddress, e.TokenNumber))
+}
+
+// String returns the string representation of the TokenCID
+func (t TokenCID) String() string {
+	return string(t)
+}
+
+// Parse parses the TokenCID into chain, standard, contract address, and token number
+func (t TokenCID) Parse() (Chain, ChainStandard, string, string) {
+	parts := strings.Split(string(t), "/")
+	return Chain(parts[0]), ChainStandard(parts[1]), parts[2], parts[3]
 }

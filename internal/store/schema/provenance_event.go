@@ -41,7 +41,7 @@ type ProvenanceEvent struct {
 	// TxHash is the transaction hash that triggered this event
 	TxHash *string `gorm:"column:tx_hash;type:text"`
 	// BlockNumber is the block number where this event was recorded
-	BlockNumber *int64 `gorm:"column:block_number;type:bigint"`
+	BlockNumber *uint64 `gorm:"column:block_number;type:bigint"`
 	// BlockHash is the hash of the block containing this event
 	BlockHash *string `gorm:"column:block_hash;type:text"`
 	// Timestamp is the blockchain timestamp when this event occurred

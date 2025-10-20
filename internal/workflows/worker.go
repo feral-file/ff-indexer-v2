@@ -21,6 +21,9 @@ type WorkerCore interface {
 
 	// IndexMetadataUpdate processes a metadata update event
 	IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error
+
+	// IndexTokenMetadata index token metadata
+	IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error
 }
 
 // WorkerMedia defines the interface for processing media events

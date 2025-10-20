@@ -27,7 +27,7 @@ type Config struct {
 }
 
 type ethSubscriber struct {
-	client  adapter.EthClient
+	client  EthereumClient
 	chainID domain.Chain
 	clock   adapter.Clock
 }
@@ -56,14 +56,9 @@ var (
 )
 
 // NewSubscriber creates a new Ethereum event subscriber
-func NewSubscriber(ctx context.Context, cfg Config, ethClientDialer adapter.EthClientDialer, clock adapter.Clock) (messaging.Subscriber, error) {
-	client, err := ethClientDialer.Dial(ctx, cfg.WebSocketURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to dial Ethereum WebSocket: %w", err)
-	}
-
+func NewSubscriber(ctx context.Context, cfg Config, ethereumClient EthereumClient, clock adapter.Clock) (messaging.Subscriber, error) {
 	return &ethSubscriber{
-		client:  client,
+		client:  ethereumClient,
 		chainID: cfg.ChainID,
 		clock:   clock,
 	}, nil

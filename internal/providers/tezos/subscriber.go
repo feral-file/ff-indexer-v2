@@ -214,6 +214,14 @@ func (s *tzSubscriber) Transfers(data interface{}) {
 	}
 
 	for _, transfer := range transfers {
+		if transfer.Token.Standard != domain.StandardFA2 {
+			logger.Debug("Skipping token is not fa2",
+				zap.String("standard", string(transfer.Token.Standard)),
+				zap.String("contract", transfer.Token.Contract.Address),
+				zap.String("tokenId", transfer.Token.TokenID))
+			continue
+		}
+
 		event, err := s.parseTransfer(transfer)
 		if err != nil {
 			logger.Error(fmt.Errorf("error parsing transfer: %w", err), zap.Error(err))

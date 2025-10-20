@@ -1,6 +1,8 @@
 package adapter
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 // JSON defines an interface for JSON operations to enable mocking
 //
