@@ -227,34 +227,45 @@ func (s *pgStore) CreateOrUpdateTokenTransfer(ctx context.Context, input CreateO
 		// 2. Update sender's balance (decrease)
 		if input.SenderBalanceUpdate != nil {
 			var senderBalance schema.Balance
-			// Lock the row for update to ensure atomicity
+			// Try to lock the row for update to ensure atomicity
 			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
 				First(&senderBalance).Error
 
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
-					// This shouldn't happen in a valid transfer, but handle it gracefully
-					return fmt.Errorf("sender balance not found for address %s", input.SenderBalanceUpdate.OwnerAddress)
+					// Balance doesn't exist - create it with the delta as initial quantity
+					// This can happen if events are processed out of order or the initial mint wasn't captured
+					senderBalance = schema.Balance{
+						TokenID:      token.ID,
+						OwnerAddress: input.SenderBalanceUpdate.OwnerAddress,
+						Quantity:     input.SenderBalanceUpdate.Delta,
+					}
+
+					if err := tx.Create(&senderBalance).Error; err != nil {
+						return fmt.Errorf("failed to create sender balance: %w", err)
+					}
+				} else {
+					return fmt.Errorf("failed to lock sender balance: %w", err)
 				}
-				return fmt.Errorf("failed to lock sender balance: %w", err)
-			}
+			} else {
+				// Balance exists, update it
+				// Use raw SQL to perform numeric subtraction
+				if err := tx.Model(&senderBalance).
+					Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta)).Error; err != nil {
+					return fmt.Errorf("failed to update sender balance: %w", err)
+				}
 
-			// Use raw SQL to perform numeric subtraction
-			if err := tx.Model(&senderBalance).
-				Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta)).Error; err != nil {
-				return fmt.Errorf("failed to update sender balance: %w", err)
-			}
+				// Refresh to get new quantity
+				if err := tx.First(&senderBalance, senderBalance.ID).Error; err != nil {
+					return fmt.Errorf("failed to refresh sender balance: %w", err)
+				}
 
-			// Refresh to get new quantity
-			if err := tx.First(&senderBalance, senderBalance.ID).Error; err != nil {
-				return fmt.Errorf("failed to refresh sender balance: %w", err)
-			}
-
-			// Delete balance if it reaches zero
-			if senderBalance.Quantity == "0" {
-				if err := tx.Delete(&senderBalance).Error; err != nil {
-					return fmt.Errorf("failed to delete zero balance: %w", err)
+				// Delete balance if it reaches zero
+				if senderBalance.Quantity == "0" {
+					if err := tx.Delete(&senderBalance).Error; err != nil {
+						return fmt.Errorf("failed to delete zero balance: %w", err)
+					}
 				}
 			}
 		}
