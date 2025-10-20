@@ -63,6 +63,28 @@ type CreateTokenMetadataInput struct {
 	Artists         []string
 }
 
+// UpdateBalanceInput represents the input for updating a balance record
+type UpdateBalanceInput struct {
+	OwnerAddress string
+	Delta        string // Delta to add/subtract (can be negative)
+}
+
+// CreateOrUpdateTokenTransferInput represents the complete input for creating or updating a token transfer with all related data
+type CreateOrUpdateTokenTransferInput struct {
+	Token                 CreateTokenInput
+	SenderBalanceUpdate   *UpdateBalanceInput // nil if sender is zero address (mint)
+	ReceiverBalanceUpdate *UpdateBalanceInput // nil if receiver is zero address (burn)
+	ProvenanceEvent       CreateProvenanceEventInput
+	TokenCID              string    // For change journal
+	ChangedAt             time.Time // For change journal
+}
+
+// CreateOrUpdateTokenTransferResult contains the result of a token transfer operation
+type CreateOrUpdateTokenTransferResult struct {
+	TokenID         int64
+	WasNewlyCreated bool // true if token was created, false if it was updated
+}
+
 // Store defines the interface for database operations
 type Store interface {
 	// GetTokenByTokenCID retrieves a token by its canonical ID
@@ -75,6 +97,8 @@ type Store interface {
 	SetBlockCursor(ctx context.Context, chain string, blockNumber uint64) error
 	// CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
 	CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error
+	// CreateOrUpdateTokenTransfer creates or updates a token with associated balance updates, change journal, and provenance event in a single transaction
+	CreateOrUpdateTokenTransfer(ctx context.Context, input CreateOrUpdateTokenTransferInput) (*CreateOrUpdateTokenTransferResult, error)
 	// GetTokenMetadata retrieves the metadata for a token by its ID
 	GetTokenMetadata(ctx context.Context, tokenID int64) (*schema.TokenMetadata, error)
 	// UpsertTokenMetadata creates or updates token metadata

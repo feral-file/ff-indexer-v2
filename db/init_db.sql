@@ -9,7 +9,7 @@ CREATE TYPE enrichment_level AS ENUM ('none', 'vendor', 'full');
 CREATE TYPE vendor_type AS ENUM ('opensea', 'artblocks', 'onchain', 'objkt');
 CREATE TYPE media_role AS ENUM ('image', 'animation', 'poster');
 CREATE TYPE media_status AS ENUM ('pending', 'ready', 'failed');
-CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'media', 'provenance');
+CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'media');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 
 -- ============================================================================
@@ -94,8 +94,9 @@ CREATE TABLE media_assets (
 -- Changes Journal table - Audit log for tracking all changes to indexed data
 CREATE TABLE changes_journal (
     "cursor" BIGSERIAL PRIMARY KEY,
-    subject_type subject_type NOT NULL,     -- token, owner, balance, metadata, media, provenance
-    subject_id TEXT NOT NULL,               -- token_cid
+    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
+    subject_type subject_type NOT NULL,     -- token, owner, balance, metadata, media
+    subject_id TEXT NOT NULL,               -- polymorphic ref: provenance_event_id, balance_id, media_asset_id, etc.
     changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     meta JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -161,7 +162,7 @@ CREATE INDEX idx_balances_updated_at ON balances (updated_at);
 CREATE INDEX idx_token_metadata_enrichment_level ON token_metadata (enrichment_level);
 CREATE INDEX idx_token_metadata_last_refreshed_at ON token_metadata (last_refreshed_at);
 CREATE INDEX idx_token_metadata_name ON token_metadata (name) WHERE name IS NOT NULL;
-CREATE INDEX idx_token_metadata_artist ON token_metadata (artist) WHERE artist IS NOT NULL;
+CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WHERE CARDINALITY(artists) > 0;
 CREATE INDEX idx_token_metadata_image_url ON token_metadata (image_url) WHERE image_url IS NOT NULL;
 
 -- Enrichment Sources table indexes
@@ -177,6 +178,7 @@ CREATE INDEX idx_media_assets_cf_image_id ON media_assets (cf_image_id) WHERE cf
 CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
 
 -- Changes Journal table indexes
+CREATE INDEX idx_changes_journal_token_id ON changes_journal (token_id);
 CREATE INDEX idx_changes_journal_subject_type_id ON changes_journal (subject_type, subject_id);
 CREATE INDEX idx_changes_journal_changed_at ON changes_journal (changed_at);
 CREATE INDEX idx_changes_journal_cursor ON changes_journal ("cursor");
@@ -326,7 +328,7 @@ COMMENT ON TABLE balances IS 'Tracks ownership quantities for multi-edition toke
 COMMENT ON TABLE token_metadata IS 'Stores original and enriched metadata for tokens';
 COMMENT ON TABLE enrichment_sources IS 'Tracks metadata fetch attempts from various vendors';
 COMMENT ON TABLE media_assets IS 'Manages media files with different storage providers integration';
-COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data';
+COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. token_id always points to affected token. subject_id is polymorphic: provenance_event_id (token/owner), balance_id (balance), token_id (metadata), media_asset_id (media)';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';

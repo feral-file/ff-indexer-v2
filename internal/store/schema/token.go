@@ -37,7 +37,7 @@ type Token struct {
 	EnrichmentSources []EnrichmentSource `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 	MediaAssets       []MediaAsset       `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 	ProvenanceEvents  []ProvenanceEvent  `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
-	ChangesJournals   []ChangesJournal   `gorm:"foreignKey:SubjectID;constraint:OnDelete:CASCADE"`
+	ChangesJournals   []ChangesJournal   `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 }
 
 // TableName specifies the table name for the Token model

@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // IndexTokenMint processes a token mint event
@@ -71,12 +72,60 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 	logger.Info("Processing token transfer event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
-		zap.String("from", *event.FromAddress),
-		zap.String("to", *event.ToAddress),
+		zap.String("from", types.SafeString(event.FromAddress)),
+		zap.String("to", types.SafeString(event.ToAddress)),
 		zap.String("txHash", event.TxHash),
 	)
 
-	// TODO: Implement token transfer workflow
+	// Configure activity options
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	// Step 1: Create or update the token transfer in the database
+	// This activity will create the token if it doesn't exist, or update it if it does
+	// It returns whether the token was newly created
+	var wasNewlyCreated bool
+	err := workflow.ExecuteActivity(ctx, w.executor.CreateOrUpdateTokenTransferActivity, event).Get(ctx, &wasNewlyCreated)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to create or update token transfer: %w", err),
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return err
+	}
+
+	// Step 2: If token was newly created, start metadata indexing
+	if wasNewlyCreated {
+		logger.Info("Token was newly created from transfer event, starting metadata indexing",
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+
+		childWorkflowOptions := workflow.ChildWorkflowOptions{
+			WorkflowID:               "index-metadata-" + event.TokenCID().String(),
+			WorkflowExecutionTimeout: 15 * time.Minute,
+			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+		}
+		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
+
+		// Execute the child workflow without waiting for the result
+		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
+		if err := childWorkflowExec.Get(ctx, nil); err != nil {
+			logger.Error(fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
+				zap.String("tokenCID", event.TokenCID().String()),
+			)
+			return err
+		}
+	}
+
+	logger.Info("Token transfer processed successfully",
+		zap.String("tokenCID", event.TokenCID().String()),
+		zap.Bool("wasNewlyCreated", wasNewlyCreated),
+	)
 
 	return nil
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // Executor defines the interface for executing activities
@@ -24,6 +25,9 @@ import (
 type Executor interface {
 	// CreateTokenMintActivity creates a new token in the database
 	CreateTokenMintActivity(ctx context.Context, event *domain.BlockchainEvent) error
+
+	// CreateOrUpdateTokenTransferActivity creates or updates a token in the database for a transfer event
+	CreateOrUpdateTokenTransferActivity(ctx context.Context, event *domain.BlockchainEvent) (bool, error)
 
 	// FetchTokenMetadataActivity fetches token metadata from blockchain/API
 	FetchTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error)
@@ -158,6 +162,94 @@ func (e *executor) CreateTokenMintActivity(ctx context.Context, event *domain.Bl
 	)
 
 	return nil
+}
+
+// CreateOrUpdateTokenTransferActivity creates or updates a token in the database for a transfer event
+// Returns true if the token was newly created (didn't exist before), false if it was updated
+func (e *executor) CreateOrUpdateTokenTransferActivity(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
+	// Determine current owner from event
+	// For ERC1155 and FA2, the current owner is nil since it's a multi-owner token
+	currentOwner := event.ToAddress
+	if event.Standard == domain.StandardERC1155 || event.Standard == domain.StandardFA2 {
+		currentOwner = nil
+	}
+
+	// Marshal raw event
+	rawEventData, err := e.json.Marshal(event)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	// Prepare balance updates
+	var senderBalanceUpdate *store.UpdateBalanceInput
+	var receiverBalanceUpdate *store.UpdateBalanceInput
+
+	// Sender balance update (decrease)
+	if !types.StringNilOrEmpty(event.FromAddress) {
+		// For all standards, we use the event quantity as the delta for balance update
+		// The store layer will handle the subtraction atomically
+		senderBalanceUpdate = &store.UpdateBalanceInput{
+			OwnerAddress: *event.FromAddress,
+			Delta:        event.Quantity,
+		}
+	}
+
+	// Receiver balance update (increase)
+	if !types.StringNilOrEmpty(event.ToAddress) {
+		// For all standards, we use the event quantity as the delta for balance update
+		// The store layer will handle the addition atomically
+		receiverBalanceUpdate = &store.UpdateBalanceInput{
+			OwnerAddress: *event.ToAddress,
+			Delta:        event.Quantity,
+		}
+	}
+
+	// Transform domain event to store input
+	input := store.CreateOrUpdateTokenTransferInput{
+		Token: store.CreateTokenInput{
+			TokenCID:         event.TokenCID().String(),
+			Chain:            event.Chain,
+			Standard:         event.Standard,
+			ContractAddress:  event.ContractAddress,
+			TokenNumber:      event.TokenNumber,
+			CurrentOwner:     currentOwner,
+			Burned:           false,
+			LastActivityTime: event.Timestamp,
+		},
+		SenderBalanceUpdate:   senderBalanceUpdate,
+		ReceiverBalanceUpdate: receiverBalanceUpdate,
+		ProvenanceEvent: store.CreateProvenanceEventInput{
+			Chain:       event.Chain,
+			EventType:   schema.ProvenanceEventTypeTransfer,
+			FromAddress: event.FromAddress,
+			ToAddress:   event.ToAddress,
+			Quantity:    &event.Quantity,
+			TxHash:      &event.TxHash,
+			BlockNumber: &event.BlockNumber,
+			BlockHash:   event.BlockHash,
+			Raw:         rawEventData,
+			Timestamp:   event.Timestamp,
+		},
+		TokenCID:  event.TokenCID().String(),
+		ChangedAt: event.Timestamp,
+	}
+
+	// Create or update the token atomically with balance updates, provenance event, and change journal
+	result, err := e.store.CreateOrUpdateTokenTransfer(ctx, input)
+	if err != nil {
+		return false, fmt.Errorf("failed to create or update token transfer: %w", err)
+	}
+
+	logger.Info("Token transfer processed successfully",
+		zap.String("tokenCID", event.TokenCID().String()),
+		zap.String("chain", string(event.Chain)),
+		zap.String("standard", string(event.Standard)),
+		zap.Bool("wasNewlyCreated", result.WasNewlyCreated),
+		zap.String("from", types.SafeString(event.FromAddress)),
+		zap.String("to", types.SafeString(event.ToAddress)),
+	)
+
+	return result.WasNewlyCreated, nil
 }
 
 // FetchTokenMetadataActivity fetches token metadata from blockchain/API
