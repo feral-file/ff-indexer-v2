@@ -168,5 +168,5 @@ func (c *ethereumClient) ERC1155BalanceOf(ctx context.Context, contractAddress, 
 
 // Close closes the connection
 func (c *ethereumClient) Close() {
-	c.Close()
+	c.client.Close()
 }

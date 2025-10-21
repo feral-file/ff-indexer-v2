@@ -308,7 +308,7 @@ func (e *executor) UpsertTokenMetadataActivity(ctx context.Context, tokenCID dom
 
 	logger.Info("Token metadata upserted successfully",
 		zap.String("tokenCID", tokenCID.String()),
-		zap.Int64("tokenID", token.ID),
+		zap.Uint64("tokenID", token.ID),
 	)
 
 	// TODO: Trigger workflow to enrich token metadata from vendor APIs (OpenSea, ArtBlocks, etc.)

@@ -21,9 +21,9 @@ const (
 // EnrichmentSource represents the enrichment_sources table - tracks metadata fetch attempts from various vendors
 type EnrichmentSource struct {
 	// ID is the internal database primary key
-	ID int64 `gorm:"column:id;primaryKey;autoIncrement"`
+	ID uint64 `gorm:"column:id;primaryKey;autoIncrement"`
 	// TokenID references the token being enriched
-	TokenID int64 `gorm:"column:token_id;not null;uniqueIndex:idx_enrichment_sources_token_vendor,priority:1"`
+	TokenID uint64 `gorm:"column:token_id;not null;uniqueIndex:idx_enrichment_sources_token_vendor,priority:1"`
 	// Vendor identifies the metadata source (opensea, artblocks, onchain, objkt)
 	Vendor Vendor `gorm:"column:vendor;not null;type:text;uniqueIndex:idx_enrichment_sources_token_vendor,priority:2"`
 	// SourceURL is the API endpoint or URI used to fetch metadata

@@ -35,7 +35,7 @@ type MediaAsset struct {
 	// ID is the internal database primary key
 	ID int64 `gorm:"column:id;primaryKey;autoIncrement"`
 	// TokenID references the token this media belongs to
-	TokenID int64 `gorm:"column:token_id;not null;uniqueIndex:idx_media_assets_token_role,priority:1"`
+	TokenID uint64 `gorm:"column:token_id;not null;uniqueIndex:idx_media_assets_token_role,priority:1"`
 	// Role identifies the media type (image, animation, poster)
 	Role Role `gorm:"column:role;not null;type:text;uniqueIndex:idx_media_assets_token_role,priority:2"`
 	// SourceURL is the original URL where the media was fetched from

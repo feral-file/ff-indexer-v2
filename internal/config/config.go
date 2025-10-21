@@ -59,6 +59,15 @@ type TemporalConfig struct {
 	TaskQueue string `mapstructure:"task_queue"`
 }
 
+// ServerConfig holds HTTP server configuration
+type ServerConfig struct {
+	Host         string `mapstructure:"host"`
+	Port         int    `mapstructure:"port"`
+	ReadTimeout  int    `mapstructure:"read_timeout"`  // in seconds
+	WriteTimeout int    `mapstructure:"write_timeout"` // in seconds
+	IdleTimeout  int    `mapstructure:"idle_timeout"`  // in seconds
+}
+
 // EthereumEmitterConfig holds configuration for ethereum-event-emitter
 type EthereumEmitterConfig struct {
 	BaseConfig `mapstructure:",squash"`
@@ -90,6 +99,14 @@ type WorkerCoreConfig struct {
 	Temporal   TemporalConfig `mapstructure:"temporal"`
 	Ethereum   EthereumConfig `mapstructure:"ethereum"`
 	Tezos      TezosConfig    `mapstructure:"tezos"`
+}
+
+// APIConfig holds configuration for API server
+type APIConfig struct {
+	BaseConfig `mapstructure:",squash"`
+	Server     ServerConfig   `mapstructure:"server"`
+	Database   DatabaseConfig `mapstructure:"database"`
+	Temporal   TemporalConfig `mapstructure:"temporal"`
 }
 
 // LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter
@@ -186,6 +203,35 @@ func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
 	}
 
 	var config WorkerCoreConfig
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	return &config, nil
+}
+
+// LoadAPIConfig loads configuration for API server
+func LoadAPIConfig(configPath string) (*APIConfig, error) {
+	v := Viper(configPath)
+
+	// Set defaults
+	v.SetDefault("debug", false)
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.read_timeout", 10)
+	v.SetDefault("server.write_timeout", 10)
+	v.SetDefault("server.idle_timeout", 120)
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.sslmode", "disable")
+	v.SetDefault("temporal.host_port", "localhost:7233")
+	v.SetDefault("temporal.namespace", "default")
+	v.SetDefault("temporal.task_queue", "token-indexing")
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var config APIConfig
 	if err := v.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}

@@ -21,7 +21,7 @@ const (
 // TokenMetadata represents the token_metadata table - stores original and enriched metadata for tokens
 type TokenMetadata struct {
 	// TokenID references the associated token (primary key, one-to-one relationship)
-	TokenID int64 `gorm:"column:token_id;primaryKey"`
+	TokenID uint64 `gorm:"column:token_id;primaryKey"`
 	// OriginJSON is the original metadata fetched directly from the blockchain (tokenURI)
 	OriginJSON datatypes.JSON `gorm:"column:origin_json;type:jsonb"`
 	// LatestJSON is the enriched metadata combining origin and vendor data

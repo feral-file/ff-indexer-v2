@@ -51,7 +51,7 @@ type CreateTokenMintInput struct {
 
 // CreateTokenMetadataInput represents the input for creating or updating token metadata
 type CreateTokenMetadataInput struct {
-	TokenID         int64
+	TokenID         uint64
 	OriginJSON      []byte
 	LatestJSON      []byte
 	LatestHash      *string
@@ -81,7 +81,7 @@ type CreateOrUpdateTokenTransferInput struct {
 
 // CreateOrUpdateTokenTransferResult contains the result of a token transfer operation
 type CreateOrUpdateTokenTransferResult struct {
-	TokenID         int64
+	TokenID         uint64
 	WasNewlyCreated bool // true if token was created, false if it was updated
 }
 
@@ -101,10 +101,34 @@ type CreateMetadataUpdateInput struct {
 	ChangedAt       time.Time // For change journal
 }
 
+// TokenQueryFilter represents filters for token queries
+type TokenQueryFilter struct {
+	Owners            []string
+	Chains            []domain.Chain
+	ContractAddresses []string
+	TokenNumbers      []string
+	Limit             int
+	Offset            int // Offset for pagination
+}
+
+// TokensWithMetadataResult represents a token with its metadata
+type TokensWithMetadataResult struct {
+	Token    *schema.Token
+	Metadata *schema.TokenMetadata
+}
+
 // Store defines the interface for database operations
 type Store interface {
 	// GetTokenByTokenCID retrieves a token by its canonical ID
 	GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error)
+	// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID
+	GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*TokensWithMetadataResult, error)
+	// GetTokensByFilter retrieves tokens with their metadata based on filters
+	GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]*TokensWithMetadataResult, uint64, error)
+	// GetTokenOwners retrieves owners (balances) for a token
+	GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset int) ([]schema.Balance, uint64, error)
+	// GetTokenProvenanceEvents retrieves provenance events for a token
+	GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset int, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error)
 	// IsAnyAddressWatched checks if any of the given addresses are being watched on a specific chain
 	IsAnyAddressWatched(ctx context.Context, chain domain.Chain, addresses []string) (bool, error)
 	// GetBlockCursor retrieves the last processed block number for a chain
@@ -119,8 +143,6 @@ type Store interface {
 	UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error
 	// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
 	CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error
-	// GetTokenMetadata retrieves the metadata for a token by its ID
-	GetTokenMetadata(ctx context.Context, tokenID int64) (*schema.TokenMetadata, error)
 	// UpsertTokenMetadata creates or updates token metadata
 	UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error
 }

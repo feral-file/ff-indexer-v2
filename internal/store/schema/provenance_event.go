@@ -25,9 +25,9 @@ const (
 // ProvenanceEvent represents the provenance_events table - optional audit trail of blockchain events
 type ProvenanceEvent struct {
 	// ID is the internal database primary key
-	ID int64 `gorm:"column:id;primaryKey;autoIncrement"`
+	ID uint64 `gorm:"column:id;primaryKey;autoIncrement"`
 	// TokenID references the token this event relates to
-	TokenID int64 `gorm:"column:token_id;not null"`
+	TokenID uint64 `gorm:"column:token_id;not null"`
 	// Chain identifies the blockchain network where this event occurred
 	Chain domain.Chain `gorm:"column:chain;not null;type:text"`
 	// EventType identifies the type of blockchain event (mint, transfer, burn, metadata_update)

@@ -161,18 +161,158 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 	})
 }
 
-// GetTokenMetadata retrieves the metadata for a token by its ID
-func (s *pgStore) GetTokenMetadata(ctx context.Context, tokenID int64) (*schema.TokenMetadata, error) {
-	var metadata schema.TokenMetadata
-	err := s.db.WithContext(ctx).Where("token_id = ?", tokenID).First(&metadata).Error
+// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID using JOIN
+func (s *pgStore) GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*TokensWithMetadataResult, error) {
+	var result struct {
+		schema.Token
+		schema.TokenMetadata
+		MetadataExists bool `gorm:"column:metadata_exists"`
+	}
+
+	err := s.db.WithContext(ctx).
+		Table("tokens").
+		Select("tokens.*, token_metadata.*, CASE WHEN token_metadata.token_id IS NOT NULL THEN true ELSE false END as metadata_exists").
+		Joins("LEFT JOIN token_metadata ON tokens.id = token_metadata.token_id").
+		Where("tokens.token_cid = ?", tokenCID).
+		First(&result).Error
+
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to get token metadata: %w", err)
+		return nil, fmt.Errorf("failed to get token with metadata: %w", err)
 	}
 
-	return &metadata, nil
+	tokenResult := &TokensWithMetadataResult{
+		Token: &result.Token,
+	}
+
+	if result.MetadataExists {
+		tokenResult.Metadata = &result.TokenMetadata
+	}
+
+	return tokenResult, nil
+}
+
+// GetTokensByFilter retrieves tokens with their metadata based on filters
+func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]*TokensWithMetadataResult, uint64, error) {
+	query := s.db.WithContext(ctx).Model(&schema.Token{})
+
+	// Apply filters
+	if len(filter.Owners) > 0 {
+		// Join with balances to filter by owners
+		query = query.Joins("LEFT JOIN balances ON balances.token_id = tokens.id").
+			Where("balances.owner_address IN ? OR tokens.current_owner IN ?", filter.Owners, filter.Owners).
+			Distinct("tokens.id")
+	}
+
+	if len(filter.Chains) > 0 {
+		query = query.Where("chain IN ?", filter.Chains)
+	}
+
+	if len(filter.ContractAddresses) > 0 {
+		query = query.Where("contract_address IN ?", filter.ContractAddresses)
+	}
+
+	if len(filter.TokenNumbers) > 0 {
+		query = query.Where("token_number IN ?", filter.TokenNumbers)
+	}
+
+	// Count total before pagination
+	var total int64
+	countQuery := query
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count tokens: %w", err)
+	}
+
+	// Apply pagination
+	query = query.Order("id ASC").Limit(filter.Limit).Offset(filter.Offset)
+
+	var tokens []schema.Token
+	if err := query.Find(&tokens).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to get tokens: %w", err)
+	}
+
+	// Fetch metadata for all tokens
+	if len(tokens) == 0 {
+		return []*TokensWithMetadataResult{}, uint64(total), nil //nolint:gosec,G115
+	}
+
+	tokenIDs := make([]uint64, len(tokens))
+	for i, token := range tokens {
+		tokenIDs[i] = token.ID
+	}
+
+	var metadataList []schema.TokenMetadata
+	if err := s.db.WithContext(ctx).Where("token_id IN ?", tokenIDs).Find(&metadataList).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to get token metadata: %w", err)
+	}
+
+	// Create a map of metadata by token ID
+	metadataMap := make(map[uint64]*schema.TokenMetadata)
+	for i := range metadataList {
+		metadataMap[metadataList[i].TokenID] = &metadataList[i]
+	}
+
+	// Combine tokens with their metadata
+	results := make([]*TokensWithMetadataResult, len(tokens))
+	for i := range tokens {
+		results[i] = &TokensWithMetadataResult{
+			Token:    &tokens[i],
+			Metadata: metadataMap[tokens[i].ID],
+		}
+	}
+
+	return results, uint64(total), nil //nolint:gosec,G115
+}
+
+// GetTokenOwners retrieves owners (balances) for a token
+func (s *pgStore) GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset int) ([]schema.Balance, uint64, error) {
+	query := s.db.WithContext(ctx).Model(&schema.Balance{}).Where("token_id = ?", tokenID)
+
+	// Count total
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count owners: %w", err)
+	}
+
+	// Apply pagination
+	query = query.Order("id ASC").Limit(limit).Offset(offset)
+
+	var balances []schema.Balance
+	if err := query.Find(&balances).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to get owners: %w", err)
+	}
+
+	return balances, uint64(total), nil //nolint:gosec,G115
+}
+
+// GetTokenProvenanceEvents retrieves provenance events for a token
+func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset int, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error) {
+	query := s.db.WithContext(ctx).Model(&schema.ProvenanceEvent{}).Where("token_id = ?", tokenID)
+
+	// Count total
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count provenance events: %w", err)
+	}
+
+	// Apply ordering by timestamp (with ID as tiebreaker)
+	if orderDesc {
+		query = query.Order("timestamp DESC, id DESC")
+	} else {
+		query = query.Order("timestamp ASC, id ASC")
+	}
+
+	// Apply pagination
+	query = query.Limit(limit).Offset(offset)
+
+	var events []schema.ProvenanceEvent
+	if err := query.Find(&events).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to get provenance events: %w", err)
+	}
+
+	return events, uint64(total), nil //nolint:gosec,G115
 }
 
 // CreateOrUpdateTokenTransfer creates or updates a token with associated balance updates, change journal, and provenance event in a single transaction

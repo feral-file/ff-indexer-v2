@@ -1,0 +1,31 @@
+# Feral File Indexer API Configuration
+
+# Debug mode (enables debug logging and Gin debug mode)
+debug: true
+
+# Sentry DSN for error tracking (optional)
+# sentry_dsn: ""
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 15    # seconds
+  write_timeout: 15   # seconds
+  idle_timeout: 120   # seconds
+
+# Database configuration (required for token queries)
+database:
+  host: "localhost"
+  port: 5432
+  dbname: "ff_indexer"
+  user: "postgres"
+  password: "postgres"
+  sslmode: "disable"
+
+# Temporal configuration (required for triggering indexing)
+temporal:
+  host_port: "localhost:7233"
+  namespace: "default"
+  task_queue: "token-indexing"
+
