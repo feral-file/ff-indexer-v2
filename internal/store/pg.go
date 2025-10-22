@@ -662,10 +662,13 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 		}
 
 		// 6. Create the change journal entry
-		// For transfer events: subject_type = 'owner', subject_id = provenance_event_id
+		// For transfer events: subject_type depends on token standard
+		// - ERC721 (single token): subject_type = 'owner'
+		// - ERC1155/FA2 (multi-token): subject_type = 'balance'
+		subjectType := types.ProvenanceEventTypeToSubjectType(input.ProvenanceEvent.EventType, token.Standard)
 		changeJournal := schema.ChangesJournal{
 			TokenID:     token.ID,
-			SubjectType: schema.SubjectTypeOwner,
+			SubjectType: subjectType,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
 			ChangedAt:   input.ChangedAt,
 		}
@@ -775,7 +778,7 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			if len(queriedEvents) > 0 {
 				changeJournals := make([]schema.ChangesJournal, 0, len(queriedEvents))
 				for _, evt := range queriedEvents {
-					subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType)
+					subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType, token.Standard)
 					changeJournals = append(changeJournals, schema.ChangesJournal{
 						TokenID:     token.ID,
 						SubjectType: subjectType,
