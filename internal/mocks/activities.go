@@ -37,6 +37,21 @@ func (m *MockExecutor) EXPECT() *MockExecutorMockRecorder {
 	return m.recorder
 }
 
+// CheckTokenExistsActivity mocks base method.
+func (m *MockExecutor) CheckTokenExistsActivity(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckTokenExistsActivity", ctx, tokenCID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CheckTokenExistsActivity indicates an expected call of CheckTokenExistsActivity.
+func (mr *MockExecutorMockRecorder) CheckTokenExistsActivity(ctx, tokenCID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckTokenExistsActivity", reflect.TypeOf((*MockExecutor)(nil).CheckTokenExistsActivity), ctx, tokenCID)
+}
+
 // CreateMetadataUpdateActivity mocks base method.
 func (m *MockExecutor) CreateMetadataUpdateActivity(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
@@ -49,21 +64,6 @@ func (m *MockExecutor) CreateMetadataUpdateActivity(ctx context.Context, event *
 func (mr *MockExecutorMockRecorder) CreateMetadataUpdateActivity(ctx, event interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMetadataUpdateActivity", reflect.TypeOf((*MockExecutor)(nil).CreateMetadataUpdateActivity), ctx, event)
-}
-
-// CreateOrUpdateTokenTransferActivity mocks base method.
-func (m *MockExecutor) CreateOrUpdateTokenTransferActivity(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateOrUpdateTokenTransferActivity", ctx, event)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CreateOrUpdateTokenTransferActivity indicates an expected call of CreateOrUpdateTokenTransferActivity.
-func (mr *MockExecutorMockRecorder) CreateOrUpdateTokenTransferActivity(ctx, event interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateOrUpdateTokenTransferActivity", reflect.TypeOf((*MockExecutor)(nil).CreateOrUpdateTokenTransferActivity), ctx, event)
 }
 
 // CreateTokenMintActivity mocks base method.
@@ -95,6 +95,34 @@ func (mr *MockExecutorMockRecorder) FetchTokenMetadataActivity(ctx, tokenCID int
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchTokenMetadataActivity", reflect.TypeOf((*MockExecutor)(nil).FetchTokenMetadataActivity), ctx, tokenCID)
 }
 
+// IndexTokenWithFullProvenancesActivity mocks base method.
+func (m *MockExecutor) IndexTokenWithFullProvenancesActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IndexTokenWithFullProvenancesActivity", ctx, event)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IndexTokenWithFullProvenancesActivity indicates an expected call of IndexTokenWithFullProvenancesActivity.
+func (mr *MockExecutorMockRecorder) IndexTokenWithFullProvenancesActivity(ctx, event interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithFullProvenancesActivity", reflect.TypeOf((*MockExecutor)(nil).IndexTokenWithFullProvenancesActivity), ctx, event)
+}
+
+// IndexTokenWithMinimalProvenancesActivity mocks base method.
+func (m *MockExecutor) IndexTokenWithMinimalProvenancesActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IndexTokenWithMinimalProvenancesActivity", ctx, event)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IndexTokenWithMinimalProvenancesActivity indicates an expected call of IndexTokenWithMinimalProvenancesActivity.
+func (mr *MockExecutorMockRecorder) IndexTokenWithMinimalProvenancesActivity(ctx, event interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesActivity", reflect.TypeOf((*MockExecutor)(nil).IndexTokenWithMinimalProvenancesActivity), ctx, event)
+}
+
 // UpdateTokenBurnActivity mocks base method.
 func (m *MockExecutor) UpdateTokenBurnActivity(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
@@ -107,6 +135,20 @@ func (m *MockExecutor) UpdateTokenBurnActivity(ctx context.Context, event *domai
 func (mr *MockExecutorMockRecorder) UpdateTokenBurnActivity(ctx, event interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenBurnActivity", reflect.TypeOf((*MockExecutor)(nil).UpdateTokenBurnActivity), ctx, event)
+}
+
+// UpdateTokenTransferActivity mocks base method.
+func (m *MockExecutor) UpdateTokenTransferActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateTokenTransferActivity", ctx, event)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateTokenTransferActivity indicates an expected call of UpdateTokenTransferActivity.
+func (mr *MockExecutorMockRecorder) UpdateTokenTransferActivity(ctx, event interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenTransferActivity", reflect.TypeOf((*MockExecutor)(nil).UpdateTokenTransferActivity), ctx, event)
 }
 
 // UpsertTokenMetadataActivity mocks base method.

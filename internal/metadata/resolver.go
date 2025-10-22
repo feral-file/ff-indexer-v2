@@ -2,11 +2,14 @@ package metadata
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
+	"github.com/gowebpki/jcs"
 
 	"go.uber.org/zap"
 
@@ -23,6 +26,21 @@ type NormalizedMetadata struct {
 	Animation string                 `json:"animation"`
 	Name      string                 `json:"name"`
 	Artists   []string               `json:"artists"`
+}
+
+// RawHash returns the hash of the raw metadata and the raw metadata itself
+func (n *NormalizedMetadata) RawHash() ([]byte, []byte, error) {
+	metadataJSON, err := json.Marshal(n.Raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	canonicalizedMetadata, err := jcs.Transform(metadataJSON)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to canonicalize metadata: %w", err)
+	}
+	hash := sha256.Sum256(canonicalizedMetadata)
+	return hash[:], metadataJSON, nil
 }
 
 // Resolver defines the interface for resolving metadata from a tokenCID

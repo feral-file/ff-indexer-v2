@@ -82,7 +82,7 @@ func main() {
 	logger.Info("Connected to NATS JetStream")
 
 	// Initialize TzKT client
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.APIURL, httpClient)
+	tzktClient := tezos.NewTzKTClient(domain.Chain(cfg.Tezos.ChainID), cfg.Tezos.APIURL, httpClient, clockAdapter)
 
 	// Initialize Tezos subscriber
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{

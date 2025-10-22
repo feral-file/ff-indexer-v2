@@ -29,7 +29,7 @@ type ProvenanceEvent struct {
 	// TokenID references the token this event relates to
 	TokenID uint64 `gorm:"column:token_id;not null"`
 	// Chain identifies the blockchain network where this event occurred
-	Chain domain.Chain `gorm:"column:chain;not null;type:text"`
+	Chain domain.Chain `gorm:"column:chain;not null;type:text;uniqueIndex:idx_provenance_chain_tx_hash"`
 	// EventType identifies the type of blockchain event (mint, transfer, burn, metadata_update)
 	EventType ProvenanceEventType `gorm:"column:event_type;not null;type:text"`
 	// FromAddress is the sender's blockchain address (nil for mint events)
@@ -39,7 +39,7 @@ type ProvenanceEvent struct {
 	// Quantity is the number of tokens involved (stored as string to support up to 78 digits)
 	Quantity *string `gorm:"column:quantity;type:numeric(78,0)"`
 	// TxHash is the transaction hash that triggered this event
-	TxHash *string `gorm:"column:tx_hash;type:text"`
+	TxHash *string `gorm:"column:tx_hash;type:text;uniqueIndex:idx_provenance_chain_tx_hash"`
 	// BlockNumber is the block number where this event was recorded
 	BlockNumber *uint64 `gorm:"column:block_number;type:bigint"`
 	// BlockHash is the hash of the block containing this event

@@ -13,7 +13,7 @@ const (
 	ChainEthereumMainnet Chain = "eip155:1"
 	ChainEthereumSepolia Chain = "eip155:11155111"
 	ChainTezosMainnet    Chain = "tezos:mainnet"
-	ChainTezosNarwhal    Chain = "tezos:narwhal"
+	ChainTezosGhostnet   Chain = "tezos:ghostnet"
 )
 
 // ChainStandard represents blockchain token standards
@@ -58,6 +58,15 @@ type BlockchainEvent struct {
 	LogIndex        uint64        `json:"log_index"`                 // log index in the block (for ordering)
 }
 
+// CurrentOwner returns the current owner of the token
+func (e *BlockchainEvent) CurrentOwner() *string {
+	// For FA2 and ERC1155, the current owner is nil since it's a multi-owner token
+	if e.Standard == StandardFA2 || e.Standard == StandardERC1155 {
+		return nil
+	}
+	return e.ToAddress
+}
+
 // TokenCID generates the canonical token ID
 func (e *BlockchainEvent) TokenCID() TokenCID {
 	return TokenCID(fmt.Sprintf("%s/%s/%s/%s", e.Chain, e.Standard, e.ContractAddress, e.TokenNumber))
@@ -72,4 +81,15 @@ func (t TokenCID) String() string {
 func (t TokenCID) Parse() (Chain, ChainStandard, string, string) {
 	parts := strings.Split(string(t), "/")
 	return Chain(parts[0]), ChainStandard(parts[1]), parts[2], parts[3]
+}
+
+// determineTransferEventType determines the event type based on from/to addresses
+func TransferEventType(from *string, to *string) EventType {
+	if from == nil || *from == "" || *from == ETHEREUM_ZERO_ADDRESS {
+		return EventTypeMint
+	}
+	if to == nil || *to == "" {
+		return EventTypeBurn
+	}
+	return EventTypeTransfer
 }

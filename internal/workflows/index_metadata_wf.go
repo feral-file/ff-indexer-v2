@@ -26,10 +26,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
-	// Step 1: Verify the token exists in the database
-	// This is done implicitly in the FetchTokenMetadataActivity by getting the token
-
-	// Step 2: Fetch the token metadata from the blockchain/API
+	// Step 1: Fetch the token metadata from the blockchain
 	// This activity handles:
 	// - ERC721: Call tokenURI() contract method
 	// - ERC1155: Call uri() contract method

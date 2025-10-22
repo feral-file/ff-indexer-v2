@@ -10,6 +10,7 @@ import (
 
 	gomock "github.com/golang/mock/gomock"
 
+	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	tezos "github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 )
 
@@ -51,6 +52,21 @@ func (mr *MockTzKTClientMockRecorder) GetTokenBalances(ctx, contractAddress, tok
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenBalances", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenBalances), ctx, contractAddress, tokenID)
 }
 
+// GetTokenEvents mocks base method.
+func (m *MockTzKTClient) GetTokenEvents(ctx context.Context, contractAddress, tokenID string) ([]domain.BlockchainEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenEvents", ctx, contractAddress, tokenID)
+	ret0, _ := ret[0].([]domain.BlockchainEvent)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenEvents indicates an expected call of GetTokenEvents.
+func (mr *MockTzKTClientMockRecorder) GetTokenEvents(ctx, contractAddress, tokenID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenEvents", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenEvents), ctx, contractAddress, tokenID)
+}
+
 // GetTokenMetadata mocks base method.
 func (m *MockTzKTClient) GetTokenMetadata(ctx context.Context, contractAddress, tokenID string) (map[string]interface{}, error) {
 	m.ctrl.T.Helper()
@@ -64,6 +80,21 @@ func (m *MockTzKTClient) GetTokenMetadata(ctx context.Context, contractAddress, 
 func (mr *MockTzKTClientMockRecorder) GetTokenMetadata(ctx, contractAddress, tokenID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadata", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenMetadata), ctx, contractAddress, tokenID)
+}
+
+// GetTokenMetadataUpdates mocks base method.
+func (m *MockTzKTClient) GetTokenMetadataUpdates(ctx context.Context, contractAddress, tokenID string) ([]tezos.TzKTBigMapUpdate, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenMetadataUpdates", ctx, contractAddress, tokenID)
+	ret0, _ := ret[0].([]tezos.TzKTBigMapUpdate)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenMetadataUpdates indicates an expected call of GetTokenMetadataUpdates.
+func (mr *MockTzKTClientMockRecorder) GetTokenMetadataUpdates(ctx, contractAddress, tokenID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadataUpdates", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenMetadataUpdates), ctx, contractAddress, tokenID)
 }
 
 // GetTokenOwnerBalance mocks base method.
@@ -81,6 +112,21 @@ func (mr *MockTzKTClientMockRecorder) GetTokenOwnerBalance(ctx, contractAddress,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenOwnerBalance", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenOwnerBalance), ctx, contractAddress, tokenID, ownerAddress)
 }
 
+// GetTokenTransfers mocks base method.
+func (m *MockTzKTClient) GetTokenTransfers(ctx context.Context, contractAddress, tokenID string) ([]tezos.TzKTTokenTransfer, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenTransfers", ctx, contractAddress, tokenID)
+	ret0, _ := ret[0].([]tezos.TzKTTokenTransfer)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenTransfers indicates an expected call of GetTokenTransfers.
+func (mr *MockTzKTClientMockRecorder) GetTokenTransfers(ctx, contractAddress, tokenID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenTransfers", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenTransfers), ctx, contractAddress, tokenID)
+}
+
 // GetTransactionsByID mocks base method.
 func (m *MockTzKTClient) GetTransactionsByID(ctx context.Context, txID uint64) ([]tezos.TzKTTransaction, error) {
 	m.ctrl.T.Helper()
@@ -94,4 +140,34 @@ func (m *MockTzKTClient) GetTransactionsByID(ctx context.Context, txID uint64) (
 func (mr *MockTzKTClientMockRecorder) GetTransactionsByID(ctx, txID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTransactionsByID", reflect.TypeOf((*MockTzKTClient)(nil).GetTransactionsByID), ctx, txID)
+}
+
+// ParseBigMapUpdate mocks base method.
+func (m *MockTzKTClient) ParseBigMapUpdate(ctx context.Context, update *tezos.TzKTBigMapUpdate) (*domain.BlockchainEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ParseBigMapUpdate", ctx, update)
+	ret0, _ := ret[0].(*domain.BlockchainEvent)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ParseBigMapUpdate indicates an expected call of ParseBigMapUpdate.
+func (mr *MockTzKTClientMockRecorder) ParseBigMapUpdate(ctx, update interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ParseBigMapUpdate", reflect.TypeOf((*MockTzKTClient)(nil).ParseBigMapUpdate), ctx, update)
+}
+
+// ParseTransfer mocks base method.
+func (m *MockTzKTClient) ParseTransfer(ctx context.Context, transfer *tezos.TzKTTokenTransfer) (*domain.BlockchainEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ParseTransfer", ctx, transfer)
+	ret0, _ := ret[0].(*domain.BlockchainEvent)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ParseTransfer indicates an expected call of ParseTransfer.
+func (mr *MockTzKTClientMockRecorder) ParseTransfer(ctx, transfer interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ParseTransfer", reflect.TypeOf((*MockTzKTClient)(nil).ParseTransfer), ctx, transfer)
 }

@@ -24,6 +24,12 @@ type WorkerCore interface {
 
 	// IndexTokenMetadata index token metadata
 	IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error
+
+	// IndexToken indexes metadata and full provenances (provenance events and balances) for a token
+	IndexToken(ctx workflow.Context, event *domain.BlockchainEvent) error
+
+	// IndexTokenProvenances indexes all provenances (balances and events) for a token
+	IndexTokenProvenances(ctx workflow.Context, event *domain.BlockchainEvent) error
 }
 
 // WorkerMedia defines the interface for processing media events

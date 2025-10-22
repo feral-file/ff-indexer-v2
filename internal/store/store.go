@@ -32,9 +32,9 @@ type CreateProvenanceEventInput struct {
 	EventType   schema.ProvenanceEventType
 	FromAddress *string
 	ToAddress   *string
-	Quantity    *string
-	TxHash      *string
-	BlockNumber *uint64
+	Quantity    string
+	TxHash      string
+	BlockNumber uint64
 	BlockHash   *string
 	Raw         []byte
 	Timestamp   time.Time
@@ -43,10 +43,8 @@ type CreateProvenanceEventInput struct {
 // CreateTokenMintInput represents the complete input for creating a token mint with all related data
 type CreateTokenMintInput struct {
 	Token           CreateTokenInput
-	Balance         *CreateBalanceInput // Optional, only if there's an owner
+	Balance         CreateBalanceInput
 	ProvenanceEvent CreateProvenanceEventInput
-	TokenCID        string    // For change journal
-	ChangedAt       time.Time // For change journal
 }
 
 // CreateTokenMetadataInput represents the input for creating or updating token metadata
@@ -79,12 +77,6 @@ type CreateOrUpdateTokenTransferInput struct {
 	ChangedAt             time.Time // For change journal
 }
 
-// CreateOrUpdateTokenTransferResult contains the result of a token transfer operation
-type CreateOrUpdateTokenTransferResult struct {
-	TokenID         uint64
-	WasNewlyCreated bool // true if token was created, false if it was updated
-}
-
 // CreateTokenBurnInput represents the complete input for updating a token burn with all related data
 type CreateTokenBurnInput struct {
 	TokenCID            string
@@ -99,6 +91,24 @@ type CreateMetadataUpdateInput struct {
 	TokenCID        string
 	ProvenanceEvent CreateProvenanceEventInput
 	ChangedAt       time.Time // For change journal
+}
+
+// UpdateTokenTransferInput represents the input for updating a token transfer (assumes token exists)
+type UpdateTokenTransferInput struct {
+	TokenCID              string
+	CurrentOwner          *string
+	LastActivityTime      time.Time
+	SenderBalanceUpdate   *UpdateBalanceInput // nil if sender is zero address (mint)
+	ReceiverBalanceUpdate *UpdateBalanceInput // nil if receiver is zero address (burn)
+	ProvenanceEvent       CreateProvenanceEventInput
+	ChangedAt             time.Time // For change journal
+}
+
+// CreateTokenWithProvenancesInput represents the input for creating/upserting a token with all its provenance data
+type CreateTokenWithProvenancesInput struct {
+	Token    CreateTokenInput             // Token to create or update
+	Balances []CreateBalanceInput         // Balances to upsert
+	Events   []CreateProvenanceEventInput // Provenance events to insert
 }
 
 // TokenQueryFilter represents filters for token queries
@@ -119,30 +129,58 @@ type TokensWithMetadataResult struct {
 
 // Store defines the interface for database operations
 type Store interface {
+	// =============================================================================
+	// Token Management & Queries
+	// =============================================================================
+
 	// GetTokenByTokenCID retrieves a token by its canonical ID
 	GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error)
 	// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID
 	GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*TokensWithMetadataResult, error)
 	// GetTokensByFilter retrieves tokens with their metadata based on filters
 	GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]*TokensWithMetadataResult, uint64, error)
+	// CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
+	CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error
+	// UpdateTokenTransfer updates a token transfer (assumes token exists)
+	UpdateTokenTransfer(ctx context.Context, input UpdateTokenTransferInput) error
+	// UpdateTokenBurn updates a token as burned with associated balance update, change journal, and provenance event in a single transaction
+	UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error
+	// CreateTokenWithProvenances creates or updates a token with all its provenance data (balances and events)
+	CreateTokenWithProvenances(ctx context.Context, input CreateTokenWithProvenancesInput) error
+
+	// =============================================================================
+	// Token Metadata Operations
+	// =============================================================================
+
+	// GetTokenMetadataByTokenCID retrieves token metadata by token CID
+	GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error)
+	// UpsertTokenMetadata creates or updates token metadata
+	UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error
+	// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
+	CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error
+
+	// =============================================================================
+	// Token Ownership & Balances
+	// =============================================================================
+
 	// GetTokenOwners retrieves owners (balances) for a token
 	GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset int) ([]schema.Balance, uint64, error)
+
+	// =============================================================================
+	// Provenance & Event Tracking
+	// =============================================================================
+
 	// GetTokenProvenanceEvents retrieves provenance events for a token
 	GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset int, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error)
+
+	// =============================================================================
+	// System Configuration & Monitoring
+	// =============================================================================
+
 	// IsAnyAddressWatched checks if any of the given addresses are being watched on a specific chain
 	IsAnyAddressWatched(ctx context.Context, chain domain.Chain, addresses []string) (bool, error)
 	// GetBlockCursor retrieves the last processed block number for a chain
 	GetBlockCursor(ctx context.Context, chain string) (uint64, error)
 	// SetBlockCursor stores the last processed block number for a chain
 	SetBlockCursor(ctx context.Context, chain string, blockNumber uint64) error
-	// CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
-	CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error
-	// CreateOrUpdateTokenTransfer creates or updates a token with associated balance updates, change journal, and provenance event in a single transaction
-	CreateOrUpdateTokenTransfer(ctx context.Context, input CreateOrUpdateTokenTransferInput) (*CreateOrUpdateTokenTransferResult, error)
-	// UpdateTokenBurn updates a token as burned with associated balance update, change journal, and provenance event in a single transaction
-	UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error
-	// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
-	CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error
-	// UpsertTokenMetadata creates or updates token metadata
-	UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error
 }

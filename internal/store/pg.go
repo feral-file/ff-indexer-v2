@@ -11,6 +11,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 type pgStore struct {
@@ -112,36 +113,46 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			return fmt.Errorf("failed to create token: %w", err)
 		}
 
-		// 2. Create the balance record (if provided)
-		if input.Balance != nil {
-			balance := schema.Balance{
-				TokenID:      token.ID,
-				OwnerAddress: input.Balance.OwnerAddress,
-				Quantity:     input.Balance.Quantity,
-			}
-
-			if err := tx.Create(&balance).Error; err != nil {
-				return fmt.Errorf("failed to create balance: %w", err)
-			}
+		// 2. Create the balance record
+		balance := schema.Balance{
+			TokenID:      token.ID,
+			OwnerAddress: input.Balance.OwnerAddress,
+			Quantity:     input.Balance.Quantity,
+		}
+		if err := tx.Create(&balance).Error; err != nil {
+			return fmt.Errorf("failed to create balance: %w", err)
 		}
 
-		// 3. Create the provenance event
+		// 3. Create the provenance event with conflict handling
 		provenanceEvent := schema.ProvenanceEvent{
 			TokenID:     token.ID,
 			Chain:       input.ProvenanceEvent.Chain,
 			EventType:   input.ProvenanceEvent.EventType,
 			FromAddress: input.ProvenanceEvent.FromAddress,
 			ToAddress:   input.ProvenanceEvent.ToAddress,
-			Quantity:    input.ProvenanceEvent.Quantity,
-			TxHash:      input.ProvenanceEvent.TxHash,
-			BlockNumber: input.ProvenanceEvent.BlockNumber,
+			Quantity:    &input.ProvenanceEvent.Quantity,
+			TxHash:      &input.ProvenanceEvent.TxHash,
+			BlockNumber: &input.ProvenanceEvent.BlockNumber,
 			BlockHash:   input.ProvenanceEvent.BlockHash,
 			Raw:         input.ProvenanceEvent.Raw,
 			Timestamp:   input.ProvenanceEvent.Timestamp,
 		}
 
-		if err := tx.Create(&provenanceEvent).Error; err != nil {
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+			DoNothing: true,
+		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&provenanceEvent).Error; err != nil {
 			return fmt.Errorf("failed to create provenance event: %w", err)
+		}
+
+		// If the event was a duplicate, we need to fetch it to get the ID
+		if provenanceEvent.ID == 0 {
+			if err := tx.Where("chain = ? AND tx_hash = ?", input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash).
+				First(&provenanceEvent).Error; err != nil {
+				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
+			}
 		}
 
 		// 4. Create the change journal entry
@@ -150,10 +161,14 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			TokenID:     token.ID,
 			SubjectType: schema.SubjectTypeToken,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
-			ChangedAt:   input.ChangedAt,
+			ChangedAt:   input.ProvenanceEvent.Timestamp,
 		}
 
-		if err := tx.Create(&changeJournal).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{
+			DoNothing: true,
+		}).
+			Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&changeJournal).Error; err != nil {
 			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
@@ -315,102 +330,256 @@ func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, 
 	return events, uint64(total), nil //nolint:gosec,G115
 }
 
-// CreateOrUpdateTokenTransfer creates or updates a token with associated balance updates, change journal, and provenance event in a single transaction
-func (s *pgStore) CreateOrUpdateTokenTransfer(ctx context.Context, input CreateOrUpdateTokenTransferInput) (*CreateOrUpdateTokenTransferResult, error) {
-	result := &CreateOrUpdateTokenTransferResult{}
+// GetTokenMetadataByTokenCID retrieves token metadata by token CID
+func (s *pgStore) GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error) {
+	var metadata schema.TokenMetadata
+	err := s.db.WithContext(ctx).
+		Joins("JOIN tokens ON tokens.id = token_metadata.token_id").
+		Where("tokens.token_cid = ?", tokenCID).
+		First(&metadata).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get token metadata: %w", err)
+	}
+	return &metadata, nil
+}
 
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Check if token exists
-		var existingToken schema.Token
-		err := tx.Where("token_cid = ?", input.Token.TokenCID).First(&existingToken).Error
+// UpsertTokenMetadata creates or updates token metadata
+func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error {
+	metadata := schema.TokenMetadata{
+		TokenID:         input.TokenID,
+		OriginJSON:      input.OriginJSON,
+		LatestJSON:      input.LatestJSON,
+		LatestHash:      input.LatestHash,
+		EnrichmentLevel: input.EnrichmentLevel,
+		LastRefreshedAt: input.LastRefreshedAt,
+		ImageURL:        input.ImageURL,
+		AnimationURL:    input.AnimationURL,
+		Name:            input.Name,
+		Artists:         input.Artists,
+	}
 
+	err := s.db.WithContext(ctx).Save(&metadata).Error
+	if err != nil {
+		return fmt.Errorf("failed to upsert token metadata: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateTokenBurn updates a token as burned with associated balance update, change journal, and provenance event in a single transaction
+// This method assumes the token and balance records already exist
+func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Get the token to ensure it exists
 		var token schema.Token
+		err := tx.Where("token_cid = ?", input.TokenCID).First(&token).Error
 		if err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("failed to check if token exists: %w", err)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domain.ErrTokenNotFound
 			}
-
-			// Token doesn't exist, create it
-			token = schema.Token{
-				TokenCID:         input.Token.TokenCID,
-				Chain:            input.Token.Chain,
-				Standard:         input.Token.Standard,
-				ContractAddress:  input.Token.ContractAddress,
-				TokenNumber:      input.Token.TokenNumber,
-				CurrentOwner:     input.Token.CurrentOwner,
-				Burned:           input.Token.Burned,
-				LastActivityTime: input.Token.LastActivityTime,
-			}
-
-			if err := tx.Create(&token).Error; err != nil {
-				return fmt.Errorf("failed to create token: %w", err)
-			}
-
-			result.WasNewlyCreated = true
-		} else {
-			// Token exists, update it (but only if last_activity_time is newer or equal)
-			// The database trigger will enforce the last_activity_time constraint
-			token = existingToken
-			token.CurrentOwner = input.Token.CurrentOwner
-			token.Burned = input.Token.Burned
-			token.LastActivityTime = input.Token.LastActivityTime
-
-			if err := tx.Save(&token).Error; err != nil {
-				return fmt.Errorf("failed to update token: %w", err)
-			}
-
-			result.WasNewlyCreated = false
+			return fmt.Errorf("failed to get token: %w", err)
 		}
 
-		result.TokenID = token.ID
+		// 2. Update the token: set burned = true, current_owner = nil, last_activity_time
+		token.Burned = true
+		token.CurrentOwner = nil
+		token.LastActivityTime = input.LastActivityTime
 
-		// 2. Update sender's balance (decrease)
+		if err := tx.Save(&token).Error; err != nil {
+			return fmt.Errorf("failed to update token burn: %w", err)
+		}
+
+		// 3. Update sender's balance (decrease by quantity, delete if reaches 0)
 		if input.SenderBalanceUpdate != nil {
-			var senderBalance schema.Balance
-			// Try to lock the row for update to ensure atomicity
-			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			// Use raw SQL to perform numeric subtraction
+			if err := tx.Model(&schema.Balance{}).
 				Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
-				First(&senderBalance).Error
+				Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta)).Error; err != nil {
+				return fmt.Errorf("failed to update sender balance: %w", err)
+			}
 
-			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					// Balance doesn't exist - create it with the delta as initial quantity
-					// This can happen if events are processed out of order or the initial mint wasn't captured
-					senderBalance = schema.Balance{
-						TokenID:      token.ID,
-						OwnerAddress: input.SenderBalanceUpdate.OwnerAddress,
-						Quantity:     input.SenderBalanceUpdate.Delta,
-					}
+			// Refresh to get new quantity
+			var senderBalance schema.Balance
+			if err := tx.Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
+				First(&senderBalance).Error; err != nil {
+				return fmt.Errorf("failed to refresh sender balance: %w", err)
+			}
 
-					if err := tx.Create(&senderBalance).Error; err != nil {
-						return fmt.Errorf("failed to create sender balance: %w", err)
-					}
-				} else {
-					return fmt.Errorf("failed to lock sender balance: %w", err)
-				}
-			} else {
-				// Balance exists, update it
-				// Use raw SQL to perform numeric subtraction
-				if err := tx.Model(&senderBalance).
-					Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta)).Error; err != nil {
-					return fmt.Errorf("failed to update sender balance: %w", err)
-				}
-
-				// Refresh to get new quantity
-				if err := tx.First(&senderBalance, senderBalance.ID).Error; err != nil {
-					return fmt.Errorf("failed to refresh sender balance: %w", err)
-				}
-
-				// Delete balance if it reaches zero
-				if senderBalance.Quantity == "0" {
-					if err := tx.Delete(&senderBalance).Error; err != nil {
-						return fmt.Errorf("failed to delete zero balance: %w", err)
-					}
+			// Delete balance if it reaches zero
+			if senderBalance.Quantity == "0" {
+				if err := tx.Delete(&senderBalance).Error; err != nil {
+					return fmt.Errorf("failed to delete zero balance: %w", err)
 				}
 			}
 		}
 
-		// 3. Update receiver's balance (increase)
+		// 4. Create the provenance event with conflict handling
+		provenanceEvent := schema.ProvenanceEvent{
+			TokenID:     token.ID,
+			Chain:       input.ProvenanceEvent.Chain,
+			EventType:   input.ProvenanceEvent.EventType,
+			FromAddress: input.ProvenanceEvent.FromAddress,
+			ToAddress:   input.ProvenanceEvent.ToAddress,
+			Quantity:    &input.ProvenanceEvent.Quantity,
+			TxHash:      &input.ProvenanceEvent.TxHash,
+			BlockNumber: &input.ProvenanceEvent.BlockNumber,
+			BlockHash:   input.ProvenanceEvent.BlockHash,
+			Raw:         input.ProvenanceEvent.Raw,
+			Timestamp:   input.ProvenanceEvent.Timestamp,
+		}
+
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+			DoNothing: true,
+		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&provenanceEvent).Error; err != nil {
+			return fmt.Errorf("failed to create provenance event: %w", err)
+		}
+
+		// If the event was a duplicate, we need to fetch it to get the ID
+		if provenanceEvent.ID == 0 {
+			if err := tx.Where("chain = ? AND tx_hash = ?", input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash).
+				First(&provenanceEvent).Error; err != nil {
+				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
+			}
+		}
+
+		// 5. Create the change journal entry
+		// For burn events: subject_type = 'token', subject_id = provenance_event_id
+		changeJournal := schema.ChangesJournal{
+			TokenID:     token.ID,
+			SubjectType: schema.SubjectTypeToken,
+			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
+			ChangedAt:   input.ChangedAt,
+		}
+
+		if err := tx.Clauses(clause.OnConflict{
+			DoNothing: true,
+		}).
+			Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&changeJournal).Error; err != nil {
+			return fmt.Errorf("failed to create change journal: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
+func (s *pgStore) CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Get the token to ensure it exists
+		var token schema.Token
+		err := tx.Where("token_cid = ?", input.TokenCID).First(&token).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domain.ErrTokenNotFound
+			}
+			return fmt.Errorf("failed to get token: %w", err)
+		}
+
+		// 2. Create the provenance event with conflict handling
+		provenanceEvent := schema.ProvenanceEvent{
+			TokenID:     token.ID,
+			Chain:       input.ProvenanceEvent.Chain,
+			EventType:   input.ProvenanceEvent.EventType,
+			FromAddress: input.ProvenanceEvent.FromAddress,
+			ToAddress:   input.ProvenanceEvent.ToAddress,
+			Quantity:    &input.ProvenanceEvent.Quantity,
+			TxHash:      &input.ProvenanceEvent.TxHash,
+			BlockNumber: &input.ProvenanceEvent.BlockNumber,
+			BlockHash:   input.ProvenanceEvent.BlockHash,
+			Raw:         input.ProvenanceEvent.Raw,
+			Timestamp:   input.ProvenanceEvent.Timestamp,
+		}
+
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+			DoNothing: true,
+		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&provenanceEvent).Error; err != nil {
+			return fmt.Errorf("failed to create provenance event: %w", err)
+		}
+
+		// If the event was a duplicate, we need to fetch it to get the ID
+		if provenanceEvent.ID == 0 {
+			if err := tx.Where("chain = ? AND tx_hash = ?", input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash).
+				First(&provenanceEvent).Error; err != nil {
+				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
+			}
+		}
+
+		// 3. Create the change journal entry
+		// For metadata updates: subject_type = 'metadata', subject_id = provenance_event_id
+		changeJournal := schema.ChangesJournal{
+			TokenID:     token.ID,
+			SubjectType: schema.SubjectTypeMetadata,
+			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
+			ChangedAt:   input.ChangedAt,
+		}
+
+		if err := tx.Clauses(clause.OnConflict{
+			DoNothing: true,
+		}).
+			Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&changeJournal).Error; err != nil {
+			return fmt.Errorf("failed to create change journal: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// UpdateTokenTransfer updates a token transfer (assumes token exists)
+func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTransferInput) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Get the token to ensure it exists
+		var token schema.Token
+		err := tx.Where("token_cid = ?", input.TokenCID).First(&token).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return domain.ErrTokenNotFound
+			}
+			return fmt.Errorf("failed to get token: %w", err)
+		}
+
+		// 2. Update the token
+		token.CurrentOwner = input.CurrentOwner
+		token.LastActivityTime = input.LastActivityTime
+
+		if err := tx.Save(&token).Error; err != nil {
+			return fmt.Errorf("failed to update token: %w", err)
+		}
+
+		// 3. Update sender's balance (decrease)
+		if input.SenderBalanceUpdate != nil {
+			// Use raw SQL to perform numeric subtraction
+			if err := tx.Model(&schema.Balance{}).
+				Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
+				Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta)).Error; err != nil {
+				return fmt.Errorf("failed to update sender balance: %w", err)
+			}
+
+			// Refresh to get new quantity
+			var senderBalance schema.Balance
+			if err := tx.Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).First(&senderBalance).Error; err != nil {
+				return fmt.Errorf("failed to find sender balance: %w", err)
+			}
+
+			// Delete balance if it reaches zero
+			if senderBalance.Quantity == "0" {
+				if err := tx.Delete(&senderBalance).Error; err != nil {
+					return fmt.Errorf("failed to delete zero balance: %w", err)
+				}
+			}
+		}
+
+		// 4. Update receiver's balance (increase)
 		if input.ReceiverBalanceUpdate != nil {
 			var receiverBalance schema.Balance
 			// Lock the row for update to ensure atomicity
@@ -442,26 +611,39 @@ func (s *pgStore) CreateOrUpdateTokenTransfer(ctx context.Context, input CreateO
 			}
 		}
 
-		// 4. Create the provenance event
+		// 5. Create the provenance event with conflict handling
 		provenanceEvent := schema.ProvenanceEvent{
 			TokenID:     token.ID,
 			Chain:       input.ProvenanceEvent.Chain,
 			EventType:   input.ProvenanceEvent.EventType,
 			FromAddress: input.ProvenanceEvent.FromAddress,
 			ToAddress:   input.ProvenanceEvent.ToAddress,
-			Quantity:    input.ProvenanceEvent.Quantity,
-			TxHash:      input.ProvenanceEvent.TxHash,
-			BlockNumber: input.ProvenanceEvent.BlockNumber,
+			Quantity:    &input.ProvenanceEvent.Quantity,
+			TxHash:      &input.ProvenanceEvent.TxHash,
+			BlockNumber: &input.ProvenanceEvent.BlockNumber,
 			BlockHash:   input.ProvenanceEvent.BlockHash,
 			Raw:         input.ProvenanceEvent.Raw,
 			Timestamp:   input.ProvenanceEvent.Timestamp,
 		}
 
-		if err := tx.Create(&provenanceEvent).Error; err != nil {
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+			DoNothing: true,
+		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&provenanceEvent).Error; err != nil {
 			return fmt.Errorf("failed to create provenance event: %w", err)
 		}
 
-		// 5. Create the change journal entry
+		// If the event was a duplicate, we need to fetch it to get the ID
+		if provenanceEvent.ID == 0 {
+			if err := tx.Where("chain = ? AND tx_hash = ?", input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash).
+				First(&provenanceEvent).Error; err != nil {
+				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
+			}
+		}
+
+		// 6. Create the change journal entry
 		// For transfer events: subject_type = 'owner', subject_id = provenance_event_id
 		changeJournal := schema.ChangesJournal{
 			TokenID:     token.ID,
@@ -470,129 +652,11 @@ func (s *pgStore) CreateOrUpdateTokenTransfer(ctx context.Context, input CreateO
 			ChangedAt:   input.ChangedAt,
 		}
 
-		if err := tx.Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-// UpsertTokenMetadata creates or updates token metadata
-func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error {
-	metadata := schema.TokenMetadata{
-		TokenID:         input.TokenID,
-		OriginJSON:      input.OriginJSON,
-		LatestJSON:      input.LatestJSON,
-		LatestHash:      input.LatestHash,
-		EnrichmentLevel: input.EnrichmentLevel,
-		LastRefreshedAt: input.LastRefreshedAt,
-		ImageURL:        input.ImageURL,
-		AnimationURL:    input.AnimationURL,
-		Name:            input.Name,
-		Artists:         input.Artists,
-	}
-
-	err := s.db.WithContext(ctx).Save(&metadata).Error
-	if err != nil {
-		return fmt.Errorf("failed to upsert token metadata: %w", err)
-	}
-
-	return nil
-}
-
-// UpdateTokenBurn updates a token as burned with associated balance update, change journal, and provenance event in a single transaction
-func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Get the token to ensure it exists
-		var token schema.Token
-		err := tx.Where("token_cid = ?", input.TokenCID).First(&token).Error
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return domain.ErrTokenNotFound
-			}
-			return fmt.Errorf("failed to get token: %w", err)
-		}
-
-		// 2. Update the token: set burned = true, current_owner = nil, last_activity_time
-		token.Burned = true
-		token.CurrentOwner = nil
-		token.LastActivityTime = input.LastActivityTime
-
-		if err := tx.Save(&token).Error; err != nil {
-			return fmt.Errorf("failed to update token burn: %w", err)
-		}
-
-		// 3. Update sender's balance (decrease by quantity, delete if reaches 0)
-		if input.SenderBalanceUpdate != nil {
-			var senderBalance schema.Balance
-			// Lock the row for update to ensure atomicity
-			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
-				First(&senderBalance).Error
-
-			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					// Balance doesn't exist - this shouldn't happen for burn, but we'll handle it gracefully
-					return fmt.Errorf("sender balance not found for burn operation")
-				}
-				return fmt.Errorf("failed to lock sender balance: %w", err)
-			}
-
-			// Use raw SQL to perform numeric subtraction
-			if err := tx.Model(&senderBalance).
-				Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta)).Error; err != nil {
-				return fmt.Errorf("failed to update sender balance: %w", err)
-			}
-
-			// Refresh to get new quantity
-			if err := tx.First(&senderBalance, senderBalance.ID).Error; err != nil {
-				return fmt.Errorf("failed to refresh sender balance: %w", err)
-			}
-
-			// Delete balance if it reaches zero
-			if senderBalance.Quantity == "0" {
-				if err := tx.Delete(&senderBalance).Error; err != nil {
-					return fmt.Errorf("failed to delete zero balance: %w", err)
-				}
-			}
-		}
-
-		// 4. Create the provenance event
-		provenanceEvent := schema.ProvenanceEvent{
-			TokenID:     token.ID,
-			Chain:       input.ProvenanceEvent.Chain,
-			EventType:   input.ProvenanceEvent.EventType,
-			FromAddress: input.ProvenanceEvent.FromAddress,
-			ToAddress:   input.ProvenanceEvent.ToAddress,
-			Quantity:    input.ProvenanceEvent.Quantity,
-			TxHash:      input.ProvenanceEvent.TxHash,
-			BlockNumber: input.ProvenanceEvent.BlockNumber,
-			BlockHash:   input.ProvenanceEvent.BlockHash,
-			Raw:         input.ProvenanceEvent.Raw,
-			Timestamp:   input.ProvenanceEvent.Timestamp,
-		}
-
-		if err := tx.Create(&provenanceEvent).Error; err != nil {
-			return fmt.Errorf("failed to create provenance event: %w", err)
-		}
-
-		// 5. Create the change journal entry
-		// For burn events: subject_type = 'token', subject_id = provenance_event_id
-		changeJournal := schema.ChangesJournal{
-			TokenID:     token.ID,
-			SubjectType: schema.SubjectTypeToken,
-			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
-			ChangedAt:   input.ChangedAt,
-		}
-
-		if err := tx.Create(&changeJournal).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{
+			DoNothing: true,
+		}).
+			Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&changeJournal).Error; err != nil {
 			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
@@ -600,49 +664,117 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 	})
 }
 
-// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
-func (s *pgStore) CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error {
+// CreateTokenWithProvenances creates or updates a token with all its provenance data (balances and events)
+func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTokenWithProvenancesInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Get the token to ensure it exists
-		var token schema.Token
-		err := tx.Where("token_cid = ?", input.TokenCID).First(&token).Error
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return domain.ErrTokenNotFound
+		// 1. Upsert the token
+		token := schema.Token{
+			TokenCID:         input.Token.TokenCID,
+			Chain:            input.Token.Chain,
+			Standard:         input.Token.Standard,
+			ContractAddress:  input.Token.ContractAddress,
+			TokenNumber:      input.Token.TokenNumber,
+			CurrentOwner:     input.Token.CurrentOwner,
+			Burned:           input.Token.Burned,
+			LastActivityTime: input.Token.LastActivityTime,
+		}
+
+		// Use ON CONFLICT to update if token already exists
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "token_cid"}},
+			DoUpdates: clause.AssignmentColumns([]string{"current_owner", "burned", "last_activity_time"}),
+		}).Create(&token).Error; err != nil {
+			return fmt.Errorf("failed to upsert token: %w", err)
+		}
+
+		// 2. Upsert all balances in batch (using ON CONFLICT to handle existing records)
+		if len(input.Balances) > 0 {
+			balances := make([]schema.Balance, 0, len(input.Balances))
+			for _, balanceInput := range input.Balances {
+				balances = append(balances, schema.Balance{
+					TokenID:      token.ID,
+					OwnerAddress: balanceInput.OwnerAddress,
+					Quantity:     balanceInput.Quantity,
+				})
 			}
-			return fmt.Errorf("failed to get token: %w", err)
+
+			// Use Clauses with OnConflict to upsert
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "token_id"}, {Name: "owner_address"}},
+				DoUpdates: clause.AssignmentColumns([]string{"quantity"}),
+			}).Create(&balances).Error; err != nil {
+				return fmt.Errorf("failed to upsert balances: %w", err)
+			}
 		}
 
-		// 2. Create the provenance event
-		provenanceEvent := schema.ProvenanceEvent{
-			TokenID:     token.ID,
-			Chain:       input.ProvenanceEvent.Chain,
-			EventType:   input.ProvenanceEvent.EventType,
-			FromAddress: input.ProvenanceEvent.FromAddress,
-			ToAddress:   input.ProvenanceEvent.ToAddress,
-			Quantity:    input.ProvenanceEvent.Quantity,
-			TxHash:      input.ProvenanceEvent.TxHash,
-			BlockNumber: input.ProvenanceEvent.BlockNumber,
-			BlockHash:   input.ProvenanceEvent.BlockHash,
-			Raw:         input.ProvenanceEvent.Raw,
-			Timestamp:   input.ProvenanceEvent.Timestamp,
-		}
+		// 3. Batch insert all provenance events (skip duplicates using ON CONFLICT)
+		if len(input.Events) > 0 {
+			provenanceEvents := make([]schema.ProvenanceEvent, 0, len(input.Events))
+			for i := range input.Events {
+				eventInput := input.Events[i]
 
-		if err := tx.Create(&provenanceEvent).Error; err != nil {
-			return fmt.Errorf("failed to create provenance event: %w", err)
-		}
+				provenanceEvents = append(provenanceEvents, schema.ProvenanceEvent{
+					TokenID:     token.ID,
+					Chain:       eventInput.Chain,
+					EventType:   eventInput.EventType,
+					FromAddress: eventInput.FromAddress,
+					ToAddress:   eventInput.ToAddress,
+					Quantity:    &eventInput.Quantity,
+					TxHash:      &eventInput.TxHash,
+					BlockNumber: &eventInput.BlockNumber,
+					BlockHash:   eventInput.BlockHash,
+					Raw:         eventInput.Raw,
+					Timestamp:   eventInput.Timestamp,
+				})
+			}
 
-		// 3. Create the change journal entry
-		// For metadata updates: subject_type = 'metadata', subject_id = token_id
-		changeJournal := schema.ChangesJournal{
-			TokenID:     token.ID,
-			SubjectType: schema.SubjectTypeMetadata,
-			SubjectID:   fmt.Sprintf("%d", token.ID),
-			ChangedAt:   input.ChangedAt,
-		}
+			// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+				DoNothing: true,
+			}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+				Create(&provenanceEvents).Error; err != nil {
+				return fmt.Errorf("failed to create provenance events: %w", err)
+			}
 
-		if err := tx.Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
+			// 4. Query back the events to get their IDs (for both newly inserted and existing events)
+			// Use tx_hash as the primary identifier for batch query
+			txHashes := make([]string, 0, len(input.Events))
+			for _, eventInput := range input.Events {
+				txHashes = append(txHashes, eventInput.TxHash)
+			}
+
+			var queriedEvents []schema.ProvenanceEvent
+			if len(txHashes) > 0 {
+				if err := tx.Where("token_id = ? AND tx_hash IN ?", token.ID, txHashes).
+					Find(&queriedEvents).Error; err != nil {
+					return fmt.Errorf("failed to query provenance events: %w", err)
+				}
+			}
+
+			// 5. Batch insert changes_journal entries for all events
+			// The unique constraint (token_id, subject_type, subject_id) will handle deduplication
+			if len(queriedEvents) > 0 {
+				changeJournals := make([]schema.ChangesJournal, 0, len(queriedEvents))
+				for _, evt := range queriedEvents {
+					subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType)
+					changeJournals = append(changeJournals, schema.ChangesJournal{
+						TokenID:     token.ID,
+						SubjectType: subjectType,
+						SubjectID:   fmt.Sprintf("%d", evt.ID),
+						ChangedAt:   evt.Timestamp,
+					})
+				}
+
+				// Use ON CONFLICT DO NOTHING to skip duplicates
+				if err := tx.Clauses(clause.OnConflict{
+					DoNothing: true,
+				}).
+					Clauses(clause.Returning{Columns: []clause.Column{}}).
+					Create(&changeJournals).Error; err != nil {
+					return fmt.Errorf("failed to create changes_journal entries: %w", err)
+				}
+			}
 		}
 
 		return nil

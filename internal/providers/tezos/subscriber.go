@@ -40,6 +40,7 @@ type TzKTMessage struct {
 }
 
 type tzSubscriber struct {
+	ctx        context.Context
 	wsURL      string
 	chainID    domain.Chain
 	client     adapter.SignalRClient
@@ -48,62 +49,6 @@ type tzSubscriber struct {
 	signalR    adapter.SignalR
 	clock      adapter.Clock
 	tzktClient TzKTClient
-}
-
-// TzKTTransferEvent represents a transfer event from TzKT
-type TzKTTransferEvent struct {
-	Type      int    `json:"type"`      // Event type
-	ID        uint64 `json:"id"`        // Transfer ID
-	Level     uint64 `json:"level"`     // Block level
-	Timestamp string `json:"timestamp"` // ISO timestamp
-
-	Token struct {
-		ID       uint64 `json:"id"`
-		Contract struct {
-			Address string `json:"address"`
-		} `json:"contract"`
-		TokenID  string               `json:"tokenId"`
-		Standard domain.ChainStandard `json:"standard"` // "fa2", "fa1.2"
-	} `json:"token"`
-
-	From *struct {
-		Address string `json:"address"`
-	} `json:"from"`
-
-	To *struct {
-		Address string `json:"address"`
-	} `json:"to"`
-
-	Amount        string `json:"amount"`
-	TransactionID uint64 `json:"transactionId"`
-
-	// Additional metadata for metadata updates
-	Metadata interface{} `json:"metadata,omitempty"`
-}
-
-// TzKTBigMapUpdate represents a big map update event from TzKT
-type TzKTBigMapUpdate struct {
-	ID        uint64 `json:"id"`        // Update ID
-	Level     uint64 `json:"level"`     // Block level
-	Timestamp string `json:"timestamp"` // ISO timestamp
-
-	BigMap uint64 `json:"bigmap"` // BigMap ID
-
-	Contract struct {
-		Address string `json:"address"`
-	} `json:"contract"`
-
-	Path string `json:"path"` // Path in contract storage (e.g., "token_metadata")
-
-	Action string `json:"action"` // "add_key", "update_key", "remove_key"
-
-	Content struct {
-		Hash  string      `json:"hash"`
-		Key   interface{} `json:"key"`   // Token ID (can be int or string)
-		Value interface{} `json:"value"` // Metadata value
-	} `json:"content"`
-
-	TransactionID *uint64 `json:"transactionId,omitempty"`
 }
 
 // NewSubscriber creates a new Tezos/TzKT event subscriber
@@ -119,23 +64,31 @@ func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzk
 
 // SubscribeEvents subscribes to FA2 transfer events and metadata updates via TzKT SignalR
 // Note: fromLevel parameter is ignored for Tezos as TzKT always subscribes from current
-func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler messaging.EventHandler) error {
+func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler messaging.EventHandler) error {
+	if c.connected {
+		logger.Warn("Already connected to TzKT SignalR")
+		return nil
+	}
+
+	// Store context for cancellation
+	c.ctx = ctx
+
 	// Store handler for callback
-	s.handler = handler
+	c.handler = handler
 
 	// Create SignalR client with connection
-	client, err := s.signalR.NewClient(ctx, s.wsURL, s)
+	client, err := c.signalR.NewClient(ctx, c.wsURL, c)
 	if err != nil {
 		return fmt.Errorf("failed to create SignalR client: %w", err)
 	}
 
-	s.client = client
+	c.client = client
 
 	// Connect to SignalR hub
 	client.Start()
 
 	// Wait for connection
-	s.clock.Sleep(time.Second)
+	c.clock.Sleep(time.Second)
 
 	// Subscribe to token transfers
 	sendErrChan := client.Send("SubscribeToTokenTransfers", map[string]interface{}{})
@@ -144,7 +97,7 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		if err != nil {
 			return fmt.Errorf("failed to subscribe to token transfers: %w", err)
 		}
-	case <-s.clock.After(SUBSCRIBE_TIMEOUT):
+	case <-c.clock.After(SUBSCRIBE_TIMEOUT):
 		// Timeout waiting for send
 		return fmt.Errorf("timeout waiting for token transfers subscription: %w", domain.ErrSubscriptionFailed)
 	}
@@ -159,12 +112,12 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		if err != nil {
 			return fmt.Errorf("failed to subscribe to big maps: %w", err)
 		}
-	case <-s.clock.After(SUBSCRIBE_TIMEOUT):
+	case <-c.clock.After(SUBSCRIBE_TIMEOUT):
 		// Timeout waiting for send
 		return fmt.Errorf("timeout waiting for big maps subscription: %w", domain.ErrSubscriptionFailed)
 	}
 
-	s.connected = true
+	c.connected = true
 
 	// Keep connection alive and handle events
 	<-ctx.Done()
@@ -173,7 +126,7 @@ func (s *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 
 // Transfers handles incoming transfer events from TzKT SignalR
 // Method name must match the SignalR target name "transfers"
-func (s *tzSubscriber) Transfers(data interface{}) {
+func (c *tzSubscriber) Transfers(data interface{}) {
 	// Marshal data to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -207,13 +160,14 @@ func (s *tzSubscriber) Transfers(data interface{}) {
 	}
 
 	// Unmarshal data array into transfer events
-	var transfers []TzKTTransferEvent
+	var transfers []TzKTTokenTransfer
 	if err := json.Unmarshal(msg.Data, &transfers); err != nil {
 		logger.Error(fmt.Errorf("error unmarshaling transfers data: %w", err), zap.Error(err))
 		return
 	}
 
-	for _, transfer := range transfers {
+	for i := range transfers {
+		transfer := transfers[i]
 		if transfer.Token.Standard != domain.StandardFA2 {
 			logger.Debug("Skipping token is not fa2",
 				zap.String("standard", string(transfer.Token.Standard)),
@@ -222,15 +176,15 @@ func (s *tzSubscriber) Transfers(data interface{}) {
 			continue
 		}
 
-		event, err := s.parseTransfer(transfer)
+		event, err := c.tzktClient.ParseTransfer(c.ctx, &transfer)
 		if err != nil {
 			logger.Error(fmt.Errorf("error parsing transfer: %w", err), zap.Error(err))
 			continue
 		}
 
 		// Call handler if set
-		if s.handler != nil {
-			if err := s.handler(event); err != nil {
+		if c.handler != nil {
+			if err := c.handler(event); err != nil {
 				logger.Error(fmt.Errorf("error handling event: %w", err), zap.Error(err))
 			}
 		}
@@ -239,7 +193,7 @@ func (s *tzSubscriber) Transfers(data interface{}) {
 
 // Bigmaps handles incoming big map update events from TzKT SignalR
 // Method name must match the SignalR target name "bigmaps"
-func (s *tzSubscriber) Bigmaps(data interface{}) {
+func (c *tzSubscriber) Bigmaps(data interface{}) {
 	// Marshal data to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -279,145 +233,31 @@ func (s *tzSubscriber) Bigmaps(data interface{}) {
 		return
 	}
 
-	for _, update := range updates {
+	for i := range updates {
+		update := updates[i]
+
 		// Only handle token_metadata updates
 		if update.Path != "token_metadata" {
 			continue
 		}
 
-		event, err := s.parseBigMapUpdate(update)
+		event, err := c.tzktClient.ParseBigMapUpdate(c.ctx, &update)
 		if err != nil {
 			logger.Error(fmt.Errorf("error parsing big map update: %w", err), zap.Error(err))
 			continue
 		}
 
 		// Call handler if set
-		if s.handler != nil {
-			if err := s.handler(event); err != nil {
+		if c.handler != nil {
+			if err := c.handler(event); err != nil {
 				logger.Error(fmt.Errorf("error handling metadata update event: %w", err), zap.Error(err))
 			}
 		}
 	}
 }
 
-// parseTransfer converts a TzKT transfer to a standardized blockchain event
-func (s *tzSubscriber) parseTransfer(transfer TzKTTransferEvent) (*domain.BlockchainEvent, error) {
-	// Parse timestamp
-	timestamp, err := s.clock.Parse(time.RFC3339, transfer.Timestamp)
-	if err != nil {
-		timestamp = s.clock.Now()
-	}
-
-	// Determine addresses
-	fromAddress := ""
-	if transfer.From != nil {
-		fromAddress = transfer.From.Address
-	}
-
-	toAddress := ""
-	if transfer.To != nil {
-		toAddress = transfer.To.Address
-	}
-
-	// Determine event type
-	eventType := s.determineTransferEventType(fromAddress, toAddress)
-
-	// Fetch actual transaction hash from TzKT API
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	txs, err := s.tzktClient.GetTransactionsByID(ctx, transfer.TransactionID)
-	if err != nil {
-		logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", transfer.TransactionID, err))
-		return nil, fmt.Errorf("failed to get transaction hash: %w", err)
-	}
-
-	var txHash string
-	if len(txs) > 0 {
-		txHash = txs[0].Hash
-	}
-
-	event := &domain.BlockchainEvent{
-		Chain:           s.chainID,
-		Standard:        transfer.Token.Standard,
-		ContractAddress: transfer.Token.Contract.Address,
-		TokenNumber:     transfer.Token.TokenID,
-		EventType:       eventType,
-		FromAddress:     &fromAddress,
-		ToAddress:       &toAddress,
-		Quantity:        transfer.Amount,
-		TxHash:          txHash,
-		BlockNumber:     transfer.Level,
-		BlockHash:       nil, // Block hash is optional for Tezos
-		Timestamp:       timestamp,
-		LogIndex:        transfer.ID, // Use transfer ID as log index
-	}
-
-	return event, nil
-}
-
-// parseBigMapUpdate converts a TzKT big map update to a standardized blockchain event
-func (s *tzSubscriber) parseBigMapUpdate(update TzKTBigMapUpdate) (*domain.BlockchainEvent, error) {
-	// Parse timestamp
-	timestamp, err := s.clock.Parse(time.RFC3339, update.Timestamp)
-	if err != nil {
-		timestamp = s.clock.Now()
-	}
-
-	// Extract token ID from the key
-	tokenID := fmt.Sprintf("%v", update.Content.Key)
-
-	// Fetch actual transaction hash from TzKT API (if available)
-	var txHash string
-	if update.TransactionID != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		txs, err := s.tzktClient.GetTransactionsByID(ctx, *update.TransactionID)
-		if err != nil {
-			logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", *update.TransactionID, err))
-			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
-		}
-		if len(txs) > 0 {
-			txHash = txs[0].Hash
-		}
-	} else {
-		// For big map updates without a transaction ID, use a special format
-		txHash = fmt.Sprintf("bigmap_%d", update.ID)
-	}
-
-	event := &domain.BlockchainEvent{
-		Chain:           s.chainID,
-		Standard:        domain.StandardFA2, // BigMap updates are for FA2 tokens on Tezos
-		ContractAddress: update.Contract.Address,
-		TokenNumber:     tokenID,
-		EventType:       domain.EventTypeMetadataUpdate,
-		FromAddress:     nil,
-		ToAddress:       nil,
-		Quantity:        "1",
-		TxHash:          txHash,
-		BlockNumber:     update.Level,
-		BlockHash:       nil, // Block hash is optional for Tezos
-		Timestamp:       timestamp,
-		LogIndex:        update.ID,
-	}
-
-	return event, nil
-}
-
-// determineTransferEventType determines the event type based on from/to addresses
-func (s *tzSubscriber) determineTransferEventType(from, to string) domain.EventType {
-	if from == "" {
-		return domain.EventTypeMint
-	}
-	if to == "" {
-		return domain.EventTypeBurn
-	}
-	return domain.EventTypeTransfer
-}
-
 // GetLatestBlock returns the latest block level from TzKT API
-func (s *tzSubscriber) GetLatestBlock(ctx context.Context) (uint64, error) {
+func (c *tzSubscriber) GetLatestBlock(ctx context.Context) (uint64, error) {
 	// This would require HTTP client to call TzKT API
 	// Simplified implementation - would need actual HTTP request
 	// For now, return 0 to indicate we should start from current
@@ -425,12 +265,12 @@ func (s *tzSubscriber) GetLatestBlock(ctx context.Context) (uint64, error) {
 }
 
 // Close closes the SignalR connection
-func (s *tzSubscriber) Close() {
-	if s.client == nil || !s.connected {
+func (c *tzSubscriber) Close() {
+	if c.client == nil || !c.connected {
 		return
 	}
 
-	s.client.Stop()
-	s.connected = false
+	c.client.Stop()
+	c.connected = false
 	logger.Info("TzKT WebSocket connection closed")
 }

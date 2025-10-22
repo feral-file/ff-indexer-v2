@@ -12,10 +12,8 @@ type EnrichmentLevel string
 const (
 	// EnrichmentLevelNone indicates no metadata has been fetched yet
 	EnrichmentLevelNone EnrichmentLevel = "none"
-	// EnrichmentLevelVendor indicates metadata has been enriched from vendor APIs (OpenSea, ArtBlocks, etc.)
+	// EnrichmentLevelVendor indicates metadata has been enriched from vendor APIs (FXHash, ArtBlocks, etc.)
 	EnrichmentLevelVendor EnrichmentLevel = "vendor"
-	// EnrichmentLevelVerified indicates metadata has been fully verified and enriched
-	EnrichmentLevelVerified EnrichmentLevel = "full"
 )
 
 // TokenMetadata represents the token_metadata table - stores original and enriched metadata for tokens
@@ -29,9 +27,9 @@ type TokenMetadata struct {
 	// LatestHash is the hash of LatestJSON to detect changes and prevent redundant updates
 	LatestHash *string `gorm:"column:latest_hash;type:text"`
 	// EnrichmentLevel indicates how much enrichment has been performed (none, vendor, full)
-	EnrichmentLevel EnrichmentLevel `gorm:"column:enrichment_level;not null;default:'none';type:text"`
+	EnrichmentLevel EnrichmentLevel `gorm:"column:enrichment_level;not null;default:'none';type:text;index:idx_token_metadata_enrichment_level"`
 	// LastRefreshedAt is the timestamp when metadata was last fetched from sources
-	LastRefreshedAt *time.Time `gorm:"column:last_refreshed_at;type:timestamptz"`
+	LastRefreshedAt *time.Time `gorm:"column:last_refreshed_at;type:timestamptz;index:idx_token_metadata_last_refreshed_at"`
 	// ImageURL is the direct URL to the token's image (extracted for quick access)
 	ImageURL *string `gorm:"column:image_url;type:text"`
 	// AnimationURL is the URL to animated content like videos or interactive content
@@ -39,7 +37,7 @@ type TokenMetadata struct {
 	// Name is the token's name (extracted for quick access and indexing)
 	Name *string `gorm:"column:name;type:text"`
 	// Artists are the creators' names (extracted for quick access and indexing)
-	Artists []string `gorm:"column:artists;type:text[]"`
+	Artists []string `gorm:"column:artists;type:text[];index:idx_token_metadata_artists"`
 	// CreatedAt is the timestamp when this record was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this record was last updated

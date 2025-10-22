@@ -4,9 +4,9 @@
 
 -- Create ENUM types for better type safety and performance
 CREATE TYPE token_standard AS ENUM ('erc721', 'erc1155', 'fa2');
-CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:mainnet', 'tezos:narwhal');
-CREATE TYPE enrichment_level AS ENUM ('none', 'vendor', 'full');
-CREATE TYPE vendor_type AS ENUM ('opensea', 'artblocks', 'onchain', 'objkt');
+CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:mainnet', 'tezos:ghostnet');
+CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
+CREATE TYPE vendor_type AS ENUM ('fxhash', 'artblocks', 'onchain');
 CREATE TYPE media_role AS ENUM ('image', 'animation', 'poster');
 CREATE TYPE media_status AS ENUM ('pending', 'ready', 'failed');
 CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'media');
@@ -100,14 +100,15 @@ CREATE TABLE changes_journal (
     changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     meta JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (token_id, subject_type, subject_id)
 );
 
 -- Provenance Events table - Optional audit trail of blockchain events
 CREATE TABLE provenance_events (
     id BIGSERIAL PRIMARY KEY,
     token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    chain TEXT NOT NULL,
+    chain blockchain_chain NOT NULL,
     event_type event_type NOT NULL,         -- mint, transfer, burn, metadata_update
     from_address TEXT,
     to_address TEXT,
@@ -118,7 +119,8 @@ CREATE TABLE provenance_events (
     timestamp TIMESTAMPTZ NOT NULL,
     raw JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT provenance_events_chain_tx_hash_unique UNIQUE (chain, tx_hash)
 );
 
 -- Watched Addresses table - For owner-based indexing
@@ -161,9 +163,7 @@ CREATE INDEX idx_balances_updated_at ON balances (updated_at);
 -- Token Metadata table indexes
 CREATE INDEX idx_token_metadata_enrichment_level ON token_metadata (enrichment_level);
 CREATE INDEX idx_token_metadata_last_refreshed_at ON token_metadata (last_refreshed_at);
-CREATE INDEX idx_token_metadata_name ON token_metadata (name) WHERE name IS NOT NULL;
 CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WHERE CARDINALITY(artists) > 0;
-CREATE INDEX idx_token_metadata_image_url ON token_metadata (image_url) WHERE image_url IS NOT NULL;
 
 -- Enrichment Sources table indexes
 CREATE INDEX idx_enrichment_sources_token_vendor ON enrichment_sources (token_id, vendor);

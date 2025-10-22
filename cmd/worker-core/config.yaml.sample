@@ -25,7 +25,9 @@ temporal:
   task_queue: token-indexing
 
 ethereum:
-  rpc_url: https://mainnet.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID
+  chain_id: eip155:1
+  rpc_url: https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID
 
 tezos:
+  chain_id: tezos:mainnet
   api_url: https://api.tzkt.io

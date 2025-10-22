@@ -16,6 +16,9 @@ type EthClient interface {
 	// SubscribeFilterLogs subscribes to filter logs
 	SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
 
+	// FilterLogs retrieves logs that match the filter query
+	FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error)
+
 	// BlockByNumber returns a block by number
 	BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error)
 

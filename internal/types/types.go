@@ -1,5 +1,7 @@
 package types
 
+import "regexp"
+
 // StringPtr converts a string to a pointer to a string
 func StringPtr(s string) *string {
 	return &s
@@ -16,4 +18,10 @@ func SafeString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// IsPositiveNumeric checks if a string is a valid positive numeric value
+func IsPositiveNumeric(s string) bool {
+	regex := regexp.MustCompile(`^[1-9][0-9]*$`)
+	return regex.MatchString(s)
 }

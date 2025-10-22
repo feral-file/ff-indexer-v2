@@ -8,14 +8,12 @@ import (
 type Vendor string
 
 const (
-	// VendorOpenSea represents metadata from OpenSea API
-	VendorOpenSea Vendor = "opensea"
+	// VendorFXHash represents metadata from FXHash API
+	VendorFXHash Vendor = "fxhash"
 	// VendorArtBlocks represents metadata from Art Blocks API
 	VendorArtBlocks Vendor = "artblocks"
 	// VendorOnchain represents metadata fetched directly from blockchain
 	VendorOnchain Vendor = "onchain"
-	// VendorObjkt represents metadata from Objkt (Tezos marketplace)
-	VendorObjkt Vendor = "objkt"
 )
 
 // EnrichmentSource represents the enrichment_sources table - tracks metadata fetch attempts from various vendors
@@ -24,7 +22,7 @@ type EnrichmentSource struct {
 	ID uint64 `gorm:"column:id;primaryKey;autoIncrement"`
 	// TokenID references the token being enriched
 	TokenID uint64 `gorm:"column:token_id;not null;uniqueIndex:idx_enrichment_sources_token_vendor,priority:1"`
-	// Vendor identifies the metadata source (opensea, artblocks, onchain, objkt)
+	// Vendor identifies the metadata source (fxhash, artblocks, onchain)
 	Vendor Vendor `gorm:"column:vendor;not null;type:text;uniqueIndex:idx_enrichment_sources_token_vendor,priority:2"`
 	// SourceURL is the API endpoint or URI used to fetch metadata
 	SourceURL *string `gorm:"column:source_url;type:text"`

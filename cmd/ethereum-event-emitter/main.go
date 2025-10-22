@@ -75,7 +75,7 @@ func main() {
 		logger.Fatal("Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
 	defer adapterEthClient.Close()
-	ethereumClient := ethereum.NewClient(adapterEthClient)
+	ethereumClient := ethereum.NewClient(domain.Chain(cfg.Ethereum.ChainID), adapterEthClient, clockAdapter)
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(
