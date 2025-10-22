@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strconv"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -395,23 +397,30 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 		// 3. Update sender's balance (decrease by quantity, delete if reaches 0)
 		if input.SenderBalanceUpdate != nil {
 			// Use raw SQL to perform numeric subtraction
-			if err := tx.Model(&schema.Balance{}).
+			tx := tx.Model(&schema.Balance{}).
 				Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
-				Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta)).Error; err != nil {
-				return fmt.Errorf("failed to update sender balance: %w", err)
-			}
+				Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta))
 
-			// Refresh to get new quantity
-			var senderBalance schema.Balance
-			if err := tx.Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
-				First(&senderBalance).Error; err != nil {
-				return fmt.Errorf("failed to refresh sender balance: %w", err)
+			if tx.Error != nil {
+				return fmt.Errorf("failed to update sender balance: %w", tx.Error)
 			}
 
 			// Delete balance if it reaches zero
-			if senderBalance.Quantity == "0" {
-				if err := tx.Delete(&senderBalance).Error; err != nil {
-					return fmt.Errorf("failed to delete zero balance: %w", err)
+			if tx.RowsAffected > 0 {
+				var senderBalance schema.Balance
+				if err := tx.Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
+					First(&senderBalance).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						logger.Warn("Sender balance not found", zap.String("token_cid", token.TokenCID), zap.String("owner_address", input.SenderBalanceUpdate.OwnerAddress))
+					} else {
+						return fmt.Errorf("failed to find sender balance: %w", err)
+					}
+				}
+
+				if senderBalance.Quantity == "0" {
+					if err := tx.Delete(&senderBalance).Error; err != nil {
+						return fmt.Errorf("failed to delete zero balance: %w", err)
+					}
 				}
 			}
 		}
@@ -559,24 +568,32 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 		// 3. Update sender's balance (decrease)
 		if input.SenderBalanceUpdate != nil {
 			// Use raw SQL to perform numeric subtraction
-			if err := tx.Model(&schema.Balance{}).
+			tx := tx.Model(&schema.Balance{}).
 				Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
-				Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta)).Error; err != nil {
-				return fmt.Errorf("failed to update sender balance: %w", err)
-			}
+				Update("quantity", gorm.Expr("quantity - ?", input.SenderBalanceUpdate.Delta))
 
-			// Refresh to get new quantity
-			var senderBalance schema.Balance
-			if err := tx.Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).First(&senderBalance).Error; err != nil {
-				return fmt.Errorf("failed to find sender balance: %w", err)
+			if tx.Error != nil {
+				return fmt.Errorf("failed to update sender balance: %w", tx.Error)
 			}
 
 			// Delete balance if it reaches zero
-			if senderBalance.Quantity == "0" {
-				if err := tx.Delete(&senderBalance).Error; err != nil {
-					return fmt.Errorf("failed to delete zero balance: %w", err)
+			if tx.RowsAffected > 0 {
+				var senderBalance schema.Balance
+				if err := tx.Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).First(&senderBalance).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						logger.Warn("Sender balance not found", zap.String("token_cid", token.TokenCID), zap.String("owner_address", input.SenderBalanceUpdate.OwnerAddress))
+					} else {
+						return fmt.Errorf("failed to find sender balance: %w", err)
+					}
+				}
+
+				if senderBalance.Quantity == "0" {
+					if err := tx.Delete(&senderBalance).Error; err != nil {
+						return fmt.Errorf("failed to delete zero balance: %w", err)
+					}
 				}
 			}
+
 		}
 
 		// 4. Update receiver's balance (increase)

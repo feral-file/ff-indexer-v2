@@ -4,6 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const MAX_PAGE_SIZE = 100
+
 // GetTokenQueryParams holds query parameters for GET /tokens/:cid
 type GetTokenQueryParams struct {
 	Expand []string `form:"expand"`
@@ -57,11 +59,11 @@ func ParseGetTokenQuery(c *gin.Context) (*GetTokenQueryParams, error) {
 	}
 
 	// Cap limits
-	if params.OwnerLimit > 100 {
-		params.OwnerLimit = 100
+	if params.OwnerLimit > MAX_PAGE_SIZE {
+		params.OwnerLimit = MAX_PAGE_SIZE
 	}
-	if params.ProvenanceEventLimit > 100 {
-		params.ProvenanceEventLimit = 100
+	if params.ProvenanceEventLimit > MAX_PAGE_SIZE {
+		params.ProvenanceEventLimit = MAX_PAGE_SIZE
 	}
 
 	// Validate order
@@ -80,14 +82,14 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	}
 
 	// Cap limits
-	if params.Limit > 100 {
-		params.Limit = 100
+	if params.Limit > MAX_PAGE_SIZE {
+		params.Limit = MAX_PAGE_SIZE
 	}
-	if params.OwnerLimit > 100 {
-		params.OwnerLimit = 100
+	if params.OwnerLimit > MAX_PAGE_SIZE {
+		params.OwnerLimit = MAX_PAGE_SIZE
 	}
-	if params.ProvenanceEventLimit > 100 {
-		params.ProvenanceEventLimit = 100
+	if params.ProvenanceEventLimit > MAX_PAGE_SIZE {
+		params.ProvenanceEventLimit = MAX_PAGE_SIZE
 	}
 
 	// Validate order

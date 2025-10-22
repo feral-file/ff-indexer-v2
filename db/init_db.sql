@@ -19,7 +19,7 @@ CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 -- Tokens table - Primary entity for tracking tokens across all blockchains
 CREATE TABLE tokens (
     id BIGSERIAL PRIMARY KEY,
-    token_cid TEXT NOT NULL UNIQUE,             -- canonical id: eip155:1/erc721:0x.../1234
+    token_cid TEXT NOT NULL UNIQUE,             -- canonical id: eip155:1:erc721:0x...:1234
     chain blockchain_chain NOT NULL,           -- eip155:1 or tezos:mainnet
     standard token_standard NOT NULL,          -- erc721, erc1155, fa2
     contract_address TEXT NOT NULL,

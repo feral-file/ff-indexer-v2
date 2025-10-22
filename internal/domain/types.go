@@ -36,7 +36,7 @@ const (
 	EventTypeMetadataUpdateRange EventType = "metadata_update_range"
 )
 
-// TokenCID represents the canonical token identifier in format: chain/standard:contract/tokenNumber (e.g., "eip155:1/erc721:0xabc.../1234")
+// TokenCID represents the canonical token identifier in format: chain:standard:contract:tokenNumber (e.g., "eip155:1:erc721:0xabc...:1234")
 type TokenCID string
 
 // BlockchainEvent represents a normalized blockchain event
@@ -69,7 +69,7 @@ func (e *BlockchainEvent) CurrentOwner() *string {
 
 // TokenCID generates the canonical token ID
 func (e *BlockchainEvent) TokenCID() TokenCID {
-	return TokenCID(fmt.Sprintf("%s/%s/%s/%s", e.Chain, e.Standard, e.ContractAddress, e.TokenNumber))
+	return TokenCID(fmt.Sprintf("%s:%s:%s:%s", e.Chain, e.Standard, e.ContractAddress, e.TokenNumber))
 }
 
 // String returns the string representation of the TokenCID
@@ -79,8 +79,8 @@ func (t TokenCID) String() string {
 
 // Parse parses the TokenCID into chain, standard, contract address, and token number
 func (t TokenCID) Parse() (Chain, ChainStandard, string, string) {
-	parts := strings.Split(string(t), "/")
-	return Chain(parts[0]), ChainStandard(parts[1]), parts[2], parts[3]
+	parts := strings.Split(string(t), ":")
+	return Chain(fmt.Sprintf("%s:%s", parts[0], parts[1])), ChainStandard(parts[2]), parts[3], parts[4]
 }
 
 // determineTransferEventType determines the event type based on from/to addresses

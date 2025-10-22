@@ -58,7 +58,7 @@ Simplified from the original design — excludes `contracts` and `chain_cursors`
 ```sql
 CREATE TABLE tokens (
   id BIGSERIAL PRIMARY KEY,
-  token_cid TEXT NOT NULL UNIQUE,             -- canonical id: eip155:1/erc721:0x.../1234
+  token_cid TEXT NOT NULL UNIQUE,             -- canonical id: eip155:1:erc721:0x...:1234
   chain TEXT NOT NULL,                        -- eip155:1 or tezos:mainnet
   standard TEXT NOT NULL,                     -- erc721, erc1155, fa2
   contract_address TEXT NOT NULL,

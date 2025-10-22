@@ -10,7 +10,7 @@ import (
 type Token struct {
 	// ID is the internal database primary key
 	ID uint64 `gorm:"column:id;primaryKey;autoIncrement"`
-	// TokenCID is the canonical token identifier in format: chain/standard:contract/tokenNumber (e.g., "eip155:1/erc721:0xabc.../1234")
+	// TokenCID is the canonical token identifier in format: chain:standard:contract:tokenNumber (e.g., "eip155:1:erc721:0xabc...:1234")
 	TokenCID string `gorm:"column:token_cid;not null;uniqueIndex;type:text"`
 	// Chain identifies the blockchain network (e.g., "eip155:1" for Ethereum mainnet, "tezos:mainnet")
 	Chain domain.Chain `gorm:"column:chain;not null;type:text;index:idx_tokens_chain_contract_number,priority:1"`
