@@ -1,7 +1,10 @@
 package rest
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -9,6 +12,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/rest/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // Handler defines the interface for REST API handlers
@@ -16,16 +20,16 @@ import (
 //
 //go:generate mockgen -source=handler.go -destination=../../mocks/mock_api_handler.go -package=mocks -mock_names=Handler=MockAPIHandler
 type Handler interface {
-	// GetToken retrieves a single token by its ID
-	// GET /api/v1/tokens/:id
+	// GetToken retrieves a single token by its CID
+	// GET /api/v1/tokens/:cid?expand=<expand>&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	GetToken(c *gin.Context)
 
 	// ListTokens retrieves tokens with optional filters
-	// GET /api/v1/tokens?owners=<address1>,<address2>
+	// GET /api/v1/tokens?owners=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_id=<id1>,<id2>&limit=<limit>&offset=<offset>&expand=<expand>&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	ListTokens(c *gin.Context)
 
-	// GetChanges retrieves changes since a specific cursor
-	// GET /api/v1/changes?since=<cursor>
+	// GetChanges retrieves changes with optional filters
+	// GET /api/v1/changes?token_cid=<cid>&address=<address>&since=<timestamp>&limit=<limit>&offset=<offset>&order=<order>&expand=<expand>
 	GetChanges(c *gin.Context)
 
 	// TriggerIndexing triggers indexing for one or more tokens
@@ -271,14 +275,130 @@ func (h *handler) ListTokens(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// GetChanges retrieves changes since a specific cursor
+// GetChanges retrieves changes with filtering and pagination
 func (h *handler) GetChanges(c *gin.Context) {
-	// TODO: Implement changes retrieval logic
-	since := c.Query("since")
-	c.JSON(200, gin.H{
-		"message": "GetChanges endpoint - to be implemented",
-		"since":   since,
-	})
+	// Parse query parameters
+	queryParams, err := ParseGetChangesQuery(c)
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	// Build filter
+	filter := store.ChangesQueryFilter{
+		TokenCIDs: queryParams.TokenCIDs,
+		Addresses: queryParams.Addresses,
+		Since:     queryParams.Since,
+		Limit:     queryParams.Limit,
+		Offset:    queryParams.Offset,
+		OrderDesc: queryParams.Order == "desc",
+	}
+
+	// Get changes
+	results, total, err := h.store.GetChanges(c.Request.Context(), filter)
+	if err != nil {
+		respondInternalError(c, err, "get_changes")
+		return
+	}
+
+	// Map to DTOs
+	changeDTOs := make([]dto.ChangeResponse, len(results))
+	for i, result := range results {
+		changeDTO := dto.MapChangeToDTO(result.Change, result.Token)
+
+		// Handle subject expansion
+		if queryParams.ShouldExpandSubject() {
+			subject, err := h.expandSubject(c.Request.Context(), result.Change, result.Token)
+			if err != nil {
+				respondInternalError(c, err, "expand_subject",
+					zap.String("subject_type", string(result.Change.SubjectType)),
+					zap.String("subject_id", result.Change.SubjectID))
+				return
+			}
+			changeDTO.Subject = subject
+		}
+
+		changeDTOs[i] = *changeDTO
+	}
+
+	// Build response with offset-based pagination
+	var nextOffset *int
+	if uint64(queryParams.Offset+len(results)) < total { //nolint:gosec,G115
+		offset := queryParams.Offset + len(results)
+		nextOffset = &offset
+	}
+
+	response := dto.ChangeListResponse{
+		Changes: changeDTOs,
+		Offset:  nextOffset,
+		Total:   total,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// expandSubject expands the subject based on subject_type
+func (h *handler) expandSubject(ctx context.Context, change *schema.ChangesJournal, token *schema.Token) (interface{}, error) {
+	switch change.SubjectType {
+	case schema.SubjectTypeToken, schema.SubjectTypeOwner:
+		// For token and owner changes, the subject is a provenance event
+		id, err := strconv.ParseUint(change.SubjectID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid subject_id: %w", err)
+		}
+		event, err := h.store.GetProvenanceEventByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if event == nil {
+			return nil, nil
+		}
+		return dto.MapProvenanceEventToDTO(event), nil
+
+	case schema.SubjectTypeBalance:
+		// For balance changes, the subject is a balance record
+		id, err := strconv.ParseUint(change.SubjectID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid subject_id: %w", err)
+		}
+		balance, err := h.store.GetBalanceByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if balance == nil {
+			return nil, nil
+		}
+		return dto.MapOwnerToDTO(balance), nil
+
+	case schema.SubjectTypeMetadata:
+		// For metadata changes, the subject is token metadata
+		metadata, err := h.store.GetTokenMetadataByTokenCID(ctx, token.TokenCID)
+		if err != nil {
+			return nil, err
+		}
+		if metadata == nil {
+			return nil, nil
+		}
+		return dto.MapTokenMetadataToDTO(metadata), nil
+
+	case schema.SubjectTypeMedia:
+		// For media changes, the subject is a media asset
+		id, err := strconv.ParseInt(change.SubjectID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid subject_id: %w", err)
+		}
+		media, err := h.store.GetMediaAssetByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if media == nil {
+			return nil, nil
+		}
+		return dto.MapMediaAssetToDTO(media), nil
+
+	default:
+		return nil, nil
+	}
 }
 
 // TriggerIndexing triggers indexing for one or more tokens

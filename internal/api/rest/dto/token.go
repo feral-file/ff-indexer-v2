@@ -147,3 +147,77 @@ func MapProvenanceEventToDTO(event *schema.ProvenanceEvent) *ProvenanceEventResp
 		Raw:         json.RawMessage(event.Raw),
 	}
 }
+
+// ChangeResponse represents a change journal entry
+type ChangeResponse struct {
+	ID          uint64             `json:"id"`
+	TokenCID    string             `json:"token_cid"`
+	SubjectType schema.SubjectType `json:"subject_type"`
+	SubjectID   string             `json:"subject_id"`
+	ChangedAt   time.Time          `json:"changed_at"`
+	Meta        json.RawMessage    `json:"meta,omitempty"`
+
+	// Expansion
+	Subject interface{} `json:"subject,omitempty"` // Expanded subject based on subject_type
+}
+
+// MediaAssetResponse represents a media asset
+type MediaAssetResponse struct {
+	ID            int64           `json:"id"`
+	TokenID       uint64          `json:"token_id"`
+	Role          string          `json:"role"`
+	SourceURL     *string         `json:"source_url,omitempty"`
+	ContentHash   *string         `json:"content_hash,omitempty"`
+	CFImageID     *string         `json:"cf_image_id,omitempty"`
+	CFVariantMap  json.RawMessage `json:"cf_variant_map,omitempty"`
+	Status        string          `json:"status"`
+	LastCheckedAt *time.Time      `json:"last_checked_at,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+// ChangeListResponse represents a paginated list of changes
+type ChangeListResponse struct {
+	Changes []ChangeResponse `json:"items"`
+	Offset  *int             `json:"offset,omitempty"` // Offset for the next page
+	Total   uint64           `json:"total"`
+}
+
+// MapChangeToDTO maps a schema.ChangesJournal to ChangeResponse
+func MapChangeToDTO(change *schema.ChangesJournal, token *schema.Token) *ChangeResponse {
+	dto := &ChangeResponse{
+		ID:          change.ID,
+		TokenCID:    token.TokenCID,
+		SubjectType: change.SubjectType,
+		SubjectID:   change.SubjectID,
+		ChangedAt:   change.ChangedAt,
+	}
+
+	if change.Meta != nil {
+		dto.Meta = json.RawMessage(change.Meta)
+	}
+
+	return dto
+}
+
+// MapMediaAssetToDTO maps a schema.MediaAsset to MediaAssetResponse
+func MapMediaAssetToDTO(media *schema.MediaAsset) *MediaAssetResponse {
+	dto := &MediaAssetResponse{
+		ID:            media.ID,
+		TokenID:       media.TokenID,
+		Role:          string(media.Role),
+		SourceURL:     media.SourceURL,
+		ContentHash:   media.ContentHash,
+		CFImageID:     media.CFImageID,
+		Status:        string(media.Status),
+		LastCheckedAt: media.LastCheckedAt,
+		CreatedAt:     media.CreatedAt,
+		UpdatedAt:     media.UpdatedAt,
+	}
+
+	if media.CFVariantMap != nil {
+		dto.CFVariantMap = json.RawMessage(media.CFVariantMap)
+	}
+
+	return dto
+}

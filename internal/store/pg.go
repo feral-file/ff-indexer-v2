@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
+
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -796,4 +797,115 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 
 		return nil
 	})
+}
+
+// GetChanges retrieves changes with optional filters and pagination
+func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*ChangeWithToken, uint64, error) {
+	// Build the base query for changes
+	query := s.db.WithContext(ctx).Model(&schema.ChangesJournal{})
+
+	// Apply timestamp filter
+	if filter.Since != nil {
+		// Since is a filter, not pagination - only show records after this timestamp
+		query = query.Where("changed_at > ?", *filter.Since)
+	}
+
+	// Only join with tokens if we need to filter by token_cid
+	if len(filter.TokenCIDs) > 0 {
+		query = query.Joins("JOIN tokens ON tokens.id = changes_journal.token_id").
+			Where("tokens.token_cid IN ?", filter.TokenCIDs)
+	}
+
+	// Filter by addresses - filter by from_address or to_address in provenance_events
+	if len(filter.Addresses) > 0 {
+		query = query.Where(`
+			subject_id IN (
+				SELECT CAST(id AS TEXT) FROM provenance_events 
+				WHERE from_address IN ? OR to_address IN ?
+			)
+		`, filter.Addresses, filter.Addresses)
+	}
+
+	// Count total matching records
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count changes: %w", err)
+	}
+
+	// Apply ordering - always by changed_at for consistent results
+	// Add id as secondary sort for stable ordering when timestamps are identical
+	if filter.OrderDesc {
+		query = query.Order("changed_at DESC, id DESC")
+	} else {
+		query = query.Order("changed_at ASC, id ASC")
+	}
+
+	// Apply pagination with offset
+	if filter.Offset > 0 {
+		query = query.Offset(filter.Offset)
+	}
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit)
+	}
+
+	// Execute the query
+	var changes []schema.ChangesJournal
+	if err := query.Find(&changes).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to query changes: %w", err)
+	}
+
+	// Fetch associated tokens
+	var results []*ChangeWithToken
+	for i := range changes {
+		var token schema.Token
+		if err := s.db.WithContext(ctx).Where("id = ?", changes[i].TokenID).First(&token).Error; err != nil {
+			return nil, 0, fmt.Errorf("failed to fetch token: %w", err)
+		}
+
+		results = append(results, &ChangeWithToken{
+			Change: &changes[i],
+			Token:  &token,
+		})
+	}
+
+	return results, uint64(total), nil //nolint:gosec,G115
+}
+
+// GetProvenanceEventByID retrieves a provenance event by ID
+func (s *pgStore) GetProvenanceEventByID(ctx context.Context, id uint64) (*schema.ProvenanceEvent, error) {
+	var event schema.ProvenanceEvent
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&event).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get provenance event: %w", err)
+	}
+	return &event, nil
+}
+
+// GetBalanceByID retrieves a balance by ID
+func (s *pgStore) GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error) {
+	var balance schema.Balance
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&balance).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get balance: %w", err)
+	}
+	return &balance, nil
+}
+
+// GetMediaAssetByID retrieves a media asset by ID
+func (s *pgStore) GetMediaAssetByID(ctx context.Context, id int64) (*schema.MediaAsset, error) {
+	var media schema.MediaAsset
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&media).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get media asset: %w", err)
+	}
+	return &media, nil
 }

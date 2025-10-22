@@ -121,6 +121,22 @@ type TokenQueryFilter struct {
 	Offset            int // Offset for pagination
 }
 
+// ChangesQueryFilter represents filters for changes queries
+type ChangesQueryFilter struct {
+	TokenCIDs []string   // Filter by token CIDs
+	Addresses []string   // Filter by addresses (matches from/to addresses in provenance events)
+	Since     *time.Time // Timestamp filter - only show changes after this time (exclusive)
+	Limit     int        // Number of results to return
+	Offset    int        // Offset for pagination
+	OrderDesc bool       // Order by changed_at descending (default: false = ascending)
+}
+
+// ChangeWithToken represents a change journal entry with its associated token
+type ChangeWithToken struct {
+	Change *schema.ChangesJournal
+	Token  *schema.Token
+}
+
 // TokensWithMetadataResult represents a token with its metadata
 type TokensWithMetadataResult struct {
 	Token    *schema.Token
@@ -158,6 +174,8 @@ type Store interface {
 	UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error
 	// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
 	CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error
+	// GetMediaAssetByID retrieves a media asset by ID
+	GetMediaAssetByID(ctx context.Context, id int64) (*schema.MediaAsset, error)
 
 	// =============================================================================
 	// Token Ownership & Balances
@@ -165,6 +183,8 @@ type Store interface {
 
 	// GetTokenOwners retrieves owners (balances) for a token
 	GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset int) ([]schema.Balance, uint64, error)
+	// GetBalanceByID retrieves a balance by ID
+	GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error)
 
 	// =============================================================================
 	// Provenance & Event Tracking
@@ -172,6 +192,15 @@ type Store interface {
 
 	// GetTokenProvenanceEvents retrieves provenance events for a token
 	GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset int, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error)
+	// GetProvenanceEventByID retrieves a provenance event by ID
+	GetProvenanceEventByID(ctx context.Context, id uint64) (*schema.ProvenanceEvent, error)
+
+	// =============================================================================
+	// Changes & Audit Log
+	// =============================================================================
+
+	// GetChanges retrieves changes with optional filters and pagination
+	GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*ChangeWithToken, uint64, error)
 
 	// =============================================================================
 	// System Configuration & Monitoring

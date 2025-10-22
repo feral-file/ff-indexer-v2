@@ -1,6 +1,8 @@
 package rest
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -126,4 +128,48 @@ func (p *ListTokensQueryParams) GetExpansions() ExpansionParams {
 		}
 	}
 	return result
+}
+
+// GetChangesQueryParams holds query parameters for GET /changes
+type GetChangesQueryParams struct {
+	// Filters
+	TokenCIDs []string   `form:"token_cid"`
+	Addresses []string   `form:"address"`
+	Since     *time.Time `form:"since" time_format:"2006-01-02T15:04:05Z07:00"` // Timestamp filter - only show changes after this time
+
+	// Pagination
+	Limit  int      `form:"limit,default=20"`
+	Offset int      `form:"offset,default=0"`
+	Order  string   `form:"order,default=asc"` // asc or desc (based on changed_at)
+	Expand []string `form:"expand"`            // Expansion options: subject
+}
+
+// ParseGetChangesQuery parses query parameters for GET /changes
+func ParseGetChangesQuery(c *gin.Context) (*GetChangesQueryParams, error) {
+	var params GetChangesQueryParams
+	if err := c.ShouldBindQuery(&params); err != nil {
+		return nil, err
+	}
+
+	// Cap limit
+	if params.Limit > MAX_PAGE_SIZE {
+		params.Limit = MAX_PAGE_SIZE
+	}
+
+	// Validate order
+	if params.Order != "asc" && params.Order != "desc" {
+		params.Order = "asc"
+	}
+
+	return &params, nil
+}
+
+// ShouldExpandSubject returns true if subject expansion is requested
+func (p *GetChangesQueryParams) ShouldExpandSubject() bool {
+	for _, item := range p.Expand {
+		if item == "subject" {
+			return true
+		}
+	}
+	return false
 }

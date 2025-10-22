@@ -93,7 +93,7 @@ CREATE TABLE media_assets (
 
 -- Changes Journal table - Audit log for tracking all changes to indexed data
 CREATE TABLE changes_journal (
-    "cursor" BIGSERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
     subject_type subject_type NOT NULL,     -- token, owner, balance, metadata, media
     subject_id TEXT NOT NULL,               -- polymorphic ref: provenance_event_id, balance_id, media_asset_id, etc.
@@ -181,7 +181,6 @@ CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
 CREATE INDEX idx_changes_journal_token_id ON changes_journal (token_id);
 CREATE INDEX idx_changes_journal_subject_type_id ON changes_journal (subject_type, subject_id);
 CREATE INDEX idx_changes_journal_changed_at ON changes_journal (changed_at);
-CREATE INDEX idx_changes_journal_cursor ON changes_journal ("cursor");
 
 -- Provenance Events table indexes
 CREATE INDEX idx_provenance_events_token_id ON provenance_events (token_id);
