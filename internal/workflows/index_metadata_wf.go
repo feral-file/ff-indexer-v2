@@ -33,7 +33,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// - FA2: Use TzKT API to get metadata
 	// It also processes the URI (IPFS, Arweave, HTTP, data URIs)
 	var metadata *metadata.NormalizedMetadata
-	err := workflow.ExecuteActivity(ctx, w.executor.FetchTokenMetadataActivity, tokenCID).Get(ctx, &metadata)
+	err := workflow.ExecuteActivity(ctx, w.executor.FetchTokenMetadata, tokenCID).Get(ctx, &metadata)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to fetch token metadata: %w", err),
 			zap.String("tokenCID", tokenCID.String()),
@@ -43,7 +43,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 
 	// Step 3: Store or update the metadata in the database
 	if metadata != nil {
-		err = workflow.ExecuteActivity(ctx, w.executor.UpsertTokenMetadataActivity, tokenCID, metadata).Get(ctx, nil)
+		err = workflow.ExecuteActivity(ctx, w.executor.UpsertTokenMetadata, tokenCID, metadata).Get(ctx, nil)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to upsert token metadata: %w", err),
 				zap.String("tokenCID", tokenCID.String()),

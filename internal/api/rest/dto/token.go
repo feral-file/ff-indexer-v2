@@ -8,18 +8,23 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
+// ArtistResponse represents an artist/creator in the API response
+type ArtistResponse struct {
+	DID  string `json:"did,omitempty"`
+	Name string `json:"name"`
+}
+
 // TokenResponse represents a token with optional expansions
 type TokenResponse struct {
-	TokenCID         string               `json:"token_cid"`
-	Chain            domain.Chain         `json:"chain"`
-	Standard         domain.ChainStandard `json:"standard"`
-	ContractAddress  string               `json:"contract_address"`
-	TokenNumber      string               `json:"token_number"`
-	CurrentOwner     *string              `json:"current_owner"`
-	Burned           bool                 `json:"burned"`
-	LastActivityTime time.Time            `json:"last_activity_time"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
+	TokenCID        string               `json:"token_cid"`
+	Chain           domain.Chain         `json:"chain"`
+	Standard        domain.ChainStandard `json:"standard"`
+	ContractAddress string               `json:"contract_address"`
+	TokenNumber     string               `json:"token_number"`
+	CurrentOwner    *string              `json:"current_owner"`
+	Burned          bool                 `json:"burned"`
+	CreatedAt       time.Time            `json:"created_at"`
+	UpdatedAt       time.Time            `json:"updated_at"`
 
 	// Metadata (always included when available)
 	Metadata *TokenMetadataResponse `json:"metadata,omitempty"`
@@ -31,15 +36,15 @@ type TokenResponse struct {
 
 // TokenMetadataResponse represents token metadata
 type TokenMetadataResponse struct {
-	OriginJSON      json.RawMessage `json:"origin_json,omitempty"`
-	LatestJSON      json.RawMessage `json:"latest_json,omitempty"`
-	LatestHash      *string         `json:"latest_hash,omitempty"`
-	EnrichmentLevel string          `json:"enrichment_level"`
-	LastRefreshedAt *time.Time      `json:"last_refreshed_at,omitempty"`
-	ImageURL        *string         `json:"image_url,omitempty"`
-	AnimationURL    *string         `json:"animation_url,omitempty"`
-	Name            *string         `json:"name,omitempty"`
-	Artists         []string        `json:"artists,omitempty"`
+	OriginJSON      json.RawMessage  `json:"origin_json,omitempty"`
+	LatestJSON      json.RawMessage  `json:"latest_json,omitempty"`
+	LatestHash      *string          `json:"latest_hash,omitempty"`
+	EnrichmentLevel string           `json:"enrichment_level"`
+	LastRefreshedAt *time.Time       `json:"last_refreshed_at,omitempty"`
+	ImageURL        *string          `json:"image_url,omitempty"`
+	AnimationURL    *string          `json:"animation_url,omitempty"`
+	Name            *string          `json:"name,omitempty"`
+	Artists         []ArtistResponse `json:"artists,omitempty"`
 }
 
 // OwnerResponse represents a token owner (balance record)
@@ -88,16 +93,15 @@ type TokenListResponse struct {
 // MapTokenToDTO maps a schema.Token to TokenResponse
 func MapTokenToDTO(token *schema.Token, metadata *schema.TokenMetadata) *TokenResponse {
 	dto := &TokenResponse{
-		TokenCID:         token.TokenCID,
-		Chain:            token.Chain,
-		Standard:         token.Standard,
-		ContractAddress:  token.ContractAddress,
-		TokenNumber:      token.TokenNumber,
-		CurrentOwner:     token.CurrentOwner,
-		Burned:           token.Burned,
-		LastActivityTime: token.LastActivityTime,
-		CreatedAt:        token.CreatedAt,
-		UpdatedAt:        token.UpdatedAt,
+		TokenCID:        token.TokenCID,
+		Chain:           token.Chain,
+		Standard:        token.Standard,
+		ContractAddress: token.ContractAddress,
+		TokenNumber:     token.TokenNumber,
+		CurrentOwner:    token.CurrentOwner,
+		Burned:          token.Burned,
+		CreatedAt:       token.CreatedAt,
+		UpdatedAt:       token.UpdatedAt,
 	}
 
 	if metadata != nil {
@@ -109,6 +113,15 @@ func MapTokenToDTO(token *schema.Token, metadata *schema.TokenMetadata) *TokenRe
 
 // MapTokenMetadataToDTO maps a schema.TokenMetadata to TokenMetadataResponse
 func MapTokenMetadataToDTO(metadata *schema.TokenMetadata) *TokenMetadataResponse {
+	// Convert schema.Artists to ArtistResponse
+	var artists []ArtistResponse
+	for _, artist := range metadata.Artists {
+		artists = append(artists, ArtistResponse{
+			DID:  artist.DID,
+			Name: artist.Name,
+		})
+	}
+
 	return &TokenMetadataResponse{
 		OriginJSON:      json.RawMessage(metadata.OriginJSON),
 		LatestJSON:      json.RawMessage(metadata.LatestJSON),
@@ -118,7 +131,7 @@ func MapTokenMetadataToDTO(metadata *schema.TokenMetadata) *TokenMetadataRespons
 		ImageURL:        metadata.ImageURL,
 		AnimationURL:    metadata.AnimationURL,
 		Name:            metadata.Name,
-		Artists:         metadata.Artists,
+		Artists:         artists,
 	}
 }
 
@@ -220,4 +233,16 @@ func MapMediaAssetToDTO(media *schema.MediaAsset) *MediaAssetResponse {
 	}
 
 	return dto
+}
+
+// TriggerIndexingRequest represents the request body for triggering indexing
+type TriggerIndexingRequest struct {
+	TokenCIDs []string `json:"token_cids,omitempty"`
+	Addresses []string `json:"addresses,omitempty"`
+}
+
+// TriggerIndexingResponse represents the response for triggering indexing
+type TriggerIndexingResponse struct {
+	WorkflowID string `json:"workflow_id"`
+	RunID      string `json:"run_id"`
 }

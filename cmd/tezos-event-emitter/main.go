@@ -18,7 +18,6 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/emitter"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
@@ -82,12 +81,12 @@ func main() {
 	logger.Info("Connected to NATS JetStream")
 
 	// Initialize TzKT client
-	tzktClient := tezos.NewTzKTClient(domain.Chain(cfg.Tezos.ChainID), cfg.Tezos.APIURL, httpClient, clockAdapter)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter)
 
 	// Initialize Tezos subscriber
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: cfg.Tezos.WebSocketURL,
-		ChainID:      domain.Chain(cfg.Tezos.ChainID),
+		ChainID:      cfg.Tezos.ChainID,
 	}, signalR, clockAdapter, tzktClient)
 	if err != nil {
 		logger.Fatal("Failed to create Tezos subscriber", zap.Error(err), zap.String("websocket_url", cfg.Tezos.WebSocketURL))
@@ -105,7 +104,7 @@ func main() {
 
 	// Create emitter with common logic
 	emitterCfg := emitter.Config{
-		ChainID:         domain.Chain(cfg.Tezos.ChainID),
+		ChainID:         cfg.Tezos.ChainID,
 		StartBlock:      cfg.Tezos.StartLevel,
 		CursorSaveFreq:  2,                // Save every 2 levels
 		CursorSaveDelay: 30 * time.Second, // Or every 30 seconds

@@ -1,10 +1,49 @@
 package schema
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"time"
 
 	"gorm.io/datatypes"
 )
+
+// Artist represents an artist/creator with their decentralized identifier and name
+type Artist struct {
+	DID  string `json:"did"`
+	Name string `json:"name"`
+}
+
+// Artists is a slice of Artist that can be stored as JSONB in PostgreSQL
+type Artists []Artist
+
+// Scan implements the sql.Scanner interface for reading from database
+func (a *Artists) Scan(value interface{}) error {
+	if value == nil {
+		*a = nil
+		return nil
+	}
+
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return nil
+	}
+
+	return json.Unmarshal(bytes, a)
+}
+
+// Value implements the driver.Valuer interface for writing to database
+func (a Artists) Value() (driver.Value, error) {
+	if a == nil {
+		return nil, nil
+	}
+	return json.Marshal(a)
+}
 
 // EnrichmentLevel indicates the completeness of metadata enrichment
 type EnrichmentLevel string
@@ -36,8 +75,8 @@ type TokenMetadata struct {
 	AnimationURL *string `gorm:"column:animation_url;type:text"`
 	// Name is the token's name (extracted for quick access and indexing)
 	Name *string `gorm:"column:name;type:text"`
-	// Artists are the creators' names (extracted for quick access and indexing)
-	Artists []string `gorm:"column:artists;type:text[];index:idx_token_metadata_artists"`
+	// Artists are the creators (extracted for quick access and indexing)
+	Artists Artists `gorm:"column:artists;type:jsonb;serializer:json;index:idx_token_metadata_artists"`
 	// CreatedAt is the timestamp when this record was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this record was last updated

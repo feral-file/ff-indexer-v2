@@ -17,6 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // NormalizedMetadata represents the normalized metadata
@@ -25,7 +26,7 @@ type NormalizedMetadata struct {
 	Image     string                 `json:"image"`
 	Animation string                 `json:"animation"`
 	Name      string                 `json:"name"`
-	Artists   []string               `json:"artists"`
+	Artists   schema.Artists         `json:"artists"`
 }
 
 // RawHash returns the hash of the raw metadata and the raw metadata itself
@@ -128,7 +129,7 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, metadata map[str
 	if c, ok := metadata["creators"]; ok {
 		// Marshal to json
 		cj, err := r.json.Marshal(c)
-		if err == nil {
+		if err != nil {
 			return nil, err
 		}
 
@@ -139,13 +140,20 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, metadata map[str
 		}
 	}
 
+	// Convert creators to artists
+	var artists schema.Artists
+	for _, creator := range creators {
+		artists = append(artists, schema.Artist{Name: creator})
+	}
+
 	normalizedMetadata := &NormalizedMetadata{
 		Raw:       metadata,
 		Image:     uriToGateway(displayUri),
 		Animation: uriToGateway(artifactUri),
 		Name:      name,
-		Artists:   creators,
+		Artists:   artists,
 	}
+
 	return normalizedMetadata, nil
 }
 
@@ -155,7 +163,7 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(metadata map[string]interfac
 	var image string
 	var animationURL string
 	var name string
-	var artists []string
+	var artists schema.Artists
 	if i, ok := metadata["image"].(string); ok {
 		image = i
 	}
@@ -173,7 +181,7 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(metadata map[string]interfac
 
 	// Resolve the artist from the metadata
 	if a := resolveArtist(metadata); a != "" {
-		artists = []string{a}
+		artists = schema.Artists{{Name: a}}
 	}
 
 	normalizedMetadata := &NormalizedMetadata{

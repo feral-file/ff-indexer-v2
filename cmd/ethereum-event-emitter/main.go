@@ -18,7 +18,6 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/emitter"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
@@ -75,7 +74,7 @@ func main() {
 		logger.Fatal("Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
 	defer adapterEthClient.Close()
-	ethereumClient := ethereum.NewClient(domain.Chain(cfg.Ethereum.ChainID), adapterEthClient, clockAdapter)
+	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter)
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(
@@ -95,7 +94,7 @@ func main() {
 	// Initialize Ethereum subscriber
 	ethSubscriber, err := ethereum.NewSubscriber(ctx, ethereum.Config{
 		WebSocketURL: cfg.Ethereum.WebSocketURL,
-		ChainID:      domain.Chain(cfg.Ethereum.ChainID),
+		ChainID:      cfg.Ethereum.ChainID,
 	}, ethereumClient, clockAdapter)
 	if err != nil {
 		logger.Fatal("Failed to create Ethereum subscriber", zap.Error(err), zap.String("websocket_url", cfg.Ethereum.WebSocketURL))
@@ -109,7 +108,7 @@ func main() {
 
 	// Create emitter with common logic
 	emitterCfg := emitter.Config{
-		ChainID:         domain.Chain(cfg.Ethereum.ChainID),
+		ChainID:         cfg.Ethereum.ChainID,
 		StartBlock:      cfg.Ethereum.StartBlock,
 		CursorSaveFreq:  2,                // Save every 2 blocks
 		CursorSaveDelay: 30 * time.Second, // Or every 30 seconds

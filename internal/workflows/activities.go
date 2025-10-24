@@ -22,32 +22,67 @@ import (
 //
 //go:generate mockgen -source=activities.go -destination=../mocks/activities.go -package=mocks -mock_names=Executor=MockExecutor
 type Executor interface {
-	// CheckTokenExistsActivity checks if a token exists in the database
-	CheckTokenExistsActivity(ctx context.Context, tokenCID domain.TokenCID) (bool, error)
+	// CheckTokenExists checks if a token exists in the database
+	CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error)
 
-	// CreateTokenMintActivity creates a new token and related provenance data
-	CreateTokenMintActivity(ctx context.Context, event *domain.BlockchainEvent) error
+	// CreateTokenMint creates a new token and related provenance data for mint event
+	CreateTokenMint(ctx context.Context, event *domain.BlockchainEvent) error
 
-	// UpdateTokenTransferActivity updates a token and related provenance data for a transfer event
-	UpdateTokenTransferActivity(ctx context.Context, event *domain.BlockchainEvent) error
+	// UpdateTokenTransfer updates a token and related provenance data for a transfer event
+	UpdateTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error
 
-	// UpdateTokenBurnActivity updates a token and related provenance data as burned
-	UpdateTokenBurnActivity(ctx context.Context, event *domain.BlockchainEvent) error
+	// UpdateTokenBurn updates a token and related provenance data for burn event
+	UpdateTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error
 
-	// CreateMetadataUpdateActivity creates a metadata update provenance event and change journal entry
-	CreateMetadataUpdateActivity(ctx context.Context, event *domain.BlockchainEvent) error
+	// CreateMetadataUpdate creates a metadata update provenance event and change journal entry
+	CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error
 
-	// FetchTokenMetadataActivity fetches token metadata from blockchain
-	FetchTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error)
+	// FetchTokenMetadata fetches token metadata from blockchain
+	FetchTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error)
 
-	// UpsertTokenMetadataActivity stores or updates token metadata in the database
-	UpsertTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error
+	// UpsertTokenMetadata stores or updates token metadata in the database
+	UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error
 
-	// IndexTokenWithMinimalProvenancesActivity index token with minimal provenance data (balances for from/to addresses only)
-	IndexTokenWithMinimalProvenancesActivity(ctx context.Context, event *domain.BlockchainEvent) error
+	// IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
+	// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
+	IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error
 
-	// IndexTokenWithFullProvenancesActivity index token with all its provenance data (all balances and events)
-	IndexTokenWithFullProvenancesActivity(ctx context.Context, event *domain.BlockchainEvent) error
+	// IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID
+	// Full provenance data includes balances for all addresses, provenance events and change journal related to the token
+	IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error
+
+	// IndexTokenWithMinimalProvenancesByTokenCID indexes token with minimal provenances using tokenCID
+	// Minimal provenance data includes balances for all addresses.
+	// The provenance events and change journal are not included.
+	IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error
+
+	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
+	// This is used to sweep tokens by block ranges for incremental indexing
+	GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error)
+
+	// GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs for an account within a block range
+	GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error)
+
+	// GetIndexingBlockRangeForAddress retrieves the indexing block range for an address and chain
+	GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (*BlockRangeResult, error)
+
+	// UpdateIndexingBlockRangeForAddress updates the indexing block range for an address and chain
+	UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error
+
+	// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
+	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error
+
+	// GetLatestEthereumBlock retrieves the latest block number from the Ethereum blockchain
+	GetLatestEthereumBlock(ctx context.Context) (uint64, error)
+
+	// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT
+	GetLatestTezosBlock(ctx context.Context) (uint64, error)
+}
+
+// BlockRangeResult represents the result of getting an indexing block range
+type BlockRangeResult struct {
+	MinBlock uint64
+	MaxBlock uint64
 }
 
 // executor is the concrete implementation of Executor
@@ -82,8 +117,8 @@ func NewExecutor(
 	}
 }
 
-// CheckTokenExistsActivity check if a token exists
-func (e *executor) CheckTokenExistsActivity(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+// CheckTokenExists checks if a token exists in the database
+func (e *executor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
 	token, err := e.store.GetTokenByTokenCID(ctx, tokenCID.String())
 	if err != nil {
 		return false, fmt.Errorf("failed to check if token exists: %w", err)
@@ -92,8 +127,8 @@ func (e *executor) CheckTokenExistsActivity(ctx context.Context, tokenCID domain
 	return token != nil, nil
 }
 
-// CreateTokenMintActivity creates a new token and related provenance data
-func (e *executor) CreateTokenMintActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// CreateTokenMint creates a new token and related provenance data for mint event
+func (e *executor) CreateTokenMint(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Check if token already exists
 	existingToken, err := e.store.GetTokenByTokenCID(ctx, event.TokenCID().String())
 	if err != nil {
@@ -113,14 +148,13 @@ func (e *executor) CreateTokenMintActivity(ctx context.Context, event *domain.Bl
 	// Transform domain event to store input
 	input := store.CreateTokenMintInput{
 		Token: store.CreateTokenInput{
-			TokenCID:         event.TokenCID().String(),
-			Chain:            event.Chain,
-			Standard:         event.Standard,
-			ContractAddress:  event.ContractAddress,
-			TokenNumber:      event.TokenNumber,
-			CurrentOwner:     event.CurrentOwner(),
-			Burned:           false,
-			LastActivityTime: event.Timestamp,
+			TokenCID:        event.TokenCID().String(),
+			Chain:           event.Chain,
+			Standard:        event.Standard,
+			ContractAddress: event.ContractAddress,
+			TokenNumber:     event.TokenNumber,
+			CurrentOwner:    event.CurrentOwner(),
+			Burned:          false,
 		},
 		ProvenanceEvent: store.CreateProvenanceEventInput{
 			Chain:       event.Chain,
@@ -173,8 +207,8 @@ func (e *executor) CreateTokenMintActivity(ctx context.Context, event *domain.Bl
 	return nil
 }
 
-// UpdateTokenTransferActivity updates a token and related provenance data for a transfer event
-func (e *executor) UpdateTokenTransferActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// UpdateTokenTransfer updates a token and related provenance data for a transfer event
+func (e *executor) UpdateTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Marshal raw event
 	rawEventData, err := e.json.Marshal(event)
 	if err != nil {
@@ -205,7 +239,6 @@ func (e *executor) UpdateTokenTransferActivity(ctx context.Context, event *domai
 	input := store.UpdateTokenTransferInput{
 		TokenCID:              event.TokenCID().String(),
 		CurrentOwner:          event.CurrentOwner(),
-		LastActivityTime:      event.Timestamp,
 		SenderBalanceUpdate:   senderBalanceUpdate,
 		ReceiverBalanceUpdate: receiverBalanceUpdate,
 		ProvenanceEvent: store.CreateProvenanceEventInput{
@@ -231,13 +264,13 @@ func (e *executor) UpdateTokenTransferActivity(ctx context.Context, event *domai
 	return nil
 }
 
-// FetchTokenMetadataActivity fetches token metadata from blockchain
-func (e *executor) FetchTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
+// FetchTokenMetadata fetches token metadata from blockchain
+func (e *executor) FetchTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
 	return e.metadataResolver.Resolve(ctx, tokenCID)
 }
 
-// UpsertTokenMetadataActivity stores or updates token metadata in the database
-func (e *executor) UpsertTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+// UpsertTokenMetadata stores or updates token metadata in the database
+func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
 	// Get token with metadata
 	result, err := e.store.GetTokenWithMetadataByTokenCID(ctx, tokenCID.String())
 	if err != nil {
@@ -288,8 +321,8 @@ func (e *executor) UpsertTokenMetadataActivity(ctx context.Context, tokenCID dom
 	return nil
 }
 
-// UpdateTokenBurnActivity updates a token and related provenance data as burned
-func (e *executor) UpdateTokenBurnActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// UpdateTokenBurn updates a token and related provenance data for burn event
+func (e *executor) UpdateTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Marshal raw event
 	rawEventData, err := e.json.Marshal(event)
 	if err != nil {
@@ -321,8 +354,7 @@ func (e *executor) UpdateTokenBurnActivity(ctx context.Context, event *domain.Bl
 			Raw:         rawEventData,
 			Timestamp:   event.Timestamp,
 		},
-		ChangedAt:        event.Timestamp,
-		LastActivityTime: event.Timestamp,
+		ChangedAt: event.Timestamp,
 	}
 
 	// Update the token burn atomically with balance update, provenance event, and change journal
@@ -333,8 +365,8 @@ func (e *executor) UpdateTokenBurnActivity(ctx context.Context, event *domain.Bl
 	return nil
 }
 
-// CreateMetadataUpdateActivity creates a metadata update provenance event and change journal entry
-func (e *executor) CreateMetadataUpdateActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// CreateMetadataUpdate creates a metadata update provenance event and change journal entry
+func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Marshal raw event
 	rawEventData, err := e.json.Marshal(event)
 	if err != nil {
@@ -367,8 +399,9 @@ func (e *executor) CreateMetadataUpdateActivity(ctx context.Context, event *doma
 	return nil
 }
 
-// IndexTokenWithMinimalProvenancesActivity index token with minimal provenance data (balances for from/to addresses only)
-func (e *executor) IndexTokenWithMinimalProvenancesActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
+// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
+func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error {
 	tokenCID := event.TokenCID()
 	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
@@ -386,14 +419,13 @@ func (e *executor) IndexTokenWithMinimalProvenancesActivity(ctx context.Context,
 	// Prepare input for creating/updating token with minimal provenance data
 	input := store.CreateTokenWithProvenancesInput{
 		Token: store.CreateTokenInput{
-			TokenCID:         tokenCID.String(),
-			Chain:            chain,
-			Standard:         standard,
-			ContractAddress:  contractAddress,
-			TokenNumber:      tokenNumber,
-			CurrentOwner:     event.CurrentOwner(),
-			Burned:           burned,
-			LastActivityTime: event.Timestamp,
+			TokenCID:        tokenCID.String(),
+			Chain:           chain,
+			Standard:        standard,
+			ContractAddress: contractAddress,
+			TokenNumber:     tokenNumber,
+			CurrentOwner:    event.CurrentOwner(),
+			Burned:          burned,
 		},
 		Balances: []store.CreateBalanceInput{},
 		Events: []store.CreateProvenanceEventInput{
@@ -487,17 +519,128 @@ func (e *executor) IndexTokenWithMinimalProvenancesActivity(ctx context.Context,
 	return nil
 }
 
-// IndexTokenWithFullProvenancesActivity index token with all its provenance data (all balances and events)
-func (e *executor) IndexTokenWithFullProvenancesActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// IndexTokenWithMinimalProvenancesByTokenCID indexes token with minimal provenances using tokenCID
+// Minimal provenance data includes balances for all addresses.
+// The provenance events and change journal are not included.
+func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
+	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
+
+	// Prepare input for creating token with minimal provenance
+	input := store.CreateTokenWithProvenancesInput{
+		Token: store.CreateTokenInput{
+			TokenCID:        tokenCID.String(),
+			Chain:           chain,
+			Standard:        standard,
+			ContractAddress: contractAddress,
+			TokenNumber:     tokenNumber,
+		},
+		Balances: []store.CreateBalanceInput{},
+		Events:   []store.CreateProvenanceEventInput{}, // No events for minimal provenance
+	}
+
+	// Fetch current balances based on chain and standard
+	switch chain {
+	case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
+		// For Tezos FA2, TzKT API provides all current token balances directly
+		balances, err := e.tzktClient.GetTokenBalances(ctx, contractAddress, tokenNumber)
+		if err != nil {
+			return fmt.Errorf("failed to get token balances from TzKT: %w", err)
+		}
+
+		for _, bal := range balances {
+			if types.IsPositiveNumeric(bal.Balance) {
+				input.Balances = append(input.Balances, store.CreateBalanceInput{
+					OwnerAddress: bal.Account.Address,
+					Quantity:     bal.Balance,
+				})
+			}
+		}
+
+	case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
+		switch standard {
+		case domain.StandardERC721:
+			// For ERC721, use ownerOf to get the current single owner
+			owner, err := e.ethClient.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
+			if err != nil {
+				return fmt.Errorf("failed to get ERC721 owner: %w", err)
+			} else if owner != "" && owner != domain.ETHEREUM_ZERO_ADDRESS {
+				input.Token.CurrentOwner = &owner
+				input.Balances = append(input.Balances, store.CreateBalanceInput{
+					OwnerAddress: owner,
+					Quantity:     "1",
+				})
+			} else {
+				input.Token.Burned = true
+			}
+
+		case domain.StandardERC1155:
+			// For ERC1155, use ERC1155Balances to calculate balances from events
+			balances, err := e.ethClient.ERC1155Balances(ctx, contractAddress, tokenNumber)
+			if err != nil {
+				return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
+			}
+
+			// Convert balances map to CreateBalanceInput slice
+			for addr, balance := range balances {
+				if types.IsPositiveNumeric(balance) {
+					input.Balances = append(input.Balances, store.CreateBalanceInput{
+						OwnerAddress: addr,
+						Quantity:     balance,
+					})
+				}
+			}
+
+		default:
+			return fmt.Errorf("unsupported standard: %s", standard)
+		}
+
+	default:
+		return fmt.Errorf("unsupported chain: %s", chain)
+	}
+
+	// Determine burned status from balances (if no positive balances, token is burned)
+	if len(input.Balances) == 0 {
+		input.Token.Burned = true
+	}
+
+	// Create/update the token with minimal provenance data
+	if err := e.store.CreateTokenWithProvenances(ctx, input); err != nil {
+		return fmt.Errorf("failed to create token with minimal provenances: %w", err)
+	}
+
+	return nil
+}
+
+// GetTokenCIDsByOwner retrieves all token CIDs owned by an address
+func (e *executor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]domain.TokenCID, error) {
+	return e.store.GetTokenCIDsByOwner(ctx, address)
+}
+
+// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
+// This is used to sweep tokens by block ranges for incremental indexing
+func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
+	blockchain := domain.AddressToBlockchain(address)
+	if blockchain != domain.BlockchainEthereum {
+		return nil, fmt.Errorf("unsupported blockchain for address: %s", address)
+	}
+
+	return e.ethClient.GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock)
+}
+
+// IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID
+// Full provenance data includes balances for all addresses, provenance events and change journal related to the token
+func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
+	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
+
 	// Fetch all events based on chain
 	var allBalances map[string]string
 	var allEvents []domain.BlockchainEvent
 	var err error
 
-	switch event.Chain {
+	switch chain {
 	case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
 		// Fetch all balances from TzKT
-		tzktBalances, err := e.tzktClient.GetTokenBalances(ctx, event.ContractAddress, event.TokenNumber)
+		tzktBalances, err := e.tzktClient.GetTokenBalances(ctx, contractAddress, tokenNumber)
 		if err != nil {
 			return fmt.Errorf("failed to fetch token balances from TzKT: %w", err)
 		}
@@ -510,22 +653,21 @@ func (e *executor) IndexTokenWithFullProvenancesActivity(ctx context.Context, ev
 		}
 
 		// Fetch all token events (transfers + metadata updates) from TzKT
-		allEvents, err = e.tzktClient.GetTokenEvents(ctx, event.ContractAddress, event.TokenNumber)
+		allEvents, err = e.tzktClient.GetTokenEvents(ctx, contractAddress, tokenNumber)
 		if err != nil {
 			return fmt.Errorf("failed to fetch token events from TzKT: %w", err)
 		}
 
 	case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
 		// Fetch all events (transfers + metadata updates) from Ethereum
-		allEvents, err = e.ethClient.GetTokenEvents(ctx, event.ContractAddress, event.TokenNumber, event.Standard)
+		allEvents, err = e.ethClient.GetTokenEvents(ctx, contractAddress, tokenNumber, standard)
 		if err != nil {
 			return fmt.Errorf("failed to fetch token events from Ethereum: %w", err)
 		}
 
-		// Fetch current balances for all unique addresses in the events (excluding metadata updates)
+		// Fetch current balances for all unique addresses in the events
 		addressSet := make(map[string]bool)
 		for _, evt := range allEvents {
-			// Skip metadata updates
 			if evt.EventType == domain.EventTypeMetadataUpdate {
 				continue
 			}
@@ -541,9 +683,9 @@ func (e *executor) IndexTokenWithFullProvenancesActivity(ctx context.Context, ev
 		allBalances = make(map[string]string)
 		for addr := range addressSet {
 			var balance string
-			switch event.Standard {
+			switch standard {
 			case domain.StandardERC1155:
-				balance, err = e.ethClient.ERC1155BalanceOf(ctx, event.ContractAddress, addr, event.TokenNumber)
+				balance, err = e.ethClient.ERC1155BalanceOf(ctx, contractAddress, addr, tokenNumber)
 				if err != nil {
 					logger.Warn("Failed to get balance for address", zap.String("address", addr), zap.Error(err))
 					continue
@@ -559,52 +701,38 @@ func (e *executor) IndexTokenWithFullProvenancesActivity(ctx context.Context, ev
 		}
 
 	default:
-		return fmt.Errorf("unsupported chain: %s", event.Chain)
+		return fmt.Errorf("unsupported chain: %s", chain)
 	}
 
 	// Determine the current owner and burned status based on the latest transfer event
 	var currentOwner *string
 	var burned bool
-	var lastActivityTime = event.Timestamp
 
-	// Find the latest transfer event to determine current state
 	if len(allEvents) > 0 {
-		// Since the events are in ascending order of block number (level),
-		// the latest transfer event should be checked from the end of the list
-		var latestTransferEvent domain.BlockchainEvent
+		// Since the events are in ascending order, check from the end
 		for i := len(allEvents) - 1; i >= 0; i-- {
 			if allEvents[i].EventType == domain.EventTypeTransfer ||
 				allEvents[i].EventType == domain.EventTypeBurn ||
 				allEvents[i].EventType == domain.EventTypeMint {
-				latestTransferEvent = allEvents[i]
+				currentOwner = allEvents[i].CurrentOwner()
+				if allEvents[i].EventType == domain.EventTypeBurn {
+					burned = true
+				}
 				break
 			}
-		}
-
-		currentOwner = latestTransferEvent.CurrentOwner()
-		if latestTransferEvent.EventType == domain.EventTypeBurn {
-			burned = true
-		}
-		lastActivityTime = latestTransferEvent.Timestamp
-	} else {
-		// If no events found, use the provided event
-		currentOwner = event.CurrentOwner()
-		if event.EventType == domain.EventTypeBurn {
-			burned = true
 		}
 	}
 
 	// Prepare input for creating/updating token with all provenance data
 	input := store.CreateTokenWithProvenancesInput{
 		Token: store.CreateTokenInput{
-			TokenCID:         event.TokenCID().String(),
-			Chain:            event.Chain,
-			Standard:         event.Standard,
-			ContractAddress:  event.ContractAddress,
-			TokenNumber:      event.TokenNumber,
-			CurrentOwner:     currentOwner,
-			Burned:           burned,
-			LastActivityTime: lastActivityTime,
+			TokenCID:        tokenCID.String(),
+			Chain:           chain,
+			Standard:        standard,
+			ContractAddress: contractAddress,
+			TokenNumber:     tokenNumber,
+			CurrentOwner:    currentOwner,
+			Burned:          burned,
 		},
 		Balances: []store.CreateBalanceInput{},
 		Events:   []store.CreateProvenanceEventInput{},
@@ -640,8 +768,86 @@ func (e *executor) IndexTokenWithFullProvenancesActivity(ctx context.Context, ev
 	}
 
 	if err := e.store.CreateTokenWithProvenances(ctx, input); err != nil {
-		return fmt.Errorf("failed to create token with provenances: %w", err)
+		return fmt.Errorf("failed to create token with full provenances: %w", err)
 	}
 
 	return nil
+}
+
+// GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs for an account within a block range
+// Handles pagination automatically by fetching all results within the range
+func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
+	var allTokenCIDs []domain.TokenCID
+	limit := tezos.MAX_PAGE_SIZE
+	offset := 0
+
+	for {
+		balances, err := e.tzktClient.GetTokenBalancesByAccountWithinBlockRange(ctx, address, fromBlock, toBlock, limit, offset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get token balances from TzKT: %w", err)
+		}
+
+		if len(balances) == 0 {
+			break
+		}
+
+		for _, balance := range balances {
+			tokenCID := domain.NewTokenCID(
+				e.tzktClient.ChainID(),
+				balance.Token.Standard,
+				balance.Token.Contract.Address,
+				balance.Token.TokenID,
+			)
+			allTokenCIDs = append(allTokenCIDs, tokenCID)
+		}
+
+		// If we got fewer results than the limit, we've reached the end
+		if len(balances) < limit {
+			break
+		}
+
+		offset += limit
+	}
+
+	return allTokenCIDs, nil
+}
+
+// GetLatestEthereumBlock retrieves the latest block number from the Ethereum blockchain
+func (e *executor) GetLatestEthereumBlock(ctx context.Context) (uint64, error) {
+	header, err := e.ethClient.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get latest block: %w", err)
+	}
+	return header.Number.Uint64(), nil
+}
+
+// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT
+func (e *executor) GetLatestTezosBlock(ctx context.Context) (uint64, error) {
+	latestBlock, err := e.tzktClient.GetLatestBlock(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get latest Tezos block: %w", err)
+	}
+	return latestBlock, nil
+}
+
+// GetIndexingBlockRangeForAddress retrieves the indexing block range for an address and chain
+func (e *executor) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (*BlockRangeResult, error) {
+	minBlock, maxBlock, err := e.store.GetIndexingBlockRangeForAddress(ctx, address, chainID)
+	if err != nil {
+		return nil, err
+	}
+	return &BlockRangeResult{
+		MinBlock: minBlock,
+		MaxBlock: maxBlock,
+	}, nil
+}
+
+// UpdateIndexingBlockRangeForAddress updates the indexing block range for an address and chain
+func (e *executor) UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error {
+	return e.store.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, minBlock, maxBlock)
+}
+
+// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
+func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
+	return e.store.EnsureWatchedAddressExists(ctx, address, chain)
 }

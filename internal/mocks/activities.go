@@ -12,6 +12,7 @@ import (
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
+	workflows "github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
 // MockExecutor is a mock of Executor interface.
@@ -37,130 +38,247 @@ func (m *MockExecutor) EXPECT() *MockExecutorMockRecorder {
 	return m.recorder
 }
 
-// CheckTokenExistsActivity mocks base method.
-func (m *MockExecutor) CheckTokenExistsActivity(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+// CheckTokenExists mocks base method.
+func (m *MockExecutor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckTokenExistsActivity", ctx, tokenCID)
+	ret := m.ctrl.Call(m, "CheckTokenExists", ctx, tokenCID)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// CheckTokenExistsActivity indicates an expected call of CheckTokenExistsActivity.
-func (mr *MockExecutorMockRecorder) CheckTokenExistsActivity(ctx, tokenCID interface{}) *gomock.Call {
+// CheckTokenExists indicates an expected call of CheckTokenExists.
+func (mr *MockExecutorMockRecorder) CheckTokenExists(ctx, tokenCID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckTokenExistsActivity", reflect.TypeOf((*MockExecutor)(nil).CheckTokenExistsActivity), ctx, tokenCID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckTokenExists", reflect.TypeOf((*MockExecutor)(nil).CheckTokenExists), ctx, tokenCID)
 }
 
-// CreateMetadataUpdateActivity mocks base method.
-func (m *MockExecutor) CreateMetadataUpdateActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// CreateMetadataUpdate mocks base method.
+func (m *MockExecutor) CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateMetadataUpdateActivity", ctx, event)
+	ret := m.ctrl.Call(m, "CreateMetadataUpdate", ctx, event)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// CreateMetadataUpdateActivity indicates an expected call of CreateMetadataUpdateActivity.
-func (mr *MockExecutorMockRecorder) CreateMetadataUpdateActivity(ctx, event interface{}) *gomock.Call {
+// CreateMetadataUpdate indicates an expected call of CreateMetadataUpdate.
+func (mr *MockExecutorMockRecorder) CreateMetadataUpdate(ctx, event interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMetadataUpdateActivity", reflect.TypeOf((*MockExecutor)(nil).CreateMetadataUpdateActivity), ctx, event)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateMetadataUpdate", reflect.TypeOf((*MockExecutor)(nil).CreateMetadataUpdate), ctx, event)
 }
 
-// CreateTokenMintActivity mocks base method.
-func (m *MockExecutor) CreateTokenMintActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// CreateTokenMint mocks base method.
+func (m *MockExecutor) CreateTokenMint(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateTokenMintActivity", ctx, event)
+	ret := m.ctrl.Call(m, "CreateTokenMint", ctx, event)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// CreateTokenMintActivity indicates an expected call of CreateTokenMintActivity.
-func (mr *MockExecutorMockRecorder) CreateTokenMintActivity(ctx, event interface{}) *gomock.Call {
+// CreateTokenMint indicates an expected call of CreateTokenMint.
+func (mr *MockExecutorMockRecorder) CreateTokenMint(ctx, event interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenMintActivity", reflect.TypeOf((*MockExecutor)(nil).CreateTokenMintActivity), ctx, event)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenMint", reflect.TypeOf((*MockExecutor)(nil).CreateTokenMint), ctx, event)
 }
 
-// FetchTokenMetadataActivity mocks base method.
-func (m *MockExecutor) FetchTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
+// EnsureWatchedAddressExists mocks base method.
+func (m *MockExecutor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchTokenMetadataActivity", ctx, tokenCID)
+	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// EnsureWatchedAddressExists indicates an expected call of EnsureWatchedAddressExists.
+func (mr *MockExecutorMockRecorder) EnsureWatchedAddressExists(ctx, address, chain interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockExecutor)(nil).EnsureWatchedAddressExists), ctx, address, chain)
+}
+
+// FetchTokenMetadata mocks base method.
+func (m *MockExecutor) FetchTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchTokenMetadata", ctx, tokenCID)
 	ret0, _ := ret[0].(*metadata.NormalizedMetadata)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// FetchTokenMetadataActivity indicates an expected call of FetchTokenMetadataActivity.
-func (mr *MockExecutorMockRecorder) FetchTokenMetadataActivity(ctx, tokenCID interface{}) *gomock.Call {
+// FetchTokenMetadata indicates an expected call of FetchTokenMetadata.
+func (mr *MockExecutorMockRecorder) FetchTokenMetadata(ctx, tokenCID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchTokenMetadataActivity", reflect.TypeOf((*MockExecutor)(nil).FetchTokenMetadataActivity), ctx, tokenCID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchTokenMetadata", reflect.TypeOf((*MockExecutor)(nil).FetchTokenMetadata), ctx, tokenCID)
 }
 
-// IndexTokenWithFullProvenancesActivity mocks base method.
-func (m *MockExecutor) IndexTokenWithFullProvenancesActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// GetEthereumTokenCIDsByOwnerWithinBlockRange mocks base method.
+func (m *MockExecutor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokenWithFullProvenancesActivity", ctx, event)
+	ret := m.ctrl.Call(m, "GetEthereumTokenCIDsByOwnerWithinBlockRange", ctx, address, fromBlock, toBlock)
+	ret0, _ := ret[0].([]domain.TokenCID)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetEthereumTokenCIDsByOwnerWithinBlockRange indicates an expected call of GetEthereumTokenCIDsByOwnerWithinBlockRange.
+func (mr *MockExecutorMockRecorder) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEthereumTokenCIDsByOwnerWithinBlockRange", reflect.TypeOf((*MockExecutor)(nil).GetEthereumTokenCIDsByOwnerWithinBlockRange), ctx, address, fromBlock, toBlock)
+}
+
+// GetIndexingBlockRangeForAddress mocks base method.
+func (m *MockExecutor) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (*workflows.BlockRangeResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetIndexingBlockRangeForAddress", ctx, address, chainID)
+	ret0, _ := ret[0].(*workflows.BlockRangeResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetIndexingBlockRangeForAddress indicates an expected call of GetIndexingBlockRangeForAddress.
+func (mr *MockExecutorMockRecorder) GetIndexingBlockRangeForAddress(ctx, address, chainID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetIndexingBlockRangeForAddress", reflect.TypeOf((*MockExecutor)(nil).GetIndexingBlockRangeForAddress), ctx, address, chainID)
+}
+
+// GetLatestEthereumBlock mocks base method.
+func (m *MockExecutor) GetLatestEthereumBlock(ctx context.Context) (uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLatestEthereumBlock", ctx)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLatestEthereumBlock indicates an expected call of GetLatestEthereumBlock.
+func (mr *MockExecutorMockRecorder) GetLatestEthereumBlock(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestEthereumBlock", reflect.TypeOf((*MockExecutor)(nil).GetLatestEthereumBlock), ctx)
+}
+
+// GetLatestTezosBlock mocks base method.
+func (m *MockExecutor) GetLatestTezosBlock(ctx context.Context) (uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLatestTezosBlock", ctx)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLatestTezosBlock indicates an expected call of GetLatestTezosBlock.
+func (mr *MockExecutorMockRecorder) GetLatestTezosBlock(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestTezosBlock", reflect.TypeOf((*MockExecutor)(nil).GetLatestTezosBlock), ctx)
+}
+
+// GetTezosTokenCIDsByAccountWithinBlockRange mocks base method.
+func (m *MockExecutor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTezosTokenCIDsByAccountWithinBlockRange", ctx, address, fromBlock, toBlock)
+	ret0, _ := ret[0].([]domain.TokenCID)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTezosTokenCIDsByAccountWithinBlockRange indicates an expected call of GetTezosTokenCIDsByAccountWithinBlockRange.
+func (mr *MockExecutorMockRecorder) GetTezosTokenCIDsByAccountWithinBlockRange(ctx, address, fromBlock, toBlock interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTezosTokenCIDsByAccountWithinBlockRange", reflect.TypeOf((*MockExecutor)(nil).GetTezosTokenCIDsByAccountWithinBlockRange), ctx, address, fromBlock, toBlock)
+}
+
+// IndexTokenWithFullProvenancesByTokenCID mocks base method.
+func (m *MockExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IndexTokenWithFullProvenancesByTokenCID", ctx, tokenCID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// IndexTokenWithFullProvenancesActivity indicates an expected call of IndexTokenWithFullProvenancesActivity.
-func (mr *MockExecutorMockRecorder) IndexTokenWithFullProvenancesActivity(ctx, event interface{}) *gomock.Call {
+// IndexTokenWithFullProvenancesByTokenCID indicates an expected call of IndexTokenWithFullProvenancesByTokenCID.
+func (mr *MockExecutorMockRecorder) IndexTokenWithFullProvenancesByTokenCID(ctx, tokenCID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithFullProvenancesActivity", reflect.TypeOf((*MockExecutor)(nil).IndexTokenWithFullProvenancesActivity), ctx, event)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithFullProvenancesByTokenCID", reflect.TypeOf((*MockExecutor)(nil).IndexTokenWithFullProvenancesByTokenCID), ctx, tokenCID)
 }
 
-// IndexTokenWithMinimalProvenancesActivity mocks base method.
-func (m *MockExecutor) IndexTokenWithMinimalProvenancesActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// IndexTokenWithMinimalProvenancesByBlockchainEvent mocks base method.
+func (m *MockExecutor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokenWithMinimalProvenancesActivity", ctx, event)
+	ret := m.ctrl.Call(m, "IndexTokenWithMinimalProvenancesByBlockchainEvent", ctx, event)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// IndexTokenWithMinimalProvenancesActivity indicates an expected call of IndexTokenWithMinimalProvenancesActivity.
-func (mr *MockExecutorMockRecorder) IndexTokenWithMinimalProvenancesActivity(ctx, event interface{}) *gomock.Call {
+// IndexTokenWithMinimalProvenancesByBlockchainEvent indicates an expected call of IndexTokenWithMinimalProvenancesByBlockchainEvent.
+func (mr *MockExecutorMockRecorder) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx, event interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesActivity", reflect.TypeOf((*MockExecutor)(nil).IndexTokenWithMinimalProvenancesActivity), ctx, event)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesByBlockchainEvent", reflect.TypeOf((*MockExecutor)(nil).IndexTokenWithMinimalProvenancesByBlockchainEvent), ctx, event)
 }
 
-// UpdateTokenBurnActivity mocks base method.
-func (m *MockExecutor) UpdateTokenBurnActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// IndexTokenWithMinimalProvenancesByTokenCID mocks base method.
+func (m *MockExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateTokenBurnActivity", ctx, event)
+	ret := m.ctrl.Call(m, "IndexTokenWithMinimalProvenancesByTokenCID", ctx, tokenCID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// UpdateTokenBurnActivity indicates an expected call of UpdateTokenBurnActivity.
-func (mr *MockExecutorMockRecorder) UpdateTokenBurnActivity(ctx, event interface{}) *gomock.Call {
+// IndexTokenWithMinimalProvenancesByTokenCID indicates an expected call of IndexTokenWithMinimalProvenancesByTokenCID.
+func (mr *MockExecutorMockRecorder) IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenBurnActivity", reflect.TypeOf((*MockExecutor)(nil).UpdateTokenBurnActivity), ctx, event)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesByTokenCID", reflect.TypeOf((*MockExecutor)(nil).IndexTokenWithMinimalProvenancesByTokenCID), ctx, tokenCID)
 }
 
-// UpdateTokenTransferActivity mocks base method.
-func (m *MockExecutor) UpdateTokenTransferActivity(ctx context.Context, event *domain.BlockchainEvent) error {
+// UpdateIndexingBlockRangeForAddress mocks base method.
+func (m *MockExecutor) UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock, maxBlock uint64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateTokenTransferActivity", ctx, event)
+	ret := m.ctrl.Call(m, "UpdateIndexingBlockRangeForAddress", ctx, address, chainID, minBlock, maxBlock)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// UpdateTokenTransferActivity indicates an expected call of UpdateTokenTransferActivity.
-func (mr *MockExecutorMockRecorder) UpdateTokenTransferActivity(ctx, event interface{}) *gomock.Call {
+// UpdateIndexingBlockRangeForAddress indicates an expected call of UpdateIndexingBlockRangeForAddress.
+func (mr *MockExecutorMockRecorder) UpdateIndexingBlockRangeForAddress(ctx, address, chainID, minBlock, maxBlock interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenTransferActivity", reflect.TypeOf((*MockExecutor)(nil).UpdateTokenTransferActivity), ctx, event)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingBlockRangeForAddress", reflect.TypeOf((*MockExecutor)(nil).UpdateIndexingBlockRangeForAddress), ctx, address, chainID, minBlock, maxBlock)
 }
 
-// UpsertTokenMetadataActivity mocks base method.
-func (m *MockExecutor) UpsertTokenMetadataActivity(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+// UpdateTokenBurn mocks base method.
+func (m *MockExecutor) UpdateTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpsertTokenMetadataActivity", ctx, tokenCID, metadata)
+	ret := m.ctrl.Call(m, "UpdateTokenBurn", ctx, event)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// UpsertTokenMetadataActivity indicates an expected call of UpsertTokenMetadataActivity.
-func (mr *MockExecutorMockRecorder) UpsertTokenMetadataActivity(ctx, tokenCID, metadata interface{}) *gomock.Call {
+// UpdateTokenBurn indicates an expected call of UpdateTokenBurn.
+func (mr *MockExecutorMockRecorder) UpdateTokenBurn(ctx, event interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenMetadataActivity", reflect.TypeOf((*MockExecutor)(nil).UpsertTokenMetadataActivity), ctx, tokenCID, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenBurn", reflect.TypeOf((*MockExecutor)(nil).UpdateTokenBurn), ctx, event)
+}
+
+// UpdateTokenTransfer mocks base method.
+func (m *MockExecutor) UpdateTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateTokenTransfer", ctx, event)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateTokenTransfer indicates an expected call of UpdateTokenTransfer.
+func (mr *MockExecutorMockRecorder) UpdateTokenTransfer(ctx, event interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenTransfer", reflect.TypeOf((*MockExecutor)(nil).UpdateTokenTransfer), ctx, event)
+}
+
+// UpsertTokenMetadata mocks base method.
+func (m *MockExecutor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertTokenMetadata", ctx, tokenCID, metadata)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertTokenMetadata indicates an expected call of UpsertTokenMetadata.
+func (mr *MockExecutorMockRecorder) UpsertTokenMetadata(ctx, tokenCID, metadata interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenMetadata", reflect.TypeOf((*MockExecutor)(nil).UpsertTokenMetadata), ctx, tokenCID, metadata)
 }

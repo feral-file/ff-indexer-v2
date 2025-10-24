@@ -4,9 +4,26 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 const MAX_PAGE_SIZE = 100
+
+type Order string
+
+const (
+	OrderAsc  Order = "asc"
+	OrderDesc Order = "desc"
+)
+
+func (o Order) Desc() bool {
+	return o == OrderDesc
+}
+
+func (o Order) Asc() bool {
+	return o == OrderAsc
+}
 
 // GetTokenQueryParams holds query parameters for GET /tokens/:cid
 type GetTokenQueryParams struct {
@@ -17,9 +34,9 @@ type GetTokenQueryParams struct {
 	OwnerOffset int `form:"owners.offset,default=0"`
 
 	// Provenance events expansion parameters
-	ProvenanceEventLimit  int    `form:"provenance_events.limit,default=10"`
-	ProvenanceEventOffset int    `form:"provenance_events.offset,default=0"`
-	ProvenanceEventOrder  string `form:"provenance_events.order,default=desc"`
+	ProvenanceEventLimit  int   `form:"provenance_events.limit,default=10"`
+	ProvenanceEventOffset int   `form:"provenance_events.offset,default=0"`
+	ProvenanceEventOrder  Order `form:"provenance_events.order,default=desc"`
 }
 
 // ListTokensQueryParams holds query parameters for GET /tokens
@@ -42,9 +59,9 @@ type ListTokensQueryParams struct {
 	OwnerOffset int `form:"owners.offset,default=0"`
 
 	// Provenance events expansion parameters
-	ProvenanceEventLimit  int    `form:"provenance_events.limit,default=10"`
-	ProvenanceEventOffset int    `form:"provenance_events.offset,default=0"`
-	ProvenanceEventOrder  string `form:"provenance_events.order,default=desc"`
+	ProvenanceEventLimit  int   `form:"provenance_events.limit,default=10"`
+	ProvenanceEventOffset int   `form:"provenance_events.offset,default=0"`
+	ProvenanceEventOrder  Order `form:"provenance_events.order,default=desc"`
 }
 
 // ExpansionParams holds parsed expansion flags
@@ -69,8 +86,8 @@ func ParseGetTokenQuery(c *gin.Context) (*GetTokenQueryParams, error) {
 	}
 
 	// Validate order
-	if params.ProvenanceEventOrder != "asc" && params.ProvenanceEventOrder != "desc" {
-		params.ProvenanceEventOrder = "desc"
+	if !params.ProvenanceEventOrder.Asc() && !params.ProvenanceEventOrder.Desc() {
+		params.ProvenanceEventOrder = OrderDesc
 	}
 
 	return &params, nil
@@ -82,6 +99,10 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	if err := c.ShouldBindQuery(&params); err != nil {
 		return nil, err
 	}
+
+	// Normalize addresses
+	params.Owners = domain.NormalizeAddresses(params.Owners)
+	params.ContractAddresses = domain.NormalizeAddresses(params.ContractAddresses)
 
 	// Cap limits
 	if params.Limit > MAX_PAGE_SIZE {
@@ -95,8 +116,8 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	}
 
 	// Validate order
-	if params.ProvenanceEventOrder != "asc" && params.ProvenanceEventOrder != "desc" {
-		params.ProvenanceEventOrder = "desc"
+	if !params.ProvenanceEventOrder.Asc() && !params.ProvenanceEventOrder.Desc() {
+		params.ProvenanceEventOrder = OrderDesc
 	}
 
 	return &params, nil
@@ -140,7 +161,7 @@ type GetChangesQueryParams struct {
 	// Pagination
 	Limit  int      `form:"limit,default=20"`
 	Offset int      `form:"offset,default=0"`
-	Order  string   `form:"order,default=asc"` // asc or desc (based on changed_at)
+	Order  Order    `form:"order,default=asc"` // asc or desc (based on changed_at)
 	Expand []string `form:"expand"`            // Expansion options: subject
 }
 
@@ -157,8 +178,8 @@ func ParseGetChangesQuery(c *gin.Context) (*GetChangesQueryParams, error) {
 	}
 
 	// Validate order
-	if params.Order != "asc" && params.Order != "desc" {
-		params.Order = "asc"
+	if !params.Order.Asc() && !params.Order.Desc() {
+		params.Order = OrderAsc
 	}
 
 	return &params, nil

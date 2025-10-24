@@ -6,18 +6,22 @@ import (
 	"time"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
+	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
+const MAX_PAGE_SIZE = 10_000
+
 // TzKTTokenBalance represents a token balance from the TzKT API
 type TzKTTokenBalance struct {
-	Account   TzKTAccount `json:"account"`
-	Balance   string      `json:"balance"`
-	TokenID   string      `json:"tokenId"`
-	LastLevel uint64      `json:"lastLevel"`
-	LastTime  string      `json:"lastTime"`
+	Account   TzKTAccount   `json:"account"`
+	Token     TzKTTokenInfo `json:"token"`
+	Balance   string        `json:"balance"`
+	TokenID   string        `json:"tokenId"`
+	LastLevel uint64        `json:"lastLevel"`
+	LastTime  string        `json:"lastTime"`
 }
 
 // TzKTAccount represents an account address
@@ -140,6 +144,18 @@ type TzKTClient interface {
 
 	// GetTokenEvents retrieves all token-related events (transfers + metadata updates) for a specific token
 	GetTokenEvents(ctx context.Context, contractAddress string, tokenID string) ([]domain.BlockchainEvent, error)
+
+	// GetTokenBalancesByAccount retrieves all token balances for a specific account address within an anchor block level and order
+	GetTokenBalancesByAccount(ctx context.Context, accountAddress string, blkLevel *uint64, isDesc bool) ([]TzKTTokenBalance, error)
+
+	// GetTokenBalancesByAccountWithinBlockRange retrieves token balances for an account within a block range
+	GetTokenBalancesByAccountWithinBlockRange(ctx context.Context, accountAddress string, fromBlock, toBlock uint64, limit int, offset int) ([]TzKTTokenBalance, error)
+
+	// GetLatestBlock retrieves the current latest block level from the TzKT API
+	GetLatestBlock(ctx context.Context) (uint64, error)
+
+	// ChainID returns the chain ID for this client
+	ChainID() domain.Chain
 }
 
 // tzktClient is the concrete implementation of TzKTClient
@@ -230,10 +246,9 @@ func (c *tzktClient) GetTokenMetadata(ctx context.Context, contractAddress strin
 
 // GetTokenTransfers retrieves all token transfers for a specific token in ascending order of block number (level)
 func (c *tzktClient) GetTokenTransfers(ctx context.Context, contractAddress string, tokenID string) ([]TzKTTokenTransfer, error) {
-	// TzKT API: GET /v1/tokens/transfers?token.contract={address}&token.tokenId={id}&sort.asc=level&limit=10000
+	// TzKT API: GET /v1/tokens/transfers?token.contract={address}&token.tokenId={id}&sort.{order}=level&limit={limit}
 	// FIXME handle pagination
-	url := fmt.Sprintf("%s/v1/tokens/transfers?token.contract=%s&token.tokenId=%s&sort.asc=level&limit=10000",
-		c.baseURL, contractAddress, tokenID)
+	url := fmt.Sprintf("%s/v1/tokens/transfers?token.contract=%s&token.tokenId=%s&sort.asc=level&limit=10000", c.baseURL, contractAddress, tokenID)
 
 	var transfers []TzKTTokenTransfer
 	if err := c.httpClient.Get(ctx, url, &transfers); err != nil {
@@ -273,16 +288,15 @@ func (c *tzktClient) GetTokenMetadataUpdates(ctx context.Context, contractAddres
 		return []TzKTBigMapUpdate{}, nil
 	}
 
-	// Step 2: Get all updates for this bigmap (no pagination, high limit)
-	updatesURL := fmt.Sprintf("%s/v1/bigmaps/updates?bigmap=%d&sort.asc=id&limit=10000",
-		c.baseURL, tokenMetadataBigMapPtr)
+	// Step 2: Get updates for this bigmap with specified order and limit
+	updatesURL := fmt.Sprintf("%s/v1/bigmaps/updates?bigmap=%d&sort.asc=id&limit=10000", c.baseURL, tokenMetadataBigMapPtr)
 
 	var updates []TzKTBigMapUpdate
 	if err := c.httpClient.Get(ctx, updatesURL, &updates); err != nil {
 		return nil, fmt.Errorf("failed to get bigmap updates: %w", err)
 	}
 
-	// Step 3: Filter updates to only include token_metadata updates
+	// Step 3: Filter updates to only include token_metadata updates for this specific token
 	var filteredUpdates []TzKTBigMapUpdate
 	for _, update := range updates {
 		if update.Path != "token_metadata" || fmt.Sprintf("%v", update.Content.Key) != tokenID {
@@ -348,6 +362,49 @@ func (c *tzktClient) GetTokenEvents(ctx context.Context, contractAddress string,
 	return events, nil
 }
 
+// GetTokenBalancesByAccount retrieves all token balances for a specific account address and anchor block level and order
+func (c *tzktClient) GetTokenBalancesByAccount(ctx context.Context, accountAddress string, blkLevel *uint64, isDesc bool) ([]TzKTTokenBalance, error) {
+	// TzKT API: GET /v1/tokens/balances?account={address}&balance.ne=0&sort.{order}=lastLevel&limit=10000&lastLevel.lt={blkLevel}
+	// This returns all tokens (with non-zero balance) owned by the specified account
+	// sorted by lastLevel in descending order if isDesc is true, otherwise ascending
+	url := fmt.Sprintf("%s/v1/tokens/balances?account=%s&balance.ne=0&limit=10000", c.baseURL, accountAddress)
+	if blkLevel != nil {
+		url += fmt.Sprintf("&lastLevel.lt=%d", *blkLevel)
+	}
+	if isDesc {
+		url += "&sort.desc=lastLevel"
+	} else {
+		url += "&sort.asc=lastLevel"
+	}
+
+	var balances []TzKTTokenBalance
+	if err := c.httpClient.Get(ctx, url, &balances); err != nil {
+		return nil, fmt.Errorf("failed to get token balances for account %s: %w", accountAddress, err)
+	}
+
+	return balances, nil
+}
+
+// GetTokenBalancesByAccountWithinBlockRange retrieves token balances for an account within a block range
+// This is used for chunk-based sweeping, supporting pagination with offset
+func (c *tzktClient) GetTokenBalancesByAccountWithinBlockRange(ctx context.Context, accountAddress string, fromBlock, toBlock uint64, limit int, offset int) ([]TzKTTokenBalance, error) {
+	// TzKT API: GET /v1/tokens/balances?account={address}&balance.ne=0&lastLevel.ge={fromBlock}&lastLevel.le={toBlock}&sort.asc=lastLevel&limit={limit}&offset={offset}
+	url := fmt.Sprintf("%s/v1/tokens/balances?account=%s&balance.ne=0&lastLevel.ge=%d&lastLevel.le=%d&sort.asc=lastLevel&limit=%d&offset=%d",
+		c.baseURL, accountAddress, fromBlock, toBlock, limit, offset)
+
+	var balances []TzKTTokenBalance
+	if err := c.httpClient.Get(ctx, url, &balances); err != nil {
+		return nil, fmt.Errorf("failed to get token balances for account %s within block range [%d, %d]: %w", accountAddress, fromBlock, toBlock, err)
+	}
+
+	return balances, nil
+}
+
+// ChainID returns the chain ID for this client
+func (c *tzktClient) ChainID() domain.Chain {
+	return c.chainID
+}
+
 // parseTransfer converts a TzKT transfer to a standardized blockchain event
 func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTransfer) (*domain.BlockchainEvent, error) {
 	// Parse timestamp
@@ -371,15 +428,19 @@ func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 	eventType := domain.TransferEventType(&fromAddress, &toAddress)
 
 	// Fetch actual transaction hash
-	txs, err := c.GetTransactionsByID(ctx, *transfer.TransactionID)
-	if err != nil {
-		logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", *transfer.TransactionID, err))
-		return nil, fmt.Errorf("failed to get transaction hash: %w", err)
-	}
-
 	var txHash string
-	if len(txs) > 0 {
-		txHash = txs[0].Hash
+	if transfer.TransactionID != nil {
+		txs, err := c.GetTransactionsByID(ctx, *transfer.TransactionID)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", *transfer.TransactionID, err))
+			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
+		}
+		if len(txs) > 0 {
+			txHash = txs[0].Hash
+		}
+	} else {
+		// FIXME figure out how to get the transaction hash
+		logger.Warn("no transaction ID found for transfer", zap.Any("transfer", transfer))
 	}
 
 	event := &domain.BlockchainEvent{
@@ -395,7 +456,7 @@ func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 		BlockNumber:     transfer.Level,
 		BlockHash:       nil, // Block hash is optional for Tezos
 		Timestamp:       timestamp,
-		LogIndex:        transfer.ID, // Use transfer ID as log index
+		TxIndex:         transfer.ID, // Use transfer ID as log index
 	}
 
 	return event, nil
@@ -446,7 +507,7 @@ func (c *tzktClient) ParseBigMapUpdate(ctx context.Context, update *TzKTBigMapUp
 		BlockNumber:     update.Level,
 		BlockHash:       nil, // Block hash is optional for Tezos
 		Timestamp:       timestamp,
-		LogIndex:        update.ID,
+		TxIndex:         update.ID,
 	}
 
 	return event, nil
@@ -473,4 +534,21 @@ func (c *tzktClient) getTransactionFromBitmapUpdate(ctx context.Context, updates
 	}
 
 	return result, nil
+}
+
+// GetLatestBlock retrieves the current latest block level from the TzKT API
+func (c *tzktClient) GetLatestBlock(ctx context.Context) (uint64, error) {
+	// TzKT API: GET /v1/head
+	// Returns the current head block information
+	url := fmt.Sprintf("%s/v1/head", c.baseURL)
+
+	var head struct {
+		Level uint64 `json:"level"`
+	}
+
+	if err := c.httpClient.Get(ctx, url, &head); err != nil {
+		return 0, fmt.Errorf("failed to get latest block from TzKT: %w", err)
+	}
+
+	return head.Level, nil
 }

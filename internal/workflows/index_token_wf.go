@@ -32,7 +32,7 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
 	// Step 1: Create the token mint in the database
-	err := workflow.ExecuteActivity(ctx, w.executor.CreateTokenMintActivity, event).Get(ctx, nil)
+	err := workflow.ExecuteActivity(ctx, w.executor.CreateTokenMint, event).Get(ctx, nil)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to create token mint: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -87,7 +87,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 
 	// Step 1: Check if token exists
 	var tokenExists bool
-	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExistsActivity, event.TokenCID()).Get(ctx, &tokenExists)
+	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to check if token exists: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -110,7 +110,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 		// Execute the child workflow and waiting for the result
-		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, event)
+		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenFromEvent, event)
 		if err := childWorkflowExec.Get(ctx, nil); err != nil {
 			logger.Error(fmt.Errorf("failed to execute child workflow IndexFullToken: %w", err),
 				zap.String("tokenCID", event.TokenCID().String()),
@@ -126,7 +126,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 	}
 
 	// Step 3: Token exists, update the token transfer
-	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenTransferActivity, event).Get(ctx, nil)
+	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenTransfer, event).Get(ctx, nil)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to update token transfer: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -161,7 +161,7 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 
 	// Step 1: Check if token exists
 	var tokenExists bool
-	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExistsActivity, event.TokenCID()).Get(ctx, &tokenExists)
+	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to check if token exists: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -184,7 +184,7 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 		// Execute the child workflow and waiting for the result
-		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, event)
+		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenFromEvent, event)
 		if err := childWorkflowExec.Get(ctx, nil); err != nil {
 			logger.Error(fmt.Errorf("failed to execute child workflow IndexFullToken: %w", err),
 				zap.String("tokenCID", event.TokenCID().String()),
@@ -200,7 +200,7 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	}
 
 	// Step 3: Token exists, update the token burn
-	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenBurnActivity, event).Get(ctx, nil)
+	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenBurn, event).Get(ctx, nil)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to update token burn: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -233,7 +233,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
 	// Step 1: Create the metadata update record in the database
-	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdateActivity, event).Get(ctx, nil)
+	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdate, event).Get(ctx, nil)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to create metadata update record: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -267,8 +267,8 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	return nil
 }
 
-// IndexToken indexes metadata and full provenances (provenance events and balances) for a token
-func (w *workerCore) IndexToken(ctx workflow.Context, event *domain.BlockchainEvent) error {
+// IndexTokenFromEvent indexes metadata and full provenances (provenance events and balances) for a token
+func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error {
 	logger.Info("Starting full token indexing",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
@@ -284,7 +284,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, event *domain.BlockchainEv
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
 	// Step 1: Create token with minimal provenance (from/to balances only) for speed
-	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesActivity, event).Get(ctx, nil)
+	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, event).Get(ctx, nil)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to create token with minimal provenances: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -325,7 +325,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, event *domain.BlockchainEv
 	provenanceCtx := workflow.WithChildOptions(ctx, provenanceWorkflowOptions)
 
 	// Execute the full provenance workflow without waiting for the result
-	provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, event).GetChildWorkflowExecution()
+	provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, event.TokenCID()).GetChildWorkflowExecution()
 	if err := provenanceWorkflowExec.Get(ctx, nil); err != nil {
 		logger.Warn("Failed to start full provenance indexing workflow",
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -336,6 +336,124 @@ func (w *workerCore) IndexToken(ctx workflow.Context, event *domain.BlockchainEv
 
 	logger.Info("Token indexing completed, metadata and provenances workflows started",
 		zap.String("tokenCID", event.TokenCID().String()),
+	)
+
+	return nil
+}
+
+// IndexTokens indexes multiple tokens in parallel
+func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+	logger.Info("Starting batch token indexing",
+		zap.Int("count", len(tokenCIDs)),
+	)
+
+	// Configure child workflow options for fire-and-forget execution
+	childWorkflowOptions := workflow.ChildWorkflowOptions{
+		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+	}
+
+	// Start child workflows for each token in parallel (fire and forget)
+	var childExecutions []workflow.ChildWorkflowFuture
+	for _, tokenCID := range tokenCIDs {
+		workflowID := fmt.Sprintf("index-token-%s", tokenCID.String())
+		childWorkflowOptions.WorkflowID = workflowID
+		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
+
+		// Execute child workflow without waiting for result
+		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID)
+		childExecutions = append(childExecutions, childFuture)
+
+		logger.Info("Triggered token indexing workflow",
+			zap.String("tokenCID", tokenCID.String()),
+			zap.String("workflowID", workflowID),
+		)
+	}
+
+	// Get workflow execution started for all children (but don't wait for completion)
+	for i, childFuture := range childExecutions {
+		childWorkflowExec := childFuture.GetChildWorkflowExecution()
+		if err := childWorkflowExec.Get(ctx, nil); err != nil {
+			logger.Warn("Failed to start child workflow",
+				zap.String("tokenCID", tokenCIDs[i].String()),
+				zap.Error(err),
+			)
+			// Continue with other workflows even if one fails to start
+		}
+	}
+
+	logger.Info("Batch token indexing workflows triggered successfully",
+		zap.Int("count", len(tokenCIDs)),
+	)
+
+	return nil
+}
+
+// IndexToken indexes a single token (metadata and provenances)
+func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) error {
+	logger.Info("Starting token indexing",
+		zap.String("tokenCID", tokenCID.String()),
+	)
+
+	// Configure activity options
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 10 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	// Step 2: Index token with minimal provenances (from blockchain query)
+	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID).Get(ctx, nil)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to index token with minimal provenances: %w", err),
+			zap.String("tokenCID", tokenCID.String()),
+		)
+		return err
+	}
+
+	logger.Info("Token indexed with minimal provenances",
+		zap.String("tokenCID", tokenCID.String()),
+	)
+
+	// Step 3: Start child workflow to index token metadata (fire and forget)
+	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
+		WorkflowID:               "index-metadata-" + tokenCID.String(),
+		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+	}
+	metadataCtx := workflow.WithChildOptions(ctx, metadataWorkflowOptions)
+
+	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, tokenCID).GetChildWorkflowExecution()
+	if err := metadataWorkflowExec.Get(ctx, nil); err != nil {
+		logger.Warn("Failed to start metadata indexing workflow",
+			zap.String("tokenCID", tokenCID.String()),
+			zap.Error(err),
+		)
+	}
+
+	// Step 4: Start child workflow to index full provenance (fire and forget)
+	provenanceWorkflowOptions := workflow.ChildWorkflowOptions{
+		WorkflowID:               "index-full-provenance-" + tokenCID.String(),
+		WorkflowExecutionTimeout: 30 * time.Minute,
+		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+	}
+	provenanceCtx := workflow.WithChildOptions(ctx, provenanceWorkflowOptions)
+
+	provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, tokenCID).GetChildWorkflowExecution()
+	if err := provenanceWorkflowExec.Get(ctx, nil); err != nil {
+		logger.Warn("Failed to start full provenance indexing workflow",
+			zap.String("tokenCID", tokenCID.String()),
+			zap.Error(err),
+		)
+	}
+
+	logger.Info("Token indexing completed, metadata and provenances workflows started",
+		zap.String("tokenCID", tokenCID.String()),
 	)
 
 	return nil

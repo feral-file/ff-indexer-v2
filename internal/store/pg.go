@@ -102,14 +102,13 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Create the token
 		token := schema.Token{
-			TokenCID:         input.Token.TokenCID,
-			Chain:            input.Token.Chain,
-			Standard:         input.Token.Standard,
-			ContractAddress:  input.Token.ContractAddress,
-			TokenNumber:      input.Token.TokenNumber,
-			CurrentOwner:     input.Token.CurrentOwner,
-			Burned:           input.Token.Burned,
-			LastActivityTime: input.Token.LastActivityTime,
+			TokenCID:        input.Token.TokenCID,
+			Chain:           input.Token.Chain,
+			Standard:        input.Token.Standard,
+			ContractAddress: input.Token.ContractAddress,
+			TokenNumber:     input.Token.TokenNumber,
+			CurrentOwner:    input.Token.CurrentOwner,
+			Burned:          input.Token.Burned,
 		}
 
 		if err := tx.Create(&token).Error; err != nil {
@@ -214,14 +213,15 @@ func (s *pgStore) GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID s
 
 // GetTokensByFilter retrieves tokens with their metadata based on filters
 func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]*TokensWithMetadataResult, uint64, error) {
-	query := s.db.WithContext(ctx).Model(&schema.Token{})
+	query := s.db.WithContext(ctx).Model(&schema.Token{}).
+		Select("DISTINCT ON (tokens.id, latest_pe.timestamp) tokens.*")
 
 	// Apply filters
 	if len(filter.Owners) > 0 {
 		// Join with balances to filter by owners
-		query = query.Joins("LEFT JOIN balances ON balances.token_id = tokens.id").
-			Where("balances.owner_address IN ? OR tokens.current_owner IN ?", filter.Owners, filter.Owners).
-			Distinct("tokens.id")
+		query = query.
+			Joins("LEFT JOIN balances ON balances.token_id = tokens.id").
+			Where("balances.owner_address IN ? OR tokens.current_owner IN ?", filter.Owners, filter.Owners)
 	}
 
 	if len(filter.Chains) > 0 {
@@ -243,8 +243,17 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		return nil, 0, fmt.Errorf("failed to count tokens: %w", err)
 	}
 
-	// Apply pagination
-	query = query.Order("id ASC").Limit(filter.Limit).Offset(filter.Offset)
+	// Join with latest provenance event to sort by timestamp
+	query = query.Joins(`LEFT JOIN LATERAL (
+		SELECT timestamp
+		FROM provenance_events
+		WHERE provenance_events.token_id = tokens.id
+		ORDER BY timestamp DESC
+		LIMIT 1
+	) latest_pe ON true`)
+
+	// Apply pagination with sorting by latest provenance event timestamp descending
+	query = query.Order("latest_pe.timestamp DESC NULLS LAST").Order("tokens.id DESC").Limit(filter.Limit).Offset(filter.Offset)
 
 	var tokens []schema.Token
 	if err := query.Find(&tokens).Error; err != nil {
@@ -317,9 +326,9 @@ func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, 
 
 	// Apply ordering by timestamp (with ID as tiebreaker)
 	if orderDesc {
-		query = query.Order("timestamp DESC, id DESC")
+		query = query.Order("timestamp DESC, id DESC") // TODO: Add tx_index as tiebreaker
 	} else {
-		query = query.Order("timestamp ASC, id ASC")
+		query = query.Order("timestamp ASC, id ASC") // TODO: Add tx_index as tiebreaker
 	}
 
 	// Apply pagination
@@ -386,10 +395,9 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 			return fmt.Errorf("failed to get token: %w", err)
 		}
 
-		// 2. Update the token: set burned = true, current_owner = nil, last_activity_time
+		// 2. Update the token: set burned = true, current_owner = nil
 		token.Burned = true
 		token.CurrentOwner = nil
-		token.LastActivityTime = input.LastActivityTime
 
 		if err := tx.Save(&token).Error; err != nil {
 			return fmt.Errorf("failed to update token burn: %w", err)
@@ -560,7 +568,6 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 
 		// 2. Update the token
 		token.CurrentOwner = input.CurrentOwner
-		token.LastActivityTime = input.LastActivityTime
 
 		if err := tx.Save(&token).Error; err != nil {
 			return fmt.Errorf("failed to update token: %w", err)
@@ -690,20 +697,19 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Upsert the token
 		token := schema.Token{
-			TokenCID:         input.Token.TokenCID,
-			Chain:            input.Token.Chain,
-			Standard:         input.Token.Standard,
-			ContractAddress:  input.Token.ContractAddress,
-			TokenNumber:      input.Token.TokenNumber,
-			CurrentOwner:     input.Token.CurrentOwner,
-			Burned:           input.Token.Burned,
-			LastActivityTime: input.Token.LastActivityTime,
+			TokenCID:        input.Token.TokenCID,
+			Chain:           input.Token.Chain,
+			Standard:        input.Token.Standard,
+			ContractAddress: input.Token.ContractAddress,
+			TokenNumber:     input.Token.TokenNumber,
+			CurrentOwner:    input.Token.CurrentOwner,
+			Burned:          input.Token.Burned,
 		}
 
 		// Use ON CONFLICT to update if token already exists
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "token_cid"}},
-			DoUpdates: clause.AssignmentColumns([]string{"current_owner", "burned", "last_activity_time"}),
+			DoUpdates: clause.AssignmentColumns([]string{"current_owner", "burned"}),
 		}).Create(&token).Error; err != nil {
 			return fmt.Errorf("failed to upsert token: %w", err)
 		}
@@ -898,6 +904,113 @@ func (s *pgStore) GetBalanceByID(ctx context.Context, id uint64) (*schema.Balanc
 		return nil, fmt.Errorf("failed to get balance: %w", err)
 	}
 	return &balance, nil
+}
+
+// GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
+func (s *pgStore) GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) ([]domain.TokenCID, error) {
+	var tokenCIDs []domain.TokenCID
+	err := s.db.WithContext(ctx).
+		Table("tokens t").
+		Select("DISTINCT t.token_cid").
+		Joins("INNER JOIN balances b ON t.id = b.token_id").
+		Where("b.owner_address = ? AND CAST(b.quantity AS NUMERIC) > 0", ownerAddress).
+		Find(&tokenCIDs).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tokens by owner: %w", err)
+	}
+
+	return tokenCIDs, nil
+}
+
+// GetIndexingBlockRangeForAddress retrieves the indexing block range for an address and chain
+// Returns min_block=0, max_block=0 if no range exists for the chain
+func (s *pgStore) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (minBlock uint64, maxBlock uint64, err error) {
+	var watchedAddr schema.WatchedAddresses
+	err = s.db.WithContext(ctx).
+		Where("address = ?", address).
+		First(&watchedAddr).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// No watched address record exists yet
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("failed to get watched address: %w", err)
+	}
+
+	// Check if block range exists for the chain
+	if watchedAddr.LastSuccessfulIndexingBlkRange == nil {
+		return 0, 0, nil
+	}
+
+	ranges := *watchedAddr.LastSuccessfulIndexingBlkRange
+	blockRange, exists := ranges[chainID]
+	if !exists {
+		return 0, 0, nil
+	}
+
+	return blockRange.MinBlock, blockRange.MaxBlock, nil
+}
+
+// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
+func (s *pgStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
+	watchedAddr := schema.WatchedAddresses{
+		Chain:    chain,
+		Address:  address,
+		Watching: true,
+	}
+
+	// Use ON CONFLICT DO NOTHING to handle concurrent inserts
+	err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&watchedAddr).Error
+
+	if err != nil {
+		return fmt.Errorf("failed to ensure watched address exists: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateIndexingBlockRangeForAddress updates the indexing block range for an address and chain
+// Assumes the watched address record already exists
+func (s *pgStore) UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error {
+	// Use a transaction with row-level locking
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock the record for update
+		var watchedAddr schema.WatchedAddresses
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("address = ?", address).
+			First(&watchedAddr).Error
+		if err != nil {
+			return fmt.Errorf("failed to lock watched address for update: %w", err)
+		}
+
+		// Initialize the block ranges map if nil
+		if watchedAddr.LastSuccessfulIndexingBlkRange == nil {
+			ranges := schema.IndexingBlockRanges{}
+			watchedAddr.LastSuccessfulIndexingBlkRange = &ranges
+		}
+
+		// Update the block range for the specific chain
+		ranges := *watchedAddr.LastSuccessfulIndexingBlkRange
+		ranges[chainID] = schema.BlockRange{
+			MinBlock: minBlock,
+			MaxBlock: maxBlock,
+		}
+		watchedAddr.LastSuccessfulIndexingBlkRange = &ranges
+
+		// Save the updated record
+		err = tx.Model(&schema.WatchedAddresses{}).
+			Where("address = ?", address).
+			Update("last_successful_indexing_blk_range", watchedAddr.LastSuccessfulIndexingBlkRange).Error
+		if err != nil {
+			return fmt.Errorf("failed to update indexing block range: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // GetMediaAssetByID retrieves a media asset by ID

@@ -65,7 +65,6 @@ CREATE TABLE tokens (
   token_number TEXT NOT NULL,
   current_owner TEXT,
   burned BOOLEAN NOT NULL DEFAULT FALSE,
-  last_activity_time TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (chain, contract_address, token_number)
 );

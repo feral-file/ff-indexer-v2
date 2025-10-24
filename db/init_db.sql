@@ -26,7 +26,6 @@ CREATE TABLE tokens (
     token_number TEXT NOT NULL,
     current_owner TEXT,
     burned BOOLEAN NOT NULL DEFAULT FALSE,
-    last_activity_time TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (chain, contract_address, token_number)
@@ -54,7 +53,7 @@ CREATE TABLE token_metadata (
     image_url TEXT,
     animation_url TEXT,
     name TEXT,
-    artists TEXT[],
+    artists JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -128,9 +127,8 @@ CREATE TABLE watched_addresses (
     chain          TEXT        NOT NULL,
     address        TEXT        NOT NULL,
     watching       BOOLEAN     NOT NULL DEFAULT TRUE,
-    added_by       TEXT        NOT NULL,  -- system/user/tenant/source of watch request
-    reason         TEXT,                  -- e.g. "owner_index_request" | "manual"
     last_queried_at TIMESTAMPTZ,          -- when API last queried this address
+    last_successful_indexing_blk_range JSONB, -- {"eip155:1": {"min_block": 123, "max_block": 456}}
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (chain, address)
@@ -152,7 +150,6 @@ CREATE TABLE key_value_store (
 CREATE INDEX idx_tokens_chain_contract_number ON tokens (chain, contract_address, token_number);
 CREATE INDEX idx_tokens_current_owner ON tokens (current_owner) WHERE current_owner IS NOT NULL;
 CREATE INDEX idx_tokens_burned ON tokens (burned) WHERE burned;
-CREATE INDEX idx_tokens_last_activity_time ON tokens (last_activity_time);
 CREATE INDEX idx_tokens_created_at ON tokens (created_at);
 
 -- Balances table indexes
@@ -163,7 +160,7 @@ CREATE INDEX idx_balances_updated_at ON balances (updated_at);
 -- Token Metadata table indexes
 CREATE INDEX idx_token_metadata_enrichment_level ON token_metadata (enrichment_level);
 CREATE INDEX idx_token_metadata_last_refreshed_at ON token_metadata (last_refreshed_at);
-CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WHERE CARDINALITY(artists) > 0;
+CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WHERE artists IS NOT NULL AND jsonb_array_length(artists) > 0;
 
 -- Enrichment Sources table indexes
 CREATE INDEX idx_enrichment_sources_token_vendor ON enrichment_sources (token_id, vendor);
@@ -272,38 +269,6 @@ CREATE TRIGGER update_watched_addresses_updated_at
 CREATE TRIGGER update_key_value_store_updated_at 
     BEFORE UPDATE ON key_value_store 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- ============================================================================
--- CONSTRAINTS AND VALIDATIONS
--- ============================================================================
-
--- ENUM types provide automatic validation, no additional CHECK constraints needed
-
--- Function to ensure tokens are only updated with newer or equal last_activity_time
-CREATE OR REPLACE FUNCTION check_last_activity_time()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- If last_activity_time is being updated to an older time, reject the update
-    IF NEW.last_activity_time < OLD.last_activity_time THEN
-        RAISE EXCEPTION 'Cannot update token with older last_activity_time. Current: %, Attempted: %',
-            OLD.last_activity_time, NEW.last_activity_time
-            USING ERRCODE = '23514', -- check_violation
-                  HINT = 'Token updates must have last_activity_time >= current value';
-    END IF;
-    
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Trigger to enforce last_activity_time progression on tokens table
-CREATE TRIGGER enforce_last_activity_time_progression
-    BEFORE UPDATE ON tokens
-    FOR EACH ROW
-    WHEN (OLD.last_activity_time IS DISTINCT FROM NEW.last_activity_time)
-    EXECUTE FUNCTION check_last_activity_time();
-
-COMMENT ON FUNCTION check_last_activity_time() IS 
-    'Ensures tokens can only be updated with newer or equal last_activity_time values to maintain temporal consistency';
 
 -- ============================================================================
 -- INITIAL DATA

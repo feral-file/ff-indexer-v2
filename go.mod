@@ -4,11 +4,13 @@ go 1.24.0
 
 require (
 	github.com/bitmark-inc/autonomy-logger v0.0.10
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/ethereum/go-ethereum v1.16.5
 	github.com/getsentry/sentry-go v0.36.0
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang/mock v1.6.0
+	github.com/gowebpki/jcs v1.0.1
 	github.com/nats-io/nats.go v1.47.0
 	github.com/philippseith/signalr v0.8.0
 	github.com/spf13/viper v1.21.0
@@ -29,7 +31,6 @@ require (
 	github.com/bits-and-blooms/bitset v1.20.0 // indirect
 	github.com/bytedance/sonic v1.14.0 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
-	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/coder/websocket v1.8.13 // indirect
@@ -59,7 +60,6 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
-	github.com/gowebpki/jcs v1.0.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect

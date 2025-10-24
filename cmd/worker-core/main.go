@@ -19,7 +19,6 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
@@ -79,12 +78,12 @@ func main() {
 		logger.Fatal("Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
 	defer adapterEthClient.Close()
-	ethereumClient := ethereum.NewClient(domain.Chain(cfg.Ethereum.ChainID), adapterEthClient, clockAdapter)
+	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter)
 
 	logger.Info("Connected to Ethereum RPC", zap.String("rpc_url", cfg.Ethereum.RPCURL))
 
 	// Initialize Tezos client
-	tzktClient := tezos.NewTzKTClient(domain.Chain(cfg.Tezos.ChainID), cfg.Tezos.APIURL, httpClient, clockAdapter)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter)
 
 	// Initialize vendors
 	artblocksClient := artblocks.NewClient(httpClient)
@@ -112,11 +111,22 @@ func main() {
 	temporalWorker := worker.New(
 		temporalClient,
 		cfg.Temporal.TaskQueue,
-		worker.Options{})
+		worker.Options{
+			MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
+			WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
+		})
 	logger.Info("Created Temporal worker", zap.String("taskQueue", cfg.Temporal.TaskQueue))
 
 	// Create worker core instance
-	workerCore := workflows.NewWorkerCore(executor)
+	workerCore := workflows.NewWorkerCore(executor,
+		workflows.WorkerCoreConfig{
+			EthereumTokenSweepStartBlock:     cfg.EthereumTokenSweepStartBlock,
+			EthereumTokenSweepBlockChunkSize: cfg.EthereumTokenSweepBlockChunkSize,
+			TezosTokenSweepStartBlock:        cfg.TezosTokenSweepStartBlock,
+			TezosTokenSweepBlockChunkSize:    cfg.TezosTokenSweepBlockChunkSize,
+			EthereumChainID:                  cfg.Ethereum.ChainID,
+			TezosChainID:                     cfg.Tezos.ChainID,
+		})
 
 	// Register workflows
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMint)
@@ -124,21 +134,35 @@ func main() {
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenBurn)
 	temporalWorker.RegisterWorkflow(workerCore.IndexMetadataUpdate)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMetadata)
-	temporalWorker.RegisterWorkflow(workerCore.IndexToken)
+	temporalWorker.RegisterWorkflow(workerCore.IndexTokenFromEvent)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenProvenances)
+	temporalWorker.RegisterWorkflow(workerCore.IndexTokens)
+	temporalWorker.RegisterWorkflow(workerCore.IndexToken)
+	temporalWorker.RegisterWorkflow(workerCore.IndexTokenOwners)
+	temporalWorker.RegisterWorkflow(workerCore.IndexTokenOwner)
+	temporalWorker.RegisterWorkflow(workerCore.IndexTezosTokenOwner)
+	temporalWorker.RegisterWorkflow(workerCore.IndexEthereumTokenOwner)
 	logger.Info("Registered workflows")
 
 	// Register activities
 	// Activities will be called by workflows
-	temporalWorker.RegisterActivity(executor.CreateTokenMintActivity)
-	temporalWorker.RegisterActivity(executor.FetchTokenMetadataActivity)
-	temporalWorker.RegisterActivity(executor.UpsertTokenMetadataActivity)
-	temporalWorker.RegisterActivity(executor.UpdateTokenTransferActivity)
-	temporalWorker.RegisterActivity(executor.UpdateTokenBurnActivity)
-	temporalWorker.RegisterActivity(executor.CreateMetadataUpdateActivity)
-	temporalWorker.RegisterActivity(executor.IndexTokenWithMinimalProvenancesActivity)
-	temporalWorker.RegisterActivity(executor.IndexTokenWithFullProvenancesActivity)
-	temporalWorker.RegisterActivity(executor.CheckTokenExistsActivity)
+	temporalWorker.RegisterActivity(executor.CreateTokenMint)
+	temporalWorker.RegisterActivity(executor.FetchTokenMetadata)
+	temporalWorker.RegisterActivity(executor.UpsertTokenMetadata)
+	temporalWorker.RegisterActivity(executor.UpdateTokenTransfer)
+	temporalWorker.RegisterActivity(executor.UpdateTokenBurn)
+	temporalWorker.RegisterActivity(executor.CreateMetadataUpdate)
+	temporalWorker.RegisterActivity(executor.IndexTokenWithMinimalProvenancesByBlockchainEvent)
+	temporalWorker.RegisterActivity(executor.IndexTokenWithFullProvenancesByTokenCID)
+	temporalWorker.RegisterActivity(executor.CheckTokenExists)
+	temporalWorker.RegisterActivity(executor.GetEthereumTokenCIDsByOwnerWithinBlockRange)
+	temporalWorker.RegisterActivity(executor.GetLatestEthereumBlock)
+	temporalWorker.RegisterActivity(executor.GetLatestTezosBlock)
+	temporalWorker.RegisterActivity(executor.IndexTokenWithMinimalProvenancesByTokenCID)
+	temporalWorker.RegisterActivity(executor.GetTezosTokenCIDsByAccountWithinBlockRange)
+	temporalWorker.RegisterActivity(executor.GetIndexingBlockRangeForAddress)
+	temporalWorker.RegisterActivity(executor.UpdateIndexingBlockRangeForAddress)
+	temporalWorker.RegisterActivity(executor.EnsureWatchedAddressExists)
 	logger.Info("Registered activities")
 
 	// Start worker

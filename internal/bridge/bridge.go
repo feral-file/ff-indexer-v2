@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -92,32 +93,32 @@ func NewBridge(
 }
 
 // shouldProcessEvent determines if an event should be forwarded to workers
-// func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
-// 	// Check if token is already indexed
-// 	token, err := b.store.GegtTokenByTokenCID(ctx, event.TokenCID())
-// 	if err != nil {
-// 		return false, fmt.Errorf("failed to check token existence: %w", err)
-// 	}
+func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
+	// Check if token is already indexed
+	token, err := b.store.GetTokenByTokenCID(ctx, event.TokenCID().String())
+	if err != nil {
+		return false, fmt.Errorf("failed to check token existence: %w", err)
+	}
 
-// 	if token != nil {
-// 		return true, nil
-// 	}
+	if token != nil {
+		return true, nil
+	}
 
-// 	// Token not indexed, check if from/to addresses are watched
-// 	var addresses []string
-// 	if !types.StringNilOrEmpty(event.FromAddress) {
-// 		addresses = append(addresses, *event.FromAddress)
-// 	}
-// 	if !types.StringNilOrEmpty(event.ToAddress) {
-// 		addresses = append(addresses, *event.ToAddress)
-// 	}
+	// Token not indexed, check if from/to addresses are watched
+	var addresses []string
+	if !types.StringNilOrEmpty(event.FromAddress) {
+		addresses = append(addresses, *event.FromAddress)
+	}
+	if !types.StringNilOrEmpty(event.ToAddress) {
+		addresses = append(addresses, *event.ToAddress)
+	}
 
-// 	if len(addresses) == 0 {
-// 		return false, nil
-// 	}
+	if len(addresses) == 0 {
+		return false, nil
+	}
 
-// 	return b.store.IsAnyAddressWatched(ctx, event.Chain, addresses)
-// }
+	return b.store.IsAnyAddressWatched(ctx, event.Chain, addresses)
+}
 
 // Run starts the event bridge
 func (b *bridge) Run(ctx context.Context) error {
@@ -195,31 +196,31 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 		zap.Uint64("deliveryCount", metadata.NumDelivered),
 	)
 
-	// // Check if event should be processed
-	// shouldProcess, err := b.shouldProcessEvent(ctx, &event)
-	// if err != nil {
-	// 	logger.Error(err, zap.String("message", "Failed to check if event should be processed"))
-	// 	// NAK to retry
-	// 	if err := msg.Nak(); err != nil {
-	// 		logger.Error(err, zap.String("message", "Failed to NAK message"))
-	// 	}
-	// 	return
-	// }
+	// Check if event should be processed
+	shouldProcess, err := b.shouldProcessEvent(ctx, &event)
+	if err != nil {
+		logger.Error(err, zap.String("message", "Failed to check if event should be processed"))
+		// NAK to retry
+		if err := msg.Nak(); err != nil {
+			logger.Error(err, zap.String("message", "Failed to NAK message"))
+		}
+		return
+	}
 
-	// if !shouldProcess {
-	// 	logger.Info("Dropping event - token not indexed and addresses not watched",
-	// 		zap.String("chain", string(event.Chain)),
-	// 		zap.String("eventType", string(event.EventType)),
-	// 		zap.String("tokenCID", event.TokenCID()),
-	// 		zap.String("from", types.SafeString(event.FromAddress)),
-	// 		zap.String("to", types.SafeString(event.ToAddress)),
-	// 	)
-	// 	// ACK to remove from queue
-	// 	if err := msg.Ack(); err != nil {
-	// 		logger.Error(err, zap.String("message", "Failed to ACK message"))
-	// 	}
-	// 	return
-	// }
+	if !shouldProcess {
+		logger.Info("Dropping event - token not indexed and addresses not watched",
+			zap.String("chain", string(event.Chain)),
+			zap.String("eventType", string(event.EventType)),
+			zap.String("tokenCID", event.TokenCID().String()),
+			zap.String("from", types.SafeString(event.FromAddress)),
+			zap.String("to", types.SafeString(event.ToAddress)),
+		)
+		// ACK to remove from queue
+		if err := msg.Ack(); err != nil {
+			logger.Error(err, zap.String("message", "Failed to ACK message"))
+		}
+		return
+	}
 
 	// Forward to appropriate worker
 	if err := b.forwardToWorker(ctx, &event); err != nil {
@@ -240,7 +241,7 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 // forwardToWorker forwards the event to appropriate worker based on event type
 func (b *bridge) forwardToWorker(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Route to appropriate worker method based on event type
-	w := workflows.NewWorkerCore(nil)
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{})
 	var workflowFunc interface{}
 	switch event.EventType {
 	case domain.EventTypeMint:

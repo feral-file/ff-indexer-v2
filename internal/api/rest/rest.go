@@ -15,7 +15,7 @@ func SetupRoutes(router *gin.Engine, handler Handler) {
 		// Token endpoints
 		v1.GET("/tokens/:cid", handler.GetToken)
 		v1.GET("/tokens", handler.ListTokens)
-		v1.POST("/tokens", handler.TriggerIndexing)
+		v1.POST("/tokens/index", handler.TriggerTokenIndexing)
 
 		// Changes endpoint
 		v1.GET("/changes", handler.GetChanges)

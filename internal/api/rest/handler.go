@@ -5,14 +5,23 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/rest/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/workflows"
+)
+
+const (
+	MAX_TOKEN_CIDS_PER_REQUEST = 20
+	MAX_ADDRESSES_PER_REQUEST  = 5
 )
 
 // Handler defines the interface for REST API handlers
@@ -32,9 +41,9 @@ type Handler interface {
 	// GET /api/v1/changes?token_cid=<cid>&address=<address>&since=<timestamp>&limit=<limit>&offset=<offset>&order=<order>&expand=<expand>
 	GetChanges(c *gin.Context)
 
-	// TriggerIndexing triggers indexing for one or more tokens
-	// POST /api/v1/tokens
-	TriggerIndexing(c *gin.Context)
+	// TriggerTokenIndexing triggers indexing for one or more tokens
+	// POST /api/v1/tokens/index
+	TriggerTokenIndexing(c *gin.Context)
 
 	// HealthCheck returns the health status of the API
 	// GET /health
@@ -43,13 +52,17 @@ type Handler interface {
 
 // handler implements the Handler interface
 type handler struct {
-	store store.Store
+	store                 store.Store
+	orchestrator          temporal.TemporalOrchestrator
+	orchestratorTaskQueue string
 }
 
 // NewHandler creates a new REST API handler
-func NewHandler(store store.Store) Handler {
+func NewHandler(store store.Store, orchestrator temporal.TemporalOrchestrator, orchestratorTaskQueue string) Handler {
 	return &handler{
-		store: store,
+		store:                 store,
+		orchestrator:          orchestrator,
+		orchestratorTaskQueue: orchestratorTaskQueue,
 	}
 }
 
@@ -117,13 +130,12 @@ func (h *handler) GetToken(c *gin.Context) {
 	}
 
 	if expansions.ProvenanceEvents {
-		orderDesc := queryParams.ProvenanceEventOrder == "desc"
 		events, total, err := h.store.GetTokenProvenanceEvents(
 			c.Request.Context(),
 			result.Token.ID,
 			queryParams.ProvenanceEventLimit,
 			queryParams.ProvenanceEventOffset,
-			orderDesc,
+			queryParams.ProvenanceEventOrder.Desc(),
 		)
 		if err != nil {
 			respondInternalError(c, err, "get_provenance_events", zap.String("token_cid", tokenCID))
@@ -225,13 +237,12 @@ func (h *handler) ListTokens(c *gin.Context) {
 		}
 
 		if expansions.ProvenanceEvents {
-			orderDesc := queryParams.ProvenanceEventOrder == "desc"
 			events, eventTotal, err := h.store.GetTokenProvenanceEvents(
 				c.Request.Context(),
 				result.Token.ID,
 				queryParams.ProvenanceEventLimit,
 				queryParams.ProvenanceEventOffset,
-				orderDesc,
+				queryParams.ProvenanceEventOrder.Desc(),
 			)
 			if err != nil {
 				respondInternalError(c, err, "get_provenance_events", zap.Uint64("token_id", result.Token.ID))
@@ -291,7 +302,7 @@ func (h *handler) GetChanges(c *gin.Context) {
 		Since:     queryParams.Since,
 		Limit:     queryParams.Limit,
 		Offset:    queryParams.Offset,
-		OrderDesc: queryParams.Order == "desc",
+		OrderDesc: queryParams.Order.Desc(),
 	}
 
 	// Get changes
@@ -401,13 +412,90 @@ func (h *handler) expandSubject(ctx context.Context, change *schema.ChangesJourn
 	}
 }
 
-// TriggerIndexing triggers indexing for one or more tokens
-func (h *handler) TriggerIndexing(c *gin.Context) {
-	// TODO: Implement indexing trigger logic
-	c.JSON(202, gin.H{
-		"message": "TriggerIndexing endpoint - to be implemented",
-		"status":  "accepted",
-	})
+// TriggerTokenIndexing triggers indexing for one or more tokens
+func (h *handler) TriggerTokenIndexing(c *gin.Context) {
+	var req dto.TriggerIndexingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	// Validate: only one type of input should be provided
+	hasTokenCIDs := len(req.TokenCIDs) > 0
+	hasAddresses := len(req.Addresses) > 0
+
+	if !hasTokenCIDs && !hasAddresses {
+		respondValidationError(c, "Either token_cids or addresses must be provided")
+		return
+	}
+
+	if hasTokenCIDs && hasAddresses {
+		respondValidationError(c, "Cannot provide both token_cids and addresses")
+		return
+	}
+
+	// Validate limits
+	if hasTokenCIDs && len(req.TokenCIDs) > MAX_TOKEN_CIDS_PER_REQUEST {
+		respondValidationError(c, fmt.Sprintf("Maximum %d token CIDs allowed", MAX_TOKEN_CIDS_PER_REQUEST))
+		return
+	}
+
+	if hasAddresses && len(req.Addresses) > MAX_ADDRESSES_PER_REQUEST {
+		respondValidationError(c, fmt.Sprintf("Maximum %d addresses allowed", MAX_ADDRESSES_PER_REQUEST))
+		return
+	}
+
+	ctx := c.Request.Context()
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{})
+	var workflowID string
+	var runID string
+
+	if hasTokenCIDs {
+		// Build workflow ID from token CIDs hash
+		options := client.StartWorkflowOptions{
+			TaskQueue:                h.orchestratorTaskQueue,
+			WorkflowExecutionTimeout: 30 * time.Minute,
+		}
+
+		// Convert string CIDs to domain.TokenCID
+		tokenCIDs := make([]domain.TokenCID, len(req.TokenCIDs))
+		for i, cid := range req.TokenCIDs {
+			tokenCIDs[i] = domain.TokenCID(cid)
+		}
+
+		// Trigger IndexTokens workflow
+		wfRun, err := h.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, tokenCIDs)
+		if err != nil {
+			respondInternalError(c, err, "trigger_index_tokens")
+			return
+		}
+		workflowID = wfRun.GetID()
+		runID = wfRun.GetRunID()
+	}
+
+	if hasAddresses {
+		// Build workflow ID from addresses hash
+		options := client.StartWorkflowOptions{
+			TaskQueue:                h.orchestratorTaskQueue,
+			WorkflowExecutionTimeout: time.Hour,
+		}
+
+		// Trigger IndexTokenOwners workflow
+		wfRun, err := h.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwners, req.Addresses)
+		if err != nil {
+			respondInternalError(c, err, "trigger_index_token_owners")
+			return
+		}
+		workflowID = wfRun.GetID()
+		runID = wfRun.GetRunID()
+	}
+
+	response := dto.TriggerIndexingResponse{
+		WorkflowID: workflowID,
+		RunID:      runID,
+	}
+
+	c.JSON(http.StatusAccepted, response)
 }
 
 // HealthCheck returns the health status of the API

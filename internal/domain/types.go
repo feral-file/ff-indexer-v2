@@ -4,6 +4,16 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
+)
+
+// Blockchain represents the blockchain name
+type Blockchain string
+
+const (
+	BlockchainEthereum Blockchain = "ethereum"
+	BlockchainTezos    Blockchain = "tezos"
 )
 
 // Chain represents the blockchain network identifier using CAIP-2 format
@@ -55,7 +65,7 @@ type BlockchainEvent struct {
 	BlockNumber     uint64        `json:"block_number"`              // block number
 	BlockHash       *string       `json:"block_hash,omitempty"`      // block hash (optional, nil if not available)
 	Timestamp       time.Time     `json:"timestamp"`                 // block timestamp
-	LogIndex        uint64        `json:"log_index"`                 // log index in the block (for ordering)
+	TxIndex         uint64        `json:"tx_index"`                  // transaction index in the block (for ordering)
 }
 
 // CurrentOwner returns the current owner of the token
@@ -83,6 +93,11 @@ func (t TokenCID) Parse() (Chain, ChainStandard, string, string) {
 	return Chain(fmt.Sprintf("%s:%s", parts[0], parts[1])), ChainStandard(parts[2]), parts[3], parts[4]
 }
 
+// NewTokenCID creates a new TokenCID
+func NewTokenCID(chain Chain, standard ChainStandard, contractAddress string, tokenNumber string) TokenCID {
+	return TokenCID(fmt.Sprintf("%s:%s:%s:%s", chain, standard, contractAddress, tokenNumber))
+}
+
 // determineTransferEventType determines the event type based on from/to addresses
 func TransferEventType(from *string, to *string) EventType {
 	if from == nil || *from == "" || *from == ETHEREUM_ZERO_ADDRESS {
@@ -92,4 +107,28 @@ func TransferEventType(from *string, to *string) EventType {
 		return EventTypeBurn
 	}
 	return EventTypeTransfer
+}
+
+// AddressToBlockchain converts an address to the blockchain it belongs to
+func AddressToBlockchain(address string) Blockchain {
+	if strings.HasPrefix(address, "0x") {
+		return BlockchainEthereum
+	}
+	return BlockchainTezos
+}
+
+// NormalizeAddresses normalizes a list of addresses to the format used by the blockchain
+func NormalizeAddresses(addresses []string) []string {
+	for i, address := range addresses {
+		addresses[i] = NormalizeAddress(address)
+	}
+	return addresses
+}
+
+// NormalizeAddress normalizes an address to the format used by the blockchain
+func NormalizeAddress(address string) string {
+	if strings.HasPrefix(address, "0x") {
+		return common.HexToAddress(address).String()
+	}
+	return address
 }

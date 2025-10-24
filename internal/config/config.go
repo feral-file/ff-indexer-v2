@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 // BaseConfig holds base configuration
@@ -38,25 +40,27 @@ type NATSConfig struct {
 
 // EthereumConfig holds Ethereum-specific configuration
 type EthereumConfig struct {
-	WebSocketURL string `mapstructure:"websocket_url"`
-	RPCURL       string `mapstructure:"rpc_url"`
-	ChainID      string `mapstructure:"chain_id"`
-	StartBlock   uint64 `mapstructure:"start_block"`
+	WebSocketURL string       `mapstructure:"websocket_url"`
+	RPCURL       string       `mapstructure:"rpc_url"`
+	ChainID      domain.Chain `mapstructure:"chain_id"`
+	StartBlock   uint64       `mapstructure:"start_block"`
 }
 
 // TezosConfig holds Tezos-specific configuration
 type TezosConfig struct {
-	APIURL       string `mapstructure:"api_url"`
-	WebSocketURL string `mapstructure:"websocket_url"`
-	ChainID      string `mapstructure:"chain_id"`
-	StartLevel   uint64 `mapstructure:"start_level"`
+	APIURL       string       `mapstructure:"api_url"`
+	WebSocketURL string       `mapstructure:"websocket_url"`
+	ChainID      domain.Chain `mapstructure:"chain_id"`
+	StartLevel   uint64       `mapstructure:"start_level"`
 }
 
 // TemporalConfig holds Temporal configuration
 type TemporalConfig struct {
-	HostPort  string `mapstructure:"host_port"`
-	Namespace string `mapstructure:"namespace"`
-	TaskQueue string `mapstructure:"task_queue"`
+	HostPort                           string  `mapstructure:"host_port"`
+	Namespace                          string  `mapstructure:"namespace"`
+	TaskQueue                          string  `mapstructure:"task_queue"`
+	MaxConcurrentActivityExecutionSize int     `mapstructure:"max_concurrent_activity_execution_size"`
+	WorkerActivitiesPerSecond          float64 `mapstructure:"worker_activities_per_second"`
 }
 
 // ServerConfig holds HTTP server configuration
@@ -94,11 +98,15 @@ type EventBridgeConfig struct {
 
 // WorkerCoreConfig holds configuration for worker-core
 type WorkerCoreConfig struct {
-	BaseConfig `mapstructure:",squash"`
-	Database   DatabaseConfig `mapstructure:"database"`
-	Temporal   TemporalConfig `mapstructure:"temporal"`
-	Ethereum   EthereumConfig `mapstructure:"ethereum"`
-	Tezos      TezosConfig    `mapstructure:"tezos"`
+	BaseConfig                       `mapstructure:",squash"`
+	Database                         DatabaseConfig `mapstructure:"database"`
+	Temporal                         TemporalConfig `mapstructure:"temporal"`
+	Ethereum                         EthereumConfig `mapstructure:"ethereum"`
+	Tezos                            TezosConfig    `mapstructure:"tezos"`
+	EthereumTokenSweepStartBlock     uint64         `mapstructure:"ethereum_token_sweep_start_block"`
+	EthereumTokenSweepBlockChunkSize uint64         `mapstructure:"ethereum_token_sweep_block_chunk_size"`
+	TezosTokenSweepStartBlock        uint64         `mapstructure:"tezos_token_sweep_start_block"`
+	TezosTokenSweepBlockChunkSize    uint64         `mapstructure:"tezos_token_sweep_block_chunk_size"`
 }
 
 // APIConfig holds configuration for API server
@@ -173,6 +181,8 @@ func LoadEventBridgeConfig(configPath string) (*EventBridgeConfig, error) {
 	v.SetDefault("temporal.host_port", "localhost:7233")
 	v.SetDefault("temporal.namespace", "default")
 	v.SetDefault("temporal.task_queue", "token-indexing")
+	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
+	v.SetDefault("temporal.worker_activities_per_second", 50)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)
@@ -196,6 +206,8 @@ func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
 	v.SetDefault("temporal.host_port", "localhost:7233")
 	v.SetDefault("temporal.namespace", "default")
 	v.SetDefault("temporal.task_queue", "token-indexing")
+	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
+	v.SetDefault("temporal.worker_activities_per_second", 50)
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 
 	if err := v.ReadInConfig(); err != nil {
@@ -226,6 +238,8 @@ func LoadAPIConfig(configPath string) (*APIConfig, error) {
 	v.SetDefault("temporal.host_port", "localhost:7233")
 	v.SetDefault("temporal.namespace", "default")
 	v.SetDefault("temporal.task_queue", "token-indexing")
+	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
+	v.SetDefault("temporal.worker_activities_per_second", 50)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)

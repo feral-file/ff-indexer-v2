@@ -37,11 +37,21 @@ type EthereumClient interface {
 	// ERC1155URI fetches the uri from an ERC1155 contract
 	ERC1155URI(ctx context.Context, contractAddress, tokenNumber string) (string, error)
 
+	// ERC721OwnerOf fetches the current owner of an ERC721 token
+	ERC721OwnerOf(ctx context.Context, contractAddress, tokenNumber string) (string, error)
+
 	// ERC1155BalanceOf fetches the balance of a specific token ID for an owner from an ERC1155 contract
 	ERC1155BalanceOf(ctx context.Context, contractAddress, ownerAddress, tokenNumber string) (string, error)
 
 	// GetTokenEvents fetches all historical events for a specific token
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) ([]domain.BlockchainEvent, error)
+
+	// ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events
+	ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error)
+
+	// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs for an owner within a block range
+	// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
+	GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenCID, error)
 
 	// Close closes the connection
 	Close()
@@ -105,6 +115,41 @@ func (c *ethereumClient) ERC721TokenURI(ctx context.Context, contractAddress str
 	}
 
 	return uri, nil
+}
+
+// ERC721OwnerOf fetches the current owner of an ERC721 token
+func (c *ethereumClient) ERC721OwnerOf(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+	// ERC721 ownerOf function signature: ownerOf(uint256) returns (address)
+	ownerOfABI, err := abi.JSON(strings.NewReader(`[{"constant":true,"inputs":[{"name":"tokenId","type":"uint256"}],"name":"ownerOf","outputs":[{"name":"","type":"address"}],"payable":false,"stateMutability":"view","type":"function"}]`))
+	if err != nil {
+		return "", fmt.Errorf("failed to parse ABI: %w", err)
+	}
+
+	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
+	if !ok {
+		return "", fmt.Errorf("invalid token number: %s", tokenNumber)
+	}
+
+	data, err := ownerOfABI.Pack("ownerOf", tokenID)
+	if err != nil {
+		return "", fmt.Errorf("failed to pack data: %w", err)
+	}
+
+	contractAddr := common.HexToAddress(contractAddress)
+	result, err := c.client.CallContract(ctx, ethereum.CallMsg{
+		To:   &contractAddr,
+		Data: data,
+	}, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to call contract: %w", err)
+	}
+
+	var owner common.Address
+	if err := ownerOfABI.UnpackIntoInterface(&owner, "ownerOf", result); err != nil {
+		return "", fmt.Errorf("failed to unpack result: %w", err)
+	}
+
+	return owner.Hex(), nil
 }
 
 // ERC1155URI fetches the uri from an ERC1155 contract
@@ -254,6 +299,218 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 	return events, nil
 }
 
+// ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events from oldest to newest
+func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error) {
+	// Parse token number to big.Int
+	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid token number: %s", tokenNumber)
+	}
+
+	contractAddr := common.HexToAddress(contractAddress)
+
+	// For ERC1155, token ID is in data, not topics, so we fetch all TransferSingle events for this contract
+	// and filter by token ID later
+	query := ethereum.FilterQuery{
+		FromBlock: big.NewInt(0),
+		ToBlock:   nil,
+		Addresses: []common.Address{contractAddr},
+		Topics: [][]common.Hash{
+			{
+				transferSingleEventSignature,
+				//transferBatchEventSignature, // FIXME: Handle batch transfers properly
+			},
+		},
+	}
+
+	// Fetch logs
+	// FIXME handle pagination
+	logs, err := c.client.FilterLogs(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to filter logs: %w", err)
+	}
+
+	// Build balances map by replaying transfer logs
+	balances := make(map[string]*big.Int)
+
+	for _, vLog := range logs {
+		// ERC1155 TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
+		if len(vLog.Topics) != 4 {
+			logger.Warn("Invalid ERC1155 TransferSingle event: unexpected topic count",
+				zap.Int("topics", len(vLog.Topics)),
+				zap.String("txHash", vLog.TxHash.Hex()))
+			continue
+		}
+		if len(vLog.Data) < 64 {
+			logger.Warn("Invalid ERC1155 TransferSingle event: insufficient data",
+				zap.String("txHash", vLog.TxHash.Hex()))
+			continue
+		}
+
+		// Parse data: first 32 bytes = token ID, next 32 bytes = value
+		logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
+		// Filter by token ID
+		if logTokenID.Cmp(tokenID) != 0 {
+			continue
+		}
+
+		fromAddr := common.BytesToAddress(vLog.Topics[2].Bytes()).Hex()
+		toAddr := common.BytesToAddress(vLog.Topics[3].Bytes()).Hex()
+		quantity := new(big.Int).SetBytes(vLog.Data[32:64])
+
+		// Process transfer: subtract from 'from' address, add to 'to' address
+		if fromAddr != "" && fromAddr != domain.ETHEREUM_ZERO_ADDRESS {
+			if balances[fromAddr] == nil {
+				balances[fromAddr] = big.NewInt(0)
+			}
+			balances[fromAddr] = new(big.Int).Sub(balances[fromAddr], quantity)
+		}
+
+		if toAddr != "" && toAddr != domain.ETHEREUM_ZERO_ADDRESS {
+			if balances[toAddr] == nil {
+				balances[toAddr] = big.NewInt(0)
+			}
+			balances[toAddr] = new(big.Int).Add(balances[toAddr], quantity)
+		}
+	}
+
+	// Convert to string map and filter out zero/negative balances
+	result := make(map[string]string)
+	for addr, balance := range balances {
+		if balance.Cmp(big.NewInt(0)) > 0 {
+			result[addr] = balance.String()
+		}
+	}
+
+	return result, nil
+}
+
+// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs for an owner within a block range
+// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
+func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
+	owner := common.HexToAddress(ownerAddress)
+	ownerHash := common.BytesToHash(owner.Bytes())
+
+	// Define all query configurations
+	// We need to query both ERC721 and ERC1155 transfers where the address is either sender or receiver
+	queries := []ethereum.FilterQuery{
+		// ERC721 Transfer where address is `from` (topic[1])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{transferEventSignature}, // Transfer event
+				{ownerHash},              // from address
+			},
+		},
+		// ERC721 Transfer where address is `to` (topic[2])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{transferEventSignature}, // Transfer event
+				nil,                      // any from address
+				{ownerHash},              // to address
+			},
+		},
+		// ERC1155 TransferSingle where address is `from` (topic[2])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{transferSingleEventSignature}, // TransferSingle event
+				nil,                            // any operator
+				{ownerHash},                    // from address
+			},
+		},
+		// ERC1155 TransferSingle where address is `to` (topic[3])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{transferSingleEventSignature}, // TransferSingle event
+				nil,                            // any operator
+				nil,                            // any from address
+				{ownerHash},                    // to address
+			},
+		},
+	}
+
+	type queryResult struct {
+		logs []types.Log
+		err  error
+	}
+
+	// Execute all queries in parallel
+	resultsCh := make(chan queryResult, len(queries))
+	for _, q := range queries {
+		go func(query ethereum.FilterQuery) {
+			logs, err := c.client.FilterLogs(ctx, query)
+			resultsCh <- queryResult{logs: logs, err: err}
+		}(q)
+	}
+
+	// Collect all results and merge logs
+	var allLogs []types.Log
+	for range queries {
+		result := <-resultsCh
+		if result.err != nil {
+			return nil, fmt.Errorf("failed to query logs: %w", result.err)
+		}
+		allLogs = append(allLogs, result.logs...)
+	}
+
+	// Use a map to collect unique token CIDs
+	tokenCIDMap := make(map[domain.TokenCID]bool)
+
+	// Process all logs - distinguish between ERC721 and ERC1155 by event signature
+	for _, vLog := range allLogs {
+		if len(vLog.Topics) < 1 {
+			continue
+		}
+
+		switch vLog.Topics[0] {
+		case transferEventSignature:
+			// ERC721 Transfer (4 topics: signature, from, to, tokenId)
+			// Skip ERC20 (3 topics)
+			if len(vLog.Topics) != 4 {
+				continue
+			}
+
+			tokenID := new(big.Int).SetBytes(vLog.Topics[3].Bytes())
+			tokenCID := domain.TokenCID(fmt.Sprintf("%s:%s:%s:%s",
+				c.chainID,
+				domain.StandardERC721,
+				vLog.Address.Hex(),
+				tokenID.String()))
+			tokenCIDMap[tokenCID] = true
+
+		case transferSingleEventSignature:
+			// ERC1155 TransferSingle (4 topics: signature, operator, from, to; data contains tokenId and value)
+			if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+				continue
+			}
+
+			// Parse token ID from data (first 32 bytes)
+			tokenID := new(big.Int).SetBytes(vLog.Data[0:32])
+			tokenCID := domain.TokenCID(fmt.Sprintf("%s:%s:%s:%s",
+				c.chainID,
+				domain.StandardERC1155,
+				vLog.Address.Hex(),
+				tokenID.String()))
+			tokenCIDMap[tokenCID] = true
+		}
+	}
+
+	// Convert map to slice
+	tokenCIDs := make([]domain.TokenCID, 0, len(tokenCIDMap))
+	for tokenCID := range tokenCIDMap {
+		tokenCIDs = append(tokenCIDs, tokenCID)
+	}
+
+	return tokenCIDs, nil
+}
+
 // parseLog parses an Ethereum log into a standardized blockchain event
 func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	// Get block to extract timestamp
@@ -270,7 +527,7 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 		BlockNumber:     vLog.BlockNumber,
 		BlockHash:       &blockHash,
 		Timestamp:       c.clock.Unix(int64(block.Time()), 0), //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
-		LogIndex:        uint64(vLog.Index),
+		TxIndex:         uint64(vLog.TxIndex),
 	}
 
 	// Parse based on event signature

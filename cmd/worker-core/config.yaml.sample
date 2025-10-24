@@ -23,6 +23,8 @@ temporal:
   host_port: localhost:7233
   namespace: default
   task_queue: token-indexing
+  max_concurrent_activity_execution_size: 50
+  worker_activities_per_second: 50
 
 ethereum:
   chain_id: eip155:1
@@ -31,3 +33,8 @@ ethereum:
 tezos:
   chain_id: tezos:mainnet
   api_url: https://api.tzkt.io
+
+ethereum_token_sweep_start_block: 10000000
+ethereum_token_sweep_block_chunk_size: 50000
+tezos_token_sweep_start_block: 5000000
+tezos_token_sweep_block_chunk_size: 10000

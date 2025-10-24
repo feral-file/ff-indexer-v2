@@ -82,14 +82,14 @@ func (mr *MockAPIHandlerMockRecorder) ListTokens(c interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokens", reflect.TypeOf((*MockAPIHandler)(nil).ListTokens), c)
 }
 
-// TriggerIndexing mocks base method.
-func (m *MockAPIHandler) TriggerIndexing(c *gin.Context) {
+// TriggerTokenIndexing mocks base method.
+func (m *MockAPIHandler) TriggerTokenIndexing(c *gin.Context) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "TriggerIndexing", c)
+	m.ctrl.Call(m, "TriggerTokenIndexing", c)
 }
 
-// TriggerIndexing indicates an expected call of TriggerIndexing.
-func (mr *MockAPIHandlerMockRecorder) TriggerIndexing(c interface{}) *gomock.Call {
+// TriggerTokenIndexing indicates an expected call of TriggerTokenIndexing.
+func (mr *MockAPIHandlerMockRecorder) TriggerTokenIndexing(c interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerIndexing", reflect.TypeOf((*MockAPIHandler)(nil).TriggerIndexing), c)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerTokenIndexing", reflect.TypeOf((*MockAPIHandler)(nil).TriggerTokenIndexing), c)
 }

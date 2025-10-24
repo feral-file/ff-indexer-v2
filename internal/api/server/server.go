@@ -12,31 +12,35 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/rest"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
 // Config holds the server configuration
 type Config struct {
-	Debug        bool
-	Host         string
-	Port         int
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	IdleTimeout  time.Duration
+	Debug                 bool
+	Host                  string
+	Port                  int
+	ReadTimeout           time.Duration
+	WriteTimeout          time.Duration
+	IdleTimeout           time.Duration
+	OrchestratorTaskQueue string
 }
 
 // Server wraps the HTTP server
 type Server struct {
-	config     Config
-	store      store.Store
-	httpServer *http.Server
+	config       Config
+	store        store.Store
+	orchestrator temporal.TemporalOrchestrator
+	httpServer   *http.Server
 }
 
 // New creates a new API server
-func New(cfg Config, store store.Store) *Server {
+func New(cfg Config, store store.Store, orchestrator temporal.TemporalOrchestrator) *Server {
 	return &Server{
-		config: cfg,
-		store:  store,
+		config:       cfg,
+		store:        store,
+		orchestrator: orchestrator,
 	}
 }
 
@@ -58,7 +62,7 @@ func (s *Server) Start() error {
 	router.Use(middleware.SetupCORS())
 
 	// Create REST handler
-	restHandler := rest.NewHandler(s.store)
+	restHandler := rest.NewHandler(s.store, s.orchestrator, s.config.OrchestratorTaskQueue)
 
 	// Setup routes
 	rest.SetupRoutes(router, restHandler)

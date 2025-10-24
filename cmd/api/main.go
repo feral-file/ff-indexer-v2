@@ -11,6 +11,7 @@ import (
 
 	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/getsentry/sentry-go"
+	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -54,18 +55,30 @@ func main() {
 	// Initialize store
 	dataStore := store.NewPGStore(db)
 
+	// Connect to Temporal
+	temporalClient, err := client.Dial(client.Options{
+		HostPort:  cfg.Temporal.HostPort,
+		Namespace: cfg.Temporal.Namespace,
+	})
+	if err != nil {
+		logger.Fatal("Failed to connect to Temporal", zap.Error(err))
+	}
+	defer temporalClient.Close()
+	logger.Info("Connected to Temporal", zap.String("host_port", cfg.Temporal.HostPort))
+
 	// Create server config
 	serverConfig := server.Config{
-		Debug:        cfg.Debug,
-		Host:         cfg.Server.Host,
-		Port:         cfg.Server.Port,
-		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
-		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+		Debug:                 cfg.Debug,
+		Host:                  cfg.Server.Host,
+		Port:                  cfg.Server.Port,
+		ReadTimeout:           time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout:          time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:           time.Duration(cfg.Server.IdleTimeout) * time.Second,
+		OrchestratorTaskQueue: cfg.Temporal.TaskQueue,
 	}
 
 	// Create and start server
-	srv := server.New(serverConfig, dataStore)
+	srv := server.New(serverConfig, dataStore, temporalClient)
 
 	// Start server in a goroutine
 	go func() {

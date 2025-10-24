@@ -10,14 +10,13 @@ import (
 
 // CreateTokenInput represents the input for creating a token
 type CreateTokenInput struct {
-	TokenCID         string
-	Chain            domain.Chain
-	Standard         domain.ChainStandard
-	ContractAddress  string
-	TokenNumber      string
-	CurrentOwner     *string
-	Burned           bool
-	LastActivityTime time.Time
+	TokenCID        string
+	Chain           domain.Chain
+	Standard        domain.ChainStandard
+	ContractAddress string
+	TokenNumber     string
+	CurrentOwner    *string
+	Burned          bool
 }
 
 // CreateBalanceInput represents the input for creating a balance record
@@ -58,7 +57,7 @@ type CreateTokenMetadataInput struct {
 	ImageURL        *string
 	AnimationURL    *string
 	Name            *string
-	Artists         []string
+	Artists         schema.Artists
 }
 
 // UpdateBalanceInput represents the input for updating a balance record
@@ -83,7 +82,6 @@ type CreateTokenBurnInput struct {
 	SenderBalanceUpdate *UpdateBalanceInput // Update sender balance (decrease by quantity)
 	ProvenanceEvent     CreateProvenanceEventInput
 	ChangedAt           time.Time // For change journal
-	LastActivityTime    time.Time // For token update
 }
 
 // CreateMetadataUpdateInput represents the complete input for creating a metadata update record
@@ -97,7 +95,6 @@ type CreateMetadataUpdateInput struct {
 type UpdateTokenTransferInput struct {
 	TokenCID              string
 	CurrentOwner          *string
-	LastActivityTime      time.Time
 	SenderBalanceUpdate   *UpdateBalanceInput // nil if sender is zero address (mint)
 	ReceiverBalanceUpdate *UpdateBalanceInput // nil if receiver is zero address (burn)
 	ProvenanceEvent       CreateProvenanceEventInput
@@ -185,6 +182,8 @@ type Store interface {
 	GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset int) ([]schema.Balance, uint64, error)
 	// GetBalanceByID retrieves a balance by ID
 	GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error)
+	// GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
+	GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) ([]domain.TokenCID, error)
 
 	// =============================================================================
 	// Provenance & Event Tracking
@@ -212,4 +211,11 @@ type Store interface {
 	GetBlockCursor(ctx context.Context, chain string) (uint64, error)
 	// SetBlockCursor stores the last processed block number for a chain
 	SetBlockCursor(ctx context.Context, chain string, blockNumber uint64) error
+	// GetIndexingBlockRangeForAddress retrieves the indexing block range for an address and chain
+	// Returns min_block=0, max_block=0 if no range exists for the chain
+	GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (minBlock uint64, maxBlock uint64, err error)
+	// UpdateIndexingBlockRangeForAddress updates the indexing block range for an address and chain
+	UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error
+	// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
+	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error
 }
