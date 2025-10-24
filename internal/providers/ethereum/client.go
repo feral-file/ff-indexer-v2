@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -70,6 +71,132 @@ func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clo
 // SubscribeFilterLogs subscribes to filter logs
 func (c *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
 	return c.client.SubscribeFilterLogs(ctx, query, ch)
+}
+
+// filterLogsWithPagination is an internal method that handles pagination for FilterLogs
+// to work around Infura's 10k log limitation
+func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+	// Create a context with timeout (1 minute)
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+
+	// If blockhash is specified, use it directly (no pagination needed)
+	if query.BlockHash != nil {
+		return c.client.FilterLogs(timeoutCtx, query)
+	}
+
+	// 1. Detect initial start/end blocks (genesis and latest)
+	var fromBlock, toBlock *big.Int
+	if query.FromBlock != nil {
+		fromBlock = query.FromBlock
+	} else {
+		fromBlock = big.NewInt(0) // Genesis
+	}
+
+	if query.ToBlock != nil {
+		toBlock = query.ToBlock
+	} else {
+		// Get latest block
+		latestBlock, err := c.client.HeaderByNumber(timeoutCtx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get latest block: %w", err)
+		}
+		toBlock = latestBlock.Number
+	}
+
+	// 2. Start from genesis, step 1M blocks, process query
+	var allLogs []types.Log
+	currentFrom := new(big.Int).Set(fromBlock)
+	stepSize := uint64(1000000) // 1M blocks
+
+	for currentFrom.Cmp(toBlock) < 0 {
+		// Calculate current range
+		currentTo := new(big.Int).Add(currentFrom, big.NewInt(int64(stepSize)))
+		if currentTo.Cmp(toBlock) > 0 {
+			currentTo.Set(toBlock)
+		}
+
+		// Create query for current range
+		rangeQuery := query
+		rangeQuery.FromBlock = new(big.Int).Set(currentFrom)
+		rangeQuery.ToBlock = currentTo
+
+		// Try to get logs for current range with retry logic
+		logs, err := c.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get logs for range %d-%d: %w", currentFrom.Uint64(), currentTo.Uint64(), err)
+		}
+
+		allLogs = append(allLogs, logs...)
+
+		// Move to next range - use the actual end of the processed range
+		currentFrom.SetUint64(currentTo.Uint64() + 1)
+	}
+
+	return allLogs, nil
+}
+
+// getLogsWithRetry attempts to get logs with retry logic and step size reduction
+// It processes the entire range from query.FromBlock to query.ToBlock in chunks
+func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64) ([]types.Log, error) {
+	currentStepSize := stepSize
+
+	var allLogs []types.Log
+	currentFrom := new(big.Int).Set(query.FromBlock)
+
+	// Process the entire range in chunks
+	for currentFrom.Cmp(query.ToBlock) <= 0 {
+		// Calculate current range based on current step size
+		currentTo := new(big.Int).Add(currentFrom, new(big.Int).SetUint64(currentStepSize-1))
+		if currentTo.Cmp(query.ToBlock) > 0 {
+			currentTo.Set(query.ToBlock)
+		}
+
+		// Create query for current chunk
+		queryCopy := query
+		queryCopy.FromBlock = new(big.Int).Set(currentFrom)
+		queryCopy.ToBlock = new(big.Int).Set(currentTo)
+
+		logs, err := c.client.FilterLogs(ctx, queryCopy)
+		if err == nil {
+			// Success - accumulate logs and move to next chunk
+			allLogs = append(allLogs, logs...)
+
+			// Move to next chunk using the full step size
+			currentFrom.SetUint64(currentTo.Uint64() + 1)
+			continue
+		}
+
+		// 3. If other errors than rate limited, return error
+		if !isTooManyResultsError(err) {
+			return nil, err
+		}
+
+		// 4. If rate limited, divide the step by 2 and try again
+		currentStepSize = currentStepSize / 2
+
+		logger.Warn("Too many results, reducing step size",
+			zap.Uint64("oldStepSize", currentStepSize*2),
+			zap.Uint64("newStepSize", currentStepSize),
+			zap.Uint64("fromBlock", currentFrom.Uint64()),
+			zap.Uint64("toBlock", currentTo.Uint64()))
+	}
+
+	return allLogs, nil
+}
+
+// isTooManyResultsError checks if the error is related to too many results
+func isTooManyResultsError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+	// Check for common "too many results" error messages
+	return strings.Contains(errStr, "query returned more than 10000 results") ||
+		strings.Contains(errStr, "query timeout exceeded") ||
+		strings.Contains(errStr, "too many results") ||
+		strings.Contains(errStr, "exceeded maximum")
 }
 
 // BlockByNumber returns a block by number
@@ -275,9 +402,8 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 		return nil, fmt.Errorf("unsupported token standard: %s", standard)
 	}
 
-	// Fetch logs
-	// FIXME handle pagination
-	logs, err := c.client.FilterLogs(ctx, query)
+	// Fetch logs with pagination to handle Infura's 10k limitation
+	logs, err := c.filterLogsWithPagination(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to filter logs: %w", err)
 	}
@@ -323,9 +449,8 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 		},
 	}
 
-	// Fetch logs
-	// FIXME handle pagination
-	logs, err := c.client.FilterLogs(ctx, query)
+	// Fetch logs with pagination to handle Infura's 10k limitation
+	logs, err := c.filterLogsWithPagination(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to filter logs: %w", err)
 	}
@@ -445,7 +570,7 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 	resultsCh := make(chan queryResult, len(queries))
 	for _, q := range queries {
 		go func(query ethereum.FilterQuery) {
-			logs, err := c.client.FilterLogs(ctx, query)
+			logs, err := c.filterLogsWithPagination(ctx, query)
 			resultsCh <- queryResult{logs: logs, err: err}
 		}(q)
 	}
