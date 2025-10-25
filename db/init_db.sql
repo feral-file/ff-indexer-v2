@@ -53,7 +53,9 @@ CREATE TABLE token_metadata (
     image_url TEXT,
     animation_url TEXT,
     name TEXT,
+    description TEXT,
     artists JSONB,
+    publisher JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -62,7 +64,7 @@ CREATE TABLE token_metadata (
 CREATE TABLE enrichment_sources (
     id BIGSERIAL PRIMARY KEY,
     token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    vendor vendor_type NOT NULL,           -- 'opensea','artblocks','onchain','objkt'
+    vendor vendor_type NOT NULL,           -- 'fxhash','artblocks','onchain'
     source_url TEXT,
     etag TEXT,
     last_status INTEGER,
@@ -161,6 +163,7 @@ CREATE INDEX idx_balances_updated_at ON balances (updated_at);
 CREATE INDEX idx_token_metadata_enrichment_level ON token_metadata (enrichment_level);
 CREATE INDEX idx_token_metadata_last_refreshed_at ON token_metadata (last_refreshed_at);
 CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WHERE artists IS NOT NULL AND jsonb_array_length(artists) > 0;
+CREATE INDEX idx_token_metadata_publisher ON token_metadata USING GIN (publisher) WHERE publisher IS NOT NULL AND jsonb_typeof(publisher) = 'object';
 
 -- Enrichment Sources table indexes
 CREATE INDEX idx_enrichment_sources_token_vendor ON enrichment_sources (token_id, vendor);
@@ -186,6 +189,7 @@ CREATE INDEX idx_provenance_events_event_type ON provenance_events (event_type);
 CREATE INDEX idx_provenance_events_timestamp ON provenance_events (timestamp);
 CREATE INDEX idx_provenance_events_tx_hash ON provenance_events (tx_hash) WHERE tx_hash IS NOT NULL;
 CREATE INDEX idx_provenance_events_block_number ON provenance_events (block_number) WHERE block_number IS NOT NULL;
+CREATE INDEX idx_provenance_events_raw ON provenance_events USING GIN (raw);
 
 -- Watched Addresses table indexes
 CREATE INDEX idx_watched_addresses_watching ON watched_addresses (watching, chain, address);
@@ -279,7 +283,7 @@ INSERT INTO key_value_store (key, value) VALUES
     ('ethereum_mainnet_cursor', '0'),
     ('ethereum_sepolia_cursor', '0'),
     ('tezos_mainnet_cursor', '0'),
-    ('tezos_narwhal_cursor', '0'),
+    ('tezos_ghostnet_cursor', '0'),
     ('indexer_version', '2.0.0')
 ON CONFLICT (key) DO NOTHING;
 

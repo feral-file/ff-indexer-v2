@@ -107,6 +107,7 @@ type WorkerCoreConfig struct {
 	EthereumTokenSweepBlockChunkSize uint64         `mapstructure:"ethereum_token_sweep_block_chunk_size"`
 	TezosTokenSweepStartBlock        uint64         `mapstructure:"tezos_token_sweep_start_block"`
 	TezosTokenSweepBlockChunkSize    uint64         `mapstructure:"tezos_token_sweep_block_chunk_size"`
+	PublisherRegistryPath            string         `mapstructure:"publisher_registry_path"`
 }
 
 // APIConfig holds configuration for API server

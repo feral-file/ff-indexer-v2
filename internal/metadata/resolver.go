@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/gowebpki/jcs"
@@ -17,16 +19,19 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // NormalizedMetadata represents the normalized metadata
 type NormalizedMetadata struct {
-	Raw       map[string]interface{} `json:"raw"`
-	Image     string                 `json:"image"`
-	Animation string                 `json:"animation"`
-	Name      string                 `json:"name"`
-	Artists   schema.Artists         `json:"artists"`
+	Raw         map[string]interface{} `json:"raw"`
+	Image       string                 `json:"image"`
+	Animation   string                 `json:"animation"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Artists     schema.Artists         `json:"artists"`
+	Publisher   *schema.Publisher      `json:"publisher"`
 }
 
 // RawHash returns the hash of the raw metadata and the raw metadata itself
@@ -44,28 +49,68 @@ func (n *NormalizedMetadata) RawHash() ([]byte, []byte, error) {
 	return hash[:], metadataJSON, nil
 }
 
+// PublisherChainConfig represents chain-specific configuration for a publisher
+type PublisherChainConfig struct {
+	DeployerAddresses   []string `json:"deployer_addresses"`
+	CollectionAddresses []string `json:"collection_addresses"`
+}
+
+// PublisherInfo represents a publisher entry in the registry
+type PublisherInfo struct {
+	Name   string                          `json:"name"`
+	URL    string                          `json:"url"`
+	Chains map[string]PublisherChainConfig `json:"chains"` // key is chain ID like "eip155:1" or "tez:mainnet"
+}
+
+// PublisherRegistryData represents the structure of the registry JSON file
+type PublisherRegistryData struct {
+	Version    int               `json:"version"`
+	MinBlocks  map[string]uint64 `json:"min_blocks,omitempty"` // Optional: earliest block to search per chain (e.g., "eip155:1": 13492497)
+	Publishers []PublisherInfo   `json:"publishers"`
+}
+
+// PublisherRegistry is a registry of publishers with in-memory lookup
+type PublisherRegistry struct {
+	data *PublisherRegistryData
+	// Fast lookup maps: chain:contract -> publisher
+	collectionToPublisher map[string]*PublisherInfo
+	// chain:contract -> deployer lookup (for contracts deployed by known deployers)
+	deployerToPublisher map[string]*PublisherInfo
+}
+
 // Resolver defines the interface for resolving metadata from a tokenCID
 //
 //go:generate mockgen -source=resolver.go -destination=../mocks/metadata_resolver.go -package=mocks -mock_names=Resolver=MockMetadataResolver
 type Resolver interface {
+	// LoadDeployerCacheFromDB loads the deployer cache from the database
+	LoadDeployerCacheFromDB(ctx context.Context) error
+
+	// Resolve resolves the metadata for a given token CID
 	Resolve(ctx context.Context, tokenCID domain.TokenCID) (*NormalizedMetadata, error)
 }
 
 type resolver struct {
-	ethClient  ethereum.EthereumClient
-	tzClient   tezos.TzKTClient
-	httpClient adapter.HTTPClient
-	json       adapter.JSON
-	clock      adapter.Clock
+	ethClient         ethereum.EthereumClient
+	tzClient          tezos.TzKTClient
+	httpClient        adapter.HTTPClient
+	json              adapter.JSON
+	clock             adapter.Clock
+	store             store.Store
+	registry          *PublisherRegistry
+	deployerCache     map[string]string // key: "chain:contract", value: deployer address
+	deployerCacheLock sync.RWMutex
 }
 
-func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, httpClient adapter.HTTPClient, json adapter.JSON, clock adapter.Clock) Resolver {
+func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, httpClient adapter.HTTPClient, json adapter.JSON, clock adapter.Clock, store store.Store, registry *PublisherRegistry) Resolver {
 	return &resolver{
-		ethClient:  ethClient,
-		tzClient:   tzClient,
-		httpClient: httpClient,
-		json:       json,
-		clock:      clock,
+		ethClient:     ethClient,
+		tzClient:      tzClient,
+		httpClient:    httpClient,
+		json:          json,
+		clock:         clock,
+		store:         store,
+		registry:      registry,
+		deployerCache: make(map[string]string),
 	}
 }
 
@@ -90,7 +135,7 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 		}
 
 		// Normalize the metadata based on TZIP-21
-		return r.normalizeTZIP21Metadata(ctx, metadata)
+		return r.normalizeTZIP21Metadata(ctx, tokenCID, metadata)
 	default:
 		return nil, fmt.Errorf("unsupported standard: %s", standard)
 	}
@@ -107,15 +152,16 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 	}
 
 	// Normalize the metadata based on OpenSea Metadata Standard
-	return r.normalizeOpenSeaMetadataStandard(metadata), nil
+	return r.normalizeOpenSeaMetadataStandard(ctx, tokenCID, metadata), nil
 }
 
 // normalizeTZIP21Metadata normalizes the metadata follow the TZIP21 specs
 // https://tzip.tezosagora.org/proposal/tzip-21/
-func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, metadata map[string]interface{}) (*NormalizedMetadata, error) {
+func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) (*NormalizedMetadata, error) {
 	var displayUri string
 	var artifactUri string
 	var name string
+	var description string
 	var creators []string
 	if d, ok := metadata["displayUri"].(string); ok {
 		displayUri = d
@@ -125,6 +171,9 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, metadata map[str
 	}
 	if n, ok := metadata["name"].(string); ok {
 		name = n
+	}
+	if d, ok := metadata["description"].(string); ok {
+		description = d
 	}
 	if c, ok := metadata["creators"]; ok {
 		// Marshal to json
@@ -146,12 +195,17 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, metadata map[str
 		artists = append(artists, schema.Artist{Name: creator})
 	}
 
+	// Resolve the publisher from the token CID
+	publisher := r.resolvePublisher(ctx, tokenCID)
+
 	normalizedMetadata := &NormalizedMetadata{
-		Raw:       metadata,
-		Image:     uriToGateway(displayUri),
-		Animation: uriToGateway(artifactUri),
-		Name:      name,
-		Artists:   artists,
+		Raw:         metadata,
+		Image:       uriToGateway(displayUri),
+		Animation:   uriToGateway(artifactUri),
+		Name:        name,
+		Description: description,
+		Artists:     artists,
+		Publisher:   publisher,
 	}
 
 	return normalizedMetadata, nil
@@ -159,11 +213,12 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, metadata map[str
 
 // normalizeOpenSeaMetadataStandard normalizes the metadata follow the OpenSea metadata standard
 // https://docs.opensea.io/docs/metadata-standards
-func (r *resolver) normalizeOpenSeaMetadataStandard(metadata map[string]interface{}) *NormalizedMetadata {
+func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) *NormalizedMetadata {
 	var image string
 	var animationURL string
 	var name string
 	var artists schema.Artists
+	var description string
 	if i, ok := metadata["image"].(string); ok {
 		image = i
 	}
@@ -172,6 +227,9 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(metadata map[string]interfac
 	}
 	if n, ok := metadata["name"].(string); ok {
 		name = n
+	}
+	if d, ok := metadata["description"].(string); ok {
+		description = d
 	}
 
 	// ArtBlocks uses generator_url for animation URL
@@ -184,12 +242,17 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(metadata map[string]interfac
 		artists = schema.Artists{{Name: a}}
 	}
 
+	// Resolve the publisher from the token CID
+	publisher := r.resolvePublisher(ctx, tokenCID)
+
 	normalizedMetadata := &NormalizedMetadata{
-		Raw:       metadata,
-		Image:     uriToGateway(image),
-		Animation: uriToGateway(animationURL),
-		Name:      name,
-		Artists:   artists,
+		Raw:         metadata,
+		Image:       uriToGateway(image),
+		Animation:   uriToGateway(animationURL),
+		Name:        name,
+		Description: description,
+		Artists:     artists,
+		Publisher:   publisher,
 	}
 
 	return normalizedMetadata
@@ -425,4 +488,195 @@ func uriToGateway(uri string) string {
 		return fmt.Sprintf("%s/%s", domain.DEFAULT_ARWEAVE_GATEWAY, after)
 	}
 	return uri
+}
+
+// LoadDeployerCacheFromDB loads all cached deployer addresses from the database
+func (r *resolver) LoadDeployerCacheFromDB(ctx context.Context) error {
+	if r.store == nil {
+		return nil
+	}
+
+	// Get all deployer cache entries from DB
+	cacheEntries, err := r.store.GetAllKeyValuesByPrefix(ctx, "deployer:")
+	if err != nil {
+		return fmt.Errorf("failed to load deployer cache from DB: %w", err)
+	}
+
+	r.deployerCacheLock.Lock()
+	defer r.deployerCacheLock.Unlock()
+
+	for key, value := range cacheEntries {
+		// Key format: "deployer:chain:contract" -> extract "chain:contract"
+		cacheKey := strings.TrimPrefix(key, "deployer:")
+		r.deployerCache[cacheKey] = value
+	}
+
+	logger.Info("Loaded deployer cache from DB", zap.Int("count", len(cacheEntries)))
+	return nil
+}
+
+// getContractDeployer gets the deployer address for a contract with caching
+// Returns the deployer address (may be empty if not found), or error if lookup failed
+func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain, contractAddress string) (string, error) {
+	cacheKey := fmt.Sprintf("%s:%s", strings.ToLower(string(chainID)), strings.ToLower(contractAddress))
+
+	// Check in-memory cache first (includes both successful and failed lookups)
+	r.deployerCacheLock.RLock()
+	if deployer, ok := r.deployerCache[cacheKey]; ok {
+		r.deployerCacheLock.RUnlock()
+		// Cache hit - return immediately without blockchain lookup
+		return deployer, nil
+	}
+	r.deployerCacheLock.RUnlock()
+
+	// Determine minBlock from registry if available
+	minBlock := uint64(0)
+	if r.registry != nil && r.registry.data.MinBlocks != nil {
+		// Look up the minimum block for this chain
+		if mb, ok := r.registry.data.MinBlocks[string(chainID)]; ok {
+			minBlock = mb
+		}
+	}
+
+	// Fetch from blockchain
+	var deployer string
+	var err error
+
+	switch chainID {
+	case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
+		deployer, err = r.ethClient.GetContractDeployer(ctx, contractAddress, minBlock)
+	case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
+		deployer, err = r.tzClient.GetContractDeployer(ctx, contractAddress)
+	default:
+		return "", fmt.Errorf("unsupported chain: %s", chainID)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("failed to get contract deployer: %w", err)
+	}
+
+	logger.InfoWithContext(ctx, "Fetched deployer from blockchain",
+		zap.String("chain", string(chainID)),
+		zap.String("contract", contractAddress),
+		zap.String("deployer", deployer),
+		zap.Bool("found", deployer != ""),
+		zap.Uint64("min_block", minBlock))
+
+	// Cache the result in memory (even if empty - this prevents repeated failed lookups)
+	r.deployerCacheLock.Lock()
+	r.deployerCache[cacheKey] = deployer
+	r.deployerCacheLock.Unlock()
+
+	// Persist to database (even if empty - critical for persistence across restarts)
+	dbKey := fmt.Sprintf("deployer:%s", cacheKey)
+	if err := r.store.SetKeyValue(ctx, dbKey, deployer); err != nil {
+		logger.WarnWithContext(ctx, "failed to cache deployer in DB",
+			zap.Error(err),
+			zap.String("key", dbKey))
+	}
+
+	return deployer, nil
+}
+
+// LoadPublisherRegistry loads the publisher registry from a JSON file
+func LoadPublisherRegistry(filePath string) (*PublisherRegistry, error) {
+	// Read the file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read registry file: %w", err)
+	}
+
+	// Parse JSON
+	var registryData PublisherRegistryData
+	if err := json.Unmarshal(data, &registryData); err != nil {
+		return nil, fmt.Errorf("failed to parse registry JSON: %w", err)
+	}
+
+	// Build lookup maps
+	registry := &PublisherRegistry{
+		data:                  &registryData,
+		collectionToPublisher: make(map[string]*PublisherInfo),
+		deployerToPublisher:   make(map[string]*PublisherInfo),
+	}
+
+	for i := range registryData.Publishers {
+		publisher := &registryData.Publishers[i]
+		for chainID, chainConfig := range publisher.Chains {
+			// Normalize chain ID format
+			normalizedChainID := strings.ToLower(chainID)
+
+			// Index collection addresses
+			for _, addr := range chainConfig.CollectionAddresses {
+				normalizedAddr := strings.ToLower(addr)
+				key := fmt.Sprintf("%s:%s", normalizedChainID, normalizedAddr)
+				registry.collectionToPublisher[key] = publisher
+			}
+
+			// Index deployer addresses
+			for _, addr := range chainConfig.DeployerAddresses {
+				normalizedAddr := strings.ToLower(addr)
+				key := fmt.Sprintf("%s:%s", normalizedChainID, normalizedAddr)
+				registry.deployerToPublisher[key] = publisher
+			}
+		}
+	}
+
+	return registry, nil
+}
+
+// lookupPublisherByCollection looks up a publisher by collection address
+func (r *PublisherRegistry) lookupPublisherByCollection(chainID domain.Chain, contractAddress string) *PublisherInfo {
+	key := fmt.Sprintf("%s:%s", strings.ToLower(string(chainID)), strings.ToLower(contractAddress))
+	return r.collectionToPublisher[key]
+}
+
+// lookupPublisherByDeployer looks up a publisher by deployer address
+func (r *PublisherRegistry) lookupPublisherByDeployer(chainID domain.Chain, deployerAddress string) *PublisherInfo {
+	key := fmt.Sprintf("%s:%s", strings.ToLower(string(chainID)), strings.ToLower(deployerAddress))
+	return r.deployerToPublisher[key]
+}
+
+// resolvePublisher resolves the publisher from the metadata
+func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCID) *schema.Publisher {
+	if r.registry == nil {
+		return nil
+	}
+
+	chainID, _, contractAddress, _ := tokenCID.Parse()
+
+	// First, check if the contract is in the collection addresses
+	if publisher := r.registry.lookupPublisherByCollection(chainID, contractAddress); publisher != nil {
+		name := publisher.Name
+		url := publisher.URL
+		return &schema.Publisher{
+			Name: &name,
+			URL:  &url,
+		}
+	}
+
+	// Second, get the deployer and check if it's in the deployer addresses
+	deployer, err := r.getContractDeployer(ctx, chainID, contractAddress)
+	if err != nil {
+		logger.WarnWithContext(ctx, "failed to get contract deployer",
+			zap.Error(err),
+			zap.String("chain", string(chainID)),
+			zap.String("contract", contractAddress))
+		return nil
+	}
+
+	if deployer == "" {
+		return nil
+	}
+
+	// Check if deployer is in registry
+	if publisher := r.registry.lookupPublisherByDeployer(chainID, deployer); publisher != nil {
+		name := publisher.Name
+		url := publisher.URL
+		return &schema.Publisher{
+			Name: &name,
+			URL:  &url,
+		}
+	}
+
+	return nil
 }

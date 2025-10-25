@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,6 +54,10 @@ type EthereumClient interface {
 	// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs for an owner within a block range
 	// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
 	GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenCID, error)
+
+	// GetContractDeployer retrieves the deployer address for a contract
+	// minBlock specifies the earliest block to search (0 = search from genesis)
+	GetContractDeployer(ctx context.Context, contractAddress string, minBlock uint64) (string, error)
 
 	// Close closes the connection
 	Close()
@@ -758,6 +763,85 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 	}
 
 	return event, nil
+}
+
+// GetContractDeployer retrieves the deployer address for a contract
+// This method finds the contract creation transaction by binary searching for the block
+// where the contract was deployed
+// minBlock specifies the earliest block to search (0 = search from genesis)
+func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddress string, minBlock uint64) (string, error) {
+	addr := common.HexToAddress(contractAddress)
+
+	// Get current block number
+	latestHeader, err := c.client.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to get latest header: %w", err)
+	}
+	latestBlock := latestHeader.Number.Uint64()
+
+	// Validate minBlock
+	if minBlock > latestBlock {
+		return "", fmt.Errorf("minBlock (%d) is greater than latest block (%d)", minBlock, latestBlock)
+	}
+
+	// Binary search to find the block where contract was created
+	// We look for the first block where the contract has code
+	// sort.Search finds the smallest index i in [0, n) where f(i) is true
+	// We adjust the search to start from minBlock
+	searchRange := int(latestBlock - minBlock + 1)
+	var searchErr error
+	relativeBlock := uint64(sort.Search(searchRange, func(i int) bool {
+		blockNum := minBlock + uint64(i)
+		code, err := c.client.CodeAt(ctx, addr, new(big.Int).SetUint64(blockNum))
+		if err != nil {
+			// Store error for later handling, but continue search
+			searchErr = err
+			return false
+		}
+		return len(code) > 0
+	}))
+
+	creationBlock := minBlock + relativeBlock
+
+	// Check if contract was found (sort.Search returns n if not found)
+	if relativeBlock >= uint64(searchRange) {
+		if searchErr != nil {
+			return "", fmt.Errorf("failed to find contract (encountered errors during search): %w", searchErr)
+		}
+		return "", fmt.Errorf("contract not found: %s (searched blocks %d-%d)", contractAddress, minBlock, latestBlock)
+	}
+
+	// Get the block where contract was created
+	block, err := c.client.BlockByNumber(ctx, new(big.Int).SetUint64(creationBlock))
+	if err != nil {
+		return "", fmt.Errorf("failed to get block %d: %w", creationBlock, err)
+	}
+
+	// Find the transaction that created the contract
+	// The contract creation transaction has the contract address as the result
+	for _, tx := range block.Transactions() {
+		// Contract creation transactions have nil To address
+		if tx.To() != nil {
+			continue
+		}
+
+		// Get transaction receipt to check contract address
+		receipt, err := c.client.TransactionReceipt(ctx, tx.Hash())
+		if err != nil {
+			continue
+		}
+
+		if receipt.ContractAddress == addr {
+			// Found the creation transaction
+			sender, err := c.client.TransactionSender(ctx, tx, block.Hash(), receipt.TransactionIndex)
+			if err != nil {
+				return "", fmt.Errorf("failed to get transaction sender: %w", err)
+			}
+			return sender.Hex(), nil
+		}
+	}
+
+	return "", fmt.Errorf("contract creation transaction not found for %s at block %d", contractAddress, creationBlock)
 }
 
 // Close closes the connection

@@ -58,6 +58,8 @@ type CreateTokenMetadataInput struct {
 	AnimationURL    *string
 	Name            *string
 	Artists         schema.Artists
+	Description     *string
+	Publisher       *schema.Publisher
 }
 
 // UpdateBalanceInput represents the input for updating a balance record
@@ -218,4 +220,15 @@ type Store interface {
 	UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error
 	// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
 	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error
+
+	// =============================================================================
+	// Key-Value Store Operations
+	// =============================================================================
+
+	// SetKeyValue sets a key-value pair in the key-value store
+	SetKeyValue(ctx context.Context, key string, value string) error
+	// GetKeyValue retrieves a value by key from the key-value store
+	GetKeyValue(ctx context.Context, key string) (string, error)
+	// GetAllKeyValuesByPrefix retrieves all key-value pairs with a specific prefix
+	GetAllKeyValuesByPrefix(ctx context.Context, prefix string) (map[string]string, error)
 }

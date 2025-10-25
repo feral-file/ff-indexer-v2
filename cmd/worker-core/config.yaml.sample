@@ -38,3 +38,4 @@ ethereum_token_sweep_start_block: 10000000
 ethereum_token_sweep_block_chunk_size: 50000
 tezos_token_sweep_start_block: 5000000
 tezos_token_sweep_block_chunk_size: 10000
+publisher_registry_path: ../../tools/registry/publisher.json

@@ -34,17 +34,25 @@ type TokenResponse struct {
 	ProvenanceEvents *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`
 }
 
+// PublisherResponse represents the publisher of the token
+type PublisherResponse struct {
+	Name *string `json:"name,omitempty"`
+	URL  *string `json:"url,omitempty"`
+}
+
 // TokenMetadataResponse represents token metadata
 type TokenMetadataResponse struct {
-	OriginJSON      json.RawMessage  `json:"origin_json,omitempty"`
-	LatestJSON      json.RawMessage  `json:"latest_json,omitempty"`
-	LatestHash      *string          `json:"latest_hash,omitempty"`
-	EnrichmentLevel string           `json:"enrichment_level"`
-	LastRefreshedAt *time.Time       `json:"last_refreshed_at,omitempty"`
-	ImageURL        *string          `json:"image_url,omitempty"`
-	AnimationURL    *string          `json:"animation_url,omitempty"`
-	Name            *string          `json:"name,omitempty"`
-	Artists         []ArtistResponse `json:"artists,omitempty"`
+	OriginJSON      json.RawMessage    `json:"origin_json,omitempty"`
+	LatestJSON      json.RawMessage    `json:"latest_json,omitempty"`
+	LatestHash      *string            `json:"latest_hash,omitempty"`
+	EnrichmentLevel string             `json:"enrichment_level"`
+	LastRefreshedAt *time.Time         `json:"last_refreshed_at,omitempty"`
+	ImageURL        *string            `json:"image_url,omitempty"`
+	AnimationURL    *string            `json:"animation_url,omitempty"`
+	Name            *string            `json:"name,omitempty"`
+	Description     *string            `json:"description,omitempty"`
+	Artists         []ArtistResponse   `json:"artists,omitempty"`
+	Publisher       *PublisherResponse `json:"publisher,omitempty"`
 }
 
 // OwnerResponse represents a token owner (balance record)
@@ -122,6 +130,14 @@ func MapTokenMetadataToDTO(metadata *schema.TokenMetadata) *TokenMetadataRespons
 		})
 	}
 
+	var publisher *PublisherResponse
+	if metadata.Publisher != nil {
+		publisher = &PublisherResponse{
+			Name: metadata.Publisher.Name,
+			URL:  metadata.Publisher.URL,
+		}
+	}
+
 	return &TokenMetadataResponse{
 		OriginJSON:      json.RawMessage(metadata.OriginJSON),
 		LatestJSON:      json.RawMessage(metadata.LatestJSON),
@@ -131,7 +147,9 @@ func MapTokenMetadataToDTO(metadata *schema.TokenMetadata) *TokenMetadataRespons
 		ImageURL:        metadata.ImageURL,
 		AnimationURL:    metadata.AnimationURL,
 		Name:            metadata.Name,
+		Description:     metadata.Description,
 		Artists:         artists,
+		Publisher:       publisher,
 	}
 }
 

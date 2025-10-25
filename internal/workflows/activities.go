@@ -311,6 +311,8 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 		AnimationURL:    &metadata.Animation,
 		Name:            &metadata.Name,
 		Artists:         metadata.Artists,
+		Description:     &metadata.Description,
+		Publisher:       metadata.Publisher,
 	}
 
 	// Upsert the metadata

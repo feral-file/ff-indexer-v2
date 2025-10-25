@@ -5,6 +5,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
@@ -27,6 +28,15 @@ type EthClient interface {
 
 	// CallContract calls a contract function
 	CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
+
+	// CodeAt returns the code of the given account at the given block number
+	CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error)
+
+	// TransactionReceipt returns the receipt of a transaction by transaction hash
+	TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error)
+
+	// TransactionSender returns the sender address of a transaction
+	TransactionSender(ctx context.Context, tx *types.Transaction, block common.Hash, index uint) (common.Address, error)
 
 	// Close closes the connection
 	Close()

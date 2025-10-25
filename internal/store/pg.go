@@ -248,7 +248,7 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		SELECT timestamp
 		FROM provenance_events
 		WHERE provenance_events.token_id = tokens.id
-		ORDER BY timestamp DESC
+		ORDER BY timestamp DESC, raw->>'tx_index' DESC
 		LIMIT 1
 	) latest_pe ON true`)
 
@@ -326,9 +326,9 @@ func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, 
 
 	// Apply ordering by timestamp (with ID as tiebreaker)
 	if orderDesc {
-		query = query.Order("timestamp DESC, id DESC") // TODO: Add tx_index as tiebreaker
+		query = query.Order("timestamp DESC, raw->>'tx_index' DESC")
 	} else {
-		query = query.Order("timestamp ASC, id ASC") // TODO: Add tx_index as tiebreaker
+		query = query.Order("timestamp ASC, raw->>'tx_index' ASC")
 	}
 
 	// Apply pagination
@@ -371,6 +371,8 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 		AnimationURL:    input.AnimationURL,
 		Name:            input.Name,
 		Artists:         input.Artists,
+		Description:     input.Description,
+		Publisher:       input.Publisher,
 	}
 
 	err := s.db.WithContext(ctx).Save(&metadata).Error
@@ -1024,4 +1026,49 @@ func (s *pgStore) GetMediaAssetByID(ctx context.Context, id int64) (*schema.Medi
 		return nil, fmt.Errorf("failed to get media asset: %w", err)
 	}
 	return &media, nil
+}
+
+// SetKeyValue sets a key-value pair in the key-value store
+func (s *pgStore) SetKeyValue(ctx context.Context, key string, value string) error {
+	kv := schema.KeyValueStore{
+		Key:   key,
+		Value: value,
+	}
+
+	err := s.db.WithContext(ctx).Save(&kv).Error
+	if err != nil {
+		return fmt.Errorf("failed to set key-value: %w", err)
+	}
+
+	return nil
+}
+
+// GetKeyValue retrieves a value by key from the key-value store
+func (s *pgStore) GetKeyValue(ctx context.Context, key string) (string, error) {
+	var kv schema.KeyValueStore
+	err := s.db.WithContext(ctx).Where("key = ?", key).First(&kv).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get key-value: %w", err)
+	}
+
+	return kv.Value, nil
+}
+
+// GetAllKeyValuesByPrefix retrieves all key-value pairs with a specific prefix
+func (s *pgStore) GetAllKeyValuesByPrefix(ctx context.Context, prefix string) (map[string]string, error) {
+	var kvs []schema.KeyValueStore
+	err := s.db.WithContext(ctx).Where("key LIKE ?", prefix+"%").Find(&kvs).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key-values by prefix: %w", err)
+	}
+
+	result := make(map[string]string, len(kvs))
+	for _, kv := range kvs {
+		result[kv.Key] = kv.Value
+	}
+
+	return result, nil
 }

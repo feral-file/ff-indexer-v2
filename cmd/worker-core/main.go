@@ -89,9 +89,31 @@ func main() {
 	artblocksClient := artblocks.NewClient(httpClient)
 	fxhashClient := fxhash.NewClient(httpClient)
 
+	// Load publisher registry
+	var publisherRegistry *metadata.PublisherRegistry
+	if cfg.PublisherRegistryPath != "" {
+		registry, err := metadata.LoadPublisherRegistry(cfg.PublisherRegistryPath)
+		if err != nil {
+			logger.Fatal("Failed to load publisher registry",
+				zap.Error(err),
+				zap.String("path", cfg.PublisherRegistryPath))
+		}
+		publisherRegistry = registry
+		logger.Info("Loaded publisher registry", zap.String("path", cfg.PublisherRegistryPath))
+	} else {
+		logger.Warn("Publisher registry path not configured, publisher resolution will be disabled")
+	}
+
 	// Initialize metadata enhancer and resolver
 	metadataEnhancer := metadata.NewEnhancer(artblocksClient, fxhashClient)
-	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, jsonAdapter, clockAdapter)
+	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, jsonAdapter, clockAdapter, dataStore, publisherRegistry)
+
+	// Load deployer cache from DB if resolver has store and registry
+	if publisherRegistry != nil {
+		if err := metadataResolver.LoadDeployerCacheFromDB(ctx); err != nil {
+			logger.Warn("Failed to load deployer cache from DB", zap.Error(err))
+		}
+	}
 
 	// Initialize executor for activities
 	executor := workflows.NewExecutor(dataStore, metadataResolver, metadataEnhancer, ethereumClient, tzktClient, jsonAdapter, clockAdapter)

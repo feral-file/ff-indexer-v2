@@ -154,6 +154,9 @@ type TzKTClient interface {
 	// GetLatestBlock retrieves the current latest block level from the TzKT API
 	GetLatestBlock(ctx context.Context) (uint64, error)
 
+	// GetContractDeployer retrieves the deployer address for a contract
+	GetContractDeployer(ctx context.Context, contractAddress string) (string, error)
+
 	// ChainID returns the chain ID for this client
 	ChainID() domain.Chain
 }
@@ -551,4 +554,46 @@ func (c *tzktClient) GetLatestBlock(ctx context.Context) (uint64, error) {
 	}
 
 	return head.Level, nil
+}
+
+// TzKTOrigination represents an origination operation from the TzKT API
+type TzKTOrigination struct {
+	Hash   string `json:"hash"`
+	Level  uint64 `json:"level"`
+	Sender struct {
+		Address string `json:"address"`
+	} `json:"sender"`
+	Initiator *struct {
+		Address string `json:"address"`
+	} `json:"initiator"`
+	OriginatedContract struct {
+		Address string `json:"address"`
+	} `json:"originatedContract"`
+}
+
+// GetContractDeployer retrieves the deployer address for a contract
+func (c *tzktClient) GetContractDeployer(ctx context.Context, contractAddress string) (string, error) {
+	// TzKT API: GET /v1/operations/originations?originatedContract={address}&limit=1
+	// This returns the origination operation that created the contract
+	// We need to get both sender and initiator fields to handle factory contract patterns
+	url := fmt.Sprintf("%s/v1/operations/originations?originatedContract=%s&limit=1", c.baseURL, contractAddress)
+
+	var originations []TzKTOrigination
+	if err := c.httpClient.Get(ctx, url, &originations); err != nil {
+		return "", fmt.Errorf("failed to get contract origination for %s: %w", contractAddress, err)
+	}
+
+	if len(originations) == 0 {
+		return "", fmt.Errorf("no origination found for contract %s", contractAddress)
+	}
+
+	origination := originations[0]
+
+	// If initiator exists and is not null, it's the actual deployer (factory contract pattern)
+	// Otherwise, sender is the deployer (direct origination)
+	if origination.Initiator != nil && origination.Initiator.Address != "" {
+		return origination.Initiator.Address, nil
+	}
+
+	return origination.Sender.Address, nil
 }

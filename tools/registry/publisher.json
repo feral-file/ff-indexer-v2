@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "min_blocks": {
+    "eip155:1": 11338784
+  },
+  "publishers": [
+    {
+      "name": "Feral File",
+      "url": "https://feralfile.com",
+      "chains": {
+        "eip155:1": {
+          "deployer_addresses": [
+            "0x1d05cf6c6BEb0c869851BFdb9510D4E44E855ad6"
+          ],
+          "collection_addresses": [
+            "0x28b51BA8B990c48CB22cB6EF0ad5415fdBA5210C",
+            "0xaa02CC02F4531Ee75d1b78Cb5A155d4F3B54f830",
+            "0x979316F5b3f3d8db956Af519553c853525A5b1Af",
+            "0x6E906B2E355294A6aeCD6B4F75816Eda9F703dda",
+            "0x1d5bdC75918600541C115b74b81a404C9E4AF7D4",
+            "0xE5163c74fFE6563D75d750E5d767122500a1c337",
+            "0x29C9E04E05c5d261836e458BC5B779a7dE3C58D6",
+            "0x63c8282C8705E7873B3302bd623b2Bc8eBCdDDD3",
+            "0x7a15b36cB834AeA88553De69077D3777460d73Ac",
+            "0xDB5f1aDCFFA1869B9711cBFBe3Bf46cc5d5319E5",
+            "0x6DBa130221A1C39f6623908A136976686050059a",
+            "0xD8eed224E1B358fa6f7b167124C2c1AFe42275b4",
+            "0x513AC47320798fB6D74543242a9c0F686682998D",
+            "0x0A5c44da5F71B884c16A195CeC304F47ac0233CF",
+            "0x9294c5787f5BC7462E991fE8B6FeaC75F433ac39",
+            "0xaDB387798599f5777CD0531c2ECb36007C1D1a51",
+            "0x7A9Ea7C036F6aaB113E2563096ef1e0E56375A39",
+            "0xA29a5824E2A52d15836f1780277d7218b0Ca244b",
+            "0xD74745721E3b9c3D784F15bfBA2802fa2e9955d9",
+            "0x6e82e4B398Ca4137007ba69ddD6FF699334d13b5",
+            "0x7E6c132B8cb00899d17750E0fD982EA122C6b0f2",
+            "0x2A86C5466f088caEbf94e071a77669BAe371CD87",
+            "0xB14b42814895FC1B0A528a475f8A5b070eB4c671",
+            "0x6003994adECA13407E8dbEE808280CC3EF2ab820",
+            "0x14a62abFEC0e09159fBE9c050F3B03044fC7ea52",
+            "0xE46A41b840176b62983FC71162dc9faEAC4D9bcB",
+            "0x8f30722dd16BD63cF2665C383c1aEf5e307B0046",
+            "0xc4f0ee96676D3de800b9725eb628DE1C5a0CBea1",
+            "0xe59B7D60d7d7183E09d8ABb6DF8B20EB4CF66632",
+            "0xD156b0297f33Ddd706Ddeb018371FFDf02868e79",
+            "0x559fE9Fe5E2DAE7A7ae5766457096E6d7C647A46",
+            "0xc490888997d65df70FE69f33BA3bf7C8D12989CF",
+            "0x9D6c8e4B348999A69eE24285cd81226f4628e8F8",
+            "0xfD9FdFAC71Bbc7DD5C7176644De7Fbfd1A6825ee",
+            "0x377d8E26d145c9ba0db766A0A577baBa9de9eC17",
+            "0xF51bFC40C10289246e5BBa7afEDeB8cF976c3250",
+            "0x60d0e7d2Ce6558d0a993693c4612fF9a642C5433",
+            "0x835dF7CC88D8BC51FCbb6a7FDED0BBE1ec020273",
+            "0x772A3C476461C041FeAC146A86113d7b14712653",
+            "0xBb12686c360e9057be3CD031140035A705e19ceC",
+            "0x87355Eb83C0772e1d96C1BbfD03c5e05A872197e",
+            "0xacd3392e9Ec2C4D876D09DC38cb52F842Ea58096",
+            "0x051E50D8465417e58899FD48C3b0Fc0CA3Dd4B6a",
+            "0x1D9787369B1DCf709f92Da1d8743c2A4b6028a83",
+            "0x8a20fB6eb7e1D662b157Fc6eA0694972584C09BB",
+            "0xBE0A4E26a156B2a60cF515E86b3Df9756DEE1952",
+            "0x81c882c59799eA442317D020c39174AaAa8d7FC7",
+            "0x5D303A17883C442603B8afb54921d1b7DCc0C831",
+            "0xFfE213c3faA18B4B80aC1658C363D471dC745886",
+            "0x614d5475FE81ef4b6Dd8093b5C73EfEEE03167e0",
+            "0x115C9A6118bC7a3EB0aBD30f6BCF1C45Bb198AEd"
+          ]
+        },
+        "tezos:mainnet": {
+          "deployer_addresses": [
+            "tz1af6xXFXVZnttqpVjnwFdza6g8LKUiT25K"
+          ],
+          "collection_addresses": []
+        }
+      }
+    },
+    {
+      "name": "Art Blocks",
+      "url": "https://artblocks.io",
+      "chains": {
+        "eip155:1": {
+          "deployer_addresses": [
+            "0x96dC73c8B5969608C77375F085949744b5177660"
+          ],
+          "collection_addresses": [
+            "0x059edd72cd353df5106d2b9cc5ab83a52287ac3a",
+            "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+          ]
+        }
+      }
+    },
+    {
+      "name": "fxhash",
+      "url": "https://fxhash.xyz",
+      "chains": {
+        "tezos:mainnet": {
+          "deployer_addresses": [
+            "tz1fepn7jZsCYBqCDhpM63hzh9g2Ytqk4Tpv"
+          ],
+          "collection_addresses": [
+            "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi",
+            "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Foundation",
+      "url": "https://foundation.app",
+      "chains": {
+        "eip155:1": {
+          "deployer_addresses": [
+            "0x95271d54d6e0d88b3825f89A766f97b8b7E8aF82"
+          ],
+          "collection_addresses": [
+            "0x3B3ee1931Dc30C1957379FAc9aba94D1C48a5405"
+          ]
+        }
+      }
+    },
+    {
+      "name": "SuperRare",
+      "url": "https://superrare.com",
+      "chains": {
+        "eip155:1": {
+          "deployer_addresses": [
+            "0xb2d39da392f19edb27639b92adfe7edfcc96391b"
+          ],
+          "collection_addresses": [
+            "0xb932a70a57673d89f4acffbe830e8ed7f75fb9e0"
+          ]
+        }
+      }
+    }
+  ]
+}

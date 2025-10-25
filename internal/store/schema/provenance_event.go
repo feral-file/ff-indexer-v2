@@ -47,7 +47,7 @@ type ProvenanceEvent struct {
 	// Timestamp is the blockchain timestamp when this event occurred
 	Timestamp time.Time `gorm:"column:timestamp;not null;type:timestamptz"`
 	// Raw contains the complete raw event data as JSON for debugging and analysis
-	Raw datatypes.JSON `gorm:"column:raw;type:jsonb"`
+	Raw datatypes.JSON `gorm:"column:raw;type:jsonb;index:idx_provenance_events_raw"`
 	// CreatedAt is the timestamp when this record was indexed
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this record was last updated
