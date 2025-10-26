@@ -51,6 +51,21 @@ func (mr *MockTzKTClientMockRecorder) ChainID() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ChainID", reflect.TypeOf((*MockTzKTClient)(nil).ChainID))
 }
 
+// GetContractDeployer mocks base method.
+func (m *MockTzKTClient) GetContractDeployer(ctx context.Context, contractAddress string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetContractDeployer", ctx, contractAddress)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetContractDeployer indicates an expected call of GetContractDeployer.
+func (mr *MockTzKTClientMockRecorder) GetContractDeployer(ctx, contractAddress interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetContractDeployer", reflect.TypeOf((*MockTzKTClient)(nil).GetContractDeployer), ctx, contractAddress)
+}
+
 // GetLatestBlock mocks base method.
 func (m *MockTzKTClient) GetLatestBlock(ctx context.Context) (uint64, error) {
 	m.ctrl.T.Helper()

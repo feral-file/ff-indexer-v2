@@ -241,7 +241,7 @@ func (c *tzktClient) GetTokenMetadata(ctx context.Context, contractAddress strin
 	}
 
 	if len(tokens) == 0 {
-		return nil, fmt.Errorf("token not found: %s/%s", contractAddress, tokenID)
+		return nil, domain.ErrTokenNotFoundOnChain
 	}
 
 	return tokens[0].Metadata, nil

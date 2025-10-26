@@ -59,6 +59,11 @@ type EthereumClient interface {
 	// minBlock specifies the earliest block to search (0 = search from genesis)
 	GetContractDeployer(ctx context.Context, contractAddress string, minBlock uint64) (string, error)
 
+	// TokenExists checks if a token exists on the blockchain
+	// For ERC721: uses ownerOf and catches execution revert errors
+	// For ERC1155: checks mint and burn events in logs
+	TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error)
+
 	// Close closes the connection
 	Close()
 }
@@ -69,8 +74,81 @@ type ethereumClient struct {
 	clock   adapter.Clock
 }
 
+// ERC1155 TransferBatch event ABI
+// TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
+const transferBatchEventABI = `[{
+	"anonymous": false,
+	"inputs": [
+		{"indexed": true, "name": "operator", "type": "address"},
+		{"indexed": true, "name": "from", "type": "address"},
+		{"indexed": true, "name": "to", "type": "address"},
+		{"indexed": false, "name": "ids", "type": "uint256[]"},
+		{"indexed": false, "name": "values", "type": "uint256[]"}
+	],
+	"name": "TransferBatch",
+	"type": "event"
+}]`
+
 func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock) EthereumClient {
 	return &ethereumClient{chainID: chainID, client: client, clock: clock}
+}
+
+// TransferBatchEvent represents the parsed data from an ERC1155 TransferBatch event
+// TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
+type TransferBatchEvent struct {
+	Operator common.Address // From topics[1]
+	From     common.Address // From topics[2]
+	To       common.Address // From topics[3]
+	Ids      []*big.Int     // From data
+	Values   []*big.Int     // From data
+}
+
+// parseTransferBatchEvent parses a TransferBatch event log and returns the complete event data
+func parseTransferBatchEvent(vLog types.Log) (*TransferBatchEvent, error) {
+	// Validate topics length
+	// topics[0] = event signature, topics[1] = operator, topics[2] = from, topics[3] = to
+	if len(vLog.Topics) != 4 {
+		return nil, fmt.Errorf("invalid TransferBatch event: expected 4 topics, got %d", len(vLog.Topics))
+	}
+
+	// Parse the ABI
+	contractABI, err := abi.JSON(strings.NewReader(transferBatchEventABI))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse TransferBatch ABI: %w", err)
+	}
+
+	// Create a struct to hold the unpacked non-indexed data (ids and values)
+	var eventData struct {
+		Ids    []*big.Int
+		Values []*big.Int
+	}
+
+	// Unpack the event data (non-indexed fields: ids and values)
+	err = contractABI.UnpackIntoInterface(&eventData, "TransferBatch", vLog.Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unpack TransferBatch event data: %w", err)
+	}
+
+	// Extract indexed fields from topics
+	event := &TransferBatchEvent{
+		Operator: common.BytesToAddress(vLog.Topics[1].Bytes()),
+		From:     common.BytesToAddress(vLog.Topics[2].Bytes()),
+		To:       common.BytesToAddress(vLog.Topics[3].Bytes()),
+		Ids:      eventData.Ids,
+		Values:   eventData.Values,
+	}
+
+	return event, nil
+}
+
+// containsTokenID checks if a token ID exists in the TransferBatch event
+func (e *TransferBatchEvent) containsTokenID(tokenID *big.Int) bool {
+	for _, id := range e.Ids {
+		if id.Cmp(tokenID) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // SubscribeFilterLogs subscribes to filter logs
@@ -788,10 +866,10 @@ func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 	// We look for the first block where the contract has code
 	// sort.Search finds the smallest index i in [0, n) where f(i) is true
 	// We adjust the search to start from minBlock
-	searchRange := int(latestBlock - minBlock + 1)
+	searchRange := int(latestBlock - minBlock + 1) //nolint:gosec,G115 // Suppose the block range is not too large for int overflow
 	var searchErr error
-	relativeBlock := uint64(sort.Search(searchRange, func(i int) bool {
-		blockNum := minBlock + uint64(i)
+	relativeBlock := uint64(sort.Search(searchRange, func(i int) bool { //nolint:gosec,G115 // Casting int to uint64 is safe for block range, there is no negative block number
+		blockNum := minBlock + uint64(i) //nolint:gosec,G115 // Casting int to uint64 is safe for block range, there is no negative block number
 		code, err := c.client.CodeAt(ctx, addr, new(big.Int).SetUint64(blockNum))
 		if err != nil {
 			// Store error for later handling, but continue search
@@ -804,7 +882,7 @@ func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 	creationBlock := minBlock + relativeBlock
 
 	// Check if contract was found (sort.Search returns n if not found)
-	if relativeBlock >= uint64(searchRange) {
+	if relativeBlock >= uint64(searchRange) { //nolint:gosec,G115 // Casting int to uint64 is safe for block range, there is no negative block number
 		if searchErr != nil {
 			return "", fmt.Errorf("failed to find contract (encountered errors during search): %w", searchErr)
 		}
@@ -842,6 +920,145 @@ func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 	}
 
 	return "", fmt.Errorf("contract creation transaction not found for %s at block %d", contractAddress, creationBlock)
+}
+
+// TokenExists checks if a token exists on the blockchain
+// For ERC721: uses ownerOf and catches execution revert errors
+// For ERC1155: checks mint and burn events in logs
+func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
+	switch standard {
+	case domain.StandardERC721:
+		// For ERC721, try to call ownerOf. If it reverts, the token doesn't exist.
+		_, err := c.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
+		if err != nil {
+			// Check if it's an execution revert error (token doesn't exist)
+			if strings.Contains(err.Error(), "execution reverted") ||
+				strings.Contains(err.Error(), "nonexistent token") {
+				return false, nil
+			}
+			// Other errors should be propagated
+			return false, fmt.Errorf("failed to check ERC721 token existence: %w", err)
+		}
+		return true, nil
+
+	case domain.StandardERC1155:
+		// For ERC1155, check if token was minted and not burned by examining event logs
+		tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
+		if !ok {
+			return false, fmt.Errorf("invalid token number: %s", tokenNumber)
+		}
+
+		contractAddr := common.HexToAddress(contractAddress)
+		zeroAddress := common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS)
+		zeroHash := common.BytesToHash(zeroAddress.Bytes())
+
+		// Check for mint events (from = 0x0) in both TransferSingle and TransferBatch events
+		mintQuery := ethereum.FilterQuery{
+			FromBlock: big.NewInt(0),
+			Addresses: []common.Address{contractAddr},
+			Topics: [][]common.Hash{
+				{transferSingleEventSignature, transferBatchEventSignature}, // Both transfer event types
+				nil,        // any operator
+				{zeroHash}, // from = 0x0 (mint)
+			},
+		}
+
+		mintLogs, err := c.filterLogsWithPagination(ctx, mintQuery)
+		if err != nil {
+			return false, fmt.Errorf("failed to fetch mint logs: %w", err)
+		}
+
+		// Check if token ID was minted
+		minted := false
+		for _, vLog := range mintLogs {
+			if vLog.Topics[0] == transferSingleEventSignature {
+				// TransferSingle: topics[0]=signature, topics[1]=operator, topics[2]=from, topics[3]=to
+				// Data contains: id (32 bytes) and value (32 bytes)
+				if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+					continue
+				}
+
+				// Extract token ID from data (first 32 bytes)
+				logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
+				if logTokenID.Cmp(tokenID) == 0 {
+					minted = true
+					break
+				}
+			} else if vLog.Topics[0] == transferBatchEventSignature {
+				// TransferBatch: Use ABI parsing for cleaner code
+				batchEvent, err := parseTransferBatchEvent(vLog)
+				if err != nil {
+					logger.Warn("Failed to parse TransferBatch mint event",
+						zap.String("contract", contractAddress),
+						zap.Error(err))
+					continue
+				}
+				if batchEvent.containsTokenID(tokenID) {
+					minted = true
+					break
+				}
+			}
+		}
+
+		if !minted {
+			// Token was never minted
+			return false, nil
+		}
+
+		// Check for burn events (to = 0x0) in both TransferSingle and TransferBatch events
+		burnQuery := ethereum.FilterQuery{
+			FromBlock: big.NewInt(0),
+			Addresses: []common.Address{contractAddr},
+			Topics: [][]common.Hash{
+				{transferSingleEventSignature, transferBatchEventSignature}, // Both transfer event types
+				nil,        // any operator
+				nil,        // any from address
+				{zeroHash}, // to = 0x0 (burn)
+			},
+		}
+
+		burnLogs, err := c.filterLogsWithPagination(ctx, burnQuery)
+		if err != nil {
+			return false, fmt.Errorf("failed to fetch burn logs: %w", err)
+		}
+
+		// Check if token ID was burned
+		for _, vLog := range burnLogs {
+			if vLog.Topics[0] == transferSingleEventSignature {
+				// TransferSingle: topics[0]=signature, topics[1]=operator, topics[2]=from, topics[3]=to
+				// Data contains: id (32 bytes) and value (32 bytes)
+				if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+					continue
+				}
+
+				// Extract token ID from data (first 32 bytes)
+				logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
+				if logTokenID.Cmp(tokenID) == 0 {
+					// Token was burned
+					return false, nil
+				}
+			} else if vLog.Topics[0] == transferBatchEventSignature {
+				// TransferBatch: Use ABI parsing for cleaner code
+				batchEvent, err := parseTransferBatchEvent(vLog)
+				if err != nil {
+					logger.Warn("Failed to parse TransferBatch burn event",
+						zap.String("contract", contractAddress),
+						zap.Error(err))
+					continue
+				}
+				if batchEvent.containsTokenID(tokenID) {
+					// Token was burned
+					return false, nil
+				}
+			}
+		}
+
+		// Token was minted and not burned
+		return true, nil
+
+	default:
+		return false, fmt.Errorf("unsupported standard: %s", standard)
+	}
 }
 
 // Close closes the connection

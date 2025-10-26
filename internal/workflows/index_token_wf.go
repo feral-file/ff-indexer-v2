@@ -405,7 +405,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
-	// Step 2: Index token with minimal provenances (from blockchain query)
+	// Step 1: Index token with minimal provenances (from blockchain query)
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID).Get(ctx, nil)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to index token with minimal provenances: %w", err),
@@ -418,7 +418,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 		zap.String("tokenCID", tokenCID.String()),
 	)
 
-	// Step 3: Start child workflow to index token metadata (fire and forget)
+	// Step 2: Start child workflow to index token metadata (fire and forget)
 	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + tokenCID.String(),
 		WorkflowExecutionTimeout: 15 * time.Minute,
@@ -435,7 +435,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 		)
 	}
 
-	// Step 4: Start child workflow to index full provenance (fire and forget)
+	// Step 3: Start child workflow to index full provenance (fire and forget)
 	provenanceWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-full-provenance-" + tokenCID.String(),
 		WorkflowExecutionTimeout: 30 * time.Minute,

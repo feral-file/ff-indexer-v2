@@ -580,8 +580,8 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 
 // LoadPublisherRegistry loads the publisher registry from a JSON file
 func LoadPublisherRegistry(filePath string) (*PublisherRegistry, error) {
-	// Read the file
-	data, err := os.ReadFile(filePath)
+	// Read the file using the absolute path
+	data, err := os.ReadFile(filePath) //nolint:gosec,G304 // This should be a trusted file
 	if err != nil {
 		return nil, fmt.Errorf("failed to read registry file: %w", err)
 	}

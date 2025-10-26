@@ -11,4 +11,7 @@ var (
 
 	// ErrTokenNotFound is returned when a token is not found
 	ErrTokenNotFound = errors.New("token not found")
+
+	// ErrTokenNotFoundOnChain is returned when a token does not exist on the blockchain
+	ErrTokenNotFoundOnChain = errors.New("token not found on chain")
 )

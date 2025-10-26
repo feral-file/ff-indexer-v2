@@ -10,6 +10,7 @@ import (
 	reflect "reflect"
 
 	ethereum "github.com/ethereum/go-ethereum"
+	common "github.com/ethereum/go-ethereum/common"
 	types "github.com/ethereum/go-ethereum/core/types"
 	gomock "github.com/golang/mock/gomock"
 
@@ -81,6 +82,21 @@ func (mr *MockEthClientMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockEthClient)(nil).Close))
 }
 
+// CodeAt mocks base method.
+func (m *MockEthClient) CodeAt(ctx context.Context, account common.Address, blockNumber *big.Int) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CodeAt", ctx, account, blockNumber)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CodeAt indicates an expected call of CodeAt.
+func (mr *MockEthClientMockRecorder) CodeAt(ctx, account, blockNumber interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CodeAt", reflect.TypeOf((*MockEthClient)(nil).CodeAt), ctx, account, blockNumber)
+}
+
 // FilterLogs mocks base method.
 func (m *MockEthClient) FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
 	m.ctrl.T.Helper()
@@ -124,6 +140,36 @@ func (m *MockEthClient) SubscribeFilterLogs(ctx context.Context, query ethereum.
 func (mr *MockEthClientMockRecorder) SubscribeFilterLogs(ctx, query, ch interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeFilterLogs", reflect.TypeOf((*MockEthClient)(nil).SubscribeFilterLogs), ctx, query, ch)
+}
+
+// TransactionReceipt mocks base method.
+func (m *MockEthClient) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TransactionReceipt", ctx, txHash)
+	ret0, _ := ret[0].(*types.Receipt)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TransactionReceipt indicates an expected call of TransactionReceipt.
+func (mr *MockEthClientMockRecorder) TransactionReceipt(ctx, txHash interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransactionReceipt", reflect.TypeOf((*MockEthClient)(nil).TransactionReceipt), ctx, txHash)
+}
+
+// TransactionSender mocks base method.
+func (m *MockEthClient) TransactionSender(ctx context.Context, tx *types.Transaction, block common.Hash, index uint) (common.Address, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TransactionSender", ctx, tx, block, index)
+	ret0, _ := ret[0].(common.Address)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TransactionSender indicates an expected call of TransactionSender.
+func (mr *MockEthClientMockRecorder) TransactionSender(ctx, tx, block, index interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransactionSender", reflect.TypeOf((*MockEthClient)(nil).TransactionSender), ctx, tx, block, index)
 }
 
 // MockEthClientDialer is a mock of EthClientDialer interface.

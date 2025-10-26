@@ -37,6 +37,20 @@ func (m *MockMetadataResolver) EXPECT() *MockMetadataResolverMockRecorder {
 	return m.recorder
 }
 
+// LoadDeployerCacheFromDB mocks base method.
+func (m *MockMetadataResolver) LoadDeployerCacheFromDB(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoadDeployerCacheFromDB", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// LoadDeployerCacheFromDB indicates an expected call of LoadDeployerCacheFromDB.
+func (mr *MockMetadataResolverMockRecorder) LoadDeployerCacheFromDB(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadDeployerCacheFromDB", reflect.TypeOf((*MockMetadataResolver)(nil).LoadDeployerCacheFromDB), ctx)
+}
+
 // Resolve mocks base method.
 func (m *MockMetadataResolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
 	m.ctrl.T.Helper()

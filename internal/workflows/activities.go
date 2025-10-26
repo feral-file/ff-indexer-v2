@@ -3,9 +3,11 @@ package workflows
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
+	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -125,6 +127,43 @@ func (e *executor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCI
 	}
 
 	return token != nil, nil
+}
+
+// verifyTokenExistsOnChain verifies if a token exists on the blockchain
+// This is an internal method used to validate token existence before indexing
+func (e *executor) verifyTokenExistsOnChain(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
+
+	switch chain {
+	case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
+		// Use the Ethereum client's TokenExists method which properly handles both ERC721 and ERC1155
+		exists, err := e.ethClient.TokenExists(ctx, contractAddress, tokenNumber, standard)
+		if err != nil {
+			logger.Warn("Failed to verify token existence on Ethereum",
+				zap.String("tokenCID", tokenCID.String()),
+				zap.Error(err))
+			return false, err
+		}
+		return exists, nil
+
+	case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
+		// For Tezos FA2, check token metadata
+		_, err := e.tzktClient.GetTokenMetadata(ctx, contractAddress, tokenNumber)
+		if err != nil {
+			// Check if it's a "token not found on chain" error (specific error from TzKT client)
+			if errors.Is(err, domain.ErrTokenNotFoundOnChain) {
+				return false, nil
+			}
+			logger.Warn("Failed to verify token existence on Tezos",
+				zap.String("tokenCID", tokenCID.String()),
+				zap.Error(err))
+			return false, err
+		}
+		return true, nil
+
+	default:
+		return false, fmt.Errorf("unsupported chain: %s", chain)
+	}
 }
 
 // CreateTokenMint creates a new token and related provenance data for mint event
@@ -405,6 +444,28 @@ func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.Block
 // Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
 func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error {
 	tokenCID := event.TokenCID()
+
+	// Check if token exists in database
+	existsInDB, err := e.CheckTokenExists(ctx, tokenCID)
+	if err != nil {
+		return fmt.Errorf("failed to check token existence in DB: %w", err)
+	}
+
+	// If token doesn't exist in DB, verify it exists on-chain
+	if !existsInDB {
+		existsOnChain, err := e.verifyTokenExistsOnChain(ctx, tokenCID)
+		if err != nil {
+			return fmt.Errorf("failed to verify token existence on-chain: %w", err)
+		}
+		if !existsOnChain {
+			return temporal.NewNonRetryableApplicationError(
+				"token not found on chain",
+				"TokenNotFoundOnChain",
+				domain.ErrTokenNotFoundOnChain,
+			)
+		}
+	}
+
 	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Marshal raw event
@@ -525,6 +586,27 @@ func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context
 // Minimal provenance data includes balances for all addresses.
 // The provenance events and change journal are not included.
 func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
+	// Check if token exists in database
+	existsInDB, err := e.CheckTokenExists(ctx, tokenCID)
+	if err != nil {
+		return fmt.Errorf("failed to check token existence in DB: %w", err)
+	}
+
+	// If token doesn't exist in DB, verify it exists on-chain
+	if !existsInDB {
+		existsOnChain, err := e.verifyTokenExistsOnChain(ctx, tokenCID)
+		if err != nil {
+			return fmt.Errorf("failed to verify token existence on-chain: %w", err)
+		}
+		if !existsOnChain {
+			return temporal.NewNonRetryableApplicationError(
+				"token not found on chain",
+				"TokenNotFoundOnChain",
+				domain.ErrTokenNotFoundOnChain,
+			)
+		}
+	}
+
 	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Prepare input for creating token with minimal provenance
@@ -632,12 +714,32 @@ func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Conte
 // IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID
 // Full provenance data includes balances for all addresses, provenance events and change journal related to the token
 func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
+	// Check if token exists in database
+	existsInDB, err := e.CheckTokenExists(ctx, tokenCID)
+	if err != nil {
+		return fmt.Errorf("failed to check token existence in DB: %w", err)
+	}
+
+	// If token doesn't exist in DB, verify it exists on-chain
+	if !existsInDB {
+		existsOnChain, err := e.verifyTokenExistsOnChain(ctx, tokenCID)
+		if err != nil {
+			return fmt.Errorf("failed to verify token existence on-chain: %w", err)
+		}
+		if !existsOnChain {
+			return temporal.NewNonRetryableApplicationError(
+				"token not found on chain",
+				"TokenNotFoundOnChain",
+				domain.ErrTokenNotFoundOnChain,
+			)
+		}
+	}
+
 	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Fetch all events based on chain
 	var allBalances map[string]string
 	var allEvents []domain.BlockchainEvent
-	var err error
 
 	switch chain {
 	case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
