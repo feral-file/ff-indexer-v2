@@ -14,4 +14,10 @@ var (
 
 	// ErrTokenNotFoundOnChain is returned when a token does not exist on the blockchain
 	ErrTokenNotFoundOnChain = errors.New("token not found on chain")
+
+	// ErrInvalidTokenCID is returned when a token CID is invalid
+	ErrInvalidTokenCID = errors.New("invalid token CID")
+
+	// ErrInvalidBlockchainEvent is returned when a blockchain event is invalid
+	ErrInvalidBlockchainEvent = errors.New("invalid blockchain event")
 )

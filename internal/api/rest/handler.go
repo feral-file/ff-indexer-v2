@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -451,19 +452,25 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 	var runID string
 
 	if hasTokenCIDs {
-		// Build workflow ID from token CIDs hash
-		options := client.StartWorkflowOptions{
-			TaskQueue:                h.orchestratorTaskQueue,
-			WorkflowExecutionTimeout: 30 * time.Minute,
-		}
-
 		// Convert string CIDs to domain.TokenCID
 		tokenCIDs := make([]domain.TokenCID, len(req.TokenCIDs))
 		for i, cid := range req.TokenCIDs {
 			tokenCIDs[i] = domain.TokenCID(cid)
 		}
 
+		// Validate token CIDs
+		for _, cid := range tokenCIDs {
+			if !cid.Valid() {
+				respondValidationError(c, fmt.Sprintf("Invalid token CID: %s", cid.String()))
+				return
+			}
+		}
+
 		// Trigger IndexTokens workflow
+		options := client.StartWorkflowOptions{
+			TaskQueue:                h.orchestratorTaskQueue,
+			WorkflowExecutionTimeout: 30 * time.Minute,
+		}
 		wfRun, err := h.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, tokenCIDs)
 		if err != nil {
 			respondInternalError(c, err, "trigger_index_tokens")
@@ -474,6 +481,14 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 	}
 
 	if hasAddresses {
+		// Validate addresses
+		for _, address := range req.Addresses {
+			if !types.IsTezosAddress(address) && !types.IsEthereumAddress(address) {
+				respondValidationError(c, fmt.Sprintf("Invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+				return
+			}
+		}
+
 		// Build workflow ID from addresses hash
 		options := client.StartWorkflowOptions{
 			TaskQueue:                h.orchestratorTaskQueue,

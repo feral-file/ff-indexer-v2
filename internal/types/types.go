@@ -1,6 +1,11 @@
 package types
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+
+	"github.com/ethereum/go-ethereum/common"
+)
 
 // StringPtr converts a string to a pointer to a string
 func StringPtr(s string) *string {
@@ -24,4 +29,14 @@ func SafeString(s *string) string {
 func IsPositiveNumeric(s string) bool {
 	regex := regexp.MustCompile(`^[1-9][0-9]*$`)
 	return regex.MatchString(s)
+}
+
+// IsTezosAddress checks if a string is a valid Tezos address
+func IsTezosAddress(s string) bool {
+	return strings.HasPrefix(s, "tz1") || strings.HasPrefix(s, "tz2") || strings.HasPrefix(s, "tz3") || strings.HasPrefix(s, "tz4") || strings.HasPrefix(s, "KT1")
+}
+
+// IsEthereumAddress checks if a string is a valid Ethereum address
+func IsEthereumAddress(s string) bool {
+	return common.IsHexAddress(s)
 }

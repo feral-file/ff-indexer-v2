@@ -121,6 +121,10 @@ func NewExecutor(
 
 // CheckTokenExists checks if a token exists in the database
 func (e *executor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+	if !tokenCID.Valid() {
+		return false, domain.ErrTokenNotFound
+	}
+
 	token, err := e.store.GetTokenByTokenCID(ctx, tokenCID.String())
 	if err != nil {
 		return false, fmt.Errorf("failed to check if token exists: %w", err)
@@ -168,6 +172,11 @@ func (e *executor) verifyTokenExistsOnChain(ctx context.Context, tokenCID domain
 
 // CreateTokenMint creates a new token and related provenance data for mint event
 func (e *executor) CreateTokenMint(ctx context.Context, event *domain.BlockchainEvent) error {
+	// Validate event
+	if !event.Valid() {
+		return domain.ErrInvalidBlockchainEvent
+	}
+
 	// Check if token already exists
 	existingToken, err := e.store.GetTokenByTokenCID(ctx, event.TokenCID().String())
 	if err != nil {
@@ -248,6 +257,11 @@ func (e *executor) CreateTokenMint(ctx context.Context, event *domain.Blockchain
 
 // UpdateTokenTransfer updates a token and related provenance data for a transfer event
 func (e *executor) UpdateTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error {
+	// Validate event
+	if !event.Valid() {
+		return domain.ErrInvalidBlockchainEvent
+	}
+
 	// Marshal raw event
 	rawEventData, err := e.json.Marshal(event)
 	if err != nil {
@@ -305,11 +319,21 @@ func (e *executor) UpdateTokenTransfer(ctx context.Context, event *domain.Blockc
 
 // FetchTokenMetadata fetches token metadata from blockchain
 func (e *executor) FetchTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
+	// Validate token CID
+	if !tokenCID.Valid() {
+		return nil, domain.ErrInvalidTokenCID
+	}
+
 	return e.metadataResolver.Resolve(ctx, tokenCID)
 }
 
 // UpsertTokenMetadata stores or updates token metadata in the database
 func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+	// Validate token CID
+	if !tokenCID.Valid() {
+		return domain.ErrInvalidTokenCID
+	}
+
 	// Get token with metadata
 	result, err := e.store.GetTokenWithMetadataByTokenCID(ctx, tokenCID.String())
 	if err != nil {
@@ -364,6 +388,11 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 
 // UpdateTokenBurn updates a token and related provenance data for burn event
 func (e *executor) UpdateTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error {
+	// Validate event
+	if !event.Valid() {
+		return domain.ErrInvalidBlockchainEvent
+	}
+
 	// Marshal raw event
 	rawEventData, err := e.json.Marshal(event)
 	if err != nil {
@@ -408,6 +437,11 @@ func (e *executor) UpdateTokenBurn(ctx context.Context, event *domain.Blockchain
 
 // CreateMetadataUpdate creates a metadata update provenance event and change journal entry
 func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
+	// Validate event
+	if !event.Valid() {
+		return domain.ErrInvalidBlockchainEvent
+	}
+
 	// Marshal raw event
 	rawEventData, err := e.json.Marshal(event)
 	if err != nil {
@@ -443,6 +477,11 @@ func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.Block
 // IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
 // Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
 func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error {
+	// Validate event
+	if !event.Valid() {
+		return domain.ErrInvalidBlockchainEvent
+	}
+
 	tokenCID := event.TokenCID()
 
 	// Check if token exists in database

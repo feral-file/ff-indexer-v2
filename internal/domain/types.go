@@ -2,6 +2,8 @@ package domain
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +70,80 @@ type BlockchainEvent struct {
 	TxIndex         uint64        `json:"tx_index"`                  // transaction index in the block (for ordering)
 }
 
+func (e *BlockchainEvent) Valid() bool {
+	// Validate token CID
+	if !e.TokenCID().Valid() {
+		return false
+	}
+
+	// Validate quantity
+	quantity, err := strconv.ParseUint(e.Quantity, 10, 64)
+	if err != nil {
+		return false
+	}
+	if quantity == 0 {
+		return false
+	}
+
+	// Validate different fields based on event type
+	switch e.EventType {
+	case EventTypeTransfer:
+		// Validate from and to addresses
+		if e.FromAddress == nil || e.ToAddress == nil {
+			return false
+		}
+		// Ensure neither address is zero/empty (those should be mint/burn)
+		if *e.FromAddress == "" || *e.FromAddress == ETHEREUM_ZERO_ADDRESS {
+			return false
+		}
+		if *e.ToAddress == "" || *e.ToAddress == ETHEREUM_ZERO_ADDRESS {
+			return false
+		}
+	case EventTypeMint:
+		// Validate from address (must be nil, empty, or zero)
+		if e.FromAddress != nil && *e.FromAddress != "" && *e.FromAddress != ETHEREUM_ZERO_ADDRESS {
+			return false
+		}
+		// Validate to address (must exist and not be zero/empty)
+		if e.ToAddress == nil || *e.ToAddress == "" || *e.ToAddress == ETHEREUM_ZERO_ADDRESS {
+			return false
+		}
+	case EventTypeBurn:
+		// Validate from address (must exist and not be zero/empty)
+		if e.FromAddress == nil || *e.FromAddress == "" || *e.FromAddress == ETHEREUM_ZERO_ADDRESS {
+			return false
+		}
+		// Validate to address (must be nil, empty, or zero)
+		if e.ToAddress != nil && *e.ToAddress != "" && *e.ToAddress != ETHEREUM_ZERO_ADDRESS {
+			return false
+		}
+	case EventTypeMetadataUpdate:
+		// Validate from and to addresses
+		if e.FromAddress != nil || e.ToAddress != nil {
+			return false
+		}
+	case EventTypeMetadataUpdateRange:
+		// Validate from and to addresses
+		if e.FromAddress != nil || e.ToAddress != nil {
+			return false
+		}
+
+		// Validate token number
+		if e.TokenNumber == "" || e.ToTokenNumber == "" {
+			return false
+		}
+
+		// Validate token numbers
+		if !validTokenNumber(e.ToTokenNumber) {
+			return false
+		}
+	default:
+		return false
+	}
+
+	return true
+}
+
 // CurrentOwner returns the current owner of the token
 func (e *BlockchainEvent) CurrentOwner() *string {
 	// For FA2 and ERC1155, the current owner is nil since it's a multi-owner token
@@ -93,6 +169,44 @@ func (t TokenCID) Parse() (Chain, ChainStandard, string, string) {
 	return Chain(fmt.Sprintf("%s:%s", parts[0], parts[1])), ChainStandard(parts[2]), parts[3], parts[4]
 }
 
+// Valid checks if the TokenCID is valid
+func (t TokenCID) Valid() bool {
+	chain, standard, contractAddress, tokenNumber := t.Parse()
+
+	// Validate token number
+	if !validTokenNumber(tokenNumber) {
+		return false
+	}
+
+	// Validate chain, standard, and contract address
+	switch chain {
+	case ChainEthereumMainnet, ChainEthereumSepolia:
+		// Validate supported standards
+		if standard != StandardERC721 && standard != StandardERC1155 {
+			return false
+		}
+
+		// Validate contract address
+		if !common.IsHexAddress(contractAddress) {
+			return false
+		}
+	case ChainTezosMainnet, ChainTezosGhostnet:
+		// Validate supported standards
+		if standard != StandardFA2 {
+			return false
+		}
+
+		// Validate contract address
+		if !strings.HasPrefix(contractAddress, "KT1") {
+			return false
+		}
+	default:
+		return false
+	}
+
+	return true
+}
+
 // NewTokenCID creates a new TokenCID
 func NewTokenCID(chain Chain, standard ChainStandard, contractAddress string, tokenNumber string) TokenCID {
 	return TokenCID(fmt.Sprintf("%s:%s:%s:%s", chain, standard, contractAddress, tokenNumber))
@@ -103,7 +217,7 @@ func TransferEventType(from *string, to *string) EventType {
 	if from == nil || *from == "" || *from == ETHEREUM_ZERO_ADDRESS {
 		return EventTypeMint
 	}
-	if to == nil || *to == "" {
+	if to == nil || *to == "" || *to == ETHEREUM_ZERO_ADDRESS {
 		return EventTypeBurn
 	}
 	return EventTypeTransfer
@@ -131,4 +245,9 @@ func NormalizeAddress(address string) string {
 		return common.HexToAddress(address).String()
 	}
 	return address
+}
+
+// validTokenNumber checks if a token number is valid
+func validTokenNumber(tokenNumber string) bool {
+	return regexp.MustCompile(`^[0-9]*$`).MatchString(tokenNumber)
 }
