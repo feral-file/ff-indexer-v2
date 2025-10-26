@@ -716,7 +716,26 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			return fmt.Errorf("failed to upsert token: %w", err)
 		}
 
-		// 2. Upsert all balances in batch (using ON CONFLICT to handle existing records)
+		// 2. Delete existing related records to ensure data freshness
+		// Delete changes_journal entries first (foreign key constraint)
+		// Only delete journal entries related to provenance data (token, owner, balance, metadata)
+		// Other journal types (e.g., media) should be preserved as they may not be tied to on-chain events
+		if err := tx.Where("token_id = ? AND subject_type IN ?", token.ID, []string{"token", "owner", "balance", "metadata"}).
+			Delete(&schema.ChangesJournal{}).Error; err != nil {
+			return fmt.Errorf("failed to delete existing changes_journal entries: %w", err)
+		}
+
+		// Delete existing provenance events
+		if err := tx.Where("token_id = ?", token.ID).Delete(&schema.ProvenanceEvent{}).Error; err != nil {
+			return fmt.Errorf("failed to delete existing provenance events: %w", err)
+		}
+
+		// Delete existing balances
+		if err := tx.Where("token_id = ?", token.ID).Delete(&schema.Balance{}).Error; err != nil {
+			return fmt.Errorf("failed to delete existing balances: %w", err)
+		}
+
+		// 3. Insert all balances in batch
 		if len(input.Balances) > 0 {
 			balances := make([]schema.Balance, 0, len(input.Balances))
 			for _, balanceInput := range input.Balances {
@@ -727,16 +746,12 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
-			// Use Clauses with OnConflict to upsert
-			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "token_id"}, {Name: "owner_address"}},
-				DoUpdates: clause.AssignmentColumns([]string{"quantity"}),
-			}).Create(&balances).Error; err != nil {
-				return fmt.Errorf("failed to upsert balances: %w", err)
+			if err := tx.Create(&balances).Error; err != nil {
+				return fmt.Errorf("failed to create balances: %w", err)
 			}
 		}
 
-		// 3. Batch insert all provenance events (skip duplicates using ON CONFLICT)
+		// 4. Batch insert all provenance events
 		if len(input.Events) > 0 {
 			provenanceEvents := make([]schema.ProvenanceEvent, 0, len(input.Events))
 			for i := range input.Events {
@@ -757,52 +772,24 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
-			// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
-			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
-				DoNothing: true,
-			}).Clauses(clause.Returning{Columns: []clause.Column{}}).
-				Create(&provenanceEvents).Error; err != nil {
+			if err := tx.Create(&provenanceEvents).Error; err != nil {
 				return fmt.Errorf("failed to create provenance events: %w", err)
 			}
 
-			// 4. Query back the events to get their IDs (for both newly inserted and existing events)
-			// Use tx_hash as the primary identifier for batch query
-			txHashes := make([]string, 0, len(input.Events))
-			for _, eventInput := range input.Events {
-				txHashes = append(txHashes, eventInput.TxHash)
-			}
-
-			var queriedEvents []schema.ProvenanceEvent
-			if len(txHashes) > 0 {
-				if err := tx.Where("token_id = ? AND tx_hash IN ?", token.ID, txHashes).
-					Find(&queriedEvents).Error; err != nil {
-					return fmt.Errorf("failed to query provenance events: %w", err)
-				}
-			}
-
 			// 5. Batch insert changes_journal entries for all events
-			// The unique constraint (token_id, subject_type, subject_id) will handle deduplication
-			if len(queriedEvents) > 0 {
-				changeJournals := make([]schema.ChangesJournal, 0, len(queriedEvents))
-				for _, evt := range queriedEvents {
-					subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType, token.Standard)
-					changeJournals = append(changeJournals, schema.ChangesJournal{
-						TokenID:     token.ID,
-						SubjectType: subjectType,
-						SubjectID:   fmt.Sprintf("%d", evt.ID),
-						ChangedAt:   evt.Timestamp,
-					})
-				}
+			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
+			for _, evt := range provenanceEvents {
+				subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType, token.Standard)
+				changeJournals = append(changeJournals, schema.ChangesJournal{
+					TokenID:     token.ID,
+					SubjectType: subjectType,
+					SubjectID:   fmt.Sprintf("%d", evt.ID),
+					ChangedAt:   evt.Timestamp,
+				})
+			}
 
-				// Use ON CONFLICT DO NOTHING to skip duplicates
-				if err := tx.Clauses(clause.OnConflict{
-					DoNothing: true,
-				}).
-					Clauses(clause.Returning{Columns: []clause.Column{}}).
-					Create(&changeJournals).Error; err != nil {
-					return fmt.Errorf("failed to create changes_journal entries: %w", err)
-				}
+			if err := tx.Create(&changeJournals).Error; err != nil {
+				return fmt.Errorf("failed to create changes_journal entries: %w", err)
 			}
 		}
 
