@@ -780,19 +780,24 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 		// Delete changes_journal entries first (foreign key constraint)
 		// Only delete journal entries related to provenance data (token, owner, balance, metadata)
 		// Other journal types (e.g., media) should be preserved as they may not be tied to on-chain events
-		if err := tx.Where("token_id = ? AND subject_type IN ?", token.ID, []string{"token", "owner", "balance", "metadata"}).
-			Delete(&schema.ChangesJournal{}).Error; err != nil {
-			return fmt.Errorf("failed to delete existing changes_journal entries: %w", err)
+		if len(input.Events) > 0 {
+			// Delete changes_journal entries
+			if err := tx.Where("token_id = ? AND subject_type IN ?", token.ID, []string{"token", "owner", "balance", "metadata"}).
+				Delete(&schema.ChangesJournal{}).Error; err != nil {
+				return fmt.Errorf("failed to delete existing changes_journal entries: %w", err)
+			}
+
+			// Delete existing provenance events
+			if err := tx.Where("token_id = ?", token.ID).Delete(&schema.ProvenanceEvent{}).Error; err != nil {
+				return fmt.Errorf("failed to delete existing provenance events: %w", err)
+			}
 		}
 
-		// Delete existing provenance events
-		if err := tx.Where("token_id = ?", token.ID).Delete(&schema.ProvenanceEvent{}).Error; err != nil {
-			return fmt.Errorf("failed to delete existing provenance events: %w", err)
-		}
-
-		// Delete existing balances
-		if err := tx.Where("token_id = ?", token.ID).Delete(&schema.Balance{}).Error; err != nil {
-			return fmt.Errorf("failed to delete existing balances: %w", err)
+		if len(input.Balances) > 0 {
+			// Delete existing balances
+			if err := tx.Where("token_id = ?", token.ID).Delete(&schema.Balance{}).Error; err != nil {
+				return fmt.Errorf("failed to delete existing balances: %w", err)
+			}
 		}
 
 		// 3. Insert all balances in batch
