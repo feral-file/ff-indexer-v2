@@ -31,11 +31,11 @@ const (
 //go:generate mockgen -source=handler.go -destination=../../mocks/mock_api_handler.go -package=mocks -mock_names=Handler=MockAPIHandler
 type Handler interface {
 	// GetToken retrieves a single token by its CID
-	// GET /api/v1/tokens/:cid?expand=<expand>&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
+	// GET /api/v1/tokens/:cid?expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	GetToken(c *gin.Context)
 
 	// ListTokens retrieves tokens with optional filters
-	// GET /api/v1/tokens?owners=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_id=<id1>,<id2>&limit=<limit>&offset=<offset>&expand=<expand>&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
+	// GET /api/v1/tokens?owners=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_id=<id1>,<id2>&limit=<limit>&offset=<offset>&expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	ListTokens(c *gin.Context)
 
 	// GetChanges retrieves changes with optional filters
@@ -161,6 +161,17 @@ func (h *handler) GetToken(c *gin.Context) {
 		}
 	}
 
+	if expansions.EnrichmentSource {
+		enrichment, err := h.store.GetEnrichmentSourceByTokenID(c.Request.Context(), result.Token.ID)
+		if err != nil {
+			respondInternalError(c, err, "get_enrichment_source", zap.Uint64("token_id", result.Token.ID))
+			return
+		}
+		if enrichment != nil {
+			tokenDTO.EnrichmentSource = dto.MapEnrichmentSourceToDTO(enrichment)
+		}
+	}
+
 	c.JSON(http.StatusOK, tokenDTO)
 }
 
@@ -265,6 +276,17 @@ func (h *handler) ListTokens(c *gin.Context) {
 					Offset: nextOffset,
 					Total:  eventTotal,
 				}
+			}
+		}
+
+		if expansions.EnrichmentSource {
+			enrichment, err := h.store.GetEnrichmentSourceByTokenID(c.Request.Context(), result.Token.ID)
+			if err != nil {
+				respondInternalError(c, err, "get_enrichment_source", zap.Uint64("token_id", result.Token.ID))
+				return
+			}
+			if enrichment != nil {
+				tokenDTO.EnrichmentSource = dto.MapEnrichmentSourceToDTO(enrichment)
 			}
 		}
 

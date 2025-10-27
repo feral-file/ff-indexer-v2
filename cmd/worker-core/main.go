@@ -86,7 +86,7 @@ func main() {
 	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter)
 
 	// Initialize vendors
-	artblocksClient := artblocks.NewClient(httpClient)
+	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL)
 	fxhashClient := fxhash.NewClient(httpClient)
 
 	// Load publisher registry
@@ -105,7 +105,7 @@ func main() {
 	}
 
 	// Initialize metadata enhancer and resolver
-	metadataEnhancer := metadata.NewEnhancer(artblocksClient, fxhashClient)
+	metadataEnhancer := metadata.NewEnhancer(artblocksClient, fxhashClient, jsonAdapter)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, jsonAdapter, clockAdapter, dataStore, publisherRegistry)
 
 	// Load deployer cache from DB if resolver has store and registry
@@ -171,6 +171,7 @@ func main() {
 	temporalWorker.RegisterActivity(executor.CreateTokenMint)
 	temporalWorker.RegisterActivity(executor.FetchTokenMetadata)
 	temporalWorker.RegisterActivity(executor.UpsertTokenMetadata)
+	temporalWorker.RegisterActivity(executor.EnhanceTokenMetadata)
 	temporalWorker.RegisterActivity(executor.UpdateTokenTransfer)
 	temporalWorker.RegisterActivity(executor.UpdateTokenBurn)
 	temporalWorker.RegisterActivity(executor.CreateMetadataUpdate)

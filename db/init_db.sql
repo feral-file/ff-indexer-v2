@@ -6,7 +6,7 @@
 CREATE TYPE token_standard AS ENUM ('erc721', 'erc1155', 'fa2');
 CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:mainnet', 'tezos:ghostnet');
 CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
-CREATE TYPE vendor_type AS ENUM ('fxhash', 'artblocks', 'onchain');
+CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile');
 CREATE TYPE media_role AS ENUM ('image', 'animation', 'poster');
 CREATE TYPE media_status AS ENUM ('pending', 'ready', 'failed');
 CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'media');
@@ -60,20 +60,19 @@ CREATE TABLE token_metadata (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Enrichment Sources table - Tracks metadata fetch attempts from various vendors
+-- Enrichment Sources table - Stores enriched metadata from vendor APIs
 CREATE TABLE enrichment_sources (
-    id BIGSERIAL PRIMARY KEY,
-    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    vendor vendor_type NOT NULL,           -- 'fxhash','artblocks','onchain'
-    source_url TEXT,
-    etag TEXT,
-    last_status INTEGER,
-    last_error TEXT,
-    last_fetched_at TIMESTAMPTZ,
-    last_hash TEXT,
+    token_id BIGINT PRIMARY KEY REFERENCES tokens (id) ON DELETE CASCADE,
+    vendor vendor_type NOT NULL,           -- 'artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile'
+    vendor_json JSONB,                     -- raw response from vendor API
+    vendor_hash TEXT,                      -- hash of vendor_json to detect changes
+    image_url TEXT,                        -- normalized image URL from vendor
+    animation_url TEXT,                    -- normalized animation URL from vendor
+    name TEXT,                             -- normalized name from vendor
+    description TEXT,                      -- normalized description from vendor
+    artists JSONB,                         -- normalized artists array from vendor
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (token_id, vendor)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Media Assets table - Manages media files with different storage providers integration
@@ -166,10 +165,9 @@ CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WH
 CREATE INDEX idx_token_metadata_publisher ON token_metadata USING GIN (publisher) WHERE publisher IS NOT NULL AND jsonb_typeof(publisher) = 'object';
 
 -- Enrichment Sources table indexes
-CREATE INDEX idx_enrichment_sources_token_vendor ON enrichment_sources (token_id, vendor);
 CREATE INDEX idx_enrichment_sources_vendor ON enrichment_sources (vendor);
-CREATE INDEX idx_enrichment_sources_last_fetched_at ON enrichment_sources (last_fetched_at);
-CREATE INDEX idx_enrichment_sources_last_status ON enrichment_sources (last_status);
+CREATE INDEX idx_enrichment_sources_vendor_hash ON enrichment_sources (vendor_hash) WHERE vendor_hash IS NOT NULL;
+CREATE INDEX idx_enrichment_sources_artists ON enrichment_sources USING GIN (artists) WHERE artists IS NOT NULL;
 
 -- Media Assets table indexes
 CREATE INDEX idx_media_assets_token_role ON media_assets (token_id, role);
@@ -206,6 +204,9 @@ CREATE INDEX idx_key_value_store_updated_at ON key_value_store (updated_at);
 -- JSONB indexes for token metadata
 CREATE INDEX idx_token_metadata_origin_json_gin ON token_metadata USING GIN (origin_json);
 CREATE INDEX idx_token_metadata_latest_json_gin ON token_metadata USING GIN (latest_json);
+
+-- JSONB indexes for enrichment sources
+CREATE INDEX idx_enrichment_sources_vendor_json_gin ON enrichment_sources USING GIN (vendor_json);
 
 -- JSONB indexes for media assets
 CREATE INDEX idx_media_assets_cf_variant_map_gin ON media_assets USING GIN (cf_variant_map);
@@ -294,7 +295,7 @@ ON CONFLICT (key) DO NOTHING;
 COMMENT ON TABLE tokens IS 'Primary entity for tracking tokens across all supported blockchains';
 COMMENT ON TABLE balances IS 'Tracks ownership quantities for multi-edition tokens (ERC1155, FA2)';
 COMMENT ON TABLE token_metadata IS 'Stores original and enriched metadata for tokens';
-COMMENT ON TABLE enrichment_sources IS 'Tracks metadata fetch attempts from various vendors';
+COMMENT ON TABLE enrichment_sources IS 'Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File) with both raw and normalized data';
 COMMENT ON TABLE media_assets IS 'Manages media files with different storage providers integration';
 COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. token_id always points to affected token. subject_id is polymorphic: provenance_event_id (token/owner), balance_id (balance), token_id (metadata), media_asset_id (media)';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';

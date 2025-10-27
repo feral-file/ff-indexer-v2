@@ -52,13 +52,25 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		}
 	}
 
-	logger.Info("Token metadata indexed successfully", zap.String("tokenCID", tokenCID.String()))
+	// Step 4: Enhance metadata from vendor APIs (ArtBlocks, fxhash, etc.)
+	// This activity will:
+	// - Detect if the token is from a known vendor (ArtBlocks, fxhash, etc.)
+	// - Fetch additional metadata from vendor APIs
+	// - Store enrichment data in enrichment_sources table
+	// - Update token_metadata with enriched data and set enrichment_level to 'vendor'
+	if metadata != nil {
+		err = workflow.ExecuteActivity(ctx, w.executor.EnhanceTokenMetadata, tokenCID, metadata).Get(ctx, nil)
+		if err != nil {
+			// Log the error but don't fail the workflow
+			// Enrichment is optional and should not block the main indexing flow
+			logger.Warn("Failed to enhance token metadata (non-fatal)",
+				zap.String("tokenCID", tokenCID.String()),
+				zap.Error(err),
+			)
+		}
+	}
 
-	// TODO: Trigger workflow to enrich token metadata from vendor APIs later
-	// This could be done by starting another child workflow:
-	// - EnrichTokenMetadataWorkflow: fetches metadata from OpenSea, ArtBlocks, etc.
-	// - Compares and merges with existing metadata
-	// - Updates enrichment_level to 'vendor' or 'full'
+	logger.Info("Token metadata indexed successfully", zap.String("tokenCID", tokenCID.String()))
 
 	return nil
 }

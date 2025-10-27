@@ -15,6 +15,7 @@ event-bridge
 worker-core
 worker-media
 api
+bin/
 
 # Directories to keep
 !ethereum-event-emitter/

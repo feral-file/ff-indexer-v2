@@ -34,6 +34,9 @@ tezos:
   chain_id: tezos:mainnet
   api_url: https://api.tzkt.io
 
+vendors:
+  artblocks_url: https://artblocks-mainnet.hasura.app/v1/graphql
+
 ethereum_token_sweep_start_block: 10000000
 ethereum_token_sweep_block_chunk_size: 50000
 tezos_token_sweep_start_block: 5000000

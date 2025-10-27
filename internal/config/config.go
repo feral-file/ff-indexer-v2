@@ -63,6 +63,11 @@ type TemporalConfig struct {
 	WorkerActivitiesPerSecond          float64 `mapstructure:"worker_activities_per_second"`
 }
 
+// VendorsConfig holds vendor API configurations
+type VendorsConfig struct {
+	ArtBlocksURL string `mapstructure:"artblocks_url"`
+}
+
 // ServerConfig holds HTTP server configuration
 type ServerConfig struct {
 	Host         string `mapstructure:"host"`
@@ -103,6 +108,7 @@ type WorkerCoreConfig struct {
 	Temporal                         TemporalConfig `mapstructure:"temporal"`
 	Ethereum                         EthereumConfig `mapstructure:"ethereum"`
 	Tezos                            TezosConfig    `mapstructure:"tezos"`
+	Vendors                          VendorsConfig  `mapstructure:"vendors"`
 	EthereumTokenSweepStartBlock     uint64         `mapstructure:"ethereum_token_sweep_start_block"`
 	EthereumTokenSweepBlockChunkSize uint64         `mapstructure:"ethereum_token_sweep_block_chunk_size"`
 	TezosTokenSweepStartBlock        uint64         `mapstructure:"tezos_token_sweep_start_block"`
@@ -210,6 +216,7 @@ func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
+	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)

@@ -62,6 +62,19 @@ type CreateTokenMetadataInput struct {
 	Publisher       *schema.Publisher
 }
 
+// CreateEnrichmentSourceInput represents the input for creating or updating an enrichment source
+type CreateEnrichmentSourceInput struct {
+	TokenID      uint64
+	Vendor       schema.Vendor
+	VendorJSON   []byte
+	VendorHash   *string
+	ImageURL     *string
+	AnimationURL *string
+	Name         *string
+	Description  *string
+	Artists      schema.Artists
+}
+
 // UpdateBalanceInput represents the input for updating a balance record
 type UpdateBalanceInput struct {
 	OwnerAddress string
@@ -175,6 +188,17 @@ type Store interface {
 	CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error
 	// GetMediaAssetByID retrieves a media asset by ID
 	GetMediaAssetByID(ctx context.Context, id int64) (*schema.MediaAsset, error)
+
+	// =============================================================================
+	// Enrichment Source Operations
+	// =============================================================================
+
+	// GetEnrichmentSourceByTokenID retrieves an enrichment source by token ID
+	GetEnrichmentSourceByTokenID(ctx context.Context, tokenID uint64) (*schema.EnrichmentSource, error)
+	// GetEnrichmentSourceByTokenCID retrieves an enrichment source by token CID
+	GetEnrichmentSourceByTokenCID(ctx context.Context, tokenCID string) (*schema.EnrichmentSource, error)
+	// UpsertEnrichmentSource creates or updates an enrichment source
+	UpsertEnrichmentSource(ctx context.Context, input CreateEnrichmentSourceInput) error
 
 	// =============================================================================
 	// Token Ownership & Balances

@@ -10,7 +10,7 @@ import (
 
 // ArtistResponse represents an artist/creator in the API response
 type ArtistResponse struct {
-	DID  string `json:"did,omitempty"`
+	DID  string `json:"did"`
 	Name string `json:"name"`
 }
 
@@ -32,6 +32,7 @@ type TokenResponse struct {
 	// Expansions
 	Owners           *PaginatedOwners           `json:"owners,omitempty"`
 	ProvenanceEvents *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`
+	EnrichmentSource *EnrichmentSourceResponse  `json:"enrichment_source,omitempty"`
 }
 
 // PublisherResponse represents the publisher of the token
@@ -91,6 +92,20 @@ type PaginatedProvenanceEvents struct {
 	Total  uint64                    `json:"total"`
 }
 
+// EnrichmentSourceResponse represents enrichment source data from vendor APIs
+type EnrichmentSourceResponse struct {
+	Vendor       string           `json:"vendor"`
+	VendorJSON   json.RawMessage  `json:"vendor_json,omitempty"`
+	VendorHash   *string          `json:"vendor_hash,omitempty"`
+	ImageURL     *string          `json:"image_url,omitempty"`
+	AnimationURL *string          `json:"animation_url,omitempty"`
+	Name         *string          `json:"name,omitempty"`
+	Description  *string          `json:"description,omitempty"`
+	Artists      []ArtistResponse `json:"artists,omitempty"`
+	CreatedAt    time.Time        `json:"created_at"`
+	UpdatedAt    time.Time        `json:"updated_at"`
+}
+
 // TokenListResponse represents a paginated list of tokens
 type TokenListResponse struct {
 	Tokens []TokenResponse `json:"items"`
@@ -125,7 +140,7 @@ func MapTokenMetadataToDTO(metadata *schema.TokenMetadata) *TokenMetadataRespons
 	var artists []ArtistResponse
 	for _, artist := range metadata.Artists {
 		artists = append(artists, ArtistResponse{
-			DID:  artist.DID,
+			DID:  artist.DID.String(),
 			Name: artist.Name,
 		})
 	}
@@ -176,6 +191,30 @@ func MapProvenanceEventToDTO(event *schema.ProvenanceEvent) *ProvenanceEventResp
 		BlockHash:   event.BlockHash,
 		Timestamp:   event.Timestamp,
 		Raw:         json.RawMessage(event.Raw),
+	}
+}
+
+// MapEnrichmentSourceToDTO maps a schema.EnrichmentSource to EnrichmentSourceResponse
+func MapEnrichmentSourceToDTO(enrichment *schema.EnrichmentSource) *EnrichmentSourceResponse {
+	var artists []ArtistResponse
+	for _, artist := range enrichment.Artists {
+		artists = append(artists, ArtistResponse{
+			DID:  artist.DID.String(),
+			Name: artist.Name,
+		})
+	}
+
+	return &EnrichmentSourceResponse{
+		Vendor:       string(enrichment.Vendor),
+		VendorJSON:   json.RawMessage(enrichment.VendorJSON),
+		VendorHash:   enrichment.VendorHash,
+		ImageURL:     enrichment.ImageURL,
+		AnimationURL: enrichment.AnimationURL,
+		Name:         enrichment.Name,
+		Description:  enrichment.Description,
+		Artists:      artists,
+		CreatedAt:    enrichment.CreatedAt,
+		UpdatedAt:    enrichment.UpdatedAt,
 	}
 }
 

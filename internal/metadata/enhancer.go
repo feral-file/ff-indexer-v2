@@ -2,27 +2,156 @@ package metadata
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"strings"
 
+	logger "github.com/bitmark-inc/autonomy-logger"
+	"github.com/gowebpki/jcs"
+	"go.uber.org/zap"
+
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 )
 
+// EnhancedMetadata represents metadata enhanced from vendor APIs
+type EnhancedMetadata struct {
+	Vendor       PublisherName
+	VendorJSON   []byte
+	Name         *string
+	Description  *string
+	ImageURL     *string
+	AnimationURL *string
+	Artists      []Artist
+}
+
+// VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
+func (e *EnhancedMetadata) VendorJsonHash() ([]byte, error) {
+	canonicalizedVendorJSON, err := jcs.Transform(e.VendorJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to canonicalize vendor JSON: %w", err)
+	}
+	hash := sha256.Sum256(canonicalizedVendorJSON)
+	return hash[:], nil
+}
+
 // Enhancer defines the interface for enhancing metadata from vendors
 //
-//go:generate mockgen -source=enhancer.go -destination=../mocks/metadata_enhancer.go -package=mocks -mock_names=MetadataEnhancer=MockMetadataEnhancer
+//go:generate mockgen -source=enhancer.go -destination=../mocks/metadata_enhancer.go -package=mocks -mock_names=Enhancer=MockMetadataEnhancer
 type Enhancer interface {
-	Enhance(ctx context.Context, meta *NormalizedMetadata) (*NormalizedMetadata, error)
+	// Enhance enhances metadata from vendor APIs based on the token CID and returns enriched data
+	Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata) (*EnhancedMetadata, error)
 }
 
 type enhancer struct {
 	artblocksClient artblocks.Client
 	fxhashClient    fxhash.Client
+	json            adapter.JSON
 }
 
-func NewEnhancer(artblocksClient artblocks.Client, fxhashClient fxhash.Client) Enhancer {
-	return &enhancer{artblocksClient: artblocksClient, fxhashClient: fxhashClient}
+func NewEnhancer(artblocksClient artblocks.Client, fxhashClient fxhash.Client, json adapter.JSON) Enhancer {
+	return &enhancer{artblocksClient: artblocksClient, fxhashClient: fxhashClient, json: json}
 }
 
-func (e *enhancer) Enhance(ctx context.Context, meta *NormalizedMetadata) (*NormalizedMetadata, error) {
-	return meta, nil
+// Enhance enhances metadata from vendor APIs based on the token CID
+func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata) (*EnhancedMetadata, error) {
+	// Skip if no publisher information is available
+	if meta.Publisher == nil || meta.Publisher.Name == nil {
+		return nil, nil
+	}
+
+	chain, _, contractAddress, tokenNumber := tokenCID.Parse()
+
+	// Check publisher name and route to appropriate enhancer
+	publisherName := PublisherName(*meta.Publisher.Name)
+
+	switch publisherName {
+	case PublisherNameArtBlocks:
+		// Only enhance Ethereum mainnet tokens
+		if chain != domain.ChainEthereumMainnet {
+			return nil, nil
+		}
+		return e.enhanceArtBlocks(ctx, tokenCID, contractAddress, tokenNumber, meta.Raw)
+
+	// TODO: Add support for other vendors
+	// case "fxhash":
+	//     return e.enhanceFxhash(ctx, tokenCID, contractAddress, tokenNumber, meta)
+	// case "Feral File":
+	//     return e.enhanceFeralFile(ctx, tokenCID, contractAddress, tokenNumber, meta)
+
+	default:
+		// No enhancement available for this publisher
+		return nil, nil
+	}
+}
+
+// enhanceArtBlocks enhances metadata from ArtBlocks API
+func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCID, contractAddress, tokenNumber string, rawMetadata map[string]interface{}) (*EnhancedMetadata, error) {
+	logger.Info("Enhancing ArtBlocks metadata", zap.String("tokenCID", tokenCID.String()))
+
+	// Parse the token ID to get project ID and mint number
+	projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ArtBlocks token ID: %w", err)
+	}
+
+	// Build the project ID string in the format: contractAddress-projectID
+	projectIDStr := fmt.Sprintf("%s-%d", strings.ToLower(contractAddress), projectID)
+
+	// Fetch project metadata from ArtBlocks API
+	project, err := e.artblocksClient.GetProjectMetadata(ctx, projectIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch ArtBlocks project metadata: %w", err)
+	}
+
+	logger.Info("Fetched ArtBlocks project metadata",
+		zap.String("tokenCID", tokenCID.String()),
+		zap.String("projectID", projectIDStr),
+		zap.String("projectName", project.Name),
+		zap.Int64("mintNumber", mintNumber))
+
+	vendorJSON, err := e.json.Marshal(project)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal ArtBlocks project metadata: %w", err)
+	}
+
+	// Build enhanced metadata
+	enhanced := &EnhancedMetadata{
+		Vendor:     PublisherNameArtBlocks,
+		VendorJSON: vendorJSON,
+	}
+
+	// Format the name as "{project.name} #{mintNumber}"
+	name := fmt.Sprintf("%s #%d", project.Name, mintNumber)
+	enhanced.Name = &name
+
+	// Use project description if available
+	if project.Description != nil && *project.Description != "" {
+		enhanced.Description = project.Description
+	}
+
+	// Build artist information using DID
+	if project.ArtistAddress != "" {
+		artistDID := domain.NewDID(project.ArtistAddress, domain.ChainEthereumMainnet)
+		enhanced.Artists = []Artist{
+			{
+				DID:  artistDID,
+				Name: project.ArtistName,
+			},
+		}
+	}
+
+	// Animation URL is the generator URL
+	if g, ok := rawMetadata["generator_url"].(string); ok {
+		enhanced.AnimationURL = &g
+	}
+
+	// Image URL is the raw metadata image URL
+	if i, ok := rawMetadata["image"].(string); ok {
+		enhanced.ImageURL = &i
+	}
+
+	return enhanced, nil
 }

@@ -2,40 +2,46 @@ package schema
 
 import (
 	"time"
+
+	"gorm.io/datatypes"
 )
 
 // Vendor represents the source of metadata enrichment
 type Vendor string
 
 const (
-	// VendorFXHash represents metadata from FXHash API
-	VendorFXHash Vendor = "fxhash"
 	// VendorArtBlocks represents metadata from Art Blocks API
 	VendorArtBlocks Vendor = "artblocks"
-	// VendorOnchain represents metadata fetched directly from blockchain
-	VendorOnchain Vendor = "onchain"
+	// VendorFXHash represents metadata from fxhash API
+	VendorFXHash Vendor = "fxhash"
+	// VendorFoundation represents metadata from Foundation API
+	VendorFoundation Vendor = "foundation"
+	// VendorSuperRare represents metadata from SuperRare API
+	VendorSuperRare Vendor = "superrare"
+	// VendorFeralFile represents metadata from Feral File API
+	VendorFeralFile Vendor = "feralfile"
 )
 
-// EnrichmentSource represents the enrichment_sources table - tracks metadata fetch attempts from various vendors
+// EnrichmentSource represents the enrichment_sources table - stores enriched metadata from vendor APIs
 type EnrichmentSource struct {
-	// ID is the internal database primary key
-	ID uint64 `gorm:"column:id;primaryKey;autoIncrement"`
-	// TokenID references the token being enriched
-	TokenID uint64 `gorm:"column:token_id;not null;uniqueIndex:idx_enrichment_sources_token_vendor,priority:1"`
-	// Vendor identifies the metadata source (fxhash, artblocks, onchain)
-	Vendor Vendor `gorm:"column:vendor;not null;type:text;uniqueIndex:idx_enrichment_sources_token_vendor,priority:2"`
-	// SourceURL is the API endpoint or URI used to fetch metadata
-	SourceURL *string `gorm:"column:source_url;type:text"`
-	// ETag is the HTTP ETag header value for cache validation
-	ETag *string `gorm:"column:etag;type:text"`
-	// LastStatus is the HTTP status code from the last fetch attempt
-	LastStatus *int `gorm:"column:last_status;type:integer"`
-	// LastError contains the error message if the last fetch failed
-	LastError *string `gorm:"column:last_error;type:text"`
-	// LastFetchedAt is the timestamp of the last fetch attempt
-	LastFetchedAt *time.Time `gorm:"column:last_fetched_at;type:timestamptz"`
-	// LastHash is the content hash from the last successful fetch to detect changes
-	LastHash *string `gorm:"column:last_hash;type:text"`
+	// TokenID references the token being enriched (primary key, one-to-one relationship)
+	TokenID uint64 `gorm:"column:token_id;primaryKey"`
+	// Vendor identifies the metadata source (artblocks, fxhash, foundation, superrare, feralfile)
+	Vendor Vendor `gorm:"column:vendor;not null;type:text"`
+	// VendorJSON is the raw response from vendor API for auditing and reprocessing
+	VendorJSON datatypes.JSON `gorm:"column:vendor_json;type:jsonb"`
+	// VendorHash is the hash of VendorJSON to detect changes in vendor data
+	VendorHash *string `gorm:"column:vendor_hash;type:text"`
+	// ImageURL is the normalized image URL from vendor
+	ImageURL *string `gorm:"column:image_url;type:text"`
+	// AnimationURL is the normalized animation URL from vendor
+	AnimationURL *string `gorm:"column:animation_url;type:text"`
+	// Name is the normalized name from vendor
+	Name *string `gorm:"column:name;type:text"`
+	// Description is the normalized description from vendor
+	Description *string `gorm:"column:description;type:text"`
+	// Artists are the normalized artists array from vendor
+	Artists Artists `gorm:"column:artists;type:jsonb"`
 	// CreatedAt is the timestamp when this enrichment source was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this enrichment source was last updated

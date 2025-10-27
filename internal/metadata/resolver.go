@@ -23,6 +23,18 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
+// Artist represents an artist/creator with their decentralized identifier and name
+type Artist struct {
+	DID  domain.DID `json:"did"`
+	Name string     `json:"name"`
+}
+
+// Publisher represents the publisher of the token
+type Publisher struct {
+	Name *PublisherName `json:"name,omitempty"`
+	URL  *string        `json:"url,omitempty"`
+}
+
 // NormalizedMetadata represents the normalized metadata
 type NormalizedMetadata struct {
 	Raw         map[string]interface{} `json:"raw"`
@@ -30,8 +42,8 @@ type NormalizedMetadata struct {
 	Animation   string                 `json:"animation"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
-	Artists     schema.Artists         `json:"artists"`
-	Publisher   *schema.Publisher      `json:"publisher"`
+	Artists     []Artist               `json:"artists"`
+	Publisher   *Publisher             `json:"publisher"`
 }
 
 // RawHash returns the hash of the raw metadata and the raw metadata itself
@@ -55,9 +67,24 @@ type PublisherChainConfig struct {
 	CollectionAddresses []string `json:"collection_addresses"`
 }
 
+type PublisherName string
+
+const (
+	// PublisherNameArtBlocks represents the name of the Art Blocks publisher
+	PublisherNameArtBlocks PublisherName = "Art Blocks"
+	// PublisherNameFXHash represents the name of the fxhash publisher
+	PublisherNameFXHash PublisherName = "fxhash"
+	// PublisherNameFeralFile represents the name of the Feral File publisher
+	PublisherNameFeralFile PublisherName = "Feral File"
+	// PublisherNameFoundation represents the name of the Foundation publisher
+	PublisherNameFoundation PublisherName = "Foundation"
+	// PublisherNameSuperRare represents the name of the SuperRare publisher
+	PublisherNameSuperRare PublisherName = "SuperRare"
+)
+
 // PublisherInfo represents a publisher entry in the registry
 type PublisherInfo struct {
-	Name   string                          `json:"name"`
+	Name   PublisherName                   `json:"name"`
 	URL    string                          `json:"url"`
 	Chains map[string]PublisherChainConfig `json:"chains"` // key is chain ID like "eip155:1" or "tez:mainnet"
 }
@@ -76,6 +103,24 @@ type PublisherRegistry struct {
 	collectionToPublisher map[string]*PublisherInfo
 	// chain:contract -> deployer lookup (for contracts deployed by known deployers)
 	deployerToPublisher map[string]*PublisherInfo
+}
+
+// PublisherNameToVendor converts a publisher name to a vendor
+func PublisherNameToVendor(publisherName PublisherName) schema.Vendor {
+	switch publisherName {
+	case PublisherNameArtBlocks:
+		return schema.VendorArtBlocks
+	case PublisherNameFXHash:
+		return schema.VendorFXHash
+	case PublisherNameFeralFile:
+		return schema.VendorFeralFile
+	case PublisherNameFoundation:
+		return schema.VendorFoundation
+	case PublisherNameSuperRare:
+		return schema.VendorSuperRare
+	default:
+		return ""
+	}
 }
 
 // Resolver defines the interface for resolving metadata from a tokenCID
@@ -158,6 +203,9 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 // normalizeTZIP21Metadata normalizes the metadata follow the TZIP21 specs
 // https://tzip.tezosagora.org/proposal/tzip-21/
 func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.TokenCID, metadata map[string]interface{}) (*NormalizedMetadata, error) {
+	// Parse the token CID to get the chain ID
+	chainID, _, _, _ := tokenCID.Parse()
+
 	var displayUri string
 	var artifactUri string
 	var name string
@@ -190,9 +238,14 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 	}
 
 	// Convert creators to artists
-	var artists schema.Artists
+	var artists []Artist
 	for _, creator := range creators {
-		artists = append(artists, schema.Artist{Name: creator})
+		name := creator
+		if n := resolveArtistName(metadata); n != "" {
+			name = n
+		}
+
+		artists = append(artists, Artist{DID: domain.NewDID(creator, chainID), Name: name})
 	}
 
 	// Resolve the publisher from the token CID
@@ -217,7 +270,7 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	var image string
 	var animationURL string
 	var name string
-	var artists schema.Artists
+	var artists []Artist
 	var description string
 	if i, ok := metadata["image"].(string); ok {
 		image = i
@@ -232,14 +285,9 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 		description = d
 	}
 
-	// ArtBlocks uses generator_url for animation URL
-	if g, ok := metadata["generator_url"].(string); ok {
-		animationURL = g
-	}
-
 	// Resolve the artist from the metadata
-	if a := resolveArtist(metadata); a != "" {
-		artists = schema.Artists{{Name: a}}
+	if a := resolveArtistName(metadata); a != "" {
+		artists = []Artist{{Name: a}}
 	}
 
 	// Resolve the publisher from the token CID
@@ -258,8 +306,8 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	return normalizedMetadata
 }
 
-// resolveArtist resolves the artist from the metadata
-func resolveArtist(metadata map[string]interface{}) string {
+// resolveArtistName resolves the artist from the metadata
+func resolveArtistName(metadata map[string]interface{}) string {
 	// Resolve from `artist` field
 	artist, ok := metadata["artist"].(string)
 	if ok {
@@ -637,7 +685,7 @@ func (r *PublisherRegistry) lookupPublisherByDeployer(chainID domain.Chain, depl
 }
 
 // resolvePublisher resolves the publisher from the metadata
-func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCID) *schema.Publisher {
+func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCID) *Publisher {
 	if r.registry == nil {
 		return nil
 	}
@@ -648,7 +696,7 @@ func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCI
 	if publisher := r.registry.lookupPublisherByCollection(chainID, contractAddress); publisher != nil {
 		name := publisher.Name
 		url := publisher.URL
-		return &schema.Publisher{
+		return &Publisher{
 			Name: &name,
 			URL:  &url,
 		}
@@ -672,7 +720,7 @@ func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCI
 	if publisher := r.registry.lookupPublisherByDeployer(chainID, deployer); publisher != nil {
 		name := publisher.Name
 		url := publisher.URL
-		return &schema.Publisher{
+		return &Publisher{
 			Name: &name,
 			URL:  &url,
 		}

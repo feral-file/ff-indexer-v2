@@ -383,6 +383,66 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 	return nil
 }
 
+// GetEnrichmentSourceByTokenID retrieves an enrichment source by token ID
+func (s *pgStore) GetEnrichmentSourceByTokenID(ctx context.Context, tokenID uint64) (*schema.EnrichmentSource, error) {
+	var enrichmentSource schema.EnrichmentSource
+	err := s.db.WithContext(ctx).Where("token_id = ?", tokenID).First(&enrichmentSource).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get enrichment source: %w", err)
+	}
+	return &enrichmentSource, nil
+}
+
+// GetEnrichmentSourceByTokenCID retrieves an enrichment source by token CID
+func (s *pgStore) GetEnrichmentSourceByTokenCID(ctx context.Context, tokenCID string) (*schema.EnrichmentSource, error) {
+	var enrichmentSource schema.EnrichmentSource
+	err := s.db.WithContext(ctx).
+		Joins("JOIN tokens ON tokens.id = enrichment_sources.token_id").
+		Where("tokens.token_cid = ?", tokenCID).
+		First(&enrichmentSource).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get enrichment source: %w", err)
+	}
+	return &enrichmentSource, nil
+}
+
+// UpsertEnrichmentSource creates or updates an enrichment source and updates enrichment_level in token_metadata
+func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrichmentSourceInput) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Upsert enrichment source
+		enrichmentSource := schema.EnrichmentSource{
+			TokenID:      input.TokenID,
+			Vendor:       input.Vendor,
+			VendorJSON:   input.VendorJSON,
+			VendorHash:   input.VendorHash,
+			ImageURL:     input.ImageURL,
+			AnimationURL: input.AnimationURL,
+			Name:         input.Name,
+			Description:  input.Description,
+			Artists:      input.Artists,
+		}
+
+		if err := tx.Save(&enrichmentSource).Error; err != nil {
+			return fmt.Errorf("failed to upsert enrichment source: %w", err)
+		}
+
+		// 2. Update enrichment_level in token_metadata to 'vendor'
+		if err := tx.Model(&schema.TokenMetadata{}).
+			Where("token_id = ?", input.TokenID).
+			Update("enrichment_level", schema.EnrichmentLevelVendor).Error; err != nil {
+			return fmt.Errorf("failed to update enrichment level: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // UpdateTokenBurn updates a token as burned with associated balance update, change journal, and provenance event in a single transaction
 // This method assumes the token and balance records already exist
 func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error {

@@ -5,6 +5,10 @@
 package mocks
 
 import (
+	context "context"
+	reflect "reflect"
+
+	artblocks "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	gomock "github.com/golang/mock/gomock"
 )
 
@@ -29,4 +33,19 @@ func NewMockArtBlocksClient(ctrl *gomock.Controller) *MockArtBlocksClient {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockArtBlocksClient) EXPECT() *MockArtBlocksClientMockRecorder {
 	return m.recorder
+}
+
+// GetProjectMetadata mocks base method.
+func (m *MockArtBlocksClient) GetProjectMetadata(ctx context.Context, projectID string) (*artblocks.ProjectMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetProjectMetadata", ctx, projectID)
+	ret0, _ := ret[0].(*artblocks.ProjectMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetProjectMetadata indicates an expected call of GetProjectMetadata.
+func (mr *MockArtBlocksClientMockRecorder) GetProjectMetadata(ctx, projectID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetProjectMetadata", reflect.TypeOf((*MockArtBlocksClient)(nil).GetProjectMetadata), ctx, projectID)
 }

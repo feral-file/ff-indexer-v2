@@ -10,43 +10,44 @@ import (
 
 	gomock "github.com/golang/mock/gomock"
 
+	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
 )
 
-// MockEnhancer is a mock of Enhancer interface.
-type MockEnhancer struct {
+// MockMetadataEnhancer is a mock of Enhancer interface.
+type MockMetadataEnhancer struct {
 	ctrl     *gomock.Controller
-	recorder *MockEnhancerMockRecorder
+	recorder *MockMetadataEnhancerMockRecorder
 }
 
-// MockEnhancerMockRecorder is the mock recorder for MockEnhancer.
-type MockEnhancerMockRecorder struct {
-	mock *MockEnhancer
+// MockMetadataEnhancerMockRecorder is the mock recorder for MockMetadataEnhancer.
+type MockMetadataEnhancerMockRecorder struct {
+	mock *MockMetadataEnhancer
 }
 
-// NewMockEnhancer creates a new mock instance.
-func NewMockEnhancer(ctrl *gomock.Controller) *MockEnhancer {
-	mock := &MockEnhancer{ctrl: ctrl}
-	mock.recorder = &MockEnhancerMockRecorder{mock}
+// NewMockMetadataEnhancer creates a new mock instance.
+func NewMockMetadataEnhancer(ctrl *gomock.Controller) *MockMetadataEnhancer {
+	mock := &MockMetadataEnhancer{ctrl: ctrl}
+	mock.recorder = &MockMetadataEnhancerMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockEnhancer) EXPECT() *MockEnhancerMockRecorder {
+func (m *MockMetadataEnhancer) EXPECT() *MockMetadataEnhancerMockRecorder {
 	return m.recorder
 }
 
 // Enhance mocks base method.
-func (m *MockEnhancer) Enhance(ctx context.Context, meta *metadata.NormalizedMetadata) (*metadata.NormalizedMetadata, error) {
+func (m *MockMetadataEnhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Enhance", ctx, meta)
-	ret0, _ := ret[0].(*metadata.NormalizedMetadata)
+	ret := m.ctrl.Call(m, "Enhance", ctx, tokenCID, meta)
+	ret0, _ := ret[0].(*metadata.EnhancedMetadata)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Enhance indicates an expected call of Enhance.
-func (mr *MockEnhancerMockRecorder) Enhance(ctx, meta interface{}) *gomock.Call {
+func (mr *MockMetadataEnhancerMockRecorder) Enhance(ctx, tokenCID, meta interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Enhance", reflect.TypeOf((*MockEnhancer)(nil).Enhance), ctx, meta)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Enhance", reflect.TypeOf((*MockMetadataEnhancer)(nil).Enhance), ctx, tokenCID, meta)
 }

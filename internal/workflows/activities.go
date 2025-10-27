@@ -45,6 +45,9 @@ type Executor interface {
 	// UpsertTokenMetadata stores or updates token metadata in the database
 	UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error
 
+	// EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
+	EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error
+
 	// IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
 	// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
 	IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error
@@ -361,6 +364,24 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 		originJSON = metadataJSON
 	}
 
+	// Convert artists to schema.Artist
+	var artists schema.Artists
+	for _, artist := range metadata.Artists {
+		artists = append(artists, schema.Artist{
+			DID:  artist.DID,
+			Name: artist.Name,
+		})
+	}
+
+	// Convert publisher to schema.Publisher
+	var publisher *schema.Publisher
+	if metadata.Publisher != nil {
+		publisher = &schema.Publisher{
+			Name: types.StringPtr(string(*metadata.Publisher.Name)),
+			URL:  metadata.Publisher.URL,
+		}
+	}
+
 	now := e.clock.Now()
 	// Transform metadata to store input
 	input := store.CreateTokenMetadataInput{
@@ -373,15 +394,90 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 		ImageURL:        &metadata.Image,
 		AnimationURL:    &metadata.Animation,
 		Name:            &metadata.Name,
-		Artists:         metadata.Artists,
+		Artists:         artists,
 		Description:     &metadata.Description,
-		Publisher:       metadata.Publisher,
+		Publisher:       publisher,
 	}
 
 	// Upsert the metadata
 	if err := e.store.UpsertTokenMetadata(ctx, input); err != nil {
 		return fmt.Errorf("failed to upsert token metadata: %w", err)
 	}
+
+	return nil
+}
+
+// EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
+func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) error {
+	// Validate token CID
+	if !tokenCID.Valid() {
+		return domain.ErrInvalidTokenCID
+	}
+
+	// Get token to retrieve its ID
+	token, err := e.store.GetTokenByTokenCID(ctx, tokenCID.String())
+	if err != nil {
+		return fmt.Errorf("failed to get token: %w", err)
+	}
+
+	if token == nil {
+		return domain.ErrTokenNotFound
+	}
+
+	// Enhance metadata from vendor APIs
+	enhanced, err := e.metadataEnhancer.Enhance(ctx, tokenCID, normalizedMetadata)
+	if err != nil {
+		return fmt.Errorf("failed to enhance metadata: %w", err)
+	}
+
+	// If no enhancement is available, skip
+	if enhanced == nil {
+		logger.Info("No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
+		return nil
+	}
+
+	// Hash the vendor JSON
+	hash, err := enhanced.VendorJsonHash()
+	if err != nil {
+		return fmt.Errorf("failed to get vendor JSON hash: %w", err)
+	}
+	hashString := hex.EncodeToString(hash)
+
+	// Convert publisher name to vendor
+	vendor := metadata.PublisherNameToVendor(enhanced.Vendor)
+	if vendor == "" {
+		return fmt.Errorf("invalid publisher name: %s", enhanced.Vendor)
+	}
+
+	// Convert artists to schema.Artists
+	var artists schema.Artists
+	for _, artist := range enhanced.Artists {
+		artists = append(artists, schema.Artist{
+			DID:  artist.DID,
+			Name: artist.Name,
+		})
+	}
+
+	// Upsert enrichment source (which also updates enrichment_level to 'vendor' in the same transaction)
+	enrichmentInput := store.CreateEnrichmentSourceInput{
+		TokenID:      token.ID,
+		Vendor:       vendor,
+		VendorJSON:   enhanced.VendorJSON,
+		VendorHash:   &hashString,
+		ImageURL:     enhanced.ImageURL,
+		AnimationURL: enhanced.AnimationURL,
+		Name:         enhanced.Name,
+		Description:  enhanced.Description,
+		Artists:      artists,
+	}
+
+	if err := e.store.UpsertEnrichmentSource(ctx, enrichmentInput); err != nil {
+		return fmt.Errorf("failed to upsert enrichment source: %w", err)
+	}
+
+	logger.Info("Successfully enhanced token metadata",
+		zap.String("tokenCID", tokenCID.String()),
+		zap.String("vendor", string(enhanced.Vendor)))
 
 	return nil
 }

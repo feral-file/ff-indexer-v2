@@ -19,6 +19,7 @@ import (
 //go:generate mockgen -source=http.go -destination=../mocks/http.go -package=mocks -mock_names=HTTPClient=MockHTTPClient
 type HTTPClient interface {
 	Get(ctx context.Context, url string, result interface{}) error
+	Post(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error)
 }
 
 // RealHTTPClient implements HTTPClient using the standard http package
@@ -35,16 +36,11 @@ func NewHTTPClient(timeout time.Duration) HTTPClient {
 	}
 }
 
-// Get performs a GET request and unmarshals the response into result
-// Implements exponential backoff retry for rate limiting (429) responses
-func (c *RealHTTPClient) Get(ctx context.Context, url string, result interface{}) error {
-	operation := func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			// Request creation errors are permanent (non-retryable)
-			return backoff.Permanent(fmt.Errorf("failed to create request: %w", err))
-		}
+// doRequestWithRetry executes an HTTP request with exponential backoff retry for rate limiting
+func (c *RealHTTPClient) doRequestWithRetry(ctx context.Context, req *http.Request) ([]byte, error) {
+	var respBody []byte
 
+	operation := func() error {
 		resp, err := c.client.Do(req)
 		if err != nil {
 			// Network errors are retryable
@@ -52,13 +48,13 @@ func (c *RealHTTPClient) Get(ctx context.Context, url string, result interface{}
 		}
 		defer func() {
 			if err := resp.Body.Close(); err != nil {
-				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", url))
+				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
 			}
 		}()
 
 		// Handle rate limiting - retry with backoff
 		if resp.StatusCode == http.StatusTooManyRequests {
-			logger.Warn("rate limited, retrying with backoff", zap.String("url", url))
+			logger.Warn("rate limited, retrying with backoff", zap.String("url", req.URL.String()))
 			return fmt.Errorf("rate limited (429), retrying")
 		}
 
@@ -68,9 +64,10 @@ func (c *RealHTTPClient) Get(ctx context.Context, url string, result interface{}
 			return backoff.Permanent(fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body)))
 		}
 
-		// Decode the response
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return backoff.Permanent(fmt.Errorf("failed to decode response: %w", err))
+		// Read the response body
+		respBody, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return backoff.Permanent(fmt.Errorf("failed to read response body: %w", err))
 		}
 
 		return nil
@@ -86,8 +83,44 @@ func (c *RealHTTPClient) Get(ctx context.Context, url string, result interface{}
 
 	// Execute with retry and context support
 	if err := backoff.Retry(operation, backoff.WithContext(b, ctx)); err != nil {
-		return fmt.Errorf("request failed after retries: %w", err)
+		return nil, fmt.Errorf("request failed after retries: %w", err)
+	}
+
+	return respBody, nil
+}
+
+// Get performs a GET request and unmarshals the response into result
+// Implements exponential backoff retry for rate limiting (429) responses
+func (c *RealHTTPClient) Get(ctx context.Context, url string, result interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	respBody, err := c.doRequestWithRetry(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	// Decode the response
+	if err := json.Unmarshal(respBody, result); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	return nil
+}
+
+// Post performs a POST request and returns the response body
+// Implements exponential backoff retry for rate limiting (429) responses
+func (c *RealHTTPClient) Post(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
+	return c.doRequestWithRetry(ctx, req)
 }

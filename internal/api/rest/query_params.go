@@ -68,6 +68,7 @@ type ListTokensQueryParams struct {
 type ExpansionParams struct {
 	Owners           bool
 	ProvenanceEvents bool
+	EnrichmentSource bool
 }
 
 // ParseGetTokenQuery parses query parameters for GET /tokens/:cid
@@ -132,6 +133,8 @@ func (p *GetTokenQueryParams) GetExpansions() ExpansionParams {
 			result.Owners = true
 		case "provenance_events":
 			result.ProvenanceEvents = true
+		case "enrichment_source":
+			result.EnrichmentSource = true
 		}
 	}
 	return result
@@ -146,6 +149,8 @@ func (p *ListTokensQueryParams) GetExpansions() ExpansionParams {
 			result.Owners = true
 		case "provenance_events":
 			result.ProvenanceEvents = true
+		case "enrichment_source":
+			result.EnrichmentSource = true
 		}
 	}
 	return result

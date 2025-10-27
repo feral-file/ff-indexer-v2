@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"gorm.io/datatypes"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 // Artist represents an artist/creator with their decentralized identifier and name
 type Artist struct {
-	DID  string `json:"did"`
-	Name string `json:"name"`
+	DID  domain.DID `json:"did"`
+	Name string     `json:"name"`
 }
 
 // Artists is a slice of Artist that can be stored as JSONB in PostgreSQL

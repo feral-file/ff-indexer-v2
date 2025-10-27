@@ -81,6 +81,20 @@ func (mr *MockExecutorMockRecorder) CreateTokenMint(ctx, event interface{}) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenMint", reflect.TypeOf((*MockExecutor)(nil).CreateTokenMint), ctx, event)
 }
 
+// EnhanceTokenMetadata mocks base method.
+func (m *MockExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EnhanceTokenMetadata", ctx, tokenCID, metadata)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// EnhanceTokenMetadata indicates an expected call of EnhanceTokenMetadata.
+func (mr *MockExecutorMockRecorder) EnhanceTokenMetadata(ctx, tokenCID, metadata interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnhanceTokenMetadata", reflect.TypeOf((*MockExecutor)(nil).EnhanceTokenMetadata), ctx, tokenCID, metadata)
+}
+
 // EnsureWatchedAddressExists mocks base method.
 func (m *MockExecutor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
 	m.ctrl.T.Helper()

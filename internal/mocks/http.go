@@ -6,6 +6,7 @@ package mocks
 
 import (
 	context "context"
+	io "io"
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
@@ -46,4 +47,19 @@ func (m *MockHTTPClient) Get(ctx context.Context, url string, result interface{}
 func (mr *MockHTTPClientMockRecorder) Get(ctx, url, result interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockHTTPClient)(nil).Get), ctx, url, result)
+}
+
+// Post mocks base method.
+func (m *MockHTTPClient) Post(ctx context.Context, url, contentType string, body io.Reader) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Post", ctx, url, contentType, body)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Post indicates an expected call of Post.
+func (mr *MockHTTPClientMockRecorder) Post(ctx, url, contentType, body interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Post", reflect.TypeOf((*MockHTTPClient)(nil).Post), ctx, url, contentType, body)
 }
