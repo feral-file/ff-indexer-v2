@@ -1,0 +1,202 @@
+# FF Indexer GraphQL Schema
+# This schema mirrors the RESTful API with the same request/response format
+
+# Scalar types
+scalar Time
+scalar JSON
+scalar Uint64
+
+# Order enumeration for sorting
+enum Order {
+  ASC
+  DESC
+}
+
+# Artist/Creator information
+type Artist {
+  did: String!
+  name: String!
+}
+
+# Publisher information
+type Publisher {
+  name: String
+  url: String
+}
+
+# Token metadata
+type TokenMetadata {
+  token_id: Uint64!
+  origin_json: JSON
+  latest_json: JSON
+  latest_hash: String
+  enrichment_level: String!
+  last_refreshed_at: Time
+  image_url: String
+  animation_url: String
+  name: String
+  description: String
+  artists: [Artist!]
+  publisher: Publisher
+}
+
+# Token owner (balance record)
+type Owner {
+  owner_address: String!
+  quantity: String!
+  created_at: Time!
+  updated_at: Time!
+}
+
+# Provenance event
+type ProvenanceEvent {
+  id: Uint64!
+  token_id: Uint64!
+  chain: String!
+  event_type: String!
+  from_address: String
+  to_address: String
+  quantity: String
+  tx_hash: String
+  block_number: Uint64
+  block_hash: String
+  timestamp: Time!
+  raw: JSON
+  created_at: Time!
+  updated_at: Time!
+}
+
+# Paginated owners list
+type PaginatedOwners {
+  items: [Owner!]!
+  offset: Uint64
+  total: Uint64!
+}
+
+# Paginated provenance events list
+type PaginatedProvenanceEvents {
+  items: [ProvenanceEvent!]!
+  offset: Uint64
+  total: Uint64!
+}
+
+# Enrichment source data from vendor APIs
+type EnrichmentSource {
+  token_id: Uint64!
+  vendor: String!
+  vendor_json: JSON
+  vendor_hash: String
+  image_url: String
+  animation_url: String
+  name: String
+  description: String
+  artists: [Artist!]
+  created_at: Time!
+  updated_at: Time!
+}
+
+# Token with optional expansions
+type Token {
+  id: Uint64!
+  token_cid: String!
+  chain: String!
+  standard: String!
+  contract_address: String!
+  token_number: String!
+  current_owner: String
+  burned: Boolean!
+  created_at: Time!
+  updated_at: Time!
+  metadata: TokenMetadata
+  owners: PaginatedOwners
+  provenance_events: PaginatedProvenanceEvents
+  enrichment_source: EnrichmentSource
+}
+
+# Paginated tokens list
+type TokenList {
+  items: [Token!]!
+  offset: Uint64
+  total: Uint64!
+}
+
+# Change journal entry
+type Change {
+  id: Uint64!
+  token_cid: String!
+  subject_type: String!
+  subject_id: String!
+  changed_at: Time!
+  meta: JSON
+  subject: JSON
+  created_at: Time!
+  updated_at: Time!
+}
+
+# Paginated changes list
+type ChangeList {
+  items: [Change!]!
+  offset: Uint64
+  total: Uint64!
+}
+
+# Result of triggering indexing
+type TriggerIndexingResult {
+  workflow_id: String!
+  run_id: String!
+}
+
+# Root Query type
+type Query {
+  # Get a single token by CID
+  # Equivalent to: GET /api/v1/tokens/:cid
+  token(
+    cid: String!
+    expand: [String!]
+    owners_limit: Int = 10
+    owners_offset: Uint64 = 0
+    provenance_events_limit: Int = 10
+    provenance_events_offset: Uint64 = 0
+    provenance_events_order: Order = DESC
+  ): Token
+
+  # List tokens with filters
+  # Equivalent to: GET /api/v1/tokens
+  tokens(
+    owner: [String!]
+    chain: [String!]
+    contract_address: [String!]
+    token_id: [String!]
+    limit: Int = 20
+    offset: Uint64 = 0
+    expand: [String!]
+    owners_limit: Int = 10
+    owners_offset: Uint64 = 0
+    provenance_events_limit: Int = 10
+    provenance_events_offset: Uint64 = 0
+    provenance_events_order: Order = DESC
+  ): TokenList
+
+  # Get changes with filters
+  # Equivalent to: GET /api/v1/changes
+  changes(
+    token_cid: [String!]
+    address: [String!]
+    since: String
+    limit: Int = 20
+    offset: Uint64 = 0
+    order: Order = ASC
+    expand: [String!]
+  ): ChangeList
+}
+
+# Root Mutation type
+type Mutation {
+  # Trigger indexing for tokens or addresses
+  # Equivalent to: POST /api/v1/tokens/index
+  triggerIndexing(
+    token_cids: [String!]
+    addresses: [String!]
+  ): TriggerIndexingResult
+}
+

@@ -130,7 +130,7 @@ type TokenQueryFilter struct {
 	ContractAddresses []string
 	TokenNumbers      []string
 	Limit             int
-	Offset            int // Offset for pagination
+	Offset            uint64 // Offset for pagination
 }
 
 // ChangesQueryFilter represents filters for changes queries
@@ -139,7 +139,7 @@ type ChangesQueryFilter struct {
 	Addresses []string   // Filter by addresses (matches from/to addresses in provenance events)
 	Since     *time.Time // Timestamp filter - only show changes after this time (exclusive)
 	Limit     int        // Number of results to return
-	Offset    int        // Offset for pagination
+	Offset    uint64     // Offset for pagination
 	OrderDesc bool       // Order by changed_at descending (default: false = ascending)
 }
 
@@ -205,7 +205,7 @@ type Store interface {
 	// =============================================================================
 
 	// GetTokenOwners retrieves owners (balances) for a token
-	GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset int) ([]schema.Balance, uint64, error)
+	GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset uint64) ([]schema.Balance, uint64, error)
 	// GetBalanceByID retrieves a balance by ID
 	GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error)
 	// GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
@@ -216,7 +216,7 @@ type Store interface {
 	// =============================================================================
 
 	// GetTokenProvenanceEvents retrieves provenance events for a token
-	GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset int, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error)
+	GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset uint64, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error)
 	// GetProvenanceEventByID retrieves a provenance event by ID
 	GetProvenanceEventByID(ctx context.Context, id uint64) (*schema.ProvenanceEvent, error)
 

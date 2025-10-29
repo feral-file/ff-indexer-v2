@@ -258,6 +258,9 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 		// 4. If rate limited, divide the step by 2 and try again
 		currentStepSize = currentStepSize / 2
 
+		// Sleep for 1 second to avoid overwhelming the API
+		c.clock.Sleep(time.Second * 1)
+
 		logger.Warn("Too many results, reducing step size",
 			zap.Uint64("oldStepSize", currentStepSize*2),
 			zap.Uint64("newStepSize", currentStepSize),
@@ -279,7 +282,8 @@ func isTooManyResultsError(err error) bool {
 	return strings.Contains(errStr, "query returned more than 10000 results") ||
 		strings.Contains(errStr, "query timeout exceeded") ||
 		strings.Contains(errStr, "too many results") ||
-		strings.Contains(errStr, "exceeded maximum")
+		strings.Contains(errStr, "exceeded maximum") ||
+		strings.Contains(errStr, "Too Many Requests")
 }
 
 // BlockByNumber returns a block by number

@@ -8,8 +8,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	artblocks "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	gomock "github.com/golang/mock/gomock"
+
+	artblocks "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 )
 
 // MockArtBlocksClient is a mock of Client interface.

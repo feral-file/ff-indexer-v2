@@ -10,8 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/api/graphql"
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/rest"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
@@ -61,11 +63,23 @@ func (s *Server) Start() error {
 	router.Use(middleware.Logger())
 	router.Use(middleware.SetupCORS())
 
-	// Create REST handler
-	restHandler := rest.NewHandler(s.store, s.orchestrator, s.config.OrchestratorTaskQueue)
+	// Create shared executor (contains business logic shared between REST and GraphQL)
+	exec := executor.NewExecutor(s.store, s.orchestrator, s.config.OrchestratorTaskQueue)
 
-	// Setup routes
+	// Create REST handler
+	restHandler := rest.NewHandler(exec)
+
+	// Setup REST routes
 	rest.SetupRoutes(router, restHandler)
+
+	// Create GraphQL handler
+	graphqlHandler, err := graphql.NewHandler(exec)
+	if err != nil {
+		return fmt.Errorf("failed to create GraphQL handler: %w", err)
+	}
+
+	// Setup GraphQL routes
+	graphql.SetupRoutes(router, graphqlHandler)
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)

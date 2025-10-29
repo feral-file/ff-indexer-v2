@@ -253,7 +253,7 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 	) latest_pe ON true`)
 
 	// Apply pagination with sorting by latest provenance event timestamp descending
-	query = query.Order("latest_pe.timestamp DESC NULLS LAST").Order("tokens.id DESC").Limit(filter.Limit).Offset(filter.Offset)
+	query = query.Order("latest_pe.timestamp DESC NULLS LAST").Order("tokens.id DESC").Limit(filter.Limit).Offset(int(filter.Offset)) //nolint:gosec,G115
 
 	var tokens []schema.Token
 	if err := query.Find(&tokens).Error; err != nil {
@@ -294,7 +294,7 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 }
 
 // GetTokenOwners retrieves owners (balances) for a token
-func (s *pgStore) GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset int) ([]schema.Balance, uint64, error) {
+func (s *pgStore) GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset uint64) ([]schema.Balance, uint64, error) {
 	query := s.db.WithContext(ctx).Model(&schema.Balance{}).Where("token_id = ?", tokenID)
 
 	// Count total
@@ -304,7 +304,7 @@ func (s *pgStore) GetTokenOwners(ctx context.Context, tokenID uint64, limit int,
 	}
 
 	// Apply pagination
-	query = query.Order("id ASC").Limit(limit).Offset(offset)
+	query = query.Order("id ASC").Limit(limit).Offset(int(offset)) //nolint:gosec,G115
 
 	var balances []schema.Balance
 	if err := query.Find(&balances).Error; err != nil {
@@ -315,7 +315,7 @@ func (s *pgStore) GetTokenOwners(ctx context.Context, tokenID uint64, limit int,
 }
 
 // GetTokenProvenanceEvents retrieves provenance events for a token
-func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset int, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error) {
+func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset uint64, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error) {
 	query := s.db.WithContext(ctx).Model(&schema.ProvenanceEvent{}).Where("token_id = ?", tokenID)
 
 	// Count total
@@ -332,7 +332,7 @@ func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, 
 	}
 
 	// Apply pagination
-	query = query.Limit(limit).Offset(offset)
+	query = query.Limit(limit).Offset(int(offset)) //nolint:gosec,G115
 
 	var events []schema.ProvenanceEvent
 	if err := query.Find(&events).Error; err != nil {
@@ -905,7 +905,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 
 	// Apply pagination with offset
 	if filter.Offset > 0 {
-		query = query.Offset(filter.Offset)
+		query = query.Offset(int(filter.Offset)) //nolint:gosec,G115
 	}
 	if filter.Limit > 0 {
 		query = query.Limit(filter.Limit)

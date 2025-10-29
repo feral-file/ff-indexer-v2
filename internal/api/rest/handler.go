@@ -1,28 +1,14 @@
 package rest
 
 import (
-	"context"
 	"fmt"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.temporal.io/sdk/client"
-	"go.uber.org/zap"
 
-	"github.com/feral-file/ff-indexer-v2/internal/api/rest/dto"
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
-	"github.com/feral-file/ff-indexer-v2/internal/store"
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
-	"github.com/feral-file/ff-indexer-v2/internal/types"
-	"github.com/feral-file/ff-indexer-v2/internal/workflows"
-)
-
-const (
-	MAX_TOKEN_CIDS_PER_REQUEST = 20
-	MAX_ADDRESSES_PER_REQUEST  = 5
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 )
 
 // Handler defines the interface for REST API handlers
@@ -53,17 +39,13 @@ type Handler interface {
 
 // handler implements the Handler interface
 type handler struct {
-	store                 store.Store
-	orchestrator          temporal.TemporalOrchestrator
-	orchestratorTaskQueue string
+	executor executor.Executor
 }
 
-// NewHandler creates a new REST API handler
-func NewHandler(store store.Store, orchestrator temporal.TemporalOrchestrator, orchestratorTaskQueue string) Handler {
+// NewHandler creates a new REST API handler using the shared executor
+func NewHandler(exec executor.Executor) Handler {
 	return &handler{
-		store:                 store,
-		orchestrator:          orchestrator,
-		orchestratorTaskQueue: orchestratorTaskQueue,
+		executor: exec,
 	}
 }
 
@@ -82,96 +64,38 @@ func (h *handler) GetToken(c *gin.Context) {
 		return
 	}
 
-	// Get token with metadata
-	result, err := h.store.GetTokenWithMetadataByTokenCID(c.Request.Context(), tokenCID)
+	// Convert query parameters to executor parameters
+	expansions := queryParams.Expand
+	ownersLimit := &queryParams.OwnerLimit
+	ownersOffset := &queryParams.OwnerOffset
+	provenanceEventsLimit := &queryParams.ProvenanceEventLimit
+	provenanceEventsOffset := &queryParams.ProvenanceEventOffset
+	provenanceEventsOrder := &queryParams.ProvenanceEventOrder
+
+	// Call executor's GetToken method
+	tokenDTO, err := h.executor.GetToken(
+		c.Request.Context(),
+		tokenCID,
+		expansions,
+		ownersLimit,
+		ownersOffset,
+		provenanceEventsLimit,
+		provenanceEventsOffset,
+		provenanceEventsOrder,
+	)
+
 	if err != nil {
-		respondInternalError(c, err, "get_token", zap.String("token_cid", tokenCID))
+		// Handle errors from executor
+		respondInternalError(c, err, "Failed to get token")
 		return
 	}
 
-	if result == nil {
+	if tokenDTO == nil {
 		respondNotFound(c, "Token not found")
 		return
 	}
 
-	// Map to DTO
-	tokenDTO := dto.MapTokenToDTO(result.Token, result.Metadata)
-
-	// Handle expansions
-	expansions := queryParams.GetExpansions()
-
-	if expansions.Owners {
-		owners, total, err := h.store.GetTokenOwners(
-			c.Request.Context(),
-			result.Token.ID,
-			queryParams.OwnerLimit,
-			queryParams.OwnerOffset,
-		)
-		if err != nil {
-			respondInternalError(c, err, "get_token_owners", zap.Uint64("token_id", result.Token.ID))
-			return
-		} else {
-			ownerDTOs := make([]dto.OwnerResponse, len(owners))
-			for i := range owners {
-				ownerDTOs[i] = *dto.MapOwnerToDTO(&owners[i])
-			}
-
-			var nextOffset *int
-			if uint64(queryParams.OwnerOffset+len(owners)) < total { //nolint:gosec,G115
-				offset := queryParams.OwnerOffset + len(owners)
-				nextOffset = &offset
-			}
-
-			tokenDTO.Owners = &dto.PaginatedOwners{
-				Owners: ownerDTOs,
-				Offset: nextOffset,
-				Total:  total,
-			}
-		}
-	}
-
-	if expansions.ProvenanceEvents {
-		events, total, err := h.store.GetTokenProvenanceEvents(
-			c.Request.Context(),
-			result.Token.ID,
-			queryParams.ProvenanceEventLimit,
-			queryParams.ProvenanceEventOffset,
-			queryParams.ProvenanceEventOrder.Desc(),
-		)
-		if err != nil {
-			respondInternalError(c, err, "get_provenance_events", zap.String("token_cid", tokenCID))
-			return
-		} else {
-			eventDTOs := make([]dto.ProvenanceEventResponse, len(events))
-			for i := range events {
-				eventDTOs[i] = *dto.MapProvenanceEventToDTO(&events[i])
-			}
-
-			var nextOffset *int
-			if uint64(queryParams.ProvenanceEventOffset+len(events)) < total { //nolint:gosec,G115
-				offset := queryParams.ProvenanceEventOffset + len(events)
-				nextOffset = &offset
-			}
-
-			tokenDTO.ProvenanceEvents = &dto.PaginatedProvenanceEvents{
-				Events: eventDTOs,
-				Offset: nextOffset,
-				Total:  total,
-			}
-		}
-	}
-
-	if expansions.EnrichmentSource {
-		enrichment, err := h.store.GetEnrichmentSourceByTokenID(c.Request.Context(), result.Token.ID)
-		if err != nil {
-			respondInternalError(c, err, "get_enrichment_source", zap.Uint64("token_id", result.Token.ID))
-			return
-		}
-		if enrichment != nil {
-			tokenDTO.EnrichmentSource = dto.MapEnrichmentSourceToDTO(enrichment)
-		}
-	}
-
+	// Return successful response
 	c.JSON(http.StatusOK, tokenDTO)
 }
 
@@ -184,126 +108,36 @@ func (h *handler) ListTokens(c *gin.Context) {
 		return
 	}
 
-	// Build filter
-	filter := store.TokenQueryFilter{
-		Owners:            queryParams.Owners,
-		ContractAddresses: queryParams.ContractAddresses,
-		TokenNumbers:      queryParams.TokenIDs,
-		Limit:             queryParams.Limit,
-		Offset:            queryParams.Offset,
-	}
+	// Convert query parameters to executor parameters
+	limit := &queryParams.Limit
+	offset := &queryParams.Offset
+	expansions := queryParams.Expand
+	ownersLimit := &queryParams.OwnerLimit
+	ownersOffset := &queryParams.OwnerOffset
+	provenanceEventsLimit := &queryParams.ProvenanceEventLimit
+	provenanceEventsOffset := &queryParams.ProvenanceEventOffset
+	provenanceEventsOrder := &queryParams.ProvenanceEventOrder
 
-	// Convert chain strings to domain.Chain
-	if len(queryParams.Chains) > 0 {
-		chains := make([]domain.Chain, len(queryParams.Chains))
-		for i, chain := range queryParams.Chains {
-			chains[i] = domain.Chain(chain)
-		}
-		filter.Chains = chains
-	}
+	// Call executor's GetTokens method
+	response, err := h.executor.GetTokens(
+		c.Request.Context(),
+		queryParams.Owners,
+		queryParams.Chains,
+		queryParams.ContractAddresses,
+		queryParams.TokenIDs,
+		limit,
+		offset,
+		expansions,
+		ownersLimit,
+		ownersOffset,
+		provenanceEventsLimit,
+		provenanceEventsOffset,
+		provenanceEventsOrder,
+	)
 
-	// Get tokens
-	results, total, err := h.store.GetTokensByFilter(c.Request.Context(), filter)
 	if err != nil {
-		respondInternalError(c, err, "list_tokens")
+		respondInternalError(c, err, "Failed to list tokens")
 		return
-	}
-
-	// Get expansion parameters
-	expansions := queryParams.GetExpansions()
-
-	// Map to DTOs
-	tokenDTOs := make([]dto.TokenResponse, len(results))
-	for i, result := range results {
-		tokenDTO := dto.MapTokenToDTO(result.Token, result.Metadata)
-
-		// Handle expansions for each token
-		if expansions.Owners {
-			owners, ownerTotal, err := h.store.GetTokenOwners(
-				c.Request.Context(),
-				result.Token.ID,
-				queryParams.OwnerLimit,
-				queryParams.OwnerOffset,
-			)
-			if err != nil {
-				respondInternalError(c, err, "get_token_owners", zap.Uint64("token_id", result.Token.ID))
-				return
-			} else {
-				ownerDTOs := make([]dto.OwnerResponse, len(owners))
-				for j := range owners {
-					ownerDTOs[j] = *dto.MapOwnerToDTO(&owners[j])
-				}
-
-				var nextOffset *int
-				if uint64(queryParams.OwnerOffset+len(owners)) < ownerTotal { //nolint:gosec,G115
-					offset := queryParams.OwnerOffset + len(owners)
-					nextOffset = &offset
-				}
-
-				tokenDTO.Owners = &dto.PaginatedOwners{
-					Owners: ownerDTOs,
-					Offset: nextOffset,
-					Total:  ownerTotal,
-				}
-			}
-		}
-
-		if expansions.ProvenanceEvents {
-			events, eventTotal, err := h.store.GetTokenProvenanceEvents(
-				c.Request.Context(),
-				result.Token.ID,
-				queryParams.ProvenanceEventLimit,
-				queryParams.ProvenanceEventOffset,
-				queryParams.ProvenanceEventOrder.Desc(),
-			)
-			if err != nil {
-				respondInternalError(c, err, "get_provenance_events", zap.Uint64("token_id", result.Token.ID))
-				return
-			} else {
-				eventDTOs := make([]dto.ProvenanceEventResponse, len(events))
-				for j := range events {
-					eventDTOs[j] = *dto.MapProvenanceEventToDTO(&events[j])
-				}
-
-				var nextOffset *int
-				if uint64(queryParams.ProvenanceEventOffset+len(events)) < eventTotal { //nolint:gosec,G115
-					offset := queryParams.ProvenanceEventOffset + len(events)
-					nextOffset = &offset
-				}
-
-				tokenDTO.ProvenanceEvents = &dto.PaginatedProvenanceEvents{
-					Events: eventDTOs,
-					Offset: nextOffset,
-					Total:  eventTotal,
-				}
-			}
-		}
-
-		if expansions.EnrichmentSource {
-			enrichment, err := h.store.GetEnrichmentSourceByTokenID(c.Request.Context(), result.Token.ID)
-			if err != nil {
-				respondInternalError(c, err, "get_enrichment_source", zap.Uint64("token_id", result.Token.ID))
-				return
-			}
-			if enrichment != nil {
-				tokenDTO.EnrichmentSource = dto.MapEnrichmentSourceToDTO(enrichment)
-			}
-		}
-
-		tokenDTOs[i] = *tokenDTO
-	}
-
-	// Build response
-	var nextOffset *int
-	if uint64(queryParams.Offset+len(results)) < total { //nolint:gosec,G115
-		offset := queryParams.Offset + len(results)
-		nextOffset = &offset
-	}
-
-	response := dto.TokenListResponse{
-		Tokens: tokenDTOs,
-		Offset: nextOffset,
-		Total:  total,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -318,121 +152,30 @@ func (h *handler) GetChanges(c *gin.Context) {
 		return
 	}
 
-	// Build filter
-	filter := store.ChangesQueryFilter{
-		TokenCIDs: queryParams.TokenCIDs,
-		Addresses: queryParams.Addresses,
-		Since:     queryParams.Since,
-		Limit:     queryParams.Limit,
-		Offset:    queryParams.Offset,
-		OrderDesc: queryParams.Order.Desc(),
-	}
+	// Convert query parameters to executor parameters
+	limit := &queryParams.Limit
+	offset := &queryParams.Offset
+	order := &queryParams.Order
+	expansions := queryParams.Expand
 
-	// Get changes
-	results, total, err := h.store.GetChanges(c.Request.Context(), filter)
+	// Call executor's GetChanges method
+	response, err := h.executor.GetChanges(
+		c.Request.Context(),
+		queryParams.TokenCIDs,
+		queryParams.Addresses,
+		queryParams.Since,
+		limit,
+		offset,
+		order,
+		expansions,
+	)
+
 	if err != nil {
-		respondInternalError(c, err, "get_changes")
+		respondInternalError(c, err, "Failed to get changes")
 		return
 	}
 
-	// Map to DTOs
-	changeDTOs := make([]dto.ChangeResponse, len(results))
-	for i, result := range results {
-		changeDTO := dto.MapChangeToDTO(result.Change, result.Token)
-
-		// Handle subject expansion
-		if queryParams.ShouldExpandSubject() {
-			subject, err := h.expandSubject(c.Request.Context(), result.Change, result.Token)
-			if err != nil {
-				respondInternalError(c, err, "expand_subject",
-					zap.String("subject_type", string(result.Change.SubjectType)),
-					zap.String("subject_id", result.Change.SubjectID))
-				return
-			}
-			changeDTO.Subject = subject
-		}
-
-		changeDTOs[i] = *changeDTO
-	}
-
-	// Build response with offset-based pagination
-	var nextOffset *int
-	if uint64(queryParams.Offset+len(results)) < total { //nolint:gosec,G115
-		offset := queryParams.Offset + len(results)
-		nextOffset = &offset
-	}
-
-	response := dto.ChangeListResponse{
-		Changes: changeDTOs,
-		Offset:  nextOffset,
-		Total:   total,
-	}
-
 	c.JSON(http.StatusOK, response)
-}
-
-// expandSubject expands the subject based on subject_type
-func (h *handler) expandSubject(ctx context.Context, change *schema.ChangesJournal, token *schema.Token) (interface{}, error) {
-	switch change.SubjectType {
-	case schema.SubjectTypeToken, schema.SubjectTypeOwner:
-		// For token and owner changes, the subject is a provenance event
-		id, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid subject_id: %w", err)
-		}
-		event, err := h.store.GetProvenanceEventByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if event == nil {
-			return nil, nil
-		}
-		return dto.MapProvenanceEventToDTO(event), nil
-
-	case schema.SubjectTypeBalance:
-		// For balance changes, the subject is a balance record
-		id, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid subject_id: %w", err)
-		}
-		balance, err := h.store.GetBalanceByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if balance == nil {
-			return nil, nil
-		}
-		return dto.MapOwnerToDTO(balance), nil
-
-	case schema.SubjectTypeMetadata:
-		// For metadata changes, the subject is token metadata
-		metadata, err := h.store.GetTokenMetadataByTokenCID(ctx, token.TokenCID)
-		if err != nil {
-			return nil, err
-		}
-		if metadata == nil {
-			return nil, nil
-		}
-		return dto.MapTokenMetadataToDTO(metadata), nil
-
-	case schema.SubjectTypeMedia:
-		// For media changes, the subject is a media asset
-		id, err := strconv.ParseInt(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid subject_id: %w", err)
-		}
-		media, err := h.store.GetMediaAssetByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if media == nil {
-			return nil, nil
-		}
-		return dto.MapMediaAssetToDTO(media), nil
-
-	default:
-		return nil, nil
-	}
 }
 
 // TriggerTokenIndexing triggers indexing for one or more tokens
@@ -458,78 +201,26 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 	}
 
 	// Validate limits
-	if hasTokenCIDs && len(req.TokenCIDs) > MAX_TOKEN_CIDS_PER_REQUEST {
-		respondValidationError(c, fmt.Sprintf("Maximum %d token CIDs allowed", MAX_TOKEN_CIDS_PER_REQUEST))
+	if hasTokenCIDs && len(req.TokenCIDs) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+		respondValidationError(c, fmt.Sprintf("Maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
 		return
 	}
 
-	if hasAddresses && len(req.Addresses) > MAX_ADDRESSES_PER_REQUEST {
-		respondValidationError(c, fmt.Sprintf("Maximum %d addresses allowed", MAX_ADDRESSES_PER_REQUEST))
+	if hasAddresses && len(req.Addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
+		respondValidationError(c, fmt.Sprintf("Maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
 		return
 	}
 
-	ctx := c.Request.Context()
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{})
-	var workflowID string
-	var runID string
+	// Call executor's TriggerTokenIndexing method
+	response, err := h.executor.TriggerTokenIndexing(
+		c.Request.Context(),
+		req.TokenCIDs,
+		req.Addresses,
+	)
 
-	if hasTokenCIDs {
-		// Convert string CIDs to domain.TokenCID
-		tokenCIDs := make([]domain.TokenCID, len(req.TokenCIDs))
-		for i, cid := range req.TokenCIDs {
-			tokenCIDs[i] = domain.TokenCID(cid)
-		}
-
-		// Validate token CIDs
-		for _, cid := range tokenCIDs {
-			if !cid.Valid() {
-				respondValidationError(c, fmt.Sprintf("Invalid token CID: %s", cid.String()))
-				return
-			}
-		}
-
-		// Trigger IndexTokens workflow
-		options := client.StartWorkflowOptions{
-			TaskQueue:                h.orchestratorTaskQueue,
-			WorkflowExecutionTimeout: 30 * time.Minute,
-		}
-		wfRun, err := h.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, tokenCIDs)
-		if err != nil {
-			respondInternalError(c, err, "trigger_index_tokens")
-			return
-		}
-		workflowID = wfRun.GetID()
-		runID = wfRun.GetRunID()
-	}
-
-	if hasAddresses {
-		// Validate addresses
-		for _, address := range req.Addresses {
-			if !types.IsTezosAddress(address) && !types.IsEthereumAddress(address) {
-				respondValidationError(c, fmt.Sprintf("Invalid address: %s. Must be a valid Tezos or Ethereum address", address))
-				return
-			}
-		}
-
-		// Build workflow ID from addresses hash
-		options := client.StartWorkflowOptions{
-			TaskQueue:                h.orchestratorTaskQueue,
-			WorkflowExecutionTimeout: time.Hour,
-		}
-
-		// Trigger IndexTokenOwners workflow
-		wfRun, err := h.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwners, req.Addresses)
-		if err != nil {
-			respondInternalError(c, err, "trigger_index_token_owners")
-			return
-		}
-		workflowID = wfRun.GetID()
-		runID = wfRun.GetRunID()
-	}
-
-	response := dto.TriggerIndexingResponse{
-		WorkflowID: workflowID,
-		RunID:      runID,
+	if err != nil {
+		respondInternalError(c, err, "Failed to trigger indexing")
+		return
 	}
 
 	c.JSON(http.StatusAccepted, response)

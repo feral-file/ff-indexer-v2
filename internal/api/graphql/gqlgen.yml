@@ -1,0 +1,275 @@
+# gqlgen configuration for FF Indexer GraphQL API
+# This file configures code generation from the GraphQL schema
+
+# Schema files to use for generation
+schema:
+  - ../../../api/graphql/schema.graphql
+
+# Where should the generated server code go?
+exec:
+  filename: generated.go
+  package: graphql
+
+# Where should the generated models go?
+model:
+  filename: models_gen.go
+  package: graphql
+
+# Where should the resolver implementations go?
+resolver:
+  layout: follow-schema
+  dir: .
+  package: graphql
+  filename_template: "{name}.resolvers.go"
+
+# Enable automatic binding to existing types from our shared DTOs
+autobind:
+  - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto
+  - github.com/feral-file/ff-indexer-v2/internal/api/shared/types
+
+# Configure models to use existing types from our codebase
+models:
+  # ==================== Scalar Types ====================
+  Time:
+    model:
+      - github.com/99designs/gqlgen/graphql.Time
+  JSON:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/graphql.JSON
+  Uint64:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/graphql.Uint64
+  
+  # ==================== Enum Types ====================
+  Order:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/types.Order
+
+  # ==================== Response Types (use shared DTOs) ====================
+  # Token and related types
+  Token:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.TokenResponse
+    fields:
+      id:
+        fieldName: ID
+      token_cid:
+        fieldName: TokenCID
+      contract_address:
+        fieldName: ContractAddress
+      token_number:
+        fieldName: TokenNumber
+      current_owner:
+        fieldName: CurrentOwner
+      created_at:
+        fieldName: CreatedAt
+      updated_at:
+        fieldName: UpdatedAt
+      metadata:
+        fieldName: Metadata
+      owners:
+        fieldName: Owners
+      provenance_events:
+        fieldName: ProvenanceEvents
+      enrichment_source:
+        fieldName: EnrichmentSource
+
+  TokenMetadata:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.TokenMetadataResponse
+    fields:
+      token_id:
+        fieldName: TokenID
+      origin_json:
+        fieldName: OriginJSON
+      latest_json:
+        fieldName: LatestJSON
+      latest_hash:
+        fieldName: LatestHash
+      enrichment_level:
+        fieldName: EnrichmentLevel
+      last_refreshed_at:
+        fieldName: LastRefreshedAt
+      image_url:
+        fieldName: ImageURL
+      animation_url:
+        fieldName: AnimationURL
+      name:
+        fieldName: Name
+      description:
+        fieldName: Description
+      artists:
+        fieldName: Artists
+      publisher:
+        fieldName: Publisher
+
+  Artist:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.ArtistResponse
+    fields:
+      did:
+        fieldName: DID
+      name:
+        fieldName: Name
+
+  Publisher:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.PublisherResponse
+    fields:
+      name:
+        fieldName: Name
+      url:
+        fieldName: URL
+
+  Owner:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.OwnerResponse
+    fields:
+      owner_address:
+        fieldName: OwnerAddress
+      quantity:
+        fieldName: Quantity
+      created_at:
+        fieldName: CreatedAt
+      updated_at:
+        fieldName: UpdatedAt
+
+  PaginatedOwners:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.PaginatedOwners
+    fields:
+      items:
+        fieldName: Owners
+      offset:
+        fieldName: Offset
+      total:
+        fieldName: Total
+
+  ProvenanceEvent:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.ProvenanceEventResponse
+    fields:
+      id:
+        fieldName: ID
+      token_id:
+        fieldName: TokenID
+      chain:
+        fieldName: Chain
+      event_type:
+        fieldName: EventType
+      from_address:
+        fieldName: FromAddress
+      to_address:
+        fieldName: ToAddress
+      quantity:
+        fieldName: Quantity
+      tx_hash:
+        fieldName: TxHash
+      block_number:
+        fieldName: BlockNumber
+      block_hash:
+        fieldName: BlockHash
+      timestamp:
+        fieldName: Timestamp
+      raw:
+        fieldName: Raw
+      created_at:
+        fieldName: CreatedAt
+      updated_at:
+        fieldName: UpdatedAt
+
+  PaginatedProvenanceEvents:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.PaginatedProvenanceEvents
+    fields:
+      items:
+        fieldName: Events
+      offset:
+        fieldName: Offset
+      total:
+        fieldName: Total
+
+  EnrichmentSource:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.EnrichmentSourceResponse
+    fields:
+      token_id:
+        fieldName: TokenID
+      vendor:
+        fieldName: Vendor
+      vendor_json:
+        fieldName: VendorJSON
+      vendor_hash:
+        fieldName: VendorHash
+      image_url:
+        fieldName: ImageURL
+      animation_url:
+        fieldName: AnimationURL
+      name:
+        fieldName: Name
+      description:
+        fieldName: Description
+      artists:
+        fieldName: Artists
+      created_at:
+        fieldName: CreatedAt
+      updated_at:
+        fieldName: UpdatedAt
+
+  TokenList:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.TokenListResponse
+    fields:
+      items:
+        fieldName: Tokens
+      offset:
+        fieldName: Offset
+      total:
+        fieldName: Total
+
+  Change:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.ChangeResponse
+    fields:
+      id:
+        fieldName: ID
+      token_cid:
+        fieldName: TokenCID
+      subject_type:
+        fieldName: SubjectType
+      subject_id:
+        fieldName: SubjectID
+      changed_at:
+        fieldName: ChangedAt
+      meta:
+        fieldName: Meta
+      subject:
+        fieldName: Subject
+      created_at:
+        fieldName: CreatedAt
+      updated_at:
+        fieldName: UpdatedAt
+
+  ChangeList:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.ChangeListResponse
+    fields:
+      items:
+        fieldName: Changes
+      offset:
+        fieldName: Offset
+      total:
+        fieldName: Total
+
+  TriggerIndexingResult:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.TriggerIndexingResponse
+    fields:
+      workflow_id:
+        fieldName: WorkflowID
+      run_id:
+        fieldName: RunID
+
+# Skip generating resolver stubs for these fields (we'll implement them manually)
+omit_slice_element_pointers: true
+
