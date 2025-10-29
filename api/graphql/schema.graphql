@@ -5,11 +5,12 @@
 scalar Time
 scalar JSON
 scalar Uint64
+scalar Uint8
 
 # Order enumeration for sorting
 enum Order {
-  ASC
-  DESC
+  asc
+  desc
 }
 
 # Artist/Creator information
@@ -153,11 +154,11 @@ type Query {
   token(
     cid: String!
     expand: [String!]
-    owners_limit: Int = 10
+    owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
-    provenance_events_limit: Int = 10
+    provenance_events_limit: Uint8 = 10
     provenance_events_offset: Uint64 = 0
-    provenance_events_order: Order = DESC
+    provenance_events_order: Order = desc
   ): Token
 
   # List tokens with filters
@@ -167,14 +168,14 @@ type Query {
     chain: [String!]
     contract_address: [String!]
     token_id: [String!]
-    limit: Int = 20
+    limit: Uint8 = 20
     offset: Uint64 = 0
     expand: [String!]
-    owners_limit: Int = 10
+    owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
-    provenance_events_limit: Int = 10
+    provenance_events_limit: Uint8 = 10
     provenance_events_offset: Uint64 = 0
-    provenance_events_order: Order = DESC
+    provenance_events_order: Order = desc
   ): TokenList
 
   # Get changes with filters
@@ -183,9 +184,9 @@ type Query {
     token_cid: [String!]
     address: [String!]
     since: String
-    limit: Int = 20
+    limit: Uint8 = 20
     offset: Uint64 = 0
-    order: Order = ASC
+    order: Order = asc
     expand: [String!]
   ): ChangeList
 }
