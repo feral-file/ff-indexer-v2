@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
+
+	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 )
 
 // JSON is a custom scalar type for arbitrary JSON data
@@ -82,19 +85,19 @@ func (u *Uint64) UnmarshalGQL(v interface{}) error {
 	case string:
 		val, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
-			return fmt.Errorf("cannot parse %q as uint64: %w", v, err)
+			return apierrors.NewValidationError(fmt.Sprintf("cannot parse %q as uint64: %v", v, err))
 		}
 		*u = Uint64(val)
 		return nil
 	case int:
 		if v < 0 {
-			return fmt.Errorf("uint64 cannot be negative: %d", v)
+			return apierrors.NewValidationError(fmt.Sprintf("uint64 cannot be negative: %d", v))
 		}
 		*u = Uint64(v)
 		return nil
 	case int64:
 		if v < 0 {
-			return fmt.Errorf("uint64 cannot be negative: %d", v)
+			return apierrors.NewValidationError(fmt.Sprintf("uint64 cannot be negative: %d", v))
 		}
 		*u = Uint64(v)
 		return nil
@@ -102,6 +105,75 @@ func (u *Uint64) UnmarshalGQL(v interface{}) error {
 		*u = Uint64(v)
 		return nil
 	default:
-		return fmt.Errorf("cannot unmarshal %T to Uint64", v)
+		return apierrors.NewValidationError(fmt.Sprintf("cannot unmarshal %q to Uint64", v))
+	}
+}
+
+// Uint8 scalar type for unsigned 8-bit integers
+type Uint8 uint8
+
+// ToNativeUint8 converts a Uint8 to a uint8, returning nil if the Uint8 is nil
+func ToNativeUint8(u *Uint8) *uint8 {
+	if u == nil {
+		return nil
+	}
+	nu := uint8(*u)
+	return &nu
+}
+
+// FromNativeUint8 converts a uint8 to a Uint8, returning nil if the uint8 is nil
+func FromNativeUint8(u *uint8) *Uint8 {
+	if u == nil {
+		return nil
+	}
+	gu := Uint8(*u)
+	return &gu
+}
+
+// MarshalGQL implements graphql.Marshaler for Uint8
+// Note: Marshals as a number (not string) since uint8 max value (255) is safe in JSON/JS
+func (u Uint8) MarshalGQL(w io.Writer) {
+	_, _ = io.WriteString(w, strconv.Itoa(int(u)))
+}
+
+// UnmarshalGQL implements graphql.Unmarshaler for Uint8
+func (u *Uint8) UnmarshalGQL(v interface{}) error {
+	switch v := v.(type) {
+	case int:
+		// Most common case from GraphQL Int input - check first
+		if v < 0 || v > math.MaxUint8 {
+			return apierrors.NewValidationError(fmt.Sprintf("uint8 value out of range [0-255]: %d", v))
+		}
+		*u = Uint8(v)
+		return nil
+	case int64:
+		if v < 0 || v > math.MaxUint8 {
+			return apierrors.NewValidationError(fmt.Sprintf("uint8 value out of range [0-255]: %d", v))
+		}
+		*u = Uint8(v)
+		return nil
+	case string:
+		val, err := strconv.ParseUint(v, 10, 8)
+		if err != nil {
+			return apierrors.NewValidationError(fmt.Sprintf("cannot parse %q as uint8: %v", v, err))
+		}
+		*u = Uint8(val)
+		return nil
+	case uint8:
+		*u = Uint8(v)
+		return nil
+	case json.Number:
+		val, err := v.Int64()
+		if err != nil {
+			return apierrors.NewValidationError(fmt.Sprintf("cannot parse %q as uint8: %v", v, err))
+		}
+		if val < 0 || val > math.MaxUint8 {
+			return apierrors.NewValidationError(fmt.Sprintf("uint8 value out of range [0-255]: %d", val))
+		}
+		*u = Uint8(val)
+		return nil
+
+	default:
+		return apierrors.NewValidationError(fmt.Sprintf("cannot unmarshal %q to Uint8", v))
 	}
 }

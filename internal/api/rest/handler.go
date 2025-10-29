@@ -6,9 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 // Handler defines the interface for REST API handlers
@@ -57,8 +57,21 @@ func (h *handler) GetToken(c *gin.Context) {
 		return
 	}
 
+	// Validate token CID
+	if !domain.TokenCID(tokenCID).Valid() {
+		respondBadRequest(c, "Invalid token CID")
+		return
+	}
+
 	// Parse query parameters
 	queryParams, err := ParseGetTokenQuery(c)
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	// Validate query parameters
+	err = queryParams.Validate()
 	if err != nil {
 		respondValidationError(c, err.Error())
 		return
@@ -108,6 +121,13 @@ func (h *handler) ListTokens(c *gin.Context) {
 		return
 	}
 
+	// Validate query parameters
+	err = queryParams.Validate()
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
 	// Convert query parameters to executor parameters
 	limit := &queryParams.Limit
 	offset := &queryParams.Offset
@@ -152,6 +172,13 @@ func (h *handler) GetChanges(c *gin.Context) {
 		return
 	}
 
+	// Validate query parameters
+	err = queryParams.Validate()
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
 	// Convert query parameters to executor parameters
 	limit := &queryParams.Limit
 	offset := &queryParams.Offset
@@ -186,28 +213,10 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 		return
 	}
 
-	// Validate: only one type of input should be provided
-	hasTokenCIDs := len(req.TokenCIDs) > 0
-	hasAddresses := len(req.Addresses) > 0
-
-	if !hasTokenCIDs && !hasAddresses {
-		respondValidationError(c, "Either token_cids or addresses must be provided")
-		return
-	}
-
-	if hasTokenCIDs && hasAddresses {
-		respondValidationError(c, "Cannot provide both token_cids and addresses")
-		return
-	}
-
-	// Validate limits
-	if hasTokenCIDs && len(req.TokenCIDs) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
-		respondValidationError(c, fmt.Sprintf("Maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
-		return
-	}
-
-	if hasAddresses && len(req.Addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
-		respondValidationError(c, fmt.Sprintf("Maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
+	// Validate request body
+	err := req.Validate()
+	if err != nil {
+		respondValidationError(c, err.Error())
 		return
 	}
 

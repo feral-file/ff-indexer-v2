@@ -22,7 +22,7 @@ resolver:
   package: graphql
   filename_template: "{name}.resolvers.go"
 
-# Enable automatic binding to existing types from our shared DTOs
+# Enable automatic binding to existing types from our shared objects
 autobind:
   - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto
   - github.com/feral-file/ff-indexer-v2/internal/api/shared/types
@@ -39,6 +39,9 @@ models:
   Uint64:
     model:
       - github.com/feral-file/ff-indexer-v2/internal/api/graphql.Uint64
+  Uint8:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/graphql.Uint8
   
   # ==================== Enum Types ====================
   Order:

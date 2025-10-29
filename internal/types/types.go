@@ -25,6 +25,11 @@ func SafeString(s *string) string {
 	return *s
 }
 
+// IsNumeric checks if a string is a valid numeric value
+func IsNumeric(s string) bool {
+	return regexp.MustCompile(`^[0-9]+$`).MatchString(s)
+}
+
 // IsPositiveNumeric checks if a string is a valid positive numeric value
 func IsPositiveNumeric(s string) bool {
 	regex := regexp.MustCompile(`^[1-9][0-9]*$`)
@@ -33,7 +38,16 @@ func IsPositiveNumeric(s string) bool {
 
 // IsTezosAddress checks if a string is a valid Tezos address
 func IsTezosAddress(s string) bool {
-	return strings.HasPrefix(s, "tz1") || strings.HasPrefix(s, "tz2") || strings.HasPrefix(s, "tz3") || strings.HasPrefix(s, "tz4") || strings.HasPrefix(s, "KT1")
+	return strings.HasPrefix(s, "tz1") ||
+		strings.HasPrefix(s, "tz2") ||
+		strings.HasPrefix(s, "tz3") ||
+		strings.HasPrefix(s, "tz4") ||
+		IsTezosContractAddress(s)
+}
+
+// IsTezosContractAddress checks if a string is a valid Tezos contract address
+func IsTezosContractAddress(s string) bool {
+	return regexp.MustCompile(`^KT1[1-9A-HJ-NP-Za-km-z]{33}$`).MatchString(s)
 }
 
 // IsEthereumAddress checks if a string is a valid Ethereum address

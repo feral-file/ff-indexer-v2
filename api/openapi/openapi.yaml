@@ -1,0 +1,1041 @@
+openapi: 3.0.3
+info:
+  title: FF Indexer API
+  description: |
+    API for indexing and querying NFT tokens across multiple blockchain networks.
+    
+    The FF Indexer provides comprehensive token metadata, ownership information, 
+    provenance events, and change tracking capabilities.
+  version: 1.0.0
+  contact:
+    name: Feral File
+    url: https://feralfile.com
+
+servers:
+  - url: http://localhost:8081
+    description: Local development server
+  - url: https://indexer.feralfile.com
+    description: Production server
+
+tags:
+  - name: tokens
+    description: Token retrieval and indexing operations
+  - name: changes
+    description: Change journal tracking
+  - name: health
+    description: Health check endpoints
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns the health status of the API service
+      operationId: healthCheck
+      tags:
+        - health
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: ff-indexer-api
+
+  /api/v1/tokens/{cid}:
+    get:
+      summary: Get token by CID
+      description: |
+        Retrieves a single token by its canonical identifier (CID).
+        
+        The CID format is: `chain:standard:contract_address:token_number`
+        
+        Example: `eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:1`
+      operationId: getToken
+      tags:
+        - tokens
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          description: Token canonical identifier (CID)
+          schema:
+            type: string
+          example: "eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:1"
+        
+        - name: expand
+          in: query
+          required: false
+          description: |
+            Comma-separated list of fields to expand in the response.
+            
+            Available expansions:
+            - `owners`: Include token ownership information
+            - `provenance_events`: Include blockchain event history
+            - `enrichment_source`: Include vendor enrichment data
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [owners, provenance_events, enrichment_source]
+          style: form
+          explode: false
+          example: ["owners", "provenance_events"]
+        
+        - name: owners.limit
+          in: query
+          required: false
+          description: Maximum number of owners to return (when owners expansion is requested)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        
+        - name: owners.offset
+          in: query
+          required: false
+          description: Number of owners to skip (when owners expansion is requested)
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        
+        - name: provenance_events.limit
+          in: query
+          required: false
+          description: Maximum number of provenance events to return (when provenance_events expansion is requested)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        
+        - name: provenance_events.offset
+          in: query
+          required: false
+          description: Number of provenance events to skip (when provenance_events expansion is requested)
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        
+        - name: provenance_events.order
+          in: query
+          required: false
+          description: Sort order for provenance events based on timestamp (when provenance_events expansion is requested)
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+
+      responses:
+        '200':
+          description: Token found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Bad request - Invalid CID format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '404':
+          description: Token not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '422':
+          description: Validation error - Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/tokens:
+    get:
+      summary: List tokens
+      description: |
+        Retrieves a list of tokens with optional filtering and pagination.
+        
+        Multiple filter values can be provided for each filter parameter to match tokens 
+        that satisfy any of the provided values (OR logic).
+      operationId: listTokens
+      tags:
+        - tokens
+      parameters:
+        - name: owner
+          in: query
+          required: false
+          description: Filter by owner address(es)
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["0xabc123...", "0xdef456..."]
+        
+        - name: chain
+          in: query
+          required: false
+          description: |
+            Filter by blockchain chain(s) using CAIP-2 format.
+            
+            Supported chains:
+            - `eip155:1` - Ethereum Mainnet
+            - `eip155:11155111` - Ethereum Sepolia
+            - `tezos:mainnet` - Tezos Mainnet
+            - `tezos:ghostnet` - Tezos Ghostnet
+          schema:
+            type: array
+            items:
+              type: string
+              enum: ["eip155:1", "eip155:11155111", "tezos:mainnet", "tezos:ghostnet"]
+          style: form
+          explode: true
+          example: ["eip155:1"]
+        
+        - name: contract_address
+          in: query
+          required: false
+          description: Filter by contract address(es)
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d"]
+        
+        - name: token_id
+          in: query
+          required: false
+          description: Filter by token ID(s) within the contract
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["1", "2", "3"]
+        
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of tokens to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        
+        - name: offset
+          in: query
+          required: false
+          description: Number of tokens to skip
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        
+        - name: expand
+          in: query
+          required: false
+          description: |
+            Comma-separated list of fields to expand in the response.
+            
+            Available expansions:
+            - `owners`: Include token ownership information
+            - `provenance_events`: Include blockchain event history
+            - `enrichment_source`: Include vendor enrichment data
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [owners, provenance_events, enrichment_source]
+          style: form
+          explode: false
+          example: ["owners"]
+        
+        - name: owners.limit
+          in: query
+          required: false
+          description: Maximum number of owners to return per token (when owners expansion is requested)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        
+        - name: owners.offset
+          in: query
+          required: false
+          description: Number of owners to skip per token (when owners expansion is requested)
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        
+        - name: provenance_events.limit
+          in: query
+          required: false
+          description: Maximum number of provenance events to return per token (when provenance_events expansion is requested)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        
+        - name: provenance_events.offset
+          in: query
+          required: false
+          description: Number of provenance events to skip per token (when provenance_events expansion is requested)
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        
+        - name: provenance_events.order
+          in: query
+          required: false
+          description: Sort order for provenance events based on timestamp (when provenance_events expansion is requested)
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+
+      responses:
+        '200':
+          description: List of tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenListResponse'
+        '422':
+          description: Validation error - Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/tokens/index:
+    post:
+      summary: Trigger token indexing
+      description: |
+        Triggers asynchronous indexing for one or more tokens or all tokens owned by specific addresses.
+        
+        You must provide either `token_cids` or `addresses`, but not both.
+        
+        Limits:
+        - Maximum 20 token CIDs per request
+        - Maximum 5 addresses per request
+      operationId: triggerTokenIndexing
+      tags:
+        - tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerIndexingRequest'
+            examples:
+              byTokenCIDs:
+                summary: Index specific tokens by CID
+                value:
+                  token_cids:
+                    - "eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:1"
+                    - "eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:2"
+              byAddresses:
+                summary: Index all tokens owned by addresses
+                value:
+                  addresses:
+                    - "0xabc123..."
+                    - "0xdef456..."
+
+      responses:
+        '202':
+          description: Indexing job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerIndexingResponse'
+        '422':
+          description: Validation error - Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/changes:
+    get:
+      summary: Get changes journal
+      description: |
+        Retrieves changes from the journal with optional filtering and pagination.
+        
+        The changes journal tracks all modifications to indexed data including:
+        - Token mints, burns, and transfers
+        - Ownership changes
+        - Balance updates
+        - Metadata updates
+        - Media asset updates
+      operationId: getChanges
+      tags:
+        - changes
+      parameters:
+        - name: token_cid
+          in: query
+          required: false
+          description: Filter by token CID(s)
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:1"]
+        
+        - name: address
+          in: query
+          required: false
+          description: Filter by address(es) - returns changes related to tokens owned by these addresses
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["0xabc123..."]
+        
+        - name: since
+          in: query
+          required: false
+          description: |
+            Only show changes after this timestamp (ISO 8601 format).
+            
+            Useful for polling for new changes.
+          schema:
+            type: string
+            format: date-time
+          example: "2024-01-01T00:00:00Z"
+        
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of changes to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        
+        - name: offset
+          in: query
+          required: false
+          description: Number of changes to skip
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        
+        - name: order
+          in: query
+          required: false
+          description: Sort order based on changed_at timestamp
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        
+        - name: expand
+          in: query
+          required: false
+          description: |
+            Comma-separated list of fields to expand in the response.
+            
+            Available expansions:
+            - `subject`: Include the full subject entity (token, owner, balance, metadata, or media)
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [subject]
+          style: form
+          explode: false
+          example: ["subject"]
+
+      responses:
+        '200':
+          description: List of changes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeListResponse'
+        '422':
+          description: Validation error - Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+components:
+  schemas:
+    TokenResponse:
+      type: object
+      required:
+        - id
+        - token_cid
+        - chain
+        - standard
+        - contract_address
+        - token_number
+        - burned
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: uint64
+          description: Internal database ID
+          example: 12345
+        token_cid:
+          type: string
+          description: Canonical token identifier (format: chain:standard:contract:tokenNumber)
+          example: "eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:1"
+        chain:
+          type: string
+          description: Blockchain chain identifier (CAIP-2 format)
+          enum: ["eip155:1", "eip155:11155111", "tezos:mainnet", "tezos:ghostnet"]
+          example: "eip155:1"
+        standard:
+          type: string
+          description: Token standard
+          enum: [erc721, erc1155, fa2]
+          example: "erc721"
+        contract_address:
+          type: string
+          description: Smart contract address
+          example: "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d"
+        token_number:
+          type: string
+          description: Token ID within the contract
+          example: "1"
+        current_owner:
+          type: string
+          nullable: true
+          description: Current owner address (null for ERC1155/FA2 multi-owner tokens)
+          example: "0xabc123..."
+        burned:
+          type: boolean
+          description: Whether the token has been burned
+          example: false
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the token was first indexed
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the token was last updated
+        metadata:
+          $ref: '#/components/schemas/TokenMetadataResponse'
+        owners:
+          $ref: '#/components/schemas/PaginatedOwners'
+        provenance_events:
+          $ref: '#/components/schemas/PaginatedProvenanceEvents'
+        enrichment_source:
+          $ref: '#/components/schemas/EnrichmentSourceResponse'
+
+    TokenMetadataResponse:
+      type: object
+      required:
+        - token_id
+        - enrichment_level
+      properties:
+        token_id:
+          type: integer
+          format: uint64
+          description: Internal token ID reference
+          example: 12345
+        origin_json:
+          type: object
+          description: Original metadata JSON from the blockchain
+          additionalProperties: true
+        latest_json:
+          type: object
+          description: Latest enriched metadata JSON
+          additionalProperties: true
+        latest_hash:
+          type: string
+          nullable: true
+          description: Hash of the latest metadata
+        enrichment_level:
+          type: string
+          description: Level of metadata enrichment applied
+          enum: [none, basic, full]
+          example: "full"
+        last_refreshed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of last metadata refresh
+        image_url:
+          type: string
+          nullable: true
+          description: URL to the token image
+          example: "https://example.com/image.png"
+        animation_url:
+          type: string
+          nullable: true
+          description: URL to the token animation/video
+          example: "https://example.com/animation.mp4"
+        name:
+          type: string
+          nullable: true
+          description: Token name
+          example: "Bored Ape #1"
+        description:
+          type: string
+          nullable: true
+          description: Token description
+        artists:
+          type: array
+          description: List of artists/creators
+          items:
+            $ref: '#/components/schemas/ArtistResponse'
+        publisher:
+          $ref: '#/components/schemas/PublisherResponse'
+
+    ArtistResponse:
+      type: object
+      properties:
+        did:
+          type: string
+          description: Decentralized identifier for the artist
+          example: "did:web:example.com:artist:123"
+        name:
+          type: string
+          description: Artist name
+          example: "John Doe"
+
+    PublisherResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+          description: Publisher name
+          example: "Feral File"
+        url:
+          type: string
+          nullable: true
+          description: Publisher URL
+          example: "https://feralfile.com"
+
+    PaginatedOwners:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          description: List of owners
+          items:
+            $ref: '#/components/schemas/OwnerResponse'
+        offset:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Offset for the next page
+        total:
+          type: integer
+          format: uint64
+          description: Total number of owners
+          example: 100
+
+    OwnerResponse:
+      type: object
+      required:
+        - owner_address
+        - quantity
+        - created_at
+        - updated_at
+      properties:
+        owner_address:
+          type: string
+          description: Owner's blockchain address
+          example: "0xabc123..."
+        quantity:
+          type: string
+          description: Number of tokens owned (as string to support large numbers)
+          example: "1"
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when ownership was first recorded
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when ownership was last updated
+
+    PaginatedProvenanceEvents:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          description: List of provenance events
+          items:
+            $ref: '#/components/schemas/ProvenanceEventResponse'
+        offset:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Offset for the next page
+        total:
+          type: integer
+          format: uint64
+          description: Total number of provenance events
+          example: 50
+
+    ProvenanceEventResponse:
+      type: object
+      required:
+        - id
+        - token_id
+        - chain
+        - event_type
+        - timestamp
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: uint64
+          description: Internal event ID
+          example: 67890
+        token_id:
+          type: integer
+          format: uint64
+          description: Internal token ID reference
+          example: 12345
+        chain:
+          type: string
+          description: Blockchain chain identifier (CAIP-2 format)
+          enum: ["eip155:1", "eip155:11155111", "tezos:mainnet", "tezos:ghostnet"]
+          example: "eip155:1"
+        event_type:
+          type: string
+          description: Type of blockchain event
+          enum: [mint, transfer, burn, metadata_update]
+          example: "mint"
+        from_address:
+          type: string
+          nullable: true
+          description: Sender address (null for mint events)
+          example: "0x0000000000000000000000000000000000000000"
+        to_address:
+          type: string
+          nullable: true
+          description: Recipient address (null for burn events)
+          example: "0xabc123..."
+        quantity:
+          type: string
+          nullable: true
+          description: Quantity transferred (as string to support large numbers)
+          example: "1"
+        tx_hash:
+          type: string
+          nullable: true
+          description: Transaction hash
+          example: "0xdef456..."
+        block_number:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Block number
+          example: 15000000
+        block_hash:
+          type: string
+          nullable: true
+          description: Block hash
+          example: "0xghi789..."
+        timestamp:
+          type: string
+          format: date-time
+          description: Blockchain timestamp of the event
+        raw:
+          type: object
+          description: Raw event data as JSON
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the event was indexed
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the event was last updated
+
+    EnrichmentSourceResponse:
+      type: object
+      required:
+        - token_id
+        - vendor
+        - created_at
+        - updated_at
+      properties:
+        token_id:
+          type: integer
+          format: uint64
+          description: Internal token ID reference
+          example: 12345
+        vendor:
+          type: string
+          description: Enrichment vendor name
+          enum: [artblocks, fxhash]
+          example: "artblocks"
+        vendor_json:
+          type: object
+          description: Raw vendor data as JSON
+          additionalProperties: true
+        vendor_hash:
+          type: string
+          nullable: true
+          description: Hash of the vendor data
+        image_url:
+          type: string
+          nullable: true
+          description: Image URL from vendor
+          example: "https://example.com/image.png"
+        animation_url:
+          type: string
+          nullable: true
+          description: Animation URL from vendor
+          example: "https://example.com/animation.mp4"
+        name:
+          type: string
+          nullable: true
+          description: Token name from vendor
+          example: "Chromie Squiggle #1"
+        description:
+          type: string
+          nullable: true
+          description: Token description from vendor
+        artists:
+          type: array
+          description: List of artists from vendor data
+          items:
+            $ref: '#/components/schemas/ArtistResponse'
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when enrichment was first stored
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when enrichment was last updated
+
+    TokenListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          description: List of tokens
+          items:
+            $ref: '#/components/schemas/TokenResponse'
+        offset:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Offset for the next page
+        total:
+          type: integer
+          format: uint64
+          description: Total number of tokens matching the filter criteria
+          example: 1000
+
+    ChangeResponse:
+      type: object
+      required:
+        - id
+        - token_cid
+        - subject_type
+        - subject_id
+        - changed_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: uint64
+          description: Internal change ID
+          example: 99999
+        token_cid:
+          type: string
+          description: Token CID affected by this change
+          example: "eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:1"
+        subject_type:
+          type: string
+          description: Type of entity that changed
+          enum: [token, owner, balance, metadata, media]
+          example: "token"
+        subject_id:
+          type: string
+          description: |
+            Polymorphic reference to the specific record that changed:
+            - For 'token'/'owner': provenance_event_id
+            - For 'balance': balance_id
+            - For 'metadata': token_id
+            - For 'media': media_asset_id
+          example: "67890"
+        changed_at:
+          type: string
+          format: date-time
+          description: Timestamp when the change occurred
+        meta:
+          type: object
+          description: Additional context about the change as JSON
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the change was recorded
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the change was last updated
+        subject:
+          description: Expanded subject entity (when subject expansion is requested)
+          oneOf:
+            - $ref: '#/components/schemas/TokenResponse'
+            - $ref: '#/components/schemas/OwnerResponse'
+            - $ref: '#/components/schemas/TokenMetadataResponse'
+            - $ref: '#/components/schemas/ProvenanceEventResponse'
+
+    ChangeListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          description: List of changes
+          items:
+            $ref: '#/components/schemas/ChangeResponse'
+        offset:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Offset for the next page
+        total:
+          type: integer
+          format: uint64
+          description: Total number of changes matching the filter criteria
+          example: 5000
+
+    TriggerIndexingRequest:
+      type: object
+      properties:
+        token_cids:
+          type: array
+          description: List of token CIDs to index (max 20, cannot be used with addresses)
+          maxItems: 20
+          items:
+            type: string
+          example: 
+            - "eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:1"
+            - "eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:2"
+        addresses:
+          type: array
+          description: List of addresses to index all owned tokens (max 5, cannot be used with token_cids)
+          maxItems: 5
+          items:
+            type: string
+          example:
+            - "0xabc123..."
+            - "0xdef456..."
+
+    TriggerIndexingResponse:
+      type: object
+      required:
+        - workflow_id
+        - run_id
+      properties:
+        workflow_id:
+          type: string
+          description: Temporal workflow ID for the indexing job
+          example: "index-tokens-1234567890"
+        run_id:
+          type: string
+          description: Temporal run ID for the indexing job
+          example: "abc-def-ghi-123"
+
+    APIError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          enum: 
+            - bad_request
+            - not_found
+            - validation_failed
+            - unauthorized
+            - forbidden
+            - internal_error
+            - database_error
+            - service_error
+          example: "validation_failed"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Validation failed"
+        details:
+          type: string
+          description: Additional error details
+          example: "Token CID is required"
+

@@ -14,11 +14,10 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
-	gqlparser "github.com/vektah/gqlparser/v2"
-	"github.com/vektah/gqlparser/v2/ast"
-
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
+	gqlparser "github.com/vektah/gqlparser/v2"
+	"github.com/vektah/gqlparser/v2/ast"
 )
 
 // region    ************************** generated!.gotpl **************************
@@ -141,9 +140,9 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		Changes func(childComplexity int, tokenCid []string, address []string, since *string, limit *int, offset *Uint64, order *types.Order, expand []string) int
-		Token   func(childComplexity int, cid string, expand []string, ownersLimit *int, ownersOffset *Uint64, provenanceEventsLimit *int, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
-		Tokens  func(childComplexity int, owner []string, chain []string, contractAddress []string, tokenID []string, limit *int, offset *Uint64, expand []string, ownersLimit *int, ownersOffset *Uint64, provenanceEventsLimit *int, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Changes func(childComplexity int, tokenCid []string, address []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) int
+		Token   func(childComplexity int, cid string, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Tokens  func(childComplexity int, owner []string, chain []string, contractAddress []string, tokenID []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
 	}
 
 	Token struct {
@@ -229,9 +228,9 @@ type ProvenanceEventResolver interface {
 	Raw(ctx context.Context, obj *dto.ProvenanceEventResponse) (JSON, error)
 }
 type QueryResolver interface {
-	Token(ctx context.Context, cid string, expand []string, ownersLimit *int, ownersOffset *Uint64, provenanceEventsLimit *int, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
-	Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, limit *int, offset *Uint64, expand []string, ownersLimit *int, ownersOffset *Uint64, provenanceEventsLimit *int, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
-	Changes(ctx context.Context, tokenCid []string, address []string, since *string, limit *int, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error)
+	Token(ctx context.Context, cid string, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
+	Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
+	Changes(ctx context.Context, tokenCid []string, address []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error)
 }
 type TokenResolver interface {
 	ID(ctx context.Context, obj *dto.TokenResponse) (Uint64, error)
@@ -605,7 +604,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Changes(childComplexity, args["token_cid"].([]string), args["address"].([]string), args["since"].(*string), args["limit"].(*int), args["offset"].(*Uint64), args["order"].(*types.Order), args["expand"].([]string)), true
+		return e.complexity.Query.Changes(childComplexity, args["token_cid"].([]string), args["address"].([]string), args["since"].(*string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["order"].(*types.Order), args["expand"].([]string)), true
 	case "Query.token":
 		if e.complexity.Query.Token == nil {
 			break
@@ -616,7 +615,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["expand"].([]string), args["owners_limit"].(*int), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*int), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["expand"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
 	case "Query.tokens":
 		if e.complexity.Query.Tokens == nil {
 			break
@@ -627,7 +626,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Tokens(childComplexity, args["owner"].([]string), args["chain"].([]string), args["contract_address"].([]string), args["token_id"].([]string), args["limit"].(*int), args["offset"].(*Uint64), args["expand"].([]string), args["owners_limit"].(*int), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*int), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Tokens(childComplexity, args["owner"].([]string), args["chain"].([]string), args["contract_address"].([]string), args["token_id"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["expand"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
 
 	case "Token.burned":
 		if e.complexity.Token.Burned == nil {
@@ -930,11 +929,12 @@ var sources = []*ast.Source{
 scalar Time
 scalar JSON
 scalar Uint64
+scalar Uint8
 
 # Order enumeration for sorting
 enum Order {
-  ASC
-  DESC
+  asc
+  desc
 }
 
 # Artist/Creator information
@@ -1078,11 +1078,11 @@ type Query {
   token(
     cid: String!
     expand: [String!]
-    owners_limit: Int = 10
+    owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
-    provenance_events_limit: Int = 10
+    provenance_events_limit: Uint8 = 10
     provenance_events_offset: Uint64 = 0
-    provenance_events_order: Order = DESC
+    provenance_events_order: Order = desc
   ): Token
 
   # List tokens with filters
@@ -1092,14 +1092,14 @@ type Query {
     chain: [String!]
     contract_address: [String!]
     token_id: [String!]
-    limit: Int = 20
+    limit: Uint8 = 20
     offset: Uint64 = 0
     expand: [String!]
-    owners_limit: Int = 10
+    owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
-    provenance_events_limit: Int = 10
+    provenance_events_limit: Uint8 = 10
     provenance_events_offset: Uint64 = 0
-    provenance_events_order: Order = DESC
+    provenance_events_order: Order = desc
   ): TokenList
 
   # Get changes with filters
@@ -1108,9 +1108,9 @@ type Query {
     token_cid: [String!]
     address: [String!]
     since: String
-    limit: Int = 20
+    limit: Uint8 = 20
     offset: Uint64 = 0
-    order: Order = ASC
+    order: Order = asc
     expand: [String!]
   ): ChangeList
 }
@@ -1178,7 +1178,7 @@ func (ec *executionContext) field_Query_changes_args(ctx context.Context, rawArg
 		return nil, err
 	}
 	args["since"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOInt2ᚖint)
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
@@ -1214,7 +1214,7 @@ func (ec *executionContext) field_Query_token_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["expand"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOInt2ᚖint)
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
@@ -1224,7 +1224,7 @@ func (ec *executionContext) field_Query_token_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["owners_offset"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOInt2ᚖint)
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
@@ -1265,7 +1265,7 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["token_id"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOInt2ᚖint)
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
@@ -1280,7 +1280,7 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["expand"] = arg6
-	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOInt2ᚖint)
+	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
@@ -1290,7 +1290,7 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["owners_offset"] = arg8
-	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOInt2ᚖint)
+	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
@@ -2960,7 +2960,7 @@ func (ec *executionContext) _Query_token(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_token,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["expand"].([]string), fc.Args["owners_limit"].(*int), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*int), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["expand"].([]string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOToken2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenResponse,
@@ -3031,7 +3031,7 @@ func (ec *executionContext) _Query_tokens(ctx context.Context, field graphql.Col
 		ec.fieldContext_Query_tokens,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Tokens(ctx, fc.Args["owner"].([]string), fc.Args["chain"].([]string), fc.Args["contract_address"].([]string), fc.Args["token_id"].([]string), fc.Args["limit"].(*int), fc.Args["offset"].(*Uint64), fc.Args["expand"].([]string), fc.Args["owners_limit"].(*int), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*int), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Tokens(ctx, fc.Args["owner"].([]string), fc.Args["chain"].([]string), fc.Args["contract_address"].([]string), fc.Args["token_id"].([]string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["expand"].([]string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,
@@ -3080,7 +3080,7 @@ func (ec *executionContext) _Query_changes(ctx context.Context, field graphql.Co
 		ec.fieldContext_Query_changes,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Changes(ctx, fc.Args["token_cid"].([]string), fc.Args["address"].([]string), fc.Args["since"].(*string), fc.Args["limit"].(*int), fc.Args["offset"].(*Uint64), fc.Args["order"].(*types.Order), fc.Args["expand"].([]string))
+			return ec.resolvers.Query().Changes(ctx, fc.Args["token_cid"].([]string), fc.Args["address"].([]string), fc.Args["since"].(*string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["order"].(*types.Order), fc.Args["expand"].([]string))
 		},
 		nil,
 		ec.marshalOChangeList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐChangeListResponse,
@@ -8323,24 +8323,6 @@ func (ec *executionContext) marshalOEnrichmentSource2ᚖgithubᚗcomᚋferalᚑf
 	return ec._EnrichmentSource(ctx, sel, v)
 }
 
-func (ec *executionContext) unmarshalOInt2ᚖint(ctx context.Context, v any) (*int, error) {
-	if v == nil {
-		return nil, nil
-	}
-	res, err := graphql.UnmarshalInt(v)
-	return &res, graphql.ErrorOnPath(ctx, err)
-}
-
-func (ec *executionContext) marshalOInt2ᚖint(ctx context.Context, sel ast.SelectionSet, v *int) graphql.Marshaler {
-	if v == nil {
-		return graphql.Null
-	}
-	_ = sel
-	_ = ctx
-	res := graphql.MarshalInt(*v)
-	return res
-}
-
 func (ec *executionContext) unmarshalOJSON2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐJSON(ctx context.Context, v any) (JSON, error) {
 	if v == nil {
 		return nil, nil
@@ -8507,6 +8489,22 @@ func (ec *executionContext) unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋff
 }
 
 func (ec *executionContext) marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64(ctx context.Context, sel ast.SelectionSet, v *Uint64) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8(ctx context.Context, v any) (*Uint8, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(Uint8)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8(ctx context.Context, sel ast.SelectionSet, v *Uint8) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}

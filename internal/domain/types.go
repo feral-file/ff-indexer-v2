@@ -28,6 +28,14 @@ const (
 	ChainTezosGhostnet   Chain = "tezos:ghostnet"
 )
 
+// IsValidChain checks if a chain is valid
+func IsValidChain(chain Chain) bool {
+	return chain == ChainEthereumMainnet ||
+		chain == ChainEthereumSepolia ||
+		chain == ChainTezosMainnet ||
+		chain == ChainTezosGhostnet
+}
+
 // ChainStandard represents blockchain token standards
 type ChainStandard string
 

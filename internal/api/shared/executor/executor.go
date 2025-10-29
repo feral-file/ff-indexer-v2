@@ -16,7 +16,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
-	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -25,16 +24,16 @@ import (
 //go:generate mockgen -source=executor.go -destination=../../../mocks/mock_api_executor.go -package=mocks -mock_names=Executor=MockAPIExecutor
 type Executor interface {
 	// GetToken retrieves a single token by its CID with optional expansions
-	GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *int, ownersOffset *uint64, provenanceEventsLimit *int, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
+	GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, limit *int, offset *uint64, expand []types.Expansion, ownersLimit *int, ownersOffset *uint64, provenanceEventsLimit *int, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 
 	// GetChanges retrieves changes with optional filters and expansions
-	GetChanges(ctx context.Context, tokenCIDs []string, addresses []string, since *time.Time, limit *int, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
+	GetChanges(ctx context.Context, tokenCIDs []string, addresses []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens and addresses
-	TriggerTokenIndexing(ctx context.Context, tokenCIDs []string, addresses []string) (*dto.TriggerIndexingResponse, error)
+	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error)
 }
 
 type executor struct {
@@ -47,7 +46,7 @@ func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, 
 	return &executor{store: store, orchestrator: orchestrator, orchestratorTaskQueue: orchestratorTaskQueue}
 }
 
-func (e *executor) GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *int, ownersOffset *uint64, provenanceEventsLimit *int, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+func (e *executor) GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
 	// Get token with metadata
 	result, err := e.store.GetTokenWithMetadataByTokenCID(ctx, tokenCID)
 	if err != nil {
@@ -82,7 +81,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expand []types
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, limit *int, offset *uint64, expand []types.Expansion, ownersLimit *int, ownersOffset *uint64, provenanceEventsLimit *int, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -99,7 +98,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		ContractAddresses: contractAddresses,
 		TokenNumbers:      tokenIDs,
 		Chains:            chains,
-		Limit:             *limit,
+		Limit:             int(*limit),
 		Offset:            *offset,
 	}
 
@@ -149,7 +148,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	}, nil
 }
 
-func (e *executor) GetChanges(ctx context.Context, tokenCIDs []string, addresses []string, since *time.Time, limit *int, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
+func (e *executor) GetChanges(ctx context.Context, tokenCIDs []string, addresses []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_CHANGES_LIMIT
@@ -166,7 +165,7 @@ func (e *executor) GetChanges(ctx context.Context, tokenCIDs []string, addresses
 		TokenCIDs: tokenCIDs,
 		Addresses: addresses,
 		Since:     since,
-		Limit:     *limit,
+		Limit:     int(*limit),
 		Offset:    *offset,
 		OrderDesc: orderDesc,
 	}
@@ -210,7 +209,7 @@ func (e *executor) GetChanges(ctx context.Context, tokenCIDs []string, addresses
 	}, nil
 }
 
-func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []string, addresses []string) (*dto.TriggerIndexingResponse, error) {
+func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error) {
 	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{})
 	var workflowID string
 	var runID string
@@ -219,25 +218,12 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []string,
 	hasAddresses := len(addresses) > 0
 
 	if hasTokenCIDs {
-		// Convert string CIDs to domain.TokenCID
-		domainTokenCIDs := make([]domain.TokenCID, len(tokenCIDs))
-		for i, cid := range tokenCIDs {
-			domainTokenCIDs[i] = domain.TokenCID(cid)
-		}
-
-		// Validate token CIDs
-		for _, cid := range domainTokenCIDs {
-			if !cid.Valid() {
-				return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid token CID: %s", cid.String()))
-			}
-		}
-
 		// Trigger IndexTokens workflow
 		options := client.StartWorkflowOptions{
 			TaskQueue:                e.orchestratorTaskQueue,
 			WorkflowExecutionTimeout: 30 * time.Minute,
 		}
-		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, domainTokenCIDs)
+		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, tokenCIDs)
 		if err != nil {
 			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing: %v", err))
 		}
@@ -246,13 +232,6 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []string,
 	}
 
 	if hasAddresses {
-		// Validate addresses
-		for _, address := range addresses {
-			if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
-				return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid address: %s. Must be a valid Tezos or Ethereum address", address))
-			}
-		}
-
 		// Trigger IndexTokenOwners workflow
 		options := client.StartWorkflowOptions{
 			TaskQueue:                e.orchestratorTaskQueue,
@@ -274,7 +253,7 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []string,
 
 // Helper methods for expanding token data
 
-func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64, limit *int, offset *uint64) error {
+func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64, limit *uint8, offset *uint64) error {
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_OWNERS_LIMIT
 		limit = &defaultLimit
@@ -284,7 +263,7 @@ func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse
 		offset = &defaultOffset
 	}
 
-	owners, total, err := e.store.GetTokenOwners(ctx, tokenID, *limit, *offset)
+	owners, total, err := e.store.GetTokenOwners(ctx, tokenID, int(*limit), *offset)
 	if err != nil {
 		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token owners: %v", err))
 	}
@@ -309,7 +288,7 @@ func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse
 	return nil
 }
 
-func (e *executor) expandProvenanceEvents(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64, limit *int, offset *uint64, order *types.Order) error {
+func (e *executor) expandProvenanceEvents(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64, limit *uint8, offset *uint64, order *types.Order) error {
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_PROVENANCE_EVENTS_LIMIT
 		limit = &defaultLimit
@@ -320,7 +299,7 @@ func (e *executor) expandProvenanceEvents(ctx context.Context, tokenDTO *dto.Tok
 	}
 	orderDesc := order == nil || order.Desc() // Default to DESC
 
-	events, total, err := e.store.GetTokenProvenanceEvents(ctx, tokenID, *limit, *offset, orderDesc)
+	events, total, err := e.store.GetTokenProvenanceEvents(ctx, tokenID, int(*limit), *offset, orderDesc)
 	if err != nil {
 		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance events: %v", err))
 	}

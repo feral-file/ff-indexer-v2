@@ -1,14 +1,17 @@
 package rest
 
 import (
+	"fmt"
 	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
+	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // GetTokenQueryParams holds query parameters for GET /tokens/:cid
@@ -16,13 +19,30 @@ type GetTokenQueryParams struct {
 	Expand []types.Expansion `form:"expand"`
 
 	// Owners expansion parameters
-	OwnerLimit  int    `form:"owners.limit,default=10"`
+	OwnerLimit  uint8  `form:"owners.limit,default=10"`
 	OwnerOffset uint64 `form:"owners.offset,default=0"`
 
 	// Provenance events expansion parameters
-	ProvenanceEventLimit  int         `form:"provenance_events.limit,default=10"`
+	ProvenanceEventLimit  uint8       `form:"provenance_events.limit,default=10"`
 	ProvenanceEventOffset uint64      `form:"provenance_events.offset,default=0"`
 	ProvenanceEventOrder  types.Order `form:"provenance_events.order,default=desc"`
+}
+
+// Validate validates the query parameters for GET /tokens/:cid
+func (p *GetTokenQueryParams) Validate() error {
+	// Validate expansions
+	for _, expansion := range p.Expand {
+		if expansion != types.ExpansionOwners && expansion != types.ExpansionProvenanceEvents && expansion != types.ExpansionEnrichmentSource {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
+		}
+	}
+
+	// Validate provenance event order
+	if !p.ProvenanceEventOrder.Valid() {
+		return apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", p.ProvenanceEventOrder))
+	}
+
+	return nil
 }
 
 // ListTokensQueryParams holds query parameters for GET /tokens
@@ -34,20 +54,65 @@ type ListTokensQueryParams struct {
 	TokenIDs          []string       `form:"token_id"`
 
 	// Pagination
-	Limit  int    `form:"limit,default=20"`
+	Limit  uint8  `form:"limit,default=20"`
 	Offset uint64 `form:"offset,default=0"`
 
 	// Expansion
 	Expand []types.Expansion `form:"expand"`
 
 	// Owners expansion parameters
-	OwnerLimit  int    `form:"owners.limit,default=10"`
+	OwnerLimit  uint8  `form:"owners.limit,default=10"`
 	OwnerOffset uint64 `form:"owners.offset,default=0"`
 
 	// Provenance events expansion parameters
-	ProvenanceEventLimit  int         `form:"provenance_events.limit,default=10"`
+	ProvenanceEventLimit  uint8       `form:"provenance_events.limit,default=10"`
 	ProvenanceEventOffset uint64      `form:"provenance_events.offset,default=0"`
 	ProvenanceEventOrder  types.Order `form:"provenance_events.order,default=desc"`
+}
+
+// Validate validates the query parameters for GET /tokens
+func (p *ListTokensQueryParams) Validate() error {
+	// Validate owners
+	for _, owner := range p.Owners {
+		if !internalTypes.IsTezosAddress(owner) && !internalTypes.IsEthereumAddress(owner) {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid owner: %s. Must be a valid Tezos or Ethereum address", owner))
+		}
+	}
+
+	// Validate chains
+	for _, chain := range p.Chains {
+		if !domain.IsValidChain(chain) {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid chain: %s. Must be a valid Tezos or Ethereum chain", chain))
+		}
+	}
+
+	// Validate contract addresses
+	for _, contractAddress := range p.ContractAddresses {
+		if !internalTypes.IsTezosContractAddress(contractAddress) && !internalTypes.IsEthereumAddress(contractAddress) {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid contract address: %s. Must be a valid Tezos or Ethereum address", contractAddress))
+		}
+	}
+
+	// Validate token IDs
+	for _, tokenID := range p.TokenIDs {
+		if !internalTypes.IsNumeric(tokenID) {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid token ID: %s. Must be a valid positive numeric value", tokenID))
+		}
+	}
+
+	// Validate expansions
+	for _, expansion := range p.Expand {
+		if expansion != types.ExpansionOwners && expansion != types.ExpansionProvenanceEvents && expansion != types.ExpansionEnrichmentSource {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
+		}
+	}
+
+	// Validate provenance event order
+	if !p.ProvenanceEventOrder.Valid() {
+		return apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", p.ProvenanceEventOrder))
+	}
+
+	return nil
 }
 
 // ParseGetTokenQuery parses query parameters for GET /tokens/:cid
@@ -111,10 +176,41 @@ type GetChangesQueryParams struct {
 	Since     *time.Time `form:"since" time_format:"2006-01-02T15:04:05Z07:00"` // Timestamp filter - only show changes after this time
 
 	// Pagination
-	Limit  int               `form:"limit,default=20"`
+	Limit  uint8             `form:"limit,default=20"`
 	Offset uint64            `form:"offset,default=0"`
 	Order  types.Order       `form:"order,default=asc"` // asc or desc (based on changed_at)
 	Expand []types.Expansion `form:"expand"`            // Expansion options: subject
+}
+
+// Validate validates the query parameters for GET /changes
+func (p *GetChangesQueryParams) Validate() error {
+	// Validate token CIDs
+	for _, tokenCID := range p.TokenCIDs {
+		if !domain.TokenCID(tokenCID).Valid() {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid token CID: %s. Must be a valid token CID", tokenCID))
+		}
+	}
+
+	// Validate addresses
+	for _, address := range p.Addresses {
+		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+		}
+	}
+
+	// Validate expansions
+	for _, expansion := range p.Expand {
+		if expansion != types.ExpansionSubject {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
+		}
+	}
+
+	// Validate order
+	if !p.Order.Valid() {
+		return apierrors.NewValidationError(fmt.Sprintf("Invalid order: %s. Must be a valid order", p.Order))
+	}
+
+	return nil
 }
 
 // ParseGetChangesQuery parses query parameters for GET /changes

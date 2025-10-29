@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // ID is the resolver for the id field.
@@ -70,7 +73,41 @@ func (r *enrichmentSourceResolver) VendorJSON(ctx context.Context, obj *dto.Enri
 
 // TriggerIndexing is the resolver for the triggerIndexing field.
 func (r *mutationResolver) TriggerIndexing(ctx context.Context, tokenCids []string, addresses []string) (*dto.TriggerIndexingResponse, error) {
-	return r.executor.TriggerTokenIndexing(ctx, tokenCids, addresses)
+	hasTokenCIDs := len(tokenCids) > 0
+	hasAddresses := len(addresses) > 0
+
+	// Validate: only one type of input should be provided
+	if hasTokenCIDs && hasAddresses {
+		return nil, apierrors.NewValidationError("cannot provide both token_cids and addresses")
+	}
+
+	// Validate: maximum number of token CIDs allowed
+	if hasTokenCIDs && len(tokenCids) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
+	}
+
+	// Validate: maximum number of addresses allowed
+	if hasAddresses && len(addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
+	}
+
+	// Validate: addresses must be valid
+	for _, address := range addresses {
+		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+		}
+	}
+
+	// Validate: token CIDs must be valid
+	tokenCIDs := make([]domain.TokenCID, len(tokenCids))
+	for i, cid := range tokenCids {
+		tokenCIDs[i] = domain.TokenCID(cid)
+		if !tokenCIDs[i].Valid() {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token CID: %s", cid))
+		}
+	}
+
+	return r.executor.TriggerTokenIndexing(ctx, tokenCIDs, addresses)
 }
 
 // Offset is the resolver for the offset field.
@@ -131,9 +168,29 @@ func (r *provenanceEventResolver) Raw(ctx context.Context, obj *dto.ProvenanceEv
 }
 
 // Token is the resolver for the token field.
-func (r *queryResolver) Token(ctx context.Context, cid string, expand []string, ownersLimit *int, ownersOffset *Uint64, provenanceEventsLimit *int, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+func (r *queryResolver) Token(ctx context.Context, cid string, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+	// Validate token CID
+	if !domain.TokenCID(cid).Valid() {
+		return nil, apierrors.NewValidationError("Invalid token CID")
+	}
+
+	// Convert expansions to domain.Expansion
 	expansions := convertExpansionStrings(expand)
-	token, err := r.executor.GetToken(ctx, cid, expansions, ownersLimit, ToNativeUint64(ownersOffset), provenanceEventsLimit, ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
+
+	// Validate expansions
+	for _, expansion := range expansions {
+		if expansion != types.ExpansionOwners && expansion != types.ExpansionProvenanceEvents && expansion != types.ExpansionEnrichmentSource {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
+		}
+	}
+
+	// Validate provenance event order
+	if provenanceEventsOrder != nil && !provenanceEventsOrder.Valid() {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", *provenanceEventsOrder))
+	}
+
+	// Get token
+	token, err := r.executor.GetToken(ctx, cid, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -146,20 +203,90 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expand []string, 
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, limit *int, offset *Uint64, expand []string, ownersLimit *int, ownersOffset *Uint64, provenanceEventsLimit *int, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+	// Convert query parameters to executor parameters
 	expansions := convertExpansionStrings(expand)
 	chains := convertChainStrings(chain)
-	return r.executor.GetTokens(ctx, owner, chains, contractAddress, tokenID, limit, ToNativeUint64(offset), expansions, ownersLimit, ToNativeUint64(ownersOffset), provenanceEventsLimit, ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
+
+	// Validate owners
+	for _, owner := range owner {
+		if !internalTypes.IsTezosAddress(owner) && !internalTypes.IsEthereumAddress(owner) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid owner: %s. Must be a valid Tezos or Ethereum address", owner))
+		}
+	}
+
+	// Validate chains
+	for _, chain := range chains {
+		if !domain.IsValidChain(chain) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid chain: %s. Must be a valid Tezos or Ethereum chain", chain))
+		}
+	}
+
+	// Validate contract addresses
+	for _, contractAddress := range contractAddress {
+		if !internalTypes.IsTezosContractAddress(contractAddress) && !internalTypes.IsEthereumAddress(contractAddress) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid contract address: %s. Must be a valid Tezos or Ethereum address", contractAddress))
+		}
+	}
+
+	// Validate token IDs
+	for _, tokenID := range tokenID {
+		if !internalTypes.IsNumeric(tokenID) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token ID: %s. Must be a valid positive numeric value", tokenID))
+		}
+	}
+
+	// Validate expansions
+	for _, expansion := range expansions {
+		if expansion != types.ExpansionOwners && expansion != types.ExpansionProvenanceEvents && expansion != types.ExpansionEnrichmentSource {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
+		}
+	}
+
+	// Validate provenance event order
+	if provenanceEventsOrder != nil && !provenanceEventsOrder.Valid() {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", *provenanceEventsOrder))
+	}
+
+	return r.executor.GetTokens(ctx, owner, chains, contractAddress, tokenID, ToNativeUint8(limit), ToNativeUint64(offset), expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
 }
 
 // Changes is the resolver for the changes field.
-func (r *queryResolver) Changes(ctx context.Context, tokenCid []string, address []string, since *string, limit *int, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error) {
+func (r *queryResolver) Changes(ctx context.Context, tokenCid []string, address []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error) {
+	// Convert query parameters to executor parameters
 	expansions := convertExpansionStrings(expand)
 	sinceTime, err := parseSinceTimestamp(since)
 	if err != nil {
 		return nil, fmt.Errorf("invalid since timestamp: %w", err)
 	}
-	return r.executor.GetChanges(ctx, tokenCid, address, sinceTime, limit, ToNativeUint64(offset), order, expansions)
+
+	// Validate token CIDs
+	for _, tokenCid := range tokenCid {
+		if !domain.TokenCID(tokenCid).Valid() {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid token CID: %s. Must be a valid token CID", tokenCid))
+		}
+	}
+
+	// Validate addresses
+	for _, address := range address {
+		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+		}
+	}
+
+	// Validate expansions
+	for _, expansion := range expansions {
+		if expansion != types.ExpansionSubject {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
+		}
+	}
+
+	// Validate order
+	if order != nil && !order.Valid() {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid order: %s. Must be a valid order", *order))
+	}
+
+	return r.executor.GetChanges(ctx, tokenCid, address, sinceTime, ToNativeUint8(limit), ToNativeUint64(offset), order, expansions)
 }
 
 // ID is the resolver for the id field.
