@@ -373,6 +373,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 		Artists:         input.Artists,
 		Description:     input.Description,
 		Publisher:       input.Publisher,
+		MimeType:        input.MimeType,
 	}
 
 	err := s.db.WithContext(ctx).Save(&metadata).Error
@@ -426,6 +427,7 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 			Name:         input.Name,
 			Description:  input.Description,
 			Artists:      input.Artists,
+			MimeType:     input.MimeType,
 		}
 
 		if err := tx.Save(&enrichmentSource).Error; err != nil {

@@ -62,6 +62,7 @@ type CreateTokenMetadataInput struct {
 	Artists         schema.Artists
 	Description     *string
 	Publisher       *schema.Publisher
+	MimeType        *string
 }
 
 // CreateEnrichmentSourceInput represents the input for creating or updating an enrichment source
@@ -75,6 +76,7 @@ type CreateEnrichmentSourceInput struct {
 	Name         *string
 	Description  *string
 	Artists      schema.Artists
+	MimeType     *string
 }
 
 // UpdateBalanceInput represents the input for updating a balance record

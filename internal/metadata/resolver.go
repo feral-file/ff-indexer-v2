@@ -45,6 +45,7 @@ type NormalizedMetadata struct {
 	Description string                 `json:"description"`
 	Artists     []Artist               `json:"artists"`
 	Publisher   *Publisher             `json:"publisher"`
+	MimeType    *string                `json:"mime_type,omitempty"`
 }
 
 // RawHash returns the hash of the raw metadata and the raw metadata itself
@@ -266,6 +267,9 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 		Publisher:   publisher,
 	}
 
+	// Detect mime type from animation_url or image_url
+	normalizedMetadata.MimeType = detectMimeType(ctx, r.httpClient, r.uriResolver, &normalizedMetadata.Animation, &normalizedMetadata.Image)
+
 	return normalizedMetadata, nil
 }
 
@@ -307,6 +311,9 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 		Artists:     artists,
 		Publisher:   publisher,
 	}
+
+	// Detect mime type from animation_url or image_url
+	normalizedMetadata.MimeType = detectMimeType(ctx, r.httpClient, r.uriResolver, &normalizedMetadata.Animation, &normalizedMetadata.Image)
 
 	return normalizedMetadata
 }

@@ -103,6 +103,8 @@ type TokenMetadata struct {
 	Artists Artists `gorm:"column:artists;type:jsonb;serializer:json;index:idx_token_metadata_artists"`
 	// Publisher is the publisher of the token
 	Publisher *Publisher `gorm:"column:publisher;type:jsonb;serializer:json;index:idx_token_metadata_publisher"`
+	// MimeType is the MIME type of the artwork (detected from animation_url or image_url)
+	MimeType *string `gorm:"column:mime_type;type:text"`
 	// CreatedAt is the timestamp when this record was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this record was last updated

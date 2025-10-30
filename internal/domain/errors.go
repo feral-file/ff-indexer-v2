@@ -20,4 +20,7 @@ var (
 
 	// ErrInvalidBlockchainEvent is returned when a blockchain event is invalid
 	ErrInvalidBlockchainEvent = errors.New("invalid blockchain event")
+
+	// ErrUnsupportedMediaFile is returned when a media file is not supported
+	ErrUnsupportedMediaFile = errors.New("unsupported media file")
 )

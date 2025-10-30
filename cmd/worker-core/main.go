@@ -112,7 +112,7 @@ func main() {
 	})
 
 	// Initialize metadata enhancer and resolver
-	metadataEnhancer := metadata.NewEnhancer(artblocksClient, fxhashClient, jsonAdapter)
+	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, fxhashClient, jsonAdapter)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, dataStore, publisherRegistry)
 
 	// Load deployer cache from DB if resolver has store and registry

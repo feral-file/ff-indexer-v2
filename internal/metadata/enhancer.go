@@ -14,6 +14,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
+	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
 // EnhancedMetadata represents metadata enhanced from vendor APIs
@@ -25,6 +26,7 @@ type EnhancedMetadata struct {
 	ImageURL     *string
 	AnimationURL *string
 	Artists      []Artist
+	MimeType     *string
 }
 
 // VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
@@ -46,13 +48,15 @@ type Enhancer interface {
 }
 
 type enhancer struct {
+	httpClient      adapter.HTTPClient
+	uriResolver     uri.Resolver
 	artblocksClient artblocks.Client
 	fxhashClient    fxhash.Client
 	json            adapter.JSON
 }
 
-func NewEnhancer(artblocksClient artblocks.Client, fxhashClient fxhash.Client, json adapter.JSON) Enhancer {
-	return &enhancer{artblocksClient: artblocksClient, fxhashClient: fxhashClient, json: json}
+func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, fxhashClient fxhash.Client, json adapter.JSON) Enhancer {
+	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, fxhashClient: fxhashClient, json: json}
 }
 
 // Enhance enhances metadata from vendor APIs based on the token CID
@@ -67,13 +71,17 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	// Check publisher name and route to appropriate enhancer
 	publisherName := PublisherName(*meta.Publisher.Name)
 
+	var enhancedMetadata *EnhancedMetadata
+	var err error
 	switch publisherName {
 	case PublisherNameArtBlocks:
 		// Only enhance Ethereum mainnet tokens
-		if chain != domain.ChainEthereumMainnet {
-			return nil, nil
+		if chain == domain.ChainEthereumMainnet {
+			enhancedMetadata, err = e.enhanceArtBlocks(ctx, tokenCID, contractAddress, tokenNumber, meta.Raw)
+			if err != nil {
+				return nil, fmt.Errorf("failed to enhance ArtBlocks metadata: %w", err)
+			}
 		}
-		return e.enhanceArtBlocks(ctx, tokenCID, contractAddress, tokenNumber, meta.Raw)
 
 	// TODO: Add support for other vendors
 	// case "fxhash":
@@ -85,6 +93,12 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 		// No enhancement available for this publisher
 		return nil, nil
 	}
+
+	if enhancedMetadata != nil {
+		enhancedMetadata.MimeType = detectMimeType(ctx, e.httpClient, e.uriResolver, enhancedMetadata.AnimationURL, enhancedMetadata.ImageURL)
+	}
+
+	return enhancedMetadata, nil
 }
 
 // enhanceArtBlocks enhances metadata from ArtBlocks API

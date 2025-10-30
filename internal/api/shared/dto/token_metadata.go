@@ -33,6 +33,9 @@ type TokenMetadataResponse struct {
 	Description     *string            `json:"description,omitempty"`
 	Artists         []ArtistResponse   `json:"artists,omitempty"`
 	Publisher       *PublisherResponse `json:"publisher,omitempty"`
+	MimeType        *string            `json:"mime_type,omitempty"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
 // MapTokenMetadataToDTO maps a schema.TokenMetadata to TokenMetadataResponse
@@ -67,5 +70,8 @@ func MapTokenMetadataToDTO(metadata *schema.TokenMetadata) *TokenMetadataRespons
 		Description:     metadata.Description,
 		Artists:         artists,
 		Publisher:       publisher,
+		MimeType:        metadata.MimeType,
+		CreatedAt:       metadata.CreatedAt,
+		UpdatedAt:       metadata.UpdatedAt,
 	}
 }

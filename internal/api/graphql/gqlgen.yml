@@ -105,6 +105,12 @@ models:
         fieldName: Artists
       publisher:
         fieldName: Publisher
+      mime_type:
+        fieldName: MimeType
+      created_at:
+        fieldName: CreatedAt
+      updated_at:
+        fieldName: UpdatedAt
 
   Artist:
     model:
@@ -214,6 +220,8 @@ models:
         fieldName: Description
       artists:
         fieldName: Artists
+      mime_type:
+        fieldName: MimeType
       created_at:
         fieldName: CreatedAt
       updated_at:

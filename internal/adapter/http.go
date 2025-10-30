@@ -27,6 +27,10 @@ type HTTPClient interface {
 	// Head performs a HEAD request
 	// The caller is responsible for closing the response body
 	Head(ctx context.Context, url string) (*http.Response, error)
+
+	// GetPartialContent performs a GET request with Range header to fetch partial content
+	// Returns the partial content as bytes
+	GetPartialContent(ctx context.Context, url string, maxBytes int) ([]byte, error)
 }
 
 // RealHTTPClient implements HTTPClient using the standard http package
@@ -43,9 +47,10 @@ func NewHTTPClient(timeout time.Duration) HTTPClient {
 	}
 }
 
-// doRequestWithRetry executes an HTTP request with exponential backoff retry for rate limiting
-func (c *RealHTTPClient) doRequestWithRetry(ctx context.Context, req *http.Request) ([]byte, error) {
-	var respBody []byte
+// doRequestWithRetryAndResponse executes an HTTP request with exponential backoff retry for rate limiting
+// and returns the final response. The caller is responsible for closing the response body.
+func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req *http.Request) (*http.Response, error) {
+	var finalResp *http.Response
 
 	operation := func() error {
 		resp, err := c.client.Do(req)
@@ -53,30 +58,16 @@ func (c *RealHTTPClient) doRequestWithRetry(ctx context.Context, req *http.Reque
 			// Network errors are retryable
 			return fmt.Errorf("failed to perform request: %w", err)
 		}
-		defer func() {
-			if err := resp.Body.Close(); err != nil {
-				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
-			}
-		}()
 
 		// Handle rate limiting - retry with backoff
 		if resp.StatusCode == http.StatusTooManyRequests {
+			_ = resp.Body.Close()
 			logger.Warn("rate limited, retrying with backoff", zap.String("url", req.URL.String()))
 			return fmt.Errorf("rate limited (429), retrying")
 		}
 
-		// Other non-OK status codes are permanent errors
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return backoff.Permanent(fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body)))
-		}
-
-		// Read the response body
-		respBody, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return backoff.Permanent(fmt.Errorf("failed to read response body: %w", err))
-		}
-
+		// Store the final response (redirects are handled automatically by the client)
+		finalResp = resp
 		return nil
 	}
 
@@ -91,6 +82,34 @@ func (c *RealHTTPClient) doRequestWithRetry(ctx context.Context, req *http.Reque
 	// Execute with retry and context support
 	if err := backoff.Retry(operation, backoff.WithContext(b, ctx)); err != nil {
 		return nil, fmt.Errorf("request failed after retries: %w", err)
+	}
+
+	return finalResp, nil
+}
+
+// doRequestWithRetry executes an HTTP request with exponential backoff retry for rate limiting
+// and returns the response body as bytes
+func (c *RealHTTPClient) doRequestWithRetry(ctx context.Context, req *http.Request) ([]byte, error) {
+	resp, err := c.doRequestWithRetryAndResponse(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logger.Warn("failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
+		}
+	}()
+
+	// Check status code for non-2xx responses
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Read the response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	return respBody, nil
@@ -140,10 +159,37 @@ func (c *RealHTTPClient) Head(ctx context.Context, url string) (*http.Response, 
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := c.client.Do(req)
+	return c.doRequestWithRetryAndResponse(ctx, req)
+}
+
+// GetPartialContent performs a GET request with Range header to fetch partial content
+// Returns the partial content as bytes
+func (c *RealHTTPClient) GetPartialContent(ctx context.Context, url string, maxBytes int) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to perform request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	return resp, nil
+	// Set Range header to fetch only the first maxBytes
+	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", maxBytes-1))
+
+	resp, err := c.doRequestWithRetryAndResponse(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+	}
+
+	// Read the response body (limited by Range header or entire content if server doesn't support Range)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return body, nil
 }

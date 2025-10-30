@@ -405,6 +405,7 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 		Artists:         artists,
 		Description:     &normalizedMetadata.Description,
 		Publisher:       publisher,
+		MimeType:        normalizedMetadata.MimeType,
 	}
 
 	// Upsert the metadata
@@ -477,6 +478,7 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 		Name:         enhanced.Name,
 		Description:  enhanced.Description,
 		Artists:      artists,
+		MimeType:     enhanced.MimeType,
 	}
 
 	if err := e.store.UpsertEnrichmentSource(ctx, enrichmentInput); err != nil {
@@ -1118,6 +1120,10 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 
 	// Process the media file
 	if err := e.mediaProcessor.Process(ctx, url); err != nil {
+		if errors.Is(err, domain.ErrUnsupportedMediaFile) {
+			logger.Info("Unsupported media file, skipping", zap.String("url", url))
+			return nil
+		}
 		return fmt.Errorf("failed to process media file: %w", err)
 	}
 

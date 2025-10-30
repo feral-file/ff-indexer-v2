@@ -7,11 +7,13 @@ import (
 	"strings"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
+	"github.com/gabriel-vasile/mimetype"
 	"go.uber.org/zap"
 
 	"gorm.io/datatypes"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -71,33 +73,73 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 
 	logger.Info("URL resolved", zap.String("sourceURL", sourceURL), zap.String("resolvedURL", resolvedURL))
 
-	// Step 2: Use HEAD request to get content-type and determine if it's image or video
+	// Step 2: Try HEAD request first to get content-type and size
+	// If HEAD fails, fallback to partial GET request
+	var contentType string
+	var contentLength int64
+
 	resp, err := p.httpClient.Head(ctx, resolvedURL)
-	if err != nil {
-		return fmt.Errorf("failed to get content-type via HEAD request: %w", err)
-	}
-	defer func() {
-		if resp.Body != nil {
+	if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// HEAD request succeeded
+		defer func() {
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+		}()
+
+		contentType = resp.Header.Get("Content-Type")
+		contentLength = resp.ContentLength
+
+		logger.Info("Media content-type detected via HEAD",
+			zap.String("sourceURL", sourceURL),
+			zap.String("contentType", contentType),
+			zap.Int64("contentLength", contentLength),
+		)
+	} else {
+		// HEAD failed, fallback to partial GET to detect content-type
+		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-	}()
 
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		return fmt.Errorf("no content-type header in response")
+		logger.Info("HEAD request failed, falling back to partial GET",
+			zap.String("sourceURL", sourceURL),
+			zap.Error(err),
+			zap.Int("statusCode", func() int {
+				if resp != nil {
+					return resp.StatusCode
+				}
+				return 0
+			}()),
+		)
+
+		// Fetch first 512 bytes to detect content-type
+		partialContent, err := p.httpClient.GetPartialContent(ctx, resolvedURL, 512)
+		if err != nil {
+			return fmt.Errorf("failed to get content-type via partial GET: %w", err)
+		}
+
+		// Detect content-type from the actual bytes using mimetype library
+		mtype := mimetype.Detect(partialContent)
+		if mtype != nil {
+			contentType = mtype.String()
+		}
+
+		logger.Info("Media content-type detected via partial GET",
+			zap.String("sourceURL", sourceURL),
+			zap.String("contentType", contentType),
+		)
 	}
 
-	logger.Info("Media content-type detected",
-		zap.String("sourceURL", sourceURL),
-		zap.String("contentType", contentType),
-	)
+	if contentType == "" {
+		return fmt.Errorf("no content-type detected")
+	}
 
 	// Determine if this is a video or image
 	isVideo := strings.HasPrefix(contentType, "video/")
 	isImage := strings.HasPrefix(contentType, "image/")
 
 	if !isVideo && !isImage {
-		return fmt.Errorf("unsupported media type: %s", contentType)
+		return domain.ErrUnsupportedMediaFile
 	}
 
 	// Prepare metadata for upload
@@ -107,16 +149,18 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	}
 
 	// Get content-length if available
-	if resp.ContentLength > 0 {
-		uploadMetadata["file_size"] = resp.ContentLength
+	if contentLength > 0 {
+		uploadMetadata["file_size"] = contentLength
 	}
 
-	// Check if the file size is within the allowed limits
-	if isVideo && resp.ContentLength > p.maxVideoSize {
-		return fmt.Errorf("video file size exceeds the allowed limit: %d > %d", resp.ContentLength, p.maxVideoSize)
-	}
-	if isImage && resp.ContentLength > p.maxImageSize {
-		return fmt.Errorf("image file size exceeds the allowed limit: %d > %d", resp.ContentLength, p.maxImageSize)
+	// Check if the file size is within the allowed limits (only if we have content length from HEAD)
+	if contentLength > 0 {
+		if isVideo && contentLength > p.maxVideoSize {
+			return fmt.Errorf("video file size exceeds the allowed limit: %d > %d", contentLength, p.maxVideoSize)
+		}
+		if isImage && contentLength > p.maxImageSize {
+			return fmt.Errorf("image file size exceeds the allowed limit: %d > %d", contentLength, p.maxImageSize)
+		}
 	}
 
 	// Step 3: Upload to provider based on media type

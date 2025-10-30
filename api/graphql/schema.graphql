@@ -39,6 +39,9 @@ type TokenMetadata {
   description: String
   artists: [Artist!]
   publisher: Publisher
+  mime_type: String
+  created_at: Time!
+  updated_at: Time!
 }
 
 # Token owner (balance record)
@@ -92,6 +95,7 @@ type EnrichmentSource {
   name: String
   description: String
   artists: [Artist!]
+  mime_type: String
   created_at: Time!
   updated_at: Time!
 }

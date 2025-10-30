@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
@@ -333,6 +334,16 @@ func (r *tokenMetadataResolver) LatestJSON(ctx context.Context, obj *dto.TokenMe
 		return JSON("{}"), nil
 	}
 	return JSON(obj.LatestJSON), nil
+}
+
+// CreatedAt is the resolver for the created_at field.
+func (r *tokenMetadataResolver) CreatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error) {
+	return &obj.CreatedAt, nil
+}
+
+// UpdatedAt is the resolver for the updated_at field.
+func (r *tokenMetadataResolver) UpdatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error) {
+	return &obj.UpdatedAt, nil
 }
 
 // Change returns ChangeResolver implementation.

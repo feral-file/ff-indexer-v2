@@ -42,6 +42,8 @@ type EnrichmentSource struct {
 	Description *string `gorm:"column:description;type:text"`
 	// Artists are the normalized artists array from vendor
 	Artists Artists `gorm:"column:artists;type:jsonb"`
+	// MimeType is the MIME type of the artwork (detected from animation_url or image_url)
+	MimeType *string `gorm:"column:mime_type;type:text"`
 	// CreatedAt is the timestamp when this enrichment source was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this enrichment source was last updated

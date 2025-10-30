@@ -18,6 +18,7 @@ type EnrichmentSourceResponse struct {
 	Name         *string          `json:"name,omitempty"`
 	Description  *string          `json:"description,omitempty"`
 	Artists      []ArtistResponse `json:"artists,omitempty"`
+	MimeType     *string          `json:"mime_type,omitempty"`
 	CreatedAt    time.Time        `json:"created_at"`
 	UpdatedAt    time.Time        `json:"updated_at"`
 }
@@ -42,6 +43,7 @@ func MapEnrichmentSourceToDTO(enrichment *schema.EnrichmentSource) *EnrichmentSo
 		Name:         enrichment.Name,
 		Description:  enrichment.Description,
 		Artists:      artists,
+		MimeType:     enrichment.MimeType,
 		CreatedAt:    enrichment.CreatedAt,
 		UpdatedAt:    enrichment.UpdatedAt,
 	}

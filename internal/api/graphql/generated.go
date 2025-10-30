@@ -87,6 +87,7 @@ type ComplexityRoot struct {
 		CreatedAt    func(childComplexity int) int
 		Description  func(childComplexity int) int
 		ImageURL     func(childComplexity int) int
+		MimeType     func(childComplexity int) int
 		Name         func(childComplexity int) int
 		TokenID      func(childComplexity int) int
 		UpdatedAt    func(childComplexity int) int
@@ -172,16 +173,19 @@ type ComplexityRoot struct {
 	TokenMetadata struct {
 		AnimationURL    func(childComplexity int) int
 		Artists         func(childComplexity int) int
+		CreatedAt       func(childComplexity int) int
 		Description     func(childComplexity int) int
 		EnrichmentLevel func(childComplexity int) int
 		ImageURL        func(childComplexity int) int
 		LastRefreshedAt func(childComplexity int) int
 		LatestHash      func(childComplexity int) int
 		LatestJSON      func(childComplexity int) int
+		MimeType        func(childComplexity int) int
 		Name            func(childComplexity int) int
 		OriginJSON      func(childComplexity int) int
 		Publisher       func(childComplexity int) int
 		TokenID         func(childComplexity int) int
+		UpdatedAt       func(childComplexity int) int
 	}
 
 	TriggerIndexingResult struct {
@@ -247,6 +251,9 @@ type TokenMetadataResolver interface {
 	TokenID(ctx context.Context, obj *dto.TokenMetadataResponse) (Uint64, error)
 	OriginJSON(ctx context.Context, obj *dto.TokenMetadataResponse) (JSON, error)
 	LatestJSON(ctx context.Context, obj *dto.TokenMetadataResponse) (JSON, error)
+
+	CreatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error)
+	UpdatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error)
 }
 
 type executableSchema struct {
@@ -385,6 +392,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.EnrichmentSource.ImageURL(childComplexity), true
+	case "EnrichmentSource.mime_type":
+		if e.complexity.EnrichmentSource.MimeType == nil {
+			break
+		}
+
+		return e.complexity.EnrichmentSource.MimeType(childComplexity), true
 	case "EnrichmentSource.name":
 		if e.complexity.EnrichmentSource.Name == nil {
 			break
@@ -745,6 +758,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TokenMetadata.Artists(childComplexity), true
+	case "TokenMetadata.created_at":
+		if e.complexity.TokenMetadata.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.TokenMetadata.CreatedAt(childComplexity), true
 	case "TokenMetadata.description":
 		if e.complexity.TokenMetadata.Description == nil {
 			break
@@ -781,6 +800,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TokenMetadata.LatestJSON(childComplexity), true
+	case "TokenMetadata.mime_type":
+		if e.complexity.TokenMetadata.MimeType == nil {
+			break
+		}
+
+		return e.complexity.TokenMetadata.MimeType(childComplexity), true
 	case "TokenMetadata.name":
 		if e.complexity.TokenMetadata.Name == nil {
 			break
@@ -805,6 +830,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TokenMetadata.TokenID(childComplexity), true
+	case "TokenMetadata.updated_at":
+		if e.complexity.TokenMetadata.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.TokenMetadata.UpdatedAt(childComplexity), true
 
 	case "TriggerIndexingResult.run_id":
 		if e.complexity.TriggerIndexingResult.RunID == nil {
@@ -964,6 +995,9 @@ type TokenMetadata {
   description: String
   artists: [Artist!]
   publisher: Publisher
+  mime_type: String
+  created_at: Time!
+  updated_at: Time!
 }
 
 # Token owner (balance record)
@@ -1017,6 +1051,7 @@ type EnrichmentSource {
   name: String
   description: String
   artists: [Artist!]
+  mime_type: String
   created_at: Time!
   updated_at: Time!
 }
@@ -2049,6 +2084,35 @@ func (ec *executionContext) fieldContext_EnrichmentSource_artists(_ context.Cont
 				return ec.fieldContext_Artist_name(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Artist", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _EnrichmentSource_mime_type(ctx context.Context, field graphql.CollectedField, obj *dto.EnrichmentSourceResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_EnrichmentSource_mime_type,
+		func(ctx context.Context) (any, error) {
+			return obj.MimeType, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_EnrichmentSource_mime_type(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "EnrichmentSource",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -3568,6 +3632,12 @@ func (ec *executionContext) fieldContext_Token_metadata(_ context.Context, field
 				return ec.fieldContext_TokenMetadata_artists(ctx, field)
 			case "publisher":
 				return ec.fieldContext_TokenMetadata_publisher(ctx, field)
+			case "mime_type":
+				return ec.fieldContext_TokenMetadata_mime_type(ctx, field)
+			case "created_at":
+				return ec.fieldContext_TokenMetadata_created_at(ctx, field)
+			case "updated_at":
+				return ec.fieldContext_TokenMetadata_updated_at(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type TokenMetadata", field.Name)
 		},
@@ -3691,6 +3761,8 @@ func (ec *executionContext) fieldContext_Token_enrichment_source(_ context.Conte
 				return ec.fieldContext_EnrichmentSource_description(ctx, field)
 			case "artists":
 				return ec.fieldContext_EnrichmentSource_artists(ctx, field)
+			case "mime_type":
+				return ec.fieldContext_EnrichmentSource_mime_type(ctx, field)
 			case "created_at":
 				return ec.fieldContext_EnrichmentSource_created_at(ctx, field)
 			case "updated_at":
@@ -4174,6 +4246,93 @@ func (ec *executionContext) fieldContext_TokenMetadata_publisher(_ context.Conte
 				return ec.fieldContext_Publisher_url(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Publisher", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenMetadata_mime_type(ctx context.Context, field graphql.CollectedField, obj *dto.TokenMetadataResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenMetadata_mime_type,
+		func(ctx context.Context) (any, error) {
+			return obj.MimeType, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenMetadata_mime_type(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenMetadata",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenMetadata_created_at(ctx context.Context, field graphql.CollectedField, obj *dto.TokenMetadataResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenMetadata_created_at,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.TokenMetadata().CreatedAt(ctx, obj)
+		},
+		nil,
+		ec.marshalNTime2ᚖtimeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenMetadata_created_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenMetadata",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenMetadata_updated_at(ctx context.Context, field graphql.CollectedField, obj *dto.TokenMetadataResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenMetadata_updated_at,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.TokenMetadata().UpdatedAt(ctx, obj)
+		},
+		nil,
+		ec.marshalNTime2ᚖtimeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenMetadata_updated_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenMetadata",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
 		},
 	}
 	return fc, nil
@@ -6137,6 +6296,8 @@ func (ec *executionContext) _EnrichmentSource(ctx context.Context, sel ast.Selec
 			out.Values[i] = ec._EnrichmentSource_description(ctx, field, obj)
 		case "artists":
 			out.Values[i] = ec._EnrichmentSource_artists(ctx, field, obj)
+		case "mime_type":
+			out.Values[i] = ec._EnrichmentSource_mime_type(ctx, field, obj)
 		case "created_at":
 			out.Values[i] = ec._EnrichmentSource_created_at(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -7324,6 +7485,80 @@ func (ec *executionContext) _TokenMetadata(ctx context.Context, sel ast.Selectio
 			out.Values[i] = ec._TokenMetadata_artists(ctx, field, obj)
 		case "publisher":
 			out.Values[i] = ec._TokenMetadata_publisher(ctx, field, obj)
+		case "mime_type":
+			out.Values[i] = ec._TokenMetadata_mime_type(ctx, field, obj)
+		case "created_at":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._TokenMetadata_created_at(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "updated_at":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._TokenMetadata_updated_at(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -7914,6 +8149,28 @@ func (ec *executionContext) unmarshalNTime2timeᚐTime(ctx context.Context, v an
 func (ec *executionContext) marshalNTime2timeᚐTime(ctx context.Context, sel ast.SelectionSet, v time.Time) graphql.Marshaler {
 	_ = sel
 	res := graphql.MarshalTime(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
+func (ec *executionContext) unmarshalNTime2ᚖtimeᚐTime(ctx context.Context, v any) (*time.Time, error) {
+	res, err := graphql.UnmarshalTime(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNTime2ᚖtimeᚐTime(ctx context.Context, sel ast.SelectionSet, v *time.Time) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	_ = sel
+	res := graphql.MarshalTime(*v)
 	if res == graphql.Null {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			ec.Errorf(ctx, "the requested element is null which the schema does not allow")

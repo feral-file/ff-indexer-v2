@@ -50,6 +50,21 @@ func (mr *MockHTTPClientMockRecorder) Get(ctx, url, result interface{}) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockHTTPClient)(nil).Get), ctx, url, result)
 }
 
+// GetPartialContent mocks base method.
+func (m *MockHTTPClient) GetPartialContent(ctx context.Context, url string, maxBytes int) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPartialContent", ctx, url, maxBytes)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPartialContent indicates an expected call of GetPartialContent.
+func (mr *MockHTTPClientMockRecorder) GetPartialContent(ctx, url, maxBytes interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPartialContent", reflect.TypeOf((*MockHTTPClient)(nil).GetPartialContent), ctx, url, maxBytes)
+}
+
 // Head mocks base method.
 func (m *MockHTTPClient) Head(ctx context.Context, url string) (*http.Response, error) {
 	m.ctrl.T.Helper()

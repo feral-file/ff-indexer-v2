@@ -55,6 +55,7 @@ CREATE TABLE token_metadata (
     description TEXT,
     artists JSONB,
     publisher JSONB,
+    mime_type TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -70,6 +71,7 @@ CREATE TABLE enrichment_sources (
     name TEXT,                             -- normalized name from vendor
     description TEXT,                      -- normalized description from vendor
     artists JSONB,                         -- normalized artists array from vendor
+    mime_type TEXT,                        -- MIME type of the artwork (detected from animation_url or image_url)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
