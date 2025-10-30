@@ -1080,6 +1080,74 @@ func (s *pgStore) GetMediaAssetByID(ctx context.Context, id int64) (*schema.Medi
 	return &media, nil
 }
 
+// GetMediaAssetBySourceURL retrieves a media asset by source URL
+func (s *pgStore) GetMediaAssetBySourceURL(ctx context.Context, sourceURL string, provider schema.StorageProvider) (*schema.MediaAsset, error) {
+	var media schema.MediaAsset
+	err := s.db.WithContext(ctx).
+		Where("source_url = ? AND provider = ?", sourceURL, provider).First(&media).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get media asset by source URL: %w", err)
+	}
+	return &media, nil
+}
+
+// CreateMediaAsset creates a new media asset record
+// Uses pessimistic locking to handle all unique constraints:
+// - (source_url, provider)
+// - (provider, provider_asset_id)
+func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetInput) (*schema.MediaAsset, error) {
+	var result *schema.MediaAsset
+
+	// Use transaction with row-level locking
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existingAsset schema.MediaAsset
+
+		// Try to lock an existing record matching any of the two unique constraints
+		// SELECT ... FOR UPDATE will lock the row if it exists, preventing concurrent inserts
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("source_url = ? AND provider = ?", input.SourceURL, input.Provider).
+			Or("provider = ? AND provider_asset_id = ?", input.Provider, input.ProviderAssetID).
+			First(&existingAsset).Error
+
+		if err == nil {
+			// Record exists and is now locked, return it
+			result = &existingAsset
+			return nil
+		}
+
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to lock existing media asset: %w", err)
+		}
+
+		// No existing record found, safe to insert
+		mediaAsset := schema.MediaAsset{
+			SourceURL:        input.SourceURL,
+			MimeType:         input.MimeType,
+			FileSizeBytes:    input.FileSizeBytes,
+			Provider:         input.Provider,
+			ProviderAssetID:  input.ProviderAssetID,
+			ProviderMetadata: input.ProviderMetadata,
+			VariantURLs:      input.VariantURLs,
+		}
+
+		if err := tx.Create(&mediaAsset).Error; err != nil {
+			return fmt.Errorf("failed to create media asset: %w", err)
+		}
+
+		result = &mediaAsset
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // SetKeyValue sets a key-value pair in the key-value store
 func (s *pgStore) SetKeyValue(ctx context.Context, key string, value string) error {
 	kv := schema.KeyValueStore{

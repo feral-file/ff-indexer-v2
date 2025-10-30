@@ -25,6 +25,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -104,9 +105,15 @@ func main() {
 		logger.Warn("Publisher registry path not configured, publisher resolution will be disabled")
 	}
 
+	// Initialize URI resolver
+	uriResolver := uri.NewResolver(httpClient, &uri.Config{
+		IPFSGateways:    cfg.URI.IPFSGateways,
+		ArweaveGateways: cfg.URI.ArweaveGateways,
+	})
+
 	// Initialize metadata enhancer and resolver
 	metadataEnhancer := metadata.NewEnhancer(artblocksClient, fxhashClient, jsonAdapter)
-	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, jsonAdapter, clockAdapter, dataStore, publisherRegistry)
+	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, dataStore, publisherRegistry)
 
 	// Load deployer cache from DB if resolver has store and registry
 	if publisherRegistry != nil {
@@ -116,7 +123,7 @@ func main() {
 	}
 
 	// Initialize executor for activities
-	executor := workflows.NewExecutor(dataStore, metadataResolver, metadataEnhancer, ethereumClient, tzktClient, jsonAdapter, clockAdapter)
+	executor := workflows.NewExecutor(dataStore, metadataResolver, metadataEnhancer, ethereumClient, tzktClient, nil, jsonAdapter, clockAdapter)
 
 	// Connect to Temporal
 	temporalClient, err := client.Dial(client.Options{
@@ -148,6 +155,7 @@ func main() {
 			TezosTokenSweepBlockChunkSize:    cfg.TezosTokenSweepBlockChunkSize,
 			EthereumChainID:                  cfg.Ethereum.ChainID,
 			TezosChainID:                     cfg.Tezos.ChainID,
+			MediaTaskQueue:                   cfg.Temporal.MediaTaskQueue,
 		})
 
 	// Register workflows

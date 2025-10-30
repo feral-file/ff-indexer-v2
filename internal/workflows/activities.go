@@ -12,7 +12,9 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	mediaProcessor "github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -43,10 +45,10 @@ type Executor interface {
 	FetchTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error)
 
 	// UpsertTokenMetadata stores or updates token metadata in the database
-	UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error
+	UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) error
 
 	// EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
-	EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error
+	EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error)
 
 	// IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
 	// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
@@ -82,6 +84,9 @@ type Executor interface {
 
 	// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT
 	GetLatestTezosBlock(ctx context.Context) (uint64, error)
+
+	// IndexMediaFile processes a media file by downloading, uploading to storage, and storing metadata
+	IndexMediaFile(ctx context.Context, url string) error
 }
 
 // BlockRangeResult represents the result of getting an indexing block range
@@ -95,6 +100,7 @@ type executor struct {
 	store            store.Store
 	metadataResolver metadata.Resolver
 	metadataEnhancer metadata.Enhancer
+	mediaProcessor   mediaProcessor.Processor
 	ethClient        ethereum.EthereumClient
 	tzktClient       tezos.TzKTClient
 	json             adapter.JSON
@@ -108,6 +114,7 @@ func NewExecutor(
 	metadataEnhancer metadata.Enhancer,
 	ethClient ethereum.EthereumClient,
 	tzktClient tezos.TzKTClient,
+	mediaProcessor mediaProcessor.Processor,
 	jsonAdapter adapter.JSON,
 	clock adapter.Clock,
 ) Executor {
@@ -117,6 +124,7 @@ func NewExecutor(
 		metadataEnhancer: metadataEnhancer,
 		ethClient:        ethClient,
 		tzktClient:       tzktClient,
+		mediaProcessor:   mediaProcessor,
 		json:             jsonAdapter,
 		clock:            clock,
 	}
@@ -331,7 +339,7 @@ func (e *executor) FetchTokenMetadata(ctx context.Context, tokenCID domain.Token
 }
 
 // UpsertTokenMetadata stores or updates token metadata in the database
-func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) error {
 	// Validate token CID
 	if !tokenCID.Valid() {
 		return domain.ErrInvalidTokenCID
@@ -350,7 +358,7 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 	currentMetadata := result.Metadata
 
 	// Hash the new metadata
-	hash, metadataJSON, err := metadata.RawHash()
+	hash, metadataJSON, err := normalizedMetadata.RawHash()
 	if err != nil {
 		return fmt.Errorf("failed to get raw hash: %w", err)
 	}
@@ -366,7 +374,7 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 
 	// Convert artists to schema.Artist
 	var artists schema.Artists
-	for _, artist := range metadata.Artists {
+	for _, artist := range normalizedMetadata.Artists {
 		artists = append(artists, schema.Artist{
 			DID:  artist.DID,
 			Name: artist.Name,
@@ -375,10 +383,10 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 
 	// Convert publisher to schema.Publisher
 	var publisher *schema.Publisher
-	if metadata.Publisher != nil {
+	if normalizedMetadata.Publisher != nil {
 		publisher = &schema.Publisher{
-			Name: types.StringPtr(string(*metadata.Publisher.Name)),
-			URL:  metadata.Publisher.URL,
+			Name: types.StringPtr(string(*normalizedMetadata.Publisher.Name)),
+			URL:  normalizedMetadata.Publisher.URL,
 		}
 	}
 
@@ -391,11 +399,11 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 		LatestHash:      &hashString,
 		EnrichmentLevel: schema.EnrichmentLevelNone,
 		LastRefreshedAt: &now,
-		ImageURL:        &metadata.Image,
-		AnimationURL:    &metadata.Animation,
-		Name:            &metadata.Name,
+		ImageURL:        &normalizedMetadata.Image,
+		AnimationURL:    &normalizedMetadata.Animation,
+		Name:            &normalizedMetadata.Name,
 		Artists:         artists,
-		Description:     &metadata.Description,
+		Description:     &normalizedMetadata.Description,
 		Publisher:       publisher,
 	}
 
@@ -408,45 +416,45 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 }
 
 // EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
-func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) error {
+func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
 	// Validate token CID
 	if !tokenCID.Valid() {
-		return domain.ErrInvalidTokenCID
+		return nil, domain.ErrInvalidTokenCID
 	}
 
 	// Get token to retrieve its ID
 	token, err := e.store.GetTokenByTokenCID(ctx, tokenCID.String())
 	if err != nil {
-		return fmt.Errorf("failed to get token: %w", err)
+		return nil, fmt.Errorf("failed to get token: %w", err)
 	}
 
 	if token == nil {
-		return domain.ErrTokenNotFound
+		return nil, domain.ErrTokenNotFound
 	}
 
 	// Enhance metadata from vendor APIs
 	enhanced, err := e.metadataEnhancer.Enhance(ctx, tokenCID, normalizedMetadata)
 	if err != nil {
-		return fmt.Errorf("failed to enhance metadata: %w", err)
+		return nil, fmt.Errorf("failed to enhance metadata: %w", err)
 	}
 
 	// If no enhancement is available, skip
 	if enhanced == nil {
 		logger.Info("No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
-		return nil
+		return nil, nil
 	}
 
 	// Hash the vendor JSON
 	hash, err := enhanced.VendorJsonHash()
 	if err != nil {
-		return fmt.Errorf("failed to get vendor JSON hash: %w", err)
+		return nil, fmt.Errorf("failed to get vendor JSON hash: %w", err)
 	}
 	hashString := hex.EncodeToString(hash)
 
 	// Convert publisher name to vendor
 	vendor := metadata.PublisherNameToVendor(enhanced.Vendor)
 	if vendor == "" {
-		return fmt.Errorf("invalid publisher name: %s", enhanced.Vendor)
+		return nil, fmt.Errorf("invalid publisher name: %s", enhanced.Vendor)
 	}
 
 	// Convert artists to schema.Artists
@@ -472,14 +480,14 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 	}
 
 	if err := e.store.UpsertEnrichmentSource(ctx, enrichmentInput); err != nil {
-		return fmt.Errorf("failed to upsert enrichment source: %w", err)
+		return nil, fmt.Errorf("failed to upsert enrichment source: %w", err)
 	}
 
 	logger.Info("Successfully enhanced token metadata",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.String("vendor", string(enhanced.Vendor)))
 
-	return nil
+	return enhanced, nil
 }
 
 // UpdateTokenBurn updates a token and related provenance data for burn event
@@ -1089,4 +1097,40 @@ func (e *executor) UpdateIndexingBlockRangeForAddress(ctx context.Context, addre
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
 func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
 	return e.store.EnsureWatchedAddressExists(ctx, address, chain)
+}
+
+// IndexMediaFile processes a media file by downloading, uploading to storage, and storing metadata
+func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
+	if url == "" {
+		return fmt.Errorf("media URL is empty")
+	}
+
+	// Check if media asset already exists
+	existingAsset, err := e.store.GetMediaAssetBySourceURL(ctx, url, e.toSchemaStorageProvider())
+	if err != nil {
+		return fmt.Errorf("failed to check existing media asset: %w", err)
+	}
+
+	if existingAsset != nil {
+		logger.Info("Media asset already exists, skipping", zap.String("url", url))
+		return nil
+	}
+
+	// Process the media file
+	if err := e.mediaProcessor.Process(ctx, url); err != nil {
+		return fmt.Errorf("failed to process media file: %w", err)
+	}
+
+	logger.Info("Successfully indexed media file", zap.String("url", url))
+	return nil
+}
+
+// toSchemaStorageProvider converts the provider name to a schema storage provider
+func (e *executor) toSchemaStorageProvider() schema.StorageProvider {
+	switch e.mediaProcessor.Provider() {
+	case cloudflare.CLOUDFLARE_PROVIDER_NAME:
+		return schema.StorageProviderCloudflare
+	default:
+		return schema.StorageProviderSelfHosted
+	}
 }

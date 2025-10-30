@@ -18,8 +18,15 @@ import (
 //
 //go:generate mockgen -source=http.go -destination=../mocks/http.go -package=mocks -mock_names=HTTPClient=MockHTTPClient
 type HTTPClient interface {
+	// Get performs a GET request and unmarshals the response into result
 	Get(ctx context.Context, url string, result interface{}) error
+
+	// Post performs a POST request and returns the response body
 	Post(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error)
+
+	// Head performs a HEAD request
+	// The caller is responsible for closing the response body
+	Head(ctx context.Context, url string) (*http.Response, error)
 }
 
 // RealHTTPClient implements HTTPClient using the standard http package
@@ -123,4 +130,20 @@ func (c *RealHTTPClient) Post(ctx context.Context, url string, contentType strin
 	}
 
 	return c.doRequestWithRetry(ctx, req)
+}
+
+// Head performs a HEAD request
+// The caller is responsible for closing the response body
+func (c *RealHTTPClient) Head(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to perform request: %w", err)
+	}
+
+	return resp, nil
 }

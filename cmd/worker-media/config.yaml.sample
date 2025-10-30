@@ -1,0 +1,35 @@
+debug: true
+sentry_dsn: ""
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  dbname: ff_indexer
+  sslmode: disable
+
+temporal:
+  host_port: localhost:7233
+  namespace: default
+  task_queue: media-indexing
+  max_concurrent_activity_execution_size: 10
+  worker_activities_per_second: 10
+
+# URI resolver configuration
+uri:
+  ipfs_gateways:
+    - https://ipfs.io
+    - https://cloudflare-ipfs.com
+    - https://ipfs.feralfile.com
+    - https://dweb.link
+    - https://ipfs.filebase.io
+  arweave_gateways:
+    - https://arweave.net
+
+# Media storage configuration (Cloudflare Images and Stream)
+# Uses the same account for both services
+cloudflare:
+  account_id: YOUR_CLOUDFLARE_ACCOUNT_ID  # Used for both Images and Stream
+  api_token: YOUR_CLOUDFLARE_API_TOKEN
+

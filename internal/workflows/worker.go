@@ -51,8 +51,13 @@ type WorkerCore interface {
 }
 
 // WorkerMedia defines the interface for processing media events
-// TODO: Define the interface for media events
-type WorkerMedia interface{}
+type WorkerMedia interface {
+	// IndexMediaWorkflow indexes a single media file
+	IndexMediaWorkflow(ctx workflow.Context, url string) error
+
+	// IndexMultipleMediaWorkflow indexes multiple media files
+	IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string) error
+}
 
 type WorkerCoreConfig struct {
 	// TezosChainID is the chain ID for the Tezos blockchain
@@ -67,6 +72,8 @@ type WorkerCoreConfig struct {
 	TezosTokenSweepStartBlock uint64
 	// TezosTokenSweepBlockChunkSize is the size of the chunk of blocks to sweep for owners
 	TezosTokenSweepBlockChunkSize uint64
+	// MediaTaskQueue is the task queue for the media worker
+	MediaTaskQueue string
 }
 
 // workerCore is the concrete implementation of WorkerCore

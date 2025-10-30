@@ -40,7 +40,7 @@ func (m *MockAPIExecutor) EXPECT() *MockAPIExecutorMockRecorder {
 }
 
 // GetChanges mocks base method.
-func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenCIDs, addresses []string, since *time.Time, limit *int, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
+func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenCIDs, addresses []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetChanges", ctx, tokenCIDs, addresses, since, limit, offset, order, expand)
 	ret0, _ := ret[0].(*dto.ChangeListResponse)
@@ -55,7 +55,7 @@ func (mr *MockAPIExecutorMockRecorder) GetChanges(ctx, tokenCIDs, addresses, sin
 }
 
 // GetToken mocks base method.
-func (m *MockAPIExecutor) GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *int, ownersOffset *uint64, provenanceEventsLimit *int, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+func (m *MockAPIExecutor) GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetToken", ctx, tokenCID, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
 	ret0, _ := ret[0].(*dto.TokenResponse)
@@ -70,7 +70,7 @@ func (mr *MockAPIExecutorMockRecorder) GetToken(ctx, tokenCID, expand, ownersLim
 }
 
 // GetTokens mocks base method.
-func (m *MockAPIExecutor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses, tokenIDs []string, limit *int, offset *uint64, expand []types.Expansion, ownersLimit *int, ownersOffset *uint64, provenanceEventsLimit *int, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (m *MockAPIExecutor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses, tokenIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTokens", ctx, owners, chains, contractAddresses, tokenIDs, limit, offset, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
 	ret0, _ := ret[0].(*dto.TokenListResponse)
@@ -85,7 +85,7 @@ func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAd
 }
 
 // TriggerTokenIndexing mocks base method.
-func (m *MockAPIExecutor) TriggerTokenIndexing(ctx context.Context, tokenCIDs, addresses []string) (*dto.TriggerIndexingResponse, error) {
+func (m *MockAPIExecutor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "TriggerTokenIndexing", ctx, tokenCIDs, addresses)
 	ret0, _ := ret[0].(*dto.TriggerIndexingResponse)

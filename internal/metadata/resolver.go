@@ -21,6 +21,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
 // Artist represents an artist/creator with their decentralized identifier and name
@@ -138,6 +139,7 @@ type resolver struct {
 	ethClient         ethereum.EthereumClient
 	tzClient          tezos.TzKTClient
 	httpClient        adapter.HTTPClient
+	uriResolver       uri.Resolver
 	json              adapter.JSON
 	clock             adapter.Clock
 	store             store.Store
@@ -146,11 +148,12 @@ type resolver struct {
 	deployerCacheLock sync.RWMutex
 }
 
-func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, httpClient adapter.HTTPClient, json adapter.JSON, clock adapter.Clock, store store.Store, registry *PublisherRegistry) Resolver {
+func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, httpClient adapter.HTTPClient, uriResolver uri.Resolver, json adapter.JSON, clock adapter.Clock, store store.Store, registry *PublisherRegistry) Resolver {
 	return &resolver{
 		ethClient:     ethClient,
 		tzClient:      tzClient,
 		httpClient:    httpClient,
+		uriResolver:   uriResolver,
 		json:          json,
 		clock:         clock,
 		store:         store,
@@ -190,10 +193,12 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 	}
 
 	// Process the URI and fetch the actual metadata
-	processedURI := processMetadataURI(metadataURI, tokenNumber)
-	metadata, err := r.fetchMetadataFromURI(ctx, processedURI)
+	if standard == domain.StandardERC1155 {
+		metadataURI = strings.ReplaceAll(metadataURI, "{id}", tokenNumber) // ERC1155 placeholder for token number
+	}
+	metadata, err := r.fetchMetadataFromURI(ctx, metadataURI)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch metadata from URI %s: %w", processedURI, err)
+		return nil, fmt.Errorf("failed to fetch metadata from URI %s: %w", metadataURI, err)
 	}
 
 	// Normalize the metadata based on OpenSea Metadata Standard
@@ -366,38 +371,19 @@ func resolveArtistName(metadata map[string]interface{}) string {
 	return ""
 }
 
-// processMetadataURI processes the metadata URI to handle different protocols and formats
-// For Ethereum:
-// - URI can be https://, ipfs://, ar://, or data:
-// - If HTTP includes /ipfs/, fallback to ipfs:// to avoid private gateway
-// - For ipfs:// or ar://, use well-known gateways
-func processMetadataURI(uri, tokenNumber string) string {
-	// Replace {id} placeholder with actual token number (ERC1155 standard)
-	uri = strings.ReplaceAll(uri, "{id}", tokenNumber)
-
-	// If the URI contains /ipfs/ in an HTTP URL, convert to ipfs:// protocol
-	if strings.HasPrefix(uri, "http") && strings.Contains(uri, "/ipfs/") {
-		// Extract the IPFS hash from the URL
-		parts := strings.Split(uri, "/ipfs/")
-		if len(parts) > 1 {
-			uri = "ipfs://" + parts[1]
-		}
-	}
-
-	return uri
-}
-
 // fetchMetadataFromURI fetches metadata from a given URI, handling different protocols
 func (r *resolver) fetchMetadataFromURI(ctx context.Context, uri string) (map[string]interface{}, error) {
 	switch {
 	case strings.HasPrefix(uri, "data:"):
 		return r.parseDataURI(uri)
-	case strings.HasPrefix(uri, "ipfs://"):
-		return r.fetchFromIPFS(ctx, uri)
-	case strings.HasPrefix(uri, "ar://"):
-		return r.fetchFromArweave(ctx, uri)
-	case strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://"):
-		return r.fetchFromHTTP(ctx, uri)
+	case strings.HasPrefix(uri, "ipfs://"), strings.HasPrefix(uri, "ar://"), strings.HasPrefix(uri, "http://"), strings.HasPrefix(uri, "https://"):
+		// Use URI resolver to find a working gateway
+		resolvedURL, err := r.uriResolver.Resolve(ctx, uri)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve URI: %w", err)
+		}
+		// Fetch metadata from the resolved URL
+		return r.fetchFromHTTP(ctx, resolvedURL)
 	default:
 		return nil, fmt.Errorf("unsupported URI scheme: %s", uri)
 	}
@@ -434,86 +420,6 @@ func (r *resolver) parseDataURI(uri string) (map[string]interface{}, error) {
 	}
 
 	return metadata, nil
-}
-
-// fetchFromIPFS fetches metadata from IPFS using multiple gateways in parallel
-func (r *resolver) fetchFromIPFS(ctx context.Context, uri string) (map[string]interface{}, error) {
-	// Extract the IPFS hash
-	ipfsHash := strings.TrimPrefix(uri, "ipfs://")
-
-	// Well-known IPFS gateways
-	gateways := []string{
-		"https://ipfs.io/ipfs/",
-		"https://cloudflare-ipfs.com/ipfs/",
-		"https://nftstorage.link/ipfs/",
-		"https://gateway.pinata.cloud/ipfs/",
-		"https://dweb.link/ipfs/",
-		"https://ipfs.feralfile.com/ipfs/",
-	}
-
-	// Try gateways in parallel, return first successful result
-	type result struct {
-		metadata map[string]interface{}
-		err      error
-	}
-
-	results := make(chan result, len(gateways))
-
-	for _, gateway := range gateways {
-		go func(gw string) {
-			url := gw + ipfsHash
-			metadata, err := r.fetchFromHTTP(ctx, url)
-			results <- result{metadata: metadata, err: err}
-		}(gateway)
-	}
-
-	// Wait for first successful result
-	for range gateways {
-		res := <-results
-		if res.err == nil {
-			return res.metadata, nil
-		}
-	}
-
-	return nil, fmt.Errorf("failed to fetch from all IPFS gateways")
-}
-
-// fetchFromArweave fetches metadata from Arweave using multiple gateways in parallel
-func (r *resolver) fetchFromArweave(ctx context.Context, uri string) (map[string]interface{}, error) {
-	// Extract the Arweave transaction ID
-	arTxID := strings.TrimPrefix(uri, "ar://")
-
-	// Well-known Arweave gateways
-	gateways := []string{
-		"https://arweave.net/",
-		"https://arweave.dev/",
-	}
-
-	// Try gateways in parallel, return first successful result
-	type result struct {
-		metadata map[string]interface{}
-		err      error
-	}
-
-	results := make(chan result, len(gateways))
-
-	for _, gateway := range gateways {
-		go func(gw string) {
-			url := gw + arTxID
-			metadata, err := r.fetchFromHTTP(ctx, url)
-			results <- result{metadata: metadata, err: err}
-		}(gateway)
-	}
-
-	// Wait for first successful result
-	for range gateways {
-		res := <-results
-		if res.err == nil {
-			return res.metadata, nil
-		}
-	}
-
-	return nil, fmt.Errorf("failed to fetch from all Arweave gateways")
 }
 
 // fetchFromHTTP fetches metadata from an HTTP(S) URL

@@ -82,17 +82,18 @@ func (mr *MockExecutorMockRecorder) CreateTokenMint(ctx, event interface{}) *gom
 }
 
 // EnhanceTokenMetadata mocks base method.
-func (m *MockExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+func (m *MockExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnhanceTokenMetadata", ctx, tokenCID, metadata)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "EnhanceTokenMetadata", ctx, tokenCID, normalizedMetadata)
+	ret0, _ := ret[0].(*metadata.EnhancedMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // EnhanceTokenMetadata indicates an expected call of EnhanceTokenMetadata.
-func (mr *MockExecutorMockRecorder) EnhanceTokenMetadata(ctx, tokenCID, metadata interface{}) *gomock.Call {
+func (mr *MockExecutorMockRecorder) EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnhanceTokenMetadata", reflect.TypeOf((*MockExecutor)(nil).EnhanceTokenMetadata), ctx, tokenCID, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnhanceTokenMetadata", reflect.TypeOf((*MockExecutor)(nil).EnhanceTokenMetadata), ctx, tokenCID, normalizedMetadata)
 }
 
 // EnsureWatchedAddressExists mocks base method.
@@ -199,6 +200,20 @@ func (mr *MockExecutorMockRecorder) GetTezosTokenCIDsByAccountWithinBlockRange(c
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTezosTokenCIDsByAccountWithinBlockRange", reflect.TypeOf((*MockExecutor)(nil).GetTezosTokenCIDsByAccountWithinBlockRange), ctx, address, fromBlock, toBlock)
 }
 
+// IndexMediaFile mocks base method.
+func (m *MockExecutor) IndexMediaFile(ctx context.Context, url string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IndexMediaFile", ctx, url)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IndexMediaFile indicates an expected call of IndexMediaFile.
+func (mr *MockExecutorMockRecorder) IndexMediaFile(ctx, url interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexMediaFile", reflect.TypeOf((*MockExecutor)(nil).IndexMediaFile), ctx, url)
+}
+
 // IndexTokenWithFullProvenancesByTokenCID mocks base method.
 func (m *MockExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
 	m.ctrl.T.Helper()
@@ -284,15 +299,15 @@ func (mr *MockExecutorMockRecorder) UpdateTokenTransfer(ctx, event interface{}) 
 }
 
 // UpsertTokenMetadata mocks base method.
-func (m *MockExecutor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, metadata *metadata.NormalizedMetadata) error {
+func (m *MockExecutor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpsertTokenMetadata", ctx, tokenCID, metadata)
+	ret := m.ctrl.Call(m, "UpsertTokenMetadata", ctx, tokenCID, normalizedMetadata)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpsertTokenMetadata indicates an expected call of UpsertTokenMetadata.
-func (mr *MockExecutorMockRecorder) UpsertTokenMetadata(ctx, tokenCID, metadata interface{}) *gomock.Call {
+func (mr *MockExecutorMockRecorder) UpsertTokenMetadata(ctx, tokenCID, normalizedMetadata interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenMetadata", reflect.TypeOf((*MockExecutor)(nil).UpsertTokenMetadata), ctx, tokenCID, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenMetadata", reflect.TypeOf((*MockExecutor)(nil).UpsertTokenMetadata), ctx, tokenCID, normalizedMetadata)
 }

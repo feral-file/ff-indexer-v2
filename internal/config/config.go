@@ -16,6 +16,12 @@ type BaseConfig struct {
 	SentryDSN string `mapstructure:"sentry_dsn"`
 }
 
+// URIConfig holds URI resolver configuration
+type URIConfig struct {
+	IPFSGateways    []string `mapstructure:"ipfs_gateways"`
+	ArweaveGateways []string `mapstructure:"arweave_gateways"`
+}
+
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
 	Host     string `mapstructure:"host"`
@@ -59,6 +65,7 @@ type TemporalConfig struct {
 	HostPort                           string  `mapstructure:"host_port"`
 	Namespace                          string  `mapstructure:"namespace"`
 	TaskQueue                          string  `mapstructure:"task_queue"`
+	MediaTaskQueue                     string  `mapstructure:"media_task_queue"`
 	MaxConcurrentActivityExecutionSize int     `mapstructure:"max_concurrent_activity_execution_size"`
 	WorkerActivitiesPerSecond          float64 `mapstructure:"worker_activities_per_second"`
 }
@@ -109,6 +116,7 @@ type WorkerCoreConfig struct {
 	Ethereum                         EthereumConfig `mapstructure:"ethereum"`
 	Tezos                            TezosConfig    `mapstructure:"tezos"`
 	Vendors                          VendorsConfig  `mapstructure:"vendors"`
+	URI                              URIConfig      `mapstructure:"uri"`
 	EthereumTokenSweepStartBlock     uint64         `mapstructure:"ethereum_token_sweep_start_block"`
 	EthereumTokenSweepBlockChunkSize uint64         `mapstructure:"ethereum_token_sweep_block_chunk_size"`
 	TezosTokenSweepStartBlock        uint64         `mapstructure:"tezos_token_sweep_start_block"`
@@ -122,6 +130,24 @@ type APIConfig struct {
 	Server     ServerConfig   `mapstructure:"server"`
 	Database   DatabaseConfig `mapstructure:"database"`
 	Temporal   TemporalConfig `mapstructure:"temporal"`
+}
+
+// CloudflareConfig holds Cloudflare configuration
+type CloudflareConfig struct {
+	// AccountID is the Cloudflare account ID (used for both Images and Stream)
+	AccountID string `mapstructure:"account_id"`
+	APIToken  string `mapstructure:"api_token"`
+}
+
+// WorkerMediaConfig holds configuration for worker-media
+type WorkerMediaConfig struct {
+	BaseConfig   `mapstructure:",squash"`
+	Database     DatabaseConfig   `mapstructure:"database"`
+	Temporal     TemporalConfig   `mapstructure:"temporal"`
+	URI          URIConfig        `mapstructure:"uri"`
+	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
+	MaxImageSize int64            `mapstructure:"max_image_size"`
+	MaxVideoSize int64            `mapstructure:"max_video_size"`
 }
 
 // LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter
@@ -254,6 +280,33 @@ func LoadAPIConfig(configPath string) (*APIConfig, error) {
 	}
 
 	var config APIConfig
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	return &config, nil
+}
+
+// LoadWorkerMediaConfig loads configuration for worker-media
+func LoadWorkerMediaConfig(configPath string) (*WorkerMediaConfig, error) {
+	v := Viper(configPath)
+
+	// Set defaults
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.sslmode", "disable")
+	v.SetDefault("temporal.task_queue", "media-indexing")
+	v.SetDefault("temporal.max_concurrent_activity_execution_size", 10)
+	v.SetDefault("temporal.worker_activities_per_second", 10)
+	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
+	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
+	v.SetDefault("max_image_size", 50*1024*1024)  // 50MB
+	v.SetDefault("max_video_size", 512*1024*1024) // 512MB
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var config WorkerMediaConfig
 	if err := v.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}

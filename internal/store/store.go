@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"gorm.io/datatypes"
+
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
@@ -155,6 +157,17 @@ type TokensWithMetadataResult struct {
 	Metadata *schema.TokenMetadata
 }
 
+// CreateMediaAssetInput represents the input for creating a media asset record
+type CreateMediaAssetInput struct {
+	SourceURL        string
+	MimeType         *string
+	FileSizeBytes    *int64
+	Provider         schema.StorageProvider
+	ProviderAssetID  *string
+	ProviderMetadata datatypes.JSON
+	VariantURLs      datatypes.JSON
+}
+
 // Store defines the interface for database operations
 type Store interface {
 	// =============================================================================
@@ -188,6 +201,10 @@ type Store interface {
 	CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error
 	// GetMediaAssetByID retrieves a media asset by ID
 	GetMediaAssetByID(ctx context.Context, id int64) (*schema.MediaAsset, error)
+	// GetMediaAssetBySourceURL retrieves a media asset by source URL and provider
+	GetMediaAssetBySourceURL(ctx context.Context, sourceURL string, provider schema.StorageProvider) (*schema.MediaAsset, error)
+	// CreateMediaAsset creates a new media asset record
+	CreateMediaAsset(ctx context.Context, input CreateMediaAssetInput) (*schema.MediaAsset, error)
 
 	// =============================================================================
 	// Enrichment Source Operations

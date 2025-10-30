@@ -7,8 +7,7 @@ CREATE TYPE token_standard AS ENUM ('erc721', 'erc1155', 'fa2');
 CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:mainnet', 'tezos:ghostnet');
 CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
 CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile');
-CREATE TYPE media_role AS ENUM ('image', 'animation', 'poster');
-CREATE TYPE media_status AS ENUM ('pending', 'ready', 'failed');
+CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
 CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'media');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 
@@ -75,20 +74,30 @@ CREATE TABLE enrichment_sources (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Media Assets table - Manages media files with different storage providers integration
+-- Media Assets table - Reference mapping between original URLs and provider URLs
 CREATE TABLE media_assets (
     id BIGSERIAL PRIMARY KEY,
-    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    role media_role NOT NULL,               -- 'image','animation','poster'
-    source_url TEXT,
-    content_hash TEXT,
-    cf_image_id TEXT,
-    cf_variant_map JSONB,                   -- {"thumb":..., "fit":...}
-    status media_status NOT NULL DEFAULT 'pending',
-    last_checked_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT now(),
+    
+    -- Original source
+    source_url TEXT NOT NULL,               -- Original URL where media was found
+    mime_type TEXT,                         -- image/jpeg, video/mp4, etc.
+    file_size_bytes BIGINT,
+    
+    -- Storage provider info
+    provider storage_provider NOT NULL,
+    provider_asset_id TEXT,                 -- provider-specific ID (cf_image_id, s3 key, etc.)
+    provider_metadata JSONB,                -- provider-specific data (e.g., cloudflare account info)
+    
+    -- Variant URLs (actual URLs, not URIs)
+    variant_urls JSONB NOT NULL,            -- {"thumbnail": "https://...", "medium": "https://...", "original": "https://..."}
+    
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (token_id, role)
+    
+    -- Unique constraints: one entry per provider per asset, one entry per source URL per provider
+    UNIQUE (provider, provider_asset_id),
+    UNIQUE (source_url, provider)
 );
 
 -- Changes Journal table - Audit log for tracking all changes to indexed data
@@ -170,9 +179,9 @@ CREATE INDEX idx_enrichment_sources_vendor_hash ON enrichment_sources (vendor_ha
 CREATE INDEX idx_enrichment_sources_artists ON enrichment_sources USING GIN (artists) WHERE artists IS NOT NULL;
 
 -- Media Assets table indexes
-CREATE INDEX idx_media_assets_token_role ON media_assets (token_id, role);
-CREATE INDEX idx_media_assets_status ON media_assets (status);
-CREATE INDEX idx_media_assets_cf_image_id ON media_assets (cf_image_id) WHERE cf_image_id IS NOT NULL;
+CREATE INDEX idx_media_assets_source_url ON media_assets (source_url);
+CREATE INDEX idx_media_assets_provider ON media_assets (provider);
+CREATE INDEX idx_media_assets_provider_asset_id ON media_assets (provider, provider_asset_id);
 CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
 
 -- Changes Journal table indexes
@@ -209,7 +218,8 @@ CREATE INDEX idx_token_metadata_latest_json_gin ON token_metadata USING GIN (lat
 CREATE INDEX idx_enrichment_sources_vendor_json_gin ON enrichment_sources USING GIN (vendor_json);
 
 -- JSONB indexes for media assets
-CREATE INDEX idx_media_assets_cf_variant_map_gin ON media_assets USING GIN (cf_variant_map);
+CREATE INDEX idx_media_assets_variant_urls_gin ON media_assets USING GIN (variant_urls);
+CREATE INDEX idx_media_assets_provider_metadata_gin ON media_assets USING GIN (provider_metadata) WHERE provider_metadata IS NOT NULL;
 
 -- JSONB indexes for changes journal
 CREATE INDEX idx_changes_journal_meta_gin ON changes_journal USING GIN (meta);
@@ -296,7 +306,7 @@ COMMENT ON TABLE tokens IS 'Primary entity for tracking tokens across all suppor
 COMMENT ON TABLE balances IS 'Tracks ownership quantities for multi-edition tokens (ERC1155, FA2)';
 COMMENT ON TABLE token_metadata IS 'Stores original and enriched metadata for tokens';
 COMMENT ON TABLE enrichment_sources IS 'Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File) with both raw and normalized data';
-COMMENT ON TABLE media_assets IS 'Manages media files with different storage providers integration';
+COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
 COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. token_id always points to affected token. subject_id is polymorphic: provenance_event_id (token/owner), balance_id (balance), token_id (metadata), media_asset_id (media)';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';

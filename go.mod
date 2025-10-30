@@ -6,7 +6,9 @@ require (
 	github.com/99designs/gqlgen v0.17.81
 	github.com/bitmark-inc/autonomy-logger v0.0.10
 	github.com/cenkalti/backoff/v4 v4.3.0
+	github.com/cloudflare/cloudflare-go v0.116.0
 	github.com/ethereum/go-ethereum v1.16.5
+	github.com/gabriel-vasile/mimetype v1.4.9
 	github.com/getsentry/sentry-go v0.36.0
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
@@ -47,7 +49,6 @@ require (
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.9 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.6.0 // indirect
@@ -61,6 +62,7 @@ require (
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
+	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect

@@ -23,6 +23,7 @@ temporal:
   host_port: localhost:7233
   namespace: default
   task_queue: token-indexing
+  media_task_queue: media-indexing
   max_concurrent_activity_execution_size: 50
   worker_activities_per_second: 50
 
@@ -42,3 +43,13 @@ ethereum_token_sweep_block_chunk_size: 50000
 tezos_token_sweep_start_block: 5000000
 tezos_token_sweep_block_chunk_size: 10000
 publisher_registry_path: tools/registry/publisher.json
+
+uri:
+  ipfs_gateways:
+    - https://ipfs.io
+    - https://cloudflare-ipfs.com
+    - https://ipfs.feralfile.com
+    - https://dweb.link
+    - https://ipfs.filebase.io
+  arweave_gateways:
+    - https://arweave.net

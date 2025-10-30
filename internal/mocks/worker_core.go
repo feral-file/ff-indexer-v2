@@ -240,3 +240,31 @@ func NewMockWorkerMedia(ctrl *gomock.Controller) *MockWorkerMedia {
 func (m *MockWorkerMedia) EXPECT() *MockWorkerMediaMockRecorder {
 	return m.recorder
 }
+
+// IndexMediaWorkflow mocks base method.
+func (m *MockWorkerMedia) IndexMediaWorkflow(ctx workflow.Context, url string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IndexMediaWorkflow", ctx, url)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IndexMediaWorkflow indicates an expected call of IndexMediaWorkflow.
+func (mr *MockWorkerMediaMockRecorder) IndexMediaWorkflow(ctx, url interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexMediaWorkflow", reflect.TypeOf((*MockWorkerMedia)(nil).IndexMediaWorkflow), ctx, url)
+}
+
+// IndexMultipleMediaWorkflow mocks base method.
+func (m *MockWorkerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IndexMultipleMediaWorkflow", ctx, urls)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IndexMultipleMediaWorkflow indicates an expected call of IndexMultipleMediaWorkflow.
+func (mr *MockWorkerMediaMockRecorder) IndexMultipleMediaWorkflow(ctx, urls interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexMultipleMediaWorkflow", reflect.TypeOf((*MockWorkerMedia)(nil).IndexMultipleMediaWorkflow), ctx, urls)
+}

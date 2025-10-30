@@ -33,7 +33,6 @@ type Token struct {
 	Balances          []Balance          `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 	Metadata          *TokenMetadata     `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 	EnrichmentSources []EnrichmentSource `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
-	MediaAssets       []MediaAsset       `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 	ProvenanceEvents  []ProvenanceEvent  `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 	ChangesJournals   []ChangesJournal   `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 }
