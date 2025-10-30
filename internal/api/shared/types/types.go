@@ -25,10 +25,12 @@ func (o Order) Valid() bool {
 type Expansion string
 
 const (
-	ExpansionOwners           Expansion = "owners"
-	ExpansionProvenanceEvents Expansion = "provenance_events"
-	ExpansionEnrichmentSource Expansion = "enrichment_source"
-	ExpansionSubject          Expansion = "subject"
+	ExpansionOwners                     Expansion = "owners"
+	ExpansionProvenanceEvents           Expansion = "provenance_events"
+	ExpansionEnrichmentSource           Expansion = "enrichment_source"
+	ExpansionMetadataMediaAsset         Expansion = "metadata_media_asset"
+	ExpansionEnrichmentSourceMediaAsset Expansion = "enrichment_source_media_asset"
+	ExpansionSubject                    Expansion = "subject"
 )
 
 // Valid checks if an expansion is valid
@@ -36,5 +38,7 @@ func (e Expansion) Valid() bool {
 	return e == ExpansionOwners ||
 		e == ExpansionProvenanceEvents ||
 		e == ExpansionEnrichmentSource ||
+		e == ExpansionMetadataMediaAsset ||
+		e == ExpansionEnrichmentSourceMediaAsset ||
 		e == ExpansionSubject
 }

@@ -24,9 +24,11 @@ type TokenResponse struct {
 	Metadata *TokenMetadataResponse `json:"metadata,omitempty"`
 
 	// Expansions
-	Owners           *PaginatedOwners           `json:"owners,omitempty"`
-	ProvenanceEvents *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`
-	EnrichmentSource *EnrichmentSourceResponse  `json:"enrichment_source,omitempty"`
+	Owners                      *PaginatedOwners           `json:"owners,omitempty"`
+	ProvenanceEvents            *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`
+	EnrichmentSource            *EnrichmentSourceResponse  `json:"enrichment_source,omitempty"`
+	MetadataMediaAssets         []MediaAssetResponse       `json:"metadata_media_assets,omitempty"`
+	EnrichmentSourceMediaAssets []MediaAssetResponse       `json:"enrichment_source_media_assets,omitempty"`
 }
 
 // OwnerResponse represents a token owner (balance record)

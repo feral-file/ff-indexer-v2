@@ -205,6 +205,8 @@ type Store interface {
 	GetMediaAssetByID(ctx context.Context, id int64) (*schema.MediaAsset, error)
 	// GetMediaAssetBySourceURL retrieves a media asset by source URL and provider
 	GetMediaAssetBySourceURL(ctx context.Context, sourceURL string, provider schema.StorageProvider) (*schema.MediaAsset, error)
+	// GetMediaAssetsBySourceURLs retrieves media assets by multiple source URLs
+	GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []string) ([]schema.MediaAsset, error)
 	// CreateMediaAsset creates a new media asset record
 	CreateMediaAsset(ctx context.Context, input CreateMediaAssetInput) (*schema.MediaAsset, error)
 

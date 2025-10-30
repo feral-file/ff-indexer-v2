@@ -76,6 +76,10 @@ models:
         fieldName: ProvenanceEvents
       enrichment_source:
         fieldName: EnrichmentSource
+      metadata_media_assets:
+        fieldName: MetadataMediaAssets
+      enrichment_source_media_assets:
+        fieldName: EnrichmentSourceMediaAssets
 
   TokenMetadata:
     model:
@@ -222,6 +226,31 @@ models:
         fieldName: Artists
       mime_type:
         fieldName: MimeType
+      created_at:
+        fieldName: CreatedAt
+      updated_at:
+        fieldName: UpdatedAt
+
+  MediaAsset:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.MediaAssetResponse
+    fields:
+      id:
+        fieldName: ID
+      source_url:
+        fieldName: SourceURL
+      mime_type:
+        fieldName: MimeType
+      file_size_bytes:
+        fieldName: FileSizeBytes
+      provider:
+        fieldName: Provider
+      provider_asset_id:
+        fieldName: ProviderAssetID
+      provider_metadata:
+        fieldName: ProviderMetadata
+      variant_urls:
+        fieldName: VariantURLs
       created_at:
         fieldName: CreatedAt
       updated_at:

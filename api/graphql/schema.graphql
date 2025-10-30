@@ -100,6 +100,20 @@ type EnrichmentSource {
   updated_at: Time!
 }
 
+# Media asset information
+type MediaAsset {
+  id: Int!
+  source_url: String!
+  mime_type: String
+  file_size_bytes: Int
+  provider: String!
+  provider_asset_id: String
+  provider_metadata: JSON
+  variant_urls: JSON!
+  created_at: Time!
+  updated_at: Time!
+}
+
 # Token with optional expansions
 type Token {
   id: Uint64!
@@ -116,6 +130,8 @@ type Token {
   owners: PaginatedOwners
   provenance_events: PaginatedProvenanceEvents
   enrichment_source: EnrichmentSource
+  metadata_media_assets: [MediaAsset!]
+  enrichment_source_media_assets: [MediaAsset!]
 }
 
 # Paginated tokens list

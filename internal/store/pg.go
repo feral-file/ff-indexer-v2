@@ -1096,6 +1096,22 @@ func (s *pgStore) GetMediaAssetBySourceURL(ctx context.Context, sourceURL string
 	return &media, nil
 }
 
+// GetMediaAssetsBySourceURLs retrieves media assets by multiple source URLs
+func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []string) ([]schema.MediaAsset, error) {
+	if len(sourceURLs) == 0 {
+		return []schema.MediaAsset{}, nil
+	}
+
+	var mediaAssets []schema.MediaAsset
+	err := s.db.WithContext(ctx).
+		Where("source_url IN ?", sourceURLs).
+		Find(&mediaAssets).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get media assets by source URLs: %w", err)
+	}
+	return mediaAssets, nil
+}
+
 // CreateMediaAsset creates a new media asset record
 // Uses pessimistic locking to handle all unique constraints:
 // - (source_url, provider)

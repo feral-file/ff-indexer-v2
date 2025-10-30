@@ -32,7 +32,11 @@ type GetTokenQueryParams struct {
 func (p *GetTokenQueryParams) Validate() error {
 	// Validate expansions
 	for _, expansion := range p.Expand {
-		if expansion != types.ExpansionOwners && expansion != types.ExpansionProvenanceEvents && expansion != types.ExpansionEnrichmentSource {
+		if expansion != types.ExpansionOwners &&
+			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionEnrichmentSource &&
+			expansion != types.ExpansionMetadataMediaAsset &&
+			expansion != types.ExpansionEnrichmentSourceMediaAsset {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
@@ -102,7 +106,11 @@ func (p *ListTokensQueryParams) Validate() error {
 
 	// Validate expansions
 	for _, expansion := range p.Expand {
-		if expansion != types.ExpansionOwners && expansion != types.ExpansionProvenanceEvents && expansion != types.ExpansionEnrichmentSource {
+		if expansion != types.ExpansionOwners &&
+			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionEnrichmentSource &&
+			expansion != types.ExpansionMetadataMediaAsset &&
+			expansion != types.ExpansionEnrichmentSourceMediaAsset {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}

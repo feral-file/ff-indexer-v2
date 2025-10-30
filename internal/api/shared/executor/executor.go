@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -75,6 +76,14 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expand []types
 			if err := e.expandEnrichmentSource(ctx, tokenDTO, result.Token.ID); err != nil {
 				return nil, err
 			}
+		case types.ExpansionMetadataMediaAsset:
+			if err := e.expandMetadataMediaAssets(ctx, tokenDTO); err != nil {
+				return nil, err
+			}
+		case types.ExpansionEnrichmentSourceMediaAsset:
+			if err := e.expandEnrichmentSourceMediaAssets(ctx, tokenDTO); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -126,6 +135,14 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 				}
 			case types.ExpansionEnrichmentSource:
 				if err := e.expandEnrichmentSource(ctx, tokenDTO, result.Token.ID); err != nil {
+					return nil, err
+				}
+			case types.ExpansionMetadataMediaAsset:
+				if err := e.expandMetadataMediaAssets(ctx, tokenDTO); err != nil {
+					return nil, err
+				}
+			case types.ExpansionEnrichmentSourceMediaAsset:
+				if err := e.expandEnrichmentSourceMediaAssets(ctx, tokenDTO); err != nil {
 					return nil, err
 				}
 			}
@@ -254,6 +271,12 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 // Helper methods for expanding token data
 
 func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64, limit *uint8, offset *uint64) error {
+	// If owners are already expanded, return nil
+	if tokenDTO.Owners != nil {
+		return nil
+	}
+
+	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_OWNERS_LIMIT
 		limit = &defaultLimit
@@ -263,11 +286,13 @@ func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse
 		offset = &defaultOffset
 	}
 
+	// Get owners
 	owners, total, err := e.store.GetTokenOwners(ctx, tokenID, int(*limit), *offset)
 	if err != nil {
 		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token owners: %v", err))
 	}
 
+	// Map to DTOs
 	ownerDTOs := make([]dto.OwnerResponse, len(owners))
 	for i := range owners {
 		ownerDTOs[i] = *dto.MapOwnerToDTO(&owners[i])
@@ -289,6 +314,12 @@ func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse
 }
 
 func (e *executor) expandProvenanceEvents(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64, limit *uint8, offset *uint64, order *types.Order) error {
+	// If provenance events are already expanded, return nil
+	if tokenDTO.ProvenanceEvents != nil {
+		return nil
+	}
+
+	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_PROVENANCE_EVENTS_LIMIT
 		limit = &defaultLimit
@@ -299,11 +330,13 @@ func (e *executor) expandProvenanceEvents(ctx context.Context, tokenDTO *dto.Tok
 	}
 	orderDesc := order == nil || order.Desc() // Default to DESC
 
+	// Get provenance events
 	events, total, err := e.store.GetTokenProvenanceEvents(ctx, tokenID, int(*limit), *offset, orderDesc)
 	if err != nil {
 		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance events: %v", err))
 	}
 
+	// Map to DTOs
 	eventDTOs := make([]dto.ProvenanceEventResponse, len(events))
 	for i := range events {
 		eventDTOs[i] = *dto.MapProvenanceEventToDTO(&events[i])
@@ -325,6 +358,12 @@ func (e *executor) expandProvenanceEvents(ctx context.Context, tokenDTO *dto.Tok
 }
 
 func (e *executor) expandEnrichmentSource(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64) error {
+	// If enrichment source is already expanded, return nil
+	if tokenDTO.EnrichmentSource != nil {
+		return nil
+	}
+
+	// Get enrichment source
 	enrichment, err := e.store.GetEnrichmentSourceByTokenID(ctx, tokenID)
 	if err != nil {
 		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get enrichment source: %v", err))
@@ -396,4 +435,83 @@ func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJour
 	default:
 		return nil, nil
 	}
+}
+
+func (e *executor) expandMetadataMediaAssets(ctx context.Context, tokenDTO *dto.TokenResponse) error {
+	// If metadata is not available, return nil
+	if tokenDTO.Metadata == nil {
+		return nil
+	}
+
+	// Collect source URLs from metadata
+	var sourceURLs []string
+	if !internalTypes.StringNilOrEmpty(tokenDTO.Metadata.ImageURL) {
+		sourceURLs = append(sourceURLs, *tokenDTO.Metadata.ImageURL)
+	}
+	if !internalTypes.StringNilOrEmpty(tokenDTO.Metadata.AnimationURL) {
+		sourceURLs = append(sourceURLs, *tokenDTO.Metadata.AnimationURL)
+	}
+
+	if len(sourceURLs) == 0 {
+		return nil
+	}
+
+	// Query media assets
+	mediaAssets, err := e.store.GetMediaAssetsBySourceURLs(ctx, sourceURLs)
+	if err != nil {
+		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media assets: %v", err))
+	}
+
+	// Map to DTOs
+	mediaDTOs := make([]dto.MediaAssetResponse, len(mediaAssets))
+	for i := range mediaAssets {
+		mediaDTOs[i] = *dto.MapMediaAssetToDTO(&mediaAssets[i])
+	}
+
+	tokenDTO.MetadataMediaAssets = mediaDTOs
+	return nil
+}
+
+func (e *executor) expandEnrichmentSourceMediaAssets(ctx context.Context, tokenDTO *dto.TokenResponse) error {
+	if tokenDTO.EnrichmentSource == nil {
+		// No enrichment source available
+		// Query enrichment source by token ID
+		enrichment, err := e.store.GetEnrichmentSourceByTokenID(ctx, tokenDTO.ID)
+		if err != nil {
+			return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get enrichment source: %v", err))
+		}
+		if enrichment == nil {
+			return nil
+		}
+
+		tokenDTO.EnrichmentSource = dto.MapEnrichmentSourceToDTO(enrichment)
+	}
+
+	// Collect source URLs from enrichment source
+	var sourceURLs []string
+	if internalTypes.StringNilOrEmpty(tokenDTO.EnrichmentSource.ImageURL) {
+		sourceURLs = append(sourceURLs, *tokenDTO.EnrichmentSource.ImageURL)
+	}
+	if internalTypes.StringNilOrEmpty(tokenDTO.EnrichmentSource.AnimationURL) {
+		sourceURLs = append(sourceURLs, *tokenDTO.EnrichmentSource.AnimationURL)
+	}
+
+	if len(sourceURLs) == 0 {
+		return nil
+	}
+
+	// Query media assets
+	mediaAssets, err := e.store.GetMediaAssetsBySourceURLs(ctx, sourceURLs)
+	if err != nil {
+		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media assets: %v", err))
+	}
+
+	// Map to DTOs
+	mediaDTOs := make([]dto.MediaAssetResponse, len(mediaAssets))
+	for i := range mediaAssets {
+		mediaDTOs[i] = *dto.MapMediaAssetToDTO(&mediaAssets[i])
+	}
+
+	tokenDTO.EnrichmentSourceMediaAssets = mediaDTOs
+	return nil
 }

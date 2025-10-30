@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
@@ -70,6 +69,22 @@ func (r *enrichmentSourceResolver) VendorJSON(ctx context.Context, obj *dto.Enri
 		return JSON("{}"), nil
 	}
 	return JSON(obj.VendorJSON), nil
+}
+
+// ProviderMetadata is the resolver for the provider_metadata field.
+func (r *mediaAssetResolver) ProviderMetadata(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error) {
+	if obj.ProviderMetadata == nil {
+		return JSON("{}"), nil
+	}
+	return JSON(obj.ProviderMetadata), nil
+}
+
+// VariantURLs is the resolver for the variant_urls field.
+func (r *mediaAssetResolver) VariantURLs(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error) {
+	if obj.VariantURLs == nil {
+		return JSON("{}"), nil
+	}
+	return JSON(obj.VariantURLs), nil
 }
 
 // TriggerIndexing is the resolver for the triggerIndexing field.
@@ -180,7 +195,11 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expand []string, 
 
 	// Validate expansions
 	for _, expansion := range expansions {
-		if expansion != types.ExpansionOwners && expansion != types.ExpansionProvenanceEvents && expansion != types.ExpansionEnrichmentSource {
+		if expansion != types.ExpansionOwners &&
+			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionEnrichmentSource &&
+			expansion != types.ExpansionMetadataMediaAsset &&
+			expansion != types.ExpansionEnrichmentSourceMediaAsset {
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
@@ -239,7 +258,11 @@ func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []stri
 
 	// Validate expansions
 	for _, expansion := range expansions {
-		if expansion != types.ExpansionOwners && expansion != types.ExpansionProvenanceEvents && expansion != types.ExpansionEnrichmentSource {
+		if expansion != types.ExpansionOwners &&
+			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionEnrichmentSource &&
+			expansion != types.ExpansionMetadataMediaAsset &&
+			expansion != types.ExpansionEnrichmentSourceMediaAsset {
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
@@ -336,16 +359,6 @@ func (r *tokenMetadataResolver) LatestJSON(ctx context.Context, obj *dto.TokenMe
 	return JSON(obj.LatestJSON), nil
 }
 
-// CreatedAt is the resolver for the created_at field.
-func (r *tokenMetadataResolver) CreatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error) {
-	return &obj.CreatedAt, nil
-}
-
-// UpdatedAt is the resolver for the updated_at field.
-func (r *tokenMetadataResolver) UpdatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error) {
-	return &obj.UpdatedAt, nil
-}
-
 // Change returns ChangeResolver implementation.
 func (r *Resolver) Change() ChangeResolver { return &changeResolver{r} }
 
@@ -354,6 +367,9 @@ func (r *Resolver) ChangeList() ChangeListResolver { return &changeListResolver{
 
 // EnrichmentSource returns EnrichmentSourceResolver implementation.
 func (r *Resolver) EnrichmentSource() EnrichmentSourceResolver { return &enrichmentSourceResolver{r} }
+
+// MediaAsset returns MediaAssetResolver implementation.
+func (r *Resolver) MediaAsset() MediaAssetResolver { return &mediaAssetResolver{r} }
 
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
@@ -384,6 +400,7 @@ func (r *Resolver) TokenMetadata() TokenMetadataResolver { return &tokenMetadata
 type changeResolver struct{ *Resolver }
 type changeListResolver struct{ *Resolver }
 type enrichmentSourceResolver struct{ *Resolver }
+type mediaAssetResolver struct{ *Resolver }
 type mutationResolver struct{ *Resolver }
 type paginatedOwnersResolver struct{ *Resolver }
 type paginatedProvenanceEventsResolver struct{ *Resolver }
@@ -392,3 +409,18 @@ type queryResolver struct{ *Resolver }
 type tokenResolver struct{ *Resolver }
 type tokenListResolver struct{ *Resolver }
 type tokenMetadataResolver struct{ *Resolver }
+
+// !!! WARNING !!!
+// The code below was going to be deleted when updating resolvers. It has been copied here so you have
+// one last chance to move it out of harms way if you want. There are two reasons this happens:
+//  - When renaming or deleting a resolver the old code will be put in here. You can safely delete
+//    it when you're done.
+//  - You have helper methods in this file. Move them out to keep these resolver files clean.
+/*
+	func (r *tokenMetadataResolver) CreatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error) {
+	return &obj.CreatedAt, nil
+}
+func (r *tokenMetadataResolver) UpdatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error) {
+	return &obj.UpdatedAt, nil
+}
+*/
