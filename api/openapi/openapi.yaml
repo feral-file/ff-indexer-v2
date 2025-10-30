@@ -698,6 +698,21 @@ components:
         publisher:
           $ref: '#/components/schemas/PublisherResponse'
           nullable: true
+        mime_type:
+          type: string
+          nullable: true
+          description: MIME type of the animation_url or image_url 
+          example: "image/png"
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the token metadata was created
+          example: "2024-01-01T00:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the token metadata was last updated
+          example: "2024-01-02T12:00:00Z"
 
     ArtistResponse:
       type: object
@@ -927,6 +942,11 @@ components:
           items:
             $ref: '#/components/schemas/ArtistResponse'
           description: Artists from vendor data
+        mime_type:
+          type: string
+          nullable: true
+          description: MIME type of the animation_url or image_url from vendor
+          example: "image/png"
         created_at:
           type: string
           format: date-time
