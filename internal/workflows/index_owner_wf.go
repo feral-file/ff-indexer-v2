@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
@@ -11,6 +12,12 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+)
+
+const (
+	// TOKEN_INDEXING_CHUNK_SIZE is the number of tokens to process in a single batch
+	// This balances between resumability (smaller chunks) and efficiency (fewer workflow calls)
+	TOKEN_INDEXING_CHUNK_SIZE = 20
 )
 
 // IndexTokenOwners indexes tokens for multiple addresses sequentially
@@ -100,11 +107,63 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 	return nil
 }
 
-// IndexTezosTokenOwner indexes all tokens held by a Tezos address using bi-directional block range sweeping
+// sortTokensByBlock sorts tokens by block number in the specified order
+func sortTokensByBlock(tokens []domain.TokenWithBlock, descending bool) {
+	sort.Slice(tokens, func(i, j int) bool {
+		if descending {
+			return tokens[i].BlockNumber > tokens[j].BlockNumber
+		}
+		return tokens[i].BlockNumber < tokens[j].BlockNumber
+	})
+}
+
+// chunkTokensByCount splits tokens into chunks of specified size
+func chunkTokensByCount(tokens []domain.TokenWithBlock, chunkSize int) [][]domain.TokenWithBlock {
+	var chunks [][]domain.TokenWithBlock
+	for i := 0; i < len(tokens); i += chunkSize {
+		end := min(i+chunkSize, len(tokens))
+		chunks = append(chunks, tokens[i:end])
+	}
+	return chunks
+}
+
+// tokenChunkInfo holds extracted information from a token chunk
+type tokenChunkInfo struct {
+	tokenCIDs []domain.TokenCID
+	minBlock  uint64
+	maxBlock  uint64
+}
+
+// extractChunkInfo extracts TokenCIDs and block range from a token chunk in a single pass
+func extractChunkInfo(tokens []domain.TokenWithBlock) tokenChunkInfo {
+	if len(tokens) == 0 {
+		return tokenChunkInfo{tokenCIDs: []domain.TokenCID{}, minBlock: 0, maxBlock: 0}
+	}
+
+	info := tokenChunkInfo{
+		tokenCIDs: make([]domain.TokenCID, len(tokens)),
+		minBlock:  tokens[0].BlockNumber,
+		maxBlock:  tokens[0].BlockNumber,
+	}
+
+	for i, token := range tokens {
+		info.tokenCIDs[i] = token.TokenCID
+		if token.BlockNumber < info.minBlock {
+			info.minBlock = token.BlockNumber
+		}
+		if token.BlockNumber > info.maxBlock {
+			info.maxBlock = token.BlockNumber
+		}
+	}
+
+	return info
+}
+
+// IndexTezosTokenOwner indexes all tokens held by a Tezos address
+// Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
 func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) error {
-	logger.Info("Starting Tezos token owner indexing with bi-directional block range sweeping",
+	logger.Info("Starting Tezos token owner indexing",
 		zap.String("address", address),
-		zap.Uint64("chunkSize", w.config.TezosTokenSweepBlockChunkSize),
 		zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
 	)
 
@@ -166,228 +225,244 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 	// Step 4: Determine sweeping strategy
 	if storedMinBlock == 0 && storedMaxBlock == 0 {
 		// First run: No previous indexing exists
-		// Query from current block backwards, continuing until reaching start block
-		logger.Info("First run detected, sweeping from current block backwards",
+		// Fetch entire range from start to latest, process in chunks
+		logger.Info("First run detected, fetching all tokens from start to latest",
+			zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
 			zap.Uint64("latestBlock", latestBlock),
 		)
 
-		fromBlock := latestBlock
-		chunkProcessed := 0
-
-		for fromBlock > w.config.TezosTokenSweepStartBlock {
-			toBlock := fromBlock
-			fromBlock = max(fromBlock-w.config.TezosTokenSweepBlockChunkSize+1, w.config.TezosTokenSweepStartBlock)
-
-			logger.Info("Processing chunk (newest to oldest)",
-				zap.String("address", address),
-				zap.Uint64("fromBlock", fromBlock),
-				zap.Uint64("toBlock", toBlock),
-			)
-
-			err := w.processTezosBlockChunk(ctx, address, fromBlock, toBlock)
-			if err != nil {
-				return err
-			}
-			chunkProcessed++
-
-			// Update the stored range after successful chunk
-			// For first run, we set max on first chunk and keep updating min as we go backward
-			if chunkProcessed == 1 {
-				// First chunk - this becomes our max_block
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress, address, chainID, fromBlock, toBlock).Get(ctx, nil)
-			} else {
-				// Subsequent chunks - only update min_block
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress, address, chainID, fromBlock, storedMaxBlock).Get(ctx, nil)
-			}
-			if err != nil {
-				logger.Error(fmt.Errorf("failed to update indexing block range: %w", err),
-					zap.String("address", address),
-					zap.Uint64("fromBlock", fromBlock),
-					zap.Uint64("toBlock", toBlock),
-				)
-				return err
-			}
-
-			logger.Info("Updated indexing block range after chunk",
-				zap.Uint64("fromBlock", fromBlock),
-				zap.Uint64("toBlock", toBlock),
-			)
-
-			// Update storedMaxBlock for next iteration (only on first chunk)
-			if chunkProcessed == 1 {
-				storedMaxBlock = toBlock
-			}
-
-			fromBlock--
+		var allTokens []domain.TokenWithBlock
+		err = workflow.ExecuteActivity(ctx, w.executor.GetTezosTokenCIDsByAccountWithinBlockRange,
+			address, w.config.TezosTokenSweepStartBlock, latestBlock).Get(ctx, &allTokens)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to fetch tokens: %w", err), zap.String("address", address))
+			return err
 		}
 
-		logger.Info("Completed first run sweep")
+		logger.Info("Retrieved all tokens for first run",
+			zap.String("address", address),
+			zap.Int("tokenCount", len(allTokens)),
+		)
+
+		// Sort by block number (descending - newest first) and process in chunks
+		sortTokensByBlock(allTokens, true)
+		chunks := chunkTokensByCount(allTokens, TOKEN_INDEXING_CHUNK_SIZE)
+
+		// Store the actual scanned block range (not token block range)
+		scannedMinBlock := w.config.TezosTokenSweepStartBlock
+		scannedMaxBlock := latestBlock
+
+		for i, chunk := range chunks {
+			info := extractChunkInfo(chunk)
+
+			logger.Info("Processing token chunk",
+				zap.Int("chunkIndex", i+1),
+				zap.Int("totalChunks", len(chunks)),
+				zap.Int("tokenCount", len(info.tokenCIDs)),
+				zap.Uint64("tokenMinBlock", info.minBlock),
+				zap.Uint64("tokenMaxBlock", info.maxBlock),
+			)
+
+			// Index tokens
+			if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+				return err
+			}
+
+			// Update block range after each successful chunk for resumability
+			// For first run descending: set max on first chunk, then progressively update min
+			if i == 0 {
+				// First chunk - establish the max_block (scanned range end)
+				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+					address, chainID, info.minBlock, scannedMaxBlock).Get(ctx, nil)
+			} else {
+				// Subsequent chunks - progressively update min_block toward start
+				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+					address, chainID, info.minBlock, storedMaxBlock).Get(ctx, nil)
+			}
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to update block range: %w", err), zap.String("address", address))
+				return err
+			}
+
+			if i == 0 {
+				storedMaxBlock = scannedMaxBlock
+			}
+
+			logger.Info("Updated block range after chunk",
+				zap.Uint64("currentMinBlock", info.minBlock),
+				zap.Uint64("currentMaxBlock", storedMaxBlock),
+			)
+		}
+
+		// Final update to ensure we mark the complete scanned range
+		err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+			address, chainID, scannedMinBlock, scannedMaxBlock).Get(ctx, nil)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to update final block range: %w", err), zap.String("address", address))
+			return err
+		}
+
+		logger.Info("Completed first run sweep",
+			zap.Uint64("scannedMinBlock", scannedMinBlock),
+			zap.Uint64("scannedMaxBlock", scannedMaxBlock),
+		)
 	} else {
-		// Subsequent run: Sweep both directions (both from newest to oldest)
-		logger.Info("Subsequent run detected, sweeping in both directions",
+		// Subsequent run: Sweep backward first (historical), then forward (latest updates)
+		logger.Info("Subsequent run detected, sweeping backward then forward",
 			zap.Uint64("storedMinBlock", storedMinBlock),
 			zap.Uint64("storedMaxBlock", storedMaxBlock),
 			zap.Uint64("latestBlock", latestBlock),
 		)
 
-		// Part A: Sweep forward (new blocks): from stored max_block upward to latest block
+		// Part A: Sweep backward (historical data) - FIRST
+		if storedMinBlock > w.config.TezosTokenSweepStartBlock {
+			logger.Info("Sweeping backward for historical data",
+				zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
+				zap.Uint64("storedMinBlock", storedMinBlock),
+			)
+
+			var backwardTokens []domain.TokenWithBlock
+			err = workflow.ExecuteActivity(ctx, w.executor.GetTezosTokenCIDsByAccountWithinBlockRange,
+				address, w.config.TezosTokenSweepStartBlock, storedMinBlock-1).Get(ctx, &backwardTokens)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to fetch backward tokens: %w", err), zap.String("address", address))
+				return err
+			}
+
+			logger.Info("Retrieved backward sweep tokens",
+				zap.String("address", address),
+				zap.Int("tokenCount", len(backwardTokens)),
+			)
+
+			// Sort by block (descending - newest first) and process in chunks
+			sortTokensByBlock(backwardTokens, true)
+			chunks := chunkTokensByCount(backwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
+
+			// Store the actual scanned block range (not token block range)
+			scannedMinBlock := w.config.TezosTokenSweepStartBlock
+			scannedMaxBlock := storedMinBlock - 1
+
+			for i, chunk := range chunks {
+				info := extractChunkInfo(chunk)
+
+				logger.Info("Processing backward chunk",
+					zap.Int("chunkIndex", i+1),
+					zap.Int("totalChunks", len(chunks)),
+					zap.Int("tokenCount", len(info.tokenCIDs)),
+					zap.Uint64("tokenMinBlock", info.minBlock),
+					zap.Uint64("tokenMaxBlock", info.maxBlock),
+				)
+
+				if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+					return err
+				}
+
+				// Update min_block after each successful chunk for resumability
+				// Progressively update min_block toward start
+				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+					address, chainID, info.minBlock, storedMaxBlock).Get(ctx, nil)
+				if err != nil {
+					logger.Error(fmt.Errorf("failed to update min block: %w", err), zap.String("address", address))
+					return err
+				}
+
+				logger.Info("Updated min block after chunk", zap.Uint64("currentMinBlock", info.minBlock))
+			}
+
+			// Final update to ensure we mark the complete scanned range
+			err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+				address, chainID, scannedMinBlock, storedMaxBlock).Get(ctx, nil)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to update final min block: %w", err), zap.String("address", address))
+				return err
+			}
+
+			storedMinBlock = scannedMinBlock
+			logger.Info("Completed backward sweep",
+				zap.Uint64("scannedMinBlock", scannedMinBlock),
+				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
+			)
+		}
+
+		// Part B: Sweep forward (latest updates) - SECOND
 		if latestBlock > storedMaxBlock {
-			logger.Info("Sweeping forward for new blocks (upward from stored max to latest)",
+			logger.Info("Sweeping forward for latest updates",
 				zap.Uint64("storedMaxBlock", storedMaxBlock),
 				zap.Uint64("latestBlock", latestBlock),
 			)
 
-			toBlock := storedMaxBlock
-
-			for toBlock < latestBlock {
-				fromBlock := toBlock + 1
-				toBlock = min(fromBlock+w.config.TezosTokenSweepBlockChunkSize-1, latestBlock)
-
-				logger.Info("Processing forward sweep chunk",
-					zap.String("address", address),
-					zap.Uint64("fromBlock", fromBlock),
-					zap.Uint64("toBlock", toBlock),
-				)
-
-				err := w.processTezosBlockChunk(ctx, address, fromBlock, toBlock)
-				if err != nil {
-					return err
-				}
-
-				// Update max_block after each successful chunk to avoid gaps
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress, address, chainID, storedMinBlock, toBlock).Get(ctx, nil)
-				if err != nil {
-					logger.Error(fmt.Errorf("failed to update max block: %w", err),
-						zap.String("address", address),
-						zap.Uint64("newMaxBlock", toBlock),
-					)
-					return err
-				}
-
-				logger.Info("Updated max block after forward sweep chunk",
-					zap.Uint64("newMaxBlock", toBlock),
-				)
+			var forwardTokens []domain.TokenWithBlock
+			err = workflow.ExecuteActivity(ctx, w.executor.GetTezosTokenCIDsByAccountWithinBlockRange,
+				address, storedMaxBlock+1, latestBlock).Get(ctx, &forwardTokens)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to fetch forward tokens: %w", err), zap.String("address", address))
+				return err
 			}
 
-			logger.Info("Completed forward sweep")
-
-			// Update storedMaxBlock for backward sweep
-			storedMaxBlock = latestBlock
-		}
-
-		// Part B: Sweep backward (historical data): from stored min_block down to start block (newest to oldest)
-		if storedMinBlock > w.config.TezosTokenSweepStartBlock {
-			logger.Info("Sweeping backward for historical data (newest to oldest)",
-				zap.Uint64("storedMinBlock", storedMinBlock),
-				zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
+			logger.Info("Retrieved forward sweep tokens",
+				zap.String("address", address),
+				zap.Int("tokenCount", len(forwardTokens)),
 			)
 
-			fromBlock := storedMinBlock - 1
+			// Sort by block (ascending - oldest first) and process in chunks
+			sortTokensByBlock(forwardTokens, false)
+			chunks := chunkTokensByCount(forwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
 
-			for fromBlock > w.config.TezosTokenSweepStartBlock {
-				toBlock := fromBlock
-				fromBlock = max(fromBlock-w.config.TezosTokenSweepBlockChunkSize+1, w.config.TezosTokenSweepStartBlock)
+			// Store the actual scanned block range (not token block range)
+			scannedMinBlock := storedMaxBlock + 1
+			scannedMaxBlock := latestBlock
 
-				logger.Info("Processing backward sweep chunk",
-					zap.String("address", address),
-					zap.Uint64("fromBlock", fromBlock),
-					zap.Uint64("toBlock", toBlock),
+			for i, chunk := range chunks {
+				info := extractChunkInfo(chunk)
+
+				logger.Info("Processing forward chunk",
+					zap.Int("chunkIndex", i+1),
+					zap.Int("totalChunks", len(chunks)),
+					zap.Int("tokenCount", len(info.tokenCIDs)),
+					zap.Uint64("tokenMinBlock", info.minBlock),
+					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				err := w.processTezosBlockChunk(ctx, address, fromBlock, toBlock)
-				if err != nil {
+				if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
 					return err
 				}
 
-				// Update min_block after successful chunk
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress, address, chainID, fromBlock, storedMaxBlock).Get(ctx, nil)
+				// Update max_block after each successful chunk for resumability
+				// Progressively update max_block toward latest
+				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+					address, chainID, storedMinBlock, info.maxBlock).Get(ctx, nil)
 				if err != nil {
-					logger.Error(fmt.Errorf("failed to update min block: %w", err),
-						zap.String("address", address),
-						zap.Uint64("newMinBlock", fromBlock),
-					)
+					logger.Error(fmt.Errorf("failed to update max block: %w", err), zap.String("address", address))
 					return err
 				}
 
-				logger.Info("Updated min block after backward sweep chunk",
-					zap.Uint64("newMinBlock", fromBlock),
-				)
-
-				fromBlock--
+				logger.Info("Updated max block after chunk", zap.Uint64("currentMaxBlock", info.maxBlock))
 			}
 
-			logger.Info("Completed backward sweep")
+			// Final update to ensure we mark the complete scanned range
+			err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+				address, chainID, storedMinBlock, scannedMaxBlock).Get(ctx, nil)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to update final max block: %w", err), zap.String("address", address))
+				return err
+			}
+
+			logger.Info("Completed forward sweep",
+				zap.Uint64("scannedMinBlock", scannedMinBlock),
+				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
+			)
 		}
 	}
 
 	logger.Info("Tezos token owner indexing completed", zap.String("address", address))
-
 	return nil
 }
 
-// processTezosBlockChunk processes a single block range chunk for Tezos
-func (w *workerCore) processTezosBlockChunk(ctx workflow.Context, address string, fromBlock, toBlock uint64) error {
-	logger.Info("Processing Tezos block range chunk",
-		zap.String("address", address),
-		zap.Uint64("fromBlock", fromBlock),
-		zap.Uint64("toBlock", toBlock),
-	)
-
-	// Query token CIDs for this block range
-	var tokenCIDs []domain.TokenCID
-	err := workflow.ExecuteActivity(ctx, w.executor.GetTezosTokenCIDsByAccountWithinBlockRange, address, fromBlock, toBlock).Get(ctx, &tokenCIDs)
-	if err != nil {
-		logger.Error(fmt.Errorf("failed to get Tezos token CIDs for block range: %w", err),
-			zap.String("address", address),
-			zap.Uint64("fromBlock", fromBlock),
-			zap.Uint64("toBlock", toBlock),
-		)
-		return err
-	}
-
-	logger.Info("Retrieved token CIDs for block range",
-		zap.String("address", address),
-		zap.Uint64("fromBlock", fromBlock),
-		zap.Uint64("toBlock", toBlock),
-		zap.Int("tokenCount", len(tokenCIDs)),
-	)
-
-	// If tokens found, trigger child workflow to index them
-	if len(tokenCIDs) > 0 {
-		indexTokensWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowExecutionTimeout: 15 * time.Minute,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		}
-		indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
-
-		// Execute and wait for this chunk to complete before moving to next chunk
-		err = workflow.ExecuteChildWorkflow(indexTokensCtx, w.IndexTokens, tokenCIDs).Get(ctx, nil)
-		if err != nil {
-			logger.Error(fmt.Errorf("failed to trigger index tokens workflow: %w", err),
-				zap.String("address", address),
-				zap.Uint64("fromBlock", fromBlock),
-				zap.Uint64("toBlock", toBlock),
-				zap.Int("tokenCount", len(tokenCIDs)),
-			)
-			return err
-		}
-
-		logger.Info("Completed indexing tokens for chunk",
-			zap.String("address", address),
-			zap.Uint64("fromBlock", fromBlock),
-			zap.Uint64("toBlock", toBlock),
-			zap.Int("tokenCount", len(tokenCIDs)),
-		)
-	}
-
-	return nil
-}
-
-// IndexEthereumTokenOwner indexes all tokens held by an Ethereum address using bi-directional block range sweeping
+// IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
+// Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
 func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address string) error {
-	logger.Info("Starting Ethereum token owner indexing with bi-directional block range sweeping",
+	logger.Info("Starting Ethereum token owner indexing",
 		zap.String("address", address),
-		zap.Uint64("chunkSize", w.config.EthereumTokenSweepBlockChunkSize),
 		zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
 	)
 
@@ -449,218 +524,255 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 	// Step 4: Determine sweeping strategy
 	if storedMinBlock == 0 && storedMaxBlock == 0 {
 		// First run: No previous indexing exists
-		// Query from current block backwards, continuing until reaching start block
-		logger.Info("First run detected, sweeping from current block backwards",
+		// Fetch entire range from start to latest, process in chunks
+		logger.Info("First run detected, fetching all tokens from start to latest",
+			zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
 			zap.Uint64("latestBlock", latestBlock),
 		)
 
-		fromBlock := latestBlock
-		chunkProcessed := 0
-
-		for fromBlock > w.config.EthereumTokenSweepStartBlock {
-			toBlock := fromBlock
-			fromBlock = max(fromBlock-w.config.EthereumTokenSweepBlockChunkSize+1, w.config.EthereumTokenSweepStartBlock)
-
-			logger.Info("Processing chunk (newest to oldest)",
-				zap.String("address", address),
-				zap.Uint64("fromBlock", fromBlock),
-				zap.Uint64("toBlock", toBlock),
-			)
-
-			err := w.processEthereumBlockChunk(ctx, address, fromBlock, toBlock)
-			if err != nil {
-				return err
-			}
-			chunkProcessed++
-
-			// Update the stored range after successful chunk
-			// For first run, we set max on first chunk and keep updating min as we go backward
-			if chunkProcessed == 1 {
-				// First chunk - this becomes our max_block
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress, address, chainID, fromBlock, toBlock).Get(ctx, nil)
-			} else {
-				// Subsequent chunks - only update min_block
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress, address, chainID, fromBlock, storedMaxBlock).Get(ctx, nil)
-			}
-			if err != nil {
-				logger.Error(fmt.Errorf("failed to update indexing block range: %w", err),
-					zap.String("address", address),
-					zap.Uint64("fromBlock", fromBlock),
-					zap.Uint64("toBlock", toBlock),
-				)
-				return err
-			}
-
-			logger.Info("Updated indexing block range after chunk",
-				zap.Uint64("fromBlock", fromBlock),
-				zap.Uint64("toBlock", toBlock),
-			)
-
-			// Update storedMaxBlock for next iteration (only on first chunk)
-			if chunkProcessed == 1 {
-				storedMaxBlock = toBlock
-			}
-
-			fromBlock--
+		var allTokens []domain.TokenWithBlock
+		err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+			address, w.config.EthereumTokenSweepStartBlock, latestBlock).Get(ctx, &allTokens)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to fetch tokens: %w", err), zap.String("address", address))
+			return err
 		}
 
-		logger.Info("Completed first run sweep")
+		logger.Info("Retrieved all tokens for first run",
+			zap.String("address", address),
+			zap.Int("tokenCount", len(allTokens)),
+		)
+
+		// Sort by block number (descending - newest first) and process in chunks
+		sortTokensByBlock(allTokens, true)
+		chunks := chunkTokensByCount(allTokens, TOKEN_INDEXING_CHUNK_SIZE)
+
+		// Store the actual scanned block range (not token block range)
+		scannedMinBlock := w.config.EthereumTokenSweepStartBlock
+		scannedMaxBlock := latestBlock
+
+		for i, chunk := range chunks {
+			info := extractChunkInfo(chunk)
+
+			logger.Info("Processing token chunk",
+				zap.Int("chunkIndex", i+1),
+				zap.Int("totalChunks", len(chunks)),
+				zap.Int("tokenCount", len(info.tokenCIDs)),
+				zap.Uint64("tokenMinBlock", info.minBlock),
+				zap.Uint64("tokenMaxBlock", info.maxBlock),
+			)
+
+			// Index tokens
+			if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+				return err
+			}
+
+			// Update block range after each successful chunk for resumability
+			// For first run descending: set max on first chunk, then progressively update min
+			if i == 0 {
+				// First chunk - establish the max_block (scanned range end)
+				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+					address, chainID, info.minBlock, scannedMaxBlock).Get(ctx, nil)
+			} else {
+				// Subsequent chunks - progressively update min_block toward start
+				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+					address, chainID, info.minBlock, storedMaxBlock).Get(ctx, nil)
+			}
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to update block range: %w", err), zap.String("address", address))
+				return err
+			}
+
+			if i == 0 {
+				storedMaxBlock = scannedMaxBlock
+			}
+
+			logger.Info("Updated block range after chunk",
+				zap.Uint64("currentMinBlock", info.minBlock),
+				zap.Uint64("currentMaxBlock", storedMaxBlock),
+			)
+		}
+
+		// Final update to ensure we mark the complete scanned range
+		err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+			address, chainID, scannedMinBlock, scannedMaxBlock).Get(ctx, nil)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to update final block range: %w", err), zap.String("address", address))
+			return err
+		}
+
+		logger.Info("Completed first run sweep",
+			zap.Uint64("scannedMinBlock", scannedMinBlock),
+			zap.Uint64("scannedMaxBlock", scannedMaxBlock),
+		)
 	} else {
-		// Subsequent run: Sweep both directions
-		logger.Info("Subsequent run detected, sweeping in both directions",
+		// Subsequent run: Sweep backward first (historical), then forward (latest updates)
+		logger.Info("Subsequent run detected, sweeping backward then forward",
 			zap.Uint64("storedMinBlock", storedMinBlock),
 			zap.Uint64("storedMaxBlock", storedMaxBlock),
 			zap.Uint64("latestBlock", latestBlock),
 		)
 
-		// Part A: Sweep forward (new blocks): from stored max_block upward to latest block
+		// Part A: Sweep backward (historical data) - FIRST
+		if storedMinBlock > w.config.EthereumTokenSweepStartBlock {
+			logger.Info("Sweeping backward for historical data",
+				zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
+				zap.Uint64("storedMinBlock", storedMinBlock),
+			)
+
+			var backwardTokens []domain.TokenWithBlock
+			err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+				address, w.config.EthereumTokenSweepStartBlock, storedMinBlock-1).Get(ctx, &backwardTokens)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to fetch backward tokens: %w", err), zap.String("address", address))
+				return err
+			}
+
+			logger.Info("Retrieved backward sweep tokens",
+				zap.String("address", address),
+				zap.Int("tokenCount", len(backwardTokens)),
+			)
+
+			// Sort by block (descending - newest first) and process in chunks
+			sortTokensByBlock(backwardTokens, true)
+			chunks := chunkTokensByCount(backwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
+
+			// Store the actual scanned block range (not token block range)
+			scannedMinBlock := w.config.EthereumTokenSweepStartBlock
+			scannedMaxBlock := storedMinBlock - 1
+
+			for i, chunk := range chunks {
+				info := extractChunkInfo(chunk)
+
+				logger.Info("Processing backward chunk",
+					zap.Int("chunkIndex", i+1),
+					zap.Int("totalChunks", len(chunks)),
+					zap.Int("tokenCount", len(info.tokenCIDs)),
+					zap.Uint64("tokenMinBlock", info.minBlock),
+					zap.Uint64("tokenMaxBlock", info.maxBlock),
+				)
+
+				if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+					return err
+				}
+
+				// Update min_block after each successful chunk for resumability
+				// Progressively update min_block toward start
+				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+					address, chainID, info.minBlock, storedMaxBlock).Get(ctx, nil)
+				if err != nil {
+					logger.Error(fmt.Errorf("failed to update min block: %w", err), zap.String("address", address))
+					return err
+				}
+
+				logger.Info("Updated min block after chunk", zap.Uint64("currentMinBlock", info.minBlock))
+			}
+
+			// Final update to ensure we mark the complete scanned range
+			err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+				address, chainID, scannedMinBlock, storedMaxBlock).Get(ctx, nil)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to update final min block: %w", err), zap.String("address", address))
+				return err
+			}
+
+			storedMinBlock = scannedMinBlock
+			logger.Info("Completed backward sweep",
+				zap.Uint64("scannedMinBlock", scannedMinBlock),
+				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
+			)
+		}
+
+		// Part B: Sweep forward (latest updates) - SECOND
 		if latestBlock > storedMaxBlock {
-			logger.Info("Sweeping forward for new blocks (upward from stored max to latest)",
+			logger.Info("Sweeping forward for latest updates",
 				zap.Uint64("storedMaxBlock", storedMaxBlock),
 				zap.Uint64("latestBlock", latestBlock),
 			)
 
-			toBlock := storedMaxBlock
-
-			for toBlock < latestBlock {
-				fromBlock := toBlock + 1
-				toBlock = min(fromBlock+w.config.EthereumTokenSweepBlockChunkSize-1, latestBlock)
-
-				logger.Info("Processing forward sweep chunk",
-					zap.String("address", address),
-					zap.Uint64("fromBlock", fromBlock),
-					zap.Uint64("toBlock", toBlock),
-				)
-
-				err := w.processEthereumBlockChunk(ctx, address, fromBlock, toBlock)
-				if err != nil {
-					return err
-				}
-
-				// Update max_block after each successful chunk to avoid gaps
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress, address, chainID, storedMinBlock, toBlock).Get(ctx, nil)
-				if err != nil {
-					logger.Error(fmt.Errorf("failed to update max block: %w", err),
-						zap.String("address", address),
-						zap.Uint64("newMaxBlock", toBlock),
-					)
-					return err
-				}
-
-				logger.Info("Updated max block after forward sweep chunk",
-					zap.Uint64("newMaxBlock", toBlock),
-				)
+			var forwardTokens []domain.TokenWithBlock
+			err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+				address, storedMaxBlock+1, latestBlock).Get(ctx, &forwardTokens)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to fetch forward tokens: %w", err), zap.String("address", address))
+				return err
 			}
 
-			logger.Info("Completed forward sweep")
-
-			// Update storedMaxBlock for backward sweep
-			storedMaxBlock = latestBlock
-		}
-
-		// Part B: Sweep backward (historical data): from stored min_block down to start block (newest to oldest)
-		if storedMinBlock > w.config.EthereumTokenSweepStartBlock {
-			logger.Info("Sweeping backward for historical data (newest to oldest)",
-				zap.Uint64("storedMinBlock", storedMinBlock),
-				zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
+			logger.Info("Retrieved forward sweep tokens",
+				zap.String("address", address),
+				zap.Int("tokenCount", len(forwardTokens)),
 			)
 
-			fromBlock := storedMinBlock - 1
+			// Sort by block (ascending - oldest first) and process in chunks
+			sortTokensByBlock(forwardTokens, false)
+			chunks := chunkTokensByCount(forwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
 
-			for fromBlock > w.config.EthereumTokenSweepStartBlock {
-				toBlock := fromBlock
-				fromBlock = max(fromBlock-w.config.EthereumTokenSweepBlockChunkSize+1, w.config.EthereumTokenSweepStartBlock)
+			// Store the actual scanned block range (not token block range)
+			scannedMinBlock := storedMaxBlock + 1
+			scannedMaxBlock := latestBlock
 
-				logger.Info("Processing backward sweep chunk",
-					zap.String("address", address),
-					zap.Uint64("fromBlock", fromBlock),
-					zap.Uint64("toBlock", toBlock),
+			for i, chunk := range chunks {
+				info := extractChunkInfo(chunk)
+
+				logger.Info("Processing forward chunk",
+					zap.Int("chunkIndex", i+1),
+					zap.Int("totalChunks", len(chunks)),
+					zap.Int("tokenCount", len(info.tokenCIDs)),
+					zap.Uint64("tokenMinBlock", info.minBlock),
+					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				err := w.processEthereumBlockChunk(ctx, address, fromBlock, toBlock)
-				if err != nil {
+				if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
 					return err
 				}
 
-				// Update min_block after successful chunk
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress, address, chainID, fromBlock, storedMaxBlock).Get(ctx, nil)
+				// Update max_block after each successful chunk for resumability
+				// Progressively update max_block toward latest
+				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+					address, chainID, storedMinBlock, info.maxBlock).Get(ctx, nil)
 				if err != nil {
-					logger.Error(fmt.Errorf("failed to update min block: %w", err),
-						zap.String("address", address),
-						zap.Uint64("newMinBlock", fromBlock),
-					)
+					logger.Error(fmt.Errorf("failed to update max block: %w", err), zap.String("address", address))
 					return err
 				}
 
-				logger.Info("Updated min block after backward sweep chunk",
-					zap.Uint64("newMinBlock", fromBlock),
-				)
-
-				fromBlock--
+				logger.Info("Updated max block after chunk", zap.Uint64("currentMaxBlock", info.maxBlock))
 			}
 
-			logger.Info("Completed backward sweep")
+			// Final update to ensure we mark the complete scanned range
+			err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+				address, chainID, storedMinBlock, scannedMaxBlock).Get(ctx, nil)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to update final max block: %w", err), zap.String("address", address))
+				return err
+			}
+
+			logger.Info("Completed forward sweep",
+				zap.Uint64("scannedMinBlock", scannedMinBlock),
+				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
+			)
 		}
 	}
 
 	logger.Info("Ethereum token owner indexing completed", zap.String("address", address))
-
 	return nil
 }
 
-// processEthereumBlockChunk processes a single block range chunk for Ethereum
-func (w *workerCore) processEthereumBlockChunk(ctx workflow.Context, address string, fromBlock, toBlock uint64) error {
-	logger.Info("Processing Ethereum block range chunk",
-		zap.String("address", address),
-		zap.Uint64("fromBlock", fromBlock),
-		zap.Uint64("toBlock", toBlock),
-	)
-
-	// Query token CIDs for this block range
-	var tokenCIDs []domain.TokenCID
-	err := workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, address, fromBlock, toBlock).Get(ctx, &tokenCIDs)
-	if err != nil {
-		logger.Error(fmt.Errorf("failed to get Ethereum token CIDs for block range: %w", err),
-			zap.String("address", address),
-			zap.Uint64("fromBlock", fromBlock),
-			zap.Uint64("toBlock", toBlock),
-		)
-		return err
+// indexTokenChunk indexes a chunk of tokens using the IndexTokens workflow
+func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+	if len(tokenCIDs) == 0 {
+		return nil
 	}
 
-	logger.Info("Retrieved token CIDs for block range",
-		zap.String("address", address),
-		zap.Uint64("fromBlock", fromBlock),
-		zap.Uint64("toBlock", toBlock),
-		zap.Int("tokenCount", len(tokenCIDs)),
-	)
+	indexTokensWorkflowOptions := workflow.ChildWorkflowOptions{
+		WorkflowExecutionTimeout: 15 * time.Minute,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+	}
+	indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
 
-	// If tokens found, trigger child workflow to index them
-	if len(tokenCIDs) > 0 {
-		indexTokensWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowExecutionTimeout: 15 * time.Minute,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		}
-		indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
-
-		// Execute and wait for this chunk to complete before moving to next chunk
-		err = workflow.ExecuteChildWorkflow(indexTokensCtx, w.IndexTokens, tokenCIDs).Get(ctx, nil)
-		if err != nil {
-			logger.Error(fmt.Errorf("failed to trigger index tokens workflow: %w", err),
-				zap.String("address", address),
-				zap.Uint64("fromBlock", fromBlock),
-				zap.Uint64("toBlock", toBlock),
-				zap.Int("tokenCount", len(tokenCIDs)),
-			)
-			return err
-		}
-
-		logger.Info("Completed indexing tokens for chunk",
-			zap.String("address", address),
-			zap.Uint64("fromBlock", fromBlock),
-			zap.Uint64("toBlock", toBlock),
-			zap.Int("tokenCount", len(tokenCIDs)),
-		)
+	err := workflow.ExecuteChildWorkflow(indexTokensCtx, w.IndexTokens, tokenCIDs).Get(ctx, nil)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to index tokens: %w", err), zap.Int("tokenCount", len(tokenCIDs)))
+		return err
 	}
 
 	return nil

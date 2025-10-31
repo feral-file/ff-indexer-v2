@@ -59,6 +59,13 @@ const (
 // TokenCID represents the canonical token identifier in format: chain:standard:contract:tokenNumber (e.g., "eip155:1:erc721:0xabc...:1234")
 type TokenCID string
 
+// TokenWithBlock represents a token identifier with its associated block number
+// This is used for tracking when tokens were involved in transfers during block range sweeps
+type TokenWithBlock struct {
+	TokenCID    TokenCID `json:"token_cid"`
+	BlockNumber uint64   `json:"block_number"`
+}
+
 // BlockchainEvent represents a normalized blockchain event
 // This is the standard format published to NATS
 type BlockchainEvent struct {

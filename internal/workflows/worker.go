@@ -66,12 +66,8 @@ type WorkerCoreConfig struct {
 	EthereumChainID domain.Chain
 	// EthereumTokenSweepStartBlock is the start block for the Ethereum token sweep
 	EthereumTokenSweepStartBlock uint64
-	// EthereumTokenSweepBlockChunkSize is the size of the chunk of blocks to sweep for owners
-	EthereumTokenSweepBlockChunkSize uint64
 	// TezosTokenSweepStartBlock is the start block for the Tezos token sweep
 	TezosTokenSweepStartBlock uint64
-	// TezosTokenSweepBlockChunkSize is the size of the chunk of blocks to sweep for owners
-	TezosTokenSweepBlockChunkSize uint64
 	// MediaTaskQueue is the task queue for the media worker
 	MediaTaskQueue string
 }

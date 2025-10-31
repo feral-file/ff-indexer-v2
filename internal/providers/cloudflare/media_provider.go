@@ -17,7 +17,10 @@ import (
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
 )
 
-const CLOUDFLARE_PROVIDER_NAME = "cloudflare"
+const (
+	CLOUDFLARE_PROVIDER_NAME  = "cloudflare"
+	CLOUDFLARE_IMAGE_ENDPOINT = "https://imagedelivery.net"
+)
 
 // Config holds configuration for Cloudflare Images and Stream
 type Config struct {
@@ -58,6 +61,10 @@ func (p *mediaProvider) UploadVideo(ctx context.Context, sourceURL string, metad
 
 // uploadImage uploads an image to Cloudflare Images from a URL
 func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+	if !strings.HasPrefix(sourceURL, CLOUDFLARE_IMAGE_ENDPOINT) {
+		return nil, fmt.Errorf("unsupported media URL: %s", sourceURL)
+	}
+
 	logger.Info("Uploading to Cloudflare Images", zap.String("url", sourceURL), zap.Any("metadata", metadata))
 
 	// Upload image via URL

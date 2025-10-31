@@ -813,7 +813,10 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
-			if err := tx.Create(&balances).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "token_id"}, {Name: "owner_address"}},
+				DoUpdates: clause.AssignmentColumns([]string{"quantity"}),
+			}).Create(&balances).Error; err != nil {
 				return fmt.Errorf("failed to create balances: %w", err)
 			}
 		}
@@ -839,7 +842,10 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
-			if err := tx.Create(&provenanceEvents).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+				DoNothing: true,
+			}).Create(&provenanceEvents).Error; err != nil {
 				return fmt.Errorf("failed to create provenance events: %w", err)
 			}
 
@@ -855,7 +861,10 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
-			if err := tx.Create(&changeJournals).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "token_id"}, {Name: "subject_type"}, {Name: "subject_id"}},
+				DoNothing: true,
+			}).Create(&changeJournals).Error; err != nil {
 				return fmt.Errorf("failed to create changes_journal entries: %w", err)
 			}
 		}

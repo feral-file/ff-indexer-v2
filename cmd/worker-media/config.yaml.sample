@@ -33,3 +33,6 @@ cloudflare:
   account_id: YOUR_CLOUDFLARE_ACCOUNT_ID  # Used for both Images and Stream
   api_token: YOUR_CLOUDFLARE_API_TOKEN
 
+max_static_image_size: 10485760  # 10MB in bytes
+max_animated_image_size: 52428800 # 50MB in bytes
+max_video_size: 314572800 # 300MB in bytes

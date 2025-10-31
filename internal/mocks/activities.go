@@ -126,10 +126,10 @@ func (mr *MockExecutorMockRecorder) FetchTokenMetadata(ctx, tokenCID interface{}
 }
 
 // GetEthereumTokenCIDsByOwnerWithinBlockRange mocks base method.
-func (m *MockExecutor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
+func (m *MockExecutor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetEthereumTokenCIDsByOwnerWithinBlockRange", ctx, address, fromBlock, toBlock)
-	ret0, _ := ret[0].([]domain.TokenCID)
+	ret0, _ := ret[0].([]domain.TokenWithBlock)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -186,10 +186,10 @@ func (mr *MockExecutorMockRecorder) GetLatestTezosBlock(ctx interface{}) *gomock
 }
 
 // GetTezosTokenCIDsByAccountWithinBlockRange mocks base method.
-func (m *MockExecutor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
+func (m *MockExecutor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTezosTokenCIDsByAccountWithinBlockRange", ctx, address, fromBlock, toBlock)
-	ret0, _ := ret[0].([]domain.TokenCID)
+	ret0, _ := ret[0].([]domain.TokenWithBlock)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

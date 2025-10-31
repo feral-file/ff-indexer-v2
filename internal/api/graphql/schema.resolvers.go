@@ -123,7 +123,12 @@ func (r *mutationResolver) TriggerIndexing(ctx context.Context, tokenCids []stri
 		}
 	}
 
-	return r.executor.TriggerTokenIndexing(ctx, tokenCIDs, addresses)
+	// Trigger indexing
+	wr, err := r.executor.TriggerTokenIndexing(ctx, tokenCIDs, addresses)
+	if err != nil {
+		return nil, err
+	}
+	return wr, nil
 }
 
 // Offset is the resolver for the offset field.

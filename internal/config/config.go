@@ -110,18 +110,16 @@ type EventBridgeConfig struct {
 
 // WorkerCoreConfig holds configuration for worker-core
 type WorkerCoreConfig struct {
-	BaseConfig                       `mapstructure:",squash"`
-	Database                         DatabaseConfig `mapstructure:"database"`
-	Temporal                         TemporalConfig `mapstructure:"temporal"`
-	Ethereum                         EthereumConfig `mapstructure:"ethereum"`
-	Tezos                            TezosConfig    `mapstructure:"tezos"`
-	Vendors                          VendorsConfig  `mapstructure:"vendors"`
-	URI                              URIConfig      `mapstructure:"uri"`
-	EthereumTokenSweepStartBlock     uint64         `mapstructure:"ethereum_token_sweep_start_block"`
-	EthereumTokenSweepBlockChunkSize uint64         `mapstructure:"ethereum_token_sweep_block_chunk_size"`
-	TezosTokenSweepStartBlock        uint64         `mapstructure:"tezos_token_sweep_start_block"`
-	TezosTokenSweepBlockChunkSize    uint64         `mapstructure:"tezos_token_sweep_block_chunk_size"`
-	PublisherRegistryPath            string         `mapstructure:"publisher_registry_path"`
+	BaseConfig                   `mapstructure:",squash"`
+	Database                     DatabaseConfig `mapstructure:"database"`
+	Temporal                     TemporalConfig `mapstructure:"temporal"`
+	Ethereum                     EthereumConfig `mapstructure:"ethereum"`
+	Tezos                        TezosConfig    `mapstructure:"tezos"`
+	Vendors                      VendorsConfig  `mapstructure:"vendors"`
+	URI                          URIConfig      `mapstructure:"uri"`
+	EthereumTokenSweepStartBlock uint64         `mapstructure:"ethereum_token_sweep_start_block"`
+	TezosTokenSweepStartBlock    uint64         `mapstructure:"tezos_token_sweep_start_block"`
+	PublisherRegistryPath        string         `mapstructure:"publisher_registry_path"`
 }
 
 // APIConfig holds configuration for API server
@@ -141,13 +139,14 @@ type CloudflareConfig struct {
 
 // WorkerMediaConfig holds configuration for worker-media
 type WorkerMediaConfig struct {
-	BaseConfig   `mapstructure:",squash"`
-	Database     DatabaseConfig   `mapstructure:"database"`
-	Temporal     TemporalConfig   `mapstructure:"temporal"`
-	URI          URIConfig        `mapstructure:"uri"`
-	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
-	MaxImageSize int64            `mapstructure:"max_image_size"`
-	MaxVideoSize int64            `mapstructure:"max_video_size"`
+	BaseConfig           `mapstructure:",squash"`
+	Database             DatabaseConfig   `mapstructure:"database"`
+	Temporal             TemporalConfig   `mapstructure:"temporal"`
+	URI                  URIConfig        `mapstructure:"uri"`
+	Cloudflare           CloudflareConfig `mapstructure:"cloudflare"`
+	MaxStaticImageSize   int64            `mapstructure:"max_static_image_size"`
+	MaxAnimatedImageSize int64            `mapstructure:"max_animated_image_size"`
+	MaxVideoSize         int64            `mapstructure:"max_video_size"`
 }
 
 // LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter
@@ -299,8 +298,9 @@ func LoadWorkerMediaConfig(configPath string) (*WorkerMediaConfig, error) {
 	v.SetDefault("temporal.worker_activities_per_second", 10)
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
-	v.SetDefault("max_image_size", 50*1024*1024)  // 50MB
-	v.SetDefault("max_video_size", 512*1024*1024) // 512MB
+	v.SetDefault("max_static_image_size", 10*1024*1024)   // 10MB
+	v.SetDefault("max_animated_image_size", 50*1024*1024) // 50MB
+	v.SetDefault("max_video_size", 300*1024*1024)         // 300MB
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)

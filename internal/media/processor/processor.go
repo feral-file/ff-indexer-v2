@@ -38,23 +38,25 @@ type Processor interface {
 
 // processor is the implementation of Processor
 type processor struct {
-	httpClient   adapter.HTTPClient
-	uriResolver  uri.Resolver
-	provider     mediaprovider.Provider
-	store        store.Store
-	maxImageSize int64
-	maxVideoSize int64
+	httpClient           adapter.HTTPClient
+	uriResolver          uri.Resolver
+	provider             mediaprovider.Provider
+	store                store.Store
+	maxStaticImageSize   int64
+	maxAnimatedImageSize int64
+	maxVideoSize         int64
 }
 
 // NewProcessor creates a new Processor instance
-func NewProcessor(httpClient adapter.HTTPClient, uriResolver uri.Resolver, provider mediaprovider.Provider, st store.Store, maxImageSize int64, maxVideoSize int64) Processor {
+func NewProcessor(httpClient adapter.HTTPClient, uriResolver uri.Resolver, provider mediaprovider.Provider, st store.Store, maxStaticImageSize int64, maxAnimatedImageSize int64, maxVideoSize int64) Processor {
 	return &processor{
-		httpClient:   httpClient,
-		uriResolver:  uriResolver,
-		provider:     provider,
-		store:        st,
-		maxImageSize: maxImageSize,
-		maxVideoSize: maxVideoSize,
+		httpClient:           httpClient,
+		uriResolver:          uriResolver,
+		provider:             provider,
+		store:                st,
+		maxStaticImageSize:   maxStaticImageSize,
+		maxAnimatedImageSize: maxAnimatedImageSize,
+		maxVideoSize:         maxVideoSize,
 	}
 }
 
@@ -137,6 +139,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	// Determine if this is a video or image
 	isVideo := strings.HasPrefix(contentType, "video/")
 	isImage := strings.HasPrefix(contentType, "image/")
+	isAnimatedImage := strings.HasPrefix(contentType, "image/gif") || strings.HasPrefix(contentType, "image/webp")
 
 	if !isVideo && !isImage {
 		return domain.ErrUnsupportedMediaFile
@@ -155,11 +158,14 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 
 	// Check if the file size is within the allowed limits (only if we have content length from HEAD)
 	if contentLength > 0 {
+		if isAnimatedImage && contentLength > p.maxAnimatedImageSize {
+			return fmt.Errorf("animated image file size exceeds the allowed limit: %d > %d", contentLength, p.maxAnimatedImageSize)
+		}
 		if isVideo && contentLength > p.maxVideoSize {
 			return fmt.Errorf("video file size exceeds the allowed limit: %d > %d", contentLength, p.maxVideoSize)
 		}
-		if isImage && contentLength > p.maxImageSize {
-			return fmt.Errorf("image file size exceeds the allowed limit: %d > %d", contentLength, p.maxImageSize)
+		if isImage && contentLength > p.maxStaticImageSize {
+			return fmt.Errorf("image file size exceeds the allowed limit: %d > %d", contentLength, p.maxStaticImageSize)
 		}
 	}
 

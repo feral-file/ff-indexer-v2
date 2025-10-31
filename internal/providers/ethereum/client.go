@@ -51,9 +51,9 @@ type EthereumClient interface {
 	// ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events
 	ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error)
 
-	// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs for an owner within a block range
+	// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs with block numbers for an owner within a block range
 	// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
-	GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenCID, error)
+	GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error)
 
 	// GetContractDeployer retrieves the deployer address for a contract
 	// minBlock specifies the earliest block to search (0 = search from genesis)
@@ -74,81 +74,8 @@ type ethereumClient struct {
 	clock   adapter.Clock
 }
 
-// ERC1155 TransferBatch event ABI
-// TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
-const transferBatchEventABI = `[{
-	"anonymous": false,
-	"inputs": [
-		{"indexed": true, "name": "operator", "type": "address"},
-		{"indexed": true, "name": "from", "type": "address"},
-		{"indexed": true, "name": "to", "type": "address"},
-		{"indexed": false, "name": "ids", "type": "uint256[]"},
-		{"indexed": false, "name": "values", "type": "uint256[]"}
-	],
-	"name": "TransferBatch",
-	"type": "event"
-}]`
-
 func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock) EthereumClient {
 	return &ethereumClient{chainID: chainID, client: client, clock: clock}
-}
-
-// TransferBatchEvent represents the parsed data from an ERC1155 TransferBatch event
-// TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
-type TransferBatchEvent struct {
-	Operator common.Address // From topics[1]
-	From     common.Address // From topics[2]
-	To       common.Address // From topics[3]
-	Ids      []*big.Int     // From data
-	Values   []*big.Int     // From data
-}
-
-// parseTransferBatchEvent parses a TransferBatch event log and returns the complete event data
-func parseTransferBatchEvent(vLog types.Log) (*TransferBatchEvent, error) {
-	// Validate topics length
-	// topics[0] = event signature, topics[1] = operator, topics[2] = from, topics[3] = to
-	if len(vLog.Topics) != 4 {
-		return nil, fmt.Errorf("invalid TransferBatch event: expected 4 topics, got %d", len(vLog.Topics))
-	}
-
-	// Parse the ABI
-	contractABI, err := abi.JSON(strings.NewReader(transferBatchEventABI))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse TransferBatch ABI: %w", err)
-	}
-
-	// Create a struct to hold the unpacked non-indexed data (ids and values)
-	var eventData struct {
-		Ids    []*big.Int
-		Values []*big.Int
-	}
-
-	// Unpack the event data (non-indexed fields: ids and values)
-	err = contractABI.UnpackIntoInterface(&eventData, "TransferBatch", vLog.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unpack TransferBatch event data: %w", err)
-	}
-
-	// Extract indexed fields from topics
-	event := &TransferBatchEvent{
-		Operator: common.BytesToAddress(vLog.Topics[1].Bytes()),
-		From:     common.BytesToAddress(vLog.Topics[2].Bytes()),
-		To:       common.BytesToAddress(vLog.Topics[3].Bytes()),
-		Ids:      eventData.Ids,
-		Values:   eventData.Values,
-	}
-
-	return event, nil
-}
-
-// containsTokenID checks if a token ID exists in the TransferBatch event
-func (e *TransferBatchEvent) containsTokenID(tokenID *big.Int) bool {
-	for _, id := range e.Ids {
-		if id.Cmp(tokenID) == 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // SubscribeFilterLogs subscribes to filter logs
@@ -159,9 +86,14 @@ func (c *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum
 // filterLogsWithPagination is an internal method that handles pagination for FilterLogs
 // to work around Infura's 10k log limitation
 func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
-	// Create a context with timeout (1 minute)
-	timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
+	// Use the parent context directly if it already has a deadline (e.g., from ERC1155Balances)
+	// Otherwise, create a context with timeout (1 minute)
+	timeoutCtx := ctx
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		timeoutCtx, cancel = context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+	}
 
 	// If blockhash is specified, use it directly (no pagination needed)
 	if query.BlockHash != nil {
@@ -193,8 +125,22 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 	stepSize := uint64(1000000) // 1M blocks
 
 	for currentFrom.Cmp(toBlock) < 0 {
+		// Check if context is canceled or deadline exceeded before processing next range
+		select {
+		case <-timeoutCtx.Done():
+			// Context deadline exceeded or canceled - return partial logs collected so far
+			logger.Warn("Context deadline exceeded during log pagination, returning partial logs",
+				zap.Int("partialLogsCount", len(allLogs)),
+				zap.Uint64("processedUpToBlock", currentFrom.Uint64()-1),
+				zap.Uint64("targetToBlock", toBlock.Uint64()),
+			)
+			return allLogs, timeoutCtx.Err()
+		default:
+			// Continue processing
+		}
+
 		// Calculate current range
-		currentTo := new(big.Int).Add(currentFrom, big.NewInt(int64(stepSize)))
+		currentTo := new(big.Int).Add(currentFrom, new(big.Int).SetUint64(stepSize))
 		if currentTo.Cmp(toBlock) > 0 {
 			currentTo.Set(toBlock)
 		}
@@ -207,6 +153,15 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 		// Try to get logs for current range with retry logic
 		logs, err := c.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize)
 		if err != nil {
+			// If timeout/canceled, return partial logs instead of error
+			if timeoutCtx.Err() != nil {
+				logger.Warn("Timeout during getLogsWithRetry, returning partial logs",
+					zap.Int("partialLogsCount", len(allLogs)),
+					zap.Uint64("processedUpToBlock", currentFrom.Uint64()-1),
+					zap.Uint64("targetToBlock", toBlock.Uint64()),
+				)
+				return allLogs, timeoutCtx.Err()
+			}
 			return nil, fmt.Errorf("failed to get logs for range %d-%d: %w", currentFrom.Uint64(), currentTo.Uint64(), err)
 		}
 
@@ -229,6 +184,15 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 
 	// Process the entire range in chunks
 	for currentFrom.Cmp(query.ToBlock) <= 0 {
+		// Check if context is canceled or deadline exceeded
+		select {
+		case <-ctx.Done():
+			// Return partial logs on timeout
+			return allLogs, ctx.Err()
+		default:
+			// Continue processing
+		}
+
 		// Calculate current range based on current step size
 		currentTo := new(big.Int).Add(currentFrom, new(big.Int).SetUint64(currentStepSize-1))
 		if currentTo.Cmp(query.ToBlock) > 0 {
@@ -250,6 +214,11 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 			continue
 		}
 
+		// Check if error is due to context timeout/cancellation
+		if ctx.Err() != nil {
+			return allLogs, ctx.Err()
+		}
+
 		// 3. If other errors than rate limited, return error
 		if !isTooManyResultsError(err) {
 			return nil, err
@@ -257,11 +226,20 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 
 		// 4. If rate limited, divide the step by 2 and try again
 		currentStepSize = currentStepSize / 2
+		if currentStepSize == 0 {
+			// If step size is 0, return the logs we have so far
+			logger.Warn("Step size is 0, returning partial logs",
+				zap.Int("partialLogsCount", len(allLogs)),
+				zap.Uint64("processedUpToBlock", currentFrom.Uint64()-1),
+				zap.Uint64("targetToBlock", query.ToBlock.Uint64()),
+			)
+			return allLogs, nil
+		}
 
 		// Sleep for 1 second to avoid overwhelming the API
 		c.clock.Sleep(time.Second * 1)
 
-		logger.Warn("Too many results, reducing step size",
+		logger.Debug("Too many results, reducing step size",
 			zap.Uint64("oldStepSize", currentStepSize*2),
 			zap.Uint64("newStepSize", currentStepSize),
 			zap.Uint64("fromBlock", currentFrom.Uint64()),
@@ -513,7 +491,18 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 }
 
 // ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events from oldest to newest
+// It scans backward from the latest block with a maximum threshold of 5M blocks
+// If the operation times out (30 seconds), it returns partial balances gracefully
+//
+// FIXME: This approach has limitations for high-activity ERC1155 contracts:
+// 1. Scanning only recent 5M blocks may miss historical transfers, resulting in incomplete balances
+// 2. Fetching all contract events and filtering client-side is inefficient (can't filter by token ID at RPC level)
+// 3. For contracts with millions of events, this can still hit Infura's 10k log limitation repeatedly
 func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error) {
+	// Create a timeout context (30 seconds) to prevent indefinite blocking
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	// Parse token number to big.Int
 	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
 	if !ok {
@@ -522,11 +511,35 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 
 	contractAddr := common.HexToAddress(contractAddress)
 
+	// Get the latest block number
+	latestHeader, err := c.client.HeaderByNumber(timeoutCtx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest block header: %w", err)
+	}
+	latestBlock := latestHeader.Number.Uint64()
+
+	// Calculate fromBlock: scan backward from latest block with max 5M blocks threshold
+	const maxBlockThreshold = uint64(5_000_000)
+	var fromBlock uint64
+	if latestBlock > maxBlockThreshold {
+		fromBlock = latestBlock - maxBlockThreshold
+	} else {
+		fromBlock = 0
+	}
+
+	logger.Info("Fetching ERC1155 balances",
+		zap.String("contract", contractAddress),
+		zap.String("tokenNumber", tokenNumber),
+		zap.Uint64("fromBlock", fromBlock),
+		zap.Uint64("toBlock", latestBlock),
+		zap.Uint64("blockRange", latestBlock-fromBlock),
+	)
+
 	// For ERC1155, token ID is in data, not topics, so we fetch all TransferSingle events for this contract
 	// and filter by token ID later
 	query := ethereum.FilterQuery{
-		FromBlock: big.NewInt(0),
-		ToBlock:   nil,
+		FromBlock: new(big.Int).SetUint64(fromBlock),
+		ToBlock:   new(big.Int).SetUint64(latestBlock),
 		Addresses: []common.Address{contractAddr},
 		Topics: [][]common.Hash{
 			{
@@ -537,9 +550,22 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 	}
 
 	// Fetch logs with pagination to handle Infura's 10k limitation
-	logs, err := c.filterLogsWithPagination(ctx, query)
+	// If timeout occurs, we'll get partial logs
+	logs, err := c.filterLogsWithPagination(timeoutCtx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to filter logs: %w", err)
+		// If context deadline exceeded, return partial balances with warning
+		if timeoutCtx.Err() == context.DeadlineExceeded {
+			logger.Warn("ERC1155 balance fetch timed out, returning partial balances",
+				zap.String("contract", contractAddress),
+				zap.String("tokenNumber", tokenNumber),
+				zap.Int("partialLogsCount", len(logs)),
+				zap.Uint64("fromBlock", fromBlock),
+				zap.Uint64("toBlock", latestBlock),
+			)
+			// Continue with partial logs - better than nothing
+		} else {
+			return nil, fmt.Errorf("failed to filter logs: %w", err)
+		}
 	}
 
 	// Build balances map by replaying transfer logs
@@ -597,9 +623,10 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 	return result, nil
 }
 
-// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs for an owner within a block range
+// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs with block numbers for an owner within a block range
 // It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
-func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
+// Returns tokens that the owner possesses at the end of the block range with their last interaction block
+func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	owner := common.HexToAddress(ownerAddress)
 	ownerHash := common.BytesToHash(owner.Bytes())
 
@@ -672,8 +699,17 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		allLogs = append(allLogs, result.logs...)
 	}
 
-	// Use a map to collect unique token CIDs
-	tokenCIDMap := make(map[domain.TokenCID]bool)
+	// Track balance changes per token to determine ownership at the end of the block range
+	// For ERC721: map stores the last transfer log (to determine final owner)
+	// For ERC1155: map stores net balance change (incoming - outgoing)
+	type tokenBalance struct {
+		standard    domain.ChainStandard
+		lastLog     *types.Log // For ERC721: last transfer log
+		netBalance  *big.Int   // For ERC1155: net balance change
+		blockNumber uint64     // Block number of last update
+		logIndex    uint       // Log index of last update
+	}
+	balanceMap := make(map[domain.TokenCID]*tokenBalance)
 
 	// Process all logs - distinguish between ERC721 and ERC1155 by event signature
 	for _, vLog := range allLogs {
@@ -689,13 +725,30 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 				continue
 			}
 
+			fromAddr := common.BytesToAddress(vLog.Topics[1].Bytes())
+			toAddr := common.BytesToAddress(vLog.Topics[2].Bytes())
+
+			// Skip if neither from nor to is the owner
+			if fromAddr != owner && toAddr != owner {
+				continue
+			}
+
 			tokenID := new(big.Int).SetBytes(vLog.Topics[3].Bytes())
-			tokenCID := domain.TokenCID(fmt.Sprintf("%s:%s:%s:%s",
-				c.chainID,
-				domain.StandardERC721,
-				vLog.Address.Hex(),
-				tokenID.String()))
-			tokenCIDMap[tokenCID] = true
+			tokenCID := domain.NewTokenCID(c.chainID, domain.StandardERC721, vLog.Address.Hex(), tokenID.String())
+
+			// For ERC721, track the last transfer log (chronologically)
+			existing := balanceMap[tokenCID]
+			if existing == nil ||
+				vLog.BlockNumber > existing.blockNumber ||
+				(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex) {
+				logCopy := vLog
+				balanceMap[tokenCID] = &tokenBalance{
+					standard:    domain.StandardERC721,
+					lastLog:     &logCopy,
+					blockNumber: vLog.BlockNumber,
+					logIndex:    vLog.Index,
+				}
+			}
 
 		case transferSingleEventSignature:
 			// ERC1155 TransferSingle (4 topics: signature, operator, from, to; data contains tokenId and value)
@@ -703,24 +756,76 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 				continue
 			}
 
-			// Parse token ID from data (first 32 bytes)
+			fromAddr := common.BytesToAddress(vLog.Topics[2].Bytes())
+			toAddr := common.BytesToAddress(vLog.Topics[3].Bytes())
+
+			// Skip if neither from nor to is the owner
+			if fromAddr != owner && toAddr != owner {
+				continue
+			}
+
+			// Parse token ID and amount from data
 			tokenID := new(big.Int).SetBytes(vLog.Data[0:32])
-			tokenCID := domain.TokenCID(fmt.Sprintf("%s:%s:%s:%s",
-				c.chainID,
-				domain.StandardERC1155,
-				vLog.Address.Hex(),
-				tokenID.String()))
-			tokenCIDMap[tokenCID] = true
+			amount := new(big.Int).SetBytes(vLog.Data[32:64])
+
+			tokenCID := domain.NewTokenCID(c.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
+
+			// For ERC1155, track net balance change
+			existing := balanceMap[tokenCID]
+			if existing == nil {
+				existing = &tokenBalance{
+					standard:    domain.StandardERC1155,
+					netBalance:  big.NewInt(0),
+					blockNumber: vLog.BlockNumber,
+					logIndex:    vLog.Index,
+				}
+				balanceMap[tokenCID] = existing
+			}
+
+			// Calculate balance change: +amount if receiving, -amount if sending
+			if toAddr == owner {
+				existing.netBalance.Add(existing.netBalance, amount)
+			}
+			if fromAddr == owner {
+				existing.netBalance.Sub(existing.netBalance, amount)
+			}
+
+			// Update block number to track latest interaction
+			if vLog.BlockNumber > existing.blockNumber ||
+				(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex) {
+				existing.blockNumber = vLog.BlockNumber
+				existing.logIndex = vLog.Index
+			}
 		}
 	}
 
-	// Convert map to slice
-	tokenCIDs := make([]domain.TokenCID, 0, len(tokenCIDMap))
-	for tokenCID := range tokenCIDMap {
-		tokenCIDs = append(tokenCIDs, tokenCID)
+	// Filter tokens based on final ownership status and include block numbers
+	tokensWithBlocks := make([]domain.TokenWithBlock, 0, len(balanceMap))
+	for tokenCID, balance := range balanceMap {
+		switch balance.standard {
+		case domain.StandardERC721:
+			// For ERC721: owner must be the 'to' address in the last transfer
+			if balance.lastLog != nil && len(balance.lastLog.Topics) >= 3 {
+				toAddr := common.BytesToAddress(balance.lastLog.Topics[2].Bytes())
+				if toAddr == owner {
+					tokensWithBlocks = append(tokensWithBlocks, domain.TokenWithBlock{
+						TokenCID:    tokenCID,
+						BlockNumber: balance.blockNumber,
+					})
+				}
+			}
+		case domain.StandardERC1155:
+			// For ERC1155: net balance must be positive
+			if balance.netBalance != nil && balance.netBalance.Cmp(big.NewInt(0)) > 0 {
+				tokensWithBlocks = append(tokensWithBlocks, domain.TokenWithBlock{
+					TokenCID:    tokenCID,
+					BlockNumber: balance.blockNumber,
+				})
+			}
+		}
 	}
 
-	return tokenCIDs, nil
+	return tokensWithBlocks, nil
 }
 
 // parseLog parses an Ethereum log into a standardized blockchain event
@@ -928,7 +1033,7 @@ func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 
 // TokenExists checks if a token exists on the blockchain
 // For ERC721: uses ownerOf and catches execution revert errors
-// For ERC1155: checks mint and burn events in logs
+// For ERC1155: checks recent transfers and balanceOf for multiple recipients
 func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
 	switch standard {
 	case domain.StandardERC721:
@@ -946,7 +1051,28 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 		return true, nil
 
 	case domain.StandardERC1155:
-		// For ERC1155, check if token was minted and not burned by examining event logs
+		// For ERC1155, find recent transfers in the last 10M blocks and check balanceOf for multiple recipients
+		// This avoids scanning entire history which can hit Infura's 10k log limitation
+		//
+		// Strategy: Scan backward up to 10M blocks to find recent non-burn transfers,
+		// then call balanceOf on multiple recent recipients to handle partial burns and transfers.
+		// If no recent transfers found, assume token doesn't exist.
+		//
+		// FIXME: This approach has limitations:
+		// 1. May return false negatives for very old/inactive tokens (>10M blocks / ~3-4 years)
+		// 2. Only checks TransferSingle events (not TransferBatch) for performance
+		// 3. Limited to checking 5 most recent recipients (trade-off between accuracy and RPC calls)
+		// 4. Race condition: token could be transferred between our scan and balanceOf call (unlikely but possible)
+		//
+		// TODO: Potential improvements:
+		// - Implement on-demand re-indexing for historical tokens if they appear in provenance events
+		// - Support TransferBatch events for more complete coverage
+		// - Use indexed subgraph or archive node for better ERC1155 querying
+		// - Cache existence checks per token to avoid repeated scans
+
+		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
 		tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
 		if !ok {
 			return false, fmt.Errorf("invalid token number: %s", tokenNumber)
@@ -954,111 +1080,164 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 
 		contractAddr := common.HexToAddress(contractAddress)
 		zeroAddress := common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS)
-		zeroHash := common.BytesToHash(zeroAddress.Bytes())
 
-		// Check for mint events (from = 0x0) in both TransferSingle and TransferBatch events
-		mintQuery := ethereum.FilterQuery{
-			FromBlock: big.NewInt(0),
+		// Get the latest block number
+		latestHeader, err := c.client.HeaderByNumber(timeoutCtx, nil)
+		if err != nil {
+			return false, fmt.Errorf("failed to get latest block header: %w", err)
+		}
+		latestBlock := latestHeader.Number.Uint64()
+
+		// Scan backward up to 10M blocks (~3-4 years on Ethereum)
+		const maxBlockThreshold = uint64(10_000_000)
+		var fromBlock uint64
+		if latestBlock > maxBlockThreshold {
+			fromBlock = latestBlock - maxBlockThreshold
+		}
+
+		logger.Info("Checking ERC1155 token existence via recent transfers",
+			zap.String("contract", contractAddress),
+			zap.String("tokenNumber", tokenNumber),
+			zap.Uint64("fromBlock", fromBlock),
+			zap.Uint64("toBlock", latestBlock),
+		)
+
+		// Query all TransferSingle events for this contract in the block range
+		query := ethereum.FilterQuery{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(latestBlock),
 			Addresses: []common.Address{contractAddr},
 			Topics: [][]common.Hash{
-				{transferSingleEventSignature, transferBatchEventSignature}, // Both transfer event types
-				nil,        // any operator
-				{zeroHash}, // from = 0x0 (mint)
+				{transferSingleEventSignature}, // TransferSingle events only (most common)
 			},
 		}
 
-		mintLogs, err := c.filterLogsWithPagination(ctx, mintQuery)
-		if err != nil {
-			return false, fmt.Errorf("failed to fetch mint logs: %w", err)
+		logs, err := c.filterLogsWithPagination(timeoutCtx, query)
+		if err != nil && timeoutCtx.Err() != context.DeadlineExceeded {
+			return false, fmt.Errorf("failed to fetch transfer logs: %w", err)
 		}
 
-		// Check if token ID was minted
-		minted := false
-		for _, vLog := range mintLogs {
-			if vLog.Topics[0] == transferSingleEventSignature {
-				// TransferSingle: topics[0]=signature, topics[1]=operator, topics[2]=from, topics[3]=to
-				// Data contains: id (32 bytes) and value (32 bytes)
-				if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
-					continue
-				}
+		// Collect recent unique recipients for this token ID (in reverse chronological order)
+		// We check multiple recipients to handle cases where:
+		// - Last recipient transferred tokens away (ERC1155 allows multiple holders)
+		// - Last recipient partially burned their balance (but others still hold tokens)
+		const maxRecipientsToCheck = 5
+		type recipientInfo struct {
+			address     common.Address
+			blockNumber uint64
+			logIndex    uint
+		}
+		var recentRecipients []recipientInfo
+		seenRecipients := make(map[common.Address]bool)
 
-				// Extract token ID from data (first 32 bytes)
-				logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
-				if logTokenID.Cmp(tokenID) == 0 {
-					minted = true
-					break
-				}
-			} else if vLog.Topics[0] == transferBatchEventSignature {
-				// TransferBatch: Use ABI parsing for cleaner code
-				batchEvent, err := parseTransferBatchEvent(vLog)
-				if err != nil {
-					logger.Warn("Failed to parse TransferBatch mint event",
-						zap.String("contract", contractAddress),
-						zap.Error(err))
-					continue
-				}
-				if batchEvent.containsTokenID(tokenID) {
-					minted = true
-					break
-				}
+		for _, vLog := range logs {
+			// TransferSingle: topics[0]=signature, topics[1]=operator, topics[2]=from, topics[3]=to
+			// Data contains: id (32 bytes) and value (32 bytes)
+			if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+				continue
+			}
+
+			// Extract token ID from data (first 32 bytes)
+			logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
+			if logTokenID.Cmp(tokenID) != 0 {
+				continue // Not the token we're looking for
+			}
+
+			// Extract recipient (to address)
+			toAddr := common.BytesToAddress(vLog.Topics[3].Bytes())
+
+			// Skip burn events (to = 0x0)
+			if toAddr == zeroAddress {
+				continue
+			}
+
+			// Add unique recipients (avoid checking same address multiple times)
+			if !seenRecipients[toAddr] {
+				recentRecipients = append(recentRecipients, recipientInfo{
+					address:     toAddr,
+					blockNumber: vLog.BlockNumber,
+					logIndex:    vLog.Index,
+				})
+				seenRecipients[toAddr] = true
 			}
 		}
 
-		if !minted {
-			// Token was never minted
+		// If no recent transfers found in the scan window, assume token doesn't exist
+		// (or is so old/inactive that it's not worth indexing)
+		if len(recentRecipients) == 0 {
+			logger.Info("No recent ERC1155 transfers found in scan window, assuming token doesn't exist",
+				zap.String("contract", contractAddress),
+				zap.String("tokenNumber", tokenNumber),
+				zap.Uint64("scannedBlocks", latestBlock-fromBlock),
+			)
 			return false, nil
 		}
 
-		// Check for burn events (to = 0x0) in both TransferSingle and TransferBatch events
-		burnQuery := ethereum.FilterQuery{
-			FromBlock: big.NewInt(0),
-			Addresses: []common.Address{contractAddr},
-			Topics: [][]common.Hash{
-				{transferSingleEventSignature, transferBatchEventSignature}, // Both transfer event types
-				nil,        // any operator
-				nil,        // any from address
-				{zeroHash}, // to = 0x0 (burn)
-			},
-		}
-
-		burnLogs, err := c.filterLogsWithPagination(ctx, burnQuery)
-		if err != nil {
-			return false, fmt.Errorf("failed to fetch burn logs: %w", err)
-		}
-
-		// Check if token ID was burned
-		for _, vLog := range burnLogs {
-			if vLog.Topics[0] == transferSingleEventSignature {
-				// TransferSingle: topics[0]=signature, topics[1]=operator, topics[2]=from, topics[3]=to
-				// Data contains: id (32 bytes) and value (32 bytes)
-				if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
-					continue
-				}
-
-				// Extract token ID from data (first 32 bytes)
-				logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
-				if logTokenID.Cmp(tokenID) == 0 {
-					// Token was burned
-					return false, nil
-				}
-			} else if vLog.Topics[0] == transferBatchEventSignature {
-				// TransferBatch: Use ABI parsing for cleaner code
-				batchEvent, err := parseTransferBatchEvent(vLog)
-				if err != nil {
-					logger.Warn("Failed to parse TransferBatch burn event",
-						zap.String("contract", contractAddress),
-						zap.Error(err))
-					continue
-				}
-				if batchEvent.containsTokenID(tokenID) {
-					// Token was burned
-					return false, nil
+		// Sort recipients by block number + log index (most recent first)
+		// This ensures we check the most likely current holders first
+		for i := 0; i < len(recentRecipients)-1; i++ {
+			for j := i + 1; j < len(recentRecipients); j++ {
+				if recentRecipients[j].blockNumber > recentRecipients[i].blockNumber ||
+					(recentRecipients[j].blockNumber == recentRecipients[i].blockNumber &&
+						recentRecipients[j].logIndex > recentRecipients[i].logIndex) {
+					recentRecipients[i], recentRecipients[j] = recentRecipients[j], recentRecipients[i]
 				}
 			}
 		}
 
-		// Token was minted and not burned
-		return true, nil
+		// Limit to top N most recent recipients to avoid too many RPC calls
+		if len(recentRecipients) > maxRecipientsToCheck {
+			recentRecipients = recentRecipients[:maxRecipientsToCheck]
+		}
+
+		logger.Info("Found recent ERC1155 transfers, checking recipient balances",
+			zap.String("contract", contractAddress),
+			zap.String("tokenNumber", tokenNumber),
+			zap.Int("recipientsToCheck", len(recentRecipients)),
+		)
+
+		// Check balanceOf for each recipient until we find one with balance > 0
+		// This handles partial burns and transfers between holders
+		for i, recipient := range recentRecipients {
+			balanceStr, err := c.ERC1155BalanceOf(timeoutCtx, contractAddress, recipient.address.Hex(), tokenNumber)
+			if err != nil {
+				logger.Warn("Failed to check balance for recipient, trying next",
+					zap.String("recipient", recipient.address.Hex()),
+					zap.Int("recipientIndex", i),
+					zap.Error(err),
+				)
+				continue
+			}
+
+			// Parse balance string to big.Int
+			balance, ok := new(big.Int).SetString(balanceStr, 10)
+			if !ok {
+				logger.Warn("Invalid balance returned, trying next recipient",
+					zap.String("recipient", recipient.address.Hex()),
+					zap.String("balance", balanceStr),
+				)
+				continue
+			}
+
+			// If this recipient has a balance > 0, token exists!
+			if balance.Cmp(big.NewInt(0)) > 0 {
+				logger.Info("ERC1155 token existence confirmed",
+					zap.String("contract", contractAddress),
+					zap.String("tokenNumber", tokenNumber),
+					zap.String("holder", recipient.address.Hex()),
+					zap.String("balance", balanceStr),
+				)
+				return true, nil
+			}
+		}
+
+		// All checked recipients have 0 balance - token likely doesn't exist or fully burned
+		logger.Info("All recent recipients have zero balance, assuming token doesn't exist or fully burned",
+			zap.String("contract", contractAddress),
+			zap.String("tokenNumber", tokenNumber),
+			zap.Int("recipientsChecked", len(recentRecipients)),
+		)
+		return false, nil
 
 	default:
 		return false, fmt.Errorf("unsupported standard: %s", standard)

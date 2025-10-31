@@ -341,29 +341,29 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	return nil
 }
 
-// IndexTokens indexes multiple tokens in parallel
+// IndexTokens indexes multiple tokens in chunks
 func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
 	logger.Info("Starting batch token indexing",
 		zap.Int("count", len(tokenCIDs)),
 	)
 
-	// Configure child workflow options for fire-and-forget execution
+	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowExecutionTimeout: 15 * time.Minute,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
 
-	// Start child workflows for each token in parallel (fire and forget)
-	var childExecutions []workflow.ChildWorkflowFuture
+	// Start child workflows for tokens
+	var childFutures []workflow.ChildWorkflowFuture
 	for _, tokenCID := range tokenCIDs {
 		workflowID := fmt.Sprintf("index-token-%s", tokenCID.String())
 		childWorkflowOptions.WorkflowID = workflowID
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
-		// Execute child workflow without waiting for result
+		// Execute child workflow
 		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID)
-		childExecutions = append(childExecutions, childFuture)
+		childFutures = append(childFutures, childFuture)
 
 		logger.Info("Triggered token indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
@@ -371,19 +371,18 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 		)
 	}
 
-	// Get workflow execution started for all children (but don't wait for completion)
-	for i, childFuture := range childExecutions {
-		childWorkflowExec := childFuture.GetChildWorkflowExecution()
-		if err := childWorkflowExec.Get(ctx, nil); err != nil {
-			logger.Warn("Failed to start child workflow",
+	// Wait for all workflows to complete
+	for i, childFuture := range childFutures {
+		if err := childFuture.Get(ctx, nil); err != nil {
+			logger.Warn("Child workflow failed",
 				zap.String("tokenCID", tokenCIDs[i].String()),
 				zap.Error(err),
 			)
-			// Continue with other workflows even if one fails to start
+			// Continue with other workflows even if one fails
 		}
 	}
 
-	logger.Info("Batch token indexing workflows triggered successfully",
+	logger.Info("Batch token indexing completed successfully",
 		zap.Int("count", len(tokenCIDs)),
 	)
 

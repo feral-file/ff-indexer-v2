@@ -63,12 +63,12 @@ type Executor interface {
 	// The provenance events and change journal are not included.
 	IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error
 
-	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
+	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs with block numbers for an owner within a block range
 	// This is used to sweep tokens by block ranges for incremental indexing
-	GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error)
+	GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error)
 
-	// GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs for an account within a block range
-	GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error)
+	// GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs with block numbers for an account within a block range
+	GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error)
 
 	// GetIndexingBlockRangeForAddress retrieves the indexing block range for an address and chain
 	GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (*BlockRangeResult, error)
@@ -804,9 +804,21 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 
 		case domain.StandardERC1155:
 			// For ERC1155, use ERC1155Balances to calculate balances from events
+			// FIXME: ERC1155Balances has a 30-second timeout and 5M block limit to prevent indefinite blocking
+			// This means we may get partial/incomplete balances for high-activity contracts
 			balances, err := e.ethClient.ERC1155Balances(ctx, contractAddress, tokenNumber)
 			if err != nil {
-				return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
+				// Check if error is due to timeout - if so, continue with partial balances
+				if errors.Is(err, context.DeadlineExceeded) {
+					logger.Warn("ERC1155 balance fetch timed out, continuing with partial balances",
+						zap.String("tokenCID", tokenCID.String()),
+						zap.String("contract", contractAddress),
+						zap.String("tokenNumber", tokenNumber),
+					)
+					// balances will be empty or partial, continue with whatever we got
+				} else {
+					return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
+				}
 			}
 
 			// Convert balances map to CreateBalanceInput slice
@@ -847,7 +859,7 @@ func (e *executor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]d
 
 // GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
 // This is used to sweep tokens by block ranges for incremental indexing
-func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
+func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	blockchain := domain.AddressToBlockchain(address)
 	if blockchain != domain.BlockchainEthereum {
 		return nil, fmt.Errorf("unsupported blockchain for address: %s", address)
@@ -1023,10 +1035,11 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 	return nil
 }
 
-// GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs for an account within a block range
+// GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs with block numbers for an account within a block range
 // Handles pagination automatically by fetching all results within the range
-func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenCID, error) {
-	var allTokenCIDs []domain.TokenCID
+// Returns tokens with their last interaction block number (lastLevel from TzKT)
+func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
+	var allTokensWithBlocks []domain.TokenWithBlock
 	limit := tezos.MAX_PAGE_SIZE
 	offset := 0
 
@@ -1047,7 +1060,10 @@ func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Contex
 				balance.Token.Contract.Address,
 				balance.Token.TokenID,
 			)
-			allTokenCIDs = append(allTokenCIDs, tokenCID)
+			allTokensWithBlocks = append(allTokensWithBlocks, domain.TokenWithBlock{
+				TokenCID:    tokenCID,
+				BlockNumber: balance.LastLevel,
+			})
 		}
 
 		// If we got fewer results than the limit, we've reached the end
@@ -1058,7 +1074,7 @@ func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Contex
 		offset += limit
 	}
 
-	return allTokenCIDs, nil
+	return allTokensWithBlocks, nil
 }
 
 // GetLatestEthereumBlock retrieves the latest block number from the Ethereum blockchain

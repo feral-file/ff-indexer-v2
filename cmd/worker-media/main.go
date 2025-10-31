@@ -90,8 +90,8 @@ func main() {
 		zap.String("accountID", cfg.Cloudflare.AccountID),
 	)
 
-	// Initialize media processor (no downloader needed - uses URL-based uploads with HEAD requests)
-	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, mediaProvider, dataStore, cfg.MaxImageSize, cfg.MaxVideoSize)
+	// Initialize media processor
+	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, mediaProvider, dataStore, cfg.MaxStaticImageSize, cfg.MaxAnimatedImageSize, cfg.MaxVideoSize)
 
 	// Initialize executor for activities (minimal setup for media processing only)
 	// We pass nil for unused dependencies since worker-media only handles media activities

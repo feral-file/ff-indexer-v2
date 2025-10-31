@@ -149,13 +149,11 @@ func main() {
 	// Create worker core instance
 	workerCore := workflows.NewWorkerCore(executor,
 		workflows.WorkerCoreConfig{
-			EthereumTokenSweepStartBlock:     cfg.EthereumTokenSweepStartBlock,
-			EthereumTokenSweepBlockChunkSize: cfg.EthereumTokenSweepBlockChunkSize,
-			TezosTokenSweepStartBlock:        cfg.TezosTokenSweepStartBlock,
-			TezosTokenSweepBlockChunkSize:    cfg.TezosTokenSweepBlockChunkSize,
-			EthereumChainID:                  cfg.Ethereum.ChainID,
-			TezosChainID:                     cfg.Tezos.ChainID,
-			MediaTaskQueue:                   cfg.Temporal.MediaTaskQueue,
+			EthereumTokenSweepStartBlock: cfg.EthereumTokenSweepStartBlock,
+			TezosTokenSweepStartBlock:    cfg.TezosTokenSweepStartBlock,
+			EthereumChainID:              cfg.Ethereum.ChainID,
+			TezosChainID:                 cfg.Tezos.ChainID,
+			MediaTaskQueue:               cfg.Temporal.MediaTaskQueue,
 		})
 
 	// Register workflows
