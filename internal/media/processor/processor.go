@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -85,7 +86,9 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		// HEAD request succeeded
 		defer func() {
 			if resp.Body != nil {
-				_ = resp.Body.Close()
+				if err := resp.Body.Close(); err != nil {
+					logger.Warn("failed to close response body", zap.Error(err), zap.String("url", resolvedURL))
+				}
 			}
 		}()
 
@@ -100,7 +103,9 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	} else {
 		// HEAD failed, fallback to partial GET to detect content-type
 		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", resolvedURL))
+			}
 		}
 
 		logger.Info("HEAD request failed, falling back to partial GET",
@@ -174,14 +179,19 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	if isVideo {
 		logger.Info("Uploading video", zap.String("url", resolvedURL))
 		uploadResult, err = p.provider.UploadVideo(ctx, resolvedURL, uploadMetadata)
-		if err != nil {
-			return fmt.Errorf("failed to upload video to provider: %w", err)
-		}
 	} else {
 		logger.Info("Uploading image", zap.String("url", resolvedURL))
 		uploadResult, err = p.provider.UploadImage(ctx, resolvedURL, uploadMetadata)
-		if err != nil {
-			return fmt.Errorf("failed to upload image to provider: %w", err)
+	}
+
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrInvalidURL),
+			errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile):
+			// Known error, skip processing
+			return nil
+		default:
+			return fmt.Errorf("failed to upload media to provider: %w", err)
 		}
 	}
 

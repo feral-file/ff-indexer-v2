@@ -1,6 +1,7 @@
 package types
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -53,4 +54,13 @@ func IsTezosContractAddress(s string) bool {
 // IsEthereumAddress checks if a string is a valid Ethereum address
 func IsEthereumAddress(s string) bool {
 	return common.IsHexAddress(s)
+}
+
+// IsValidURL checks if a string is a valid URL
+func IsValidURL(s string) bool {
+	url, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	return url.Scheme != "" && url.Host != ""
 }

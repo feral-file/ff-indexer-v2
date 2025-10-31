@@ -65,6 +65,21 @@ func (mr *MockHTTPClientMockRecorder) GetPartialContent(ctx, url, maxBytes inter
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPartialContent", reflect.TypeOf((*MockHTTPClient)(nil).GetPartialContent), ctx, url, maxBytes)
 }
 
+// GetWithResponse mocks base method.
+func (m *MockHTTPClient) GetWithResponse(ctx context.Context, url string) (*http.Response, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetWithResponse", ctx, url)
+	ret0, _ := ret[0].(*http.Response)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWithResponse indicates an expected call of GetWithResponse.
+func (mr *MockHTTPClientMockRecorder) GetWithResponse(ctx, url interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWithResponse", reflect.TypeOf((*MockHTTPClient)(nil).GetWithResponse), ctx, url)
+}
+
 // Head mocks base method.
 func (m *MockHTTPClient) Head(ctx context.Context, url string) (*http.Response, error) {
 	m.ctrl.T.Helper()

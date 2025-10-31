@@ -4,22 +4,28 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/cloudflare/cloudflare-go"
+	"github.com/gabriel-vasile/mimetype"
 
 	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/downloader"
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 const (
-	CLOUDFLARE_PROVIDER_NAME  = "cloudflare"
-	CLOUDFLARE_IMAGE_ENDPOINT = "https://imagedelivery.net"
+	CLOUDFLARE_PROVIDER_NAME         = "cloudflare"
+	CLOUDFLARE_IMAGE_ENDPOINT_REGEX  = `^https://imagedelivery\.net/`
+	CLOUDFLARE_STREAM_ENDPOINT_REGEX = `^https://[^/]+\.cloudflarestream\.com/`
 )
 
 // Config holds configuration for Cloudflare Images and Stream
@@ -32,16 +38,20 @@ type Config struct {
 
 // mediaProvider implements the media.Provider interface for Cloudflare Images and Stream
 type mediaProvider struct {
-	cfClient adapter.CloudflareClient
-	config   *Config
-	rc       *cloudflare.ResourceContainer
+	cfClient   adapter.CloudflareClient
+	config     *Config
+	rc         *cloudflare.ResourceContainer
+	downloader downloader.Downloader
+	fs         adapter.FileSystem
 }
 
 // NewMediaProvider creates a new Cloudflare Images and Stream provider
-func NewMediaProvider(cfClient adapter.CloudflareClient, config *Config) mediaprovider.Provider {
+func NewMediaProvider(cfClient adapter.CloudflareClient, config *Config, dl downloader.Downloader, fs adapter.FileSystem) mediaprovider.Provider {
 	return &mediaProvider{
-		cfClient: cfClient,
-		config:   config,
+		cfClient:   cfClient,
+		config:     config,
+		downloader: dl,
+		fs:         fs,
 		rc: &cloudflare.ResourceContainer{
 			Level:      cloudflare.AccountRouteLevel,
 			Identifier: config.AccountID,
@@ -61,26 +71,103 @@ func (p *mediaProvider) UploadVideo(ctx context.Context, sourceURL string, metad
 
 // uploadImage uploads an image to Cloudflare Images from a URL
 func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
-	if !strings.HasPrefix(sourceURL, CLOUDFLARE_IMAGE_ENDPOINT) {
-		return nil, fmt.Errorf("unsupported media URL: %s", sourceURL)
+	// Validate source URL is a valid image URL
+	if !types.IsValidURL(sourceURL) {
+		logger.Warn("Invalid image URL", zap.String("url", sourceURL))
+		return nil, domain.ErrInvalidURL
+	}
+
+	// Validate the source URL is a Cloudflare Images URL
+	if isCloudflareImageURL(sourceURL) {
+		logger.Warn("Unsupported self-hosted image URL", zap.String("url", sourceURL))
+		return nil, domain.ErrUnsupportedSelfHostedMediaFile
 	}
 
 	logger.Info("Uploading to Cloudflare Images", zap.String("url", sourceURL), zap.Any("metadata", metadata))
 
-	// Upload image via URL
+	// Try URL-based upload first
+	image, err := p.uploadImageFromURL(ctx, sourceURL, metadata)
+	if err != nil {
+		logger.Warn("URL-based image upload failed, trying download fallback",
+			zap.String("url", sourceURL),
+			zap.Error(err),
+		)
+
+		// Fallback to download and upload from reader
+		image, err = p.uploadImageFromReader(ctx, sourceURL, metadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload image: %w", err)
+		}
+	}
+
+	// Convert variants to result format
+	return p.buildImageUploadResult(image), nil
+}
+
+// uploadImageFromURL uploads an image to Cloudflare using URL-based upload
+func (p *mediaProvider) uploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*cloudflare.Image, error) {
 	params := cloudflare.UploadImageParams{
 		URL:      sourceURL,
 		Metadata: metadata,
 	}
 
-	// Upload using the SDK
 	image, err := p.cfClient.UploadImage(ctx, p.rc, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to upload image: %w", err)
+		return &cloudflare.Image{}, err
 	}
 
+	logger.Info("Successfully uploaded image via URL",
+		zap.String("url", sourceURL),
+		zap.String("imageID", image.ID),
+	)
+
+	return &image, nil
+}
+
+// uploadImageFromReader downloads and uploads an image using io.Reader
+func (p *mediaProvider) uploadImageFromReader(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*cloudflare.Image, error) {
+	// Download the file
+	downloadResult, err := p.downloader.Download(ctx, sourceURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download image: %w", err)
+	}
+	defer func() {
+		if err := downloadResult.Close(); err != nil {
+			logger.Warn("Failed to close download result", zap.Error(err))
+		}
+	}()
+
+	// Extract filename from URL or use a default with correct extension
+	filename := filepath.Base(sourceURL)
+	if filepath.Ext(filename) == "" {
+		// Filename exists but has no extension, add one based on mime type
+		ext := getFileExtFromMimeType(downloadResult.ContentType())
+		filename = fmt.Sprintf("%s%s", filename, ext)
+	}
+
+	// Upload using io.Reader (streaming, no disk/mem copy)
+	params := cloudflare.UploadImageParams{
+		File:     downloadResult.Reader(),
+		Name:     filename,
+		Metadata: metadata,
+	}
+
+	image, err := p.cfClient.UploadImage(ctx, p.rc, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload image from reader: %w", err)
+	}
+
+	logger.Info("Successfully uploaded image using download fallback",
+		zap.String("url", sourceURL),
+		zap.String("imageID", image.ID),
+	)
+
+	return &image, nil
+}
+
+// buildImageUploadResult converts a Cloudflare Image to an UploadResult
+func (p *mediaProvider) buildImageUploadResult(image *cloudflare.Image) *mediaprovider.UploadResult {
 	// Convert variants from []string to map[string]string
-	// Variant URLs are in format: https://imagedelivery.net/{account_hash}/{image_id}/{variant_name}
 	variantURLs := make(map[string]string)
 	for _, variantURL := range image.Variants {
 		variantName := extractVariantName(variantURL)
@@ -106,20 +193,38 @@ func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metad
 		ProviderAssetID:  image.ID,
 		VariantURLs:      variantURLs,
 		ProviderMetadata: providerMetadata,
-	}, nil
+	}
 }
 
 // uploadVideo uploads a video to Cloudflare Stream via URL
 func (p *mediaProvider) uploadVideo(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+	// Validate the source URL is a valid video URL
+	if !types.IsValidURL(sourceURL) {
+		logger.Warn("Invalid video URL", zap.String("url", sourceURL))
+		return nil, domain.ErrInvalidURL
+	}
+
+	// Validate the source URL is a Cloudflare Stream URL
+	if isCloudflareStreamURL(sourceURL) {
+		logger.Warn("Unsupported self-hosted video URL", zap.String("url", sourceURL))
+		return nil, domain.ErrUnsupportedSelfHostedMediaFile
+	}
+
 	logger.Info("Uploading to Cloudflare Stream", zap.String("url", sourceURL), zap.Any("metadata", metadata))
 
-	// Upload using URL-based method (no file download needed)
-	video, err := p.cfClient.UploadVideoFromURL(ctx, cloudflare.StreamUploadFromURLParameters{
-		AccountID: p.config.AccountID,
-		URL:       sourceURL,
-	})
+	// Try URL-based upload first
+	video, err := p.uploadVideoFromURL(ctx, sourceURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to upload video: %w", err)
+		logger.Warn("URL-based video upload failed, trying download fallback",
+			zap.String("url", sourceURL),
+			zap.Error(err),
+		)
+
+		// Fallback to download and upload from file
+		video, err = p.uploadVideoFromFile(ctx, sourceURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload video: %w", err)
+		}
 	}
 
 	// Poll for video details until processing is complete or timeout (5 minutes)
@@ -133,6 +238,92 @@ func (p *mediaProvider) uploadVideo(ctx context.Context, sourceURL string, metad
 		videoDetails = video
 	}
 
+	// Convert to result format
+	return p.buildVideoUploadResult(videoDetails), nil
+}
+
+// uploadVideoFromURL uploads a video to Cloudflare using URL-based upload
+func (p *mediaProvider) uploadVideoFromURL(ctx context.Context, sourceURL string) (cloudflare.StreamVideo, error) {
+	video, err := p.cfClient.UploadVideoFromURL(ctx, cloudflare.StreamUploadFromURLParameters{
+		AccountID: p.config.AccountID,
+		URL:       sourceURL,
+	})
+	if err != nil {
+		return cloudflare.StreamVideo{}, err
+	}
+
+	logger.Info("Successfully uploaded video via URL",
+		zap.String("url", sourceURL),
+		zap.String("videoID", video.UID),
+	)
+
+	return video, nil
+}
+
+// uploadVideoFromFile downloads and uploads a video from a temporary file
+func (p *mediaProvider) uploadVideoFromFile(ctx context.Context, sourceURL string) (cloudflare.StreamVideo, error) {
+	// Download the file
+	downloadResult, err := p.downloader.Download(ctx, sourceURL)
+	if err != nil {
+		return cloudflare.StreamVideo{}, fmt.Errorf("failed to download video: %w", err)
+	}
+	defer func() {
+		if err := downloadResult.Close(); err != nil {
+			logger.Warn("Failed to close download result", zap.Error(err))
+		}
+	}()
+
+	// Create temp file for video
+	tempDir := p.fs.TempDir()
+
+	// Get filename with appropriate extension based on content type
+	filename := filepath.Base(sourceURL)
+	if filepath.Ext(filename) == "" {
+		// Filename exists but has no extension, add one based on mime type
+		ext := getFileExtFromMimeType(downloadResult.ContentType())
+		filename = fmt.Sprintf("%s%s", filename, ext)
+	}
+
+	tempFile := filepath.Join(tempDir, fmt.Sprintf("ff-indexer-video-%d-%s", time.Now().UnixNano(), filename))
+
+	logger.Info("Saving video to temp file",
+		zap.String("tempFile", tempFile),
+	)
+
+	// Save to temp file
+	err = downloadResult.AsFile(tempFile)
+	if err != nil {
+		return cloudflare.StreamVideo{}, fmt.Errorf("failed to save video to temp file: %w", err)
+	}
+
+	// Ensure temp file is cleaned up
+	defer func() {
+		if err := p.fs.Remove(tempFile); err != nil {
+			logger.Warn("Failed to remove temp file", zap.String("file", tempFile), zap.Error(err))
+		} else {
+			logger.Debug("Cleaned up temp file", zap.String("file", tempFile))
+		}
+	}()
+
+	// Upload from file
+	video, err := p.cfClient.UploadVideoFromFile(ctx, cloudflare.StreamUploadFileParameters{
+		AccountID: p.config.AccountID,
+		FilePath:  tempFile,
+	})
+	if err != nil {
+		return cloudflare.StreamVideo{}, fmt.Errorf("failed to upload video from file: %w", err)
+	}
+
+	logger.Info("Successfully uploaded video using download fallback",
+		zap.String("url", sourceURL),
+		zap.String("videoID", video.UID),
+	)
+
+	return video, nil
+}
+
+// buildVideoUploadResult converts a Cloudflare StreamVideo to an UploadResult
+func (p *mediaProvider) buildVideoUploadResult(videoDetails cloudflare.StreamVideo) *mediaprovider.UploadResult {
 	// Build variant URLs for different playback options
 	variantURLs := make(map[string]string)
 
@@ -173,16 +364,16 @@ func (p *mediaProvider) uploadVideo(ctx context.Context, sourceURL string, metad
 	}
 
 	logger.Info("Successfully uploaded to Cloudflare Stream",
-		zap.String("videoID", video.UID),
+		zap.String("videoID", videoDetails.UID),
 		zap.String("status", string(videoDetails.Status.State)),
 		zap.Int("variantCount", len(variantURLs)),
 	)
 
 	return &mediaprovider.UploadResult{
-		ProviderAssetID:  video.UID,
+		ProviderAssetID:  videoDetails.UID,
 		VariantURLs:      variantURLs,
 		ProviderMetadata: providerMetadata,
-	}, nil
+	}
 }
 
 // waitForVideoReady polls Cloudflare Stream until the video is ready or timeout using backoff retry
@@ -262,5 +453,40 @@ func extractVariantName(variantURL string) string {
 	if len(parts) > 0 {
 		return path.Base(variantURL)
 	}
+	return ""
+}
+
+// isCloudflareImageURL checks if a URL is a Cloudflare Images URL
+func isCloudflareImageURL(url string) bool {
+	return strings.HasPrefix(url, CLOUDFLARE_IMAGE_ENDPOINT_REGEX)
+}
+
+// isCloudflareStreamURL checks if a URL is a Cloudflare Stream URL
+func isCloudflareStreamURL(url string) bool {
+	return strings.HasPrefix(url, CLOUDFLARE_STREAM_ENDPOINT_REGEX)
+}
+
+// getFileExtFromMimeType returns a file extension for a given mime type
+func getFileExtFromMimeType(mimeType string) string {
+	// Use mimetype library to detect extension
+	mtype := mimetype.Lookup(mimeType)
+	if mtype != nil {
+		ext := mtype.Extension()
+		if ext != "" {
+			return ext
+		}
+	}
+
+	// Fallback for common cases if mimetype library doesn't have it
+	mainType := strings.Split(mimeType, ";")[0]
+	mainType = strings.TrimSpace(mainType)
+
+	if strings.HasPrefix(mainType, "video/") {
+		return ".mp4"
+	}
+	if strings.HasPrefix(mainType, "image/") {
+		return ".jpg"
+	}
+
 	return ""
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // IndexTokenMetadata indexes token metadata
@@ -97,9 +98,11 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// This should not fail the parent workflow
 	if len(mediaURLs) > 0 {
 		// Convert map to slice
-		urls := make([]string, 0, len(mediaURLs))
+		var urls []string
 		for url := range mediaURLs {
-			urls = append(urls, url)
+			if types.IsValidURL(url) {
+				urls = append(urls, url)
+			}
 		}
 
 		logger.Info("Triggering media indexing workflow",

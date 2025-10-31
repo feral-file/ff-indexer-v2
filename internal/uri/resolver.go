@@ -95,7 +95,9 @@ func (r *resolver) resolveIPFS(ctx context.Context, cid string) (string, error) 
 				resultCh <- result{err: err}
 				return
 			}
-			_ = resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", url))
+			}
 
 			if resp.StatusCode == http.StatusOK {
 				resultCh <- result{url: url}
@@ -151,7 +153,9 @@ func (r *resolver) resolveArweave(ctx context.Context, txID string) (string, err
 				resultCh <- result{err: err}
 				return
 			}
-			_ = resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", url))
+			}
 
 			if resp.StatusCode == http.StatusOK {
 				resultCh <- result{url: url}

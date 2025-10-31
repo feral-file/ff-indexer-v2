@@ -80,6 +80,21 @@ func (mr *MockCloudflareClientMockRecorder) UploadImage(ctx, rc, params interfac
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UploadImage", reflect.TypeOf((*MockCloudflareClient)(nil).UploadImage), ctx, rc, params)
 }
 
+// UploadVideoFromFile mocks base method.
+func (m *MockCloudflareClient) UploadVideoFromFile(ctx context.Context, params cloudflare.StreamUploadFileParameters) (cloudflare.StreamVideo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UploadVideoFromFile", ctx, params)
+	ret0, _ := ret[0].(cloudflare.StreamVideo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UploadVideoFromFile indicates an expected call of UploadVideoFromFile.
+func (mr *MockCloudflareClientMockRecorder) UploadVideoFromFile(ctx, params interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UploadVideoFromFile", reflect.TypeOf((*MockCloudflareClient)(nil).UploadVideoFromFile), ctx, params)
+}
+
 // UploadVideoFromURL mocks base method.
 func (m *MockCloudflareClient) UploadVideoFromURL(ctx context.Context, params cloudflare.StreamUploadFromURLParameters) (cloudflare.StreamVideo, error) {
 	m.ctrl.T.Helper()

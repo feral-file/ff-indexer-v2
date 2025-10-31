@@ -19,6 +19,9 @@ type CloudflareClient interface {
 	// UploadVideoFromURL uploads a video to Cloudflare Stream via URL
 	UploadVideoFromURL(ctx context.Context, params cloudflare.StreamUploadFromURLParameters) (cloudflare.StreamVideo, error)
 
+	// UploadVideoFromFile uploads a video to Cloudflare Stream from a file path
+	UploadVideoFromFile(ctx context.Context, params cloudflare.StreamUploadFileParameters) (cloudflare.StreamVideo, error)
+
 	// GetVideo retrieves video details from Cloudflare Stream
 	GetVideo(ctx context.Context, params cloudflare.StreamParameters) (cloudflare.StreamVideo, error)
 }
@@ -52,6 +55,11 @@ func (c *RealCloudflareClient) GetImage(ctx context.Context, rc *cloudflare.Reso
 // UploadVideoFromURL uploads a video to Cloudflare Stream via URL
 func (c *RealCloudflareClient) UploadVideoFromURL(ctx context.Context, params cloudflare.StreamUploadFromURLParameters) (cloudflare.StreamVideo, error) {
 	return c.api.StreamUploadFromURL(ctx, params)
+}
+
+// UploadVideoFromFile uploads a video to Cloudflare Stream from a file path
+func (c *RealCloudflareClient) UploadVideoFromFile(ctx context.Context, params cloudflare.StreamUploadFileParameters) (cloudflare.StreamVideo, error) {
+	return c.api.StreamUploadVideoFile(ctx, params)
 }
 
 // GetVideo retrieves video details from Cloudflare Stream

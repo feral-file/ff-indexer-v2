@@ -31,6 +31,10 @@ type HTTPClient interface {
 	// GetPartialContent performs a GET request with Range header to fetch partial content
 	// Returns the partial content as bytes
 	GetPartialContent(ctx context.Context, url string, maxBytes int) ([]byte, error)
+
+	// GetWithResponse performs a GET request and returns the full HTTP response
+	// The caller is responsible for checking status code and closing the response body
+	GetWithResponse(ctx context.Context, url string) (*http.Response, error)
 }
 
 // RealHTTPClient implements HTTPClient using the standard http package
@@ -61,7 +65,9 @@ func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req 
 
 		// Handle rate limiting - retry with backoff
 		if resp.StatusCode == http.StatusTooManyRequests {
-			_ = resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
+			}
 			logger.Warn("rate limited, retrying with backoff", zap.String("url", req.URL.String()))
 			return fmt.Errorf("rate limited (429), retrying")
 		}
@@ -178,7 +184,9 @@ func (c *RealHTTPClient) GetPartialContent(ctx context.Context, url string, maxB
 		return nil, err
 	}
 	defer func() {
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			logger.Warn("failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
+		}
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -192,4 +200,15 @@ func (c *RealHTTPClient) GetPartialContent(ctx context.Context, url string, maxB
 	}
 
 	return body, nil
+}
+
+// GetWithResponse performs a GET request and returns the full HTTP response
+// The caller is responsible for checking status code and closing the response body
+func (c *RealHTTPClient) GetWithResponse(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	return c.doRequestWithRetryAndResponse(ctx, req)
 }

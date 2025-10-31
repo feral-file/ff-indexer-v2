@@ -9,6 +9,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
+
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // IndexMultipleMediaWorkflow handles the media processing for a list of URLs
@@ -19,7 +21,7 @@ func (w *workerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []st
 	// Remove duplicate URLs
 	uniqueURLs := make(map[string]bool)
 	for _, url := range urls {
-		if url != "" {
+		if types.IsValidURL(url) {
 			uniqueURLs[url] = true
 		}
 	}

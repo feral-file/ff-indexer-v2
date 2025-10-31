@@ -18,6 +18,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/downloader"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -62,6 +63,7 @@ func main() {
 	// Initialize adapters
 	jsonAdapter := adapter.NewJSON()
 	clockAdapter := adapter.NewClock()
+	fileSystem := adapter.NewFileSystem()
 
 	// Initialize HTTP client
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
@@ -79,12 +81,15 @@ func main() {
 		logger.Fatal("Failed to create Cloudflare client", zap.Error(err))
 	}
 
+	// Initialize downloader for media file downloads
+	mediaDownloader := downloader.NewDownloader(httpClient, fileSystem)
+
 	// Initialize Cloudflare media provider (handles both Images and Stream)
 	cloudflareConfig := &cloudflare.Config{
 		AccountID: cfg.Cloudflare.AccountID,
 		APIToken:  cfg.Cloudflare.APIToken,
 	}
-	mediaProvider := cloudflare.NewMediaProvider(cfClient, cloudflareConfig)
+	mediaProvider := cloudflare.NewMediaProvider(cfClient, cloudflareConfig, mediaDownloader, fileSystem)
 
 	logger.Info("Initialized Cloudflare media provider",
 		zap.String("accountID", cfg.Cloudflare.AccountID),

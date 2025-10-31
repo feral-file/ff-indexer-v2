@@ -23,4 +23,10 @@ var (
 
 	// ErrUnsupportedMediaFile is returned when a media file is not supported
 	ErrUnsupportedMediaFile = errors.New("unsupported media file")
+
+	// ErrUnsupportedSelfHostedMediaFile is returned when a self-hosted media file is not supported
+	ErrUnsupportedSelfHostedMediaFile = errors.New("unsupported self-hosted media file")
+
+	// ErrInvalidURL is returned when a URL is invalid
+	ErrInvalidURL = errors.New("invalid URL")
 )
