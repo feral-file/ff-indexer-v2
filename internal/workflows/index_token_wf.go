@@ -26,7 +26,7 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: 1,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -154,7 +154,7 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: 1,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -215,58 +215,6 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	return nil
 }
 
-// IndexMetadataUpdate processes a metadata update event
-func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.Info("Processing metadata update event",
-		zap.String("tokenCID", event.TokenCID().String()),
-		zap.String("chain", string(event.Chain)),
-		zap.String("txHash", event.TxHash),
-	)
-
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
-
-	// Step 1: Create the metadata update record in the database
-	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdate, event).Get(ctx, nil)
-	if err != nil {
-		logger.Error(fmt.Errorf("failed to create metadata update record: %w", err),
-			zap.String("tokenCID", event.TokenCID().String()),
-		)
-		return err
-	}
-
-	// Step 2: Start child workflow to index token metadata
-	// This runs asynchronously without waiting for the result
-	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
-		WorkflowExecutionTimeout: 15 * time.Minute,
-		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-	}
-	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
-	// Execute the child workflow without waiting for the result
-	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
-	if err := childWorkflowExec.Get(ctx, nil); err != nil {
-		logger.Error(fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
-			zap.String("tokenCID", event.TokenCID().String()),
-		)
-		return err
-	}
-
-	logger.Info("Metadata update event recorded and metadata indexing started",
-		zap.String("tokenCID", event.TokenCID().String()),
-	)
-
-	return nil
-}
-
 // IndexTokenFromEvent indexes metadata and full provenances (provenance events and balances) for a token
 func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error {
 	logger.Info("Starting full token indexing",
@@ -278,7 +226,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: 1,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -399,7 +347,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: 1,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)

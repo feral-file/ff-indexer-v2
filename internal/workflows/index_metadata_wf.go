@@ -15,6 +15,57 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
+// IndexMetadataUpdate processes a metadata update event
+func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error {
+	logger.Info("Processing metadata update event",
+		zap.String("tokenCID", event.TokenCID().String()),
+		zap.String("chain", string(event.Chain)),
+		zap.String("txHash", event.TxHash),
+	)
+
+	// Configure activity options
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	// Step 1: Create the metadata update record in the database
+	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdate, event).Get(ctx, nil)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to create metadata update record: %w", err),
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return err
+	}
+
+	// Step 2: Start child workflow to index token metadata
+	childWorkflowOptions := workflow.ChildWorkflowOptions{
+		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
+		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+	}
+	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
+
+	// Execute the child workflow without waiting for the result
+	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
+	if err := childWorkflowExec.Get(ctx, nil); err != nil {
+		logger.Error(fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return err
+	}
+
+	logger.Info("Metadata update event recorded and metadata indexing started",
+		zap.String("tokenCID", event.TokenCID().String()),
+	)
+
+	return nil
+}
+
 // IndexTokenMetadata indexes token metadata
 func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error {
 	logger.Info("Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
@@ -23,7 +74,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute, // Longer timeout for fetching from IPFS/Arweave
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: 1,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -113,7 +164,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		// Configure child workflow options for fire-and-forget
 		childWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:            fmt.Sprintf("index-media-token-%s", tokenCID.String()),
-			WorkflowRunTimeout:    time.Hour,
+			WorkflowRunTimeout:    30 * time.Minute,
 			TaskQueue:             w.config.MediaTaskQueue,
 			WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for completion

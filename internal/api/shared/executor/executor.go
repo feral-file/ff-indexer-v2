@@ -376,7 +376,7 @@ func (e *executor) expandEnrichmentSource(ctx context.Context, tokenDTO *dto.Tok
 
 func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJournal, token *schema.Token) (interface{}, error) {
 	switch change.SubjectType {
-	case schema.SubjectTypeToken, schema.SubjectTypeOwner:
+	case schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance:
 		// For token and owner changes, the subject is a provenance event
 		id, err := strconv.ParseUint(change.SubjectID, 10, 64)
 		if err != nil {
@@ -391,21 +391,6 @@ func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJour
 		}
 		return dto.MapProvenanceEventToDTO(event), nil
 
-	case schema.SubjectTypeBalance:
-		// For balance changes, the subject is a balance record
-		id, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id: %v", err))
-		}
-		balance, err := e.store.GetBalanceByID(ctx, id)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get balance: %v", err))
-		}
-		if balance == nil {
-			return nil, nil
-		}
-		return dto.MapOwnerToDTO(balance), nil
-
 	case schema.SubjectTypeMetadata:
 		// For metadata changes, the subject is token metadata
 		metadata, err := e.store.GetTokenMetadataByTokenCID(ctx, token.TokenCID)
@@ -416,21 +401,6 @@ func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJour
 			return nil, nil
 		}
 		return dto.MapTokenMetadataToDTO(metadata), nil
-
-	case schema.SubjectTypeMedia:
-		// For media changes, the subject is a media asset
-		id, err := strconv.ParseInt(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id: %v", err))
-		}
-		media, err := e.store.GetMediaAssetByID(ctx, id)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media asset: %v", err))
-		}
-		if media == nil {
-			return nil, nil
-		}
-		return dto.MapMediaAssetToDTO(media), nil
 
 	default:
 		return nil, nil

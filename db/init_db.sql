@@ -8,7 +8,7 @@ CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:main
 CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
 CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile');
 CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
-CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'media');
+CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 
 -- ============================================================================
@@ -106,10 +106,10 @@ CREATE TABLE media_assets (
 CREATE TABLE changes_journal (
     id BIGSERIAL PRIMARY KEY,
     token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    subject_type subject_type NOT NULL,     -- token, owner, balance, metadata, media
-    subject_id TEXT NOT NULL,               -- polymorphic ref: provenance_event_id, balance_id, media_asset_id, etc.
+    subject_type subject_type NOT NULL,     -- token, owner, balance, metadata
+    subject_id TEXT NOT NULL,               -- polymorphic ref: provenance_event_id for token/owner/balance; token_metadata_id for metadata
     changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    meta JSONB,
+    meta JSONB,                             -- ProvenanceChangeMeta for token/owner/balance; MetadataChangeMeta for metadata
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (token_id, subject_type, subject_id)

@@ -83,6 +83,126 @@ func (c *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum
 	return c.client.SubscribeFilterLogs(ctx, query, ch)
 }
 
+// calculateStepSize determines the optimal step size for pagination based on query specificity
+// More specific queries (with indexed parameters) can use larger steps to reduce RPC calls
+// while staying within Infura's 10k log limitation
+//
+// Step size guidelines for Ethereum mainnet (~4.5-5 months per 1M blocks):
+// - 30M blocks (~12 years): ERC721 with specific token ID (very few events per token)
+// - 10M blocks (~4 years): ERC721 with specific owner address
+// - 10M blocks (~4 years): ERC1155 with specific owner address
+// - 5M blocks (~2 years): ERC1155 queries for entire contract (moderate activity)
+// - 1M blocks (~5 months): ERC1155 queries for high-activity contracts
+func (c *ethereumClient) calculateStepSize(query ethereum.FilterQuery) uint64 {
+	// Default conservative step size for unrecognized patterns
+	const (
+		defaultStepSize         = uint64(1_000_000)  // 1M blocks
+		erc721TokenStepSize     = uint64(30_000_000) // 30M blocks - ERC721 with token ID
+		erc721OwnerStepSize     = uint64(10_000_000) // 10M blocks - ERC721 with owner
+		erc1155OwnerStepSize    = uint64(10_000_000) // 10M blocks - ERC1155 with owner
+		erc1155ContractStepSize = uint64(5_000_000)  // 5M blocks - ERC1155 contract only
+	)
+
+	// If no topics specified, return default
+	if len(query.Topics) == 0 {
+		return defaultStepSize
+	}
+
+	// Analyze event signatures in topics[0]
+	eventSignatures := query.Topics[0]
+	if len(eventSignatures) == 0 {
+		return defaultStepSize
+	}
+
+	// Determine if this is an ERC721 or ERC1155 query based on event signatures
+	hasERC721Transfer := false
+	hasERC1155Transfer := false
+
+	for _, sig := range eventSignatures {
+		if sig == transferEventSignature || sig == metadataUpdateEventSignature {
+			hasERC721Transfer = true
+		}
+		if sig == transferSingleEventSignature || sig == uriEventSignature {
+			hasERC1155Transfer = true
+		}
+	}
+
+	// Analyze indexed parameters based on token standard
+	// ERC721 Transfer: topics[1]=from, topics[2]=to, topics[3]=tokenId (ALL indexed)
+	// ERC1155 TransferSingle: topics[1]=operator, topics[2]=from, topics[3]=to (tokenId NOT indexed - in data)
+	hasTokenIDIndexed := false // ERC721 token ID in topics[3] (only ERC721 has indexed token ID)
+	hasOwnerIndexed := false   // Owner address filtered: topics[1]/[2] for ERC721, topics[2]/[3] for ERC1155
+
+	// Check for specific filters that make the query more targeted
+	if hasERC721Transfer {
+		// For ERC721: topics[1] or topics[2] = owner addresses, topics[3] = token ID
+		if len(query.Topics) > 1 && len(query.Topics[1]) > 0 {
+			hasOwnerIndexed = true
+		}
+		if len(query.Topics) > 2 && len(query.Topics[2]) > 0 {
+			hasOwnerIndexed = true
+		}
+		if len(query.Topics) > 3 && len(query.Topics[3]) > 0 {
+			hasTokenIDIndexed = true
+		}
+	} else if hasERC1155Transfer {
+		// For ERC1155: topics[1] is operator (not useful), topics[2]=from, topics[3]=to
+		// Token ID is NOT indexed (it's in data field), so hasTokenIDIndexed stays false
+		if len(query.Topics) > 2 && len(query.Topics[2]) > 0 {
+			hasOwnerIndexed = true
+		}
+		if len(query.Topics) > 3 && len(query.Topics[3]) > 0 {
+			hasOwnerIndexed = true
+		}
+	}
+
+	// Determine step size based on query pattern
+	switch {
+	case hasERC721Transfer && hasTokenIDIndexed:
+		// ERC721 with specific token ID indexed in topics[3]
+		// Very specific: typically only a few transfers per token over its lifetime
+		// Example: GetTokenEvents for ERC721
+		logger.Debug("Using large step size for ERC721 token query",
+			zap.Uint64("stepSize", erc721TokenStepSize))
+		return erc721TokenStepSize
+
+	case hasERC721Transfer && hasOwnerIndexed:
+		// ERC721 with owner address indexed (topics[1] or topics[2])
+		// Moderately specific: owner likely has limited number of tokens
+		// Example: GetTokenCIDsByOwnerAndBlockRange for ERC721
+		logger.Debug("Using medium-large step size for ERC721 owner query",
+			zap.Uint64("stepSize", erc721OwnerStepSize))
+		return erc721OwnerStepSize
+
+	case hasERC1155Transfer && hasOwnerIndexed:
+		// ERC1155 with owner address indexed (topics[2]=from or topics[3]=to)
+		// Moderately specific: owner may have more ERC1155 tokens than ERC721
+		// Example: GetTokenCIDsByOwnerAndBlockRange for ERC1155
+		logger.Debug("Using medium step size for ERC1155 owner query",
+			zap.Uint64("stepSize", erc1155OwnerStepSize))
+		return erc1155OwnerStepSize
+
+	case hasERC1155Transfer && len(query.Addresses) > 0:
+		// ERC1155 with only contract address specified (no owner/token ID indexed)
+		// Less specific: must fetch all contract events and filter client-side
+		// Note: Token ID is never indexed in ERC1155 (it's in data field)
+		// Example: GetTokenEvents for ERC1155, ERC1155Balances, TokenExists
+		logger.Debug("Using medium-small step size for ERC1155 contract query",
+			zap.Uint64("stepSize", erc1155ContractStepSize))
+		return erc1155ContractStepSize
+
+	default:
+		// Unrecognized pattern or low specificity - use conservative default
+		logger.Debug("Using default step size for query",
+			zap.Uint64("stepSize", defaultStepSize),
+			zap.Bool("hasERC721", hasERC721Transfer),
+			zap.Bool("hasERC1155", hasERC1155Transfer),
+			zap.Bool("hasOwnerIndexed", hasOwnerIndexed),
+			zap.Bool("hasTokenIDIndexed", hasTokenIDIndexed))
+		return defaultStepSize
+	}
+}
+
 // filterLogsWithPagination is an internal method that handles pagination for FilterLogs
 // to work around Infura's 10k log limitation
 func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
@@ -119,10 +239,18 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 		toBlock = latestBlock.Number
 	}
 
-	// 2. Start from genesis, step 1M blocks, process query
+	// 2. Calculate optimal step size based on query specificity
+	// More specific queries (with indexed parameters) can use larger steps
 	var allLogs []types.Log
 	currentFrom := new(big.Int).Set(fromBlock)
-	stepSize := uint64(1000000) // 1M blocks
+	stepSize := c.calculateStepSize(query)
+
+	logger.Debug("Starting log pagination",
+		zap.Uint64("fromBlock", fromBlock.Uint64()),
+		zap.Uint64("toBlock", toBlock.Uint64()),
+		zap.Uint64("totalBlockRange", toBlock.Uint64()-fromBlock.Uint64()),
+		zap.Uint64("initialStepSize", stepSize),
+		zap.Uint64("estimatedIterations", (toBlock.Uint64()-fromBlock.Uint64())/stepSize+1))
 
 	for currentFrom.Cmp(toBlock) < 0 {
 		// Check if context is canceled or deadline exceeded before processing next range
@@ -176,7 +304,17 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 
 // getLogsWithRetry attempts to get logs with retry logic and step size reduction
 // It processes the entire range from query.FromBlock to query.ToBlock in chunks
+//
+// This method provides a safety net for the dynamic step sizing in filterLogsWithPagination:
+// Even if the initial step size is too aggressive (e.g., a high-activity contract with more
+// than 10k events), this method will automatically halve the step size and retry until it
+// succeeds or the step size reaches 0. This makes the system adaptive to actual on-chain activity.
+//
+// After successfully processing a chunk, the step size is reset to the original value for the
+// next chunk. This handles burst activity (e.g., popular NFT mints) in specific ranges without
+// unnecessarily reducing the step size for all remaining chunks.
 func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64) ([]types.Log, error) {
+	originalStepSize := stepSize
 	currentStepSize := stepSize
 
 	var allLogs []types.Log
@@ -209,8 +347,11 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 			// Success - accumulate logs and move to next chunk
 			allLogs = append(allLogs, logs...)
 
-			// Move to next chunk using the full step size
+			// Move to next chunk and reset step size to original
+			// This allows handling burst activity in specific ranges without
+			// permanently reducing the step size for all remaining chunks
 			currentFrom.SetUint64(currentTo.Uint64() + 1)
+			currentStepSize = originalStepSize
 			continue
 		}
 
@@ -224,7 +365,7 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 			return nil, err
 		}
 
-		// 4. If rate limited, divide the step by 2 and try again
+		// 4. If rate limited, divide the step by 2 and try again (for the same range)
 		currentStepSize = currentStepSize / 2
 		if currentStepSize == 0 {
 			// If step size is 0, return the logs we have so far
@@ -239,7 +380,7 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 		// Sleep for 1 second to avoid overwhelming the API
 		c.clock.Sleep(time.Second * 1)
 
-		logger.Debug("Too many results, reducing step size",
+		logger.Debug("Too many results, reducing step size and retrying same range",
 			zap.Uint64("oldStepSize", currentStepSize*2),
 			zap.Uint64("newStepSize", currentStepSize),
 			zap.Uint64("fromBlock", currentFrom.Uint64()),
@@ -491,7 +632,7 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 }
 
 // ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events from oldest to newest
-// It scans backward from the latest block with a maximum threshold of 5M blocks
+// It scans backward from the latest block with a maximum threshold of 10M blocks
 // If the operation times out (30 seconds), it returns partial balances gracefully
 //
 // FIXME: This approach has limitations for high-activity ERC1155 contracts:
@@ -518,8 +659,8 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 	}
 	latestBlock := latestHeader.Number.Uint64()
 
-	// Calculate fromBlock: scan backward from latest block with max 5M blocks threshold
-	const maxBlockThreshold = uint64(5_000_000)
+	// Calculate fromBlock: scan backward from latest block with max 10M blocks threshold
+	const maxBlockThreshold = uint64(10_000_000)
 	var fromBlock uint64
 	if latestBlock > maxBlockThreshold {
 		fromBlock = latestBlock - maxBlockThreshold

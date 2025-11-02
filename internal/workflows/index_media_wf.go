@@ -37,9 +37,9 @@ func (w *workerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []st
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowRunTimeout: 30 * time.Minute, // Longer timeout for media processing
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    time.Minute,
+			InitialInterval:    30 * time.Second,
 			BackoffCoefficient: 2.0,
-			MaximumAttempts:    3,
+			MaximumAttempts:    2,
 		},
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON, // Fire and forget
@@ -85,9 +85,9 @@ func (w *workerMedia) IndexMediaWorkflow(ctx workflow.Context, url string) error
 		StartToCloseTimeout: 30 * time.Minute, // Much longer timeout for downloading and uploading media
 		HeartbeatTimeout:    2 * time.Minute,  // Heartbeat to track progress
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    time.Minute,
+			InitialInterval:    30 * time.Second,
 			BackoffCoefficient: 2.0,
-			MaximumAttempts:    3,
+			MaximumAttempts:    2,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)

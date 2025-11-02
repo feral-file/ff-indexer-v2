@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -159,11 +160,27 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 
 		// 4. Create the change journal entry
 		// For mint events: subject_type = 'token', subject_id = provenance_event_id
+		// Populate meta with provenance information
+		meta := schema.ProvenanceChangeMeta{
+			Chain:    token.Chain,
+			Standard: token.Standard,
+			Contract: token.ContractAddress,
+			Token:    token.TokenNumber,
+			From:     input.ProvenanceEvent.FromAddress,
+			To:       input.ProvenanceEvent.ToAddress,
+			Quantity: input.ProvenanceEvent.Quantity,
+		}
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("failed to marshal change journal meta: %w", err)
+		}
+
 		changeJournal := schema.ChangesJournal{
 			TokenID:     token.ID,
 			SubjectType: schema.SubjectTypeToken,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
 			ChangedAt:   input.ProvenanceEvent.Timestamp,
+			Meta:        metaJSON,
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
@@ -360,28 +377,87 @@ func (s *pgStore) GetTokenMetadataByTokenCID(ctx context.Context, tokenCID strin
 
 // UpsertTokenMetadata creates or updates token metadata
 func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error {
-	metadata := schema.TokenMetadata{
-		TokenID:         input.TokenID,
-		OriginJSON:      input.OriginJSON,
-		LatestJSON:      input.LatestJSON,
-		LatestHash:      input.LatestHash,
-		EnrichmentLevel: input.EnrichmentLevel,
-		LastRefreshedAt: input.LastRefreshedAt,
-		ImageURL:        input.ImageURL,
-		AnimationURL:    input.AnimationURL,
-		Name:            input.Name,
-		Artists:         input.Artists,
-		Description:     input.Description,
-		Publisher:       input.Publisher,
-		MimeType:        input.MimeType,
-	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Get the old metadata with row-level lock (if it exists)
+		// Use SELECT ... FOR UPDATE to prevent concurrent updates
+		var oldMetadata *schema.TokenMetadata
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("token_id = ?", input.TokenID).
+			First(&oldMetadata).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to lock old metadata: %w", err)
+		}
 
-	err := s.db.WithContext(ctx).Save(&metadata).Error
-	if err != nil {
-		return fmt.Errorf("failed to upsert token metadata: %w", err)
-	}
+		// 2. Upsert the metadata
+		metadata := schema.TokenMetadata{
+			TokenID:         input.TokenID,
+			OriginJSON:      input.OriginJSON,
+			LatestJSON:      input.LatestJSON,
+			LatestHash:      input.LatestHash,
+			EnrichmentLevel: input.EnrichmentLevel,
+			LastRefreshedAt: input.LastRefreshedAt,
+			ImageURL:        input.ImageURL,
+			AnimationURL:    input.AnimationURL,
+			Name:            input.Name,
+			Artists:         input.Artists,
+			Description:     input.Description,
+			Publisher:       input.Publisher,
+			MimeType:        input.MimeType,
+		}
 
-	return nil
+		err = tx.Save(&metadata).Error
+		if err != nil {
+			return fmt.Errorf("failed to upsert token metadata: %w", err)
+		}
+
+		// 3. Create or update the change journal entry with both old and new metadata
+		// subject_id = token_id (which is the PK of token_metadata table)
+		// Build the meta with old (optional) and new (required) metadata fields
+		metaChanges := schema.MetadataChangeMeta{
+			New: schema.MetadataFields{
+				AnimationURL: metadata.AnimationURL,
+				ImageURL:     metadata.ImageURL,
+				Artists:      metadata.Artists,
+				Publisher:    metadata.Publisher,
+				MimeType:     metadata.MimeType,
+			},
+		}
+
+		// Add old metadata if it existed
+		if oldMetadata != nil {
+			metaChanges.Old = schema.MetadataFields{
+				AnimationURL: oldMetadata.AnimationURL,
+				ImageURL:     oldMetadata.ImageURL,
+				Artists:      oldMetadata.Artists,
+				Publisher:    oldMetadata.Publisher,
+				MimeType:     oldMetadata.MimeType,
+			}
+		}
+
+		metaJSON, err := json.Marshal(metaChanges)
+		if err != nil {
+			return fmt.Errorf("failed to marshal change journal meta: %w", err)
+		}
+
+		changeJournal := schema.ChangesJournal{
+			TokenID:     input.TokenID,
+			SubjectType: schema.SubjectTypeMetadata,
+			SubjectID:   fmt.Sprintf("%d", input.TokenID), // token_metadata.token_id (PK)
+			ChangedAt:   *input.LastRefreshedAt,
+			Meta:        metaJSON,
+		}
+
+		// Use ON CONFLICT to update the meta if the entry already exists
+		// There will only be one metadata change journal entry per token
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "token_id"}, {Name: "subject_type"}, {Name: "subject_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"meta", "changed_at"}),
+		}).Create(&changeJournal).Error; err != nil {
+			return fmt.Errorf("failed to create/update change journal: %w", err)
+		}
+
+		return nil
+	})
 }
 
 // GetEnrichmentSourceByTokenID retrieves an enrichment source by token ID
@@ -532,11 +608,27 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 
 		// 5. Create the change journal entry
 		// For burn events: subject_type = 'token', subject_id = provenance_event_id
+		// Populate meta with provenance information
+		meta := schema.ProvenanceChangeMeta{
+			Chain:    token.Chain,
+			Standard: token.Standard,
+			Contract: token.ContractAddress,
+			Token:    token.TokenNumber,
+			From:     input.ProvenanceEvent.FromAddress,
+			To:       input.ProvenanceEvent.ToAddress,
+			Quantity: input.ProvenanceEvent.Quantity,
+		}
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("failed to marshal change journal meta: %w", err)
+		}
+
 		changeJournal := schema.ChangesJournal{
 			TokenID:     token.ID,
 			SubjectType: schema.SubjectTypeToken,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
 			ChangedAt:   input.ChangedAt,
+			Meta:        metaJSON,
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
@@ -551,7 +643,8 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 	})
 }
 
-// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
+// CreateMetadataUpdate creates a provenance event for a metadata update
+// Note: The change journal entry is created separately in UpsertTokenMetadata where we have access to the actual metadata changes
 func (s *pgStore) CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get the token to ensure it exists
@@ -594,23 +687,6 @@ func (s *pgStore) CreateMetadataUpdate(ctx context.Context, input CreateMetadata
 				First(&provenanceEvent).Error; err != nil {
 				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
 			}
-		}
-
-		// 3. Create the change journal entry
-		// For metadata updates: subject_type = 'metadata', subject_id = provenance_event_id
-		changeJournal := schema.ChangesJournal{
-			TokenID:     token.ID,
-			SubjectType: schema.SubjectTypeMetadata,
-			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
-			ChangedAt:   input.ChangedAt,
-		}
-
-		if err := tx.Clauses(clause.OnConflict{
-			DoNothing: true,
-		}).
-			Clauses(clause.Returning{Columns: []clause.Column{}}).
-			Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
 		return nil
@@ -736,12 +812,28 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 		// For transfer events: subject_type depends on token standard
 		// - ERC721 (single token): subject_type = 'owner'
 		// - ERC1155/FA2 (multi-token): subject_type = 'balance'
+		// Populate meta with provenance information
+		meta := schema.ProvenanceChangeMeta{
+			Chain:    token.Chain,
+			Standard: token.Standard,
+			Contract: token.ContractAddress,
+			Token:    token.TokenNumber,
+			From:     input.ProvenanceEvent.FromAddress,
+			To:       input.ProvenanceEvent.ToAddress,
+			Quantity: input.ProvenanceEvent.Quantity,
+		}
+		metaJSON, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("failed to marshal change journal meta: %w", err)
+		}
+
 		subjectType := types.ProvenanceEventTypeToSubjectType(input.ProvenanceEvent.EventType, token.Standard)
 		changeJournal := schema.ChangesJournal{
 			TokenID:     token.ID,
 			SubjectType: subjectType,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
 			ChangedAt:   input.ChangedAt,
+			Meta:        metaJSON,
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
@@ -780,11 +872,11 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 
 		// 2. Delete existing related records to ensure data freshness
 		// Delete changes_journal entries first (foreign key constraint)
-		// Only delete journal entries related to provenance data (token, owner, balance, metadata)
+		// Only delete journal entries related to provenance data (token, owner, balance)
 		// Other journal types (e.g., media) should be preserved as they may not be tied to on-chain events
 		if len(input.Events) > 0 {
 			// Delete changes_journal entries
-			if err := tx.Where("token_id = ? AND subject_type IN ?", token.ID, []string{"token", "owner", "balance", "metadata"}).
+			if err := tx.Where("token_id = ? AND subject_type IN ?", token.ID, []string{"token", "owner", "balance"}).
 				Delete(&schema.ChangesJournal{}).Error; err != nil {
 				return fmt.Errorf("failed to delete existing changes_journal entries: %w", err)
 			}
@@ -852,12 +944,28 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			// 5. Batch insert changes_journal entries for all events
 			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
 			for _, evt := range provenanceEvents {
+				// Populate meta with provenance information
+				meta := schema.ProvenanceChangeMeta{
+					Chain:    token.Chain,
+					Standard: token.Standard,
+					Contract: token.ContractAddress,
+					Token:    token.TokenNumber,
+					From:     evt.FromAddress,
+					To:       evt.ToAddress,
+					Quantity: *evt.Quantity,
+				}
+				metaJSON, err := json.Marshal(meta)
+				if err != nil {
+					return fmt.Errorf("failed to marshal change journal meta: %w", err)
+				}
+
 				subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType, token.Standard)
 				changeJournals = append(changeJournals, schema.ChangesJournal{
 					TokenID:     token.ID,
 					SubjectType: subjectType,
 					SubjectID:   fmt.Sprintf("%d", evt.ID),
 					ChangedAt:   evt.Timestamp,
+					Meta:        metaJSON,
 				})
 			}
 
@@ -881,7 +989,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 	// Apply timestamp filter
 	if filter.Since != nil {
 		// Since is a filter, not pagination - only show records after this timestamp
-		query = query.Where("changed_at > ?", *filter.Since)
+		query = query.Where("changed_at >= ?", *filter.Since)
 	}
 
 	// Only join with tokens if we need to filter by token_cid

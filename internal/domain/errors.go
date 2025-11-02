@@ -29,4 +29,10 @@ var (
 
 	// ErrInvalidURL is returned when a URL is invalid
 	ErrInvalidURL = errors.New("invalid URL")
+
+	// ErrMissingContentLength is returned when a content length is missing
+	ErrMissingContentLength = errors.New("missing content length")
+
+	// ErrExceededMaxFileSize is returned when a file size exceeds the allowed limit
+	ErrExceededMaxFileSize = errors.New("exceeded max file size")
 )

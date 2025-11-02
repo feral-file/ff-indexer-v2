@@ -199,7 +199,7 @@ type Store interface {
 	GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error)
 	// UpsertTokenMetadata creates or updates token metadata
 	UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error
-	// CreateMetadataUpdate creates a provenance event and change journal entry for a metadata update
+	// CreateMetadataUpdate creates a provenance event for a metadata update
 	CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error
 	// GetMediaAssetByID retrieves a media asset by ID
 	GetMediaAssetByID(ctx context.Context, id int64) (*schema.MediaAsset, error)

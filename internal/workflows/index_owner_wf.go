@@ -171,7 +171,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: 1,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -470,7 +470,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
+			MaximumAttempts: 1,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)

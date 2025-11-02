@@ -38,7 +38,7 @@ type Executor interface {
 	// UpdateTokenBurn updates a token and related provenance data for burn event
 	UpdateTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error
 
-	// CreateMetadataUpdate creates a metadata update provenance event and change journal entry
+	// CreateMetadataUpdate creates a metadata update provenance event
 	CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error
 
 	// FetchTokenMetadata fetches token metadata from blockchain
@@ -541,7 +541,7 @@ func (e *executor) UpdateTokenBurn(ctx context.Context, event *domain.Blockchain
 	return nil
 }
 
-// CreateMetadataUpdate creates a metadata update provenance event and change journal entry
+// CreateMetadataUpdate creates a metadata update provenance event
 func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Validate event
 	if !event.Valid() {
@@ -572,7 +572,7 @@ func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.Block
 		ChangedAt: event.Timestamp,
 	}
 
-	// Create metadata update provenance event and change journal entry
+	// Create metadata update provenance event
 	if err := e.store.CreateMetadataUpdate(ctx, input); err != nil {
 		return fmt.Errorf("failed to create metadata update: %w", err)
 	}
@@ -804,7 +804,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 
 		case domain.StandardERC1155:
 			// For ERC1155, use ERC1155Balances to calculate balances from events
-			// FIXME: ERC1155Balances has a 30-second timeout and 5M block limit to prevent indefinite blocking
+			// FIXME: ERC1155Balances has a 30-second timeout and 10M block limit to prevent indefinite blocking
 			// This means we may get partial/incomplete balances for high-activity contracts
 			balances, err := e.ethClient.ERC1155Balances(ctx, contractAddress, tokenNumber)
 			if err != nil {
@@ -1140,6 +1140,23 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 			logger.Info("Unsupported media file, skipping", zap.String("url", url))
 			return nil
 		}
+
+		if errors.Is(err, domain.ErrExceededMaxFileSize) {
+			return temporal.NewNonRetryableApplicationError(
+				"media file size exceeds the allowed limit",
+				"ExceededMaxFileSize",
+				domain.ErrExceededMaxFileSize,
+			)
+		}
+
+		if errors.Is(err, domain.ErrMissingContentLength) {
+			return temporal.NewNonRetryableApplicationError(
+				"media file content length is missing",
+				"MissingContentLength",
+				domain.ErrMissingContentLength,
+			)
+		}
+
 		return fmt.Errorf("failed to process media file: %w", err)
 	}
 

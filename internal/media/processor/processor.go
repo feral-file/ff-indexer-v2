@@ -138,7 +138,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	}
 
 	if contentType == "" {
-		return fmt.Errorf("no content-type detected")
+		return domain.ErrMissingContentLength
 	}
 
 	// Determine if this is a video or image
@@ -164,13 +164,16 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	// Check if the file size is within the allowed limits (only if we have content length from HEAD)
 	if contentLength > 0 {
 		if isAnimatedImage && contentLength > p.maxAnimatedImageSize {
-			return fmt.Errorf("animated image file size exceeds the allowed limit: %d > %d", contentLength, p.maxAnimatedImageSize)
+			logger.Warn("Animated image file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxAnimatedImageSize))
+			return domain.ErrExceededMaxFileSize
 		}
 		if isVideo && contentLength > p.maxVideoSize {
-			return fmt.Errorf("video file size exceeds the allowed limit: %d > %d", contentLength, p.maxVideoSize)
+			logger.Warn("Video file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxVideoSize))
+			return domain.ErrExceededMaxFileSize
 		}
 		if isImage && contentLength > p.maxStaticImageSize {
-			return fmt.Errorf("image file size exceeds the allowed limit: %d > %d", contentLength, p.maxStaticImageSize)
+			logger.Warn("Image file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxStaticImageSize))
+			return domain.ErrExceededMaxFileSize
 		}
 	}
 
