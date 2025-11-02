@@ -20,6 +20,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/bridge"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
@@ -72,6 +73,20 @@ func main() {
 	defer temporalClient.Close()
 	logger.Info("Connected to Temporal", zap.String("namespace", cfg.Temporal.Namespace))
 
+	// Load blacklist registry
+	var blacklistRegistry registry.BlacklistRegistry
+	if cfg.BlacklistPath != "" {
+		blacklistRegistry, err = registry.LoadBlacklist(cfg.BlacklistPath)
+		if err != nil {
+			logger.Fatal("Failed to load blacklist registry",
+				zap.Error(err),
+				zap.String("path", cfg.BlacklistPath))
+		}
+		logger.Info("Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
+	} else {
+		logger.Warn("Blacklist registry path not configured, all contracts will be allowed")
+	}
+
 	// Create bridge
 	eventBridge, err := bridge.NewBridge(
 		bridge.Config{
@@ -89,6 +104,7 @@ func main() {
 		dataStore,
 		temporalClient,
 		jsonAdapter,
+		blacklistRegistry,
 	)
 	if err != nil {
 		logger.Fatal("Failed to create event bridge", zap.Error(err))

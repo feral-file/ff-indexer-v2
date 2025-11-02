@@ -4,6 +4,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // WorkerCore defines the interface for processing blockchain events
@@ -74,15 +75,17 @@ type WorkerCoreConfig struct {
 
 // workerCore is the concrete implementation of WorkerCore
 type workerCore struct {
-	config   WorkerCoreConfig
-	executor Executor
+	config    WorkerCoreConfig
+	executor  Executor
+	blacklist registry.BlacklistRegistry
 }
 
 // NewWorkerCore creates a new worker core instance
-func NewWorkerCore(executor Executor, config WorkerCoreConfig) WorkerCore {
+func NewWorkerCore(executor Executor, config WorkerCoreConfig, blacklist registry.BlacklistRegistry) WorkerCore {
 	return &workerCore{
-		executor: executor,
-		config:   config,
+		executor:  executor,
+		config:    config,
+		blacklist: blacklist,
 	}
 }
 

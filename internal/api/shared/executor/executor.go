@@ -14,6 +14,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
@@ -41,10 +42,16 @@ type executor struct {
 	store                 store.Store
 	orchestrator          temporal.TemporalOrchestrator
 	orchestratorTaskQueue string
+	blacklist             registry.BlacklistRegistry
 }
 
-func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, orchestratorTaskQueue string) Executor {
-	return &executor{store: store, orchestrator: orchestrator, orchestratorTaskQueue: orchestratorTaskQueue}
+func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, orchestratorTaskQueue string, blacklist registry.BlacklistRegistry) Executor {
+	return &executor{
+		store:                 store,
+		orchestrator:          orchestrator,
+		orchestratorTaskQueue: orchestratorTaskQueue,
+		blacklist:             blacklist,
+	}
 }
 
 func (e *executor) GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
@@ -227,7 +234,7 @@ func (e *executor) GetChanges(ctx context.Context, tokenCIDs []string, addresses
 }
 
 func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error) {
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{})
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil)
 	var workflowID string
 	var runID string
 
@@ -235,6 +242,15 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 	hasAddresses := len(addresses) > 0
 
 	if hasTokenCIDs {
+		// Check for blacklisted contracts
+		if e.blacklist != nil {
+			for _, tokenCID := range tokenCIDs {
+				if e.blacklist.IsTokenCIDBlacklisted(tokenCID) {
+					return nil, apierrors.NewValidationError(fmt.Sprintf("contract is blacklisted: %s", tokenCID.String()))
+				}
+			}
+		}
+
 		// Trigger IndexTokens workflow
 		options := client.StartWorkflowOptions{
 			TaskQueue:                e.orchestratorTaskQueue,

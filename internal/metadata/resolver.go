@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -19,8 +18,8 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
@@ -32,8 +31,8 @@ type Artist struct {
 
 // Publisher represents the publisher of the token
 type Publisher struct {
-	Name *PublisherName `json:"name,omitempty"`
-	URL  *string        `json:"url,omitempty"`
+	Name *registry.PublisherName `json:"name,omitempty"`
+	URL  *string                 `json:"url,omitempty"`
 }
 
 // NormalizedMetadata represents the normalized metadata
@@ -63,68 +62,6 @@ func (n *NormalizedMetadata) RawHash() ([]byte, []byte, error) {
 	return hash[:], metadataJSON, nil
 }
 
-// PublisherChainConfig represents chain-specific configuration for a publisher
-type PublisherChainConfig struct {
-	DeployerAddresses   []string `json:"deployer_addresses"`
-	CollectionAddresses []string `json:"collection_addresses"`
-}
-
-type PublisherName string
-
-const (
-	// PublisherNameArtBlocks represents the name of the Art Blocks publisher
-	PublisherNameArtBlocks PublisherName = "Art Blocks"
-	// PublisherNameFXHash represents the name of the fxhash publisher
-	PublisherNameFXHash PublisherName = "fxhash"
-	// PublisherNameFeralFile represents the name of the Feral File publisher
-	PublisherNameFeralFile PublisherName = "Feral File"
-	// PublisherNameFoundation represents the name of the Foundation publisher
-	PublisherNameFoundation PublisherName = "Foundation"
-	// PublisherNameSuperRare represents the name of the SuperRare publisher
-	PublisherNameSuperRare PublisherName = "SuperRare"
-)
-
-// PublisherInfo represents a publisher entry in the registry
-type PublisherInfo struct {
-	Name   PublisherName                   `json:"name"`
-	URL    string                          `json:"url"`
-	Chains map[string]PublisherChainConfig `json:"chains"` // key is chain ID like "eip155:1" or "tez:mainnet"
-}
-
-// PublisherRegistryData represents the structure of the registry JSON file
-type PublisherRegistryData struct {
-	Version    int               `json:"version"`
-	MinBlocks  map[string]uint64 `json:"min_blocks,omitempty"` // Optional: earliest block to search per chain (e.g., "eip155:1": 13492497)
-	Publishers []PublisherInfo   `json:"publishers"`
-}
-
-// PublisherRegistry is a registry of publishers with in-memory lookup
-type PublisherRegistry struct {
-	data *PublisherRegistryData
-	// Fast lookup maps: chain:contract -> publisher
-	collectionToPublisher map[string]*PublisherInfo
-	// chain:contract -> deployer lookup (for contracts deployed by known deployers)
-	deployerToPublisher map[string]*PublisherInfo
-}
-
-// PublisherNameToVendor converts a publisher name to a vendor
-func PublisherNameToVendor(publisherName PublisherName) schema.Vendor {
-	switch publisherName {
-	case PublisherNameArtBlocks:
-		return schema.VendorArtBlocks
-	case PublisherNameFXHash:
-		return schema.VendorFXHash
-	case PublisherNameFeralFile:
-		return schema.VendorFeralFile
-	case PublisherNameFoundation:
-		return schema.VendorFoundation
-	case PublisherNameSuperRare:
-		return schema.VendorSuperRare
-	default:
-		return ""
-	}
-}
-
 // Resolver defines the interface for resolving metadata from a tokenCID
 //
 //go:generate mockgen -source=resolver.go -destination=../mocks/metadata_resolver.go -package=mocks -mock_names=Resolver=MockMetadataResolver
@@ -144,12 +81,12 @@ type resolver struct {
 	json              adapter.JSON
 	clock             adapter.Clock
 	store             store.Store
-	registry          *PublisherRegistry
+	registry          registry.PublisherRegistry
 	deployerCache     map[string]string // key: "chain:contract", value: deployer address
 	deployerCacheLock sync.RWMutex
 }
 
-func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, httpClient adapter.HTTPClient, uriResolver uri.Resolver, json adapter.JSON, clock adapter.Clock, store store.Store, registry *PublisherRegistry) Resolver {
+func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, httpClient adapter.HTTPClient, uriResolver uri.Resolver, json adapter.JSON, clock adapter.Clock, store store.Store, publisherRegistry registry.PublisherRegistry) Resolver {
 	return &resolver{
 		ethClient:     ethClient,
 		tzClient:      tzClient,
@@ -158,7 +95,7 @@ func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, h
 		json:          json,
 		clock:         clock,
 		store:         store,
-		registry:      registry,
+		registry:      publisherRegistry,
 		deployerCache: make(map[string]string),
 	}
 }
@@ -492,9 +429,9 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 
 	// Determine minBlock from registry if available
 	minBlock := uint64(0)
-	if r.registry != nil && r.registry.data.MinBlocks != nil {
+	if r.registry != nil {
 		// Look up the minimum block for this chain
-		if mb, ok := r.registry.data.MinBlocks[string(chainID)]; ok {
+		if mb, ok := r.registry.GetMinBlock(chainID); ok {
 			minBlock = mb
 		}
 	}
@@ -539,64 +476,6 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 	return deployer, nil
 }
 
-// LoadPublisherRegistry loads the publisher registry from a JSON file
-func LoadPublisherRegistry(filePath string) (*PublisherRegistry, error) {
-	// Read the file using the absolute path
-	data, err := os.ReadFile(filePath) //nolint:gosec,G304 // This should be a trusted file
-	if err != nil {
-		return nil, fmt.Errorf("failed to read registry file: %w", err)
-	}
-
-	// Parse JSON
-	var registryData PublisherRegistryData
-	if err := json.Unmarshal(data, &registryData); err != nil {
-		return nil, fmt.Errorf("failed to parse registry JSON: %w", err)
-	}
-
-	// Build lookup maps
-	registry := &PublisherRegistry{
-		data:                  &registryData,
-		collectionToPublisher: make(map[string]*PublisherInfo),
-		deployerToPublisher:   make(map[string]*PublisherInfo),
-	}
-
-	for i := range registryData.Publishers {
-		publisher := &registryData.Publishers[i]
-		for chainID, chainConfig := range publisher.Chains {
-			// Normalize chain ID format
-			normalizedChainID := strings.ToLower(chainID)
-
-			// Index collection addresses
-			for _, addr := range chainConfig.CollectionAddresses {
-				normalizedAddr := strings.ToLower(addr)
-				key := fmt.Sprintf("%s:%s", normalizedChainID, normalizedAddr)
-				registry.collectionToPublisher[key] = publisher
-			}
-
-			// Index deployer addresses
-			for _, addr := range chainConfig.DeployerAddresses {
-				normalizedAddr := strings.ToLower(addr)
-				key := fmt.Sprintf("%s:%s", normalizedChainID, normalizedAddr)
-				registry.deployerToPublisher[key] = publisher
-			}
-		}
-	}
-
-	return registry, nil
-}
-
-// lookupPublisherByCollection looks up a publisher by collection address
-func (r *PublisherRegistry) lookupPublisherByCollection(chainID domain.Chain, contractAddress string) *PublisherInfo {
-	key := fmt.Sprintf("%s:%s", strings.ToLower(string(chainID)), strings.ToLower(contractAddress))
-	return r.collectionToPublisher[key]
-}
-
-// lookupPublisherByDeployer looks up a publisher by deployer address
-func (r *PublisherRegistry) lookupPublisherByDeployer(chainID domain.Chain, deployerAddress string) *PublisherInfo {
-	key := fmt.Sprintf("%s:%s", strings.ToLower(string(chainID)), strings.ToLower(deployerAddress))
-	return r.deployerToPublisher[key]
-}
-
 // resolvePublisher resolves the publisher from the metadata
 func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCID) *Publisher {
 	if r.registry == nil {
@@ -606,7 +485,7 @@ func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCI
 	chainID, _, contractAddress, _ := tokenCID.Parse()
 
 	// First, check if the contract is in the collection addresses
-	if publisher := r.registry.lookupPublisherByCollection(chainID, contractAddress); publisher != nil {
+	if publisher := r.registry.LookupPublisherByCollection(chainID, contractAddress); publisher != nil {
 		name := publisher.Name
 		url := publisher.URL
 		return &Publisher{
@@ -630,7 +509,7 @@ func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCI
 	}
 
 	// Check if deployer is in registry
-	if publisher := r.registry.lookupPublisherByDeployer(chainID, deployer); publisher != nil {
+	if publisher := r.registry.LookupPublisherByDeployer(chainID, deployer); publisher != nil {
 		name := publisher.Name
 		url := publisher.URL
 		return &Publisher{

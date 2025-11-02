@@ -18,6 +18,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/server"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
@@ -66,6 +67,20 @@ func main() {
 	defer temporalClient.Close()
 	logger.Info("Connected to Temporal", zap.String("host_port", cfg.Temporal.HostPort))
 
+	// Load blacklist registry
+	var blacklistRegistry registry.BlacklistRegistry
+	if cfg.BlacklistPath != "" {
+		blacklistRegistry, err = registry.LoadBlacklist(cfg.BlacklistPath)
+		if err != nil {
+			logger.Fatal("Failed to load blacklist registry",
+				zap.Error(err),
+				zap.String("path", cfg.BlacklistPath))
+		}
+		logger.Info("Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
+	} else {
+		logger.Warn("Blacklist registry path not configured, all contracts will be allowed")
+	}
+
 	// Create server config
 	serverConfig := server.Config{
 		Debug:                 cfg.Debug,
@@ -78,7 +93,7 @@ func main() {
 	}
 
 	// Create and start server
-	srv := server.New(serverConfig, dataStore, temporalClient)
+	srv := server.New(serverConfig, dataStore, temporalClient, blacklistRegistry)
 
 	// Start server in a goroutine
 	go func() {

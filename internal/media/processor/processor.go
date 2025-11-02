@@ -138,6 +138,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	}
 
 	if contentType == "" {
+		logger.Warn("Missing content type", zap.String("sourceURL", sourceURL))
 		return domain.ErrMissingContentLength
 	}
 
@@ -147,6 +148,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	isAnimatedImage := strings.HasPrefix(contentType, "image/gif") || strings.HasPrefix(contentType, "image/webp")
 
 	if !isVideo && !isImage {
+		logger.Warn("Unsupported media file", zap.String("contentType", contentType))
 		return domain.ErrUnsupportedMediaFile
 	}
 

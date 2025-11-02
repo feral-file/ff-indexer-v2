@@ -14,12 +14,13 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
 // EnhancedMetadata represents metadata enhanced from vendor APIs
 type EnhancedMetadata struct {
-	Vendor       PublisherName
+	Vendor       registry.PublisherName
 	VendorJSON   []byte
 	Name         *string
 	Description  *string
@@ -69,12 +70,12 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	chain, _, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Check publisher name and route to appropriate enhancer
-	publisherName := PublisherName(*meta.Publisher.Name)
+	publisherName := registry.PublisherName(*meta.Publisher.Name)
 
 	var enhancedMetadata *EnhancedMetadata
 	var err error
 	switch publisherName {
-	case PublisherNameArtBlocks:
+	case registry.PublisherNameArtBlocks:
 		// Only enhance Ethereum mainnet tokens
 		if chain == domain.ChainEthereumMainnet {
 			enhancedMetadata, err = e.enhanceArtBlocks(ctx, tokenCID, contractAddress, tokenNumber, meta.Raw)
@@ -133,7 +134,7 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCI
 
 	// Build enhanced metadata
 	enhanced := &EnhancedMetadata{
-		Vendor:     PublisherNameArtBlocks,
+		Vendor:     registry.PublisherNameArtBlocks,
 		VendorJSON: vendorJSON,
 	}
 

@@ -22,6 +22,14 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 		zap.String("txHash", event.TxHash),
 	)
 
+	// Check if contract is blacklisted
+	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
+		logger.Info("Skipping blacklisted contract",
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return nil
+	}
+
 	// Configure activity options
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
@@ -75,6 +83,14 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 		zap.String("to", types.SafeString(event.ToAddress)),
 		zap.String("txHash", event.TxHash),
 	)
+
+	// Check if contract is blacklisted
+	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
+		logger.Info("Skipping blacklisted contract",
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return nil
+	}
 
 	// Configure activity options
 	activityOptions := workflow.ActivityOptions{
@@ -150,6 +166,14 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 		zap.String("txHash", event.TxHash),
 	)
 
+	// Check if contract is blacklisted
+	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
+		logger.Info("Skipping blacklisted contract",
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return nil
+	}
+
 	// Configure activity options
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
@@ -221,6 +245,14 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 	)
+
+	// Check if contract is blacklisted
+	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
+		logger.Info("Skipping blacklisted contract",
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return nil
+	}
 
 	// Configure activity options
 	activityOptions := workflow.ActivityOptions{
@@ -342,6 +374,14 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 	logger.Info("Starting token indexing",
 		zap.String("tokenCID", tokenCID.String()),
 	)
+
+	// Check if contract is blacklisted
+	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(tokenCID) {
+		logger.Info("Skipping blacklisted contract",
+			zap.String("tokenCID", tokenCID.String()),
+		)
+		return nil
+	}
 
 	// Configure activity options
 	activityOptions := workflow.ActivityOptions{

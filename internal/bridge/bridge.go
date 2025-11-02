@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -47,6 +48,7 @@ type bridge struct {
 	store        store.Store
 	orchestrator temporal.TemporalOrchestrator
 	json         adapter.JSON
+	blacklist    registry.BlacklistRegistry
 	config       Config
 }
 
@@ -57,6 +59,7 @@ func NewBridge(
 	st store.Store,
 	orchestrator temporal.TemporalOrchestrator,
 	jsonAdapter adapter.JSON,
+	blacklist registry.BlacklistRegistry,
 ) (Bridge, error) {
 	opts := []nats.Option{
 		nats.Name(cfg.ConnectionName),
@@ -86,6 +89,7 @@ func NewBridge(
 		store:        st,
 		orchestrator: orchestrator,
 		json:         jsonAdapter,
+		blacklist:    blacklist,
 		config:       cfg,
 	}
 
@@ -94,6 +98,15 @@ func NewBridge(
 
 // shouldProcessEvent determines if an event should be forwarded to workers
 func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
+	// Check if contract is blacklisted
+	if b.blacklist != nil && b.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
+		logger.Info("Dropping event - contract is blacklisted",
+			zap.String("chain", string(event.Chain)),
+			zap.String("tokenCID", event.TokenCID().String()),
+		)
+		return false, nil
+	}
+
 	// Check if token is already indexed
 	token, err := b.store.GetTokenByTokenCID(ctx, event.TokenCID().String())
 	if err != nil {
@@ -241,7 +254,7 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 // forwardToWorker forwards the event to appropriate worker based on event type
 func (b *bridge) forwardToWorker(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Route to appropriate worker method based on event type
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{})
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil)
 	var workflowFunc interface{}
 	switch event.EventType {
 	case domain.EventTypeMint:

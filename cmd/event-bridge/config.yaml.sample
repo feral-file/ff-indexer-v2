@@ -23,3 +23,6 @@ temporal:
   host_port: localhost:7233
   namespace: default
   task_queue: token-indexing
+
+# Blacklist contracts that will be skipped
+blacklist_path: tools/registry/blacklist.json

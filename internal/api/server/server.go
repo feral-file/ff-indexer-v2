@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/rest"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
@@ -34,15 +35,17 @@ type Server struct {
 	config       Config
 	store        store.Store
 	orchestrator temporal.TemporalOrchestrator
+	blacklist    registry.BlacklistRegistry
 	httpServer   *http.Server
 }
 
 // New creates a new API server
-func New(cfg Config, store store.Store, orchestrator temporal.TemporalOrchestrator) *Server {
+func New(cfg Config, store store.Store, orchestrator temporal.TemporalOrchestrator, blacklist registry.BlacklistRegistry) *Server {
 	return &Server{
 		config:       cfg,
 		store:        store,
 		orchestrator: orchestrator,
+		blacklist:    blacklist,
 	}
 }
 
@@ -64,7 +67,7 @@ func (s *Server) Start() error {
 	router.Use(middleware.SetupCORS())
 
 	// Create shared executor (contains business logic shared between REST and GraphQL)
-	exec := executor.NewExecutor(s.store, s.orchestrator, s.config.OrchestratorTaskQueue)
+	exec := executor.NewExecutor(s.store, s.orchestrator, s.config.OrchestratorTaskQueue, s.blacklist)
 
 	// Create REST handler
 	restHandler := rest.NewHandler(exec)

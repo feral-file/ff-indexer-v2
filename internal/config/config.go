@@ -102,10 +102,11 @@ type TezosEmitterConfig struct {
 
 // EventBridgeConfig holds configuration for event-bridge
 type EventBridgeConfig struct {
-	BaseConfig `mapstructure:",squash"`
-	Database   DatabaseConfig `mapstructure:"database"`
-	NATS       NATSConfig     `mapstructure:"nats"`
-	Temporal   TemporalConfig `mapstructure:"temporal"`
+	BaseConfig    `mapstructure:",squash"`
+	Database      DatabaseConfig `mapstructure:"database"`
+	NATS          NATSConfig     `mapstructure:"nats"`
+	Temporal      TemporalConfig `mapstructure:"temporal"`
+	BlacklistPath string         `mapstructure:"blacklist_path"`
 }
 
 // WorkerCoreConfig holds configuration for worker-core
@@ -120,14 +121,16 @@ type WorkerCoreConfig struct {
 	EthereumTokenSweepStartBlock uint64         `mapstructure:"ethereum_token_sweep_start_block"`
 	TezosTokenSweepStartBlock    uint64         `mapstructure:"tezos_token_sweep_start_block"`
 	PublisherRegistryPath        string         `mapstructure:"publisher_registry_path"`
+	BlacklistPath                string         `mapstructure:"blacklist_path"`
 }
 
 // APIConfig holds configuration for API server
 type APIConfig struct {
-	BaseConfig `mapstructure:",squash"`
-	Server     ServerConfig   `mapstructure:"server"`
-	Database   DatabaseConfig `mapstructure:"database"`
-	Temporal   TemporalConfig `mapstructure:"temporal"`
+	BaseConfig    `mapstructure:",squash"`
+	Server        ServerConfig   `mapstructure:"server"`
+	Database      DatabaseConfig `mapstructure:"database"`
+	Temporal      TemporalConfig `mapstructure:"temporal"`
+	BlacklistPath string         `mapstructure:"blacklist_path"`
 }
 
 // CloudflareConfig holds Cloudflare configuration

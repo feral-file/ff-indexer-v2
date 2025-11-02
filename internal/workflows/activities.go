@@ -17,6 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -453,7 +454,7 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 	hashString := hex.EncodeToString(hash)
 
 	// Convert publisher name to vendor
-	vendor := metadata.PublisherNameToVendor(enhanced.Vendor)
+	vendor := registry.PublisherNameToVendor(enhanced.Vendor)
 	if vendor == "" {
 		return nil, fmt.Errorf("invalid publisher name: %s", enhanced.Vendor)
 	}
@@ -1136,25 +1137,12 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 
 	// Process the media file
 	if err := e.mediaProcessor.Process(ctx, url); err != nil {
-		if errors.Is(err, domain.ErrUnsupportedMediaFile) {
-			logger.Info("Unsupported media file, skipping", zap.String("url", url))
+		if errors.Is(err, domain.ErrUnsupportedMediaFile) ||
+			errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) ||
+			errors.Is(err, domain.ErrExceededMaxFileSize) ||
+			errors.Is(err, domain.ErrMissingContentLength) {
+			// Skip known errors
 			return nil
-		}
-
-		if errors.Is(err, domain.ErrExceededMaxFileSize) {
-			return temporal.NewNonRetryableApplicationError(
-				"media file size exceeds the allowed limit",
-				"ExceededMaxFileSize",
-				domain.ErrExceededMaxFileSize,
-			)
-		}
-
-		if errors.Is(err, domain.ErrMissingContentLength) {
-			return temporal.NewNonRetryableApplicationError(
-				"media file content length is missing",
-				"MissingContentLength",
-				domain.ErrMissingContentLength,
-			)
 		}
 
 		return fmt.Errorf("failed to process media file: %w", err)

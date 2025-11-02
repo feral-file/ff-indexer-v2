@@ -24,6 +24,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -91,18 +92,31 @@ func main() {
 	fxhashClient := fxhash.NewClient(httpClient)
 
 	// Load publisher registry
-	var publisherRegistry *metadata.PublisherRegistry
+	var publisherRegistry registry.PublisherRegistry
 	if cfg.PublisherRegistryPath != "" {
-		registry, err := metadata.LoadPublisherRegistry(cfg.PublisherRegistryPath)
+		publisherRegistry, err = registry.LoadPublisherRegistry(cfg.PublisherRegistryPath)
 		if err != nil {
 			logger.Fatal("Failed to load publisher registry",
 				zap.Error(err),
 				zap.String("path", cfg.PublisherRegistryPath))
 		}
-		publisherRegistry = registry
 		logger.Info("Loaded publisher registry", zap.String("path", cfg.PublisherRegistryPath))
 	} else {
 		logger.Warn("Publisher registry path not configured, publisher resolution will be disabled")
+	}
+
+	// Load blacklist registry
+	var blacklistRegistry registry.BlacklistRegistry
+	if cfg.BlacklistPath != "" {
+		blacklistRegistry, err = registry.LoadBlacklist(cfg.BlacklistPath)
+		if err != nil {
+			logger.Fatal("Failed to load blacklist registry",
+				zap.Error(err),
+				zap.String("path", cfg.BlacklistPath))
+		}
+		logger.Info("Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
+	} else {
+		logger.Warn("Blacklist registry path not configured, all contracts will be allowed")
 	}
 
 	// Initialize URI resolver
@@ -154,7 +168,7 @@ func main() {
 			EthereumChainID:              cfg.Ethereum.ChainID,
 			TezosChainID:                 cfg.Tezos.ChainID,
 			MediaTaskQueue:               cfg.Temporal.MediaTaskQueue,
-		})
+		}, blacklistRegistry)
 
 	// Register workflows
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMint)

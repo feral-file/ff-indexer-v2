@@ -51,3 +51,6 @@ uri:
     - https://ipfs.filebase.io
   arweave_gateways:
     - https://arweave.net
+
+# Blacklist contracts that will be skipped
+blacklist_path: tools/registry/blacklist.json
