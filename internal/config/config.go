@@ -2,9 +2,12 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -154,7 +157,7 @@ type WorkerMediaConfig struct {
 
 // LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter
 func LoadEthereumEmitterConfig(configPath string) (*EthereumEmitterConfig, error) {
-	v := Viper(configPath)
+	v := configureViper("ethereum-event-emitter", configPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -178,7 +181,7 @@ func LoadEthereumEmitterConfig(configPath string) (*EthereumEmitterConfig, error
 
 // LoadTezosEmitterConfig loads configuration for tezos-event-emitter
 func LoadTezosEmitterConfig(configPath string) (*TezosEmitterConfig, error) {
-	v := Viper(configPath)
+	v := configureViper("tezos-event-emitter", configPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -202,7 +205,7 @@ func LoadTezosEmitterConfig(configPath string) (*TezosEmitterConfig, error) {
 
 // LoadEventBridgeConfig loads configuration for event-bridge
 func LoadEventBridgeConfig(configPath string) (*EventBridgeConfig, error) {
-	v := Viper(configPath)
+	v := configureViper("event-bridge", configPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -233,7 +236,7 @@ func LoadEventBridgeConfig(configPath string) (*EventBridgeConfig, error) {
 
 // LoadWorkerCoreConfig loads configuration for worker-core
 func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
-	v := Viper(configPath)
+	v := configureViper("worker-core", configPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -260,7 +263,7 @@ func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
 
 // LoadAPIConfig loads configuration for API server
 func LoadAPIConfig(configPath string) (*APIConfig, error) {
-	v := Viper(configPath)
+	v := configureViper("api", configPath)
 
 	// Set defaults
 	v.SetDefault("debug", false)
@@ -291,7 +294,7 @@ func LoadAPIConfig(configPath string) (*APIConfig, error) {
 
 // LoadWorkerMediaConfig loads configuration for worker-media
 func LoadWorkerMediaConfig(configPath string) (*WorkerMediaConfig, error) {
-	v := Viper(configPath)
+	v := configureViper("worker-media", configPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -317,20 +320,52 @@ func LoadWorkerMediaConfig(configPath string) (*WorkerMediaConfig, error) {
 	return &config, nil
 }
 
-// Viper returns a viper instance with the config file and environment variables set
-func Viper(configPath string) *viper.Viper {
+// configureViper returns a viper instance with the config file and environment variables set
+func configureViper(service string, configFilePath string) *viper.Viper {
 	v := viper.New()
 
+	// Load environment variables
+	loadEnv(service)
+
 	// Set config file
-	v.SetConfigFile(configPath)
+	v.SetConfigFile(configFilePath)
 	v.SetConfigType("yaml")
-	v.AddConfigPath("/.config/")
+	v.AddConfigPath("config/")
 
 	// Set environment variables
 	v.SetEnvPrefix("FF_INDEXER")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 	return v
+}
+
+// loadEnv loads environment variables from the config directory
+func loadEnv(service string) {
+	// Always try shared base first, then local, then optional per-service local.
+	candidates := []string{
+		"config/.env",
+		"config/.env.local",
+	}
+
+	if service != "" {
+		candidates = append(candidates, "config/.env."+service+".local")
+	}
+
+	for _, candidate := range candidates {
+		_ = godotenv.Overload(candidate) // Overload lets later files override earlier ones
+	}
+}
+
+// ChdirRepoRoot changes the current working directory to the repository root
+func ChdirRepoRoot() {
+	cwd, _ := os.Getwd()
+	for range 5 {
+		if _, err := os.Stat(filepath.Join(cwd, "config")); err == nil {
+			_ = os.Chdir(cwd)
+			return
+		}
+		cwd = filepath.Dir(cwd)
+	}
 }
 
 // DSN returns the database connection string

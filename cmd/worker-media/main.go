@@ -34,6 +34,7 @@ func main() {
 	flag.Parse()
 
 	// Load configuration
+	config.ChdirRepoRoot()
 	cfg, err := config.LoadWorkerMediaConfig(*configPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load config: %v", err))

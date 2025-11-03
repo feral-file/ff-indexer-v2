@@ -1,3 +1,5 @@
+# Feral File Indexer Worker Core Configuration
+
 debug: true
 sentry_dsn: ""
 
@@ -8,16 +10,6 @@ database:
   password: postgres
   dbname: ff_indexer
   sslmode: disable
-  
-nats:
-  url: nats://localhost:4222
-  stream_name: BLOCKCHAIN_EVENTS
-  consumer_name: event-bridge
-  connection_name: event-bridge-consumer
-  max_reconnects: 10
-  reconnect_wait: 2s
-  ack_wait: 30s
-  max_deliver: 3
 
 temporal:
   host_port: localhost:7233
@@ -29,7 +21,7 @@ temporal:
 
 ethereum:
   chain_id: eip155:1
-  rpc_url: https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID
+  rpc_url: ""
 
 tezos:
   chain_id: tezos:mainnet
@@ -41,6 +33,7 @@ vendors:
 ethereum_token_sweep_start_block: 10000000
 tezos_token_sweep_start_block: 5000000
 publisher_registry_path: tools/registry/publisher.json
+blacklist_path: tools/registry/blacklist.json
 
 uri:
   ipfs_gateways:
@@ -52,5 +45,3 @@ uri:
   arweave_gateways:
     - https://arweave.net
 
-# Blacklist contracts that will be skipped
-blacklist_path: tools/registry/blacklist.json

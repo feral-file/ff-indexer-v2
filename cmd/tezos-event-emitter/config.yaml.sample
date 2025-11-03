@@ -1,3 +1,5 @@
+# Feral File Indexer Tezos Event Emitter Configuration
+
 debug: true
 sentry_dsn: ""
 
@@ -20,5 +22,5 @@ tezos:
   api_url: https://api.tzkt.io
   websocket_url: https://api.tzkt.io/v1/ws
   chain_id: tezos:mainnet
-  start_level: 0  # 0 means start from latest level
+  start_level: 0
 

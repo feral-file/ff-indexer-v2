@@ -1,5 +1,7 @@
+# Feral File Indexer Worker Media Configuration
+
 debug: true
-sentry_dsn: ""
+sentry_dsn: "" 
 
 database:
   host: localhost
@@ -16,7 +18,6 @@ temporal:
   max_concurrent_activity_execution_size: 10
   worker_activities_per_second: 10
 
-# URI resolver configuration
 uri:
   ipfs_gateways:
     - https://ipfs.io
@@ -27,12 +28,11 @@ uri:
   arweave_gateways:
     - https://arweave.net
 
-# Media storage configuration (Cloudflare Images and Stream)
-# Uses the same account for both services
 cloudflare:
-  account_id: YOUR_CLOUDFLARE_ACCOUNT_ID  # Used for both Images and Stream
-  api_token: YOUR_CLOUDFLARE_API_TOKEN
+  account_id: ""
+  api_token: ""
 
-max_static_image_size: 10485760  # 10MB in bytes
-max_animated_image_size: 52428800 # 50MB in bytes
-max_video_size: 314572800 # 300MB in bytes
+max_static_image_size: 10485760      # 10MB
+max_animated_image_size: 52428800    # 50MB
+max_video_size: 314572800            # 300MB
+

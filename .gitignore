@@ -42,7 +42,11 @@ go.work
 go.work.sum
 
 # env file
-.env
+.env.local
+
+# Config files (keep samples only)
+config.yaml
+!config.yaml.sample
 **/config.yaml
 
 # Editor/IDE

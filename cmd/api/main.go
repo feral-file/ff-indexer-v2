@@ -30,10 +30,12 @@ func main() {
 	flag.Parse()
 
 	// Load configuration
+	config.ChdirRepoRoot()
 	cfg, err := config.LoadAPIConfig(*configPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
+	fmt.Println("cfg", cfg)
 
 	// Initialize logger
 	err = logger.Initialize(cfg.Debug,

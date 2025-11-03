@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /build/bin/ethereum-event-emitter ./cmd/ethereum-event-emitter
+RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /build/bin/worker-media ./cmd/worker-media
 
 # Runtime stage
 FROM alpine:latest
@@ -27,7 +27,7 @@ RUN addgroup -g 1000 appuser && \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /build/bin/ethereum-event-emitter .
+COPY --from=builder /build/bin/worker-media .
 
 # Change ownership
 RUN chown -R appuser:appuser /app
@@ -36,5 +36,5 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Run the application
-CMD ["./ethereum-event-emitter", "-config", "config.yaml"]
+CMD ["./worker-media", "-config", "config.yaml"]
 

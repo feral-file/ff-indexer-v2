@@ -1,6 +1,7 @@
+# Feral File Indexer Event Bridge Configuration
+
 debug: true
 sentry_dsn: ""
-
 database:
   host: localhost
   port: 5432
@@ -8,7 +9,7 @@ database:
   password: postgres
   dbname: ff_indexer
   sslmode: disable
-  
+
 nats:
   url: nats://localhost:4222
   stream_name: BLOCKCHAIN_EVENTS
@@ -24,5 +25,5 @@ temporal:
   namespace: default
   task_queue: token-indexing
 
-# Blacklist contracts that will be skipped
 blacklist_path: tools/registry/blacklist.json
+

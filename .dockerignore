@@ -1,0 +1,87 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+LICENSE
+docs/
+
+# Docker files (exclude other Dockerfiles and compose files)
+tools/docker/docker-compose.yaml
+tools/docker/Dockerfile-*
+!tools/docker/Dockerfile-${DOCKERFILE_TARGET}
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Development and test files
+*_test.go
+**/*_test.go
+testdata/
+coverage.*
+*.coverprofile
+profile.cov
+*.test
+*.out
+**/*mocks*/
+
+# Build artifacts and binaries
+bin/
+build/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+api
+ethereum-event-emitter
+tezos-event-emitter
+event-bridge
+worker-core
+worker-media
+
+# Dependencies (will be downloaded during build)
+vendor/
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Environment and config files (using env vars instead)
+config/.env
+config/.env.*
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# Database files
+*.db
+*.sqlite
+*.sql
+db/init_db.sql
+db/migrations/
+
+# NATS and registry files (will be mounted as volumes)
+tools/nats/
+tools/registry/
+
+# Scripts
+tools/scripts/
+

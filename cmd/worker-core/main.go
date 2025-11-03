@@ -38,10 +38,12 @@ func main() {
 	flag.Parse()
 
 	// Load configuration
+	config.ChdirRepoRoot()
 	cfg, err := config.LoadWorkerCoreConfig(*configPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
+	fmt.Println("cfg", cfg)
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())

@@ -1,3 +1,5 @@
+# Feral File Indexer Ethereum Event Emitter Configuration
+
 debug: true
 sentry_dsn: ""
 
@@ -17,7 +19,7 @@ nats:
   connection_name: ethereum-event-emitter
 
 ethereum:
-  websocket_url: wss://mainnet.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID
+  websocket_url: ""
   chain_id: eip155:1
-  start_block: 0  # 0 means start from latest block
+  start_block: 0
 
