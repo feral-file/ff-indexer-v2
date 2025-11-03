@@ -1,11 +1,10 @@
 package registry
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
@@ -31,17 +30,39 @@ type blacklistRegistry struct {
 	contracts map[string]bool
 }
 
-// LoadBlacklist loads the blacklist registry from a JSON file
-func LoadBlacklist(filePath string) (BlacklistRegistry, error) {
-	// Read the file using the absolute path
-	data, err := os.ReadFile(filePath) //nolint:gosec,G304 // This should be a trusted file
+// BlacklistRegistryLoader defines the interface for loading blacklist registries from files
+//
+//go:generate mockgen -source=blacklist.go -destination=../mocks/blacklist_registry.go -package=mocks -mock_names=BlacklistRegistryLoader=MockBlacklistRegistryLoader
+type BlacklistRegistryLoader interface {
+	// Load loads the blacklist registry from a JSON file
+	Load(filePath string) (BlacklistRegistry, error)
+}
+
+// blacklistRegistryLoader is the internal implementation of BlacklistRegistryLoader interface
+type blacklistRegistryLoader struct {
+	fs   adapter.FileSystem
+	json adapter.JSON
+}
+
+// NewBlacklistRegistryLoader creates a new BlacklistRegistryLoader with injected dependencies
+func NewBlacklistRegistryLoader(fs adapter.FileSystem, json adapter.JSON) BlacklistRegistryLoader {
+	return &blacklistRegistryLoader{
+		fs:   fs,
+		json: json,
+	}
+}
+
+// Load loads the blacklist registry from a JSON file
+func (l *blacklistRegistryLoader) Load(filePath string) (BlacklistRegistry, error) {
+	// Read the file using the file system interface
+	data, err := l.fs.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read blacklist file: %w", err)
 	}
 
-	// Parse JSON
+	// Parse JSON using the JSON adapter
 	var blacklistData BlacklistData
-	if err := json.Unmarshal(data, &blacklistData); err != nil {
+	if err := l.json.Unmarshal(data, &blacklistData); err != nil {
 		return nil, fmt.Errorf("failed to parse blacklist JSON: %w", err)
 	}
 

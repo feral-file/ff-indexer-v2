@@ -50,6 +50,21 @@ func (mr *MockFileSystemMockRecorder) Create(name interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockFileSystem)(nil).Create), name)
 }
 
+// ReadFile mocks base method.
+func (m *MockFileSystem) ReadFile(name string) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReadFile", name)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ReadFile indicates an expected call of ReadFile.
+func (mr *MockFileSystemMockRecorder) ReadFile(name interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadFile", reflect.TypeOf((*MockFileSystem)(nil).ReadFile), name)
+}
+
 // Remove mocks base method.
 func (m *MockFileSystem) Remove(name string) error {
 	m.ctrl.T.Helper()

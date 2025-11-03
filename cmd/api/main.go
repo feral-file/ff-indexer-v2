@@ -16,6 +16,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/server"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
@@ -58,6 +59,10 @@ func main() {
 	// Initialize store
 	dataStore := store.NewPGStore(db)
 
+	// Initialize adapters
+	fs := adapter.NewFileSystem()
+	jsonAdapter := adapter.NewJSON()
+
 	// Connect to Temporal
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.HostPort,
@@ -72,7 +77,8 @@ func main() {
 	// Load blacklist registry
 	var blacklistRegistry registry.BlacklistRegistry
 	if cfg.BlacklistPath != "" {
-		blacklistRegistry, err = registry.LoadBlacklist(cfg.BlacklistPath)
+		blacklistLoader := registry.NewBlacklistRegistryLoader(fs, jsonAdapter)
+		blacklistRegistry, err = blacklistLoader.Load(cfg.BlacklistPath)
 		if err != nil {
 			logger.Fatal("Failed to load blacklist registry",
 				zap.Error(err),

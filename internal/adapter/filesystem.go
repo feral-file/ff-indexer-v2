@@ -17,6 +17,9 @@ type FileSystem interface {
 
 	// TempDir returns the default directory to use for temporary files
 	TempDir() string
+
+	// ReadFile reads the named file and returns its contents
+	ReadFile(name string) ([]byte, error)
 }
 
 // File defines an interface for file operations
@@ -46,4 +49,9 @@ func (fs *RealFileSystem) Remove(name string) error {
 // TempDir returns the default directory to use for temporary files
 func (fs *RealFileSystem) TempDir() string {
 	return os.TempDir()
+}
+
+// ReadFile reads the named file and returns its contents
+func (fs *RealFileSystem) ReadFile(name string) ([]byte, error) {
+	return os.ReadFile(name) //nolint:gosec,G304 // This should be a trusted file
 }

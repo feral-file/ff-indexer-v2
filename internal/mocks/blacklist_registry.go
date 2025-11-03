@@ -10,6 +10,7 @@ import (
 	gomock "github.com/golang/mock/gomock"
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
+	registry "github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // MockBlacklistRegistry is a mock of BlacklistRegistry interface.
@@ -61,4 +62,42 @@ func (m *MockBlacklistRegistry) IsTokenCIDBlacklisted(tokenCID domain.TokenCID) 
 func (mr *MockBlacklistRegistryMockRecorder) IsTokenCIDBlacklisted(tokenCID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsTokenCIDBlacklisted", reflect.TypeOf((*MockBlacklistRegistry)(nil).IsTokenCIDBlacklisted), tokenCID)
+}
+
+// MockBlacklistRegistryLoader is a mock of BlacklistRegistryLoader interface.
+type MockBlacklistRegistryLoader struct {
+	ctrl     *gomock.Controller
+	recorder *MockBlacklistRegistryLoaderMockRecorder
+}
+
+// MockBlacklistRegistryLoaderMockRecorder is the mock recorder for MockBlacklistRegistryLoader.
+type MockBlacklistRegistryLoaderMockRecorder struct {
+	mock *MockBlacklistRegistryLoader
+}
+
+// NewMockBlacklistRegistryLoader creates a new mock instance.
+func NewMockBlacklistRegistryLoader(ctrl *gomock.Controller) *MockBlacklistRegistryLoader {
+	mock := &MockBlacklistRegistryLoader{ctrl: ctrl}
+	mock.recorder = &MockBlacklistRegistryLoaderMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockBlacklistRegistryLoader) EXPECT() *MockBlacklistRegistryLoaderMockRecorder {
+	return m.recorder
+}
+
+// Load mocks base method.
+func (m *MockBlacklistRegistryLoader) Load(filePath string) (registry.BlacklistRegistry, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Load", filePath)
+	ret0, _ := ret[0].(registry.BlacklistRegistry)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Load indicates an expected call of Load.
+func (mr *MockBlacklistRegistryLoaderMockRecorder) Load(filePath interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockBlacklistRegistryLoader)(nil).Load), filePath)
 }

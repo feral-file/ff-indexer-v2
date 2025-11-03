@@ -62,6 +62,7 @@ func main() {
 	// Initialize adapters
 	jsonAdapter := adapter.NewJSON()
 	natsJS := adapter.NewNatsJetStream()
+	fs := adapter.NewFileSystem()
 
 	// Connect to Temporal (for triggering workflows remotely)
 	temporalClient, err := client.Dial(client.Options{
@@ -77,7 +78,8 @@ func main() {
 	// Load blacklist registry
 	var blacklistRegistry registry.BlacklistRegistry
 	if cfg.BlacklistPath != "" {
-		blacklistRegistry, err = registry.LoadBlacklist(cfg.BlacklistPath)
+		blacklistLoader := registry.NewBlacklistRegistryLoader(fs, jsonAdapter)
+		blacklistRegistry, err = blacklistLoader.Load(cfg.BlacklistPath)
 		if err != nil {
 			logger.Fatal("Failed to load blacklist registry",
 				zap.Error(err),

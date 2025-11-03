@@ -78,3 +78,41 @@ func (mr *MockPublisherRegistryMockRecorder) LookupPublisherByDeployer(chainID, 
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LookupPublisherByDeployer", reflect.TypeOf((*MockPublisherRegistry)(nil).LookupPublisherByDeployer), chainID, deployerAddress)
 }
+
+// MockPublisherRegistryLoader is a mock of PublisherRegistryLoader interface.
+type MockPublisherRegistryLoader struct {
+	ctrl     *gomock.Controller
+	recorder *MockPublisherRegistryLoaderMockRecorder
+}
+
+// MockPublisherRegistryLoaderMockRecorder is the mock recorder for MockPublisherRegistryLoader.
+type MockPublisherRegistryLoaderMockRecorder struct {
+	mock *MockPublisherRegistryLoader
+}
+
+// NewMockPublisherRegistryLoader creates a new mock instance.
+func NewMockPublisherRegistryLoader(ctrl *gomock.Controller) *MockPublisherRegistryLoader {
+	mock := &MockPublisherRegistryLoader{ctrl: ctrl}
+	mock.recorder = &MockPublisherRegistryLoaderMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockPublisherRegistryLoader) EXPECT() *MockPublisherRegistryLoaderMockRecorder {
+	return m.recorder
+}
+
+// Load mocks base method.
+func (m *MockPublisherRegistryLoader) Load(filePath string) (registry.PublisherRegistry, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Load", filePath)
+	ret0, _ := ret[0].(registry.PublisherRegistry)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Load indicates an expected call of Load.
+func (mr *MockPublisherRegistryLoaderMockRecorder) Load(filePath interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockPublisherRegistryLoader)(nil).Load), filePath)
+}

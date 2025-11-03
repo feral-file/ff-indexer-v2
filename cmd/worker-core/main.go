@@ -73,6 +73,7 @@ func main() {
 	// Initialize adapters
 	jsonAdapter := adapter.NewJSON()
 	clockAdapter := adapter.NewClock()
+	fs := adapter.NewFileSystem()
 
 	// Initialize ethereum client
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
@@ -93,10 +94,14 @@ func main() {
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL)
 	fxhashClient := fxhash.NewClient(httpClient)
 
+	// Initialize registry loaders
+	publisherLoader := registry.NewPublisherRegistryLoader(fs, jsonAdapter)
+	blacklistLoader := registry.NewBlacklistRegistryLoader(fs, jsonAdapter)
+
 	// Load publisher registry
 	var publisherRegistry registry.PublisherRegistry
 	if cfg.PublisherRegistryPath != "" {
-		publisherRegistry, err = registry.LoadPublisherRegistry(cfg.PublisherRegistryPath)
+		publisherRegistry, err = publisherLoader.Load(cfg.PublisherRegistryPath)
 		if err != nil {
 			logger.Fatal("Failed to load publisher registry",
 				zap.Error(err),
@@ -110,7 +115,7 @@ func main() {
 	// Load blacklist registry
 	var blacklistRegistry registry.BlacklistRegistry
 	if cfg.BlacklistPath != "" {
-		blacklistRegistry, err = registry.LoadBlacklist(cfg.BlacklistPath)
+		blacklistRegistry, err = blacklistLoader.Load(cfg.BlacklistPath)
 		if err != nil {
 			logger.Fatal("Failed to load blacklist registry",
 				zap.Error(err),

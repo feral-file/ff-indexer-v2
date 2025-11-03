@@ -1,11 +1,10 @@
 package registry
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
@@ -87,17 +86,39 @@ type publisherRegistry struct {
 	deployerToPublisher map[string]*PublisherInfo
 }
 
-// LoadPublisherRegistry loads the publisher registry from a JSON file
-func LoadPublisherRegistry(filePath string) (PublisherRegistry, error) {
-	// Read the file using the absolute path
-	data, err := os.ReadFile(filePath) //nolint:gosec,G304 // This should be a trusted file
+// PublisherRegistryLoader defines the interface for loading publisher registries from files
+//
+//go:generate mockgen -source=publisher.go -destination=../mocks/publisher_registry.go -package=mocks -mock_names=PublisherRegistryLoader=MockPublisherRegistryLoader
+type PublisherRegistryLoader interface {
+	// Load loads the publisher registry from a JSON file
+	Load(filePath string) (PublisherRegistry, error)
+}
+
+// publisherRegistryLoader is the internal implementation of PublisherRegistryLoader interface
+type publisherRegistryLoader struct {
+	fs   adapter.FileSystem
+	json adapter.JSON
+}
+
+// NewPublisherRegistryLoader creates a new PublisherRegistryLoader with injected dependencies
+func NewPublisherRegistryLoader(fs adapter.FileSystem, json adapter.JSON) PublisherRegistryLoader {
+	return &publisherRegistryLoader{
+		fs:   fs,
+		json: json,
+	}
+}
+
+// Load loads the publisher registry from a JSON file
+func (l *publisherRegistryLoader) Load(filePath string) (PublisherRegistry, error) {
+	// Read the file using the file system interface
+	data, err := l.fs.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read registry file: %w", err)
 	}
 
-	// Parse JSON
+	// Parse JSON using the JSON adapter
 	var registryData PublisherRegistryData
-	if err := json.Unmarshal(data, &registryData); err != nil {
+	if err := l.json.Unmarshal(data, &registryData); err != nil {
 		return nil, fmt.Errorf("failed to parse registry JSON: %w", err)
 	}
 
