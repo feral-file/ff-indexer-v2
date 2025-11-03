@@ -34,6 +34,8 @@ tags:
     description: Token data and metadata operations
   - name: changes
     description: Change tracking and journal operations
+  - name: workflows
+    description: Temporal workflow status and tracking operations
   - name: health
     description: Health check operations
 
@@ -477,6 +479,61 @@ paths:
                 $ref: '#/components/schemas/TriggerIndexingResponse'
         '422':
           description: Validation error - Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/workflows/{workflow_id}/runs/{run_id}:
+    get:
+      summary: Get workflow status
+      description: |
+        Retrieves the status of a Temporal workflow execution by workflow ID and run ID.
+        
+        This endpoint returns information about the workflow execution, including:
+        - Current status (RUNNING, COMPLETED, FAILED, CANCELED, TERMINATED, TIMED_OUT)
+        - Start time
+        - Close time (if completed)
+        - Execution duration (if completed)
+      operationId: getWorkflowStatus
+      tags:
+        - workflows
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          description: The workflow ID
+          schema:
+            type: string
+          example: "index-tokens-abc123"
+        - name: run_id
+          in: path
+          required: true
+          description: The run ID
+          schema:
+            type: string
+          example: "def456"
+      responses:
+        '200':
+          description: Workflow status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowStatusResponse'
+        '400':
+          description: Bad request - Missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '404':
+          description: Workflow execution not found
           content:
             application/json:
               schema:
@@ -1095,6 +1152,51 @@ components:
           type: string
           description: Temporal run ID for tracking
           example: "run-456"
+
+    WorkflowStatusResponse:
+      type: object
+      required:
+        - workflow_id
+        - run_id
+        - status
+      properties:
+        workflow_id:
+          type: string
+          description: Temporal workflow ID
+          example: "index-workflow-123"
+        run_id:
+          type: string
+          description: Temporal run ID
+          example: "run-456"
+        status:
+          type: string
+          description: |
+            Current status of the workflow execution.
+            
+            Possible values:
+            - WORKFLOW_EXECUTION_STATUS_RUNNING - Workflow is currently running
+            - WORKFLOW_EXECUTION_STATUS_COMPLETED - Workflow completed successfully
+            - WORKFLOW_EXECUTION_STATUS_FAILED - Workflow failed with an error
+            - WORKFLOW_EXECUTION_STATUS_CANCELED - Workflow was canceled
+            - WORKFLOW_EXECUTION_STATUS_TERMINATED - Workflow was terminated
+            - WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW - Workflow continued as new
+            - WORKFLOW_EXECUTION_STATUS_TIMED_OUT - Workflow timed out
+          example: "WORKFLOW_EXECUTION_STATUS_COMPLETED"
+        start_time:
+          type: string
+          format: date-time
+          description: Workflow start time in RFC3339 format
+          example: "2024-01-15T10:30:00Z"
+        close_time:
+          type: string
+          format: date-time
+          description: Workflow close time in RFC3339 format (only present if workflow is closed)
+          example: "2024-01-15T10:35:00Z"
+        execution_time_ms:
+          type: integer
+          format: uint64
+          description: Total execution time in milliseconds (only present if workflow is closed)
+          example: 300000
 
     APIError:
       type: object

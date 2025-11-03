@@ -53,6 +53,7 @@ type ResolverRoot interface {
 	Token() TokenResolver
 	TokenList() TokenListResolver
 	TokenMetadata() TokenMetadataResolver
+	WorkflowStatus() WorkflowStatusResolver
 }
 
 type DirectiveRoot struct {
@@ -156,9 +157,10 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		Changes func(childComplexity int, tokenCid []string, address []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) int
-		Token   func(childComplexity int, cid string, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
-		Tokens  func(childComplexity int, owner []string, chain []string, contractAddress []string, tokenID []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Changes        func(childComplexity int, tokenCid []string, address []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) int
+		Token          func(childComplexity int, cid string, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Tokens         func(childComplexity int, owner []string, chain []string, contractAddress []string, tokenID []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		WorkflowStatus func(childComplexity int, workflowID string, runID string) int
 	}
 
 	Token struct {
@@ -208,6 +210,15 @@ type ComplexityRoot struct {
 		RunID      func(childComplexity int) int
 		WorkflowID func(childComplexity int) int
 	}
+
+	WorkflowStatus struct {
+		CloseTime     func(childComplexity int) int
+		ExecutionTime func(childComplexity int) int
+		RunID         func(childComplexity int) int
+		StartTime     func(childComplexity int) int
+		Status        func(childComplexity int) int
+		WorkflowID    func(childComplexity int) int
+	}
 }
 
 type ChangeResolver interface {
@@ -256,6 +267,7 @@ type QueryResolver interface {
 	Token(ctx context.Context, cid string, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 	Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 	Changes(ctx context.Context, tokenCid []string, address []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error)
+	WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error)
 }
 type TokenResolver interface {
 	ID(ctx context.Context, obj *dto.TokenResponse) (Uint64, error)
@@ -271,6 +283,9 @@ type TokenMetadataResolver interface {
 	TokenID(ctx context.Context, obj *dto.TokenMetadataResponse) (Uint64, error)
 	OriginJSON(ctx context.Context, obj *dto.TokenMetadataResponse) (JSON, error)
 	LatestJSON(ctx context.Context, obj *dto.TokenMetadataResponse) (JSON, error)
+}
+type WorkflowStatusResolver interface {
+	ExecutionTime(ctx context.Context, obj *dto.WorkflowStatusResponse) (*Uint64, error)
 }
 
 type executableSchema struct {
@@ -719,6 +734,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.Tokens(childComplexity, args["owner"].([]string), args["chain"].([]string), args["contract_address"].([]string), args["token_id"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["expand"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+	case "Query.workflowStatus":
+		if e.complexity.Query.WorkflowStatus == nil {
+			break
+		}
+
+		args, err := ec.field_Query_workflowStatus_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.WorkflowStatus(childComplexity, args["workflow_id"].(string), args["run_id"].(string)), true
 
 	case "Token.burned":
 		if e.complexity.Token.Burned == nil {
@@ -939,6 +965,43 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TriggerIndexingResult.WorkflowID(childComplexity), true
+
+	case "WorkflowStatus.close_time":
+		if e.complexity.WorkflowStatus.CloseTime == nil {
+			break
+		}
+
+		return e.complexity.WorkflowStatus.CloseTime(childComplexity), true
+	case "WorkflowStatus.execution_time_ms":
+		if e.complexity.WorkflowStatus.ExecutionTime == nil {
+			break
+		}
+
+		return e.complexity.WorkflowStatus.ExecutionTime(childComplexity), true
+	case "WorkflowStatus.run_id":
+		if e.complexity.WorkflowStatus.RunID == nil {
+			break
+		}
+
+		return e.complexity.WorkflowStatus.RunID(childComplexity), true
+	case "WorkflowStatus.start_time":
+		if e.complexity.WorkflowStatus.StartTime == nil {
+			break
+		}
+
+		return e.complexity.WorkflowStatus.StartTime(childComplexity), true
+	case "WorkflowStatus.status":
+		if e.complexity.WorkflowStatus.Status == nil {
+			break
+		}
+
+		return e.complexity.WorkflowStatus.Status(childComplexity), true
+	case "WorkflowStatus.workflow_id":
+		if e.complexity.WorkflowStatus.WorkflowID == nil {
+			break
+		}
+
+		return e.complexity.WorkflowStatus.WorkflowID(childComplexity), true
 
 	}
 	return 0, false
@@ -1213,6 +1276,16 @@ type TriggerIndexingResult {
   run_id: String!
 }
 
+# Workflow status information
+type WorkflowStatus {
+  workflow_id: String!
+  run_id: String!
+  status: String!
+  start_time: Time
+  close_time: Time
+  execution_time_ms: Uint64
+}
+
 # Root Query type
 type Query {
   # Get a single token by CID
@@ -1255,6 +1328,13 @@ type Query {
     order: Order = asc
     expand: [String!]
   ): ChangeList
+
+  # Get workflow status by workflow ID and run ID
+  # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id
+  workflowStatus(
+    workflow_id: String!
+    run_id: String!
+  ): WorkflowStatus
 }
 
 # Root Mutation type
@@ -1447,6 +1527,22 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["provenance_events_order"] = arg11
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_workflowStatus_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "workflow_id", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["workflow_id"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "run_id", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["run_id"] = arg1
 	return args, nil
 }
 
@@ -3586,6 +3682,61 @@ func (ec *executionContext) fieldContext_Query_changes(ctx context.Context, fiel
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_workflowStatus(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_workflowStatus,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().WorkflowStatus(ctx, fc.Args["workflow_id"].(string), fc.Args["run_id"].(string))
+		},
+		nil,
+		ec.marshalOWorkflowStatus2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐWorkflowStatusResponse,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_workflowStatus(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "workflow_id":
+				return ec.fieldContext_WorkflowStatus_workflow_id(ctx, field)
+			case "run_id":
+				return ec.fieldContext_WorkflowStatus_run_id(ctx, field)
+			case "status":
+				return ec.fieldContext_WorkflowStatus_status(ctx, field)
+			case "start_time":
+				return ec.fieldContext_WorkflowStatus_start_time(ctx, field)
+			case "close_time":
+				return ec.fieldContext_WorkflowStatus_close_time(ctx, field)
+			case "execution_time_ms":
+				return ec.fieldContext_WorkflowStatus_execution_time_ms(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WorkflowStatus", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_workflowStatus_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -4897,6 +5048,180 @@ func (ec *executionContext) fieldContext_TriggerIndexingResult_run_id(_ context.
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkflowStatus_workflow_id(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkflowStatus_workflow_id,
+		func(ctx context.Context) (any, error) {
+			return obj.WorkflowID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkflowStatus_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkflowStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkflowStatus_run_id(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkflowStatus_run_id,
+		func(ctx context.Context) (any, error) {
+			return obj.RunID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkflowStatus_run_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkflowStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkflowStatus_status(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkflowStatus_status,
+		func(ctx context.Context) (any, error) {
+			return obj.Status, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkflowStatus_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkflowStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkflowStatus_start_time(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkflowStatus_start_time,
+		func(ctx context.Context) (any, error) {
+			return obj.StartTime, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkflowStatus_start_time(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkflowStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkflowStatus_close_time(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkflowStatus_close_time,
+		func(ctx context.Context) (any, error) {
+			return obj.CloseTime, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkflowStatus_close_time(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkflowStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WorkflowStatus_execution_time_ms(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WorkflowStatus_execution_time_ms,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.WorkflowStatus().ExecutionTime(ctx, obj)
+		},
+		nil,
+		ec.marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_WorkflowStatus_execution_time_ms(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WorkflowStatus",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Uint64 does not have child fields")
 		},
 	}
 	return fc, nil
@@ -7670,6 +7995,25 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "workflowStatus":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_workflowStatus(ctx, field)
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -8185,6 +8529,92 @@ func (ec *executionContext) _TriggerIndexingResult(ctx context.Context, sel ast.
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var workflowStatusImplementors = []string{"WorkflowStatus"}
+
+func (ec *executionContext) _WorkflowStatus(ctx context.Context, sel ast.SelectionSet, obj *dto.WorkflowStatusResponse) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, workflowStatusImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WorkflowStatus")
+		case "workflow_id":
+			out.Values[i] = ec._WorkflowStatus_workflow_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "run_id":
+			out.Values[i] = ec._WorkflowStatus_run_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "status":
+			out.Values[i] = ec._WorkflowStatus_status(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "start_time":
+			out.Values[i] = ec._WorkflowStatus_start_time(ctx, field, obj)
+		case "close_time":
+			out.Values[i] = ec._WorkflowStatus_close_time(ctx, field, obj)
+		case "execution_time_ms":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._WorkflowStatus_execution_time_ms(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -9428,6 +9858,13 @@ func (ec *executionContext) marshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑ
 		return graphql.Null
 	}
 	return v
+}
+
+func (ec *executionContext) marshalOWorkflowStatus2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐWorkflowStatusResponse(ctx context.Context, sel ast.SelectionSet, v *dto.WorkflowStatusResponse) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._WorkflowStatus(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalO__EnumValue2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐEnumValueᚄ(ctx context.Context, sel ast.SelectionSet, v []introspection.EnumValue) graphql.Marshaler {

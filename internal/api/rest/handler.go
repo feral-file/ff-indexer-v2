@@ -32,6 +32,10 @@ type Handler interface {
 	// POST /api/v1/tokens/index
 	TriggerTokenIndexing(c *gin.Context)
 
+	// GetWorkflowStatus retrieves the status of a Temporal workflow execution
+	// GET /api/v1/workflows/:workflow_id/runs/:run_id
+	GetWorkflowStatus(c *gin.Context)
+
 	// HealthCheck returns the health status of the API
 	// GET /health
 	HealthCheck(c *gin.Context)
@@ -233,6 +237,30 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusAccepted, response)
+}
+
+// GetWorkflowStatus retrieves the status of a Temporal workflow execution
+func (h *handler) GetWorkflowStatus(c *gin.Context) {
+	workflowID := c.Param("workflow_id")
+	if workflowID == "" {
+		respondBadRequest(c, "workflow_id is required")
+		return
+	}
+
+	runID := c.Param("run_id")
+	if runID == "" {
+		respondBadRequest(c, "run_id is required")
+		return
+	}
+
+	// Call executor's GetWorkflowStatus method
+	status, err := h.executor.GetWorkflowStatus(c.Request.Context(), workflowID, runID)
+	if err != nil {
+		respondInternalError(c, err, "Failed to get workflow status")
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
 }
 
 // HealthCheck returns the health status of the API

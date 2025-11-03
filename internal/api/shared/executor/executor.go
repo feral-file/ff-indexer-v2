@@ -36,6 +36,9 @@ type Executor interface {
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens and addresses
 	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error)
+
+	// GetWorkflowStatus retrieves the status of a Temporal workflow execution
+	GetWorkflowStatus(ctx context.Context, workflowID, runID string) (*dto.WorkflowStatusResponse, error)
 }
 
 type executor struct {
@@ -500,4 +503,58 @@ func (e *executor) expandEnrichmentSourceMediaAssets(ctx context.Context, tokenD
 
 	tokenDTO.EnrichmentSourceMediaAssets = mediaDTOs
 	return nil
+}
+
+func (e *executor) GetWorkflowStatus(ctx context.Context, workflowID, runID string) (*dto.WorkflowStatusResponse, error) {
+	// Validate inputs
+	if workflowID == "" {
+		return nil, apierrors.NewValidationError("workflowID is required")
+	}
+	if runID == "" {
+		return nil, apierrors.NewValidationError("runID is required")
+	}
+
+	// Get workflow execution details from Temporal
+	describeResp, err := e.orchestrator.DescribeWorkflowExecution(ctx, workflowID, runID)
+	if err != nil {
+		return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to describe workflow execution: %v", err))
+	}
+
+	workflowInfo := describeResp.GetWorkflowExecutionInfo()
+	if workflowInfo == nil {
+		return nil, apierrors.NewNotFoundError("Workflow execution not found")
+	}
+
+	// Map status to string
+	status := workflowInfo.GetStatus().String()
+
+	// Get start time
+	var startTime *time.Time
+	if workflowInfo.GetStartTime() != nil {
+		t := workflowInfo.GetStartTime().AsTime()
+		startTime = &t
+	}
+
+	// Get close time
+	var closeTime *time.Time
+	if workflowInfo.GetCloseTime() != nil {
+		t := workflowInfo.GetCloseTime().AsTime()
+		closeTime = &t
+	}
+
+	// Calculate execution time in milliseconds
+	var executionTime *uint64
+	if startTime != nil && closeTime != nil {
+		duration := uint64(closeTime.Sub(*startTime).Milliseconds()) //nolint:gosec,G115 // time is always positive
+		executionTime = &duration
+	}
+
+	return &dto.WorkflowStatusResponse{
+		WorkflowID:    workflowID,
+		RunID:         runID,
+		Status:        status,
+		StartTime:     startTime,
+		CloseTime:     closeTime,
+		ExecutionTime: executionTime,
+	}, nil
 }

@@ -19,5 +19,8 @@ func SetupRoutes(router *gin.Engine, handler Handler) {
 
 		// Changes endpoint
 		v1.GET("/changes", handler.GetChanges)
+
+		// Workflow endpoints
+		v1.GET("/workflows/:workflow_id/runs/:run_id", handler.GetWorkflowStatus)
 	}
 }

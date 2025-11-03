@@ -167,6 +167,16 @@ type TriggerIndexingResult {
   run_id: String!
 }
 
+# Workflow status information
+type WorkflowStatus {
+  workflow_id: String!
+  run_id: String!
+  status: String!
+  start_time: Time
+  close_time: Time
+  execution_time_ms: Uint64
+}
+
 # Root Query type
 type Query {
   # Get a single token by CID
@@ -209,6 +219,13 @@ type Query {
     order: Order = asc
     expand: [String!]
   ): ChangeList
+
+  # Get workflow status by workflow ID and run ID
+  # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id
+  workflowStatus(
+    workflow_id: String!
+    run_id: String!
+  ): WorkflowStatus
 }
 
 # Root Mutation type

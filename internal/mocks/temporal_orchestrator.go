@@ -9,6 +9,7 @@ import (
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
+	workflowservice "go.temporal.io/api/workflowservice/v1"
 	client "go.temporal.io/sdk/client"
 )
 
@@ -33,6 +34,21 @@ func NewMockTemporalOrchestrator(ctrl *gomock.Controller) *MockTemporalOrchestra
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockTemporalOrchestrator) EXPECT() *MockTemporalOrchestratorMockRecorder {
 	return m.recorder
+}
+
+// DescribeWorkflowExecution mocks base method.
+func (m *MockTemporalOrchestrator) DescribeWorkflowExecution(ctx context.Context, workflowID, runID string) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DescribeWorkflowExecution", ctx, workflowID, runID)
+	ret0, _ := ret[0].(*workflowservice.DescribeWorkflowExecutionResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DescribeWorkflowExecution indicates an expected call of DescribeWorkflowExecution.
+func (mr *MockTemporalOrchestratorMockRecorder) DescribeWorkflowExecution(ctx, workflowID, runID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DescribeWorkflowExecution", reflect.TypeOf((*MockTemporalOrchestrator)(nil).DescribeWorkflowExecution), ctx, workflowID, runID)
 }
 
 // ExecuteWorkflow mocks base method.

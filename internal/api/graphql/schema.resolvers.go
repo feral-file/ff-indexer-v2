@@ -318,6 +318,11 @@ func (r *queryResolver) Changes(ctx context.Context, tokenCid []string, address 
 	return r.executor.GetChanges(ctx, tokenCid, address, sinceTime, ToNativeUint8(limit), ToNativeUint64(offset), order, expansions)
 }
 
+// WorkflowStatus is the resolver for the workflowStatus field.
+func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error) {
+	return r.executor.GetWorkflowStatus(ctx, workflowID, runID)
+}
+
 // ID is the resolver for the id field.
 func (r *tokenResolver) ID(ctx context.Context, obj *dto.TokenResponse) (Uint64, error) {
 	return Uint64(obj.ID), nil
@@ -364,6 +369,15 @@ func (r *tokenMetadataResolver) LatestJSON(ctx context.Context, obj *dto.TokenMe
 	return JSON(obj.LatestJSON), nil
 }
 
+// ExecutionTime is the resolver for the execution_time_ms field.
+func (r *workflowStatusResolver) ExecutionTime(ctx context.Context, obj *dto.WorkflowStatusResponse) (*Uint64, error) {
+	if obj.ExecutionTime == nil {
+		return nil, nil
+	}
+	val := Uint64(*obj.ExecutionTime)
+	return &val, nil
+}
+
 // Change returns ChangeResolver implementation.
 func (r *Resolver) Change() ChangeResolver { return &changeResolver{r} }
 
@@ -402,6 +416,9 @@ func (r *Resolver) TokenList() TokenListResolver { return &tokenListResolver{r} 
 // TokenMetadata returns TokenMetadataResolver implementation.
 func (r *Resolver) TokenMetadata() TokenMetadataResolver { return &tokenMetadataResolver{r} }
 
+// WorkflowStatus returns WorkflowStatusResolver implementation.
+func (r *Resolver) WorkflowStatus() WorkflowStatusResolver { return &workflowStatusResolver{r} }
+
 type changeResolver struct{ *Resolver }
 type changeListResolver struct{ *Resolver }
 type enrichmentSourceResolver struct{ *Resolver }
@@ -414,18 +431,4 @@ type queryResolver struct{ *Resolver }
 type tokenResolver struct{ *Resolver }
 type tokenListResolver struct{ *Resolver }
 type tokenMetadataResolver struct{ *Resolver }
-
-// !!! WARNING !!!
-// The code below was going to be deleted when updating resolvers. It has been copied here so you have
-// one last chance to move it out of harms way if you want. There are two reasons this happens:
-//  - When renaming or deleting a resolver the old code will be put in here. You can safely delete
-//    it when you're done.
-//  - You have helper methods in this file. Move them out to keep these resolver files clean.
-/*
-	func (r *tokenMetadataResolver) CreatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error) {
-	return &obj.CreatedAt, nil
-}
-func (r *tokenMetadataResolver) UpdatedAt(ctx context.Context, obj *dto.TokenMetadataResponse) (*time.Time, error) {
-	return &obj.UpdatedAt, nil
-}
-*/
+type workflowStatusResolver struct{ *Resolver }

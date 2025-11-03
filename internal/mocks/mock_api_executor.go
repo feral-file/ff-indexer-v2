@@ -84,6 +84,21 @@ func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAd
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokens", reflect.TypeOf((*MockAPIExecutor)(nil).GetTokens), ctx, owners, chains, contractAddresses, tokenIDs, limit, offset, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
 }
 
+// GetWorkflowStatus mocks base method.
+func (m *MockAPIExecutor) GetWorkflowStatus(ctx context.Context, workflowID, runID string) (*dto.WorkflowStatusResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetWorkflowStatus", ctx, workflowID, runID)
+	ret0, _ := ret[0].(*dto.WorkflowStatusResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWorkflowStatus indicates an expected call of GetWorkflowStatus.
+func (mr *MockAPIExecutorMockRecorder) GetWorkflowStatus(ctx, workflowID, runID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkflowStatus", reflect.TypeOf((*MockAPIExecutor)(nil).GetWorkflowStatus), ctx, workflowID, runID)
+}
+
 // TriggerTokenIndexing mocks base method.
 func (m *MockAPIExecutor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error) {
 	m.ctrl.T.Helper()
