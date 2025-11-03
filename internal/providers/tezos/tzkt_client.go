@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 const MAX_PAGE_SIZE = 10_000
@@ -435,7 +435,7 @@ func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 	if transfer.TransactionID != nil {
 		txs, err := c.GetTransactionsByID(ctx, *transfer.TransactionID)
 		if err != nil {
-			logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", *transfer.TransactionID, err))
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to get transaction hash for ID %d: %w", *transfer.TransactionID, err))
 			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
 		}
 		if len(txs) > 0 {
@@ -443,7 +443,7 @@ func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 		}
 	} else {
 		// FIXME figure out how to get the transaction hash
-		logger.Warn("no transaction ID found for transfer", zap.Any("transfer", transfer))
+		logger.WarnCtx(ctx, "no transaction ID found for transfer", zap.Any("transfer", transfer))
 	}
 
 	event := &domain.BlockchainEvent{
@@ -481,7 +481,7 @@ func (c *tzktClient) ParseBigMapUpdate(ctx context.Context, update *TzKTBigMapUp
 	if update.TransactionID != nil {
 		txs, err := c.GetTransactionsByID(ctx, *update.TransactionID)
 		if err != nil {
-			logger.Error(fmt.Errorf("failed to get transaction hash for ID %d: %w", *update.TransactionID, err))
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to get transaction hash for ID %d: %w", *update.TransactionID, err))
 			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
 		}
 		if len(txs) > 0 {

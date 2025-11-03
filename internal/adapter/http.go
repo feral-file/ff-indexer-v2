@@ -10,8 +10,9 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
+
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 // HTTPClient defines an interface for HTTP client operations to enable mocking
@@ -66,9 +67,9 @@ func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req 
 		// Handle rate limiting - retry with backoff
 		if resp.StatusCode == http.StatusTooManyRequests {
 			if err := resp.Body.Close(); err != nil {
-				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
+				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
 			}
-			logger.Warn("rate limited, retrying with backoff", zap.String("url", req.URL.String()))
+			logger.WarnCtx(ctx, "rate limited, retrying with backoff", zap.String("url", req.URL.String()))
 			return fmt.Errorf("rate limited (429), retrying")
 		}
 
@@ -102,7 +103,7 @@ func (c *RealHTTPClient) doRequestWithRetry(ctx context.Context, req *http.Reque
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			logger.Warn("failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
+			logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
 		}
 	}()
 
@@ -185,7 +186,7 @@ func (c *RealHTTPClient) GetPartialContent(ctx context.Context, url string, maxB
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			logger.Warn("failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
+			logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
 		}
 	}()
 

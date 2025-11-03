@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/gabriel-vasile/mimetype"
 	"go.uber.org/zap"
 
@@ -15,6 +14,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -63,7 +63,7 @@ func NewProcessor(httpClient adapter.HTTPClient, uriResolver uri.Resolver, provi
 
 // Process uploads a media file from URL to a provider and stores the reference in the database
 func (p *processor) Process(ctx context.Context, sourceURL string) error {
-	logger.Info("Starting media processing",
+	logger.InfoCtx(ctx, "Starting media processing",
 		zap.String("sourceURL", sourceURL),
 		zap.String("provider", p.provider.Name()),
 	)
@@ -74,7 +74,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		return fmt.Errorf("failed to resolve URL: %w", err)
 	}
 
-	logger.Info("URL resolved", zap.String("sourceURL", sourceURL), zap.String("resolvedURL", resolvedURL))
+	logger.InfoCtx(ctx, "URL resolved", zap.String("sourceURL", sourceURL), zap.String("resolvedURL", resolvedURL))
 
 	// Step 2: Try HEAD request first to get content-type and size
 	// If HEAD fails, fallback to partial GET request
@@ -87,7 +87,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		defer func() {
 			if resp.Body != nil {
 				if err := resp.Body.Close(); err != nil {
-					logger.Warn("failed to close response body", zap.Error(err), zap.String("url", resolvedURL))
+					logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", resolvedURL))
 				}
 			}
 		}()
@@ -95,7 +95,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		contentType = resp.Header.Get("Content-Type")
 		contentLength = resp.ContentLength
 
-		logger.Info("Media content-type detected via HEAD",
+		logger.InfoCtx(ctx, "Media content-type detected via HEAD",
 			zap.String("sourceURL", sourceURL),
 			zap.String("contentType", contentType),
 			zap.Int64("contentLength", contentLength),
@@ -104,11 +104,11 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		// HEAD failed, fallback to partial GET to detect content-type
 		if resp != nil && resp.Body != nil {
 			if err := resp.Body.Close(); err != nil {
-				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", resolvedURL))
+				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", resolvedURL))
 			}
 		}
 
-		logger.Info("HEAD request failed, falling back to partial GET",
+		logger.InfoCtx(ctx, "HEAD request failed, falling back to partial GET",
 			zap.String("sourceURL", sourceURL),
 			zap.Error(err),
 			zap.Int("statusCode", func() int {
@@ -131,14 +131,14 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 			contentType = mtype.String()
 		}
 
-		logger.Info("Media content-type detected via partial GET",
+		logger.InfoCtx(ctx, "Media content-type detected via partial GET",
 			zap.String("sourceURL", sourceURL),
 			zap.String("contentType", contentType),
 		)
 	}
 
 	if contentType == "" {
-		logger.Warn("Missing content type", zap.String("sourceURL", sourceURL))
+		logger.WarnCtx(ctx, "Missing content type", zap.String("sourceURL", sourceURL))
 		return domain.ErrMissingContentLength
 	}
 
@@ -148,7 +148,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	isAnimatedImage := strings.HasPrefix(contentType, "image/gif") || strings.HasPrefix(contentType, "image/webp")
 
 	if !isVideo && !isImage {
-		logger.Warn("Unsupported media file", zap.String("contentType", contentType))
+		logger.WarnCtx(ctx, "Unsupported media file", zap.String("contentType", contentType))
 		return domain.ErrUnsupportedMediaFile
 	}
 
@@ -166,15 +166,15 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	// Check if the file size is within the allowed limits (only if we have content length from HEAD)
 	if contentLength > 0 {
 		if isAnimatedImage && contentLength > p.maxAnimatedImageSize {
-			logger.Warn("Animated image file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxAnimatedImageSize))
+			logger.WarnCtx(ctx, "Animated image file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxAnimatedImageSize))
 			return domain.ErrExceededMaxFileSize
 		}
 		if isVideo && contentLength > p.maxVideoSize {
-			logger.Warn("Video file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxVideoSize))
+			logger.WarnCtx(ctx, "Video file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxVideoSize))
 			return domain.ErrExceededMaxFileSize
 		}
 		if isImage && contentLength > p.maxStaticImageSize {
-			logger.Warn("Image file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxStaticImageSize))
+			logger.WarnCtx(ctx, "Image file size exceeds the allowed limit", zap.Int64("contentLength", contentLength), zap.Int64("maxSize", p.maxStaticImageSize))
 			return domain.ErrExceededMaxFileSize
 		}
 	}
@@ -182,10 +182,10 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	// Step 3: Upload to provider based on media type
 	var uploadResult *mediaprovider.UploadResult
 	if isVideo {
-		logger.Info("Uploading video", zap.String("url", resolvedURL))
+		logger.InfoCtx(ctx, "Uploading video", zap.String("url", resolvedURL))
 		uploadResult, err = p.provider.UploadVideo(ctx, resolvedURL, uploadMetadata)
 	} else {
-		logger.Info("Uploading image", zap.String("url", resolvedURL))
+		logger.InfoCtx(ctx, "Uploading image", zap.String("url", resolvedURL))
 		uploadResult, err = p.provider.UploadImage(ctx, resolvedURL, uploadMetadata)
 	}
 
@@ -200,7 +200,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		}
 	}
 
-	logger.Info("Media uploaded to provider",
+	logger.InfoCtx(ctx, "Media uploaded to provider",
 		zap.String("provider", p.provider.Name()),
 		zap.String("providerAssetID", uploadResult.ProviderAssetID),
 		zap.Int("variantCount", len(uploadResult.VariantURLs)),
@@ -243,7 +243,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		return fmt.Errorf("failed to store media asset in database: %w", err)
 	}
 
-	logger.Info("Media processing completed",
+	logger.InfoCtx(ctx, "Media processing completed",
 		zap.String("sourceURL", sourceURL),
 		zap.String("providerAssetID", uploadResult.ProviderAssetID),
 	)

@@ -9,10 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/getsentry/sentry-go"
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/server"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
@@ -38,23 +38,31 @@ func main() {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
 
-	// Initialize logger
-	err = logger.Initialize(cfg.Debug,
-		&sentry.ClientOptions{
-			Dsn:   cfg.SentryDSN,
-			Debug: cfg.Debug,
-		})
+	// Create shutdown context with timeout
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Initialize logger with sentry integration
+	err = logger.Initialize(logger.Config{
+		Debug:           cfg.Debug,
+		SentryDSN:       cfg.SentryDSN,
+		BreadcrumbLevel: zapcore.InfoLevel,
+		Tags: map[string]string{
+			"service": "api-server",
+		},
+	})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
 	}
-	logger.Info("Starting Feral File Indexer API")
+	defer logger.Flush(2 * time.Second)
+	logger.InfoCtx(ctx, "Starting Feral File Indexer API")
 
 	// Connect to database
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {
-		logger.Fatal("Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
+		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
 	}
-	logger.Info("Connected to database")
+	logger.InfoCtx(ctx, "Connected to database")
 
 	// Initialize store
 	dataStore := store.NewPGStore(db)
@@ -69,10 +77,10 @@ func main() {
 		Namespace: cfg.Temporal.Namespace,
 	})
 	if err != nil {
-		logger.Fatal("Failed to connect to Temporal", zap.Error(err))
+		logger.FatalCtx(ctx, "Failed to connect to Temporal", zap.Error(err))
 	}
 	defer temporalClient.Close()
-	logger.Info("Connected to Temporal", zap.String("host_port", cfg.Temporal.HostPort))
+	logger.InfoCtx(ctx, "Connected to Temporal", zap.String("host_port", cfg.Temporal.HostPort))
 
 	// Load blacklist registry
 	var blacklistRegistry registry.BlacklistRegistry
@@ -80,13 +88,13 @@ func main() {
 		blacklistLoader := registry.NewBlacklistRegistryLoader(fs, jsonAdapter)
 		blacklistRegistry, err = blacklistLoader.Load(cfg.BlacklistPath)
 		if err != nil {
-			logger.Fatal("Failed to load blacklist registry",
+			logger.FatalCtx(ctx, "Failed to load blacklist registry",
 				zap.Error(err),
 				zap.String("path", cfg.BlacklistPath))
 		}
-		logger.Info("Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
+		logger.InfoCtx(ctx, "Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
 	} else {
-		logger.Warn("Blacklist registry path not configured, all contracts will be allowed")
+		logger.WarnCtx(ctx, "Blacklist registry path not configured, all contracts will be allowed")
 	}
 
 	// Create server config
@@ -108,27 +116,36 @@ func main() {
 	srv := server.New(serverConfig, dataStore, temporalClient, blacklistRegistry)
 
 	// Start server in a goroutine
+	errCh := make(chan error, 1)
 	go func() {
-		if err := srv.Start(); err != nil {
-			logger.Fatal("Server failed", zap.Error(err))
+		if err := srv.Start(ctx); err != nil {
+			errCh <- err
 		}
 	}()
 
 	// Wait for interrupt signal to gracefully shutdown the server
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-
-	logger.Info("Shutting down server...")
-
-	// Create shutdown context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Shutdown server
-	if err := srv.Shutdown(ctx); err != nil {
-		logger.Fatal("Server forced to shutdown", zap.Error(err))
+	select {
+	case sig := <-sigCh:
+		logger.InfoCtx(ctx, "Received shutdown signal", zap.String("signal", sig.String()))
+		cancel()
+	case err := <-errCh:
+		logger.ErrorCtx(ctx, err, zap.String("component", "server"))
+		cancel()
 	}
 
+	// Create shutdown context with timeout (don't use canceled ctx)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	logger.InfoCtx(shutdownCtx, "Shutting down server...")
+
+	// Shutdown server
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.FatalCtx(shutdownCtx, "Server forced to shutdown", zap.Error(err))
+	}
+
+	// Use non-context logger for final message since original ctx is canceled
 	logger.Info("API server stopped")
 }

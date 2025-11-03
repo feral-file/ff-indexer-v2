@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 // contextKey is a custom type for context keys to avoid collisions
@@ -113,7 +113,7 @@ func Auth(cfg AuthConfig) gin.HandlerFunc {
 		result := Authenticate(authHeader, cfg)
 
 		if !result.Success {
-			logger.Warn("Authentication failed",
+			logger.WarnCtx(c.Request.Context(), "Authentication failed",
 				zap.Error(result.Error),
 				zap.String("path", c.Request.URL.Path),
 				zap.String("client_ip", c.ClientIP()),
@@ -127,13 +127,13 @@ func Auth(cfg AuthConfig) gin.HandlerFunc {
 		c.Set(AUTH_TYPE_KEY, result.AuthType)
 		if result.Claims != nil {
 			c.Set(JWT_CLAIMS_KEY, result.Claims)
-			logger.Debug("JWT authentication successful",
+			logger.DebugCtx(c.Request.Context(), "JWT authentication successful",
 				zap.String("path", c.Request.URL.Path),
 				zap.String("client_ip", c.ClientIP()),
 				zap.String("subject", result.Claims.Subject),
 			)
 		} else {
-			logger.Debug("API Key authentication successful",
+			logger.DebugCtx(c.Request.Context(), "API Key authentication successful",
 				zap.String("path", c.Request.URL.Path),
 				zap.String("client_ip", c.ClientIP()),
 			)

@@ -14,10 +14,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
-
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 type EthereumClient interface {
@@ -93,7 +92,7 @@ func (c *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum
 // - 10M blocks (~4 years): ERC1155 with specific owner address
 // - 5M blocks (~2 years): ERC1155 queries for entire contract (moderate activity)
 // - 1M blocks (~5 months): ERC1155 queries for high-activity contracts
-func (c *ethereumClient) calculateStepSize(query ethereum.FilterQuery) uint64 {
+func (c *ethereumClient) calculateStepSize(ctx context.Context, query ethereum.FilterQuery) uint64 {
 	// Default conservative step size for unrecognized patterns
 	const (
 		defaultStepSize         = uint64(1_000_000)  // 1M blocks
@@ -162,7 +161,7 @@ func (c *ethereumClient) calculateStepSize(query ethereum.FilterQuery) uint64 {
 		// ERC721 with specific token ID indexed in topics[3]
 		// Very specific: typically only a few transfers per token over its lifetime
 		// Example: GetTokenEvents for ERC721
-		logger.Debug("Using large step size for ERC721 token query",
+		logger.DebugCtx(ctx, "Using large step size for ERC721 token query",
 			zap.Uint64("stepSize", erc721TokenStepSize))
 		return erc721TokenStepSize
 
@@ -170,7 +169,7 @@ func (c *ethereumClient) calculateStepSize(query ethereum.FilterQuery) uint64 {
 		// ERC721 with owner address indexed (topics[1] or topics[2])
 		// Moderately specific: owner likely has limited number of tokens
 		// Example: GetTokenCIDsByOwnerAndBlockRange for ERC721
-		logger.Debug("Using medium-large step size for ERC721 owner query",
+		logger.DebugCtx(ctx, "Using medium-large step size for ERC721 owner query",
 			zap.Uint64("stepSize", erc721OwnerStepSize))
 		return erc721OwnerStepSize
 
@@ -178,7 +177,7 @@ func (c *ethereumClient) calculateStepSize(query ethereum.FilterQuery) uint64 {
 		// ERC1155 with owner address indexed (topics[2]=from or topics[3]=to)
 		// Moderately specific: owner may have more ERC1155 tokens than ERC721
 		// Example: GetTokenCIDsByOwnerAndBlockRange for ERC1155
-		logger.Debug("Using medium step size for ERC1155 owner query",
+		logger.DebugCtx(ctx, "Using medium step size for ERC1155 owner query",
 			zap.Uint64("stepSize", erc1155OwnerStepSize))
 		return erc1155OwnerStepSize
 
@@ -187,13 +186,13 @@ func (c *ethereumClient) calculateStepSize(query ethereum.FilterQuery) uint64 {
 		// Less specific: must fetch all contract events and filter client-side
 		// Note: Token ID is never indexed in ERC1155 (it's in data field)
 		// Example: GetTokenEvents for ERC1155, ERC1155Balances, TokenExists
-		logger.Debug("Using medium-small step size for ERC1155 contract query",
+		logger.DebugCtx(ctx, "Using medium-small step size for ERC1155 contract query",
 			zap.Uint64("stepSize", erc1155ContractStepSize))
 		return erc1155ContractStepSize
 
 	default:
 		// Unrecognized pattern or low specificity - use conservative default
-		logger.Debug("Using default step size for query",
+		logger.DebugCtx(ctx, "Using default step size for query",
 			zap.Uint64("stepSize", defaultStepSize),
 			zap.Bool("hasERC721", hasERC721Transfer),
 			zap.Bool("hasERC1155", hasERC1155Transfer),
@@ -243,9 +242,9 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 	// More specific queries (with indexed parameters) can use larger steps
 	var allLogs []types.Log
 	currentFrom := new(big.Int).Set(fromBlock)
-	stepSize := c.calculateStepSize(query)
+	stepSize := c.calculateStepSize(timeoutCtx, query)
 
-	logger.Debug("Starting log pagination",
+	logger.DebugCtx(ctx, "Starting log pagination",
 		zap.Uint64("fromBlock", fromBlock.Uint64()),
 		zap.Uint64("toBlock", toBlock.Uint64()),
 		zap.Uint64("totalBlockRange", toBlock.Uint64()-fromBlock.Uint64()),
@@ -257,7 +256,7 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 		select {
 		case <-timeoutCtx.Done():
 			// Context deadline exceeded or canceled - return partial logs collected so far
-			logger.Warn("Context deadline exceeded during log pagination, returning partial logs",
+			logger.WarnCtx(ctx, "Context deadline exceeded during log pagination, returning partial logs",
 				zap.Int("partialLogsCount", len(allLogs)),
 				zap.Uint64("processedUpToBlock", currentFrom.Uint64()-1),
 				zap.Uint64("targetToBlock", toBlock.Uint64()),
@@ -283,7 +282,7 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 		if err != nil {
 			// If timeout/canceled, return partial logs instead of error
 			if timeoutCtx.Err() != nil {
-				logger.Warn("Timeout during getLogsWithRetry, returning partial logs",
+				logger.WarnCtx(ctx, "Timeout during getLogsWithRetry, returning partial logs",
 					zap.Int("partialLogsCount", len(allLogs)),
 					zap.Uint64("processedUpToBlock", currentFrom.Uint64()-1),
 					zap.Uint64("targetToBlock", toBlock.Uint64()),
@@ -369,7 +368,7 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 		currentStepSize = currentStepSize / 2
 		if currentStepSize == 0 {
 			// If step size is 0, return the logs we have so far
-			logger.Warn("Step size is 0, returning partial logs",
+			logger.WarnCtx(ctx, "Step size is 0, returning partial logs",
 				zap.Int("partialLogsCount", len(allLogs)),
 				zap.Uint64("processedUpToBlock", currentFrom.Uint64()-1),
 				zap.Uint64("targetToBlock", query.ToBlock.Uint64()),
@@ -380,7 +379,7 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 		// Sleep for 1 second to avoid overwhelming the API
 		c.clock.Sleep(time.Second * 1)
 
-		logger.Debug("Too many results, reducing step size and retrying same range",
+		logger.DebugCtx(ctx, "Too many results, reducing step size and retrying same range",
 			zap.Uint64("oldStepSize", currentStepSize*2),
 			zap.Uint64("newStepSize", currentStepSize),
 			zap.Uint64("fromBlock", currentFrom.Uint64()),
@@ -620,7 +619,7 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 		event, err := c.ParseEventLog(ctx, vLog)
 		if err != nil {
 			// Log error but continue processing
-			logger.Warn("Failed to parse event log", zap.Error(err))
+			logger.WarnCtx(ctx, "Failed to parse event log", zap.Error(err))
 			continue
 		}
 		if event != nil {
@@ -668,7 +667,7 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 		fromBlock = 0
 	}
 
-	logger.Info("Fetching ERC1155 balances",
+	logger.InfoCtx(ctx, "Fetching ERC1155 balances",
 		zap.String("contract", contractAddress),
 		zap.String("tokenNumber", tokenNumber),
 		zap.Uint64("fromBlock", fromBlock),
@@ -696,7 +695,7 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 	if err != nil {
 		// If context deadline exceeded, return partial balances with warning
 		if timeoutCtx.Err() == context.DeadlineExceeded {
-			logger.Warn("ERC1155 balance fetch timed out, returning partial balances",
+			logger.WarnCtx(timeoutCtx, "ERC1155 balance fetch timed out, returning partial balances",
 				zap.String("contract", contractAddress),
 				zap.String("tokenNumber", tokenNumber),
 				zap.Int("partialLogsCount", len(logs)),
@@ -715,13 +714,13 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 	for _, vLog := range logs {
 		// ERC1155 TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
 		if len(vLog.Topics) != 4 {
-			logger.Warn("Invalid ERC1155 TransferSingle event: unexpected topic count",
+			logger.WarnCtx(timeoutCtx, "Invalid ERC1155 TransferSingle event: unexpected topic count",
 				zap.Int("topics", len(vLog.Topics)),
 				zap.String("txHash", vLog.TxHash.Hex()))
 			continue
 		}
 		if len(vLog.Data) < 64 {
-			logger.Warn("Invalid ERC1155 TransferSingle event: insufficient data",
+			logger.WarnCtx(timeoutCtx, "Invalid ERC1155 TransferSingle event: insufficient data",
 				zap.String("txHash", vLog.TxHash.Hex()))
 			continue
 		}
@@ -997,7 +996,7 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 
 		if len(vLog.Topics) == 3 {
 			// ERC20 Transfer - skip as we only index NFTs
-			logger.Debug("Skipping ERC20 transfer event",
+			logger.DebugCtx(ctx, "Skipping ERC20 transfer event",
 				zap.String("contract", vLog.Address.Hex()),
 				zap.String("txHash", vLog.TxHash.Hex()))
 			return nil, nil // skip ERC20 transfer events
@@ -1042,7 +1041,7 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 		// Note: This is a batch transfer event, which transfers multiple token types in a single transaction
 		// For now, we'll skip the event as batch transfers need special handling
 		// FIXME handle batch transfers properly
-		logger.Debug("Skipping ERC1155 TransferBatch event",
+		logger.DebugCtx(ctx, "Skipping ERC1155 TransferBatch event",
 			zap.String("contract", vLog.Address.Hex()),
 			zap.String("txHash", vLog.TxHash.Hex()))
 		return nil, nil // skip ERC1155 TransferBatch events
@@ -1236,7 +1235,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 			fromBlock = latestBlock - maxBlockThreshold
 		}
 
-		logger.Info("Checking ERC1155 token existence via recent transfers",
+		logger.InfoCtx(timeoutCtx, "Checking ERC1155 token existence via recent transfers",
 			zap.String("contract", contractAddress),
 			zap.String("tokenNumber", tokenNumber),
 			zap.Uint64("fromBlock", fromBlock),
@@ -1306,7 +1305,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 		// If no recent transfers found in the scan window, assume token doesn't exist
 		// (or is so old/inactive that it's not worth indexing)
 		if len(recentRecipients) == 0 {
-			logger.Info("No recent ERC1155 transfers found in scan window, assuming token doesn't exist",
+			logger.InfoCtx(timeoutCtx, "No recent ERC1155 transfers found in scan window, assuming token doesn't exist",
 				zap.String("contract", contractAddress),
 				zap.String("tokenNumber", tokenNumber),
 				zap.Uint64("scannedBlocks", latestBlock-fromBlock),
@@ -1331,7 +1330,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 			recentRecipients = recentRecipients[:maxRecipientsToCheck]
 		}
 
-		logger.Info("Found recent ERC1155 transfers, checking recipient balances",
+		logger.InfoCtx(timeoutCtx, "Found recent ERC1155 transfers, checking recipient balances",
 			zap.String("contract", contractAddress),
 			zap.String("tokenNumber", tokenNumber),
 			zap.Int("recipientsToCheck", len(recentRecipients)),
@@ -1342,7 +1341,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 		for i, recipient := range recentRecipients {
 			balanceStr, err := c.ERC1155BalanceOf(timeoutCtx, contractAddress, recipient.address.Hex(), tokenNumber)
 			if err != nil {
-				logger.Warn("Failed to check balance for recipient, trying next",
+				logger.WarnCtx(timeoutCtx, "Failed to check balance for recipient, trying next",
 					zap.String("recipient", recipient.address.Hex()),
 					zap.Int("recipientIndex", i),
 					zap.Error(err),
@@ -1353,7 +1352,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 			// Parse balance string to big.Int
 			balance, ok := new(big.Int).SetString(balanceStr, 10)
 			if !ok {
-				logger.Warn("Invalid balance returned, trying next recipient",
+				logger.WarnCtx(timeoutCtx, "Invalid balance returned, trying next recipient",
 					zap.String("recipient", recipient.address.Hex()),
 					zap.String("balance", balanceStr),
 				)
@@ -1362,7 +1361,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 
 			// If this recipient has a balance > 0, token exists!
 			if balance.Cmp(big.NewInt(0)) > 0 {
-				logger.Info("ERC1155 token existence confirmed",
+				logger.InfoCtx(timeoutCtx, "ERC1155 token existence confirmed",
 					zap.String("contract", contractAddress),
 					zap.String("tokenNumber", tokenNumber),
 					zap.String("holder", recipient.address.Hex()),
@@ -1373,7 +1372,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 		}
 
 		// All checked recipients have 0 balance - token likely doesn't exist or fully burned
-		logger.Info("All recent recipients have zero balance, assuming token doesn't exist or fully burned",
+		logger.InfoCtx(timeoutCtx, "All recent recipients have zero balance, assuming token doesn't exist or fully burned",
 			zap.String("contract", contractAddress),
 			zap.String("tokenNumber", tokenNumber),
 			zap.Int("recipientsChecked", len(recentRecipients)),

@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 )
 
@@ -31,21 +31,21 @@ type publisher struct {
 }
 
 // NewPublisher creates a new NATS JetStream publisher
-func NewPublisher(cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.JSON) (messaging.Publisher, error) {
+func NewPublisher(ctx context.Context, cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.JSON) (messaging.Publisher, error) {
 	opts := []nats.Option{
 		nats.Name(cfg.ConnectionName),
 		nats.MaxReconnects(cfg.MaxReconnects),
 		nats.ReconnectWait(cfg.ReconnectWait),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			if err != nil {
-				logger.Error(err, zap.String("message", "Disconnected from NATS"))
+				logger.ErrorCtx(ctx, err, zap.String("message", "Disconnected from NATS"))
 			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
-			logger.Info("Reconnected to NATS", zap.String("url", nc.ConnectedUrl()))
+			logger.InfoCtx(ctx, "Reconnected to NATS", zap.String("url", nc.ConnectedUrl()))
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
-			logger.Info("NATS connection closed")
+			logger.InfoCtx(ctx, "NATS connection closed")
 		}),
 	}
 
@@ -64,7 +64,7 @@ func NewPublisher(cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.
 
 // PublishEvent publishes a blockchain event to NATS JetStream
 func (p *publisher) PublishEvent(ctx context.Context, event *domain.BlockchainEvent) error {
-	logger.Debug("Publishing Nats event", zap.Any("event", event))
+	logger.DebugCtx(ctx, "Publishing Nats event", zap.Any("event", event))
 
 	data, err := p.json.Marshal(event)
 	if err != nil {

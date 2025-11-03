@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"strings"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/gowebpki/jcs"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -104,7 +104,7 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 
 // enhanceArtBlocks enhances metadata from ArtBlocks API
 func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCID, contractAddress, tokenNumber string, rawMetadata map[string]interface{}) (*EnhancedMetadata, error) {
-	logger.Info("Enhancing ArtBlocks metadata", zap.String("tokenCID", tokenCID.String()))
+	logger.InfoCtx(ctx, "Enhancing ArtBlocks metadata", zap.String("tokenCID", tokenCID.String()))
 
 	// Parse the token ID to get project ID and mint number
 	projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
@@ -121,7 +121,7 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCI
 		return nil, fmt.Errorf("failed to fetch ArtBlocks project metadata: %w", err)
 	}
 
-	logger.Info("Fetched ArtBlocks project metadata",
+	logger.InfoCtx(ctx, "Fetched ArtBlocks project metadata",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.String("projectID", projectIDStr),
 		zap.String("projectName", project.Name),

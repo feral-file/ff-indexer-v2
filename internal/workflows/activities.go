@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	mediaProcessor "github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
@@ -155,7 +155,7 @@ func (e *executor) verifyTokenExistsOnChain(ctx context.Context, tokenCID domain
 		// Use the Ethereum client's TokenExists method which properly handles both ERC721 and ERC1155
 		exists, err := e.ethClient.TokenExists(ctx, contractAddress, tokenNumber, standard)
 		if err != nil {
-			logger.Warn("Failed to verify token existence on Ethereum",
+			logger.WarnCtx(ctx, "Failed to verify token existence on Ethereum",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err))
 			return false, err
@@ -170,7 +170,7 @@ func (e *executor) verifyTokenExistsOnChain(ctx context.Context, tokenCID domain
 			if errors.Is(err, domain.ErrTokenNotFoundOnChain) {
 				return false, nil
 			}
-			logger.Warn("Failed to verify token existence on Tezos",
+			logger.WarnCtx(ctx, "Failed to verify token existence on Tezos",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err))
 			return false, err
@@ -442,7 +442,7 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 
 	// If no enhancement is available, skip
 	if enhanced == nil {
-		logger.Info("No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
+		logger.InfoCtx(ctx, "No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
 		return nil, nil
 	}
 
@@ -486,7 +486,7 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 		return nil, fmt.Errorf("failed to upsert enrichment source: %w", err)
 	}
 
-	logger.Info("Successfully enhanced token metadata",
+	logger.InfoCtx(ctx, "Successfully enhanced token metadata",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.String("vendor", string(enhanced.Vendor)))
 
@@ -811,7 +811,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 			if err != nil {
 				// Check if error is due to timeout - if so, continue with partial balances
 				if errors.Is(err, context.DeadlineExceeded) {
-					logger.Warn("ERC1155 balance fetch timed out, continuing with partial balances",
+					logger.WarnCtx(ctx, "ERC1155 balance fetch timed out, continuing with partial balances",
 						zap.String("tokenCID", tokenCID.String()),
 						zap.String("contract", contractAddress),
 						zap.String("tokenNumber", tokenNumber),
@@ -949,7 +949,7 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 			case domain.StandardERC1155:
 				balance, err = e.ethClient.ERC1155BalanceOf(ctx, contractAddress, addr, tokenNumber)
 				if err != nil {
-					logger.Warn("Failed to get balance for address", zap.String("address", addr), zap.Error(err))
+					logger.WarnCtx(ctx, "Failed to get balance for address", zap.String("address", addr), zap.Error(err))
 					continue
 				}
 			case domain.StandardERC721:
@@ -1010,7 +1010,7 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 	for _, evt := range allEvents {
 		rawEventData, err := e.json.Marshal(evt)
 		if err != nil {
-			logger.Warn("Failed to marshal event", zap.Error(err))
+			logger.WarnCtx(ctx, "Failed to marshal event", zap.Error(err))
 			continue
 		}
 
@@ -1131,7 +1131,7 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 	}
 
 	if existingAsset != nil {
-		logger.Info("Media asset already exists, skipping", zap.String("url", url))
+		logger.InfoCtx(ctx, "Media asset already exists, skipping", zap.String("url", url))
 		return nil
 	}
 
@@ -1148,7 +1148,7 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 		return fmt.Errorf("failed to process media file: %w", err)
 	}
 
-	logger.Info("Successfully indexed media file", zap.String("url", url))
+	logger.InfoCtx(ctx, "Successfully indexed media file", zap.String("url", url))
 	return nil
 }
 

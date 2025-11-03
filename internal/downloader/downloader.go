@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 type DownloadResult struct {

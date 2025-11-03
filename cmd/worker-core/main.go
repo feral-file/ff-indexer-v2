@@ -9,16 +9,16 @@ import (
 	"syscall"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/getsentry/sentry-go"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
@@ -49,23 +49,27 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize logger
-	err = logger.Initialize(cfg.Debug,
-		&sentry.ClientOptions{
-			Dsn:   cfg.SentryDSN,
-			Debug: cfg.Debug,
-		})
+	// Initialize logger with sentry integration
+	err = logger.Initialize(logger.Config{
+		Debug:           cfg.Debug,
+		SentryDSN:       cfg.SentryDSN,
+		BreadcrumbLevel: zapcore.InfoLevel,
+		Tags: map[string]string{
+			"service": "worker-core",
+		},
+	})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
 	}
-	logger.Info("Starting Worker Core")
+	defer logger.Flush(2 * time.Second)
+	logger.InfoCtx(ctx, "Starting Worker Core")
 
 	// Connect to database
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {
-		logger.Fatal("Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
+		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
 	}
-	logger.Info("Connected to database")
+	logger.InfoCtx(ctx, "Connected to database")
 
 	// Initialize store
 	dataStore := store.NewPGStore(db)
@@ -80,12 +84,12 @@ func main() {
 	ethDialer := adapter.NewEthClientDialer()
 	adapterEthClient, err := ethDialer.Dial(ctx, cfg.Ethereum.RPCURL)
 	if err != nil {
-		logger.Fatal("Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
+		logger.FatalCtx(ctx, "Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
 	defer adapterEthClient.Close()
 	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter)
 
-	logger.Info("Connected to Ethereum RPC", zap.String("rpc_url", cfg.Ethereum.RPCURL))
+	logger.InfoCtx(ctx, "Connected to Ethereum RPC", zap.String("rpc_url", cfg.Ethereum.RPCURL))
 
 	// Initialize Tezos client
 	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter)
@@ -103,13 +107,13 @@ func main() {
 	if cfg.PublisherRegistryPath != "" {
 		publisherRegistry, err = publisherLoader.Load(cfg.PublisherRegistryPath)
 		if err != nil {
-			logger.Fatal("Failed to load publisher registry",
+			logger.FatalCtx(ctx, "Failed to load publisher registry",
 				zap.Error(err),
 				zap.String("path", cfg.PublisherRegistryPath))
 		}
-		logger.Info("Loaded publisher registry", zap.String("path", cfg.PublisherRegistryPath))
+		logger.InfoCtx(ctx, "Loaded publisher registry", zap.String("path", cfg.PublisherRegistryPath))
 	} else {
-		logger.Warn("Publisher registry path not configured, publisher resolution will be disabled")
+		logger.WarnCtx(ctx, "Publisher registry path not configured, publisher resolution will be disabled")
 	}
 
 	// Load blacklist registry
@@ -117,13 +121,13 @@ func main() {
 	if cfg.BlacklistPath != "" {
 		blacklistRegistry, err = blacklistLoader.Load(cfg.BlacklistPath)
 		if err != nil {
-			logger.Fatal("Failed to load blacklist registry",
+			logger.FatalCtx(ctx, "Failed to load blacklist registry",
 				zap.Error(err),
 				zap.String("path", cfg.BlacklistPath))
 		}
-		logger.Info("Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
+		logger.InfoCtx(ctx, "Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
 	} else {
-		logger.Warn("Blacklist registry path not configured, all contracts will be allowed")
+		logger.WarnCtx(ctx, "Blacklist registry path not configured, all contracts will be allowed")
 	}
 
 	// Initialize URI resolver
@@ -139,7 +143,7 @@ func main() {
 	// Load deployer cache from DB if resolver has store and registry
 	if publisherRegistry != nil {
 		if err := metadataResolver.LoadDeployerCacheFromDB(ctx); err != nil {
-			logger.Warn("Failed to load deployer cache from DB", zap.Error(err))
+			logger.WarnCtx(ctx, "Failed to load deployer cache from DB", zap.Error(err))
 		}
 	}
 
@@ -152,10 +156,10 @@ func main() {
 		Namespace: cfg.Temporal.Namespace,
 	})
 	if err != nil {
-		logger.Fatal("Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
+		logger.FatalCtx(ctx, "Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
 	}
 	defer temporalClient.Close()
-	logger.Info("Connected to Temporal", zap.String("namespace", cfg.Temporal.Namespace))
+	logger.InfoCtx(ctx, "Connected to Temporal", zap.String("namespace", cfg.Temporal.Namespace))
 
 	// Create Temporal worker
 	temporalWorker := worker.New(
@@ -165,7 +169,7 @@ func main() {
 			MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
 			WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
 		})
-	logger.Info("Created Temporal worker", zap.String("taskQueue", cfg.Temporal.TaskQueue))
+	logger.InfoCtx(ctx, "Created Temporal worker", zap.String("taskQueue", cfg.Temporal.TaskQueue))
 
 	// Create worker core instance
 	workerCore := workflows.NewWorkerCore(executor,
@@ -191,7 +195,7 @@ func main() {
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenOwner)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTezosTokenOwner)
 	temporalWorker.RegisterWorkflow(workerCore.IndexEthereumTokenOwner)
-	logger.Info("Registered workflows")
+	logger.InfoCtx(ctx, "Registered workflows")
 
 	// Register activities
 	// Activities will be called by workflows
@@ -213,21 +217,21 @@ func main() {
 	temporalWorker.RegisterActivity(executor.GetIndexingBlockRangeForAddress)
 	temporalWorker.RegisterActivity(executor.UpdateIndexingBlockRangeForAddress)
 	temporalWorker.RegisterActivity(executor.EnsureWatchedAddressExists)
-	logger.Info("Registered activities")
+	logger.InfoCtx(ctx, "Registered activities")
 
 	// Start worker
 	err = temporalWorker.Start()
 	if err != nil {
-		logger.Fatal("Failed to start worker", zap.Error(err))
+		logger.FatalCtx(ctx, "Failed to start worker", zap.Error(err))
 	}
-	logger.Info("Worker started and listening for tasks")
+	logger.InfoCtx(ctx, "Worker started and listening for tasks")
 
 	// Wait for interrupt signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	logger.Info("Shutting down worker...")
+	logger.InfoCtx(ctx, "Shutting down worker...")
 	temporalWorker.Stop()
-	logger.Info("Worker stopped")
+	logger.InfoCtx(ctx, "Worker stopped")
 }

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 // Config holds configuration for the URI resolver
@@ -72,7 +72,7 @@ func (r *resolver) resolveIPFS(ctx context.Context, cid string) (string, error) 
 		return "", fmt.Errorf("no IPFS gateways configured")
 	}
 
-	logger.Info("Resolving IPFS CID", zap.String("cid", cid), zap.Int("gateways", len(r.config.IPFSGateways)))
+	logger.InfoCtx(ctx, "Resolving IPFS CID", zap.String("cid", cid), zap.Int("gateways", len(r.config.IPFSGateways)))
 
 	// Try all gateways in parallel
 	type result struct {
@@ -96,7 +96,7 @@ func (r *resolver) resolveIPFS(ctx context.Context, cid string) (string, error) 
 				return
 			}
 			if err := resp.Body.Close(); err != nil {
-				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", url))
+				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", url))
 			}
 
 			if resp.StatusCode == http.StatusOK {
@@ -116,7 +116,7 @@ func (r *resolver) resolveIPFS(ctx context.Context, cid string) (string, error) 
 	// Return the first successful result
 	for res := range resultCh {
 		if res.err == nil {
-			logger.Info("Found working IPFS gateway", zap.String("url", res.url))
+			logger.InfoCtx(ctx, "Found working IPFS gateway", zap.String("url", res.url))
 			return res.url, nil
 		}
 	}
@@ -130,7 +130,7 @@ func (r *resolver) resolveArweave(ctx context.Context, txID string) (string, err
 		return "", fmt.Errorf("no Arweave gateways configured")
 	}
 
-	logger.Info("Resolving Arweave TX", zap.String("txID", txID), zap.Int("gateways", len(r.config.ArweaveGateways)))
+	logger.InfoCtx(ctx, "Resolving Arweave TX", zap.String("txID", txID), zap.Int("gateways", len(r.config.ArweaveGateways)))
 
 	// Try all gateways in parallel
 	type result struct {
@@ -154,7 +154,7 @@ func (r *resolver) resolveArweave(ctx context.Context, txID string) (string, err
 				return
 			}
 			if err := resp.Body.Close(); err != nil {
-				logger.Warn("failed to close response body", zap.Error(err), zap.String("url", url))
+				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", url))
 			}
 
 			if resp.StatusCode == http.StatusOK {
@@ -174,7 +174,7 @@ func (r *resolver) resolveArweave(ctx context.Context, txID string) (string, err
 	// Return the first successful result
 	for res := range resultCh {
 		if res.err == nil {
-			logger.Info("Found working Arweave gateway", zap.String("url", res.url))
+			logger.InfoCtx(ctx, "Found working Arweave gateway", zap.String("url", res.url))
 			return res.url, nil
 		}
 	}

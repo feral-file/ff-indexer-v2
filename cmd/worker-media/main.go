@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -8,17 +9,17 @@ import (
 	"syscall"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/getsentry/sentry-go"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/downloader"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -40,23 +41,31 @@ func main() {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
 
-	// Initialize logger
-	err = logger.Initialize(cfg.Debug,
-		&sentry.ClientOptions{
-			Dsn:   cfg.SentryDSN,
-			Debug: cfg.Debug,
-		})
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Initialize logger with sentry integration
+	err = logger.Initialize(logger.Config{
+		Debug:           cfg.Debug,
+		SentryDSN:       cfg.SentryDSN,
+		BreadcrumbLevel: zapcore.InfoLevel,
+		Tags: map[string]string{
+			"service": "worker-media",
+		},
+	})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
 	}
-	logger.Info("Starting Worker Media")
+	defer logger.Flush(2 * time.Second)
+	logger.InfoCtx(ctx, "Starting Worker Media")
 
 	// Connect to database
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {
-		logger.Fatal("Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
+		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
 	}
-	logger.Info("Connected to database")
+	logger.InfoCtx(ctx, "Connected to database")
 
 	// Initialize store
 	dataStore := store.NewPGStore(db)
@@ -79,7 +88,7 @@ func main() {
 	// Initialize Cloudflare client
 	cfClient, err := adapter.NewCloudflareClient(cfg.Cloudflare.APIToken)
 	if err != nil {
-		logger.Fatal("Failed to create Cloudflare client", zap.Error(err))
+		logger.FatalCtx(ctx, "Failed to create Cloudflare client", zap.Error(err))
 	}
 
 	// Initialize downloader for media file downloads
@@ -92,7 +101,7 @@ func main() {
 	}
 	mediaProvider := cloudflare.NewMediaProvider(cfClient, cloudflareConfig, mediaDownloader, fileSystem)
 
-	logger.Info("Initialized Cloudflare media provider",
+	logger.InfoCtx(ctx, "Initialized Cloudflare media provider",
 		zap.String("accountID", cfg.Cloudflare.AccountID),
 	)
 
@@ -118,11 +127,11 @@ func main() {
 		Namespace: cfg.Temporal.Namespace,
 	})
 	if err != nil {
-		logger.Fatal("Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
+		logger.FatalCtx(ctx, "Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
 	}
 	defer temporalClient.Close()
 
-	logger.Info("Connected to Temporal",
+	logger.InfoCtx(ctx, "Connected to Temporal",
 		zap.String("host_port", cfg.Temporal.HostPort),
 		zap.String("namespace", cfg.Temporal.Namespace),
 	)
@@ -139,19 +148,19 @@ func main() {
 	// Register media workflows
 	temporalWorker.RegisterWorkflow(workerMedia.IndexMediaWorkflow)
 	temporalWorker.RegisterWorkflow(workerMedia.IndexMultipleMediaWorkflow)
-	logger.Info("Registered media workflows")
+	logger.InfoCtx(ctx, "Registered media workflows")
 
 	// Register media processing activity
 	temporalWorker.RegisterActivity(executor.IndexMediaFile)
-	logger.Info("Registered media processing activity")
+	logger.InfoCtx(ctx, "Registered media processing activity")
 
 	// Start the worker
 	err = temporalWorker.Start()
 	if err != nil {
-		logger.Fatal("Failed to start Temporal worker", zap.Error(err))
+		logger.FatalCtx(ctx, "Failed to start Temporal worker", zap.Error(err))
 	}
 
-	logger.Info("Worker Media started successfully",
+	logger.InfoCtx(ctx, "Worker Media started successfully",
 		zap.String("task_queue", cfg.Temporal.TaskQueue),
 	)
 
@@ -160,10 +169,10 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
 
-	logger.Info("Shutting down Worker Media...")
+	logger.InfoCtx(ctx, "Shutting down Worker Media...")
 
 	// Stop the worker
 	temporalWorker.Stop()
 
-	logger.Info("Worker Media stopped")
+	logger.InfoCtx(ctx, "Worker Media stopped")
 }

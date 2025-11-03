@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -560,7 +560,7 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 				if err := tx.Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).
 					First(&senderBalance).Error; err != nil {
 					if errors.Is(err, gorm.ErrRecordNotFound) {
-						logger.Warn("Sender balance not found", zap.String("token_cid", token.TokenCID), zap.String("owner_address", input.SenderBalanceUpdate.OwnerAddress))
+						logger.WarnCtx(ctx, "Sender balance not found", zap.String("token_cid", token.TokenCID), zap.String("owner_address", input.SenderBalanceUpdate.OwnerAddress))
 					} else {
 						return fmt.Errorf("failed to find sender balance: %w", err)
 					}
@@ -729,7 +729,7 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 				var senderBalance schema.Balance
 				if err := tx.Where("token_id = ? AND owner_address = ?", token.ID, input.SenderBalanceUpdate.OwnerAddress).First(&senderBalance).Error; err != nil {
 					if errors.Is(err, gorm.ErrRecordNotFound) {
-						logger.Warn("Sender balance not found", zap.String("token_cid", token.TokenCID), zap.String("owner_address", input.SenderBalanceUpdate.OwnerAddress))
+						logger.WarnCtx(ctx, "Sender balance not found", zap.String("token_cid", token.TokenCID), zap.String("owner_address", input.SenderBalanceUpdate.OwnerAddress))
 					} else {
 						return fmt.Errorf("failed to find sender balance: %w", err)
 					}

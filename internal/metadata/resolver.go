@@ -9,8 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/gowebpki/jcs"
+
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 
 	"go.uber.org/zap"
 
@@ -176,7 +177,7 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 		// Unmarshal to creator array
 		err = r.json.Unmarshal(cj, &creators)
 		if err != nil {
-			logger.WarnWithContext(ctx, "fail to unmarshal creators metadata", zap.Error(err), zap.Any("creators", c))
+			logger.WarnCtx(ctx, "fail to unmarshal creators metadata", zap.Error(err), zap.Any("creators", c))
 		}
 	}
 
@@ -409,7 +410,7 @@ func (r *resolver) LoadDeployerCacheFromDB(ctx context.Context) error {
 		r.deployerCache[cacheKey] = value
 	}
 
-	logger.Info("Loaded deployer cache from DB", zap.Int("count", len(cacheEntries)))
+	logger.InfoCtx(ctx, "Loaded deployer cache from DB", zap.Int("count", len(cacheEntries)))
 	return nil
 }
 
@@ -453,7 +454,7 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 		return "", fmt.Errorf("failed to get contract deployer: %w", err)
 	}
 
-	logger.InfoWithContext(ctx, "Fetched deployer from blockchain",
+	logger.InfoCtx(ctx, "Fetched deployer from blockchain",
 		zap.String("chain", string(chainID)),
 		zap.String("contract", contractAddress),
 		zap.String("deployer", deployer),
@@ -468,7 +469,7 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 	// Persist to database (even if empty - critical for persistence across restarts)
 	dbKey := fmt.Sprintf("deployer:%s", cacheKey)
 	if err := r.store.SetKeyValue(ctx, dbKey, deployer); err != nil {
-		logger.WarnWithContext(ctx, "failed to cache deployer in DB",
+		logger.WarnCtx(ctx, "failed to cache deployer in DB",
 			zap.Error(err),
 			zap.String("key", dbKey))
 	}
@@ -497,7 +498,7 @@ func (r *resolver) resolvePublisher(ctx context.Context, tokenCID domain.TokenCI
 	// Second, get the deployer and check if it's in the deployer addresses
 	deployer, err := r.getContractDeployer(ctx, chainID, contractAddress)
 	if err != nil {
-		logger.WarnWithContext(ctx, "failed to get contract deployer",
+		logger.WarnCtx(ctx, "failed to get contract deployer",
 			zap.Error(err),
 			zap.String("chain", string(chainID)),
 			zap.String("contract", contractAddress))

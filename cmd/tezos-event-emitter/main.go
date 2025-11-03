@@ -10,15 +10,15 @@ import (
 	"syscall"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/getsentry/sentry-go"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/emitter"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -38,23 +38,31 @@ func main() {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
 
-	// Initialize logger
-	err = logger.Initialize(cfg.Debug,
-		&sentry.ClientOptions{
-			Dsn:   cfg.SentryDSN,
-			Debug: cfg.Debug,
-		})
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Initialize logger with sentry integration
+	err = logger.Initialize(logger.Config{
+		Debug:           cfg.Debug,
+		SentryDSN:       cfg.SentryDSN,
+		BreadcrumbLevel: zapcore.InfoLevel,
+		Tags: map[string]string{
+			"service": "tezos-event-emitter",
+		},
+	})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
 	}
-	logger.Info("Starting Tezos Event Emitter")
+	defer logger.Flush(2 * time.Second)
+	logger.InfoCtx(ctx, "Starting Tezos Event Emitter")
 
 	// Connect to database
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {
-		logger.Fatal("Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
+		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
 	}
-	logger.Info("Connected to database")
+	logger.InfoCtx(ctx, "Connected to database")
 
 	// Initialize store
 	dataStore := store.NewPGStore(db)
@@ -68,6 +76,7 @@ func main() {
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(
+		ctx,
 		jetstream.Config{
 			URL:            cfg.NATS.URL,
 			StreamName:     cfg.NATS.StreamName,
@@ -76,10 +85,10 @@ func main() {
 			ConnectionName: cfg.NATS.ConnectionName,
 		}, natsJS, jsonAdapter)
 	if err != nil {
-		logger.Fatal("Failed to create NATS publisher", zap.Error(err), zap.String("url", cfg.NATS.URL))
+		logger.FatalCtx(ctx, "Failed to create NATS publisher", zap.Error(err), zap.String("url", cfg.NATS.URL))
 	}
 	defer natsPublisher.Close()
-	logger.Info("Connected to NATS JetStream")
+	logger.InfoCtx(ctx, "Connected to NATS JetStream")
 
 	// Initialize TzKT client
 	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter)
@@ -90,14 +99,10 @@ func main() {
 		ChainID:      cfg.Tezos.ChainID,
 	}, signalR, clockAdapter, tzktClient)
 	if err != nil {
-		logger.Fatal("Failed to create Tezos subscriber", zap.Error(err), zap.String("websocket_url", cfg.Tezos.WebSocketURL))
+		logger.FatalCtx(ctx, "Failed to create Tezos subscriber", zap.Error(err), zap.String("websocket_url", cfg.Tezos.WebSocketURL))
 	}
 	defer tezosSubscriber.Close()
-	logger.Info("Connected to TzKT WebSocket")
-
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	logger.InfoCtx(ctx, "Connected to TzKT WebSocket")
 
 	// Setup signal handling
 	sigCh := make(chan os.Signal, 1)
@@ -133,10 +138,10 @@ func main() {
 	// Wait for shutdown signal or error
 	select {
 	case sig := <-sigCh:
-		logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
+		logger.InfoCtx(ctx, "Received shutdown signal", zap.String("signal", sig.String()))
 		cancel()
 	case err := <-errCh:
-		logger.Error(err, zap.String("component", "emitter"))
+		logger.ErrorCtx(ctx, err, zap.String("component", "emitter"))
 		cancel()
 	}
 

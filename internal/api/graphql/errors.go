@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 	"go.uber.org/zap"
 
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 // ErrorPresenter formats errors in a consistent way matching the REST API format
@@ -75,6 +75,6 @@ func handleNotFoundError(err error) *gqlerror.Error {
 
 // RecoverFunc handles panics in resolvers
 func RecoverFunc(ctx context.Context, err interface{}) error {
-	logger.Error(fmt.Errorf("panic: %v", err), zap.Any("panic", err))
+	logger.ErrorCtx(ctx, fmt.Errorf("panic: %v", err), zap.Any("panic", err))
 	return apierrors.NewInternalError("Internal server error")
 }

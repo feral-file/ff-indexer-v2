@@ -12,12 +12,12 @@ import (
 	"github.com/cloudflare/cloudflare-go"
 	"github.com/gabriel-vasile/mimetype"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/downloader"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
@@ -73,22 +73,22 @@ func (p *mediaProvider) UploadVideo(ctx context.Context, sourceURL string, metad
 func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
 	// Validate source URL is a valid image URL
 	if !types.IsValidURL(sourceURL) {
-		logger.Warn("Invalid image URL", zap.String("url", sourceURL))
+		logger.WarnCtx(ctx, "Invalid image URL", zap.String("url", sourceURL))
 		return nil, domain.ErrInvalidURL
 	}
 
 	// Validate the source URL is a Cloudflare Images URL
 	if isCloudflareImageURL(sourceURL) {
-		logger.Warn("Unsupported self-hosted image URL", zap.String("url", sourceURL))
+		logger.WarnCtx(ctx, "Unsupported self-hosted image URL", zap.String("url", sourceURL))
 		return nil, domain.ErrUnsupportedSelfHostedMediaFile
 	}
 
-	logger.Info("Uploading to Cloudflare Images", zap.String("url", sourceURL), zap.Any("metadata", metadata))
+	logger.InfoCtx(ctx, "Uploading to Cloudflare Images", zap.String("url", sourceURL), zap.Any("metadata", metadata))
 
 	// Try URL-based upload first
 	image, err := p.uploadImageFromURL(ctx, sourceURL, metadata)
 	if err != nil {
-		logger.Warn("URL-based image upload failed, trying download fallback",
+		logger.WarnCtx(ctx, "URL-based image upload failed, trying download fallback",
 			zap.String("url", sourceURL),
 			zap.Error(err),
 		)
@@ -101,7 +101,7 @@ func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metad
 	}
 
 	// Convert variants to result format
-	return p.buildImageUploadResult(image), nil
+	return p.buildImageUploadResult(ctx, image), nil
 }
 
 // uploadImageFromURL uploads an image to Cloudflare using URL-based upload
@@ -116,7 +116,7 @@ func (p *mediaProvider) uploadImageFromURL(ctx context.Context, sourceURL string
 		return &cloudflare.Image{}, err
 	}
 
-	logger.Info("Successfully uploaded image via URL",
+	logger.InfoCtx(ctx, "Successfully uploaded image via URL",
 		zap.String("url", sourceURL),
 		zap.String("imageID", image.ID),
 	)
@@ -133,7 +133,7 @@ func (p *mediaProvider) uploadImageFromReader(ctx context.Context, sourceURL str
 	}
 	defer func() {
 		if err := downloadResult.Close(); err != nil {
-			logger.Warn("Failed to close download result", zap.Error(err))
+			logger.WarnCtx(ctx, "Failed to close download result", zap.Error(err))
 		}
 	}()
 
@@ -157,7 +157,7 @@ func (p *mediaProvider) uploadImageFromReader(ctx context.Context, sourceURL str
 		return nil, fmt.Errorf("failed to upload image from reader: %w", err)
 	}
 
-	logger.Info("Successfully uploaded image using download fallback",
+	logger.InfoCtx(ctx, "Successfully uploaded image using download fallback",
 		zap.String("url", sourceURL),
 		zap.String("imageID", image.ID),
 	)
@@ -166,7 +166,7 @@ func (p *mediaProvider) uploadImageFromReader(ctx context.Context, sourceURL str
 }
 
 // buildImageUploadResult converts a Cloudflare Image to an UploadResult
-func (p *mediaProvider) buildImageUploadResult(image *cloudflare.Image) *mediaprovider.UploadResult {
+func (p *mediaProvider) buildImageUploadResult(ctx context.Context, image *cloudflare.Image) *mediaprovider.UploadResult {
 	// Convert variants from []string to map[string]string
 	variantURLs := make(map[string]string)
 	for _, variantURL := range image.Variants {
@@ -184,7 +184,7 @@ func (p *mediaProvider) buildImageUploadResult(image *cloudflare.Image) *mediapr
 		"media_type":  "image",
 	}
 
-	logger.Info("Successfully uploaded to Cloudflare Images",
+	logger.InfoCtx(ctx, "Successfully uploaded to Cloudflare Images",
 		zap.String("imageID", image.ID),
 		zap.Int("variantCount", len(variantURLs)),
 	)
@@ -200,22 +200,22 @@ func (p *mediaProvider) buildImageUploadResult(image *cloudflare.Image) *mediapr
 func (p *mediaProvider) uploadVideo(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
 	// Validate the source URL is a valid video URL
 	if !types.IsValidURL(sourceURL) {
-		logger.Warn("Invalid video URL", zap.String("url", sourceURL))
+		logger.WarnCtx(ctx, "Invalid video URL", zap.String("url", sourceURL))
 		return nil, domain.ErrInvalidURL
 	}
 
 	// Validate the source URL is a Cloudflare Stream URL
 	if isCloudflareStreamURL(sourceURL) {
-		logger.Warn("Unsupported self-hosted video URL", zap.String("url", sourceURL))
+		logger.WarnCtx(ctx, "Unsupported self-hosted video URL", zap.String("url", sourceURL))
 		return nil, domain.ErrUnsupportedSelfHostedMediaFile
 	}
 
-	logger.Info("Uploading to Cloudflare Stream", zap.String("url", sourceURL), zap.Any("metadata", metadata))
+	logger.InfoCtx(ctx, "Uploading to Cloudflare Stream", zap.String("url", sourceURL), zap.Any("metadata", metadata))
 
 	// Try URL-based upload first
 	video, err := p.uploadVideoFromURL(ctx, sourceURL)
 	if err != nil {
-		logger.Warn("URL-based video upload failed, trying download fallback",
+		logger.WarnCtx(ctx, "URL-based video upload failed, trying download fallback",
 			zap.String("url", sourceURL),
 			zap.Error(err),
 		)
@@ -231,7 +231,7 @@ func (p *mediaProvider) uploadVideo(ctx context.Context, sourceURL string, metad
 	videoDetails, err := p.waitForVideoReady(ctx, video.UID)
 	if err != nil {
 		// If we can't get details or it times out, continue with basic info
-		logger.Warn("Failed to get complete video details, using basic info",
+		logger.WarnCtx(ctx, "Failed to get complete video details, using basic info",
 			zap.Error(err),
 			zap.String("videoID", video.UID),
 		)
@@ -239,7 +239,7 @@ func (p *mediaProvider) uploadVideo(ctx context.Context, sourceURL string, metad
 	}
 
 	// Convert to result format
-	return p.buildVideoUploadResult(videoDetails), nil
+	return p.buildVideoUploadResult(ctx, videoDetails), nil
 }
 
 // uploadVideoFromURL uploads a video to Cloudflare using URL-based upload
@@ -252,7 +252,7 @@ func (p *mediaProvider) uploadVideoFromURL(ctx context.Context, sourceURL string
 		return cloudflare.StreamVideo{}, err
 	}
 
-	logger.Info("Successfully uploaded video via URL",
+	logger.InfoCtx(ctx, "Successfully uploaded video via URL",
 		zap.String("url", sourceURL),
 		zap.String("videoID", video.UID),
 	)
@@ -269,7 +269,7 @@ func (p *mediaProvider) uploadVideoFromFile(ctx context.Context, sourceURL strin
 	}
 	defer func() {
 		if err := downloadResult.Close(); err != nil {
-			logger.Warn("Failed to close download result", zap.Error(err))
+			logger.WarnCtx(ctx, "Failed to close download result", zap.Error(err))
 		}
 	}()
 
@@ -286,7 +286,7 @@ func (p *mediaProvider) uploadVideoFromFile(ctx context.Context, sourceURL strin
 
 	tempFile := filepath.Join(tempDir, fmt.Sprintf("ff-indexer-video-%d-%s", time.Now().UnixNano(), filename))
 
-	logger.Info("Saving video to temp file",
+	logger.InfoCtx(ctx, "Saving video to temp file",
 		zap.String("tempFile", tempFile),
 	)
 
@@ -299,9 +299,9 @@ func (p *mediaProvider) uploadVideoFromFile(ctx context.Context, sourceURL strin
 	// Ensure temp file is cleaned up
 	defer func() {
 		if err := p.fs.Remove(tempFile); err != nil {
-			logger.Warn("Failed to remove temp file", zap.String("file", tempFile), zap.Error(err))
+			logger.WarnCtx(ctx, "Failed to remove temp file", zap.String("file", tempFile), zap.Error(err))
 		} else {
-			logger.Debug("Cleaned up temp file", zap.String("file", tempFile))
+			logger.DebugCtx(ctx, "Cleaned up temp file", zap.String("file", tempFile))
 		}
 	}()
 
@@ -314,7 +314,7 @@ func (p *mediaProvider) uploadVideoFromFile(ctx context.Context, sourceURL strin
 		return cloudflare.StreamVideo{}, fmt.Errorf("failed to upload video from file: %w", err)
 	}
 
-	logger.Info("Successfully uploaded video using download fallback",
+	logger.InfoCtx(ctx, "Successfully uploaded video using download fallback",
 		zap.String("url", sourceURL),
 		zap.String("videoID", video.UID),
 	)
@@ -323,7 +323,7 @@ func (p *mediaProvider) uploadVideoFromFile(ctx context.Context, sourceURL strin
 }
 
 // buildVideoUploadResult converts a Cloudflare StreamVideo to an UploadResult
-func (p *mediaProvider) buildVideoUploadResult(videoDetails cloudflare.StreamVideo) *mediaprovider.UploadResult {
+func (p *mediaProvider) buildVideoUploadResult(ctx context.Context, videoDetails cloudflare.StreamVideo) *mediaprovider.UploadResult {
 	// Build variant URLs for different playback options
 	variantURLs := make(map[string]string)
 
@@ -363,7 +363,7 @@ func (p *mediaProvider) buildVideoUploadResult(videoDetails cloudflare.StreamVid
 		providerMetadata["height"] = videoDetails.Input.Height
 	}
 
-	logger.Info("Successfully uploaded to Cloudflare Stream",
+	logger.InfoCtx(ctx, "Successfully uploaded to Cloudflare Stream",
 		zap.String("videoID", videoDetails.UID),
 		zap.String("status", string(videoDetails.Status.State)),
 		zap.Int("variantCount", len(variantURLs)),
@@ -396,7 +396,7 @@ func (p *mediaProvider) waitForVideoReady(ctx context.Context, videoID string) (
 		})
 		if err != nil {
 			// Network errors are retryable
-			logger.Warn("Failed to fetch video details, retrying", zap.Error(err))
+			logger.WarnCtx(ctx, "Failed to fetch video details, retrying", zap.Error(err))
 			return fmt.Errorf("failed to get video: %w", err)
 		}
 
@@ -405,7 +405,7 @@ func (p *mediaProvider) waitForVideoReady(ctx context.Context, videoID string) (
 		// Check video status
 		switch video.Status.State {
 		case "ready":
-			logger.Info("Video processing complete",
+			logger.InfoCtx(ctx, "Video processing complete",
 				zap.String("videoID", videoID),
 			)
 			return nil // Success - stop retrying
@@ -416,7 +416,7 @@ func (p *mediaProvider) waitForVideoReady(ctx context.Context, videoID string) (
 
 		case "inprogress", "queued", "downloading":
 			// Still processing - retry
-			logger.Debug("Video still processing",
+			logger.DebugCtx(ctx, "Video still processing",
 				zap.String("videoID", videoID),
 				zap.String("status", string(video.Status.State)),
 			)
@@ -424,7 +424,7 @@ func (p *mediaProvider) waitForVideoReady(ctx context.Context, videoID string) (
 
 		default:
 			// Unknown status - retry
-			logger.Warn("Unknown video status",
+			logger.WarnCtx(ctx, "Unknown video status",
 				zap.String("videoID", videoID),
 				zap.String("status", string(video.Status.State)),
 			)

@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 )
 
@@ -66,7 +66,7 @@ func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzk
 // Note: fromLevel parameter is ignored for Tezos as TzKT always subscribes from current
 func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler messaging.EventHandler) error {
 	if c.connected {
-		logger.Warn("Already connected to TzKT SignalR")
+		logger.WarnCtx(ctx, "Already connected to TzKT SignalR")
 		return nil
 	}
 
@@ -130,46 +130,46 @@ func (c *tzSubscriber) Transfers(data interface{}) {
 	// Marshal data to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		logger.Error(fmt.Errorf("error marshaling transfers data: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, fmt.Errorf("error marshaling transfers data: %w", err), zap.Error(err))
 		return
 	}
 
 	// Unmarshal data to TzKTMessage
 	var msg TzKTMessage
 	if err := json.Unmarshal(jsonData, &msg); err != nil {
-		logger.Error(fmt.Errorf("error unmarshaling transfers message: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, fmt.Errorf("error unmarshaling transfers message: %w", err), zap.Error(err))
 		return
 	}
 
 	// Type 0 is state/confirmation message, ignore it
 	if msg.Type == MessageTypeState {
-		logger.Debug("Received transfers state message", zap.Any("state", msg.State))
+		logger.DebugCtx(c.ctx, "Received transfers state message", zap.Any("state", msg.State))
 		return
 	}
 
 	// Only handle data messages
 	if msg.Type != MessageTypeData {
 		// FIXME: Handle other message types
-		logger.Warn("Transfers message type is not data", zap.Any("type", msg.Type))
+		logger.WarnCtx(c.ctx, "Transfers message type is not data", zap.Any("type", msg.Type))
 		return
 	}
 
 	if msg.Data == nil {
-		logger.Warn("Transfers message without data field")
+		logger.WarnCtx(c.ctx, "Transfers message without data field")
 		return
 	}
 
 	// Unmarshal data array into transfer events
 	var transfers []TzKTTokenTransfer
 	if err := json.Unmarshal(msg.Data, &transfers); err != nil {
-		logger.Error(fmt.Errorf("error unmarshaling transfers data: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, fmt.Errorf("error unmarshaling transfers data: %w", err), zap.Error(err))
 		return
 	}
 
 	for i := range transfers {
 		transfer := transfers[i]
 		if transfer.Token.Standard != domain.StandardFA2 {
-			logger.Debug("Skipping token is not fa2",
+			logger.DebugCtx(c.ctx, "Skipping token is not fa2",
 				zap.String("standard", string(transfer.Token.Standard)),
 				zap.String("contract", transfer.Token.Contract.Address),
 				zap.String("tokenId", transfer.Token.TokenID))
@@ -178,14 +178,14 @@ func (c *tzSubscriber) Transfers(data interface{}) {
 
 		event, err := c.tzktClient.ParseTransfer(c.ctx, &transfer)
 		if err != nil {
-			logger.Error(fmt.Errorf("error parsing transfer: %w", err), zap.Error(err))
+			logger.ErrorCtx(c.ctx, fmt.Errorf("error parsing transfer: %w", err), zap.Error(err))
 			continue
 		}
 
 		// Call handler if set
 		if c.handler != nil {
 			if err := c.handler(event); err != nil {
-				logger.Error(fmt.Errorf("error handling event: %w", err), zap.Error(err))
+				logger.ErrorCtx(c.ctx, fmt.Errorf("error handling event: %w", err), zap.Error(err))
 			}
 		}
 	}
@@ -197,39 +197,39 @@ func (c *tzSubscriber) Bigmaps(data interface{}) {
 	// Marshal data to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		logger.Error(fmt.Errorf("error marshaling bigmaps data: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, fmt.Errorf("error marshaling bigmaps data: %w", err), zap.Error(err))
 		return
 	}
 
 	// Unmarshal data to TzKTMessage
 	var msg TzKTMessage
 	if err := json.Unmarshal(jsonData, &msg); err != nil {
-		logger.Error(fmt.Errorf("error unmarshaling bigmaps message: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, fmt.Errorf("error unmarshaling bigmaps message: %w", err), zap.Error(err))
 		return
 	}
 
 	// Type 0 is state/confirmation message, ignore it
 	if msg.Type == MessageTypeState {
-		logger.Debug("Received bigmaps state message", zap.Any("state", msg.State))
+		logger.DebugCtx(c.ctx, "Received bigmaps state message", zap.Any("state", msg.State))
 		return
 	}
 
 	// Only handle data messages
 	if msg.Type != MessageTypeData {
 		// FIXME: Handle other message types
-		logger.Warn("Bigmaps message type is not data", zap.Any("type", msg.Type))
+		logger.WarnCtx(c.ctx, "Bigmaps message type is not data", zap.Any("type", msg.Type))
 		return
 	}
 
 	if msg.Data == nil {
-		logger.Warn("Bigmaps message without data field")
+		logger.WarnCtx(c.ctx, "Bigmaps message without data field")
 		return
 	}
 
 	// Unmarshal data array into bigmap updates
 	var updates []TzKTBigMapUpdate
 	if err := json.Unmarshal(msg.Data, &updates); err != nil {
-		logger.Error(fmt.Errorf("error unmarshaling bigmaps data: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, fmt.Errorf("error unmarshaling bigmaps data: %w", err), zap.Error(err))
 		return
 	}
 
@@ -243,14 +243,14 @@ func (c *tzSubscriber) Bigmaps(data interface{}) {
 
 		event, err := c.tzktClient.ParseBigMapUpdate(c.ctx, &update)
 		if err != nil {
-			logger.Error(fmt.Errorf("error parsing big map update: %w", err), zap.Error(err))
+			logger.ErrorCtx(c.ctx, fmt.Errorf("error parsing big map update: %w", err), zap.Error(err))
 			continue
 		}
 
 		// Call handler if set
 		if c.handler != nil {
 			if err := c.handler(event); err != nil {
-				logger.Error(fmt.Errorf("error handling metadata update event: %w", err), zap.Error(err))
+				logger.ErrorCtx(c.ctx, fmt.Errorf("error handling metadata update event: %w", err), zap.Error(err))
 			}
 		}
 	}
@@ -272,5 +272,5 @@ func (c *tzSubscriber) Close() {
 
 	c.client.Stop()
 	c.connected = false
-	logger.Info("TzKT WebSocket connection closed")
+	logger.InfoCtx(c.ctx, "TzKT WebSocket connection closed")
 }

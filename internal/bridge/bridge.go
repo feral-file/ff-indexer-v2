@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.temporal.io/api/enums/v1"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -54,6 +54,7 @@ type bridge struct {
 
 // NewBridge creates a new event bridge
 func NewBridge(
+	ctx context.Context,
 	cfg Config,
 	natsJS adapter.NatsJetStream,
 	st store.Store,
@@ -67,14 +68,14 @@ func NewBridge(
 		nats.ReconnectWait(cfg.ReconnectWait),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			if err != nil {
-				logger.Error(err, zap.String("message", "Disconnected from NATS"))
+				logger.ErrorCtx(ctx, err, zap.String("message", "Disconnected from NATS"))
 			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
-			logger.Info("Reconnected to NATS", zap.String("url", nc.ConnectedUrl()))
+			logger.InfoCtx(ctx, "Reconnected to NATS", zap.String("url", nc.ConnectedUrl()))
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
-			logger.Info("NATS connection closed")
+			logger.InfoCtx(ctx, "NATS connection closed")
 		}),
 	}
 
@@ -100,7 +101,7 @@ func NewBridge(
 func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
 	// Check if contract is blacklisted
 	if b.blacklist != nil && b.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.Info("Dropping event - contract is blacklisted",
+		logger.InfoCtx(ctx, "Dropping event - contract is blacklisted",
 			zap.String("chain", string(event.Chain)),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
@@ -135,7 +136,7 @@ func (b *bridge) shouldProcessEvent(ctx context.Context, event *domain.Blockchai
 
 // Run starts the event bridge
 func (b *bridge) Run(ctx context.Context) error {
-	logger.Info("Starting event bridge", zap.String("stream", b.config.StreamName), zap.String("consumer", b.config.ConsumerName))
+	logger.InfoCtx(ctx, "Starting event bridge", zap.String("stream", b.config.StreamName), zap.String("consumer", b.config.ConsumerName))
 
 	// Subscribe to all event subjects
 	subject := "events.*.>"
@@ -158,7 +159,7 @@ func (b *bridge) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get consumer info: %w", err)
 	}
-	logger.Info("Consumer created/retrieved", zap.String("consumer", consumerInfo.Name))
+	logger.InfoCtx(ctx, "Consumer created/retrieved", zap.String("consumer", consumerInfo.Name))
 
 	// Create subscription
 	msgChan := make(chan jetstream.Msg, 100)
@@ -170,13 +171,13 @@ func (b *bridge) Run(ctx context.Context) error {
 	}
 	defer sub.Stop()
 
-	logger.Info("Started consuming messages")
+	logger.InfoCtx(ctx, "Started consuming messages")
 
 	// Process messages
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("Shutting down event bridge")
+			logger.InfoCtx(ctx, "Shutting down event bridge")
 			return ctx.Err()
 		case msg := <-msgChan:
 			// Spawn goroutine to handle message asynchronously
@@ -193,15 +194,15 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 	// Parse event
 	var event domain.BlockchainEvent
 	if err := b.json.Unmarshal(msg.Data(), &event); err != nil {
-		logger.Error(err, zap.String("message", "Failed to unmarshal event"))
+		logger.ErrorCtx(ctx, err, zap.String("message", "Failed to unmarshal event"))
 		// Terminate message for unparseable data
 		if err := msg.Term(); err != nil {
-			logger.Error(err, zap.String("message", "Failed to terminate message"))
+			logger.ErrorCtx(ctx, err, zap.String("message", "Failed to terminate message"))
 		}
 		return
 	}
 
-	logger.Info("Received event",
+	logger.InfoCtx(ctx, "Received event",
 		zap.String("chain", string(event.Chain)),
 		zap.String("eventType", string(event.EventType)),
 		zap.String("tokenCID", event.TokenCID().String()),
@@ -212,16 +213,16 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 	// Check if event should be processed
 	shouldProcess, err := b.shouldProcessEvent(ctx, &event)
 	if err != nil {
-		logger.Error(err, zap.String("message", "Failed to check if event should be processed"))
+		logger.ErrorCtx(ctx, err, zap.String("message", "Failed to check if event should be processed"))
 		// NAK to retry
 		if err := msg.Nak(); err != nil {
-			logger.Error(err, zap.String("message", "Failed to NAK message"))
+			logger.ErrorCtx(ctx, err, zap.String("message", "Failed to NAK message"))
 		}
 		return
 	}
 
 	if !shouldProcess {
-		logger.Info("Dropping event - token not indexed and addresses not watched",
+		logger.InfoCtx(ctx, "Dropping event - token not indexed and addresses not watched",
 			zap.String("chain", string(event.Chain)),
 			zap.String("eventType", string(event.EventType)),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -230,24 +231,24 @@ func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
 		)
 		// ACK to remove from queue
 		if err := msg.Ack(); err != nil {
-			logger.Error(err, zap.String("message", "Failed to ACK message"))
+			logger.ErrorCtx(ctx, err, zap.String("message", "Failed to ACK message"))
 		}
 		return
 	}
 
 	// Forward to appropriate worker
 	if err := b.forwardToWorker(ctx, &event); err != nil {
-		logger.Error(err, zap.String("message", "Failed to forward event to worker"))
+		logger.ErrorCtx(ctx, err, zap.String("message", "Failed to forward event to worker"))
 		// NAK to retry
 		if err := msg.Nak(); err != nil {
-			logger.Error(err, zap.String("message", "Failed to NAK message"))
+			logger.ErrorCtx(ctx, err, zap.String("message", "Failed to NAK message"))
 		}
 		return
 	}
 
 	// ACK message after successful processing
 	if err := msg.Ack(); err != nil {
-		logger.Error(err, zap.String("message", "Failed to ACK message"))
+		logger.ErrorCtx(ctx, err, zap.String("message", "Failed to ACK message"))
 	}
 }
 
@@ -283,7 +284,7 @@ func (b *bridge) forwardToWorker(ctx context.Context, event *domain.BlockchainEv
 		return fmt.Errorf("failed to execute workflow: %w", err)
 	}
 
-	logger.Info("Event forwarded to worker",
+	logger.InfoCtx(ctx, "Event forwarded to worker",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("eventType", string(event.EventType)),
 	)

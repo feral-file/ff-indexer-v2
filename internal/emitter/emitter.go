@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
@@ -71,7 +71,7 @@ func (e *emitter) Run(ctx context.Context) error {
 
 		if lastBlock > 0 {
 			startBlock = lastBlock + 1
-			logger.Info("Resuming from last processed block", zap.String("chain", string(e.config.ChainID)), zap.Uint64("block", startBlock))
+			logger.InfoCtx(ctx, "Resuming from last processed block", zap.String("chain", string(e.config.ChainID)), zap.Uint64("block", startBlock))
 		} else {
 			// Start from latest block
 			latestBlock, err := e.subscriber.GetLatestBlock(ctx)
@@ -79,10 +79,10 @@ func (e *emitter) Run(ctx context.Context) error {
 				return fmt.Errorf("failed to get latest block number: %w", err)
 			}
 			startBlock = latestBlock
-			logger.Info("Starting from latest block", zap.String("chain", string(e.config.ChainID)), zap.Uint64("block", startBlock))
+			logger.InfoCtx(ctx, "Starting from latest block", zap.String("chain", string(e.config.ChainID)), zap.Uint64("block", startBlock))
 		}
 	} else {
-		logger.Info("Starting from configured block", zap.String("chain", string(e.config.ChainID)), zap.Uint64("block", startBlock))
+		logger.InfoCtx(ctx, "Starting from configured block", zap.String("chain", string(e.config.ChainID)), zap.Uint64("block", startBlock))
 	}
 
 	// Channel for events
@@ -90,7 +90,7 @@ func (e *emitter) Run(ctx context.Context) error {
 
 	// Start subscribing to events
 	go func() {
-		logger.Info("Starting event subscription", zap.String("chain", string(e.config.ChainID)))
+		logger.InfoCtx(ctx, "Starting event subscription", zap.String("chain", string(e.config.ChainID)))
 
 		lastSavedBlock := uint64(0)
 		lastSaveTime := e.clock.Now()

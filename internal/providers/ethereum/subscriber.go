@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 )
 
@@ -94,7 +94,7 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 		case vLog := <-logs:
 			event, err := s.client.ParseEventLog(ctx, vLog)
 			if err != nil && !errors.Is(err, context.Canceled) {
-				logger.Error(err, zap.String("message", "Error parsing log"))
+				logger.ErrorCtx(ctx, err, zap.String("message", "Error parsing log"))
 				continue
 			}
 
@@ -103,7 +103,7 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 			}
 
 			if err := handler(event); err != nil {
-				logger.Error(err, zap.String("message", "Error handling event"))
+				logger.ErrorCtx(ctx, err, zap.String("message", "Error handling event"))
 			}
 		}
 	}

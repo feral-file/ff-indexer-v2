@@ -10,16 +10,16 @@ import (
 	"syscall"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
-	"github.com/getsentry/sentry-go"
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/bridge"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
@@ -38,23 +38,31 @@ func main() {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
 
-	// Initialize logger
-	err = logger.Initialize(cfg.Debug,
-		&sentry.ClientOptions{
-			Dsn:   cfg.SentryDSN,
-			Debug: cfg.Debug,
-		})
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Initialize logger with sentry integration
+	err = logger.Initialize(logger.Config{
+		Debug:           cfg.Debug,
+		SentryDSN:       cfg.SentryDSN,
+		BreadcrumbLevel: zapcore.InfoLevel,
+		Tags: map[string]string{
+			"service": "event-bridge",
+		},
+	})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
 	}
-	logger.Info("Starting Event Bridge")
+	defer logger.Flush(2 * time.Second)
+	logger.InfoCtx(ctx, "Starting Event Bridge")
 
 	// Connect to database
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {
-		logger.Fatal("Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
+		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
 	}
-	logger.Info("Connected to database")
+	logger.InfoCtx(ctx, "Connected to database")
 
 	// Initialize store
 	dataStore := store.NewPGStore(db)
@@ -70,10 +78,10 @@ func main() {
 		Namespace: cfg.Temporal.Namespace,
 	})
 	if err != nil {
-		logger.Fatal("Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
+		logger.FatalCtx(ctx, "Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
 	}
 	defer temporalClient.Close()
-	logger.Info("Connected to Temporal", zap.String("namespace", cfg.Temporal.Namespace))
+	logger.InfoCtx(ctx, "Connected to Temporal", zap.String("namespace", cfg.Temporal.Namespace))
 
 	// Load blacklist registry
 	var blacklistRegistry registry.BlacklistRegistry
@@ -81,17 +89,18 @@ func main() {
 		blacklistLoader := registry.NewBlacklistRegistryLoader(fs, jsonAdapter)
 		blacklistRegistry, err = blacklistLoader.Load(cfg.BlacklistPath)
 		if err != nil {
-			logger.Fatal("Failed to load blacklist registry",
+			logger.FatalCtx(ctx, "Failed to load blacklist registry",
 				zap.Error(err),
 				zap.String("path", cfg.BlacklistPath))
 		}
-		logger.Info("Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
+		logger.InfoCtx(ctx, "Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
 	} else {
-		logger.Warn("Blacklist registry path not configured, all contracts will be allowed")
+		logger.WarnCtx(ctx, "Blacklist registry path not configured, all contracts will be allowed")
 	}
 
 	// Create bridge
 	eventBridge, err := bridge.NewBridge(
+		ctx,
 		bridge.Config{
 			URL:               cfg.NATS.URL,
 			StreamName:        cfg.NATS.StreamName,
@@ -110,14 +119,10 @@ func main() {
 		blacklistRegistry,
 	)
 	if err != nil {
-		logger.Fatal("Failed to create event bridge", zap.Error(err))
+		logger.FatalCtx(ctx, "Failed to create event bridge", zap.Error(err))
 	}
 	defer eventBridge.Close()
-	logger.Info("Event bridge created", zap.String("stream", cfg.NATS.StreamName), zap.String("consumer", cfg.NATS.ConsumerName))
-
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	logger.InfoCtx(ctx, "Event bridge created", zap.String("stream", cfg.NATS.StreamName), zap.String("consumer", cfg.NATS.ConsumerName))
 
 	// Setup signal handling
 	sigCh := make(chan os.Signal, 1)
@@ -136,10 +141,10 @@ func main() {
 	// Wait for shutdown signal or error
 	select {
 	case sig := <-sigCh:
-		logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
+		logger.InfoCtx(ctx, "Received shutdown signal", zap.String("signal", sig.String()))
 		cancel()
 	case err := <-errCh:
-		logger.Error(err, zap.String("component", "bridge"))
+		logger.ErrorCtx(ctx, err, zap.String("component", "bridge"))
 		cancel()
 	}
 

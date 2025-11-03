@@ -3,11 +3,11 @@ package metadata
 import (
 	"context"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/gabriel-vasile/mimetype"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
@@ -29,25 +29,25 @@ func detectMimeType(
 	var targetURL string
 	if !types.StringNilOrEmpty(animationURL) {
 		targetURL = *animationURL
-		logger.Debug("Using animation_url for mime type detection", zap.String("url", targetURL))
+		logger.DebugCtx(ctx, "Using animation_url for mime type detection", zap.String("url", targetURL))
 	} else if !types.StringNilOrEmpty(imageURL) {
 		targetURL = *imageURL
-		logger.Debug("Using image_url for mime type detection", zap.String("url", targetURL))
+		logger.DebugCtx(ctx, "Using image_url for mime type detection", zap.String("url", targetURL))
 	} else {
-		logger.Debug("No URL available for mime type detection")
+		logger.DebugCtx(ctx, "No URL available for mime type detection")
 		return nil
 	}
 
 	// Resolve the URI to a canonical URL
 	resolvedURL, err := uriResolver.Resolve(ctx, targetURL)
 	if err != nil {
-		logger.Warn("Failed to resolve URI for mime type detection",
+		logger.WarnCtx(ctx, "Failed to resolve URI for mime type detection",
 			zap.String("url", targetURL),
 			zap.Error(err))
 		return nil
 	}
 
-	logger.Debug("Resolved URL for mime type detection",
+	logger.DebugCtx(ctx, "Resolved URL for mime type detection",
 		zap.String("original", targetURL),
 		zap.String("resolved", resolvedURL))
 
@@ -55,7 +55,7 @@ func detectMimeType(
 	const maxBytes = 512
 	content, err := httpClient.GetPartialContent(ctx, resolvedURL, maxBytes)
 	if err != nil {
-		logger.Warn("Failed to download content for mime type detection",
+		logger.WarnCtx(ctx, "Failed to download content for mime type detection",
 			zap.String("url", resolvedURL),
 			zap.Error(err))
 		return nil
@@ -64,13 +64,13 @@ func detectMimeType(
 	// Detect mime type using the mimetype library
 	mtype := mimetype.Detect(content)
 	if mtype == nil {
-		logger.Warn("Failed to detect mime type",
+		logger.WarnCtx(ctx, "Failed to detect mime type",
 			zap.String("url", resolvedURL))
 		return nil
 	}
 
 	mimeTypeStr := mtype.String()
-	logger.Info("Detected mime type",
+	logger.InfoCtx(ctx, "Detected mime type",
 		zap.String("url", resolvedURL),
 		zap.String("mimeType", mimeTypeStr))
 

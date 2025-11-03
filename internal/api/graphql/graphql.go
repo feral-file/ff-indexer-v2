@@ -9,11 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/vektah/gqlparser/v2/ast"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 // Handler defines the interface for GraphQL API handlers
@@ -72,7 +72,7 @@ func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationH
 		result := middleware.Authenticate(authHeader, h.authConfig)
 
 		if !result.Success {
-			logger.Warn("GraphQL mutation authentication failed",
+			logger.WarnCtx(ctx, "GraphQL mutation authentication failed",
 				zap.Error(result.Error),
 				zap.String("operation", opctx.OperationName),
 			)
@@ -90,7 +90,7 @@ func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationH
 			ctx = context.WithValue(ctx, middleware.AUTH_SUBJECT_KEY, result.AuthSubject)
 		}
 
-		logger.Debug("GraphQL mutation authentication successful",
+		logger.DebugCtx(ctx, "GraphQL mutation authentication successful",
 			zap.String("operation", opctx.OperationName),
 			zap.String("auth_type", result.AuthType),
 		)

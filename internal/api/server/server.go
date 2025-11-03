@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/rest"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -51,7 +51,7 @@ func New(cfg Config, store store.Store, orchestrator temporal.TemporalOrchestrat
 }
 
 // Start initializes and starts the HTTP server
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
 	// Set Gin mode based on debug flag
 	if s.config.Debug {
 		gin.SetMode(gin.DebugMode)
@@ -62,7 +62,8 @@ func (s *Server) Start() error {
 	// Create Gin router
 	router := gin.New()
 
-	// Setup middleware
+	// Setup middleware - SentryMiddleware should be first to enable context-based logging
+	router.Use(middleware.SentryMiddleware())
 	router.Use(middleware.Recovery())
 	router.Use(middleware.Logger())
 	router.Use(middleware.SetupCORS())
@@ -96,7 +97,7 @@ func (s *Server) Start() error {
 		IdleTimeout:  s.config.IdleTimeout,
 	}
 
-	logger.Info("Starting API server",
+	logger.InfoCtx(ctx, "Starting API server",
 		zap.String("address", addr),
 	)
 
@@ -110,7 +111,7 @@ func (s *Server) Start() error {
 
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
-	logger.Info("Shutting down API server")
+	logger.InfoCtx(ctx, "Shutting down API server")
 
 	if s.httpServer != nil {
 		if err := s.httpServer.Shutdown(ctx); err != nil {

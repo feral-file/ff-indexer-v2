@@ -5,13 +5,13 @@ import (
 	"sort"
 	"time"
 
-	logger "github.com/bitmark-inc/autonomy-logger"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 const (
