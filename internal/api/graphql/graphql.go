@@ -1,10 +1,18 @@
 package graphql
 
 import (
+	"context"
+
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/gin-gonic/gin"
+	"github.com/vektah/gqlparser/v2/ast"
 
+	logger "github.com/bitmark-inc/autonomy-logger"
+	"go.uber.org/zap"
+
+	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 )
 
@@ -19,11 +27,12 @@ type Handler interface {
 
 // gqlHandler implements the Handler interface using gqlgen
 type gqlHandler struct {
-	server *handler.Server
+	server     *handler.Server
+	authConfig middleware.AuthConfig
 }
 
 // NewHandler creates a new GraphQL handler with gqlgen
-func NewHandler(exec executor.Executor) (Handler, error) {
+func NewHandler(exec executor.Executor, authCfg middleware.AuthConfig) (Handler, error) {
 	// Create resolver with executor
 	resolver := NewResolver(exec)
 
@@ -36,9 +45,58 @@ func NewHandler(exec executor.Executor) (Handler, error) {
 	srv.SetErrorPresenter(ErrorPresenter)
 	srv.SetRecoverFunc(RecoverFunc)
 
-	return &gqlHandler{
-		server: srv,
-	}, nil
+	h := &gqlHandler{
+		server:     srv,
+		authConfig: authCfg,
+	}
+
+	// Add authentication middleware for mutations only
+	srv.AroundOperations(h.authMiddleware)
+
+	return h, nil
+}
+
+// authMiddleware authenticates GraphQL mutations using the shared authentication logic
+func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+	opctx := graphql.GetOperationContext(ctx)
+
+	// Only authenticate mutations, allow queries without auth
+	if opctx.Operation != nil && opctx.Operation.Operation == ast.Mutation {
+		// Get Authorization header from the HTTP request
+		authHeader := ""
+		if opctx.Headers != nil {
+			authHeader = opctx.Headers.Get("Authorization")
+		}
+
+		// Authenticate using the shared authentication logic
+		result := middleware.Authenticate(authHeader, h.authConfig)
+
+		if !result.Success {
+			logger.Warn("GraphQL mutation authentication failed",
+				zap.Error(result.Error),
+				zap.String("operation", opctx.OperationName),
+			)
+			return func(ctx context.Context) *graphql.Response {
+				return graphql.ErrorResponse(ctx, "Authentication required for mutations")
+			}
+		}
+
+		// Store authentication info in context for resolvers to access
+		ctx = context.WithValue(ctx, middleware.AUTH_TYPE_KEY, result.AuthType)
+		if result.Claims != nil {
+			ctx = context.WithValue(ctx, middleware.JWT_CLAIMS_KEY, result.Claims)
+		}
+		if result.AuthSubject != "" {
+			ctx = context.WithValue(ctx, middleware.AUTH_SUBJECT_KEY, result.AuthSubject)
+		}
+
+		logger.Debug("GraphQL mutation authentication successful",
+			zap.String("operation", opctx.OperationName),
+			zap.String("auth_type", result.AuthType),
+		)
+	}
+
+	return next(ctx)
 }
 
 // HandleGraphQL processes GraphQL queries and mutations

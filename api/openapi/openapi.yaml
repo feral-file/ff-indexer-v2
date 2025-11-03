@@ -18,6 +18,21 @@ info:
     - Metadata enrichment from vendor APIs
     - Change journal for tracking data updates
     - Token indexing triggers
+    
+    ## Authentication
+    Some endpoints require authentication:
+    - REST: `POST /api/v1/tokens/index` (trigger token indexing)
+    - GraphQL: All mutations (queries are public)
+    
+    Two authentication methods are supported:
+    
+    ### JWT (Bearer Token)
+    Use the `Authorization: Bearer <token>` header with a valid JWT token signed with RSA (RS256/RS384/RS512).
+    
+    ### API Key
+    Use the `Authorization: ApiKey <key>` header with a valid API key.
+    
+    Contact your system administrator to obtain authentication credentials.
   version: 1.0.0
   contact:
     name: Feral File
@@ -464,6 +479,9 @@ paths:
       operationId: triggerTokenIndexing
       tags:
         - tokens
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -471,6 +489,12 @@ paths:
             schema:
               $ref: '#/components/schemas/TriggerIndexingRequest'
       responses:
+        '401':
+          description: Unauthorized - Missing or invalid authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
         '202':
           description: Indexing triggered successfully
           content:
@@ -1225,3 +1249,43 @@ components:
           type: string
           description: Additional error details
           example: "Invalid token CID format"
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT authentication using RSA signing algorithms (RS256, RS384, or RS512).
+        
+        Include the JWT token in the Authorization header:
+        ```
+        Authorization: Bearer <your-jwt-token>
+        ```
+        
+        The token must include standard claims:
+        - `exp` (expiration time) - Token must not be expired
+        - `nbf` (not before) - Token must be currently valid
+        - `sub` (subject) - Optional, identifies the authenticated user/service
+        
+        Example:
+        ```
+        Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+        ```
+    
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        API Key authentication.
+        
+        Include the API key in the Authorization header with 'ApiKey' prefix:
+        ```
+        Authorization: ApiKey <your-api-key>
+        ```
+        
+        Example:
+        ```
+        Authorization: ApiKey abc123def456...
+        ```

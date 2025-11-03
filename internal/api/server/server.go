@@ -28,6 +28,7 @@ type Config struct {
 	WriteTimeout          time.Duration
 	IdleTimeout           time.Duration
 	OrchestratorTaskQueue string
+	Auth                  middleware.AuthConfig
 }
 
 // Server wraps the HTTP server
@@ -73,10 +74,11 @@ func (s *Server) Start() error {
 	restHandler := rest.NewHandler(exec)
 
 	// Setup REST routes
-	rest.SetupRoutes(router, restHandler)
+	rest.SetupRoutes(router, restHandler, s.config.Auth)
 
-	// Create GraphQL handler
-	graphqlHandler, err := graphql.NewHandler(exec)
+	// Create GraphQL handler with auth config
+	// Authentication is handled internally for mutations only
+	graphqlHandler, err := graphql.NewHandler(exec, s.config.Auth)
 	if err != nil {
 		return fmt.Errorf("failed to create GraphQL handler: %w", err)
 	}

@@ -8,9 +8,9 @@ services:
     image: postgres:15-alpine
     container_name: ff-indexer-postgres
     environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-ff_indexer}
+      POSTGRES_USER: ${FF_INDEXER_DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${FF_INDEXER_DATABASE_PASSWORD:-postgres}
+      POSTGRES_DB: ${FF_INDEXER_DATABASE_DBNAME:-ff_indexer}
     ports:
       - "5432:5432"
     volumes:
@@ -159,12 +159,11 @@ services:
         condition: service_completed_successfully
     volumes:
       - ../../cmd/ethereum-event-emitter/config.yaml.sample:/app/config.yaml:ro
+    env_file:
+      - ../../config/.env
+      - ../../config/.env.local
     environment:
-      # Sensitive values
-      - FF_INDEXER_DATABASE_PASSWORD=${DB_PASSWORD:-postgres}
-      - FF_INDEXER_SENTRY_DSN=${SENTRY_DSN:-}
-      - FF_INDEXER_ETHEREUM_WEBSOCKET_URL=${ETHEREUM_WEBSOCKET_URL}
-      # Docker-specific overrides (hostnames)
+      # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_NATS_URL=nats://nats:4222
     networks:
@@ -198,11 +197,11 @@ services:
         condition: service_completed_successfully
     volumes:
       - ../../cmd/tezos-event-emitter/config.yaml.sample:/app/config.yaml:ro
+    env_file:
+      - ../../config/.env
+      - ../../config/.env.local
     environment:
-      # Sensitive values
-      - FF_INDEXER_DATABASE_PASSWORD=${DB_PASSWORD:-postgres}
-      - FF_INDEXER_SENTRY_DSN=${SENTRY_DSN:-}
-      # Docker-specific overrides (hostnames)
+      # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_NATS_URL=nats://nats:4222
     networks:
@@ -243,11 +242,11 @@ services:
     volumes:
       - ../../cmd/event-bridge/config.yaml.sample:/app/config.yaml:ro
       - ../../tools/registry/blacklist.json:/app/tools/registry/blacklist.json:ro
+    env_file:
+      - ../../config/.env
+      - ../../config/.env.local
     environment:
-      # Sensitive values
-      - FF_INDEXER_DATABASE_PASSWORD=${DB_PASSWORD:-postgres}
-      - FF_INDEXER_SENTRY_DSN=${SENTRY_DSN:-}
-      # Docker-specific overrides (hostnames)
+      # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_NATS_URL=nats://nats:4222
       - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
@@ -281,12 +280,11 @@ services:
     volumes:
       - ../../cmd/worker-core/config.yaml.sample:/app/config.yaml:ro
       - ../../tools/registry:/app/tools/registry:ro
+    env_file:
+      - ../../config/.env
+      - ../../config/.env.local
     environment:
-      # Sensitive values
-      - FF_INDEXER_DATABASE_PASSWORD=${DB_PASSWORD:-postgres}
-      - FF_INDEXER_SENTRY_DSN=${SENTRY_DSN:-}
-      - FF_INDEXER_ETHEREUM_RPC_URL=${ETHEREUM_RPC_URL}
-      # Docker-specific overrides (hostnames)
+      # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
     networks:
@@ -318,13 +316,11 @@ services:
         condition: service_healthy
     volumes:
       - ../../cmd/worker-media/config.yaml.sample:/app/config.yaml:ro
+    env_file:
+      - ../../config/.env
+      - ../../config/.env.local
     environment:
-      # Sensitive values
-      - FF_INDEXER_DATABASE_PASSWORD=${DB_PASSWORD:-postgres}
-      - FF_INDEXER_SENTRY_DSN=${SENTRY_DSN:-}
-      - FF_INDEXER_CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
-      - FF_INDEXER_CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      # Docker-specific overrides (hostnames)
+      # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
     networks:
@@ -361,20 +357,20 @@ services:
     volumes:
       - ../../cmd/api/config.yaml.sample:/app/config.yaml:ro
       - ../../tools/registry/blacklist.json:/app/tools/registry/blacklist.json:ro
+    env_file:
+      - ../../config/.env
+      - ../../config/.env.local
     environment:
-      # Sensitive values
-      - FF_INDEXER_DATABASE_PASSWORD=${DB_PASSWORD:-postgres}
-      - FF_INDEXER_SENTRY_DSN=${SENTRY_DSN:-}
-      # Docker-specific overrides (hostnames)
+      # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
     ports:
-      - "${API_PORT:-8081}:8080"
+      - "${API_PORT:-8081}:8081"
     networks:
       - ff-indexer-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8081/health"]
       interval: 30s
       timeout: 10s
       retries: 3

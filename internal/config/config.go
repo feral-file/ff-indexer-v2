@@ -87,6 +87,12 @@ type ServerConfig struct {
 	IdleTimeout  int    `mapstructure:"idle_timeout"`  // in seconds
 }
 
+// AuthConfig holds authentication configuration
+type AuthConfig struct {
+	JWTPublicKey string   `mapstructure:"jwt_public_key"`
+	APIKeys      []string `mapstructure:"api_keys"`
+}
+
 // EthereumEmitterConfig holds configuration for ethereum-event-emitter
 type EthereumEmitterConfig struct {
 	BaseConfig `mapstructure:",squash"`
@@ -133,6 +139,7 @@ type APIConfig struct {
 	Server        ServerConfig   `mapstructure:"server"`
 	Database      DatabaseConfig `mapstructure:"database"`
 	Temporal      TemporalConfig `mapstructure:"temporal"`
+	Auth          AuthConfig     `mapstructure:"auth"`
 	BlacklistPath string         `mapstructure:"blacklist_path"`
 }
 

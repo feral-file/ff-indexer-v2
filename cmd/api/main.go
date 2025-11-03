@@ -16,6 +16,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/server"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -35,7 +36,6 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
-	fmt.Println("cfg", cfg)
 
 	// Initialize logger
 	err = logger.Initialize(cfg.Debug,
@@ -92,6 +92,10 @@ func main() {
 		WriteTimeout:          time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		IdleTimeout:           time.Duration(cfg.Server.IdleTimeout) * time.Second,
 		OrchestratorTaskQueue: cfg.Temporal.TaskQueue,
+		Auth: middleware.AuthConfig{
+			JWTPublicKey: cfg.Auth.JWTPublicKey,
+			APIKeys:      cfg.Auth.APIKeys,
+		},
 	}
 
 	// Create and start server

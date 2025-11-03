@@ -5,10 +5,31 @@ sentry_dsn: ""
 
 server:
   host: 0.0.0.0
-  port: 8080
+  port: 8081
   read_timeout: 15
   write_timeout: 15
   idle_timeout: 120
+
+# Authentication configuration
+auth:
+  # RSA public key in PEM format for validating JWT Bearer tokens (RS256/RS384/RS512)
+  # Generate key pair:
+  #   openssl genrsa -out private_key.pem 2048
+  #   openssl rsa -in private_key.pem -pubout -out public_key.pem
+  # Then copy the contents of public_key.pem here
+  jwt_public_key: |
+    -----BEGIN PUBLIC KEY-----
+    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Z7hf+bJN8jTXuXa1234
+    CHANGE_ME_WITH_YOUR_ACTUAL_RSA_PUBLIC_KEY_IN_PEM_FORMAT_HERE_THIS
+    IS_JUST_A_PLACEHOLDER_AND_WILL_NOT_WORK_FOR_ACTUAL_AUTHENTICATION
+    5678+abcd/efgh==
+    -----END PUBLIC KEY-----
+  
+  # List of valid API keys for ApiKey authentication
+  # Generate random keys: openssl rand -hex 32
+  api_keys:
+    - "api-key-1"
+    - "api-key-2"
 
 database:
   host: localhost
