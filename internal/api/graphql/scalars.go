@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"strconv"
 
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
@@ -82,6 +83,13 @@ func (u Uint64) MarshalGQL(w io.Writer) {
 // UnmarshalGQL implements graphql.Unmarshaler for Uint64
 func (u *Uint64) UnmarshalGQL(v interface{}) error {
 	switch v := v.(type) {
+	case json.Number:
+		val, ok := new(big.Int).SetString(string(v), 10)
+		if !ok {
+			return apierrors.NewValidationError(fmt.Sprintf("cannot parse %q as uint64", v))
+		}
+		*u = Uint64(val.Uint64())
+		return nil
 	case string:
 		val, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
