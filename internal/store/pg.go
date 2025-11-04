@@ -999,13 +999,18 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 	}
 
 	// Filter by addresses - filter by from_address or to_address in provenance_events
+	// or by owner_address in balances
 	if len(filter.Addresses) > 0 {
 		query = query.Where(`
 			subject_id IN (
 				SELECT CAST(id AS TEXT) FROM provenance_events 
 				WHERE from_address IN ? OR to_address IN ?
 			)
-		`, filter.Addresses, filter.Addresses)
+		`, filter.Addresses, filter.Addresses).
+			Or(`subject_id IN (
+			SELECT CAST(token_id AS TEXT) FROM balances
+			WHERE owner_address IN ?
+		)`, filter.Addresses)
 	}
 
 	// Count total matching records
