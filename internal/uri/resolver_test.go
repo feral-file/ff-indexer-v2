@@ -114,7 +114,8 @@ func TestResolver_Resolve(t *testing.T) {
 				mockHTTP.
 					EXPECT().
 					Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB").
-					Return(mockResp2, nil)
+					Return(mockResp2, nil).
+					AnyTimes()
 			},
 			expected:    "https://ipfs.io/ipfs/QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB",
 			expectedErr: "",
@@ -145,7 +146,8 @@ func TestResolver_Resolve(t *testing.T) {
 				mockHTTP.
 					EXPECT().
 					Head(gomock.Any(), "https://ar-io.net/abc123").
-					Return(mockResp2, nil)
+					Return(mockResp2, nil).
+					AnyTimes()
 			},
 			expected:    "https://arweave.net/abc123",
 			expectedErr: "",
