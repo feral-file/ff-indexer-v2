@@ -1,5 +1,9 @@
 # FF-Indexer v2
 
+![Tests](https://github.com/feral-file/ff-indexer-v2/actions/workflows/test.yaml/badge.svg)
+![Lint](https://github.com/feral-file/ff-indexer-v2/actions/workflows/lint.yaml/badge.svg)
+![codecov](https://codecov.io/gh/feral-file/ff-indexer-v2/branch/main/graph/badge.svg)
+
 A comprehensive NFT indexing system that tracks, processes, and provides access to NFT data across Ethereum and Tezos blockchains.
 
 ## Purpose
@@ -55,12 +59,12 @@ For local development, you can run infrastructure in Docker and services locally
 make dev
 
 # Run services locally with Go
-cd cmd/api && go run main.go
-cd cmd/worker-core && go run main.go
-cd cmd/worker-media && go run main.go
-cd cmd/event-bridge && go run main.go
 cd cmd/ethereum-event-emitter && go run main.go
 cd cmd/tezos-event-emitter && go run main.go
+cd cmd/event-bridge && go run main.go
+cd cmd/worker-core && go run main.go
+cd cmd/worker-media && go run main.go
+cd cmd/api && go run main.go
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
