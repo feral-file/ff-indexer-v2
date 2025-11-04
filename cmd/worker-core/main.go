@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -21,6 +22,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
+	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
@@ -150,10 +152,12 @@ func main() {
 	// Initialize executor for activities
 	executor := workflows.NewExecutor(dataStore, metadataResolver, metadataEnhancer, ethereumClient, tzktClient, nil, jsonAdapter, clockAdapter)
 
-	// Connect to Temporal
+	// Connect to Temporal with logger integration
+	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.HostPort,
 		Namespace: cfg.Temporal.Namespace,
+		Logger:    temporalLogger, // Use zap logger adapter for Temporal client
 	})
 	if err != nil {
 		logger.FatalCtx(ctx, "Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
@@ -161,13 +165,17 @@ func main() {
 	defer temporalClient.Close()
 	logger.InfoCtx(ctx, "Connected to Temporal", zap.String("namespace", cfg.Temporal.Namespace))
 
-	// Create Temporal worker
+	// Create Temporal worker with logger and Sentry interceptor
+	sentryInterceptor := temporal.NewSentryActivityInterceptor()
 	temporalWorker := worker.New(
 		temporalClient,
 		cfg.Temporal.TaskQueue,
 		worker.Options{
 			MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
 			WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
+			Interceptors: []interceptor.WorkerInterceptor{
+				sentryInterceptor,
+			},
 		})
 	logger.InfoCtx(ctx, "Created Temporal worker", zap.String("taskQueue", cfg.Temporal.TaskQueue))
 

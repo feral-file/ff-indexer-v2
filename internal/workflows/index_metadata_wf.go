@@ -17,7 +17,7 @@ import (
 
 // IndexMetadataUpdate processes a metadata update event
 func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.Info("Processing metadata update event",
+	logger.InfoWf(ctx, "Processing metadata update event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 		zap.String("txHash", event.TxHash),
@@ -35,7 +35,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	// Step 1: Create the metadata update record in the database
 	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdate, event).Get(ctx, nil)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to create metadata update record: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to create metadata update record: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -53,13 +53,13 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	// Execute the child workflow without waiting for the result
 	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
 	if err := childWorkflowExec.Get(ctx, nil); err != nil {
-		logger.Error(fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
 	}
 
-	logger.Info("Metadata update event recorded and metadata indexing started",
+	logger.InfoWf(ctx, "Metadata update event recorded and metadata indexing started",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -68,7 +68,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 
 // IndexTokenMetadata indexes token metadata
 func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error {
-	logger.Info("Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
+	logger.InfoWf(ctx, "Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
 
 	// Configure activity options with longer timeout for metadata fetching
 	activityOptions := workflow.ActivityOptions{
@@ -88,7 +88,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	var normalizedMetadata *metadata.NormalizedMetadata
 	err := workflow.ExecuteActivity(ctx, w.executor.FetchTokenMetadata, tokenCID).Get(ctx, &normalizedMetadata)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to fetch token metadata: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to fetch token metadata: %w", err),
 			zap.String("tokenCID", tokenCID.String()),
 		)
 		return err
@@ -109,7 +109,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	if normalizedMetadata != nil {
 		err = workflow.ExecuteActivity(ctx, w.executor.UpsertTokenMetadata, tokenCID, normalizedMetadata).Get(ctx, nil)
 		if err != nil {
-			logger.Error(fmt.Errorf("failed to upsert token metadata: %w", err),
+			logger.ErrorWf(ctx, fmt.Errorf("failed to upsert token metadata: %w", err),
 				zap.String("tokenCID", tokenCID.String()),
 			)
 			return err
@@ -128,7 +128,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		if err != nil {
 			// Log the error but don't fail the workflow
 			// Enrichment is optional and should not block the main indexing flow
-			logger.Warn("Failed to enhance token metadata (non-fatal)",
+			logger.WarnWf(ctx, "Failed to enhance token metadata (non-fatal)",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
@@ -156,7 +156,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 			}
 		}
 
-		logger.Info("Triggering media indexing workflow",
+		logger.InfoWf(ctx, "Triggering media indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Int("mediaCount", len(urls)),
 		)
@@ -179,19 +179,19 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		var childExecution workflow.Execution
 		if err := childWorkflow.GetChildWorkflowExecution().Get(childCtx, &childExecution); err != nil {
 			// Log but don't fail the parent workflow
-			logger.Warn("Failed to start media indexing workflow (non-fatal)",
+			logger.WarnWf(ctx, "Failed to start media indexing workflow (non-fatal)",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
 		} else {
-			logger.Info("Media indexing workflow started",
+			logger.InfoWf(ctx, "Media indexing workflow started",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.String("workflowID", childExecution.ID),
 			)
 		}
 	}
 
-	logger.Info("Token metadata indexed successfully", zap.String("tokenCID", tokenCID.String()))
+	logger.InfoWf(ctx, "Token metadata indexed successfully", zap.String("tokenCID", tokenCID.String()))
 
 	return nil
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/bridge"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
@@ -72,10 +73,12 @@ func main() {
 	natsJS := adapter.NewNatsJetStream()
 	fs := adapter.NewFileSystem()
 
-	// Connect to Temporal (for triggering workflows remotely)
+	// Connect to Temporal (for triggering workflows remotely) with logger integration
+	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.HostPort,
 		Namespace: cfg.Temporal.Namespace,
+		Logger:    temporalLogger, // Use zap logger adapter for Temporal client
 	})
 	if err != nil {
 		logger.FatalCtx(ctx, "Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))

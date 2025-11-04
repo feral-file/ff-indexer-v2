@@ -14,7 +14,7 @@ import (
 
 // IndexTokenProvenances indexes all provenances (balances and events) for a token
 func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID) error {
-	logger.Info("Starting token provenances indexing",
+	logger.InfoWf(ctx, "Starting token provenances indexing",
 		zap.String("tokenCID", tokenCID.String()),
 	)
 
@@ -30,13 +30,13 @@ func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain
 	// Index token with full provenances
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithFullProvenancesByTokenCID, tokenCID).Get(ctx, nil)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to index token provenances: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to index token provenances: %w", err),
 			zap.String("tokenCID", tokenCID.String()),
 		)
 		return err
 	}
 
-	logger.Info("Token provenances indexed successfully",
+	logger.InfoWf(ctx, "Token provenances indexed successfully",
 		zap.String("tokenCID", tokenCID.String()),
 	)
 

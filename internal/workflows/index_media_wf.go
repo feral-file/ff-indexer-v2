@@ -16,7 +16,7 @@ import (
 // IndexMultipleMediaWorkflow handles the media processing for a list of URLs
 // It triggers child workflows concurrently (fire and forget) for each URL
 func (w *workerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string) error {
-	logger.Info("Starting multiple media indexing", zap.Int("count", len(urls)))
+	logger.InfoWf(ctx, "Starting multiple media indexing", zap.Int("count", len(urls)))
 
 	// Remove duplicate URLs
 	uniqueURLs := make(map[string]bool)
@@ -27,11 +27,11 @@ func (w *workerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []st
 	}
 
 	if len(uniqueURLs) == 0 {
-		logger.Info("No media URLs to process")
+		logger.InfoWf(ctx, "No media URLs to process")
 		return nil
 	}
 
-	logger.Info("Processing unique media URLs", zap.Int("count", len(uniqueURLs)))
+	logger.InfoWf(ctx, "Processing unique media URLs", zap.Int("count", len(uniqueURLs)))
 
 	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
@@ -57,7 +57,7 @@ func (w *workerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []st
 		// Just check if the workflow started successfully
 		var childExecution workflow.Execution
 		if err := childWorkflow.GetChildWorkflowExecution().Get(childCtx, &childExecution); err != nil {
-			logger.Warn("Failed to start child workflow for media URL",
+			logger.WarnWf(ctx, "Failed to start child workflow for media URL",
 				zap.String("url", url),
 				zap.Error(err),
 			)
@@ -65,20 +65,20 @@ func (w *workerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []st
 			continue
 		}
 
-		logger.Info("Started child workflow for media URL",
+		logger.InfoWf(ctx, "Started child workflow for media URL",
 			zap.String("url", url),
 			zap.String("workflowID", childExecution.ID),
 		)
 	}
 
-	logger.Info("All media child workflows triggered", zap.Int("count", len(uniqueURLs)))
+	logger.InfoWf(ctx, "All media child workflows triggered", zap.Int("count", len(uniqueURLs)))
 	return nil
 }
 
 // IndexMediaWorkflow handles the media processing for a single URL
 // This workflow uses a separate task queue with higher execution time
 func (w *workerMedia) IndexMediaWorkflow(ctx workflow.Context, url string) error {
-	logger.Info("Starting media indexing", zap.String("url", url))
+	logger.InfoWf(ctx, "Starting media indexing", zap.String("url", url))
 
 	// Configure activity options with longer timeout for media processing
 	activityOptions := workflow.ActivityOptions{
@@ -95,12 +95,12 @@ func (w *workerMedia) IndexMediaWorkflow(ctx workflow.Context, url string) error
 	// Execute the media indexing activity
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexMediaFile, url).Get(ctx, nil)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to index media file: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to index media file: %w", err),
 			zap.String("url", url),
 		)
 		return err
 	}
 
-	logger.Info("Media indexed successfully", zap.String("url", url))
+	logger.InfoWf(ctx, "Media indexed successfully", zap.String("url", url))
 	return nil
 }

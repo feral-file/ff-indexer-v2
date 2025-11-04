@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -22,6 +23,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
+	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -121,10 +123,12 @@ func main() {
 		clockAdapter,
 	)
 
-	// Connect to Temporal
+	// Connect to Temporal with logger integration
+	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.HostPort,
 		Namespace: cfg.Temporal.Namespace,
+		Logger:    temporalLogger, // Use zap logger adapter for Temporal client
 	})
 	if err != nil {
 		logger.FatalCtx(ctx, "Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
@@ -136,10 +140,14 @@ func main() {
 		zap.String("namespace", cfg.Temporal.Namespace),
 	)
 
-	// Create Temporal worker for media processing
+	// Create Temporal worker with logger and Sentry interceptor
+	sentryInterceptor := temporal.NewSentryActivityInterceptor()
 	temporalWorker := worker.New(temporalClient, cfg.Temporal.TaskQueue, worker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
 		WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
+		Interceptors: []interceptor.WorkerInterceptor{
+			sentryInterceptor,
+		},
 	})
 
 	// Create worker media instance

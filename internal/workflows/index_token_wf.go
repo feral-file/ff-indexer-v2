@@ -16,7 +16,7 @@ import (
 
 // IndexTokenMint processes a token mint event
 func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.Info("Processing token mint event",
+	logger.InfoWf(ctx, "Processing token mint event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 		zap.String("txHash", event.TxHash),
@@ -24,7 +24,7 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.Info("Skipping blacklisted contract",
+		logger.InfoWf(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return nil
@@ -42,7 +42,7 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	// Step 1: Create the token mint in the database
 	err := workflow.ExecuteActivity(ctx, w.executor.CreateTokenMint, event).Get(ctx, nil)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to create token mint: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to create token mint: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -61,13 +61,13 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	// Execute the child workflow without waiting for the result
 	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
 	if err := childWorkflowExec.Get(ctx, nil); err != nil {
-		logger.Error(fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
 	}
 
-	logger.Info("Token mint processed successfully and metadata indexing started",
+	logger.InfoWf(ctx, "Token mint processed successfully and metadata indexing started",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -76,7 +76,7 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 
 // IndexTokenTransfer processes a token transfer event
 func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.Info("Processing token transfer event",
+	logger.InfoWf(ctx, "Processing token transfer event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 		zap.String("from", types.SafeString(event.FromAddress)),
@@ -86,7 +86,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.Info("Skipping blacklisted contract",
+		logger.InfoWf(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return nil
@@ -105,7 +105,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 	var tokenExists bool
 	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to check if token exists: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to check if token exists: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -113,7 +113,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 
 	// Step 2: If token doesn't exist, trigger full token indexing workflow
 	if !tokenExists {
-		logger.Info("Token doesn't exist, starting full token indexing",
+		logger.InfoWf(ctx, "Token doesn't exist, starting full token indexing",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 
@@ -128,13 +128,13 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 		// Execute the child workflow and waiting for the result
 		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenFromEvent, event)
 		if err := childWorkflowExec.Get(ctx, nil); err != nil {
-			logger.Error(fmt.Errorf("failed to execute child workflow IndexFullToken: %w", err),
+			logger.ErrorWf(ctx, fmt.Errorf("failed to execute child workflow IndexFullToken: %w", err),
 				zap.String("tokenCID", event.TokenCID().String()),
 			)
 			return err
 		}
 
-		logger.Info("Full token indexing workflow started",
+		logger.InfoWf(ctx, "Full token indexing workflow started",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 
@@ -144,13 +144,13 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 	// Step 3: Token exists, update the token transfer
 	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenTransfer, event).Get(ctx, nil)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to update token transfer: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to update token transfer: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
 	}
 
-	logger.Info("Token transfer processed successfully",
+	logger.InfoWf(ctx, "Token transfer processed successfully",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -159,7 +159,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 
 // IndexTokenBurn processes a token burn event
 func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.Info("Processing token burn event",
+	logger.InfoWf(ctx, "Processing token burn event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 		zap.String("from", types.SafeString(event.FromAddress)),
@@ -168,7 +168,7 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.Info("Skipping blacklisted contract",
+		logger.InfoWf(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return nil
@@ -187,7 +187,7 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	var tokenExists bool
 	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to check if token exists: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to check if token exists: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -195,7 +195,7 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 
 	// Step 2: If token doesn't exist, trigger full token indexing workflow
 	if !tokenExists {
-		logger.Info("Token doesn't exist, starting full token indexing",
+		logger.InfoWf(ctx, "Token doesn't exist, starting full token indexing",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 
@@ -210,13 +210,13 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 		// Execute the child workflow and waiting for the result
 		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenFromEvent, event)
 		if err := childWorkflowExec.Get(ctx, nil); err != nil {
-			logger.Error(fmt.Errorf("failed to execute child workflow IndexFullToken: %w", err),
+			logger.ErrorWf(ctx, fmt.Errorf("failed to execute child workflow IndexFullToken: %w", err),
 				zap.String("tokenCID", event.TokenCID().String()),
 			)
 			return err
 		}
 
-		logger.Info("Full token indexing workflow started",
+		logger.InfoWf(ctx, "Full token indexing workflow started",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 
@@ -226,13 +226,13 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	// Step 3: Token exists, update the token burn
 	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenBurn, event).Get(ctx, nil)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to update token burn: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to update token burn: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
 	}
 
-	logger.Info("Token burn processed successfully",
+	logger.InfoWf(ctx, "Token burn processed successfully",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -241,14 +241,14 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 
 // IndexTokenFromEvent indexes metadata and full provenances (provenance events and balances) for a token
 func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.Info("Starting full token indexing",
+	logger.InfoWf(ctx, "Starting full token indexing",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 	)
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.Info("Skipping blacklisted contract",
+		logger.InfoWf(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return nil
@@ -266,13 +266,13 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	// Step 1: Create token with minimal provenance (from/to balances only) for speed
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, event).Get(ctx, nil)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to create token with minimal provenances: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to create token with minimal provenances: %w", err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
 	}
 
-	logger.Info("Token indexed with minimal provenances",
+	logger.InfoWf(ctx, "Token indexed with minimal provenances",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -288,7 +288,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	// Execute the metadata workflow without waiting for the result
 	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
 	if err := metadataWorkflowExec.Get(ctx, nil); err != nil {
-		logger.Warn("Failed to start metadata indexing workflow",
+		logger.WarnWf(ctx, "Failed to start metadata indexing workflow",
 			zap.String("tokenCID", event.TokenCID().String()),
 			zap.Error(err),
 		)
@@ -307,14 +307,14 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	// Execute the full provenance workflow without waiting for the result
 	provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, event.TokenCID()).GetChildWorkflowExecution()
 	if err := provenanceWorkflowExec.Get(ctx, nil); err != nil {
-		logger.Warn("Failed to start full provenance indexing workflow",
+		logger.WarnWf(ctx, "Failed to start full provenance indexing workflow",
 			zap.String("tokenCID", event.TokenCID().String()),
 			zap.Error(err),
 		)
 		// Don't fail the whole workflow, just log the warning
 	}
 
-	logger.Info("Token indexing completed, metadata and provenances workflows started",
+	logger.InfoWf(ctx, "Token indexing completed, metadata and provenances workflows started",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -323,7 +323,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 
 // IndexTokens indexes multiple tokens in chunks
 func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
-	logger.Info("Starting batch token indexing",
+	logger.InfoWf(ctx, "Starting batch token indexing",
 		zap.Int("count", len(tokenCIDs)),
 	)
 
@@ -345,7 +345,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID)
 		childFutures = append(childFutures, childFuture)
 
-		logger.Info("Triggered token indexing workflow",
+		logger.InfoWf(ctx, "Triggered token indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.String("workflowID", workflowID),
 		)
@@ -354,7 +354,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 	// Wait for all workflows to complete
 	for i, childFuture := range childFutures {
 		if err := childFuture.Get(ctx, nil); err != nil {
-			logger.Warn("Child workflow failed",
+			logger.WarnWf(ctx, "Child workflow failed",
 				zap.String("tokenCID", tokenCIDs[i].String()),
 				zap.Error(err),
 			)
@@ -362,7 +362,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 		}
 	}
 
-	logger.Info("Batch token indexing completed successfully",
+	logger.InfoWf(ctx, "Batch token indexing completed successfully",
 		zap.Int("count", len(tokenCIDs)),
 	)
 
@@ -371,13 +371,13 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 
 // IndexToken indexes a single token (metadata and provenances)
 func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) error {
-	logger.Info("Starting token indexing",
+	logger.InfoWf(ctx, "Starting token indexing",
 		zap.String("tokenCID", tokenCID.String()),
 	)
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(tokenCID) {
-		logger.Info("Skipping blacklisted contract",
+		logger.InfoWf(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", tokenCID.String()),
 		)
 		return nil
@@ -395,13 +395,13 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 	// Step 1: Index token with minimal provenances (from blockchain query)
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID).Get(ctx, nil)
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to index token with minimal provenances: %w", err),
+		logger.ErrorWf(ctx, fmt.Errorf("failed to index token with minimal provenances: %w", err),
 			zap.String("tokenCID", tokenCID.String()),
 		)
 		return err
 	}
 
-	logger.Info("Token indexed with minimal provenances",
+	logger.InfoWf(ctx, "Token indexed with minimal provenances",
 		zap.String("tokenCID", tokenCID.String()),
 	)
 
@@ -416,7 +416,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 
 	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, tokenCID).GetChildWorkflowExecution()
 	if err := metadataWorkflowExec.Get(ctx, nil); err != nil {
-		logger.Warn("Failed to start metadata indexing workflow",
+		logger.WarnWf(ctx, "Failed to start metadata indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
@@ -433,13 +433,13 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 
 	provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, tokenCID).GetChildWorkflowExecution()
 	if err := provenanceWorkflowExec.Get(ctx, nil); err != nil {
-		logger.Warn("Failed to start full provenance indexing workflow",
+		logger.WarnWf(ctx, "Failed to start full provenance indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
 	}
 
-	logger.Info("Token indexing completed, metadata and provenances workflows started",
+	logger.InfoWf(ctx, "Token indexing completed, metadata and provenances workflows started",
 		zap.String("tokenCID", tokenCID.String()),
 	)
 

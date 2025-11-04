@@ -102,8 +102,15 @@ func FromContext(ctx context.Context) *zap.Logger {
 		return log
 	}
 
-	// Use zapsentry.Context to attach context to logger
-	// This enables sentry scope tracking via context
+	// Extract Sentry hub from context (if present)
+	hub := sentry.GetHubFromContext(ctx)
+	if hub != nil {
+		// Attach the hub's scope directly to the logger
+		// This ensures breadcrumbs and events use the correct scope from the context
+		return log.With(zapsentry.NewScopeFromScope(hub.Scope()))
+	}
+
+	// Fallback: use zapsentry.Context for trace linking (even if no hub in context)
 	return log.With(zapsentry.Context(ctx))
 }
 
@@ -168,4 +175,61 @@ func Debug(msg string, fields ...zap.Field) {
 // DebugCtx logs a debug message with context
 func DebugCtx(ctx context.Context, msg string, fields ...zap.Field) {
 	FromContext(ctx).Debug(msg, fields...)
+}
+
+// WorkflowInfo holds workflow information for Sentry tracking
+type WorkflowInfo struct {
+	WorkflowType string
+	WorkflowID   string
+	RunID        string
+	Namespace    string
+	TaskQueue    string
+}
+
+// WithWorkflowInfo adds workflow information to Sentry and returns a logger with workflow context
+// This should be used in Temporal workflows to enable Sentry tracking with workflow context
+func WithWorkflowInfo(info WorkflowInfo) *zap.Logger {
+	// Create a new Sentry hub with workflow context
+	hub := sentry.CurrentHub().Clone()
+
+	// Set workflow context
+	hub.Scope().SetContext("temporal_workflow", map[string]interface{}{
+		"workflow_type": info.WorkflowType,
+		"workflow_id":   info.WorkflowID,
+		"run_id":        info.RunID,
+		"namespace":     info.Namespace,
+		"task_queue":    info.TaskQueue,
+	})
+
+	// Set workflow tags for easy filtering in Sentry
+	hub.Scope().SetTag("workflow_type", info.WorkflowType)
+	hub.Scope().SetTag("workflow_id", info.WorkflowID)
+
+	// Attach the hub's scope directly to the logger
+	// This ensures breadcrumbs and events use the correct scope with workflow context
+	return log.With(zapsentry.NewScopeFromScope(hub.Scope()))
+}
+
+// InfoWorkflow logs an info message with workflow context
+func InfoWorkflow(info WorkflowInfo, msg string, fields ...zap.Field) {
+	WithWorkflowInfo(info).Info(msg, fields...)
+}
+
+// ErrorWorkflow logs an error message with workflow context
+func ErrorWorkflow(info WorkflowInfo, err error, fields ...zap.Field) {
+	if err != nil {
+		WithWorkflowInfo(info).Error(err.Error(), fields...)
+	} else {
+		WithWorkflowInfo(info).Error("error occurred", fields...)
+	}
+}
+
+// WarnWorkflow logs a warning message with workflow context
+func WarnWorkflow(info WorkflowInfo, msg string, fields ...zap.Field) {
+	WithWorkflowInfo(info).Warn(msg, fields...)
+}
+
+// DebugWorkflow logs a debug message with workflow context
+func DebugWorkflow(info WorkflowInfo, msg string, fields ...zap.Field) {
+	WithWorkflowInfo(info).Debug(msg, fields...)
 }
