@@ -171,6 +171,8 @@ type CreateMediaAssetInput struct {
 }
 
 // Store defines the interface for database operations
+//
+//go:generate mockgen -source=store.go -destination=../mocks/store.go -package=mocks -mock_names=Store=MockStore
 type Store interface {
 	// =============================================================================
 	// Token Management & Queries

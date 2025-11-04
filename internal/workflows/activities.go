@@ -359,7 +359,7 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 	currentMetadata := result.Metadata
 
 	// Hash the new metadata
-	hash, metadataJSON, err := normalizedMetadata.RawHash()
+	hash, metadataJSON, err := e.metadataResolver.RawHash(normalizedMetadata)
 	if err != nil {
 		return fmt.Errorf("failed to get raw hash: %w", err)
 	}
@@ -447,7 +447,7 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 	}
 
 	// Hash the vendor JSON
-	hash, err := enhanced.VendorJsonHash()
+	hash, err := e.metadataEnhancer.VendorJsonHash(enhanced)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get vendor JSON hash: %w", err)
 	}

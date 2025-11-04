@@ -19,6 +19,9 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
+// EthereumClient defines the interface for Ethereum client operations
+//
+//go:generate mockgen -source=client.go -destination=../../mocks/ethereum_provider_client.go -package=mocks -mock_names=EthereumClient=MockEthereumProviderClient
 type EthereumClient interface {
 	// ParseEventLog parses an Ethereum log into a standardized blockchain event
 	ParseEventLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error)

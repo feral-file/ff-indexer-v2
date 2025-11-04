@@ -3,13 +3,9 @@ package metadata
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
-
-	"github.com/gowebpki/jcs"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 
@@ -48,21 +44,6 @@ type NormalizedMetadata struct {
 	MimeType    *string                `json:"mime_type,omitempty"`
 }
 
-// RawHash returns the hash of the raw metadata and the raw metadata itself
-func (n *NormalizedMetadata) RawHash() ([]byte, []byte, error) {
-	metadataJSON, err := json.Marshal(n.Raw)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal metadata: %w", err)
-	}
-
-	canonicalizedMetadata, err := jcs.Transform(metadataJSON)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to canonicalize metadata: %w", err)
-	}
-	hash := sha256.Sum256(canonicalizedMetadata)
-	return hash[:], metadataJSON, nil
-}
-
 // Resolver defines the interface for resolving metadata from a tokenCID
 //
 //go:generate mockgen -source=resolver.go -destination=../mocks/metadata_resolver.go -package=mocks -mock_names=Resolver=MockMetadataResolver
@@ -72,6 +53,9 @@ type Resolver interface {
 
 	// Resolve resolves the metadata for a given token CID
 	Resolve(ctx context.Context, tokenCID domain.TokenCID) (*NormalizedMetadata, error)
+
+	// RawHash returns the hash of the raw metadata and the raw metadata itself
+	RawHash(metadata *NormalizedMetadata) ([]byte, []byte, error)
 }
 
 type resolver struct {
@@ -81,13 +65,15 @@ type resolver struct {
 	uriResolver       uri.Resolver
 	json              adapter.JSON
 	clock             adapter.Clock
+	jcs               adapter.JCS
+	base64            adapter.Base64
 	store             store.Store
 	registry          registry.PublisherRegistry
 	deployerCache     map[string]string // key: "chain:contract", value: deployer address
 	deployerCacheLock sync.RWMutex
 }
 
-func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, httpClient adapter.HTTPClient, uriResolver uri.Resolver, json adapter.JSON, clock adapter.Clock, store store.Store, publisherRegistry registry.PublisherRegistry) Resolver {
+func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, httpClient adapter.HTTPClient, uriResolver uri.Resolver, json adapter.JSON, clock adapter.Clock, jcs adapter.JCS, base64 adapter.Base64, store store.Store, publisherRegistry registry.PublisherRegistry) Resolver {
 	return &resolver{
 		ethClient:     ethClient,
 		tzClient:      tzClient,
@@ -95,10 +81,27 @@ func NewResolver(ethClient ethereum.EthereumClient, tzClient tezos.TzKTClient, h
 		uriResolver:   uriResolver,
 		json:          json,
 		clock:         clock,
+		jcs:           jcs,
+		base64:        base64,
 		store:         store,
 		registry:      publisherRegistry,
 		deployerCache: make(map[string]string),
 	}
+}
+
+// RawHash returns the hash of the raw metadata and the raw metadata itself
+func (r *resolver) RawHash(metadata *NormalizedMetadata) ([]byte, []byte, error) {
+	metadataJSON, err := r.json.Marshal(metadata.Raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	canonicalizedMetadata, err := r.jcs.Transform(metadataJSON)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to canonicalize metadata: %w", err)
+	}
+	hash := sha256.Sum256(canonicalizedMetadata)
+	return hash[:], metadataJSON, nil
 }
 
 func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*NormalizedMetadata, error) {
@@ -352,7 +355,7 @@ func (r *resolver) parseDataURI(uri string) (map[string]interface{}, error) {
 
 	if strings.Contains(dataType, "base64") {
 		// Decode base64
-		decoded, err := base64.StdEncoding.DecodeString(data)
+		decoded, err := r.base64.Decode(data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode base64: %w", err)
 		}

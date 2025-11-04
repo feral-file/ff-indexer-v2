@@ -181,12 +181,18 @@ func (t TokenCID) String() string {
 // Parse parses the TokenCID into chain, standard, contract address, and token number
 func (t TokenCID) Parse() (Chain, ChainStandard, string, string) {
 	parts := strings.Split(string(t), ":")
+	if len(parts) < 5 {
+		return "", "", "", "" // return empty values if TokenCID is invalid
+	}
 	return Chain(fmt.Sprintf("%s:%s", parts[0], parts[1])), ChainStandard(parts[2]), parts[3], parts[4]
 }
 
 // Valid checks if the TokenCID is valid
 func (t TokenCID) Valid() bool {
 	chain, standard, contractAddress, tokenNumber := t.Parse()
+	if chain == "" || standard == "" || contractAddress == "" || tokenNumber == "" {
+		return false
+	}
 
 	// Validate token number
 	if !validTokenNumber(tokenNumber) {

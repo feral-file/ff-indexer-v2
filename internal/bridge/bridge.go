@@ -162,8 +162,8 @@ func (b *bridge) Run(ctx context.Context) error {
 	logger.InfoCtx(ctx, "Consumer created/retrieved", zap.String("consumer", consumerInfo.Name))
 
 	// Create subscription
-	msgChan := make(chan jetstream.Msg, 100)
-	sub, err := consumer.Consume(func(msg jetstream.Msg) {
+	msgChan := make(chan adapter.Message, 100)
+	sub, err := consumer.Consume(func(msg adapter.Message) {
 		msgChan <- msg
 	})
 	if err != nil {
@@ -187,7 +187,7 @@ func (b *bridge) Run(ctx context.Context) error {
 }
 
 // handleMessage processes a single NATS message
-func (b *bridge) handleMessage(ctx context.Context, msg jetstream.Msg) {
+func (b *bridge) handleMessage(ctx context.Context, msg adapter.Message) {
 	// Get metadata for logging
 	metadata, _ := msg.Metadata()
 

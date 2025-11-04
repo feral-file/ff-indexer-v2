@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gowebpki/jcs"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -30,22 +29,15 @@ type EnhancedMetadata struct {
 	MimeType     *string
 }
 
-// VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
-func (e *EnhancedMetadata) VendorJsonHash() ([]byte, error) {
-	canonicalizedVendorJSON, err := jcs.Transform(e.VendorJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to canonicalize vendor JSON: %w", err)
-	}
-	hash := sha256.Sum256(canonicalizedVendorJSON)
-	return hash[:], nil
-}
-
 // Enhancer defines the interface for enhancing metadata from vendors
 //
 //go:generate mockgen -source=enhancer.go -destination=../mocks/metadata_enhancer.go -package=mocks -mock_names=Enhancer=MockMetadataEnhancer
 type Enhancer interface {
 	// Enhance enhances metadata from vendor APIs based on the token CID and returns enriched data
 	Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata) (*EnhancedMetadata, error)
+
+	// VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
+	VendorJsonHash(metadata *EnhancedMetadata) ([]byte, error)
 }
 
 type enhancer struct {
@@ -54,10 +46,21 @@ type enhancer struct {
 	artblocksClient artblocks.Client
 	fxhashClient    fxhash.Client
 	json            adapter.JSON
+	jcs             adapter.JCS
 }
 
-func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, fxhashClient fxhash.Client, json adapter.JSON) Enhancer {
-	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, fxhashClient: fxhashClient, json: json}
+func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, fxhashClient fxhash.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
+	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, fxhashClient: fxhashClient, json: json, jcs: jcs}
+}
+
+// VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
+func (e *enhancer) VendorJsonHash(metadata *EnhancedMetadata) ([]byte, error) {
+	canonicalizedVendorJSON, err := e.jcs.Transform(metadata.VendorJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to canonicalize vendor JSON: %w", err)
+	}
+	hash := sha256.Sum256(canonicalizedVendorJSON)
+	return hash[:], nil
 }
 
 // Enhance enhances metadata from vendor APIs based on the token CID

@@ -51,6 +51,22 @@ func (mr *MockMetadataResolverMockRecorder) LoadDeployerCacheFromDB(ctx interfac
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadDeployerCacheFromDB", reflect.TypeOf((*MockMetadataResolver)(nil).LoadDeployerCacheFromDB), ctx)
 }
 
+// RawHash mocks base method.
+func (m *MockMetadataResolver) RawHash(metadata *metadata.NormalizedMetadata) ([]byte, []byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RawHash", metadata)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].([]byte)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// RawHash indicates an expected call of RawHash.
+func (mr *MockMetadataResolverMockRecorder) RawHash(metadata interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RawHash", reflect.TypeOf((*MockMetadataResolver)(nil).RawHash), metadata)
+}
+
 // Resolve mocks base method.
 func (m *MockMetadataResolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
 	m.ctrl.T.Helper()

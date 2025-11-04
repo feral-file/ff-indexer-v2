@@ -21,6 +21,9 @@ type Config struct {
 	ArweaveGateways []string
 }
 
+// Resolver defines the interface for resolving URIs
+//
+//go:generate mockgen -source=resolver.go -destination=../mocks/uri_resolver.go -package=mocks -mock_names=Resolver=MockURIResolver
 type Resolver interface {
 	// Resolve resolves the URI to a canonical URL
 	// It handles special URL schemes like ipfs:// and ar://
@@ -147,7 +150,7 @@ func (r *resolver) resolveArweave(ctx context.Context, txID string) (string, err
 		go func(gw string) {
 			defer wg.Done()
 
-			url := gw + txID
+			url := fmt.Sprintf("%s/%s", gw, txID)
 			resp, err := r.httpClient.Head(ctx, url)
 			if err != nil {
 				resultCh <- result{err: err}

@@ -78,8 +78,10 @@ func main() {
 
 	// Initialize adapters
 	jsonAdapter := adapter.NewJSON()
+	jcsAdapter := adapter.NewJCS()
 	clockAdapter := adapter.NewClock()
 	fs := adapter.NewFileSystem()
+	base64Adapter := adapter.NewBase64()
 
 	// Initialize ethereum client
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
@@ -139,8 +141,8 @@ func main() {
 	})
 
 	// Initialize metadata enhancer and resolver
-	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, fxhashClient, jsonAdapter)
-	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, dataStore, publisherRegistry)
+	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, fxhashClient, jsonAdapter, jcsAdapter)
+	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, jcsAdapter, base64Adapter, dataStore, publisherRegistry)
 
 	// Load deployer cache from DB if resolver has store and registry
 	if publisherRegistry != nil {

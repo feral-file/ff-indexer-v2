@@ -51,3 +51,18 @@ func (mr *MockMetadataEnhancerMockRecorder) Enhance(ctx, tokenCID, meta interfac
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Enhance", reflect.TypeOf((*MockMetadataEnhancer)(nil).Enhance), ctx, tokenCID, meta)
 }
+
+// VendorJsonHash mocks base method.
+func (m *MockMetadataEnhancer) VendorJsonHash(metadata *metadata.EnhancedMetadata) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VendorJsonHash", metadata)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// VendorJsonHash indicates an expected call of VendorJsonHash.
+func (mr *MockMetadataEnhancerMockRecorder) VendorJsonHash(metadata interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VendorJsonHash", reflect.TypeOf((*MockMetadataEnhancer)(nil).VendorJsonHash), metadata)
+}

@@ -89,18 +89,17 @@ func (l *blacklistRegistryLoader) Load(filePath string) (BlacklistRegistry, erro
 
 // IsBlacklisted checks if a contract address is blacklisted for a given chain
 func (b *blacklistRegistry) IsBlacklisted(chainID domain.Chain, contractAddress string) bool {
-	if b == nil {
-		return false
-	}
 	key := fmt.Sprintf("%s:%s", strings.ToLower(string(chainID)), strings.ToLower(contractAddress))
 	return b.contracts[key]
 }
 
 // IsTokenCIDBlacklisted checks if a TokenCID is blacklisted
 func (b *blacklistRegistry) IsTokenCIDBlacklisted(tokenCID domain.TokenCID) bool {
-	if b == nil {
-		return false
+	// Validate tokenCID
+	if !tokenCID.Valid() {
+		return true
 	}
+
 	chainID, _, contractAddress, _ := tokenCID.Parse()
 	return b.IsBlacklisted(chainID, contractAddress)
 }
