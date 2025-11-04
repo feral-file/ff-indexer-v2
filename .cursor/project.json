@@ -2,7 +2,7 @@
   "name": "FF Indexer",
   "description": "Indexer for ERC721/1155 and FA2 tokens with ownership, provenance, and metadata enrichment",
   "knowledgeFiles": [
-    "docs/DRAFT_DESIGN.md",
-    "docs/EVENT_EMITTER.md"
+    "docs/schema.md",
+    "docs/architecture.md"
   ]
 }
