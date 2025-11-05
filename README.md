@@ -1,8 +1,8 @@
 # FF-Indexer v2
 
-![Tests](https://github.com/feral-file/ff-indexer-v2/actions/workflows/test.yaml/badge.svg)
-![Lint](https://github.com/feral-file/ff-indexer-v2/actions/workflows/lint.yaml/badge.svg)
-![codecov](https://codecov.io/github/feral-file/ff-indexer-v2/graph/badge.svg?token=8S74fEIBNs)
+[![Tests](https://github.com/feral-file/ff-indexer-v2/actions/workflows/test.yaml/badge.svg)](https://github.com/feral-file/ff-indexer-v2/actions/workflows/test.yaml)
+[![Lint](https://github.com/feral-file/ff-indexer-v2/actions/workflows/lint.yaml/badge.svg)](https://github.com/feral-file/ff-indexer-v2/actions/workflows/lint.yaml)
+[![codecov](https://codecov.io/github/feral-file/ff-indexer-v2/graph/badge.svg?token=8S74fEIBNs)](https://codecov.io/github/feral-file/ff-indexer-v2)
 
 A comprehensive NFT indexing system that tracks, processes, and provides access to NFT data across Ethereum and Tezos blockchains.
 
