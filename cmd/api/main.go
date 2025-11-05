@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	configPath = flag.String("config", "config.yaml", "Path to configuration file")
+	configPath = flag.String("config", "", "Path to configuration file")
 )
 
 func main() {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -288,13 +289,20 @@ func LoadAPIConfig(configPath string) (*APIConfig, error) {
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
+		var error viper.ConfigFileNotFoundError
+		if errors.As(err, &error) {
+			// Config file not found, use environment variables
+		} else {
+			return nil, fmt.Errorf("failed to read config: %w", err)
+		}
 	}
 
 	var config APIConfig
 	if err := v.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
+
+	fmt.Println("Config:", config)
 
 	return &config, nil
 }
@@ -335,15 +343,94 @@ func configureViper(service string, configFilePath string) *viper.Viper {
 	loadEnv(service)
 
 	// Set config file
-	v.SetConfigFile(configFilePath)
-	v.SetConfigType("yaml")
-	v.AddConfigPath("config/")
+	if configFilePath != "" {
+		v.SetConfigFile(configFilePath)
+	} else {
+		v.SetConfigType("yaml")
+		v.AddConfigPath("config/")
+	}
 
 	// Set environment variables
 	v.SetEnvPrefix("FF_INDEXER")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+
+	// Explicitly bind all environment variables
+	bindAllEnvVars(v)
 	return v
+}
+
+// bindAllEnvVars explicitly binds all possible environment variables
+// This is required for viper to map env vars to config struct fields when no config file exists
+func bindAllEnvVars(v *viper.Viper) {
+	// Common config keys
+	commonKeys := []string{
+		"debug",
+		"sentry_dsn",
+		// Database
+		"database.host",
+		"database.port",
+		"database.user",
+		"database.password",
+		"database.dbname",
+		"database.sslmode",
+		// NATS
+		"nats.url",
+		"nats.stream_name",
+		"nats.consumer_name",
+		"nats.max_reconnects",
+		"nats.reconnect_wait",
+		"nats.connection_name",
+		"nats.ack_wait",
+		"nats.max_deliver",
+		// Ethereum
+		"ethereum.websocket_url",
+		"ethereum.rpc_url",
+		"ethereum.chain_id",
+		"ethereum.start_block",
+		// Tezos
+		"tezos.api_url",
+		"tezos.websocket_url",
+		"tezos.chain_id",
+		"tezos.start_level",
+		// Temporal
+		"temporal.host_port",
+		"temporal.namespace",
+		"temporal.task_queue",
+		"temporal.media_task_queue",
+		"temporal.max_concurrent_activity_execution_size",
+		"temporal.worker_activities_per_second",
+		// Vendors
+		"vendors.artblocks_url",
+		// Server
+		"server.host",
+		"server.port",
+		"server.read_timeout",
+		"server.write_timeout",
+		"server.idle_timeout",
+		// Auth
+		"auth.jwt_public_key",
+		"auth.api_keys",
+		// URI
+		"uri.ipfs_gateways",
+		"uri.arweave_gateways",
+		// Cloudflare
+		"cloudflare.account_id",
+		"cloudflare.api_token",
+		// Worker specific
+		"ethereum_token_sweep_start_block",
+		"tezos_token_sweep_start_block",
+		"publisher_registry_path",
+		"blacklist_path",
+		// Media specific
+		"max_static_image_size",
+		"max_animated_image_size",
+		"max_video_size",
+	}
+
+	for _, key := range commonKeys {
+		_ = v.BindEnv(key)
+	}
 }
 
 // loadEnv loads environment variables from the config directory
