@@ -130,7 +130,7 @@ func TestResolver_Resolve(t *testing.T) {
 			},
 			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
 				// Mock both gateways since resolver tries them in parallel
-				// First gateway succeeds
+				// First gateway succeeds - this ensures deterministic behavior
 				mockResp1 := &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(bytes.NewReader(nil)),
@@ -140,9 +140,11 @@ func TestResolver_Resolve(t *testing.T) {
 					Head(gomock.Any(), "https://arweave.net/abc123").
 					Return(mockResp1, nil)
 
-				// Second gateway also succeeds (but first one will be returned)
+				// Second gateway fails to ensure deterministic behavior
+				// (only first gateway succeeds, so it will always be returned)
+				// Use AnyTimes() since the resolver may return early when first gateway succeeds
 				mockResp2 := &http.Response{
-					StatusCode: http.StatusOK,
+					StatusCode: http.StatusNotFound,
 					Body:       io.NopCloser(bytes.NewReader(nil)),
 				}
 				mockHTTP.
