@@ -143,7 +143,7 @@ func main() {
 
 	// Create Temporal worker with logger and Sentry interceptor
 	sentryInterceptor := temporal.NewSentryActivityInterceptor()
-	temporalWorker := worker.New(temporalClient, cfg.Temporal.TaskQueue, worker.Options{
+	temporalWorker := worker.New(temporalClient, cfg.Temporal.MediaTaskQueue, worker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
 		WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
 		Interceptors: []interceptor.WorkerInterceptor{
