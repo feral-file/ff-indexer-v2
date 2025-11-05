@@ -198,6 +198,7 @@ type Query {
     chain: [String!]
     contract_address: [String!]
     token_id: [String!]
+    token_cids: [String!]
     limit: Uint8 = 20
     offset: Uint64 = 0
     expand: [String!]

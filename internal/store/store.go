@@ -133,6 +133,7 @@ type TokenQueryFilter struct {
 	Chains            []domain.Chain
 	ContractAddresses []string
 	TokenNumbers      []string
+	TokenCIDs         []string
 	Limit             int
 	Offset            uint64 // Offset for pagination
 }

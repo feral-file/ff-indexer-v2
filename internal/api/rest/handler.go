@@ -149,6 +149,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 		queryParams.Chains,
 		queryParams.ContractAddresses,
 		queryParams.TokenIDs,
+		queryParams.TokenCIDs,
 		limit,
 		offset,
 		expansions,

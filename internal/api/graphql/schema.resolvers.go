@@ -228,36 +228,43 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expand []string, 
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, tokenCids []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Convert query parameters to executor parameters
 	expansions := convertExpansionStrings(expand)
 	chains := convertChainStrings(chain)
 
 	// Validate owners
-	for _, owner := range owner {
-		if !internalTypes.IsTezosAddress(owner) && !internalTypes.IsEthereumAddress(owner) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid owner: %s. Must be a valid Tezos or Ethereum address", owner))
+	for _, o := range owner {
+		if !internalTypes.IsTezosAddress(o) && !internalTypes.IsEthereumAddress(o) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid owner: %s. Must be a valid Tezos or Ethereum address", o))
 		}
 	}
 
 	// Validate chains
-	for _, chain := range chains {
-		if !domain.IsValidChain(chain) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid chain: %s. Must be a valid Tezos or Ethereum chain", chain))
+	for _, c := range chains {
+		if !domain.IsValidChain(c) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid chain: %s. Must be a valid Tezos or Ethereum chain", c))
 		}
 	}
 
 	// Validate contract addresses
-	for _, contractAddress := range contractAddress {
-		if !internalTypes.IsTezosContractAddress(contractAddress) && !internalTypes.IsEthereumAddress(contractAddress) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid contract address: %s. Must be a valid Tezos or Ethereum address", contractAddress))
+	for _, ca := range contractAddress {
+		if !internalTypes.IsTezosContractAddress(ca) && !internalTypes.IsEthereumAddress(ca) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid contract address: %s. Must be a valid Tezos or Ethereum address", ca))
 		}
 	}
 
 	// Validate token IDs
-	for _, tokenID := range tokenID {
-		if !internalTypes.IsNumeric(tokenID) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token ID: %s. Must be a valid positive numeric value", tokenID))
+	for _, t := range tokenID {
+		if !internalTypes.IsNumeric(t) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token ID: %s. Must be a valid positive numeric value", t))
+		}
+	}
+
+	// Validate token CIDs
+	for _, t := range tokenCids {
+		if !domain.TokenCID(t).Valid() {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token CID: %s. Must be a valid token CID", t))
 		}
 	}
 
@@ -277,7 +284,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []stri
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", *provenanceEventsOrder))
 	}
 
-	return r.executor.GetTokens(ctx, owner, chains, contractAddress, tokenID, ToNativeUint8(limit), ToNativeUint64(offset), expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
+	return r.executor.GetTokens(ctx, owner, chains, contractAddress, tokenID, tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
 }
 
 // Changes is the resolver for the changes field.

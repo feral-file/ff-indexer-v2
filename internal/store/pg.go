@@ -253,6 +253,10 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		query = query.Where("token_number IN ?", filter.TokenNumbers)
 	}
 
+	if len(filter.TokenCIDs) > 0 {
+		query = query.Where("token_cid IN ?", filter.TokenCIDs)
+	}
+
 	// Count total before pagination
 	var total int64
 	countQuery := query

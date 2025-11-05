@@ -29,7 +29,7 @@ type Executor interface {
 	GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, tokenCIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 
 	// GetChanges retrieves changes with optional filters and expansions
 	GetChanges(ctx context.Context, tokenCIDs []string, addresses []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
@@ -100,7 +100,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expand []types
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, tokenCIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -117,6 +117,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		ContractAddresses: contractAddresses,
 		TokenNumbers:      tokenIDs,
 		Chains:            chains,
+		TokenCIDs:         tokenCIDs,
 		Limit:             int(*limit),
 		Offset:            *offset,
 	}

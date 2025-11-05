@@ -56,6 +56,7 @@ type ListTokensQueryParams struct {
 	Chains            []domain.Chain `form:"chain"`
 	ContractAddresses []string       `form:"contract_address"`
 	TokenIDs          []string       `form:"token_id"`
+	TokenCIDs         []string       `form:"token_cid"`
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`
@@ -101,6 +102,13 @@ func (p *ListTokensQueryParams) Validate() error {
 	for _, tokenID := range p.TokenIDs {
 		if !internalTypes.IsNumeric(tokenID) {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid token ID: %s. Must be a valid positive numeric value", tokenID))
+		}
+	}
+
+	// Validate token CIDs
+	for _, tokenCID := range p.TokenCIDs {
+		if !domain.TokenCID(tokenCID).Valid() {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid token CID: %s. Must be a valid token CID", tokenCID))
 		}
 	}
 
