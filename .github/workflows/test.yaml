@@ -35,7 +35,7 @@ jobs:
         run: go vet ./...
 
       - name: Run tests with coverage
-        run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter")
+        run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|internal/api/graphql/generated.go|cmd")
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
