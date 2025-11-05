@@ -200,7 +200,12 @@ func LoadTezosEmitterConfig(configPath string) (*TezosEmitterConfig, error) {
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
+		var error viper.ConfigFileNotFoundError
+		if errors.As(err, &error) {
+			// Config file not found, use environment variables
+		} else {
+			return nil, fmt.Errorf("failed to read config: %w", err)
+		}
 	}
 
 	var config TezosEmitterConfig
@@ -231,7 +236,12 @@ func LoadEventBridgeConfig(configPath string) (*EventBridgeConfig, error) {
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
+		var error viper.ConfigFileNotFoundError
+		if errors.As(err, &error) {
+			// Config file not found, use environment variables
+		} else {
+			return nil, fmt.Errorf("failed to read config: %w", err)
+		}
 	}
 
 	var config EventBridgeConfig
@@ -258,7 +268,12 @@ func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
+		var error viper.ConfigFileNotFoundError
+		if errors.As(err, &error) {
+			// Config file not found, use environment variables
+		} else {
+			return nil, fmt.Errorf("failed to read config: %w", err)
+		}
 	}
 
 	var config WorkerCoreConfig
@@ -324,7 +339,12 @@ func LoadWorkerMediaConfig(configPath string) (*WorkerMediaConfig, error) {
 	v.SetDefault("max_video_size", 300*1024*1024)         // 300MB
 
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
+		var error viper.ConfigFileNotFoundError
+		if errors.As(err, &error) {
+			// Config file not found, use environment variables
+		} else {
+			return nil, fmt.Errorf("failed to read config: %w", err)
+		}
 	}
 
 	var config WorkerMediaConfig
