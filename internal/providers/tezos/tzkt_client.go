@@ -145,9 +145,6 @@ type TzKTClient interface {
 	// GetTokenEvents retrieves all token-related events (transfers + metadata updates) for a specific token
 	GetTokenEvents(ctx context.Context, contractAddress string, tokenID string) ([]domain.BlockchainEvent, error)
 
-	// GetTokenBalancesByAccount retrieves all token balances for a specific account address within an anchor block level and order
-	GetTokenBalancesByAccount(ctx context.Context, accountAddress string, blkLevel *uint64, isDesc bool) ([]TzKTTokenBalance, error)
-
 	// GetTokenBalancesByAccountWithinBlockRange retrieves token balances for an account within a block range
 	GetTokenBalancesByAccountWithinBlockRange(ctx context.Context, accountAddress string, fromBlock, toBlock uint64, limit int, offset int) ([]TzKTTokenBalance, error)
 
@@ -365,34 +362,11 @@ func (c *tzktClient) GetTokenEvents(ctx context.Context, contractAddress string,
 	return events, nil
 }
 
-// GetTokenBalancesByAccount retrieves all token balances for a specific account address and anchor block level and order
-func (c *tzktClient) GetTokenBalancesByAccount(ctx context.Context, accountAddress string, blkLevel *uint64, isDesc bool) ([]TzKTTokenBalance, error) {
-	// TzKT API: GET /v1/tokens/balances?account={address}&balance.ne=0&sort.{order}=lastLevel&limit=10000&lastLevel.lt={blkLevel}
-	// This returns all tokens (with non-zero balance) owned by the specified account
-	// sorted by lastLevel in descending order if isDesc is true, otherwise ascending
-	url := fmt.Sprintf("%s/v1/tokens/balances?account=%s&balance.ne=0&limit=10000", c.baseURL, accountAddress)
-	if blkLevel != nil {
-		url += fmt.Sprintf("&lastLevel.lt=%d", *blkLevel)
-	}
-	if isDesc {
-		url += "&sort.desc=lastLevel"
-	} else {
-		url += "&sort.asc=lastLevel"
-	}
-
-	var balances []TzKTTokenBalance
-	if err := c.httpClient.Get(ctx, url, &balances); err != nil {
-		return nil, fmt.Errorf("failed to get token balances for account %s: %w", accountAddress, err)
-	}
-
-	return balances, nil
-}
-
 // GetTokenBalancesByAccountWithinBlockRange retrieves token balances for an account within a block range
 // This is used for chunk-based sweeping, supporting pagination with offset
 func (c *tzktClient) GetTokenBalancesByAccountWithinBlockRange(ctx context.Context, accountAddress string, fromBlock, toBlock uint64, limit int, offset int) ([]TzKTTokenBalance, error) {
 	// TzKT API: GET /v1/tokens/balances?account={address}&balance.ne=0&lastLevel.ge={fromBlock}&lastLevel.le={toBlock}&sort.asc=lastLevel&limit={limit}&offset={offset}
-	url := fmt.Sprintf("%s/v1/tokens/balances?account=%s&balance.ne=0&lastLevel.ge=%d&lastLevel.le=%d&sort.asc=lastLevel&limit=%d&offset=%d",
+	url := fmt.Sprintf("%s/v1/tokens/balances?account=%s&balance.ne=0&token.metadata.artifactUri.null&lastLevel.ge=%d&lastLevel.le=%d&sort.asc=lastLevel&limit=%d&offset=%d",
 		c.baseURL, accountAddress, fromBlock, toBlock, limit, offset)
 
 	var balances []TzKTTokenBalance

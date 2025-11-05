@@ -70,18 +70,18 @@ func (mr *MockAPIExecutorMockRecorder) GetToken(ctx, tokenCID, expand, ownersLim
 }
 
 // GetTokens mocks base method.
-func (m *MockAPIExecutor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses, tokenIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (m *MockAPIExecutor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses, tokenIDs, tokenCIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokens", ctx, owners, chains, contractAddresses, tokenIDs, limit, offset, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
+	ret := m.ctrl.Call(m, "GetTokens", ctx, owners, chains, contractAddresses, tokenIDs, tokenCIDs, limit, offset, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
 	ret0, _ := ret[0].(*dto.TokenListResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTokens indicates an expected call of GetTokens.
-func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAddresses, tokenIDs, limit, offset, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder interface{}) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAddresses, tokenIDs, tokenCIDs, limit, offset, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokens", reflect.TypeOf((*MockAPIExecutor)(nil).GetTokens), ctx, owners, chains, contractAddresses, tokenIDs, limit, offset, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokens", reflect.TypeOf((*MockAPIExecutor)(nil).GetTokens), ctx, owners, chains, contractAddresses, tokenIDs, tokenCIDs, limit, offset, expand, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
 }
 
 // GetWorkflowStatus mocks base method.

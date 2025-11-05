@@ -96,21 +96,6 @@ func (mr *MockTzKTClientMockRecorder) GetTokenBalances(ctx, contractAddress, tok
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenBalances", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenBalances), ctx, contractAddress, tokenID)
 }
 
-// GetTokenBalancesByAccount mocks base method.
-func (m *MockTzKTClient) GetTokenBalancesByAccount(ctx context.Context, accountAddress string, blkLevel *uint64, isDesc bool) ([]tezos.TzKTTokenBalance, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokenBalancesByAccount", ctx, accountAddress, blkLevel, isDesc)
-	ret0, _ := ret[0].([]tezos.TzKTTokenBalance)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetTokenBalancesByAccount indicates an expected call of GetTokenBalancesByAccount.
-func (mr *MockTzKTClientMockRecorder) GetTokenBalancesByAccount(ctx, accountAddress, blkLevel, isDesc interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenBalancesByAccount", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenBalancesByAccount), ctx, accountAddress, blkLevel, isDesc)
-}
-
 // GetTokenBalancesByAccountWithinBlockRange mocks base method.
 func (m *MockTzKTClient) GetTokenBalancesByAccountWithinBlockRange(ctx context.Context, accountAddress string, fromBlock, toBlock uint64, limit, offset int) ([]tezos.TzKTTokenBalance, error) {
 	m.ctrl.T.Helper()
