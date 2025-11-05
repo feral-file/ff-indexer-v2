@@ -35,12 +35,17 @@ cd ff-indexer-v2
 # Setup environment files
 make setup
 
-# Edit config/.env.local with your credentials
-# Required: Database, NATS, Temporal, Ethereum/Tezos RPC endpoints, API authentication
+# Configure your settings (choose one or both):
+# Option 1: Edit config/.env.local with your credentials
+# Option 2: Copy config.yaml.sample files and customize
+#   cp cmd/api/config.yaml.sample cmd/api/config.yaml
+#   # Edit cmd/api/config.yaml, cmd/worker-core/config.yaml, etc.
 
 # Build and start all services
 make quickstart
 ```
+
+**Configuration**: The system supports both YAML config files and environment variables. Environment variables (with `FF_INDEXER_` prefix) override config file values. See [DEVELOPMENT.md](DEVELOPMENT.md) for details.
 
 This will start:
 - PostgreSQL (port 5432)

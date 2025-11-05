@@ -20,19 +20,32 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    cd ff-indexer-v2
    ```
 
-2. **Create environment files**:
+2. **Configure your environment** (choose one or both):
+
+   **Option A: Environment Variables**:
    ```bash
    make setup
    ```
    This creates `config/.env` and `config/.env.local` from templates.
+   Edit `config/.env.local` with your local settings.
 
-3. **Configure environment variables**:
-   Edit `config/.env.local` with your local settings:
+   **Option B: YAML Config Files**:
+   ```bash
+   cp cmd/api/config.yaml.sample cmd/api/config.yaml
+   cp cmd/worker-core/config.yaml.sample cmd/worker-core/config.yaml
+   # ... repeat for other services
+   ```
+   Edit the config files with your settings.
+
+3. **Required configuration** (in env vars or YAML):
    - Database credentials
    - NATS URL
    - Temporal connection
    - Ethereum/Tezos RPC endpoints
    - Cloudflare credentials (for media worker)
+   - API authentication (JWT public key or API keys)
+
+   **Note**: Environment variables (with `FF_INDEXER_` prefix) override YAML config values. See [DEVELOPMENT.md](DEVELOPMENT.md) for configuration details.
 
 4. **Start infrastructure**:
    ```bash

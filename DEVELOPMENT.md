@@ -41,13 +41,52 @@ psql -h localhost -U postgres -d ff_indexer
 - URL: http://localhost:8222
 - View streams, consumers, and messages
 
-### Environment Variables
+### Configuration
 
-Configuration is loaded from:
+The system supports **dual configuration**: YAML config files and environment variables. You can use either or both together.
+
+**Configuration Priority** (highest to lowest):
+1. Environment variables (with `FF_INDEXER_` prefix)
+2. `.env.local` files
+3. YAML config files (`config.yaml` in each `cmd/*/` directory)
+
+#### Option 1: YAML Config Files
+
+Each service can use a `config.yaml` file in its directory:
+
+```bash
+# Copy sample configs
+cp cmd/api/config.yaml.sample cmd/api/config.yaml
+cp cmd/worker-core/config.yaml.sample cmd/worker-core/config.yaml
+cp cmd/worker-media/config.yaml.sample cmd/worker-media/config.yaml
+cp cmd/event-bridge/config.yaml.sample cmd/event-bridge/config.yaml
+cp cmd/ethereum-event-emitter/config.yaml.sample cmd/ethereum-event-emitter/config.yaml
+cp cmd/tezos-event-emitter/config.yaml.sample cmd/tezos-event-emitter/config.yaml
+
+# Edit config files with your settings
+```
+
+**Config file location**:
+- Default: `cmd/{service}/config.yaml` (relative to service directory)
+- Can be overridden with `--config` flag: `go run main.go --config /path/to/config.yaml`
+
+#### Option 2: Environment Variables
+
+Environment variables use the `FF_INDEXER_` prefix and map to nested config keys:
+- `FF_INDEXER_DATABASE_HOST` → `database.host`
+- `FF_INDEXER_ETHEREUM_RPC_URL` → `ethereum.rpc_url`
+- `FF_INDEXER_TEMPORAL_HOST_PORT` → `temporal.host_port`
+
+Dots in config keys become underscores in env vars.
+
+**Environment variable files** (loaded in order, later files override earlier):
 1. `config/.env` - Base configuration (version controlled)
 2. `config/.env.local` - Local overrides (git ignored)
+3. `config/.env.{service}.local` - Service-specific overrides (git ignored)
 
-Required variables (should be placed in your local env file):
+#### Required Configuration
+
+Secrets settings (can be in YAML config or environment variables):
 ```bash
 # Database
 FF_INDEXER_DATABASE_USER=YOUR_DB_USER
@@ -65,6 +104,30 @@ FF_INDEXER_CLOUDFLARE_API_TOKEN=YOUR_API_TOKEN
 # API authentication
 FF_INDEXER_AUTH_JWT_PUBLIC_KEY=YOUR_JWT_PUBKEY_PEM
 FF_INDEXER_AUTH_API_KEYS=YOUR_AUTH_API_KEYS
+```
+
+**Example**: Mixing YAML and environment variables
+- Use `config.yaml` for most settings (version controlled)
+- Use `config/.env.local` for sensitive values (passwords, API keys)
+- Use environment variables for container/CI overrides
+
+**Environment variable examples**:
+```bash
+# Database
+export FF_INDEXER_DATABASE_HOST=localhost
+export FF_INDEXER_DATABASE_USER=postgres
+export FF_INDEXER_DATABASE_PASSWORD=postgres
+export FF_INDEXER_DATABASE_DBNAME=ff_indexer
+
+# Ethereum
+export FF_INDEXER_ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY
+export FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://mainnet.infura.io/ws/v3/YOUR_KEY
+export FF_INDEXER_ETHEREUM_CHAIN_ID=eip155:1
+
+# Temporal
+export FF_INDEXER_TEMPORAL_HOST_PORT=localhost:7233
+export FF_INDEXER_TEMPORAL_NAMESPACE=default
+export FF_INDEXER_TEMPORAL_TASK_QUEUE=token-indexing
 ```
 
 ## Running Services Locally
