@@ -164,8 +164,8 @@ type WorkerMediaConfig struct {
 }
 
 // LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter
-func LoadEthereumEmitterConfig(configPath string) (*EthereumEmitterConfig, error) {
-	v := configureViper("ethereum-event-emitter", configPath)
+func LoadEthereumEmitterConfig(configFile string, envPath string) (*EthereumEmitterConfig, error) {
+	v := configureViper("ethereum-event-emitter", configFile, envPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -188,8 +188,8 @@ func LoadEthereumEmitterConfig(configPath string) (*EthereumEmitterConfig, error
 }
 
 // LoadTezosEmitterConfig loads configuration for tezos-event-emitter
-func LoadTezosEmitterConfig(configPath string) (*TezosEmitterConfig, error) {
-	v := configureViper("tezos-event-emitter", configPath)
+func LoadTezosEmitterConfig(configFile string, envPath string) (*TezosEmitterConfig, error) {
+	v := configureViper("tezos-event-emitter", configFile, envPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -217,8 +217,8 @@ func LoadTezosEmitterConfig(configPath string) (*TezosEmitterConfig, error) {
 }
 
 // LoadEventBridgeConfig loads configuration for event-bridge
-func LoadEventBridgeConfig(configPath string) (*EventBridgeConfig, error) {
-	v := configureViper("event-bridge", configPath)
+func LoadEventBridgeConfig(configFile string, envPath string) (*EventBridgeConfig, error) {
+	v := configureViper("event-bridge", configFile, envPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -253,8 +253,8 @@ func LoadEventBridgeConfig(configPath string) (*EventBridgeConfig, error) {
 }
 
 // LoadWorkerCoreConfig loads configuration for worker-core
-func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
-	v := configureViper("worker-core", configPath)
+func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig, error) {
+	v := configureViper("worker-core", configFile, envPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -285,8 +285,8 @@ func LoadWorkerCoreConfig(configPath string) (*WorkerCoreConfig, error) {
 }
 
 // LoadAPIConfig loads configuration for API server
-func LoadAPIConfig(configPath string) (*APIConfig, error) {
-	v := configureViper("api", configPath)
+func LoadAPIConfig(configFile string, envPath string) (*APIConfig, error) {
+	v := configureViper("api", configFile, envPath)
 
 	// Set defaults
 	v.SetDefault("debug", false)
@@ -317,14 +317,12 @@ func LoadAPIConfig(configPath string) (*APIConfig, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	fmt.Println("Config:", config)
-
 	return &config, nil
 }
 
 // LoadWorkerMediaConfig loads configuration for worker-media
-func LoadWorkerMediaConfig(configPath string) (*WorkerMediaConfig, error) {
-	v := configureViper("worker-media", configPath)
+func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfig, error) {
+	v := configureViper("worker-media", configFile, envPath)
 
 	// Set defaults
 	v.SetDefault("database.port", 5432)
@@ -356,15 +354,15 @@ func LoadWorkerMediaConfig(configPath string) (*WorkerMediaConfig, error) {
 }
 
 // configureViper returns a viper instance with the config file and environment variables set
-func configureViper(service string, configFilePath string) *viper.Viper {
+func configureViper(service string, configFile string, envPath string) *viper.Viper {
 	v := viper.New()
 
 	// Load environment variables
-	loadEnv(service)
+	loadEnv(envPath, service)
 
 	// Set config file
-	if configFilePath != "" {
-		v.SetConfigFile(configFilePath)
+	if configFile != "" {
+		v.SetConfigFile(configFile)
 	} else {
 		v.SetConfigType("yaml")
 		v.AddConfigPath("config/")
@@ -454,18 +452,21 @@ func bindAllEnvVars(v *viper.Viper) {
 }
 
 // loadEnv loads environment variables from the config directory
-func loadEnv(service string) {
+func loadEnv(envPath string, service string) {
 	// Always try shared base first, then local, then optional per-service local.
-	candidates := []string{
-		"config/.env",
-		"config/.env.local",
-	}
-
+	envFiles := []string{".env", ".env.local"}
 	if service != "" {
-		candidates = append(candidates, "config/.env."+service+".local")
+		envFiles = append(envFiles, ".env."+service+".local")
 	}
 
-	for _, candidate := range candidates {
+	// Default to config directory
+	if envPath == "" {
+		envPath = "config/"
+	}
+
+	// Create candidates list
+	for _, envFile := range envFiles {
+		candidate := filepath.Join(envPath, envFile)
 		_ = godotenv.Overload(candidate) // Overload lets later files override earlier ones
 	}
 }

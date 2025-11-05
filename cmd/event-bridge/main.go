@@ -26,7 +26,8 @@ import (
 )
 
 var (
-	configPath = flag.String("config", "", "Path to configuration file")
+	configFile = flag.String("config", "", "Path to configuration file")
+	envPath    = flag.String("env", "config/", "Path to environment files")
 )
 
 func main() {
@@ -34,7 +35,7 @@ func main() {
 
 	// Load configuration
 	config.ChdirRepoRoot()
-	cfg, err := config.LoadEventBridgeConfig(*configPath)
+	cfg, err := config.LoadEventBridgeConfig(*configFile, *envPath)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}

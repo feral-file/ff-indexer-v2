@@ -326,4 +326,52 @@ key_value_store (standalone table)
 - **CORS**: Configurable origins
 - **Input Validation**: Schema validation for all inputs
 
+## Configuration
+
+The system supports flexible configuration through YAML files and environment variables.
+
+### Configuration Sources
+
+1. **YAML Config Files**: Each service can use a `config.yaml` file in its `cmd/{service}/` directory
+2. **Environment Variables**: Variables with `FF_INDEXER_` prefix override config file values
+3. **Environment Files**: `.env` files in `config/` directory (loaded automatically)
+
+### Configuration Priority
+
+1. Environment variables (highest priority)
+2. `.env.local` files
+3. YAML config files (base configuration)
+
+### Configuration Mapping
+
+Environment variables map to nested YAML keys:
+- `FF_INDEXER_DATABASE_HOST` → `database.host`
+- `FF_INDEXER_ETHEREUM_RPC_URL` → `ethereum.rpc_url`
+- `FF_INDEXER_TEMPORAL_HOST_PORT` → `temporal.host_port`
+
+Dots in YAML keys become underscores in environment variables.
+
+### Example Configuration
+
+**YAML config** (`cmd/api/config.yaml`):
+```yaml
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+
+server:
+  port: 8081
+```
+
+**Environment variables** (override YAML):
+```bash
+export FF_INDEXER_DATABASE_HOST=production-db.example.com
+export FF_INDEXER_SERVER_PORT=8080
+```
+
+**Result**: Database host and server port use environment variable values, other settings use YAML defaults.
+
+See [DEVELOPMENT.md](../DEVELOPMENT.md) for detailed configuration examples.
+
 
