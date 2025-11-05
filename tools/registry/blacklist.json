@@ -29,13 +29,17 @@
         "0x50f5474724e0ee42d9a4e711ccfb275809Fd6d4a",
         "0x6EbeAf8e8E946F0716E6533A6f2cefc83f60e8Ab",
         "0x77B53beb7f13Bd38de9F76Eed2F2c4F9efff7f4C",
-        "0x48ed998e778Ab2663b6C49Bd09DfFF8Efd16B934"
+        "0x48ed998e778Ab2663b6C49Bd09DfFF8Efd16B934",
+        "0xc638C80DCE17AEfeAFd4916AB0Cc23A95D7b8dC4",
+        "0x221C4Abed6A4D38c985Cad27612c751CA15e0aAA"
     ],
     "tezos:mainnet": [
         "KT1GBZmSxmnKJXGMdMLbugPfLyUPmuLSMwKS",
         "KT1TnVQhjxeNvLutGvzwZvYtC7vKRpwPWhc6",
         "KT1NVvPsNDChrLRH5K2cy6Sc9r1uuUwdiZQd",
         "KT1QrtA753MSv8VGxkDrKKyJniG5JtuHHbtV",
-        "KT1FfjhvJZppBFQuUzNAdFPR1Z2jpD4XiXrF"
+        "KT1FfjhvJZppBFQuUzNAdFPR1Z2jpD4XiXrF",
+        "KT1VaEsVNiBoA56eToEK6n6BcPgh1tdx9eXi",
+        "KT1Vfc3EMLzHdZapxxyC9zForN3Qas9TEed7"
     ]
 }
