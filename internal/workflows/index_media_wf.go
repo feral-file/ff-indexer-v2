@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"fmt"
+	gourl "net/url"
 	"time"
 
 	"go.temporal.io/api/enums/v1"
@@ -47,7 +48,7 @@ func (w *workerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []st
 
 	// Start all child workflows concurrently (fire and forget)
 	for url := range uniqueURLs {
-		childWorkflowOptions.WorkflowID = fmt.Sprintf("index-media-%s", url)
+		childWorkflowOptions.WorkflowID = fmt.Sprintf("index-media-%s", gourl.QueryEscape(url))
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 		// Start child workflow without waiting for result
