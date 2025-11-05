@@ -9,6 +9,17 @@ on:
     paths:
       - '**/*.go'
 
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to lint'
+        required: true
+        default: 'main'
+      ref:
+        description: "Exact tag or commit SHA (overrides branch if set)"
+        required: false
+        default: ""
+
 jobs:
   lint:
     name: Lint (Go)
@@ -19,6 +30,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || inputs.branch }}
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5

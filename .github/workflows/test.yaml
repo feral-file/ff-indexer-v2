@@ -10,6 +10,17 @@ on:
     paths:
       - '**/*.go'
 
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to test'
+        required: true
+        default: 'main'
+      ref:
+        description: "Exact tag or commit SHA (overrides branch if set)"
+        required: false
+        default: ""
+
 jobs:
   test:
     name: Test (Go)
@@ -20,6 +31,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || inputs.branch }}
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
