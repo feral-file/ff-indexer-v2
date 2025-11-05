@@ -144,7 +144,7 @@ IndexTokenMetadata Workflow (child)
     ↓
 FetchTokenMetadata Activity
     ├─→ Blockchain RPC (tokenURI)
-    ├─→ URI Resolver (IPFS/Arweave/HTTP)
+    ├─→ URI Resolver (IPFS/Arweave/ONCHFS/HTTP)
     └─→ Metadata Resolver (normalization)
     ↓
 EnhanceTokenMetadata Activity

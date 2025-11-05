@@ -124,6 +124,11 @@ func TestResolver_Resolve_ERC721(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://example.com/animation.mp4").
 		Return("https://example.com/animation.mp4", nil)
+	// Mock Head to fail so it falls back to GetPartialContent
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://example.com/animation.mp4").
+		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
 		GetPartialContent(gomock.Any(), "https://example.com/animation.mp4", gomock.Any()).
@@ -191,6 +196,11 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://example.com/image.png").
 		Return("https://example.com/image.png", nil)
+	// Mock Head to fail so it falls back to GetPartialContent
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://example.com/image.png").
+		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
 		GetPartialContent(gomock.Any(), "https://example.com/image.png", gomock.Any()).
@@ -263,6 +273,11 @@ func TestResolver_Resolve_FA2(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmYYY").
 		Return("https://ipfs.io/ipfs/QmYYY", nil)
+	// Mock Head to fail so it falls back to GetPartialContent
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://ipfs.io/ipfs/QmYYY").
+		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
 		GetPartialContent(gomock.Any(), "https://ipfs.io/ipfs/QmYYY", gomock.Any()).

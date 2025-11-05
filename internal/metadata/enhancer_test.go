@@ -106,6 +106,11 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://example.com/generator.html").
 		Return("https://example.com/generator.html", nil)
+	// Mock Head to fail so it falls back to GetPartialContent
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://example.com/generator.html").
+		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
 		GetPartialContent(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
@@ -177,6 +182,11 @@ func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://example.com/generator.html").
 		Return("https://example.com/generator.html", nil)
+	// Mock Head to fail so it falls back to GetPartialContent
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://example.com/generator.html").
+		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
 		GetPartialContent(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
@@ -236,6 +246,11 @@ func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://example.com/generator.html").
 		Return("https://example.com/generator.html", nil)
+	// Mock Head to fail so it falls back to GetPartialContent
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://example.com/generator.html").
+		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
 		GetPartialContent(gomock.Any(), "https://example.com/generator.html", gomock.Any()).

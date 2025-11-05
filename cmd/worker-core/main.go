@@ -139,6 +139,7 @@ func main() {
 	uriResolver := uri.NewResolver(httpClient, &uri.Config{
 		IPFSGateways:    cfg.URI.IPFSGateways,
 		ArweaveGateways: cfg.URI.ArweaveGateways,
+		OnChFSGateways:  cfg.URI.OnchfsGateways,
 	})
 
 	// Initialize metadata enhancer and resolver

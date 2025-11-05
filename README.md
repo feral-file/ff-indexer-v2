@@ -13,7 +13,7 @@ FF-Indexer v2 is a production-ready indexing service designed to capture and ind
 - **Ethereum**: ERC-721 and ERC-1155 tokens
 - **Tezos**: FA2 tokens
 - **Real-time indexing** of blockchain events (mints, transfers, burns, metadata updates)
-- **Metadata resolution** from IPFS, Arweave, and HTTP sources
+- **Metadata resolution** from IPFS, Arweave, ONCHFS, and HTTP sources
 - **Metadata enrichment** from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File)
 - **Media processing** with Cloudflare Images and Stream
 - **Provenance tracking** with full blockchain event history

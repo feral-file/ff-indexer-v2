@@ -85,6 +85,7 @@ func main() {
 	uriResolverConfig := &uri.Config{
 		IPFSGateways:    cfg.URI.IPFSGateways,
 		ArweaveGateways: cfg.URI.ArweaveGateways,
+		OnChFSGateways:  cfg.URI.OnchfsGateways,
 	}
 	uriResolver := uri.NewResolver(httpClient, uriResolverConfig)
 

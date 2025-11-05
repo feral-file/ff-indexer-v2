@@ -2,9 +2,11 @@ package metadata
 
 import (
 	"context"
+	"strings"
+
+	"go.uber.org/zap"
 
 	"github.com/gabriel-vasile/mimetype"
-	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
@@ -51,28 +53,47 @@ func detectMimeType(
 		zap.String("original", targetURL),
 		zap.String("resolved", resolvedURL))
 
-	// Download first 512 bytes for mime type detection
-	const maxBytes = 512
-	content, err := httpClient.GetPartialContent(ctx, resolvedURL, maxBytes)
-	if err != nil {
-		logger.WarnCtx(ctx, "Failed to download content for mime type detection",
-			zap.String("url", resolvedURL),
-			zap.Error(err))
-		return nil
+	// Try HEAD request first to get content-type
+	// If HEAD fails, fallback to partial GET request
+	var mimeType string
+
+	// Cut the query params from the URL
+	// Some gateways like https://onchfs.fxhash2.xyz don't support HEAD requests with query params
+	// so cut the query params from the URL will be safe to get the content-type
+	headURL := resolvedURL
+	if parts := strings.Split(headURL, "?"); len(parts) > 0 {
+		headURL = parts[0]
+	}
+	resp, err := httpClient.Head(ctx, headURL)
+	if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		mimeType = resp.Header.Get("Content-Type")
 	}
 
-	// Detect mime type using the mimetype library
-	mtype := mimetype.Detect(content)
-	if mtype == nil {
-		logger.WarnCtx(ctx, "Failed to detect mime type",
-			zap.String("url", resolvedURL))
-		return nil
+	if mimeType == "" {
+		// Download first 512 bytes for mime type detection
+		const maxBytes = 512
+		content, err := httpClient.GetPartialContent(ctx, resolvedURL, maxBytes)
+		if err != nil {
+			logger.WarnCtx(ctx, "Failed to download content for mime type detection",
+				zap.String("url", resolvedURL),
+				zap.Error(err))
+			return nil
+		}
+
+		// Detect mime type using the mimetype library
+		mtype := mimetype.Detect(content)
+		if mtype == nil {
+			logger.WarnCtx(ctx, "Failed to detect mime type",
+				zap.String("url", resolvedURL))
+			return nil
+		}
+
+		mimeType = mtype.String()
 	}
 
-	mimeTypeStr := mtype.String()
 	logger.InfoCtx(ctx, "Detected mime type",
 		zap.String("url", resolvedURL),
-		zap.String("mimeType", mimeTypeStr))
+		zap.String("mimeType", mimeType))
 
-	return &mimeTypeStr
+	return &mimeType
 }

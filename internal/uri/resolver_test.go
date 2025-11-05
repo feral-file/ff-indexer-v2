@@ -246,6 +246,79 @@ func TestResolver_Resolve(t *testing.T) {
 			},
 			expectedErr: "no working Arweave gateway found for TX: abc123",
 		},
+		{
+			name: "OnChFS URI",
+			uri:  "onchfs://QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB",
+			config: &uri.Config{
+				OnChFSGateways: []string{"https://onchfs.fxhash2.xyz", "https://onchfs-backup.example.com"},
+			},
+			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
+				// Mock both gateways since resolver tries them in parallel
+				// First gateway succeeds - this ensures deterministic behavior
+				mockResp1 := &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(bytes.NewReader(nil)),
+				}
+				mockHTTP.
+					EXPECT().
+					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB").
+					Return(mockResp1, nil)
+
+				// Second gateway fails to ensure deterministic behavior
+				// Use AnyTimes() since the resolver may return early when first gateway succeeds
+				mockResp2 := &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(bytes.NewReader(nil)),
+				}
+				mockHTTP.
+					EXPECT().
+					Head(gomock.Any(), "https://onchfs-backup.example.com/QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB").
+					Return(mockResp2, nil).
+					AnyTimes()
+			},
+			expected:    "https://onchfs.fxhash2.xyz/QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB",
+			expectedErr: "",
+		},
+		{
+			name: "OnChFS URI - no gateways configured",
+			uri:  "onchfs://QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB",
+			config: &uri.Config{
+				OnChFSGateways: []string{},
+			},
+			expectedErr: "no OnChFS gateways configured",
+		},
+		{
+			name: "OnChFS URI - no working gateway",
+			uri:  "onchfs://QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB",
+			config: &uri.Config{
+				OnChFSGateways: []string{"https://onchfs.fxhash2.xyz"},
+			},
+			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
+				mockResp := &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(bytes.NewReader(nil)),
+				}
+				mockHTTP.
+					EXPECT().
+					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB").
+					Return(mockResp, nil)
+			},
+			expectedErr: "no working OnChFS gateway found for CID: QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB",
+		},
+		{
+			name: "OnChFS URI - network error",
+			uri:  "onchfs://QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB",
+			config: &uri.Config{
+				OnChFSGateways: []string{"https://onchfs.fxhash2.xyz"},
+			},
+			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
+				mockHTTP.
+					EXPECT().
+					Head(gomock.Any(), gomock.Any()).
+					Return(nil, assert.AnError)
+			},
+			expectedErr: "no working OnChFS gateway found for CID: QmYjtig7VJQ6XsnUjqqJvj7QaMcCAwtrgxdahTF8RDbB",
+		},
 	}
 
 	for _, tt := range tests {

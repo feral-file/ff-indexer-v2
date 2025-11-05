@@ -24,6 +24,7 @@ type BaseConfig struct {
 type URIConfig struct {
 	IPFSGateways    []string `mapstructure:"ipfs_gateways"`
 	ArweaveGateways []string `mapstructure:"arweave_gateways"`
+	OnchfsGateways  []string `mapstructure:"onchfs_gateways"`
 }
 
 // DatabaseConfig holds database configuration
@@ -266,6 +267,7 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
+	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 
 	if err := v.ReadInConfig(); err != nil {
 		var error viper.ConfigFileNotFoundError
@@ -332,6 +334,7 @@ func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfi
 	v.SetDefault("temporal.worker_activities_per_second", 10)
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
+	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 	v.SetDefault("max_static_image_size", 10*1024*1024)   // 10MB
 	v.SetDefault("max_animated_image_size", 50*1024*1024) // 50MB
 	v.SetDefault("max_video_size", 300*1024*1024)         // 300MB
@@ -432,6 +435,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		// URI
 		"uri.ipfs_gateways",
 		"uri.arweave_gateways",
+		"uri.onchfs_gateways",
 		// Cloudflare
 		"cloudflare.account_id",
 		"cloudflare.api_token",

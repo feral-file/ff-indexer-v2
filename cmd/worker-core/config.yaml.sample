@@ -44,4 +44,6 @@ uri:
     - https://ipfs.filebase.io
   arweave_gateways:
     - https://arweave.net
+  onchfs_gateways:
+    - https://onchfs.fxhash2.xyz
 
