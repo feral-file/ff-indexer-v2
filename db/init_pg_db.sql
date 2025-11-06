@@ -112,7 +112,7 @@ CREATE TABLE changes_journal (
     meta JSONB,                             -- ProvenanceChangeMeta for token/owner/balance; MetadataChangeMeta for metadata
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (token_id, subject_type, subject_id)
+    UNIQUE (token_id, subject_type, subject_id, changed_at)
 );
 
 -- Provenance Events table - Optional audit trail of blockchain events

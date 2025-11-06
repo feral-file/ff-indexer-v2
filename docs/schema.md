@@ -212,7 +212,7 @@ Audit log for tracking all changes to indexed data.
 - `idx_changes_journal_meta_gin` GIN on (meta)
 
 **Unique Constraints**:
-- `(token_id, subject_type, subject_id)` (unique)
+- `(token_id, subject_type, subject_id, changed_at)` (unique)
 
 **Relationships**:
 - Many-to-one with `tokens`

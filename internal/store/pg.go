@@ -451,13 +451,14 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			Meta:        metaJSON,
 		}
 
-		// Use ON CONFLICT to update the meta if the entry already exists
-		// There will only be one metadata change journal entry per token
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on unique constraint
+		// This allows tracking multiple metadata changes over time (changed_at is part of the unique key)
 		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "token_id"}, {Name: "subject_type"}, {Name: "subject_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"meta", "changed_at"}),
-		}).Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create/update change journal: %w", err)
+			DoNothing: true,
+		}).
+			Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&changeJournal).Error; err != nil {
+			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
 		return nil
