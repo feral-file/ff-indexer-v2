@@ -75,7 +75,7 @@ temp/
 *.db
 *.sqlite
 *.sql
-db/init_db.sql
+db/init_pg_db.sql
 db/migrations/
 
 # NATS and registry files (will be mounted as volumes)

@@ -336,7 +336,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 
 ### Initial Schema (001.sql)
 
-The initial schema is created by `db/init_db.sql` which is run automatically when the PostgreSQL container starts.
+The initial schema is created by `db/init_pg_db.sql` which is run automatically when the PostgreSQL container starts.
 
 **Migration Notes**:
 - All ENUM types are created first

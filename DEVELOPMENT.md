@@ -175,11 +175,11 @@ API available at: http://localhost:8081
 
 ### Initial Schema
 
-The database schema is automatically created when the PostgreSQL container starts using `db/init_db.sql`.
+The database schema is automatically created when the PostgreSQL container starts using `db/init_pg_db.sql`.
 
 To manually initialize:
 ```bash
-psql -h localhost -U postgres -d ff_indexer -f db/init_db.sql
+psql -h localhost -U postgres -d ff_indexer -f db/init_pg_db.sql
 ```
 
 ### Migrations
