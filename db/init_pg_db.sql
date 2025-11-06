@@ -130,8 +130,21 @@ CREATE TABLE provenance_events (
     timestamp TIMESTAMPTZ NOT NULL,
     raw JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT provenance_events_chain_tx_hash_unique UNIQUE (chain, tx_hash)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Unique constraint to prevent duplicate events
+-- Combines chain, tx_hash, token_id, addresses, and event_type
+-- This allows multiple events in the same transaction for different tokens or different address pairs
+-- Note: NULL values in from_address/to_address are treated as distinct values in unique constraints
+ALTER TABLE provenance_events
+ADD CONSTRAINT provenance_events_unique UNIQUE (
+    chain,
+    tx_hash,
+    token_id,
+    from_address,
+    to_address,
+    event_type
 );
 
 -- Watched Addresses table - For owner-based indexing

@@ -141,9 +141,10 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			Timestamp:   input.ProvenanceEvent.Timestamp,
 		}
 
-		// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on comprehensive unique index
+		// (chain, tx_hash, token_id, from_address, to_address, event_type)
 		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
 			DoNothing: true,
 		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
 			Create(&provenanceEvent).Error; err != nil {
@@ -593,9 +594,10 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 			Timestamp:   input.ProvenanceEvent.Timestamp,
 		}
 
-		// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on comprehensive unique index
+		// (chain, tx_hash, token_id, from_address, to_address, event_type)
 		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
 			DoNothing: true,
 		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
 			Create(&provenanceEvent).Error; err != nil {
@@ -675,9 +677,10 @@ func (s *pgStore) CreateMetadataUpdate(ctx context.Context, input CreateMetadata
 			Timestamp:   input.ProvenanceEvent.Timestamp,
 		}
 
-		// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on comprehensive unique index
+		// (chain, tx_hash, token_id, from_address, to_address, event_type)
 		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
 			DoNothing: true,
 		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
 			Create(&provenanceEvent).Error; err != nil {
@@ -793,9 +796,10 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 			Timestamp:   input.ProvenanceEvent.Timestamp,
 		}
 
-		// Use ON CONFLICT DO NOTHING to skip duplicates based on (chain, tx_hash)
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on comprehensive unique index
+		// (chain, tx_hash, token_id, from_address, to_address, event_type)
 		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+			Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
 			DoNothing: true,
 		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
 			Create(&provenanceEvent).Error; err != nil {
@@ -935,8 +939,10 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
+			// Use ON CONFLICT DO NOTHING to skip duplicates based on comprehensive unique index
+			// (chain, tx_hash, token_id, from_address, to_address, event_type)
 			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}},
+				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
 				DoNothing: true,
 			}).Create(&provenanceEvents).Error; err != nil {
 				return fmt.Errorf("failed to create provenance events: %w", err)
@@ -945,6 +951,12 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			// 5. Batch insert changes_journal entries for all events
 			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
 			for _, evt := range provenanceEvents {
+				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
+				// These event could have ID == 0 and already have change journals from when they were first inserted
+				if evt.ID == 0 {
+					continue
+				}
+
 				// Populate meta with provenance information
 				meta := schema.ProvenanceChangeMeta{
 					Chain:    token.Chain,
@@ -1002,18 +1014,13 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 	}
 
 	// Filter by addresses - filter by from_address or to_address in provenance_events
-	// or by owner_address in balances
 	if len(filter.Addresses) > 0 {
 		query = query.Where(`
 			subject_id IN (
 				SELECT CAST(id AS TEXT) FROM provenance_events 
 				WHERE from_address IN ? OR to_address IN ?
 			)
-		`, filter.Addresses, filter.Addresses).
-			Or(`subject_id IN (
-			SELECT CAST(token_id AS TEXT) FROM balances
-			WHERE owner_address IN ?
-		)`, filter.Addresses)
+		`, filter.Addresses, filter.Addresses)
 	}
 
 	// Count total matching records
@@ -1040,7 +1047,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 
 	// Execute the query
 	var changes []schema.ChangesJournal
-	if err := query.Find(&changes).Error; err != nil {
+	if err := query.Debug().Find(&changes).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to query changes: %w", err)
 	}
 

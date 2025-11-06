@@ -111,6 +111,12 @@ up-api: up-infra up-workers ## Start API service (requires infrastructure and wo
 	@echo "$(COLOR_GREEN)✓ API service started$(COLOR_RESET)"
 	@$(MAKE) ps
 
+up-bridge: up-infra up-emitters ## Start event bridge service (requires infrastructure and emitters)
+	@echo "$(COLOR_GREEN)Starting event bridge service...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) up -d event-bridge
+	@echo "$(COLOR_GREEN)✓ Event bridge service started$(COLOR_RESET)"
+	@$(MAKE) ps
+
 start: up ## Alias for up
 
 run: build-all up ## Build and start all services
@@ -121,9 +127,49 @@ down: ## Stop and remove all services
 	@echo "$(COLOR_YELLOW)Stopping all services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) down
 
+down-api: ## Stop and remove API service
+	@echo "$(COLOR_YELLOW)Stopping API service...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) down api
+
+down-workers: ## Stop and remove worker services
+	@echo "$(COLOR_YELLOW)Stopping worker services...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) down $(WORKER_SERVICES)
+
+down-emitters: ## Stop and remove event emitters
+	@echo "$(COLOR_YELLOW)Stopping event emitters...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) down $(EMITTER_SERVICES)
+
+down-bridge: ## Stop and remove event bridge service
+	@echo "$(COLOR_YELLOW)Stopping event bridge service...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) down event-bridge
+
+down-infra: ## Stop and remove infrastructure services
+	@echo "$(COLOR_YELLOW)Stopping infrastructure services...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) down $(INFRA_SERVICES)
+
 stop: ## Stop all services (keep containers)
 	@echo "$(COLOR_YELLOW)Stopping all services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) stop
+
+stop-api: ## Stop API service
+	@echo "$(COLOR_YELLOW)Stopping API service...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) stop api
+
+stop-workers: ## Stop worker services
+	@echo "$(COLOR_YELLOW)Stopping worker services...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) stop $(WORKER_SERVICES)
+
+stop-emitters: ## Stop event emitters
+	@echo "$(COLOR_YELLOW)Stopping event emitters...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) stop $(EMITTER_SERVICES)
+
+stop-bridge: ## Stop event bridge service
+	@echo "$(COLOR_YELLOW)Stopping event bridge service...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) stop event-bridge
+
+stop-infra: ## Stop infrastructure services
+	@echo "$(COLOR_YELLOW)Stopping infrastructure services...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) stop $(INFRA_SERVICES)
 
 restart: ## Restart all services
 	@echo "$(COLOR_YELLOW)Restarting all services...$(COLOR_RESET)"
@@ -137,6 +183,12 @@ restart-workers: ## Restart worker services
 
 restart-emitters: ## Restart event emitters
 	@$(DOCKER_COMPOSE) restart $(EMITTER_SERVICES)
+
+restart-bridge: ## Restart event bridge service
+	@$(DOCKER_COMPOSE) restart event-bridge
+
+restart-infra: ## Restart infrastructure services
+	@$(DOCKER_COMPOSE) restart $(INFRA_SERVICES)
 
 ##@ Monitoring Commands
 

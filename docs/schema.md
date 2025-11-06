@@ -185,7 +185,7 @@ Optional audit trail of blockchain events.
 - `idx_provenance_events_raw` GIN on (raw)
 
 **Unique Constraints**:
-- `(chain, tx_hash)` (unique)
+- `(chain, tx_hash, token_id, from_address, to_address, event_type)` - Allows multiple events in the same transaction for different tokens or address pairs
 
 **Relationships**:
 - Many-to-one with `tokens`
