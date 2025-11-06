@@ -25,6 +25,23 @@ jobs:
   test:
     name: Test (Go)
     runs-on: ubuntu-latest
+    
+    # PostgreSQL service for integration tests
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
     defaults:
       run:
         working-directory: ./
@@ -45,11 +62,26 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+        env:
+          PGPASSWORD: postgres
+
       - name: Run go vet
         run: go vet ./...
 
       - name: Run tests with coverage
         run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|cmd")
+        env:
+          TEST_DB_HOST: localhost
+          TEST_DB_PORT: 5432
+          TEST_DB_USER: postgres
+          TEST_DB_PASSWORD: postgres
+          TEST_DB_NAME: test_db
 
       - name: Filter generated files from coverage
         run: |

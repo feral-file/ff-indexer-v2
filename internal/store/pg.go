@@ -150,12 +150,11 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			return fmt.Errorf("failed to create provenance event: %w", err)
 		}
 
-		// If the event was a duplicate, we need to fetch it to get the ID
+		// If the event was a duplicate (ID == 0), rollback the transaction
+		// This prevents creating a token with a provenance event that belongs to another token
 		if provenanceEvent.ID == 0 {
-			if err := tx.Where("chain = ? AND tx_hash = ?", input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash).
-				First(&provenanceEvent).Error; err != nil {
-				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
-			}
+			return fmt.Errorf("duplicate provenance event detected for chain=%s, tx_hash=%s",
+				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
 		// 4. Create the change journal entry
@@ -603,12 +602,11 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 			return fmt.Errorf("failed to create provenance event: %w", err)
 		}
 
-		// If the event was a duplicate, we need to fetch it to get the ID
+		// If the event was a duplicate (ID == 0), rollback the transaction
+		// This prevents linking multiple operations to the same provenance event
 		if provenanceEvent.ID == 0 {
-			if err := tx.Where("chain = ? AND tx_hash = ?", input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash).
-				First(&provenanceEvent).Error; err != nil {
-				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
-			}
+			return fmt.Errorf("duplicate provenance event detected for chain=%s, tx_hash=%s",
+				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
 		// 5. Create the change journal entry
@@ -686,12 +684,11 @@ func (s *pgStore) CreateMetadataUpdate(ctx context.Context, input CreateMetadata
 			return fmt.Errorf("failed to create provenance event: %w", err)
 		}
 
-		// If the event was a duplicate, we need to fetch it to get the ID
+		// If the event was a duplicate (ID == 0), rollback the transaction
+		// This prevents linking multiple operations to the same provenance event
 		if provenanceEvent.ID == 0 {
-			if err := tx.Where("chain = ? AND tx_hash = ?", input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash).
-				First(&provenanceEvent).Error; err != nil {
-				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
-			}
+			return fmt.Errorf("duplicate provenance event detected for chain=%s, tx_hash=%s",
+				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
 		return nil
@@ -805,12 +802,11 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 			return fmt.Errorf("failed to create provenance event: %w", err)
 		}
 
-		// If the event was a duplicate, we need to fetch it to get the ID
+		// If the event was a duplicate (ID == 0), rollback the transaction
+		// This prevents linking multiple operations to the same provenance event
 		if provenanceEvent.ID == 0 {
-			if err := tx.Where("chain = ? AND tx_hash = ?", input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash).
-				First(&provenanceEvent).Error; err != nil {
-				return fmt.Errorf("failed to fetch existing provenance event: %w", err)
-			}
+			return fmt.Errorf("duplicate provenance event detected for chain=%s, tx_hash=%s",
+				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
 		// 6. Create the change journal entry
@@ -871,14 +867,14 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "token_cid"}},
 			DoUpdates: clause.AssignmentColumns([]string{"current_owner", "burned"}),
-		}).Create(&token).Error; err != nil {
+		}).Clauses(clause.Returning{}).Create(&token).Error; err != nil {
 			return fmt.Errorf("failed to upsert token: %w", err)
 		}
 
 		// 2. Delete existing related records to ensure data freshness
 		// Delete changes_journal entries first (foreign key constraint)
 		// Only delete journal entries related to provenance data (token, owner, balance)
-		// Other journal types (e.g., media) should be preserved as they may not be tied to on-chain events
+		// Other journal types (e.g., metadata) should be preserved as they may not be tied to on-chain events
 		if len(input.Events) > 0 {
 			// Delete changes_journal entries
 			if err := tx.Where("token_id = ? AND subject_type IN ?", token.ID, []string{"token", "owner", "balance"}).
@@ -974,8 +970,10 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
+			// Use ON CONFLICT DO NOTHING with the unique constraint columns
+			// Unique constraint: (token_id, subject_type, subject_id, changed_at)
 			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "token_id"}, {Name: "subject_type"}, {Name: "subject_id"}},
+				Columns:   []clause.Column{{Name: "token_id"}, {Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 				DoNothing: true,
 			}).Create(&changeJournals).Error; err != nil {
 				return fmt.Errorf("failed to create changes_journal entries: %w", err)
@@ -1240,57 +1238,35 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 }
 
 // CreateMediaAsset creates a new media asset record
-// Uses pessimistic locking to handle all unique constraints:
-// - (source_url, provider)
-// - (provider, provider_asset_id)
+// Uses ON CONFLICT to update existing records with new data
 func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetInput) (*schema.MediaAsset, error) {
-	var result *schema.MediaAsset
-
-	// Use transaction with row-level locking
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existingAsset schema.MediaAsset
-
-		// Try to lock an existing record matching any of the two unique constraints
-		// SELECT ... FOR UPDATE will lock the row if it exists, preventing concurrent inserts
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("source_url = ? AND provider = ?", input.SourceURL, input.Provider).
-			Or("provider = ? AND provider_asset_id = ?", input.Provider, input.ProviderAssetID).
-			First(&existingAsset).Error
-
-		if err == nil {
-			// Record exists and is now locked, return it
-			result = &existingAsset
-			return nil
-		}
-
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("failed to lock existing media asset: %w", err)
-		}
-
-		// No existing record found, safe to insert
-		mediaAsset := schema.MediaAsset{
-			SourceURL:        input.SourceURL,
-			MimeType:         input.MimeType,
-			FileSizeBytes:    input.FileSizeBytes,
-			Provider:         input.Provider,
-			ProviderAssetID:  input.ProviderAssetID,
-			ProviderMetadata: input.ProviderMetadata,
-			VariantURLs:      input.VariantURLs,
-		}
-
-		if err := tx.Create(&mediaAsset).Error; err != nil {
-			return fmt.Errorf("failed to create media asset: %w", err)
-		}
-
-		result = &mediaAsset
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
+	mediaAsset := schema.MediaAsset{
+		SourceURL:        input.SourceURL,
+		MimeType:         input.MimeType,
+		FileSizeBytes:    input.FileSizeBytes,
+		Provider:         input.Provider,
+		ProviderAssetID:  input.ProviderAssetID,
+		ProviderMetadata: input.ProviderMetadata,
+		VariantURLs:      input.VariantURLs,
 	}
 
-	return result, nil
+	// Use ON CONFLICT to update all fields if duplicate exists
+	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "source_url"}, {Name: "provider"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"mime_type",
+			"file_size_bytes",
+			"provider_asset_id",
+			"provider_metadata",
+			"variant_urls",
+		}),
+	}).Create(&mediaAsset).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create media asset: %w", err)
+	}
+
+	return &mediaAsset, nil
 }
 
 // SetKeyValue sets a key-value pair in the key-value store
