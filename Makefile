@@ -152,6 +152,9 @@ logs-workers: ## Show logs for worker services
 logs-emitters: ## Show logs for event emitters
 	@$(DOCKER_COMPOSE) logs -f $(EMITTER_SERVICES)
 
+logs-bridge: ## Show logs for event bridge service
+	@$(DOCKER_COMPOSE) logs -f event-bridge
+
 logs-infra: ## Show logs for infrastructure services
 	@$(DOCKER_COMPOSE) logs -f $(INFRA_SERVICES)
 

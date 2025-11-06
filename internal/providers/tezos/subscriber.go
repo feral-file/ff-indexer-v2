@@ -121,6 +121,8 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 
 	// Keep connection alive and handle events
 	<-ctx.Done()
+
+	logger.InfoCtx(ctx, "TzKT WebSocket connection closed due to context done")
 	return ctx.Err()
 }
 

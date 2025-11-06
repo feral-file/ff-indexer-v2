@@ -83,7 +83,11 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to filter logs: %w", err)
 	}
-	defer sub.Unsubscribe()
+	defer func() {
+		logger.InfoCtx(ctx, "Unsubscribing from ethereum events logs")
+		sub.Unsubscribe()
+		logger.InfoCtx(ctx, "Unsubscribed from ethereum events logs")
+	}()
 
 	for {
 		select {
