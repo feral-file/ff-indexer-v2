@@ -78,7 +78,7 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 		},
 	}
 
-	logs := make(chan types.Log)
+	logs := make(chan types.Log, 2048) // using 2048 as the buffer size for the channel
 	sub, err := s.client.SubscribeFilterLogs(ctx, query, logs)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to filter logs: %w", err)
