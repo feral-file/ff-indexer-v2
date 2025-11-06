@@ -6,6 +6,8 @@ import (
 	"github.com/philippseith/signalr"
 )
 
+const MAX_MESSAGE_SIZE = 1 * 1024 * 1024 // 1MB
+
 // SignalRClient defines an interface for SignalR client operations to enable mocking
 //
 //go:generate mockgen -source=signalr.go -destination=../mocks/signalr.go -package=mocks -mock_names=SignalRClient=MockSignalRClient
@@ -36,5 +38,9 @@ func (s *RealSignalR) NewClient(ctx context.Context, address string, receiver in
 		return nil, err
 	}
 
-	return signalr.NewClient(ctx, signalr.WithConnection(conn), signalr.WithReceiver(receiver))
+	return signalr.NewClient(
+		ctx,
+		signalr.WithConnection(conn),
+		signalr.WithReceiver(receiver),
+		signalr.MaximumReceiveMessageSize(MAX_MESSAGE_SIZE))
 }
