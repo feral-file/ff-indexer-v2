@@ -352,8 +352,6 @@ services:
         condition: service_healthy
       worker-core:
         condition: service_healthy
-      worker-media:
-        condition: service_healthy
     volumes:
       - ../../cmd/api/config.yaml.sample:/app/config.yaml:ro
       - ../../tools/registry/blacklist.json:/app/tools/registry/blacklist.json:ro
