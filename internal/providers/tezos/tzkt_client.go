@@ -366,7 +366,7 @@ func (c *tzktClient) GetTokenEvents(ctx context.Context, contractAddress string,
 // This is used for chunk-based sweeping, supporting pagination with offset
 func (c *tzktClient) GetTokenBalancesByAccountWithinBlockRange(ctx context.Context, accountAddress string, fromBlock, toBlock uint64, limit int, offset int) ([]TzKTTokenBalance, error) {
 	// TzKT API: GET /v1/tokens/balances?account={address}&balance.ne=0&lastLevel.ge={fromBlock}&lastLevel.le={toBlock}&sort.asc=lastLevel&limit={limit}&offset={offset}
-	url := fmt.Sprintf("%s/v1/tokens/balances?account=%s&balance.ne=0&token.metadata.artifactUri.null&lastLevel.ge=%d&lastLevel.le=%d&sort.asc=lastLevel&limit=%d&offset=%d",
+	url := fmt.Sprintf("%s/v1/tokens/balances?account=%s&balance.ne=0&lastLevel.ge=%d&lastLevel.le=%d&sort.asc=lastLevel&limit=%d&offset=%d",
 		c.baseURL, accountAddress, fromBlock, toBlock, limit, offset)
 
 	var balances []TzKTTokenBalance
