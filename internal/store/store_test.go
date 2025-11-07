@@ -1125,9 +1125,11 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 		require.NotNil(t, updateChange, "Should have metadata update with old values")
 
 		// Verify initial change has new values
+		assert.Equal(t, token.ID, initialChange.TokenID)
 		assert.Equal(t, imageURL1, *initialChange.New.ImageURL)
 
 		// Verify update change has both old and new values
+		assert.Equal(t, token.ID, updateChange.TokenID)
 		assert.Equal(t, imageURL1, *updateChange.Old.ImageURL)
 		assert.Equal(t, imageURL2, *updateChange.New.ImageURL)
 	})
@@ -1274,6 +1276,7 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		var meta schema.EnrichmentSourceChangeMeta
 		err = json.Unmarshal(enrichChange.Meta, &meta)
 		require.NoError(t, err)
+		assert.Equal(t, token.ID, meta.TokenID)
 		assert.Equal(t, string(schema.VendorFXHash), meta.New.Vendor)
 		assert.Equal(t, imageURL, *meta.New.ImageURL)
 
@@ -1313,6 +1316,7 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		var latestMeta schema.EnrichmentSourceChangeMeta
 		err = json.Unmarshal(enrichSourceChanges2[len(enrichSourceChanges2)-1].Meta, &latestMeta)
 		require.NoError(t, err)
+		assert.Equal(t, token.ID, latestMeta.TokenID)
 		assert.Equal(t, imageURL, *latestMeta.Old.ImageURL)
 		assert.Equal(t, imageURL2, *latestMeta.New.ImageURL)
 	})

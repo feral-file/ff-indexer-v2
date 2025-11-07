@@ -29,20 +29,22 @@ const (
 // ProvenanceChangeMeta represents the metadata for token, owner, and balance changes
 // It stores essential provenance information to quickly identify what changed without joining tables
 type ProvenanceChangeMeta struct {
-	Chain    domain.Chain         `json:"chain"`              // e.g., "eip155:1", "tezos:mainnet"
-	Standard domain.ChainStandard `json:"standard"`           // e.g., "erc721", "erc1155", "fa2"
-	Contract string               `json:"contract"`           // Contract address
-	Token    string               `json:"token"`              // Token number
-	From     *string              `json:"from,omitempty"`     // Sender address (nil for mints)
-	To       *string              `json:"to,omitempty"`       // Receiver address (nil for burns)
-	Quantity string               `json:"quantity,omitempty"` // Quantity transferred/minted/burned
+	TokenID     uint64               `json:"token_id"`           // Token ID
+	Chain       domain.Chain         `json:"chain"`              // e.g., "eip155:1", "tezos:mainnet"
+	Standard    domain.ChainStandard `json:"standard"`           // e.g., "erc721", "erc1155", "fa2"
+	Contract    string               `json:"contract"`           // Contract address
+	TokenNumber string               `json:"token_number"`       // Token number
+	From        *string              `json:"from,omitempty"`     // Sender address (nil for mints)
+	To          *string              `json:"to,omitempty"`       // Receiver address (nil for burns)
+	Quantity    string               `json:"quantity,omitempty"` // Quantity transferred/minted/burned
 }
 
 // MetadataChangeMeta represents the metadata for metadata update changes
 // It stores the old and new values of normalized metadata fields to track what changed
 type MetadataChangeMeta struct {
-	Old MetadataFields `json:"old"` // Previous metadata values
-	New MetadataFields `json:"new"` // New metadata values
+	TokenID uint64         `json:"token_id"` // Token ID
+	Old     MetadataFields `json:"old"`      // Previous metadata values
+	New     MetadataFields `json:"new"`      // New metadata values
 }
 
 // MetadataFields represents the normalized metadata fields we track for changes
@@ -57,8 +59,9 @@ type MetadataFields struct {
 // EnrichmentSourceChangeMeta represents the metadata for enrichment source changes
 // It stores the old and new values of enrichment source fields to track what changed
 type EnrichmentSourceChangeMeta struct {
-	Old EnrichmentSourceFields `json:"old"` // Previous enrichment source values
-	New EnrichmentSourceFields `json:"new"` // New enrichment source values
+	TokenID uint64                 `json:"token_id"` // Token ID
+	Old     EnrichmentSourceFields `json:"old"`      // Previous enrichment source values
+	New     EnrichmentSourceFields `json:"new"`      // New enrichment source values
 }
 
 // EnrichmentSourceFields represents the enrichment source fields we track for changes

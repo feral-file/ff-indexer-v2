@@ -176,13 +176,14 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 		// For mint events: subject_type = 'token', subject_id = provenance_event_id
 		// Populate meta with provenance information
 		meta := schema.ProvenanceChangeMeta{
-			Chain:    token.Chain,
-			Standard: token.Standard,
-			Contract: token.ContractAddress,
-			Token:    token.TokenNumber,
-			From:     input.ProvenanceEvent.FromAddress,
-			To:       input.ProvenanceEvent.ToAddress,
-			Quantity: input.ProvenanceEvent.Quantity,
+			TokenID:     token.ID,
+			Chain:       token.Chain,
+			Standard:    token.Standard,
+			Contract:    token.ContractAddress,
+			TokenNumber: token.TokenNumber,
+			From:        input.ProvenanceEvent.FromAddress,
+			To:          input.ProvenanceEvent.ToAddress,
+			Quantity:    input.ProvenanceEvent.Quantity,
 		}
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
@@ -432,6 +433,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 		// subject_id = token_id (which is the PK of token_metadata table)
 		// Build the meta with old (optional) and new (required) metadata fields
 		metaChanges := schema.MetadataChangeMeta{
+			TokenID: input.TokenID,
 			New: schema.MetadataFields{
 				AnimationURL: metadata.AnimationURL,
 				ImageURL:     metadata.ImageURL,
@@ -545,6 +547,7 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 
 		// 4. Create change journal entry
 		metaChanges := schema.EnrichmentSourceChangeMeta{
+			TokenID: input.TokenID,
 			New: schema.EnrichmentSourceFields{
 				Vendor:       string(enrichmentSource.Vendor),
 				VendorHash:   enrichmentSource.VendorHash,
@@ -686,13 +689,14 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 		// For burn events: subject_type = 'token', subject_id = provenance_event_id
 		// Populate meta with provenance information
 		meta := schema.ProvenanceChangeMeta{
-			Chain:    token.Chain,
-			Standard: token.Standard,
-			Contract: token.ContractAddress,
-			Token:    token.TokenNumber,
-			From:     input.ProvenanceEvent.FromAddress,
-			To:       input.ProvenanceEvent.ToAddress,
-			Quantity: input.ProvenanceEvent.Quantity,
+			TokenID:     token.ID,
+			Chain:       token.Chain,
+			Standard:    token.Standard,
+			Contract:    token.ContractAddress,
+			TokenNumber: token.TokenNumber,
+			From:        input.ProvenanceEvent.FromAddress,
+			To:          input.ProvenanceEvent.ToAddress,
+			Quantity:    input.ProvenanceEvent.Quantity,
 		}
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
@@ -890,13 +894,14 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 		// - ERC1155/FA2 (multi-token): subject_type = 'balance'
 		// Populate meta with provenance information
 		meta := schema.ProvenanceChangeMeta{
-			Chain:    token.Chain,
-			Standard: token.Standard,
-			Contract: token.ContractAddress,
-			Token:    token.TokenNumber,
-			From:     input.ProvenanceEvent.FromAddress,
-			To:       input.ProvenanceEvent.ToAddress,
-			Quantity: input.ProvenanceEvent.Quantity,
+			TokenID:     token.ID,
+			Chain:       token.Chain,
+			Standard:    token.Standard,
+			Contract:    token.ContractAddress,
+			TokenNumber: token.TokenNumber,
+			From:        input.ProvenanceEvent.FromAddress,
+			To:          input.ProvenanceEvent.ToAddress,
+			Quantity:    input.ProvenanceEvent.Quantity,
 		}
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
@@ -1046,13 +1051,14 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 
 				// Populate meta with provenance information
 				meta := schema.ProvenanceChangeMeta{
-					Chain:    token.Chain,
-					Standard: token.Standard,
-					Contract: token.ContractAddress,
-					Token:    token.TokenNumber,
-					From:     evt.FromAddress,
-					To:       evt.ToAddress,
-					Quantity: *evt.Quantity,
+					TokenID:     token.ID,
+					Chain:       token.Chain,
+					Standard:    token.Standard,
+					Contract:    token.ContractAddress,
+					TokenNumber: token.TokenNumber,
+					From:        evt.FromAddress,
+					To:          evt.ToAddress,
+					Quantity:    *evt.Quantity,
 				}
 				metaJSON, err := json.Marshal(meta)
 				if err != nil {
