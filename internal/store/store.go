@@ -140,6 +140,7 @@ type TokenQueryFilter struct {
 
 // ChangesQueryFilter represents filters for changes queries
 type ChangesQueryFilter struct {
+	TokenIDs     []string             // Filter by token IDs
 	TokenCIDs    []string             // Filter by token CIDs
 	Addresses    []string             // Filter by addresses (matches from/to addresses in provenance events)
 	SubjectTypes []schema.SubjectType // Filter by subject types
@@ -177,6 +178,8 @@ type Store interface {
 
 	// GetTokenByTokenCID retrieves a token by its canonical ID
 	GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error)
+	// GetTokenByID retrieves a token by its internal ID
+	GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error)
 	// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID
 	GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*TokensWithMetadataResult, error)
 	// GetTokensByFilter retrieves tokens with their metadata based on filters
@@ -196,8 +199,6 @@ type Store interface {
 
 	// GetTokenMetadataByTokenCID retrieves token metadata by token CID
 	GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error)
-	// GetTokenMetadataByTokenID retrieves token metadata by token ID
-	GetTokenMetadataByTokenID(ctx context.Context, tokenID uint64) (*schema.TokenMetadata, error)
 	// UpsertTokenMetadata creates or updates token metadata
 	UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error
 	// CreateMetadataUpdate creates a provenance event for a metadata update

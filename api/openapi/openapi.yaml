@@ -360,8 +360,11 @@ paths:
         - Media asset changes
         
         ## Filters
+        - `token_id` - Filter by token ID(s) - supports multiple values
         - `token_cid` - Filter by token CID(s)
         - `address` - Filter by address(es) involved in the change
+        - `subject_type` - Filter by subject type(s) - supports multiple values
+        - `subject_id` - Filter by subject ID(s) - supports multiple values
         - `since` - Only show changes after this timestamp (RFC3339 format)
         
         ## Pagination & Ordering
@@ -375,6 +378,16 @@ paths:
       tags:
         - changes
       parameters:
+        - name: token_id
+          in: query
+          description: Filter by token ID(s) - supports multiple values
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["1234"]
         - name: token_cid
           in: query
           description: Filter by token CID(s) - supports multiple values
@@ -395,6 +408,26 @@ paths:
           style: form
           explode: true
           example: ["0xabc123"]
+        - name: subject_type
+          in: query
+          description: Filter by subject type(s) - supports multiple values
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["token"]
+        - name: subject_id
+          in: query
+          description: Filter by subject ID(s) - supports multiple values
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["1234"]
         - name: since
           in: query
           description: Only show changes after this timestamp (RFC3339 format)

@@ -193,8 +193,11 @@ func (h *handler) GetChanges(c *gin.Context) {
 	// Call executor's GetChanges method
 	response, err := h.executor.GetChanges(
 		c.Request.Context(),
+		queryParams.TokenIDs,
 		queryParams.TokenCIDs,
 		queryParams.Addresses,
+		queryParams.SubjectTypes,
+		queryParams.SubjectIDs,
 		queryParams.Since,
 		limit,
 		offset,

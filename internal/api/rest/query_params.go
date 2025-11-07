@@ -11,6 +11,7 @@ import (
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
@@ -187,9 +188,12 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 // GetChangesQueryParams holds query parameters for GET /changes
 type GetChangesQueryParams struct {
 	// Filters
-	TokenCIDs []string   `form:"token_cid"`
-	Addresses []string   `form:"address"`
-	Since     *time.Time `form:"since" time_format:"2006-01-02T15:04:05Z07:00"` // Timestamp filter - only show changes after this time
+	TokenIDs     []string             `form:"token_id"`
+	TokenCIDs    []string             `form:"token_cid"`
+	Addresses    []string             `form:"address"`
+	SubjectTypes []schema.SubjectType `form:"subject_type"`
+	SubjectIDs   []string             `form:"subject_id"`
+	Since        *time.Time           `form:"since" time_format:"2006-01-02T15:04:05Z07:00"` // Timestamp filter - only show changes after this time
 
 	// Pagination
 	Limit  uint8             `form:"limit,default=20"`
@@ -200,6 +204,13 @@ type GetChangesQueryParams struct {
 
 // Validate validates the query parameters for GET /changes
 func (p *GetChangesQueryParams) Validate() error {
+	// Validate token IDs
+	for _, tokenID := range p.TokenIDs {
+		if !internalTypes.IsNumeric(tokenID) {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid token ID: %s. Must be a valid positive numeric value", tokenID))
+		}
+	}
+
 	// Validate token CIDs
 	for _, tokenCID := range p.TokenCIDs {
 		if !domain.TokenCID(tokenCID).Valid() {

@@ -28,6 +28,19 @@ func NewPGStore(db *gorm.DB) Store {
 	return &pgStore{db: db}
 }
 
+// GetTokenByID retrieves a token by its internal ID
+func (s *pgStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
+	var token schema.Token
+	err := s.db.WithContext(ctx).Where("id = ?", tokenID).First(&token).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get token: %w", err)
+	}
+	return &token, nil
+}
+
 // GetTokenByTokenCID retrieves a token by its canonical ID
 func (s *pgStore) GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error) {
 	var token schema.Token
@@ -371,19 +384,6 @@ func (s *pgStore) GetTokenMetadataByTokenCID(ctx context.Context, tokenCID strin
 		Joins("JOIN tokens ON tokens.id = token_metadata.token_id").
 		Where("tokens.token_cid = ?", tokenCID).
 		First(&metadata).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get token metadata: %w", err)
-	}
-	return &metadata, nil
-}
-
-// GetTokenMetadataByTokenID retrieves token metadata by token ID
-func (s *pgStore) GetTokenMetadataByTokenID(ctx context.Context, tokenID uint64) (*schema.TokenMetadata, error) {
-	var metadata schema.TokenMetadata
-	err := s.db.WithContext(ctx).Where("token_id = ?", tokenID).First(&metadata).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -1101,6 +1101,26 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 	// Apply subject ID filter
 	if len(filter.SubjectIDs) > 0 {
 		query = query.Where("subject_id IN ?", filter.SubjectIDs)
+	}
+
+	// Filter by token_id
+	if len(filter.TokenIDs) > 0 {
+		// Build query to match changes for these tokens
+		// Different subject types reference tokens differently
+		query = query.Where(`
+			(
+				-- Provenance changes (token/owner/balance): subject_id is provenance_event_id
+				subject_type IN (?, ?, ?) AND subject_id IN (
+					SELECT CAST(id AS TEXT) FROM provenance_events WHERE token_id IN ?
+				)
+			) OR (
+				-- Metadata and enrich_source changes: subject_id is token_id
+				subject_type IN (?, ?) AND subject_id::BIGINT IN ?
+			)
+		`,
+			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance, filter.TokenIDs,
+			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, filter.TokenIDs,
+		)
 	}
 
 	// Filter by token_cid - need to resolve to token_ids and check subject_id based on subject_type

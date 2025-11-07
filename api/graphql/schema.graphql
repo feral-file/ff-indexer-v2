@@ -211,8 +211,11 @@ type Query {
   # Get changes with filters
   # Equivalent to: GET /api/v1/changes
   changes(
-    token_cid: [String!]
-    address: [String!]
+    token_ids: [String!]
+    token_cids: [String!]
+    addresses: [String!]
+    subject_types: [String!]
+    subject_ids: [String!]
     since: String
     limit: Uint8 = 20
     offset: Uint64 = 0

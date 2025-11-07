@@ -6,6 +6,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // convertExpansionStrings converts GraphQL expansion strings to shared types.Expansion
@@ -32,6 +33,19 @@ func convertChainStrings(chainStrings []string) []domain.Chain {
 		chains[i] = domain.Chain(chain)
 	}
 	return chains
+}
+
+// convertSubjectTypes converts GraphQL subject types to schema.SubjectType
+func convertSubjectTypes(subjectTypes []string) []schema.SubjectType {
+	if subjectTypes == nil {
+		return nil
+	}
+
+	stypes := make([]schema.SubjectType, len(subjectTypes))
+	for i, subjectType := range subjectTypes {
+		stypes[i] = schema.SubjectType(subjectType)
+	}
+	return stypes
 }
 
 // parseSinceTimestamp parses the "since" timestamp string into a time.Time

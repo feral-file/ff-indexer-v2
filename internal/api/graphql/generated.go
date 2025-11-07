@@ -156,7 +156,7 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		Changes        func(childComplexity int, tokenCid []string, address []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) int
+		Changes        func(childComplexity int, tokenIds []string, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) int
 		Token          func(childComplexity int, cid string, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
 		Tokens         func(childComplexity int, owner []string, chain []string, contractAddress []string, tokenID []string, tokenCids []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID string) int
@@ -264,7 +264,7 @@ type ProvenanceEventResolver interface {
 type QueryResolver interface {
 	Token(ctx context.Context, cid string, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 	Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, tokenCids []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
-	Changes(ctx context.Context, tokenCid []string, address []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error)
+	Changes(ctx context.Context, tokenIds []string, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error)
 	WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error)
 }
 type TokenResolver interface {
@@ -703,7 +703,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Changes(childComplexity, args["token_cid"].([]string), args["address"].([]string), args["since"].(*string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["order"].(*types.Order), args["expand"].([]string)), true
+		return e.complexity.Query.Changes(childComplexity, args["token_ids"].([]string), args["token_cids"].([]string), args["addresses"].([]string), args["subject_types"].([]string), args["subject_ids"].([]string), args["since"].(*string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["order"].(*types.Order), args["expand"].([]string)), true
 	case "Query.token":
 		if e.complexity.Query.Token == nil {
 			break
@@ -1312,8 +1312,11 @@ type Query {
   # Get changes with filters
   # Equivalent to: GET /api/v1/changes
   changes(
-    token_cid: [String!]
-    address: [String!]
+    token_ids: [String!]
+    token_cids: [String!]
+    addresses: [String!]
+    subject_types: [String!]
+    subject_ids: [String!]
     since: String
     limit: Uint8 = 20
     offset: Uint64 = 0
@@ -1377,41 +1380,56 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 func (ec *executionContext) field_Query_changes_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "token_cid", ec.unmarshalOString2ᚕstringᚄ)
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "token_ids", ec.unmarshalOString2ᚕstringᚄ)
 	if err != nil {
 		return nil, err
 	}
-	args["token_cid"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "address", ec.unmarshalOString2ᚕstringᚄ)
+	args["token_ids"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "token_cids", ec.unmarshalOString2ᚕstringᚄ)
 	if err != nil {
 		return nil, err
 	}
-	args["address"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "since", ec.unmarshalOString2ᚖstring)
+	args["token_cids"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "addresses", ec.unmarshalOString2ᚕstringᚄ)
 	if err != nil {
 		return nil, err
 	}
-	args["since"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["addresses"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "subject_types", ec.unmarshalOString2ᚕstringᚄ)
 	if err != nil {
 		return nil, err
 	}
-	args["limit"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["subject_types"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "subject_ids", ec.unmarshalOString2ᚕstringᚄ)
 	if err != nil {
 		return nil, err
 	}
-	args["offset"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
+	args["subject_ids"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "since", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["order"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "expand", ec.unmarshalOString2ᚕstringᚄ)
+	args["since"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["expand"] = arg6
+	args["limit"] = arg6
+	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg7
+	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
+	if err != nil {
+		return nil, err
+	}
+	args["order"] = arg8
+	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "expand", ec.unmarshalOString2ᚕstringᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["expand"] = arg9
 	return args, nil
 }
 
@@ -3607,7 +3625,7 @@ func (ec *executionContext) _Query_changes(ctx context.Context, field graphql.Co
 		ec.fieldContext_Query_changes,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Changes(ctx, fc.Args["token_cid"].([]string), fc.Args["address"].([]string), fc.Args["since"].(*string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["order"].(*types.Order), fc.Args["expand"].([]string))
+			return ec.resolvers.Query().Changes(ctx, fc.Args["token_ids"].([]string), fc.Args["token_cids"].([]string), fc.Args["addresses"].([]string), fc.Args["subject_types"].([]string), fc.Args["subject_ids"].([]string), fc.Args["since"].(*string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["order"].(*types.Order), fc.Args["expand"].([]string))
 		},
 		nil,
 		ec.marshalOChangeList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐChangeListResponse,

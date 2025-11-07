@@ -32,7 +32,7 @@ type Executor interface {
 	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, tokenCIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 
 	// GetChanges retrieves changes with optional filters and expansions
-	GetChanges(ctx context.Context, tokenCIDs []string, addresses []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
+	GetChanges(ctx context.Context, tokenIDs []string, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens and addresses
 	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error)
@@ -176,7 +176,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	}, nil
 }
 
-func (e *executor) GetChanges(ctx context.Context, tokenCIDs []string, addresses []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
+func (e *executor) GetChanges(ctx context.Context, tokenIDs []string, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_CHANGES_LIMIT
@@ -190,12 +190,15 @@ func (e *executor) GetChanges(ctx context.Context, tokenCIDs []string, addresses
 
 	// Build filter
 	filter := store.ChangesQueryFilter{
-		TokenCIDs: tokenCIDs,
-		Addresses: addresses,
-		Since:     since,
-		Limit:     int(*limit),
-		Offset:    *offset,
-		OrderDesc: orderDesc,
+		TokenIDs:     tokenIDs,
+		TokenCIDs:    tokenCIDs,
+		Addresses:    addresses,
+		SubjectTypes: subjectTypes,
+		SubjectIDs:   subjectIDs,
+		Since:        since,
+		Limit:        int(*limit),
+		Offset:       *offset,
+		OrderDesc:    orderDesc,
 	}
 
 	// Get changes
@@ -423,27 +426,15 @@ func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJour
 			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for metadata: %v", err))
 		}
 
-		if change.SubjectType == schema.SubjectTypeMetadata {
-			metadata, err := e.store.GetTokenMetadataByTokenID(ctx, tokenID)
-			if err != nil {
-				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token metadata: %v", err))
-			}
-			if metadata == nil {
-				return nil, nil
-			}
-
-			return dto.MapTokenMetadataToDTO(metadata), nil
-		} else {
-			enrichment, err := e.store.GetEnrichmentSourceByTokenID(ctx, tokenID)
-			if err != nil {
-				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get enrichment source: %v", err))
-			}
-			if enrichment == nil {
-				return nil, nil
-			}
-
-			return dto.MapEnrichmentSourceToDTO(enrichment), nil
+		token, err := e.store.GetTokenByID(ctx, tokenID)
+		if err != nil {
+			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token: %v", err))
 		}
+		if token == nil {
+			return nil, nil
+		}
+
+		return dto.MapTokenToDTO(token, nil), nil
 
 	case schema.SubjectTypeMediaAsset:
 		// For media asset changes, the subject ID is media_asset_id
