@@ -197,25 +197,26 @@ Audit log for tracking all changes to indexed data.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | BIGSERIAL | Primary key |
-| token_id | BIGINT | Foreign key to tokens.id |
-| subject_type | subject_type | Type of change (token, owner, balance, metadata) |
-| subject_id | TEXT | Polymorphic reference (provenance_event_id, balance_id, token_id, media_asset_id) |
+| subject_type | subject_type | Type of change (token, owner, balance, metadata, enrich_source, media_asset) |
+| subject_id | TEXT | Polymorphic reference (provenance_event_id for token/owner/balance; token_id for metadata/enrich_source; media_asset_id for media_asset) |
 | changed_at | TIMESTAMPTZ | Change timestamp |
-| meta | JSONB | Change metadata (ProvenanceChangeMeta or MetadataChangeMeta) |
+| meta | JSONB | Change metadata (ProvenanceChangeMeta, MetadataChangeMeta, EnrichmentSourceChangeMeta, or MediaAssetChangeMeta) |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
+**Note**: Token association is resolved through `subject_id` based on `subject_type`. For provenance changes (token/owner/balance), the token is found via the `provenance_events` table. For metadata/enrich_source changes, `subject_id` directly contains the token_id. Media asset changes don't have a direct token association.
+
 **Indexes**:
-- `idx_changes_journal_token_id` on (token_id)
-- `idx_changes_journal_subject_type_id` on (subject_type, subject_id)
+- `idx_changes_journal_subject` on (subject_type, subject_id)
 - `idx_changes_journal_changed_at` on (changed_at)
+- `idx_changes_journal_subject_type` on (subject_type)
 - `idx_changes_journal_meta_gin` GIN on (meta)
 
 **Unique Constraints**:
-- `(token_id, subject_type, subject_id, changed_at)` (unique)
+- `(subject_type, subject_id, changed_at)` (unique)
 
 **Relationships**:
-- Many-to-one with `tokens`
+- Indirect relationship to `tokens` through `subject_id` (resolved based on `subject_type`)
 
 ### watched_addresses
 
@@ -294,6 +295,8 @@ Configuration and state management (cursors, version, etc.).
 - `owner` - Owner changes
 - `balance` - Balance changes
 - `metadata` - Metadata changes
+- `enrich_source` - Enrichment source changes
+- `media_asset` - Media asset changes
 
 ### event_type
 - `mint` - Token mint event
@@ -308,8 +311,9 @@ tokens (1)
   ├── (1) token_metadata
   ├── (N) balances
   ├── (N) provenance_events
-  ├── (N) enrichment_sources
-  └── (N) changes_journal
+  └── (N) enrichment_sources
+
+changes_journal (standalone, references other entities via subject_id)
 
 media_assets (standalone)
 
@@ -317,6 +321,11 @@ watched_addresses (standalone)
 
 key_value_store (standalone)
 ```
+
+**Note on changes_journal relationships**: The changes_journal table doesn't have a direct foreign key to tokens. Instead, it uses a polymorphic pattern where the token association is resolved through `subject_id` based on `subject_type`:
+- For `token`/`owner`/`balance`: Join via `provenance_events.id = subject_id`, then get token
+- For `metadata`/`enrich_source`: `subject_id` IS the token_id
+- For `media_asset`: No direct token association
 
 ## Triggers
 

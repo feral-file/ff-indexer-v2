@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -176,7 +177,6 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 		}
 
 		changeJournal := schema.ChangesJournal{
-			TokenID:     token.ID,
 			SubjectType: schema.SubjectTypeToken,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
 			ChangedAt:   input.ProvenanceEvent.Timestamp,
@@ -184,6 +184,7 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 			DoNothing: true,
 		}).
 			Clauses(clause.Returning{Columns: []clause.Column{}}).
@@ -379,6 +380,19 @@ func (s *pgStore) GetTokenMetadataByTokenCID(ctx context.Context, tokenCID strin
 	return &metadata, nil
 }
 
+// GetTokenMetadataByTokenID retrieves token metadata by token ID
+func (s *pgStore) GetTokenMetadataByTokenID(ctx context.Context, tokenID uint64) (*schema.TokenMetadata, error) {
+	var metadata schema.TokenMetadata
+	err := s.db.WithContext(ctx).Where("token_id = ?", tokenID).First(&metadata).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get token metadata: %w", err)
+	}
+	return &metadata, nil
+}
+
 // UpsertTokenMetadata creates or updates token metadata
 func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -444,7 +458,6 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 		}
 
 		changeJournal := schema.ChangesJournal{
-			TokenID:     input.TokenID,
 			SubjectType: schema.SubjectTypeMetadata,
 			SubjectID:   fmt.Sprintf("%d", input.TokenID), // token_metadata.token_id (PK)
 			ChangedAt:   *input.LastRefreshedAt,
@@ -454,6 +467,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 		// Use ON CONFLICT DO NOTHING to skip duplicates based on unique constraint
 		// This allows tracking multiple metadata changes over time (changed_at is part of the unique key)
 		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 			DoNothing: true,
 		}).
 			Clauses(clause.Returning{Columns: []clause.Column{}}).
@@ -497,7 +511,14 @@ func (s *pgStore) GetEnrichmentSourceByTokenCID(ctx context.Context, tokenCID st
 // UpsertEnrichmentSource creates or updates an enrichment source and updates enrichment_level in token_metadata
 func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrichmentSourceInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Upsert enrichment source
+		// 1. Get the old enrichment source (if it exists) for change tracking
+		var oldEnrichmentSource *schema.EnrichmentSource
+		err := tx.Where("token_id = ?", input.TokenID).First(&oldEnrichmentSource).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to get old enrichment source: %w", err)
+		}
+
+		// 2. Upsert enrichment source
 		enrichmentSource := schema.EnrichmentSource{
 			TokenID:      input.TokenID,
 			Vendor:       input.Vendor,
@@ -515,11 +536,61 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 			return fmt.Errorf("failed to upsert enrichment source: %w", err)
 		}
 
-		// 2. Update enrichment_level in token_metadata to 'vendor'
+		// 3. Update enrichment_level in token_metadata to 'vendor'
 		if err := tx.Model(&schema.TokenMetadata{}).
 			Where("token_id = ?", input.TokenID).
 			Update("enrichment_level", schema.EnrichmentLevelVendor).Error; err != nil {
 			return fmt.Errorf("failed to update enrichment level: %w", err)
+		}
+
+		// 4. Create change journal entry
+		metaChanges := schema.EnrichmentSourceChangeMeta{
+			New: schema.EnrichmentSourceFields{
+				Vendor:       string(enrichmentSource.Vendor),
+				VendorHash:   enrichmentSource.VendorHash,
+				AnimationURL: enrichmentSource.AnimationURL,
+				ImageURL:     enrichmentSource.ImageURL,
+				Name:         enrichmentSource.Name,
+				Description:  enrichmentSource.Description,
+				Artists:      enrichmentSource.Artists,
+				MimeType:     enrichmentSource.MimeType,
+			},
+		}
+
+		// Add old enrichment source if it existed
+		if oldEnrichmentSource != nil {
+			metaChanges.Old = schema.EnrichmentSourceFields{
+				Vendor:       string(oldEnrichmentSource.Vendor),
+				VendorHash:   oldEnrichmentSource.VendorHash,
+				AnimationURL: oldEnrichmentSource.AnimationURL,
+				ImageURL:     oldEnrichmentSource.ImageURL,
+				Name:         oldEnrichmentSource.Name,
+				Description:  oldEnrichmentSource.Description,
+				Artists:      oldEnrichmentSource.Artists,
+				MimeType:     oldEnrichmentSource.MimeType,
+			}
+		}
+
+		metaJSON, err := json.Marshal(metaChanges)
+		if err != nil {
+			return fmt.Errorf("failed to marshal change journal meta: %w", err)
+		}
+
+		changeJournal := schema.ChangesJournal{
+			SubjectType: schema.SubjectTypeEnrichSource,
+			SubjectID:   fmt.Sprintf("%d", input.TokenID), // enrichment_sources.token_id (PK)
+			ChangedAt:   time.Now(),
+			Meta:        metaJSON,
+		}
+
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on unique constraint
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
+			DoNothing: true,
+		}).
+			Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&changeJournal).Error; err != nil {
+			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
 		return nil
@@ -629,7 +700,6 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 		}
 
 		changeJournal := schema.ChangesJournal{
-			TokenID:     token.ID,
 			SubjectType: schema.SubjectTypeToken,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
 			ChangedAt:   input.ChangedAt,
@@ -637,6 +707,7 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 			DoNothing: true,
 		}).
 			Clauses(clause.Returning{Columns: []clause.Column{}}).
@@ -834,7 +905,6 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 
 		subjectType := types.ProvenanceEventTypeToSubjectType(input.ProvenanceEvent.EventType, token.Standard)
 		changeJournal := schema.ChangesJournal{
-			TokenID:     token.ID,
 			SubjectType: subjectType,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
 			ChangedAt:   input.ChangedAt,
@@ -842,6 +912,7 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 			DoNothing: true,
 		}).
 			Clauses(clause.Returning{Columns: []clause.Column{}}).
@@ -876,14 +947,30 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 		}
 
 		// 2. Delete existing related records to ensure data freshness
-		// Delete changes_journal entries first (foreign key constraint)
+		// Delete changes_journal entries first
 		// Only delete journal entries related to provenance data (token, owner, balance)
-		// Other journal types (e.g., metadata) should be preserved as they may not be tied to on-chain events
+		// Other journal types (e.g., metadata, enrichment_sources, media_assets) should be preserved as they may not be tied to on-chain events
 		if len(input.Events) > 0 {
-			// Delete changes_journal entries
-			if err := tx.Where("token_id = ? AND subject_type IN ?", token.ID, []string{"token", "owner", "balance"}).
-				Delete(&schema.ChangesJournal{}).Error; err != nil {
-				return fmt.Errorf("failed to delete existing changes_journal entries: %w", err)
+			// First, get existing provenance event IDs
+			var existingProvenances []schema.ProvenanceEvent
+			if err := tx.Where("token_id = ?", token.ID).Find(&existingProvenances).Error; err != nil {
+				return fmt.Errorf("failed to get existing provenance events: %w", err)
+			}
+
+			// Delete changes_journal entries linked to these provenance events
+			if len(existingProvenances) > 0 {
+				existingEventIDs := make([]string, len(existingProvenances))
+				for i, pe := range existingProvenances {
+					existingEventIDs[i] = strconv.FormatUint(pe.ID, 10)
+				}
+
+				// subject_id contains the provenance_event_id for token/owner/balance types
+				if err := tx.Where("subject_type IN ? AND subject_id IN ?",
+					[]schema.SubjectType{schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance},
+					existingEventIDs).
+					Delete(&schema.ChangesJournal{}).Error; err != nil {
+					return fmt.Errorf("failed to delete existing changes_journal entries: %w", err)
+				}
 			}
 
 			// Delete existing provenance events
@@ -974,7 +1061,6 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 
 				subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType, token.Standard)
 				changeJournals = append(changeJournals, schema.ChangesJournal{
-					TokenID:     token.ID,
 					SubjectType: subjectType,
 					SubjectID:   fmt.Sprintf("%d", evt.ID),
 					ChangedAt:   evt.Timestamp,
@@ -983,9 +1069,9 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			}
 
 			// Use ON CONFLICT DO NOTHING with the unique constraint columns
-			// Unique constraint: (token_id, subject_type, subject_id, changed_at)
+			// Unique constraint: (subject_type, subject_id, changed_at)
 			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "token_id"}, {Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
+				Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 				DoNothing: true,
 			}).Create(&changeJournals).Error; err != nil {
 				return fmt.Errorf("failed to create changes_journal entries: %w", err)
@@ -997,7 +1083,7 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 }
 
 // GetChanges retrieves changes with optional filters and pagination
-func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*ChangeWithToken, uint64, error) {
+func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, uint64, error) {
 	// Build the base query for changes
 	query := s.db.WithContext(ctx).Model(&schema.ChangesJournal{})
 
@@ -1007,29 +1093,71 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 		query = query.Where("changed_at >= ?", *filter.Since)
 	}
 
-	// Only join with tokens if we need to filter by token_cid
-	if len(filter.TokenCIDs) > 0 {
-		query = query.Joins("JOIN tokens ON tokens.id = changes_journal.token_id").
-			Where("tokens.token_cid IN ?", filter.TokenCIDs)
+	// Apply subject type filter
+	if len(filter.SubjectTypes) > 0 {
+		query = query.Where("subject_type IN ?", filter.SubjectTypes)
 	}
 
-	// Filter by addresses - include both provenance-linked changes and metadata changes
+	// Apply subject ID filter
+	if len(filter.SubjectIDs) > 0 {
+		query = query.Where("subject_id IN ?", filter.SubjectIDs)
+	}
+
+	// Filter by token_cid - need to resolve to token_ids and check subject_id based on subject_type
+	if len(filter.TokenCIDs) > 0 {
+		// Get token IDs for the given token CIDs
+		var tokens []schema.Token
+		if err := s.db.WithContext(ctx).Where("token_cid IN ?", filter.TokenCIDs).Find(&tokens).Error; err != nil {
+			return nil, 0, fmt.Errorf("failed to get tokens for token_cids: %w", err)
+		}
+
+		if len(tokens) == 0 {
+			// No matching tokens, return empty result
+			return []*schema.ChangesJournal{}, 0, nil
+		}
+
+		tokenIDs := make([]uint64, len(tokens))
+		for i, token := range tokens {
+			tokenIDs[i] = token.ID
+		}
+
+		// Build query to match changes for these tokens
+		// Different subject types reference tokens differently
+		query = query.Where(`
+			(
+				-- Provenance changes (token/owner/balance): subject_id is provenance_event_id
+				subject_type IN (?, ?, ?) AND subject_id IN (
+					SELECT CAST(id AS TEXT) FROM provenance_events WHERE token_id IN ?
+				)
+			) OR (
+				-- Metadata and enrich_source changes: subject_id is token_id
+				subject_type IN (?, ?) AND subject_id::BIGINT IN ?
+			)
+		`,
+			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance, tokenIDs,
+			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, tokenIDs,
+		)
+	}
+
+	// Filter by addresses - include both provenance-linked changes and metadata/enrich_source changes
 	if len(filter.Addresses) > 0 {
+		// For provenance changes, match by addresses in provenance_events
+		// For metadata/enrich_source, match if the token had the address as owner during the change
 		query = query.Where(`
 			(
 				-- Include provenance-related changes (owner/balance/token) linked to specific provenance events
-				subject_id IN (
+				subject_type IN (?, ?, ?) AND subject_id IN (
 					SELECT CAST(id AS TEXT) FROM provenance_events 
 					WHERE from_address IN ? OR to_address IN ?
 				)
 			) OR (
-				-- Include metadata changes that occurred during ownership periods
-				subject_type = ? AND EXISTS (
+				-- Include metadata/enrich_source changes that occurred during ownership periods
+				subject_type IN (?, ?) AND EXISTS (
 					SELECT 1 FROM provenance_events pe
-					WHERE pe.token_id = changes_journal.token_id
+					WHERE CAST(pe.token_id AS TEXT) = changes_journal.subject_id
 					AND pe.to_address IN ?
 					AND pe.timestamp <= changes_journal.changed_at
-					-- Check if metadata change happened before token was transferred out (if at all)
+					-- Check if change happened before token was transferred out (if at all)
 					AND (
 						-- Either no subsequent transfer from this address
 						NOT EXISTS (
@@ -1038,7 +1166,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 							AND pe_out.from_address = pe.to_address
 							AND pe_out.timestamp > pe.timestamp
 						)
-						-- Or the metadata change happened before the transfer out
+						-- Or the change happened before the transfer out
 						OR changes_journal.changed_at < (
 							SELECT MIN(pe_out.timestamp)
 							FROM provenance_events pe_out
@@ -1049,7 +1177,11 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 					)
 				)
 			)
-		`, filter.Addresses, filter.Addresses, schema.SubjectTypeMetadata, filter.Addresses)
+		`,
+			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance,
+			filter.Addresses, filter.Addresses,
+			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, filter.Addresses,
+		)
 	}
 
 	// Count total matching records
@@ -1080,18 +1212,10 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 		return nil, 0, fmt.Errorf("failed to query changes: %w", err)
 	}
 
-	// Fetch associated tokens
-	var results []*ChangeWithToken
+	// Convert to pointers
+	var results []*schema.ChangesJournal
 	for i := range changes {
-		var token schema.Token
-		if err := s.db.WithContext(ctx).Where("id = ?", changes[i].TokenID).First(&token).Error; err != nil {
-			return nil, 0, fmt.Errorf("failed to fetch token: %w", err)
-		}
-
-		results = append(results, &ChangeWithToken{
-			Change: &changes[i],
-			Token:  &token,
-		})
+		results = append(results, &changes[i])
 	}
 
 	return results, uint64(total), nil //nolint:gosec,G115
@@ -1276,33 +1400,114 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 // CreateMediaAsset creates a new media asset record
 // Uses ON CONFLICT to update existing records with new data
 func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetInput) (*schema.MediaAsset, error) {
-	mediaAsset := schema.MediaAsset{
-		SourceURL:        input.SourceURL,
-		MimeType:         input.MimeType,
-		FileSizeBytes:    input.FileSizeBytes,
-		Provider:         input.Provider,
-		ProviderAssetID:  input.ProviderAssetID,
-		ProviderMetadata: input.ProviderMetadata,
-		VariantURLs:      input.VariantURLs,
-	}
+	var mediaAsset *schema.MediaAsset
 
-	// Use ON CONFLICT to update all fields if duplicate exists
-	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "source_url"}, {Name: "provider"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"mime_type",
-			"file_size_bytes",
-			"provider_asset_id",
-			"provider_metadata",
-			"variant_urls",
-		}),
-	}).Create(&mediaAsset).Error
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Get the old media asset (if it exists) for change tracking - BEFORE upsert
+		var oldMediaAsset *schema.MediaAsset
+		err := tx.Where("source_url = ? AND provider = ?", input.SourceURL, input.Provider).First(&oldMediaAsset).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to get old media asset: %w", err)
+		}
+
+		// 2. Upsert media asset
+		newMediaAsset := schema.MediaAsset{
+			SourceURL:        input.SourceURL,
+			MimeType:         input.MimeType,
+			FileSizeBytes:    input.FileSizeBytes,
+			Provider:         input.Provider,
+			ProviderAssetID:  input.ProviderAssetID,
+			ProviderMetadata: input.ProviderMetadata,
+			VariantURLs:      input.VariantURLs,
+		}
+
+		// Use ON CONFLICT to update all fields if duplicate exists
+		err = tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "source_url"}, {Name: "provider"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"mime_type",
+				"file_size_bytes",
+				"provider_asset_id",
+				"provider_metadata",
+				"variant_urls",
+			}),
+		}).Create(&newMediaAsset).Error
+
+		if err != nil {
+			return fmt.Errorf("failed to create media asset: %w", err)
+		}
+
+		mediaAsset = &newMediaAsset
+
+		// 3. Create change journal entry
+		// Convert provider metadata to string for meta
+		var providerMetadataStr *string
+		if len(input.ProviderMetadata) > 0 {
+			str := string(input.ProviderMetadata)
+			providerMetadataStr = &str
+		}
+
+		metaChanges := schema.MediaAssetChangeMeta{
+			New: schema.MediaAssetFields{
+				SourceURL:        input.SourceURL,
+				Provider:         string(input.Provider),
+				ProviderAssetID:  input.ProviderAssetID,
+				MimeType:         input.MimeType,
+				FileSizeBytes:    input.FileSizeBytes,
+				VariantURLs:      string(input.VariantURLs),
+				ProviderMetadata: providerMetadataStr,
+			},
+		}
+
+		// Add old media asset if it existed
+		if oldMediaAsset != nil {
+			var oldProviderMetadataStr *string
+			if len(oldMediaAsset.ProviderMetadata) > 0 {
+				str := string(oldMediaAsset.ProviderMetadata)
+				oldProviderMetadataStr = &str
+			}
+
+			metaChanges.Old = schema.MediaAssetFields{
+				SourceURL:        oldMediaAsset.SourceURL,
+				Provider:         string(oldMediaAsset.Provider),
+				ProviderAssetID:  oldMediaAsset.ProviderAssetID,
+				MimeType:         oldMediaAsset.MimeType,
+				FileSizeBytes:    oldMediaAsset.FileSizeBytes,
+				VariantURLs:      string(oldMediaAsset.VariantURLs),
+				ProviderMetadata: oldProviderMetadataStr,
+			}
+		}
+
+		metaJSON, err := json.Marshal(metaChanges)
+		if err != nil {
+			return fmt.Errorf("failed to marshal change journal meta: %w", err)
+		}
+
+		changeJournal := schema.ChangesJournal{
+			SubjectType: schema.SubjectTypeMediaAsset,
+			SubjectID:   fmt.Sprintf("%d", newMediaAsset.ID),
+			ChangedAt:   time.Now(),
+			Meta:        metaJSON,
+		}
+
+		// Use ON CONFLICT DO NOTHING to skip duplicates based on unique constraint
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
+			DoNothing: true,
+		}).
+			Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&changeJournal).Error; err != nil {
+			return fmt.Errorf("failed to create change journal: %w", err)
+		}
+
+		return nil
+	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to create media asset: %w", err)
+		return nil, err
 	}
 
-	return &mediaAsset, nil
+	return mediaAsset, nil
 }
 
 // SetKeyValue sets a key-value pair in the key-value store

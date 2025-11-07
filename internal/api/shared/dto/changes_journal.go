@@ -10,7 +10,6 @@ import (
 // ChangeResponse represents a change journal entry
 type ChangeResponse struct {
 	ID          uint64             `json:"id"`
-	TokenCID    string             `json:"token_cid"`
 	SubjectType schema.SubjectType `json:"subject_type"`
 	SubjectID   string             `json:"subject_id"`
 	ChangedAt   time.Time          `json:"changed_at"`
@@ -30,10 +29,9 @@ type ChangeListResponse struct {
 }
 
 // MapChangeToDTO maps a schema.ChangesJournal to ChangeResponse
-func MapChangeToDTO(change *schema.ChangesJournal, token *schema.Token) *ChangeResponse {
+func MapChangeToDTO(change *schema.ChangesJournal) *ChangeResponse {
 	dto := &ChangeResponse{
 		ID:          change.ID,
-		TokenCID:    token.TokenCID,
 		SubjectType: change.SubjectType,
 		SubjectID:   change.SubjectID,
 		ChangedAt:   change.ChangedAt,

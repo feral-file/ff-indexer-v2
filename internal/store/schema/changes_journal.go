@@ -20,6 +20,10 @@ const (
 	SubjectTypeBalance SubjectType = "balance"
 	// SubjectTypeMetadata indicates a change in token metadata
 	SubjectTypeMetadata SubjectType = "metadata"
+	// SubjectTypeEnrichSource indicates a change in enrichment source data
+	SubjectTypeEnrichSource SubjectType = "enrich_source"
+	// SubjectTypeMediaAsset indicates a change in media asset data
+	SubjectTypeMediaAsset SubjectType = "media_asset"
 )
 
 // ProvenanceChangeMeta represents the metadata for token, owner, and balance changes
@@ -50,31 +54,67 @@ type MetadataFields struct {
 	MimeType     *string    `json:"mime_type,omitempty"`     // MIME type of the artwork
 }
 
+// EnrichmentSourceChangeMeta represents the metadata for enrichment source changes
+// It stores the old and new values of enrichment source fields to track what changed
+type EnrichmentSourceChangeMeta struct {
+	Old EnrichmentSourceFields `json:"old"` // Previous enrichment source values
+	New EnrichmentSourceFields `json:"new"` // New enrichment source values
+}
+
+// EnrichmentSourceFields represents the enrichment source fields we track for changes
+type EnrichmentSourceFields struct {
+	Vendor       string   `json:"vendor"`                  // Vendor type (artblocks, fxhash, etc.)
+	VendorHash   *string  `json:"vendor_hash,omitempty"`   // Hash of vendor JSON
+	AnimationURL *string  `json:"animation_url,omitempty"` // URL to animated content from vendor
+	ImageURL     *string  `json:"image_url,omitempty"`     // URL to image from vendor
+	Name         *string  `json:"name,omitempty"`          // Name from vendor
+	Description  *string  `json:"description,omitempty"`   // Description from vendor
+	Artists      []Artist `json:"artists,omitempty"`       // List of artist names from vendor
+	MimeType     *string  `json:"mime_type,omitempty"`     // MIME type from vendor
+}
+
+// MediaAssetChangeMeta represents the metadata for media asset changes
+// It stores the old and new values of media asset fields to track what changed
+type MediaAssetChangeMeta struct {
+	Old MediaAssetFields `json:"old"` // Previous media asset values
+	New MediaAssetFields `json:"new"` // New media asset values
+}
+
+// MediaAssetFields represents the media asset fields we track for changes
+type MediaAssetFields struct {
+	SourceURL        string  `json:"source_url"`                  // Original source URL
+	Provider         string  `json:"provider"`                    // Storage provider
+	ProviderAssetID  *string `json:"provider_asset_id,omitempty"` // Provider-specific asset ID
+	MimeType         *string `json:"mime_type,omitempty"`         // MIME type
+	FileSizeBytes    *int64  `json:"file_size_bytes,omitempty"`   // File size in bytes
+	VariantURLs      string  `json:"variant_urls"`                // JSON string of variant URLs
+	ProviderMetadata *string `json:"provider_metadata,omitempty"` // Provider-specific metadata as JSON string
+}
+
 // ChangesJournal represents the changes_journal table - audit log for tracking all changes to indexed data
 type ChangesJournal struct {
 	// ID is an auto-incrementing sequence number for record identification
 	ID uint64 `gorm:"column:id;primaryKey;autoIncrement"`
-	// TokenID is the foreign key to the token that was affected by this change
-	TokenID uint64 `gorm:"column:token_id;not null"`
-	// SubjectType identifies what kind of entity changed (token, owner, balance, metadata)
+	// SubjectType identifies what kind of entity changed (token, owner, balance, metadata, enrich_source, media_asset)
 	SubjectType SubjectType `gorm:"column:subject_type;not null;type:text"`
 	// SubjectID is a polymorphic reference to the specific record that changed
 	// - For 'token'/'owner'/'balance': provenance_event_id
 	// - For 'metadata': token_metadata_id (which equals token_id since it's 1-to-1)
+	// - For 'enrich_source': token_id (enrichment_sources.token_id is the primary key)
+	// - For 'media_asset': media_asset_id
 	SubjectID string `gorm:"column:subject_id;not null;type:text"`
 	// ChangedAt is the timestamp when the change occurred
 	ChangedAt time.Time `gorm:"column:changed_at;not null;default:now();type:timestamptz"`
 	// Meta contains additional context about the change as JSON
 	// - For token/owner/balance: ProvenanceChangeMeta with chain, standard, contract, token, from, to, quantity
 	// - For metadata: MetadataChangeMeta with old and new normalized metadata fields
+	// - For enrich_source: EnrichmentSourceChangeMeta with old and new enrichment source fields
+	// - For media_asset: MediaAssetChangeMeta with old and new media asset fields
 	Meta datatypes.JSON `gorm:"column:meta;type:jsonb"`
 	// CreatedAt is the timestamp when this change was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this change was last updated
 	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now();type:timestamptz"`
-
-	// Associations
-	Token Token `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 }
 
 // TableName specifies the table name for the ChangesJournal model

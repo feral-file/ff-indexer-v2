@@ -8,7 +8,7 @@ CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:main
 CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
 CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile');
 CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
-CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata');
+CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 
 -- ============================================================================
@@ -105,14 +105,13 @@ CREATE TABLE media_assets (
 -- Changes Journal table - Audit log for tracking all changes to indexed data
 CREATE TABLE changes_journal (
     id BIGSERIAL PRIMARY KEY,
-    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    subject_type subject_type NOT NULL,     -- token, owner, balance, metadata
-    subject_id TEXT NOT NULL,               -- polymorphic ref: provenance_event_id for token/owner/balance; token_metadata_id for metadata
+    subject_type subject_type NOT NULL,     -- token, owner, balance, metadata, enrich_source, media_asset
+    subject_id TEXT NOT NULL,               -- polymorphic ref: provenance_event_id for token/owner/balance; token_id for metadata/enrich_source; media_asset_id for media_asset
     changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    meta JSONB,                             -- ProvenanceChangeMeta for token/owner/balance; MetadataChangeMeta for metadata
+    meta JSONB,                             -- ProvenanceChangeMeta for token/owner/balance; MetadataChangeMeta for metadata; EnrichmentSourceChangeMeta for enrich_source; MediaAssetChangeMeta for media_asset
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (token_id, subject_type, subject_id, changed_at)
+    UNIQUE (subject_type, subject_id, changed_at)
 );
 
 -- Provenance Events table - Optional audit trail of blockchain events
@@ -200,9 +199,9 @@ CREATE INDEX idx_media_assets_provider_asset_id ON media_assets (provider, provi
 CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
 
 -- Changes Journal table indexes
-CREATE INDEX idx_changes_journal_token_id ON changes_journal (token_id);
-CREATE INDEX idx_changes_journal_subject_type_id ON changes_journal (subject_type, subject_id);
+CREATE INDEX idx_changes_journal_subject ON changes_journal (subject_type, subject_id);
 CREATE INDEX idx_changes_journal_changed_at ON changes_journal (changed_at);
+CREATE INDEX idx_changes_journal_subject_type ON changes_journal (subject_type);
 
 -- Provenance Events table indexes
 CREATE INDEX idx_provenance_events_token_id ON provenance_events (token_id);
@@ -322,7 +321,7 @@ COMMENT ON TABLE balances IS 'Tracks ownership quantities for multi-edition toke
 COMMENT ON TABLE token_metadata IS 'Stores original and enriched metadata for tokens';
 COMMENT ON TABLE enrichment_sources IS 'Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File) with both raw and normalized data';
 COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
-COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. token_id always points to affected token. subject_id is polymorphic: provenance_event_id (token/owner), balance_id (balance), token_id (metadata), media_asset_id (media)';
+COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. subject_id is polymorphic: provenance_event_id (token/owner/balance), token_id (metadata/enrich_source), media_asset_id (media_asset). Token association is resolved through subject_id based on subject_type';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';

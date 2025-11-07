@@ -273,8 +273,6 @@ models:
     fields:
       id:
         fieldName: ID
-      token_cid:
-        fieldName: TokenCID
       subject_type:
         fieldName: SubjectType
       subject_id:

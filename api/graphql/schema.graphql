@@ -144,7 +144,6 @@ type TokenList {
 # Change journal entry
 type Change {
   id: Uint64!
-  token_cid: String!
   subject_type: String!
   subject_id: String!
   changed_at: Time!

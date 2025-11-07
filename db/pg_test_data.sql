@@ -512,11 +512,10 @@ SELECT setval('provenance_events_id_seq', 100, true);
 
 -- Change for Token 1 mint
 INSERT INTO changes_journal (
-    id, token_id, subject_type, subject_id, changed_at, meta,
+    id, subject_type, subject_id, changed_at, meta,
     created_at, updated_at
 )
 VALUES (
-    1,
     1,
     'token',
     '1',
@@ -528,11 +527,10 @@ VALUES (
 
 -- Change for Token 2 mint
 INSERT INTO changes_journal (
-    id, token_id, subject_type, subject_id, changed_at, meta,
+    id, subject_type, subject_id, changed_at, meta,
     created_at, updated_at
 )
 VALUES (
-    2,
     2,
     'token',
     '2',
@@ -544,12 +542,11 @@ VALUES (
 
 -- Change for Token 4 transfers
 INSERT INTO changes_journal (
-    id, token_id, subject_type, subject_id, changed_at, meta,
+    id, subject_type, subject_id, changed_at, meta,
     created_at, updated_at
 )
 VALUES (
     3,
-    4,
     'balance',
     '5',
     now() - interval '12 days',
@@ -560,12 +557,11 @@ VALUES (
 
 -- Change for Token 1 metadata update
 INSERT INTO changes_journal (
-    id, token_id, subject_type, subject_id, changed_at, meta,
+    id, subject_type, subject_id, changed_at, meta,
     created_at, updated_at
 )
 VALUES (
     4,
-    1,
     'metadata',
     '1',
     now() - interval '29 days',

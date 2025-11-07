@@ -73,7 +73,6 @@ type ComplexityRoot struct {
 		Subject     func(childComplexity int) int
 		SubjectID   func(childComplexity int) int
 		SubjectType func(childComplexity int) int
-		TokenCID    func(childComplexity int) int
 		UpdatedAt   func(childComplexity int) int
 	}
 
@@ -223,7 +222,6 @@ type ComplexityRoot struct {
 
 type ChangeResolver interface {
 	ID(ctx context.Context, obj *dto.ChangeResponse) (Uint64, error)
-
 	SubjectType(ctx context.Context, obj *dto.ChangeResponse) (string, error)
 
 	Meta(ctx context.Context, obj *dto.ChangeResponse) (JSON, error)
@@ -362,12 +360,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Change.SubjectType(childComplexity), true
-	case "Change.token_cid":
-		if e.complexity.Change.TokenCID == nil {
-			break
-		}
-
-		return e.complexity.Change.TokenCID(childComplexity), true
 	case "Change.updated_at":
 		if e.complexity.Change.UpdatedAt == nil {
 			break
@@ -1253,7 +1245,6 @@ type TokenList {
 # Change journal entry
 type Change {
   id: Uint64!
-  token_cid: String!
   subject_type: String!
   subject_id: String!
   changed_at: Time!
@@ -1691,35 +1682,6 @@ func (ec *executionContext) fieldContext_Change_id(_ context.Context, field grap
 	return fc, nil
 }
 
-func (ec *executionContext) _Change_token_cid(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_token_cid,
-		func(ctx context.Context) (any, error) {
-			return obj.TokenCID, nil
-		},
-		nil,
-		ec.marshalNString2string,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_token_cid(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
 func (ec *executionContext) _Change_subject_type(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -1949,8 +1911,6 @@ func (ec *executionContext) fieldContext_ChangeList_items(_ context.Context, fie
 			switch field.Name {
 			case "id":
 				return ec.fieldContext_Change_id(ctx, field)
-			case "token_cid":
-				return ec.fieldContext_Change_token_cid(ctx, field)
 			case "subject_type":
 				return ec.fieldContext_Change_subject_type(ctx, field)
 			case "subject_id":
@@ -6778,11 +6738,6 @@ func (ec *executionContext) _Change(ctx context.Context, sel ast.SelectionSet, o
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "token_cid":
-			out.Values[i] = ec._Change_token_cid(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
 		case "subject_type":
 			field := field
 

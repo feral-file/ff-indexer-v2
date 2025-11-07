@@ -140,18 +140,14 @@ type TokenQueryFilter struct {
 
 // ChangesQueryFilter represents filters for changes queries
 type ChangesQueryFilter struct {
-	TokenCIDs []string   // Filter by token CIDs
-	Addresses []string   // Filter by addresses (matches from/to addresses in provenance events)
-	Since     *time.Time // Timestamp filter - only show changes after this time (exclusive)
-	Limit     int        // Number of results to return
-	Offset    uint64     // Offset for pagination
-	OrderDesc bool       // Order by changed_at descending (default: false = ascending)
-}
-
-// ChangeWithToken represents a change journal entry with its associated token
-type ChangeWithToken struct {
-	Change *schema.ChangesJournal
-	Token  *schema.Token
+	TokenCIDs    []string             // Filter by token CIDs
+	Addresses    []string             // Filter by addresses (matches from/to addresses in provenance events)
+	SubjectTypes []schema.SubjectType // Filter by subject types
+	SubjectIDs   []string             // Filter by subject IDs
+	Since        *time.Time           // Timestamp filter - only show changes after this time (exclusive)
+	Limit        int                  // Number of results to return
+	Offset       uint64               // Offset for pagination
+	OrderDesc    bool                 // Order by changed_at descending (default: false = ascending)
 }
 
 // TokensWithMetadataResult represents a token with its metadata
@@ -200,6 +196,8 @@ type Store interface {
 
 	// GetTokenMetadataByTokenCID retrieves token metadata by token CID
 	GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error)
+	// GetTokenMetadataByTokenID retrieves token metadata by token ID
+	GetTokenMetadataByTokenID(ctx context.Context, tokenID uint64) (*schema.TokenMetadata, error)
 	// UpsertTokenMetadata creates or updates token metadata
 	UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error
 	// CreateMetadataUpdate creates a provenance event for a metadata update
@@ -249,7 +247,7 @@ type Store interface {
 	// =============================================================================
 
 	// GetChanges retrieves changes with optional filters and pagination
-	GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*ChangeWithToken, uint64, error)
+	GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, uint64, error)
 
 	// =============================================================================
 	// System Configuration & Monitoring

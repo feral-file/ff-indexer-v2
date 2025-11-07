@@ -34,7 +34,6 @@ type Token struct {
 	Metadata          *TokenMetadata     `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 	EnrichmentSources []EnrichmentSource `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 	ProvenanceEvents  []ProvenanceEvent  `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
-	ChangesJournals   []ChangesJournal   `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 }
 
 // TableName specifies the table name for the Token model

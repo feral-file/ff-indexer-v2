@@ -613,13 +613,15 @@ components:
         - `owner` - Change in token ownership (transfer)
         - `balance` - Change in token balance (for ERC1155/FA2)
         - `metadata` - Change in token metadata
-        - `media` - Change in media asset status or URLs
+        - `enrich_source` - Change in enrichment source data
+        - `media_asset` - Change in media asset status or URLs
       enum:
         - token
         - owner
         - balance
         - metadata
-        - media
+        - enrich_source
+        - media_asset
       example: token
 
     ProvenanceEventType:

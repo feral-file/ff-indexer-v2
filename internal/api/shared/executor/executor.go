@@ -206,13 +206,13 @@ func (e *executor) GetChanges(ctx context.Context, tokenCIDs []string, addresses
 
 	// Map to DTOs
 	changeDTOs := make([]dto.ChangeResponse, len(results))
-	for i, result := range results {
-		changeDTO := dto.MapChangeToDTO(result.Change, result.Token)
+	for i, change := range results {
+		changeDTO := dto.MapChangeToDTO(change)
 
 		// Handle subject expansion
 		for _, exp := range expand {
 			if exp == types.ExpansionSubject {
-				subject, err := e.expandSubject(ctx, result.Change, result.Token)
+				subject, err := e.expandSubject(ctx, change)
 				if err != nil {
 					return nil, err
 				}
@@ -290,6 +290,7 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 
 // Helper methods for expanding token data
 
+// expandOwners expands the owners of a token
 func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64, limit *uint8, offset *uint64) error {
 	// If owners are already expanded, return nil
 	if tokenDTO.Owners != nil {
@@ -333,6 +334,7 @@ func (e *executor) expandOwners(ctx context.Context, tokenDTO *dto.TokenResponse
 	return nil
 }
 
+// expandProvenanceEvents expands the provenance events of a token
 func (e *executor) expandProvenanceEvents(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64, limit *uint8, offset *uint64, order *types.Order) error {
 	// If provenance events are already expanded, return nil
 	if tokenDTO.ProvenanceEvents != nil {
@@ -377,6 +379,7 @@ func (e *executor) expandProvenanceEvents(ctx context.Context, tokenDTO *dto.Tok
 	return nil
 }
 
+// expandEnrichmentSource expands the enrichment source of a token
 func (e *executor) expandEnrichmentSource(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64) error {
 	// If enrichment source is already expanded, return nil
 	if tokenDTO.EnrichmentSource != nil {
@@ -394,15 +397,16 @@ func (e *executor) expandEnrichmentSource(ctx context.Context, tokenDTO *dto.Tok
 	return nil
 }
 
-func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJournal, token *schema.Token) (interface{}, error) {
+// expandSubject expands the subject of a change journal entry
+func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJournal) (interface{}, error) {
 	switch change.SubjectType {
 	case schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance:
 		// For token and owner changes, the subject is a provenance event
-		id, err := strconv.ParseUint(change.SubjectID, 10, 64)
+		provenanceEventID, err := strconv.ParseUint(change.SubjectID, 10, 64)
 		if err != nil {
 			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id: %v", err))
 		}
-		event, err := e.store.GetProvenanceEventByID(ctx, id)
+		event, err := e.store.GetProvenanceEventByID(ctx, provenanceEventID)
 		if err != nil {
 			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance event: %v", err))
 		}
@@ -411,22 +415,59 @@ func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJour
 		}
 		return dto.MapProvenanceEventToDTO(event), nil
 
-	case schema.SubjectTypeMetadata:
-		// For metadata changes, the subject is token metadata
-		metadata, err := e.store.GetTokenMetadataByTokenCID(ctx, token.TokenCID)
+	case schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource:
+		// For metadata and enrichment source changes,
+		// the subject ID is token_id for metadata and enrichment_source
+		tokenID, err := strconv.ParseUint(change.SubjectID, 10, 64)
 		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token metadata: %v", err))
+			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for metadata: %v", err))
 		}
-		if metadata == nil {
+
+		if change.SubjectType == schema.SubjectTypeMetadata {
+			metadata, err := e.store.GetTokenMetadataByTokenID(ctx, tokenID)
+			if err != nil {
+				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token metadata: %v", err))
+			}
+			if metadata == nil {
+				return nil, nil
+			}
+
+			return dto.MapTokenMetadataToDTO(metadata), nil
+		} else {
+			enrichment, err := e.store.GetEnrichmentSourceByTokenID(ctx, tokenID)
+			if err != nil {
+				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get enrichment source: %v", err))
+			}
+			if enrichment == nil {
+				return nil, nil
+			}
+
+			return dto.MapEnrichmentSourceToDTO(enrichment), nil
+		}
+
+	case schema.SubjectTypeMediaAsset:
+		// For media asset changes, the subject ID is media_asset_id
+		mediaAssetID, err := strconv.ParseInt(change.SubjectID, 10, 64)
+		if err != nil {
+			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for media asset: %v", err))
+		}
+
+		mediaAsset, err := e.store.GetMediaAssetByID(ctx, mediaAssetID)
+		if err != nil {
+			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media asset: %v", err))
+		}
+		if mediaAsset == nil {
 			return nil, nil
 		}
-		return dto.MapTokenMetadataToDTO(metadata), nil
+
+		return dto.MapMediaAssetToDTO(mediaAsset), nil
 
 	default:
 		return nil, nil
 	}
 }
 
+// expandMetadataMediaAssets expands the media assets of a token's metadata
 func (e *executor) expandMetadataMediaAssets(ctx context.Context, tokenDTO *dto.TokenResponse) error {
 	// If metadata is not available, return nil
 	if tokenDTO.Metadata == nil {
@@ -462,6 +503,7 @@ func (e *executor) expandMetadataMediaAssets(ctx context.Context, tokenDTO *dto.
 	return nil
 }
 
+// expandEnrichmentSourceMediaAssets expands the media assets of a token's enrichment source
 func (e *executor) expandEnrichmentSourceMediaAssets(ctx context.Context, tokenDTO *dto.TokenResponse) error {
 	if tokenDTO.EnrichmentSource == nil {
 		// No enrichment source available
@@ -506,6 +548,7 @@ func (e *executor) expandEnrichmentSourceMediaAssets(ctx context.Context, tokenD
 	return nil
 }
 
+// GetWorkflowStatus retrieves the status of a workflow execution
 func (e *executor) GetWorkflowStatus(ctx context.Context, workflowID, runID string) (*dto.WorkflowStatusResponse, error) {
 	// Validate inputs
 	if workflowID == "" {
