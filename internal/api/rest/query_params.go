@@ -188,7 +188,7 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 // GetChangesQueryParams holds query parameters for GET /changes
 type GetChangesQueryParams struct {
 	// Filters
-	TokenIDs     []string             `form:"token_id"`
+	TokenIDs     []uint64             `form:"token_id"`
 	TokenCIDs    []string             `form:"token_cid"`
 	Addresses    []string             `form:"address"`
 	SubjectTypes []schema.SubjectType `form:"subject_type"`
@@ -204,13 +204,6 @@ type GetChangesQueryParams struct {
 
 // Validate validates the query parameters for GET /changes
 func (p *GetChangesQueryParams) Validate() error {
-	// Validate token IDs
-	for _, tokenID := range p.TokenIDs {
-		if !internalTypes.IsNumeric(tokenID) {
-			return apierrors.NewValidationError(fmt.Sprintf("Invalid token ID: %s. Must be a valid positive numeric value", tokenID))
-		}
-	}
-
 	// Validate token CIDs
 	for _, tokenCID := range p.TokenCIDs {
 		if !domain.TokenCID(tokenCID).Valid() {

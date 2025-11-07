@@ -63,3 +63,16 @@ func parseSinceTimestamp(since *string) (*time.Time, error) {
 
 	return &t, nil
 }
+
+// convertToUint64 converts a slice of Uint64 to a slice of uint64
+func convertToUint64(uints []Uint64) []uint64 {
+	if uints == nil {
+		return nil
+	}
+
+	us := make([]uint64, len(uints))
+	for i, u := range uints {
+		us[i] = uint64(u)
+	}
+	return us
+}

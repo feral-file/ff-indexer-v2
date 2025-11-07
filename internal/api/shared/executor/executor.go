@@ -32,7 +32,7 @@ type Executor interface {
 	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenIDs []string, tokenCIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 
 	// GetChanges retrieves changes with optional filters and expansions
-	GetChanges(ctx context.Context, tokenIDs []string, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
+	GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens and addresses
 	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error)
@@ -176,7 +176,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	}, nil
 }
 
-func (e *executor) GetChanges(ctx context.Context, tokenIDs []string, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
+func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_CHANGES_LIMIT

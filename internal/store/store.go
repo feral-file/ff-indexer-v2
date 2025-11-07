@@ -140,7 +140,7 @@ type TokenQueryFilter struct {
 
 // ChangesQueryFilter represents filters for changes queries
 type ChangesQueryFilter struct {
-	TokenIDs     []string             // Filter by token IDs
+	TokenIDs     []uint64             // Filter by token IDs
 	TokenCIDs    []string             // Filter by token CIDs
 	Addresses    []string             // Filter by addresses (matches from/to addresses in provenance events)
 	SubjectTypes []schema.SubjectType // Filter by subject types

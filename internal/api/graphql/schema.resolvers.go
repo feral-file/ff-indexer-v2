@@ -288,19 +288,12 @@ func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []stri
 }
 
 // Changes is the resolver for the changes field.
-func (r *queryResolver) Changes(ctx context.Context, tokenIds []string, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error) {
+func (r *queryResolver) Changes(ctx context.Context, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error) {
 	// Convert query parameters to executor parameters
 	expansions := convertExpansionStrings(expand)
 	sinceTime, err := parseSinceTimestamp(since)
 	if err != nil {
 		return nil, fmt.Errorf("invalid since timestamp: %w", err)
-	}
-
-	// Validate token IDs
-	for _, tokenId := range tokenIds {
-		if !internalTypes.IsNumeric(tokenId) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid token ID: %s. Must be a valid positive numeric value", tokenId))
-		}
 	}
 
 	// Validate token CIDs
@@ -329,8 +322,7 @@ func (r *queryResolver) Changes(ctx context.Context, tokenIds []string, tokenCid
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid order: %s. Must be a valid order", *order))
 	}
 
-	stypes := convertSubjectTypes(subjectTypes)
-	return r.executor.GetChanges(ctx, tokenIds, tokenCids, addresses, stypes, subjectIds, sinceTime, ToNativeUint8(limit), ToNativeUint64(offset), order, expansions)
+	return r.executor.GetChanges(ctx, convertToUint64(tokenIds), tokenCids, addresses, convertSubjectTypes(subjectTypes), subjectIds, sinceTime, ToNativeUint8(limit), ToNativeUint64(offset), order, expansions)
 }
 
 // WorkflowStatus is the resolver for the workflowStatus field.
