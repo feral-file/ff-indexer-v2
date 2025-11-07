@@ -1333,6 +1333,321 @@ func testGetChanges(t *testing.T, store Store) {
 			assert.True(t, change.Change.ChangedAt.After(cutoffTime) || change.Change.ChangedAt.Equal(cutoffTime))
 		}
 	})
+
+	t.Run("filter by addresses - provenance events", func(t *testing.T) {
+		// Create a token and mint it to owner1
+		owner1 := "0xchanges400000000000000000000000000000000001"
+		owner2 := "0xchanges400000000000000000000000000000000002"
+		contract := "0xchanges400000000000000000000000000000004"
+
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contract,
+			"1",
+			owner1,
+		)
+		mintInput.ProvenanceEvent.Timestamp = time.Now().UTC()
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		time.Sleep(10 * time.Millisecond)
+
+		// Transfer to owner2
+		transferInput := UpdateTokenTransferInput{
+			TokenCID:     mintInput.Token.TokenCID,
+			CurrentOwner: &owner2,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner1,
+				Delta:        "1",
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner2,
+				Delta:        "1",
+			},
+			ProvenanceEvent: buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				&owner1,
+				&owner2,
+				"1",
+				"0xtransfer_changes400",
+				1001,
+			),
+			ChangedAt: time.Now().UTC(),
+		}
+		err = store.UpdateTokenTransfer(ctx, transferInput)
+		require.NoError(t, err)
+
+		// Query changes for owner1 (should include mint and transfer out)
+		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Addresses: []string{owner1},
+			Limit:     100,
+		})
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, total, uint64(2))
+		assert.GreaterOrEqual(t, len(changes), 2)
+
+		// Verify all changes involve owner1 and have appropriate subject types
+		for _, change := range changes {
+			if change.Token.TokenCID == mintInput.Token.TokenCID {
+				// For ERC721: mint = token, transfer = owner
+				assert.Contains(t, []schema.SubjectType{schema.SubjectTypeToken, schema.SubjectTypeOwner}, change.Change.SubjectType)
+			}
+		}
+
+		// Query changes for owner2 (should include transfer in)
+		_, total, err = store.GetChanges(ctx, ChangesQueryFilter{
+			Addresses: []string{owner2},
+			Limit:     100,
+		})
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, total, uint64(1))
+	})
+
+	t.Run("filter by addresses - metadata during ownership", func(t *testing.T) {
+		// Create a token and mint it to owner1
+		owner1 := "0xchanges500000000000000000000000000000000001"
+		owner2 := "0xchanges500000000000000000000000000000000002"
+		contract := "0xchanges500000000000000000000000000000005"
+
+		mintTime := time.Now().UTC()
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contract,
+			"1",
+			owner1,
+		)
+		mintInput.ProvenanceEvent.Timestamp = mintTime
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		time.Sleep(10 * time.Millisecond)
+
+		// Update metadata while owner1 still owns it
+		metadataTime := mintTime.Add(1 * time.Hour)
+		latestJSON := json.RawMessage(`{"name": "Test NFT", "image": "ipfs://test"}`)
+		hash := "hash123"
+		imageURL := "https://example.com/image.png"
+		name := "Test NFT"
+
+		metadataInput := CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			LatestJSON:      latestJSON,
+			LatestHash:      &hash,
+			ImageURL:        &imageURL,
+			Name:            &name,
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: &metadataTime,
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		time.Sleep(10 * time.Millisecond)
+
+		// Transfer to owner2 AFTER metadata update
+		transferTime := metadataTime.Add(1 * time.Hour)
+		transferInput := UpdateTokenTransferInput{
+			TokenCID:     mintInput.Token.TokenCID,
+			CurrentOwner: &owner2,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner1,
+				Delta:        "1",
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner2,
+				Delta:        "1",
+			},
+			ProvenanceEvent: buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				&owner1,
+				&owner2,
+				"1",
+				"0xtransfer_changes500",
+				1002,
+			),
+			ChangedAt: transferTime,
+		}
+		transferInput.ProvenanceEvent.Timestamp = transferTime
+		err = store.UpdateTokenTransfer(ctx, transferInput)
+		require.NoError(t, err)
+
+		// Query changes for owner1 (should include mint, metadata update, and transfer)
+		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Addresses: []string{owner1},
+			TokenCIDs: []string{mintInput.Token.TokenCID},
+			Limit:     100,
+		})
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, total, uint64(2)) // At least mint and metadata
+
+		// Should include metadata change that happened during ownership
+		hasMetadataChange := false
+		for _, change := range changes {
+			if change.Change.SubjectType == schema.SubjectTypeMetadata {
+				hasMetadataChange = true
+				// Verify metadata change happened during ownership (after mint, before transfer)
+				assert.True(t, change.Change.ChangedAt.After(mintTime))
+				assert.True(t, change.Change.ChangedAt.Before(transferTime))
+			}
+		}
+		assert.True(t, hasMetadataChange, "Metadata change during ownership should be included")
+	})
+
+	t.Run("filter by addresses - exclude metadata after transfer", func(t *testing.T) {
+		// Create a token and mint it to owner1
+		owner1 := "0xchanges600000000000000000000000000000000001"
+		owner2 := "0xchanges600000000000000000000000000000000002"
+		contract := "0xchanges600000000000000000000000000000006"
+
+		mintTime := time.Now().UTC()
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contract,
+			"1",
+			owner1,
+		)
+		mintInput.ProvenanceEvent.Timestamp = mintTime
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		time.Sleep(10 * time.Millisecond)
+
+		// Transfer to owner2 FIRST
+		transferTime := mintTime.Add(1 * time.Hour)
+		transferInput := UpdateTokenTransferInput{
+			TokenCID:     mintInput.Token.TokenCID,
+			CurrentOwner: &owner2,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner1,
+				Delta:        "1",
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner2,
+				Delta:        "1",
+			},
+			ProvenanceEvent: buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				&owner1,
+				&owner2,
+				"1",
+				"0xtransfer_changes600",
+				1002,
+			),
+			ChangedAt: transferTime,
+		}
+		transferInput.ProvenanceEvent.Timestamp = transferTime
+		err = store.UpdateTokenTransfer(ctx, transferInput)
+		require.NoError(t, err)
+
+		time.Sleep(10 * time.Millisecond)
+
+		// Update metadata AFTER owner1 transferred it away
+		metadataTime := transferTime.Add(1 * time.Hour)
+		latestJSON := json.RawMessage(`{"name": "Updated NFT", "image": "ipfs://updated"}`)
+		hash := "hash456"
+		imageURL := "https://example.com/image2.png"
+		name := "Updated NFT"
+
+		metadataInput := CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			LatestJSON:      latestJSON,
+			LatestHash:      &hash,
+			ImageURL:        &imageURL,
+			Name:            &name,
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: &metadataTime,
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		// Query changes for owner1 (should NOT include metadata update after transfer)
+		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Addresses: []string{owner1},
+			TokenCIDs: []string{mintInput.Token.TokenCID},
+			Limit:     100,
+		})
+		require.NoError(t, err)
+
+		// Should NOT include metadata change that happened after transfer
+		for _, change := range changes {
+			if change.Change.SubjectType == schema.SubjectTypeMetadata {
+				// Any metadata changes should be before the transfer
+				assert.True(t, change.Change.ChangedAt.Before(transferTime),
+					"Metadata change after transfer should NOT be included for previous owner")
+			}
+		}
+	})
+
+	t.Run("filter by addresses - metadata for current owner", func(t *testing.T) {
+		// Create a token and mint it to owner1
+		owner1 := "0xchanges700000000000000000000000000000000001"
+		contract := "0xchanges700000000000000000000000000000007"
+
+		mintTime := time.Now().UTC()
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contract,
+			"1",
+			owner1,
+		)
+		mintInput.ProvenanceEvent.Timestamp = mintTime
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		time.Sleep(10 * time.Millisecond)
+
+		// Update metadata while owner1 still owns it (no transfer)
+		metadataTime := mintTime.Add(1 * time.Hour)
+		latestJSON := json.RawMessage(`{"name": "Forever NFT", "image": "ipfs://forever"}`)
+		hash := "hash789"
+		imageURL := "https://example.com/image3.png"
+		name := "Forever NFT"
+
+		metadataInput := CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			LatestJSON:      latestJSON,
+			LatestHash:      &hash,
+			ImageURL:        &imageURL,
+			Name:            &name,
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: &metadataTime,
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		// Query changes for owner1 (should include metadata since still owner)
+		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Addresses: []string{owner1},
+			TokenCIDs: []string{mintInput.Token.TokenCID},
+			Limit:     100,
+		})
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, total, uint64(2)) // mint + metadata
+
+		// Should include metadata change for current owner
+		hasMetadataChange := false
+		for _, change := range changes {
+			if change.Change.SubjectType == schema.SubjectTypeMetadata {
+				hasMetadataChange = true
+			}
+		}
+		assert.True(t, hasMetadataChange, "Metadata change should be included for current owner")
+	})
 }
 
 // =============================================================================

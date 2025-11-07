@@ -1013,14 +1013,43 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 			Where("tokens.token_cid IN ?", filter.TokenCIDs)
 	}
 
-	// Filter by addresses - filter by from_address or to_address in provenance_events
+	// Filter by addresses - include both provenance-linked changes and metadata changes
 	if len(filter.Addresses) > 0 {
 		query = query.Where(`
-			subject_id IN (
-				SELECT CAST(id AS TEXT) FROM provenance_events 
-				WHERE from_address IN ? OR to_address IN ?
+			(
+				-- Include provenance-related changes (owner/balance/token) linked to specific provenance events
+				subject_id IN (
+					SELECT CAST(id AS TEXT) FROM provenance_events 
+					WHERE from_address IN ? OR to_address IN ?
+				)
+			) OR (
+				-- Include metadata changes that occurred during ownership periods
+				subject_type = ? AND EXISTS (
+					SELECT 1 FROM provenance_events pe
+					WHERE pe.token_id = changes_journal.token_id
+					AND pe.to_address IN ?
+					AND pe.timestamp <= changes_journal.changed_at
+					-- Check if metadata change happened before token was transferred out (if at all)
+					AND (
+						-- Either no subsequent transfer from this address
+						NOT EXISTS (
+							SELECT 1 FROM provenance_events pe_out
+							WHERE pe_out.token_id = pe.token_id
+							AND pe_out.from_address = pe.to_address
+							AND pe_out.timestamp > pe.timestamp
+						)
+						-- Or the metadata change happened before the transfer out
+						OR changes_journal.changed_at < (
+							SELECT MIN(pe_out.timestamp)
+							FROM provenance_events pe_out
+							WHERE pe_out.token_id = pe.token_id
+							AND pe_out.from_address = pe.to_address
+							AND pe_out.timestamp > pe.timestamp
+						)
+					)
+				)
 			)
-		`, filter.Addresses, filter.Addresses)
+		`, filter.Addresses, filter.Addresses, schema.SubjectTypeMetadata, filter.Addresses)
 	}
 
 	// Count total matching records
@@ -1047,7 +1076,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 
 	// Execute the query
 	var changes []schema.ChangesJournal
-	if err := query.Debug().Find(&changes).Error; err != nil {
+	if err := query.Find(&changes).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to query changes: %w", err)
 	}
 
