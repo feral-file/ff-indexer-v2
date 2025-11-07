@@ -48,6 +48,20 @@ func (mr *MockClockMockRecorder) After(d interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "After", reflect.TypeOf((*MockClock)(nil).After), d)
 }
 
+// NewTicker mocks base method.
+func (m *MockClock) NewTicker(d time.Duration) *time.Ticker {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NewTicker", d)
+	ret0, _ := ret[0].(*time.Ticker)
+	return ret0
+}
+
+// NewTicker indicates an expected call of NewTicker.
+func (mr *MockClockMockRecorder) NewTicker(d interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewTicker", reflect.TypeOf((*MockClock)(nil).NewTicker), d)
+}
+
 // Now mocks base method.
 func (m *MockClock) Now() time.Time {
 	m.ctrl.T.Helper()

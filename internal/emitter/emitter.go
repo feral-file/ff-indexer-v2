@@ -3,6 +3,7 @@ package emitter
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -92,6 +93,8 @@ func (e *emitter) Run(ctx context.Context) error {
 	go func() {
 		logger.InfoCtx(ctx, "Starting event subscription", zap.String("chain", string(e.config.ChainID)))
 
+		// Cursor state (will be accessed concurrently from worker pool)
+		var cursorMu sync.Mutex
 		lastSavedBlock := uint64(0)
 		lastSaveTime := e.clock.Now()
 
@@ -102,12 +105,17 @@ func (e *emitter) Run(ctx context.Context) error {
 			}
 
 			// Save cursor periodically (every N blocks or N seconds)
+			// Use dedicated mutex for cursor state since handler is called concurrently
+			cursorMu.Lock()
+			defer cursorMu.Unlock()
 			shouldSave := event.BlockNumber-lastSavedBlock >= e.config.CursorSaveFreq ||
 				e.clock.Since(lastSaveTime) >= e.config.CursorSaveDelay
 
 			if shouldSave {
 				if err := e.store.SetBlockCursor(ctx, string(e.config.ChainID), event.BlockNumber); err != nil {
-					fmt.Printf("[Emitter] Failed to save block cursor: %v\n", err)
+					logger.WarnCtx(ctx, "Failed to save block cursor",
+						zap.Error(err),
+						zap.Uint64("block", event.BlockNumber))
 				} else {
 					lastSavedBlock = event.BlockNumber
 					lastSaveTime = e.clock.Now()

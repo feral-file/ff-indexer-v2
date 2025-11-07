@@ -12,6 +12,7 @@ type Clock interface {
 	Parse(layout, value string) (time.Time, error)
 	Unix(sec int64, nsec int64) time.Time
 	After(d time.Duration) <-chan time.Time
+	NewTicker(d time.Duration) *time.Ticker
 }
 
 // RealClock implements Clock using the standard time package
@@ -44,4 +45,8 @@ func (c *RealClock) Unix(sec int64, nsec int64) time.Time {
 
 func (c *RealClock) After(d time.Duration) <-chan time.Time {
 	return time.After(d)
+}
+
+func (c *RealClock) NewTicker(d time.Duration) *time.Ticker {
+	return time.NewTicker(d)
 }

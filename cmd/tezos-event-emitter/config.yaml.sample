@@ -24,3 +24,6 @@ tezos:
   chain_id: tezos:mainnet
   start_level: 0
 
+worker:
+  pool_size: 20
+  queue_size: 1024

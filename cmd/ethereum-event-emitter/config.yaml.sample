@@ -23,3 +23,7 @@ ethereum:
   chain_id: eip155:1
   start_block: 0
 
+worker:
+  pool_size: 20
+  queue_size: 1024
+

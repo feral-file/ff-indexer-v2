@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -14,12 +15,18 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 )
 
-const SUBSCRIBE_TIMEOUT = 15 * time.Second
+const (
+	SUBSCRIBE_TIMEOUT         = 15 * time.Second
+	DEFAULT_WORKER_POOL_SIZE  = 20
+	DEFAULT_WORKER_QUEUE_SIZE = 2048
+)
 
 // Config holds the configuration for Tezos/TzKT subscription
 type Config struct {
-	WebSocketURL string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
-	ChainID      domain.Chain // e.g., "tezos:mainnet"
+	WebSocketURL    string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
+	ChainID         domain.Chain // e.g., "tezos:mainnet"
+	WorkerPoolSize  int          // Number of concurrent workers
+	WorkerQueueSize int          // Size of the task queue
 }
 
 // MessageType - TzKT message type
@@ -49,6 +56,8 @@ type tzSubscriber struct {
 	signalR    adapter.SignalR
 	clock      adapter.Clock
 	tzktClient TzKTClient
+	config     Config
+	pool       pond.Pool
 }
 
 // NewSubscriber creates a new Tezos/TzKT event subscriber
@@ -59,6 +68,7 @@ func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzk
 		signalR:    signalR,
 		clock:      clock,
 		tzktClient: tzktClient,
+		config:     cfg,
 	}, nil
 }
 
@@ -72,6 +82,67 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 
 	// Store context for cancellation
 	c.ctx = ctx
+
+	// Get worker pool configuration
+	workerPoolSize := c.config.WorkerPoolSize
+	if workerPoolSize == 0 {
+		workerPoolSize = DEFAULT_WORKER_POOL_SIZE
+	}
+	workerQueueSize := c.config.WorkerQueueSize
+	if workerQueueSize == 0 {
+		workerQueueSize = DEFAULT_WORKER_QUEUE_SIZE
+	}
+
+	// Create worker pool for concurrent event processing
+	c.pool = pond.NewPool(
+		workerPoolSize,
+		pond.WithQueueSize(workerQueueSize),
+		pond.WithContext(ctx),
+	)
+
+	logger.InfoCtx(ctx, "Tezos worker pool created",
+		zap.Int("workers", workerPoolSize),
+		zap.Int("queue_size", workerQueueSize),
+		zap.String("chain", string(c.chainID)))
+
+	// Ensure graceful shutdown of worker pool
+	defer func() {
+		if c.pool != nil {
+			logger.InfoCtx(ctx, "Shutting down tezos worker pool",
+				zap.Uint64("submitted", c.pool.SubmittedTasks()),
+				zap.Uint64("waiting", c.pool.WaitingTasks()),
+				zap.Uint64("successful", c.pool.SuccessfulTasks()),
+				zap.Uint64("failed", c.pool.FailedTasks()))
+
+			c.pool.StopAndWait()
+
+			logger.InfoCtx(ctx, "Tezos worker pool shutdown complete",
+				zap.Uint64("total_submitted", c.pool.SubmittedTasks()),
+				zap.Uint64("total_completed", c.pool.CompletedTasks()),
+				zap.Uint64("total_failed", c.pool.FailedTasks()))
+		}
+	}()
+
+	// Start periodic metrics logging
+	metricsTicker := c.clock.NewTicker(30 * time.Second)
+	defer metricsTicker.Stop()
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-metricsTicker.C:
+				if c.pool != nil {
+					logger.InfoCtx(ctx, "Tezos worker pool metrics",
+						zap.Int64("running_workers", c.pool.RunningWorkers()),
+						zap.Uint64("waiting_tasks", c.pool.WaitingTasks()),
+						zap.Uint64("completed_tasks", c.pool.CompletedTasks()),
+						zap.Uint64("failed_tasks", c.pool.FailedTasks()))
+				}
+			}
+		}
+	}()
 
 	// Store handler for callback
 	c.handler = handler
@@ -178,17 +249,30 @@ func (c *tzSubscriber) Transfers(data interface{}) {
 			continue
 		}
 
-		event, err := c.tzktClient.ParseTransfer(c.ctx, &transfer)
-		if err != nil {
-			logger.ErrorCtx(c.ctx, fmt.Errorf("error parsing transfer: %w", err), zap.Error(err))
-			continue
-		}
-
 		// Call handler if set
-		if c.handler != nil {
-			if err := c.handler(event); err != nil {
-				logger.ErrorCtx(c.ctx, fmt.Errorf("error handling event: %w", err), zap.Error(err))
-			}
+		if c.handler != nil && c.pool != nil {
+			// Submit event processing to worker pool instead of spawning unbounded goroutines
+			c.pool.SubmitErr(func() error {
+				// Parse the transfer to event
+				event, err := c.tzktClient.ParseTransfer(c.ctx, &transfer)
+				if err != nil {
+					logger.ErrorCtx(c.ctx, fmt.Errorf("error parsing transfer: %w", err), zap.Error(err))
+					return nil
+				}
+
+				if event == nil {
+					return nil
+				}
+
+				if err := c.handler(event); err != nil {
+					logger.ErrorCtx(c.ctx, fmt.Errorf("error handling transfer event: %w", err),
+						zap.Error(err),
+						zap.String("tx_hash", event.TxHash),
+						zap.Uint64("block", event.BlockNumber))
+					return err
+				}
+				return nil
+			})
 		}
 	}
 }
@@ -243,17 +327,30 @@ func (c *tzSubscriber) Bigmaps(data interface{}) {
 			continue
 		}
 
-		event, err := c.tzktClient.ParseBigMapUpdate(c.ctx, &update)
-		if err != nil {
-			logger.ErrorCtx(c.ctx, fmt.Errorf("error parsing big map update: %w", err), zap.Error(err))
-			continue
-		}
-
 		// Call handler if set
-		if c.handler != nil {
-			if err := c.handler(event); err != nil {
-				logger.ErrorCtx(c.ctx, fmt.Errorf("error handling metadata update event: %w", err), zap.Error(err))
-			}
+		if c.handler != nil && c.pool != nil {
+			// Submit event processing to worker pool for consistency with Transfers
+			c.pool.SubmitErr(func() error {
+				// Parse the big map update to event
+				event, err := c.tzktClient.ParseBigMapUpdate(c.ctx, &update)
+				if err != nil {
+					logger.ErrorCtx(c.ctx, fmt.Errorf("error parsing big map update: %w", err), zap.Error(err))
+					return nil
+				}
+
+				if event == nil {
+					return nil
+				}
+
+				if err := c.handler(event); err != nil {
+					logger.ErrorCtx(c.ctx, fmt.Errorf("error handling metadata update event: %w", err),
+						zap.Error(err),
+						zap.String("tx_hash", event.TxHash),
+						zap.Uint64("block", event.BlockNumber))
+					return err
+				}
+				return nil
+			})
 		}
 	}
 }

@@ -100,8 +100,10 @@ func main() {
 
 	// Initialize Ethereum subscriber
 	ethSubscriber, err := ethereum.NewSubscriber(ctx, ethereum.Config{
-		WebSocketURL: cfg.Ethereum.WebSocketURL,
-		ChainID:      cfg.Ethereum.ChainID,
+		WebSocketURL:    cfg.Ethereum.WebSocketURL,
+		ChainID:         cfg.Ethereum.ChainID,
+		WorkerPoolSize:  cfg.Worker.WorkerPoolSize,
+		WorkerQueueSize: cfg.Worker.WorkerQueueSize,
 	}, ethereumClient, clockAdapter)
 	if err != nil {
 		logger.FatalCtx(ctx, "Failed to create Ethereum subscriber", zap.Error(err), zap.String("websocket_url", cfg.Ethereum.WebSocketURL))

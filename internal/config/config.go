@@ -95,9 +95,16 @@ type AuthConfig struct {
 	APIKeys      []string `mapstructure:"api_keys"`
 }
 
+// WorkerConfig holds worker configuration
+type WorkerConfig struct {
+	WorkerPoolSize  int `mapstructure:"pool_size"`
+	WorkerQueueSize int `mapstructure:"queue_size"`
+}
+
 // EthereumEmitterConfig holds configuration for ethereum-event-emitter
 type EthereumEmitterConfig struct {
 	BaseConfig `mapstructure:",squash"`
+	Worker     WorkerConfig   `mapstructure:"worker"`
 	Database   DatabaseConfig `mapstructure:"database"`
 	NATS       NATSConfig     `mapstructure:"nats"`
 	Ethereum   EthereumConfig `mapstructure:"ethereum"`
@@ -106,6 +113,7 @@ type EthereumEmitterConfig struct {
 // TezosEmitterConfig holds configuration for tezos-event-emitter
 type TezosEmitterConfig struct {
 	BaseConfig `mapstructure:",squash"`
+	Worker     WorkerConfig   `mapstructure:"worker"`
 	Database   DatabaseConfig `mapstructure:"database"`
 	NATS       NATSConfig     `mapstructure:"nats"`
 	Tezos      TezosConfig    `mapstructure:"tezos"`
@@ -175,6 +183,8 @@ func LoadEthereumEmitterConfig(configFile string, envPath string) (*EthereumEmit
 	v.SetDefault("nats.reconnect_wait", "2s")
 	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
 	v.SetDefault("ethereum.chain_id", "eip155:1")
+	v.SetDefault("worker.pool_size", 20)
+	v.SetDefault("worker.queue_size", 2048)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %w", err)
@@ -199,6 +209,8 @@ func LoadTezosEmitterConfig(configFile string, envPath string) (*TezosEmitterCon
 	v.SetDefault("nats.reconnect_wait", "2s")
 	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
+	v.SetDefault("worker.pool_size", 20)
+	v.SetDefault("worker.queue_size", 2048)
 
 	if err := v.ReadInConfig(); err != nil {
 		var error viper.ConfigFileNotFoundError
@@ -448,6 +460,9 @@ func bindAllEnvVars(v *viper.Viper) {
 		"max_static_image_size",
 		"max_animated_image_size",
 		"max_video_size",
+		// Internal Worker config
+		"worker.pool_size",
+		"worker.queue_size",
 	}
 
 	for _, key := range commonKeys {

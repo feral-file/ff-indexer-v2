@@ -22,6 +22,9 @@ func TestLoadEthereumEmitterConfig(t *testing.T) {
 			configFile: `
 debug: true
 sentry_dsn: "https://sentry.example.com"
+worker:
+  pool_size: 10
+  queue_size: 500
 database:
   host: localhost
   port: 5432
@@ -46,6 +49,8 @@ ethereum:
 			validate: func(t *testing.T, cfg *EthereumEmitterConfig) {
 				assert.True(t, cfg.Debug)
 				assert.Equal(t, "https://sentry.example.com", cfg.SentryDSN)
+				assert.Equal(t, 10, cfg.Worker.WorkerPoolSize)
+				assert.Equal(t, 500, cfg.Worker.WorkerQueueSize)
 				assert.Equal(t, "localhost", cfg.Database.Host)
 				assert.Equal(t, 5432, cfg.Database.Port)
 				assert.Equal(t, "testuser", cfg.Database.User)
@@ -144,6 +149,9 @@ func TestLoadTezosEmitterConfig(t *testing.T) {
 			configFile: `
 debug: true
 sentry_dsn: "https://sentry.example.com"
+worker:
+  pool_size: 15
+  queue_size: 1000
 database:
   host: localhost
   port: 5432
@@ -168,6 +176,8 @@ tezos:
 			validate: func(t *testing.T, cfg *TezosEmitterConfig) {
 				assert.True(t, cfg.Debug)
 				assert.Equal(t, "https://sentry.example.com", cfg.SentryDSN)
+				assert.Equal(t, 15, cfg.Worker.WorkerPoolSize)
+				assert.Equal(t, 1000, cfg.Worker.WorkerQueueSize)
 				assert.Equal(t, "localhost", cfg.Database.Host)
 				assert.Equal(t, 5432, cfg.Database.Port)
 				assert.Equal(t, "testuser", cfg.Database.User)

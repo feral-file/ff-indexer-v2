@@ -973,12 +973,6 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 
 // parseLog parses an Ethereum log into a standardized blockchain event
 func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
-	// Get block to extract timestamp
-	block, err := c.client.BlockByNumber(ctx, new(big.Int).SetUint64(vLog.BlockNumber))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get block: %w", err)
-	}
-
 	blockHash := vLog.BlockHash.Hex()
 	event := &domain.BlockchainEvent{
 		Chain:           c.chainID,
@@ -986,7 +980,6 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 		TxHash:          vLog.TxHash.Hex(),
 		BlockNumber:     vLog.BlockNumber,
 		BlockHash:       &blockHash,
-		Timestamp:       c.clock.Unix(int64(block.Time()), 0), //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
 		TxIndex:         uint64(vLog.TxIndex),
 	}
 
@@ -1091,6 +1084,13 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 	default:
 		return nil, fmt.Errorf("unknown event signature: %s", vLog.Topics[0].Hex())
 	}
+
+	// Get block to extract timestamp
+	block, err := c.client.BlockByNumber(ctx, new(big.Int).SetUint64(vLog.BlockNumber))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get block: %w", err)
+	}
+	event.Timestamp = c.clock.Unix(int64(block.Time()), 0) //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
 
 	return event, nil
 }

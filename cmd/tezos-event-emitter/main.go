@@ -96,8 +96,10 @@ func main() {
 
 	// Initialize Tezos subscriber
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{
-		WebSocketURL: cfg.Tezos.WebSocketURL,
-		ChainID:      cfg.Tezos.ChainID,
+		WebSocketURL:    cfg.Tezos.WebSocketURL,
+		ChainID:         cfg.Tezos.ChainID,
+		WorkerPoolSize:  cfg.Worker.WorkerPoolSize,
+		WorkerQueueSize: cfg.Worker.WorkerQueueSize,
 	}, signalR, clockAdapter, tzktClient)
 	if err != nil {
 		logger.FatalCtx(ctx, "Failed to create Tezos subscriber", zap.Error(err), zap.String("websocket_url", cfg.Tezos.WebSocketURL))
