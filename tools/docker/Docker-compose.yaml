@@ -5,7 +5,7 @@ services:
 
   # PostgreSQL database for the ff-indexer application
   postgres:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     container_name: ff-indexer-postgres
     environment:
       POSTGRES_USER: ${FF_INDEXER_DATABASE_USER:-postgres}
@@ -27,7 +27,7 @@ services:
 
   # PostgreSQL database for Temporal
   temporal-postgres:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     container_name: temporal-postgres
     environment:
       POSTGRES_USER: temporal
