@@ -1,0 +1,106 @@
+{{- if .Values.workerMedia.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ff-indexer.fullname" . }}-worker-media
+  labels:
+    {{- include "ff-indexer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-media
+spec:
+  {{- if not .Values.workerMedia.autoscaling.enabled }}
+  replicas: {{ .Values.workerMedia.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ff-indexer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker-media
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "ff-indexer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker-media
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "ff-indexer.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "ff-indexer.postgresql.host" . }} 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+        - name: wait-for-temporal
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              TEMPORAL_HOST=$(echo "{{ .Values.externalTemporal.hostPort }}" | cut -d: -f1)
+              TEMPORAL_PORT=$(echo "{{ .Values.externalTemporal.hostPort }}" | cut -d: -f2)
+              until nc -z $TEMPORAL_HOST $TEMPORAL_PORT; do
+                echo "Waiting for Temporal server at {{ .Values.externalTemporal.hostPort }}..."
+                sleep 2
+              done
+      containers:
+        - name: worker-media
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "ff-indexer.image" (dict "tag" .Values.workerMedia.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- include "ff-indexer.commonEnv" . | nindent 12 }}
+            {{- include "ff-indexer.temporalEnv" . | nindent 12 }}
+            - name: FF_INDEXER_SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ff-indexer.fullname" . }}-secrets
+                  key: sentry-dsn
+            - name: FF_INDEXER_CLOUDFLARE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ff-indexer.fullname" . }}-secrets
+                  key: cloudflare-account-id
+            - name: FF_INDEXER_CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ff-indexer.fullname" . }}-secrets
+                  key: cloudflare-api-token
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: worker-media-config.yaml
+          resources:
+            {{- toYaml .Values.workerMedia.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ff-indexer.fullname" . }}-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: ff-indexer
+description: A Helm chart for FF-Indexer v2 - NFT indexing system for Ethereum and Tezos
+type: application
+version: 1.0.0
+appVersion: "2.0.0"
+keywords:
+  - nft
+  - indexer
+  - ethereum
+  - tezos
+  - blockchain
+maintainers:
+  - name: Feral File
+    url: https://github.com/feral-file/ff-indexer-v2
+

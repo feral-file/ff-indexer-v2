@@ -1,0 +1,150 @@
+{{- if .Values.api.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ff-indexer.fullname" . }}-api
+  labels:
+    {{- include "ff-indexer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "ff-indexer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "ff-indexer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "ff-indexer.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "ff-indexer.postgresql.host" . }} 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+        - name: wait-for-temporal
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              TEMPORAL_HOST=$(echo "{{ .Values.externalTemporal.hostPort }}" | cut -d: -f1)
+              TEMPORAL_PORT=$(echo "{{ .Values.externalTemporal.hostPort }}" | cut -d: -f2)
+              until nc -z $TEMPORAL_HOST $TEMPORAL_PORT; do
+                echo "Waiting for Temporal server at {{ .Values.externalTemporal.hostPort }}..."
+                sleep 2
+              done
+      containers:
+        - name: api
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "ff-indexer.image" (dict "tag" .Values.api.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.server.port }}
+              protocol: TCP
+          env:
+            {{- include "ff-indexer.commonEnv" . | nindent 12 }}
+            {{- include "ff-indexer.temporalEnv" . | nindent 12 }}
+            - name: FF_INDEXER_SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ff-indexer.fullname" . }}-secrets
+                  key: sentry-dsn
+            - name: FF_INDEXER_AUTH_JWT_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ff-indexer.fullname" . }}-secrets
+                  key: jwt-public-key
+            - name: FF_INDEXER_AUTH_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ff-indexer.fullname" . }}-secrets
+                  key: api-keys
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: api-config.yaml
+            - name: blacklist
+              mountPath: /app/config/blacklist.json
+              subPath: blacklist.json
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ff-indexer.fullname" . }}-config
+        - name: blacklist
+          configMap:
+            name: {{ include "ff-indexer.fullname" . }}-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ff-indexer.fullname" . }}-api
+  labels:
+    {{- include "ff-indexer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.api.service.type }}
+  ports:
+    - port: {{ .Values.api.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "ff-indexer.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+{{- end }}
+

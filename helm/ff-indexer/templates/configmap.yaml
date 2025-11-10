@@ -1,0 +1,196 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ff-indexer.fullname" . }}-config
+  labels:
+    {{- include "ff-indexer.labels" . | nindent 4 }}
+data:
+  api-config.yaml: |
+    # Note: Sensitive values (passwords, API keys, Sentry DSN, JWT keys) 
+    # are passed via environment variables and not stored in this ConfigMap
+    
+    debug: {{ .Values.config.debug }}
+    
+    server:
+      host: {{ .Values.api.server.host }}
+      port: {{ .Values.api.server.port }}
+      read_timeout: {{ .Values.api.server.readTimeout }}
+      write_timeout: {{ .Values.api.server.writeTimeout }}
+      idle_timeout: {{ .Values.api.server.idleTimeout }}
+    
+    database:
+      host: {{ include "ff-indexer.postgresql.host" . }}
+      port: 5432
+      user: {{ .Values.postgresql.auth.username }}
+      dbname: {{ .Values.postgresql.auth.database }}
+      sslmode: disable
+    
+    temporal:
+      host_port: {{ .Values.externalTemporal.hostPort }}
+      namespace: {{ .Values.externalTemporal.namespace }}
+      task_queue: {{ .Values.workerCore.temporal.taskQueue }}
+    
+    blacklist_path: /app/config/blacklist.json
+
+  worker-core-config.yaml: |
+    # Note: Sensitive values (passwords, RPC URLs, Sentry DSN) 
+    # are passed via environment variables and not stored in this ConfigMap
+    
+    debug: {{ .Values.config.debug }}
+    
+    database:
+      host: {{ include "ff-indexer.postgresql.host" . }}
+      port: 5432
+      user: {{ .Values.postgresql.auth.username }}
+      dbname: {{ .Values.postgresql.auth.database }}
+      sslmode: disable
+    
+    temporal:
+      host_port: {{ .Values.externalTemporal.hostPort }}
+      namespace: {{ .Values.externalTemporal.namespace }}
+      task_queue: {{ .Values.workerCore.temporal.taskQueue }}
+      media_task_queue: {{ .Values.workerCore.temporal.mediaTaskQueue }}
+      max_concurrent_activity_execution_size: {{ .Values.workerCore.temporal.maxConcurrentActivityExecutionSize }}
+      worker_activities_per_second: {{ .Values.workerCore.temporal.workerActivitiesPerSecond }}
+    
+    ethereum:
+      chain_id: {{ .Values.config.ethereum.chainId }}
+    
+    tezos:
+      chain_id: {{ .Values.config.tezos.chainId }}
+      api_url: {{ .Values.config.tezos.apiUrl }}
+    
+    vendors:
+      artblocks_url: {{ .Values.config.vendors.artblocksUrl }}
+    
+    ethereum_token_sweep_start_block: {{ .Values.config.ethereum.tokenSweepStartBlock }}
+    tezos_token_sweep_start_block: {{ .Values.config.tezos.tokenSweepStartBlock }}
+    publisher_registry_path: /app/config/publisher.json
+    blacklist_path: /app/config/blacklist.json
+    
+    uri:
+      ipfs_gateways:
+{{ .Values.config.uri.ipfsGateways | toYaml | indent 8 }}
+      arweave_gateways:
+{{ .Values.config.uri.arweaveGateways | toYaml | indent 8 }}
+      onchfs_gateways:
+{{ .Values.config.uri.onchfsGateways | toYaml | indent 8 }}
+
+  worker-media-config.yaml: |
+    # Note: Sensitive values (passwords, Sentry DSN, Cloudflare credentials) 
+    # are passed via environment variables and not stored in this ConfigMap
+    
+    debug: {{ .Values.config.debug }}
+    
+    database:
+      host: {{ include "ff-indexer.postgresql.host" . }}
+      port: 5432
+      user: {{ .Values.postgresql.auth.username }}
+      dbname: {{ .Values.postgresql.auth.database }}
+      sslmode: disable
+    
+    temporal:
+      host_port: {{ .Values.externalTemporal.hostPort }}
+      namespace: {{ .Values.externalTemporal.namespace }}
+      task_queue: {{ .Values.workerCore.temporal.mediaTaskQueue }}
+      max_concurrent_activity_execution_size: {{ .Values.workerMedia.temporal.maxConcurrentActivityExecutionSize }}
+      worker_activities_per_second: {{ .Values.workerMedia.temporal.workerActivitiesPerSecond }}
+    
+    uri:
+      ipfs_gateways:
+{{ .Values.config.uri.ipfsGateways | toYaml | indent 8 }}
+      arweave_gateways:
+{{ .Values.config.uri.arweaveGateways | toYaml | indent 8 }}
+      onchfs_gateways:
+{{ .Values.config.uri.onchfsGateways | toYaml | indent 8 }}
+    
+    max_static_image_size: {{ .Values.workerMedia.maxStaticImageSize }}
+    max_animated_image_size: {{ .Values.workerMedia.maxAnimatedImageSize }}
+    max_video_size: {{ .Values.workerMedia.maxVideoSize }}
+
+  ethereum-event-emitter-config.yaml: |
+    # Note: Sensitive values (passwords, websocket URLs with API keys, Sentry DSN) 
+    # are passed via environment variables and not stored in this ConfigMap
+    
+    debug: {{ .Values.config.debug }}
+    
+    database:
+      host: {{ include "ff-indexer.postgresql.host" . }}
+      port: 5432
+      user: {{ .Values.postgresql.auth.username }}
+      dbname: {{ .Values.postgresql.auth.database }}
+      sslmode: disable
+    
+    nats:
+      url: {{ .Values.externalNats.url }}
+      stream_name: {{ .Values.config.nats.streamName }}
+      max_reconnects: {{ .Values.config.nats.maxReconnects }}
+      reconnect_wait: {{ .Values.config.nats.reconnectWait }}
+      connection_name: ethereum-event-emitter
+    
+    ethereum:
+      chain_id: {{ .Values.config.ethereum.chainId }}
+      start_block: {{ .Values.config.ethereum.startBlock }}
+    
+    worker:
+      pool_size: {{ .Values.config.worker.poolSize }}
+      queue_size: {{ .Values.config.worker.queueSize }}
+    
+    publisher_registry_path: /app/config/publisher.json
+
+  tezos-event-emitter-config.yaml: |
+    # Note: Sensitive values (passwords, websocket URLs, Sentry DSN) 
+    # are passed via environment variables and not stored in this ConfigMap
+    
+    debug: {{ .Values.config.debug }}
+    
+    database:
+      host: {{ include "ff-indexer.postgresql.host" . }}
+      port: 5432
+      user: {{ .Values.postgresql.auth.username }}
+      dbname: {{ .Values.postgresql.auth.database }}
+      sslmode: disable
+    
+    nats:
+      url: {{ .Values.externalNats.url }}
+      stream_name: {{ .Values.config.nats.streamName }}
+      max_reconnects: {{ .Values.config.nats.maxReconnects }}
+      reconnect_wait: {{ .Values.config.nats.reconnectWait }}
+      connection_name: tezos-event-emitter
+    
+    tezos:
+      chain_id: {{ .Values.config.tezos.chainId }}
+      api_url: {{ .Values.config.tezos.apiUrl }}
+      start_level: {{ .Values.config.tezos.startLevel }}
+    
+    worker:
+      pool_size: {{ .Values.config.worker.poolSize }}
+      queue_size: {{ .Values.config.worker.queueSize }}
+    
+    publisher_registry_path: /app/config/publisher.json
+
+  event-bridge-config.yaml: |
+    # Note: Sensitive values (passwords, Sentry DSN) 
+    # are passed via environment variables and not stored in this ConfigMap
+    
+    debug: {{ .Values.config.debug }}
+    
+    database:
+      host: {{ include "ff-indexer.postgresql.host" . }}
+      port: 5432
+      user: {{ .Values.postgresql.auth.username }}
+      dbname: {{ .Values.postgresql.auth.database }}
+      sslmode: disable
+    
+    nats:
+      url: {{ .Values.externalNats.url }}
+    
+    temporal:
+      host_port: {{ .Values.externalTemporal.hostPort }}
+      namespace: {{ .Values.externalTemporal.namespace }}
+      task_queue: {{ .Values.workerCore.temporal.taskQueue }}
+    
+    blacklist_path: /app/config/blacklist.json
+
+  blacklist.json: {{ .Values.registryFiles.blacklist | quote }}
+  publisher.json: {{ .Values.registryFiles.publisher | quote }}
