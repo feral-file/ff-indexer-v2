@@ -1,5 +1,16 @@
 name: Build and Push Docker Images
 
+# Required IAM permissions for AWS credentials:
+# - ecr:GetAuthorizationToken
+# - ecr:BatchCheckLayerAvailability
+# - ecr:InitiateLayerUpload
+# - ecr:UploadLayerPart
+# - ecr:CompleteLayerUpload
+# - ecr:PutImage
+# - ecr:DescribeRepositories
+# - ecr:CreateRepository (if auto-creating repos)
+# - ecr:GetRepositoryPolicy
+
 on:
   workflow_dispatch:
     inputs:
@@ -44,12 +55,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
+      # Configure AWS credentials
+      # Note: Set either AWS_ECR_ROLE_ARN (for OIDC) OR AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (for access keys)
+      # If AWS_ECR_ROLE_ARN is set, OIDC will be used; otherwise, access keys will be used
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # Option 1: Using OIDC (recommended, more secure)
-          role-to-assume: ${{ secrets.AWS_ERC_ROLE_ARN }}
-          # Option 2: Using Access Keys (simpler setup)
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
@@ -57,6 +69,26 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Verify AWS credentials and ECR permissions
+        run: |
+          echo "Verifying AWS authentication..."
+          aws sts get-caller-identity
+          
+          echo "Checking ECR repository..."
+          if aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
+            echo "✅ ECR repository '${{ env.ECR_REPOSITORY }}' exists"
+            
+            # Check repository policy
+            echo "Checking repository permissions..."
+            aws ecr get-repository-policy --repository-name ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} || echo "No repository policy set"
+          else
+            echo "❌ ECR repository '${{ env.ECR_REPOSITORY }}' not found"
+            echo "Creating ECR repository..."
+            aws ecr create-repository --repository-name ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256 || true
+          fi
       
       - name: Determine tag
         id: determine-tag
