@@ -63,7 +63,15 @@ func main() {
 	if err != nil {
 		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
 	}
-	logger.InfoCtx(ctx, "Connected to database")
+
+	// Configure connection pool
+	if err := store.ConfigureConnectionPool(db, cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns, cfg.Database.ConnMaxLifetime, cfg.Database.ConnMaxIdleTime); err != nil {
+		logger.FatalCtx(ctx, "Failed to configure connection pool", zap.Error(err))
+	}
+	logger.InfoCtx(ctx, "Connected to database",
+		zap.Int("max_open_conns", cfg.Database.MaxOpenConns),
+		zap.Int("max_idle_conns", cfg.Database.MaxIdleConns),
+	)
 
 	// Initialize store
 	dataStore := store.NewPGStore(db)

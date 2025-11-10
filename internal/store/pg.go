@@ -28,6 +28,46 @@ func NewPGStore(db *gorm.DB) Store {
 	return &pgStore{db: db}
 }
 
+// ConfigureConnectionPool configures the connection pool settings for a GORM database connection.
+// It accesses the underlying *sql.DB and sets the pool configuration.
+// If any of the pool settings are 0 or empty, reasonable defaults are used:
+//   - MaxOpenConns: 20 (if 0)
+//   - MaxIdleConns: 5 (if 0)
+//   - ConnMaxLifetime: 5 minutes (if 0)
+//   - ConnMaxIdleTime: 10 minutes (if 0)
+func ConfigureConnectionPool(db *gorm.DB, maxOpenConns, maxIdleConns int, connMaxLifetime, connMaxIdleTime time.Duration) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	// Set defaults if not provided
+	if maxOpenConns == 0 {
+		maxOpenConns = 20
+	}
+	if maxIdleConns == 0 {
+		maxIdleConns = 5
+	}
+	if connMaxLifetime == 0 {
+		connMaxLifetime = 5 * time.Minute
+	}
+	if connMaxIdleTime == 0 {
+		connMaxIdleTime = 10 * time.Minute
+	}
+
+	// Ensure MaxIdleConns doesn't exceed MaxOpenConns
+	if maxIdleConns > maxOpenConns {
+		maxIdleConns = maxOpenConns
+	}
+
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetMaxIdleConns(maxIdleConns)
+	sqlDB.SetConnMaxLifetime(connMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(connMaxIdleTime)
+
+	return nil
+}
+
 // GetTokenByID retrieves a token by its internal ID
 func (s *pgStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
 	var token schema.Token

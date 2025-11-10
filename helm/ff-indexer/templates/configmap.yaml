@@ -24,6 +24,11 @@ data:
       user: {{ .Values.postgresql.auth.username }}
       dbname: {{ .Values.postgresql.auth.database }}
       sslmode: disable
+      # Connection pool settings - adjust based on expected API load
+      max_open_conns: {{ .Values.postgresql.connectionPool.api.maxOpenConns }}
+      max_idle_conns: {{ .Values.postgresql.connectionPool.api.maxIdleConns }}
+      conn_max_lifetime: {{ .Values.postgresql.connectionPool.api.connMaxLifetime }}
+      conn_max_idle_time: {{ .Values.postgresql.connectionPool.api.connMaxIdleTime }}
     
     temporal:
       host_port: {{ .Values.externalTemporal.hostPort }}
@@ -44,6 +49,11 @@ data:
       user: {{ .Values.postgresql.auth.username }}
       dbname: {{ .Values.postgresql.auth.database }}
       sslmode: disable
+      # Connection pool settings - adjust based on worker concurrency
+      max_open_conns: {{ .Values.postgresql.connectionPool.workerCore.maxOpenConns }}
+      max_idle_conns: {{ .Values.postgresql.connectionPool.workerCore.maxIdleConns }}
+      conn_max_lifetime: {{ .Values.postgresql.connectionPool.workerCore.connMaxLifetime }}
+      conn_max_idle_time: {{ .Values.postgresql.connectionPool.workerCore.connMaxIdleTime }}
     
     temporal:
       host_port: {{ .Values.externalTemporal.hostPort }}
@@ -88,6 +98,11 @@ data:
       user: {{ .Values.postgresql.auth.username }}
       dbname: {{ .Values.postgresql.auth.database }}
       sslmode: disable
+      # Connection pool settings - adjust based on media processing concurrency
+      max_open_conns: {{ .Values.postgresql.connectionPool.workerMedia.maxOpenConns }}
+      max_idle_conns: {{ .Values.postgresql.connectionPool.workerMedia.maxIdleConns }}
+      conn_max_lifetime: {{ .Values.postgresql.connectionPool.workerMedia.connMaxLifetime }}
+      conn_max_idle_time: {{ .Values.postgresql.connectionPool.workerMedia.connMaxIdleTime }}
     
     temporal:
       host_port: {{ .Values.externalTemporal.hostPort }}
@@ -120,6 +135,11 @@ data:
       user: {{ .Values.postgresql.auth.username }}
       dbname: {{ .Values.postgresql.auth.database }}
       sslmode: disable
+      # Connection pool settings - adjust based on event emission rate
+      max_open_conns: {{ .Values.postgresql.connectionPool.ethereumEventEmitter.maxOpenConns }}
+      max_idle_conns: {{ .Values.postgresql.connectionPool.ethereumEventEmitter.maxIdleConns }}
+      conn_max_lifetime: {{ .Values.postgresql.connectionPool.ethereumEventEmitter.connMaxLifetime }}
+      conn_max_idle_time: {{ .Values.postgresql.connectionPool.ethereumEventEmitter.connMaxIdleTime }}
     
     nats:
       url: {{ .Values.externalNats.url }}
@@ -150,6 +170,11 @@ data:
       user: {{ .Values.postgresql.auth.username }}
       dbname: {{ .Values.postgresql.auth.database }}
       sslmode: disable
+      # Connection pool settings - adjust based on event emission rate
+      max_open_conns: {{ .Values.postgresql.connectionPool.tezosEventEmitter.maxOpenConns }}
+      max_idle_conns: {{ .Values.postgresql.connectionPool.tezosEventEmitter.maxIdleConns }}
+      conn_max_lifetime: {{ .Values.postgresql.connectionPool.tezosEventEmitter.connMaxLifetime }}
+      conn_max_idle_time: {{ .Values.postgresql.connectionPool.tezosEventEmitter.connMaxIdleTime }}
     
     nats:
       url: {{ .Values.externalNats.url }}
@@ -181,6 +206,11 @@ data:
       user: {{ .Values.postgresql.auth.username }}
       dbname: {{ .Values.postgresql.auth.database }}
       sslmode: disable
+      # Connection pool settings - adjust based on event processing rate
+      max_open_conns: {{ .Values.postgresql.connectionPool.eventBridge.maxOpenConns }}
+      max_idle_conns: {{ .Values.postgresql.connectionPool.eventBridge.maxIdleConns }}
+      conn_max_lifetime: {{ .Values.postgresql.connectionPool.eventBridge.connMaxLifetime }}
+      conn_max_idle_time: {{ .Values.postgresql.connectionPool.eventBridge.connMaxIdleTime }}
     
     nats:
       url: {{ .Values.externalNats.url }}

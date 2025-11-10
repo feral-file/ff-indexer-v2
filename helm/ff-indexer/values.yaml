@@ -98,6 +98,46 @@ postgresql:
     username: postgres
     password: postgres
     database: ff_indexer
+  
+  # Database connection pool settings per service
+  # Each service maintains its own pool based on workload
+  connectionPool:
+    # API server - higher pool for concurrent HTTP requests
+    api:
+      maxOpenConns: 40
+      maxIdleConns: 10
+      connMaxLifetime: "5m"
+      connMaxIdleTime: "10m"
+    # Worker core - medium pool for task processing
+    workerCore:
+      maxOpenConns: 30
+      maxIdleConns: 8
+      connMaxLifetime: "5m"
+      connMaxIdleTime: "10m"
+    # Worker media - lower pool for CPU/IO intensive work
+    workerMedia:
+      maxOpenConns: 10
+      maxIdleConns: 5
+      connMaxLifetime: "5m"
+      connMaxIdleTime: "10m"
+    # Event bridge - lower pool for event processing
+    eventBridge:
+      maxOpenConns: 20
+      maxIdleConns: 5
+      connMaxLifetime: "5m"
+      connMaxIdleTime: "10m"
+    # Event emitters - minimal pool for low workload writes
+    # Connections can be kept longer due to minimal usage
+    ethereumEventEmitter:
+      maxOpenConns: 2
+      maxIdleConns: 1
+      connMaxLifetime: "30m"      # Longer lifetime - minimal workload
+      connMaxIdleTime: "15m"      # Keep idle connections longer
+    tezosEventEmitter:
+      maxOpenConns: 2
+      maxIdleConns: 1
+      connMaxLifetime: "30m"      # Longer lifetime - minimal workload
+      connMaxIdleTime: "15m"      # Keep idle connections longer
   primary:
     persistence:
       enabled: true

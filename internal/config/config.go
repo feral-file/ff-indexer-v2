@@ -29,12 +29,16 @@ type URIConfig struct {
 
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	DBName   string `mapstructure:"dbname"`
-	SSLMode  string `mapstructure:"sslmode"`
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	User            string        `mapstructure:"user"`
+	Password        string        `mapstructure:"password"`
+	DBName          string        `mapstructure:"dbname"`
+	SSLMode         string        `mapstructure:"sslmode"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`     // Maximum number of open connections to the database
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`     // Maximum number of idle connections in the pool
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`  // Maximum amount of time a connection may be reused (e.g., "5m", "1h")
+	ConnMaxIdleTime time.Duration `mapstructure:"conn_max_idle_time"` // Maximum amount of time a connection may be idle (e.g., "10m", "30m")
 }
 
 // NATSConfig holds NATS JetStream configuration
@@ -407,6 +411,10 @@ func bindAllEnvVars(v *viper.Viper) {
 		"database.password",
 		"database.dbname",
 		"database.sslmode",
+		"database.max_open_conns",
+		"database.max_idle_conns",
+		"database.conn_max_lifetime",
+		"database.conn_max_idle_time",
 		// NATS
 		"nats.url",
 		"nats.stream_name",
