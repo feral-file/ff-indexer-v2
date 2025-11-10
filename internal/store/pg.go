@@ -439,6 +439,8 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 				ImageURL:     metadata.ImageURL,
 				Artists:      metadata.Artists,
 				Publisher:    metadata.Publisher,
+				Name:         metadata.Name,
+				Description:  metadata.Description,
 				MimeType:     metadata.MimeType,
 			},
 		}
@@ -450,6 +452,8 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 				ImageURL:     oldMetadata.ImageURL,
 				Artists:      oldMetadata.Artists,
 				Publisher:    oldMetadata.Publisher,
+				Name:         oldMetadata.Name,
+				Description:  oldMetadata.Description,
 				MimeType:     oldMetadata.MimeType,
 			}
 		}

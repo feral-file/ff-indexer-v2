@@ -53,6 +53,8 @@ type MetadataFields struct {
 	ImageURL     *string    `json:"image_url,omitempty"`     // URL to image
 	Artists      []Artist   `json:"artists,omitempty"`       // List of artist names
 	Publisher    *Publisher `json:"publisher,omitempty"`     // Publisher name
+	Name         *string    `json:"name,omitempty"`          // Name from vendor
+	Description  *string    `json:"description,omitempty"`   // Description from vendor
 	MimeType     *string    `json:"mime_type,omitempty"`     // MIME type of the artwork
 }
 
