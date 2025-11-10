@@ -1,0 +1,163 @@
+name: Build and Push Docker Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag suffix for images (e.g., v1.2.3, dev, staging)'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+env:
+  ECR_REGISTRY: 083397868157.dkr.ecr.ap-northeast-1.amazonaws.com
+  ECR_REPOSITORY: ff-indexer
+  AWS_REGION: ap-northeast-1
+
+jobs:
+  build-and-push:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    
+    # Run all services in parallel
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - ethereum-event-emitter
+          - tezos-event-emitter
+          - event-bridge
+          - worker-core
+          - worker-media
+    
+    permissions:
+      contents: read
+      id-token: write  # Required for AWS OIDC (only if using role-to-assume)
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Option 1: Using OIDC (recommended, more secure)
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          # Option 2: Using Access Keys (simpler setup)
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Determine tag
+        id: determine-tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            # Extract tag from git ref (refs/tags/v1.2.3 -> v1.2.3)
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Using tag: ${TAG}"
+      
+      - name: Generate Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=raw,value=${{ matrix.service }}-${{ steps.determine-tag.outputs.tag }}
+            type=raw,value=${{ matrix.service }}-latest,enable=${{ github.ref == 'refs/heads/main' }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./tools/docker/Dockerfile-${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            VERSION=${{ steps.determine-tag.outputs.tag }}
+            REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+      
+      - name: Image digest
+        run: echo "Built and pushed ${{ matrix.service }} - ${{ steps.meta.outputs.tags }}"
+  
+  summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: always()
+    
+    steps:
+      - name: Check build status
+        run: |
+          if [ "${{ needs.build-and-push.result }}" = "success" ]; then
+            echo "✅ All images built and pushed successfully!"
+          else
+            echo "❌ Some images failed to build"
+            exit 1
+          fi
+      
+      - name: Output image tags
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "## 🐳 Built Images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Image Tag |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:api-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ethereum Event Emitter | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:ethereum-event-emitter-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tezos Event Emitter | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:tezos-event-emitter-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event Bridge | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:event-bridge-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Worker Core | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:worker-core-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Worker Media | \`${{ env.ECR_REPOSITORY }}:worker-media-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Helm Values" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
+          echo "global:" >> $GITHUB_STEP_SUMMARY
+          echo "  imageRegistry: ${{ env.ECR_REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "image:" >> $GITHUB_STEP_SUMMARY
+          echo "  repository: ${{ env.ECR_REPOSITORY }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "api:" >> $GITHUB_STEP_SUMMARY
+          echo "  image:" >> $GITHUB_STEP_SUMMARY
+          echo "    tag: api-${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "ethereumEventEmitter:" >> $GITHUB_STEP_SUMMARY
+          echo "  image:" >> $GITHUB_STEP_SUMMARY
+          echo "    tag: ethereum-event-emitter-${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "tezosEventEmitter:" >> $GITHUB_STEP_SUMMARY
+          echo "  image:" >> $GITHUB_STEP_SUMMARY
+          echo "    tag: tezos-event-emitter-${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "eventBridge:" >> $GITHUB_STEP_SUMMARY
+          echo "  image:" >> $GITHUB_STEP_SUMMARY
+          echo "    tag: event-bridge-${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "workerCore:" >> $GITHUB_STEP_SUMMARY
+          echo "  image:" >> $GITHUB_STEP_SUMMARY
+          echo "    tag: worker-core-${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "workerMedia:" >> $GITHUB_STEP_SUMMARY
+          echo "  image:" >> $GITHUB_STEP_SUMMARY
+          echo "    tag: worker-media-${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
