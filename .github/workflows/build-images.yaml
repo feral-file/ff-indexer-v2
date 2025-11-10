@@ -62,8 +62,6 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Login to Amazon ECR
@@ -125,6 +123,7 @@ jobs:
             BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
             VERSION=${{ steps.determine-tag.outputs.tag }}
             REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+          provenance: false
       
       - name: Image digest
         run: echo "Built and pushed ${{ matrix.service }} - ${{ steps.meta.outputs.tags }}"
@@ -157,7 +156,7 @@ jobs:
           echo "| Tezos Event Emitter | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:tezos-event-emitter-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Event Bridge | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:event-bridge-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Worker Core | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:worker-core-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Worker Media | \`${{ env.ECR_REPOSITORY }}:worker-media-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Worker Media | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:worker-media-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Helm Values" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
