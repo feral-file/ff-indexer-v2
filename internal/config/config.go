@@ -69,7 +69,7 @@ type TezosConfig struct {
 type TemporalConfig struct {
 	HostPort                           string  `mapstructure:"host_port"`
 	Namespace                          string  `mapstructure:"namespace"`
-	TaskQueue                          string  `mapstructure:"task_queue"`
+	TokenTaskQueue                     string  `mapstructure:"token_task_queue"`
 	MediaTaskQueue                     string  `mapstructure:"media_task_queue"`
 	MaxConcurrentActivityExecutionSize int     `mapstructure:"max_concurrent_activity_execution_size"`
 	WorkerActivitiesPerSecond          float64 `mapstructure:"worker_activities_per_second"`
@@ -244,7 +244,7 @@ func LoadEventBridgeConfig(configFile string, envPath string) (*EventBridgeConfi
 	v.SetDefault("nats.max_deliver", 3)
 	v.SetDefault("temporal.host_port", "localhost:7233")
 	v.SetDefault("temporal.namespace", "default")
-	v.SetDefault("temporal.task_queue", "token-indexing")
+	v.SetDefault("temporal.token_task_queue", "token-indexing")
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 
@@ -274,7 +274,7 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("database.sslmode", "disable")
 	v.SetDefault("temporal.host_port", "localhost:7233")
 	v.SetDefault("temporal.namespace", "default")
-	v.SetDefault("temporal.task_queue", "token-indexing")
+	v.SetDefault("temporal.token_task_queue", "token-indexing")
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
@@ -313,7 +313,7 @@ func LoadAPIConfig(configFile string, envPath string) (*APIConfig, error) {
 	v.SetDefault("database.sslmode", "disable")
 	v.SetDefault("temporal.host_port", "localhost:7233")
 	v.SetDefault("temporal.namespace", "default")
-	v.SetDefault("temporal.task_queue", "token-indexing")
+	v.SetDefault("temporal.token_task_queue", "token-indexing")
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 
@@ -341,7 +341,7 @@ func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfi
 	// Set defaults
 	v.SetDefault("database.port", 5432)
 	v.SetDefault("database.sslmode", "disable")
-	v.SetDefault("temporal.task_queue", "media-indexing")
+	v.SetDefault("temporal.media_task_queue", "media-indexing")
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 10)
 	v.SetDefault("temporal.worker_activities_per_second", 10)
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
@@ -429,7 +429,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		// Temporal
 		"temporal.host_port",
 		"temporal.namespace",
-		"temporal.task_queue",
+		"temporal.token_task_queue",
 		"temporal.media_task_queue",
 		"temporal.max_concurrent_activity_execution_size",
 		"temporal.worker_activities_per_second",

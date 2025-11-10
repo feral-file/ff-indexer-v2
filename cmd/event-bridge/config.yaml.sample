@@ -23,7 +23,7 @@ nats:
 temporal:
   host_port: localhost:7233
   namespace: default
-  task_queue: token-indexing
+  token_task_queue: token-indexing
 
 blacklist_path: tools/registry/blacklist.json
 

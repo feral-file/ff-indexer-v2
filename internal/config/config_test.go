@@ -296,7 +296,7 @@ nats:
 temporal:
   host_port: "temporal.example.com:7233"
   namespace: "production"
-  task_queue: "custom-queue"
+  token_task_queue: "custom-queue"
   max_concurrent_activity_execution_size: 100
   worker_activities_per_second: 100
 blacklist_path: "/path/to/blacklist.json"
@@ -318,7 +318,7 @@ blacklist_path: "/path/to/blacklist.json"
 				assert.Equal(t, 5, cfg.NATS.MaxDeliver)
 				assert.Equal(t, "temporal.example.com:7233", cfg.Temporal.HostPort)
 				assert.Equal(t, "production", cfg.Temporal.Namespace)
-				assert.Equal(t, "custom-queue", cfg.Temporal.TaskQueue)
+				assert.Equal(t, "custom-queue", cfg.Temporal.TokenTaskQueue)
 				assert.Equal(t, 100, cfg.Temporal.MaxConcurrentActivityExecutionSize)
 				assert.Equal(t, 100.0, cfg.Temporal.WorkerActivitiesPerSecond)
 				assert.Equal(t, "/path/to/blacklist.json", cfg.BlacklistPath)
@@ -351,7 +351,7 @@ temporal:
 				assert.Equal(t, 3, cfg.NATS.MaxDeliver)
 				assert.Equal(t, "localhost:7233", cfg.Temporal.HostPort)
 				assert.Equal(t, "default", cfg.Temporal.Namespace)
-				assert.Equal(t, "token-indexing", cfg.Temporal.TaskQueue)
+				assert.Equal(t, "token-indexing", cfg.Temporal.TokenTaskQueue)
 				assert.Equal(t, 50, cfg.Temporal.MaxConcurrentActivityExecutionSize)
 				assert.Equal(t, 50.0, cfg.Temporal.WorkerActivitiesPerSecond)
 			},
@@ -425,7 +425,7 @@ database:
 temporal:
   host_port: "localhost:7233"
   namespace: "default"
-  task_queue: "token-indexing"
+  token_task_queue: "token-indexing"
   max_concurrent_activity_execution_size: 50
   worker_activities_per_second: 50
 ethereum:
@@ -505,7 +505,7 @@ tezos:
 				assert.Equal(t, "disable", cfg.Database.SSLMode)
 				assert.Equal(t, "localhost:7233", cfg.Temporal.HostPort)
 				assert.Equal(t, "default", cfg.Temporal.Namespace)
-				assert.Equal(t, "token-indexing", cfg.Temporal.TaskQueue)
+				assert.Equal(t, "token-indexing", cfg.Temporal.TokenTaskQueue)
 				assert.Equal(t, 50, cfg.Temporal.MaxConcurrentActivityExecutionSize)
 				assert.Equal(t, 50.0, cfg.Temporal.WorkerActivitiesPerSecond)
 				assert.Equal(t, "https://api.tzkt.io", cfg.Tezos.APIURL)
@@ -691,7 +691,7 @@ database:
 temporal:
   host_port: "localhost:7233"
   namespace: "default"
-  task_queue: "custom-media-queue"
+  media_task_queue: "custom-media-queue"
   max_concurrent_activity_execution_size: 20
   worker_activities_per_second: 20
 uri:
@@ -720,7 +720,7 @@ max_video_size: 104857600
 				assert.Equal(t, "require", cfg.Database.SSLMode)
 				assert.Equal(t, "localhost:7233", cfg.Temporal.HostPort)
 				assert.Equal(t, "default", cfg.Temporal.Namespace)
-				assert.Equal(t, "custom-media-queue", cfg.Temporal.TaskQueue)
+				assert.Equal(t, "custom-media-queue", cfg.Temporal.MediaTaskQueue)
 				assert.Equal(t, 20, cfg.Temporal.MaxConcurrentActivityExecutionSize)
 				assert.Equal(t, 20.0, cfg.Temporal.WorkerActivitiesPerSecond)
 				assert.Equal(t, "test-account-id", cfg.Cloudflare.AccountID)
@@ -746,7 +746,7 @@ database:
 				// Check defaults
 				assert.Equal(t, 5432, cfg.Database.Port)
 				assert.Equal(t, "disable", cfg.Database.SSLMode)
-				assert.Equal(t, "media-indexing", cfg.Temporal.TaskQueue)
+				assert.Equal(t, "media-indexing", cfg.Temporal.MediaTaskQueue)
 				assert.Equal(t, 10, cfg.Temporal.MaxConcurrentActivityExecutionSize)
 				assert.Equal(t, 10.0, cfg.Temporal.WorkerActivitiesPerSecond)
 				assert.Len(t, cfg.URI.IPFSGateways, 2)

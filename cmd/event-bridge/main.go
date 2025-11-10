@@ -114,7 +114,7 @@ func main() {
 			ConnectionName:    cfg.NATS.ConnectionName,
 			AckWaitTimeout:    cfg.NATS.AckWait,
 			MaxDeliver:        cfg.NATS.MaxDeliver,
-			TemporalTaskQueue: cfg.Temporal.TaskQueue,
+			TemporalTaskQueue: cfg.Temporal.TokenTaskQueue,
 		},
 		natsJS,
 		dataStore,

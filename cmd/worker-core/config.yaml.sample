@@ -14,7 +14,7 @@ database:
 temporal:
   host_port: localhost:7233
   namespace: default
-  task_queue: token-indexing
+  token_task_queue: token-indexing
   media_task_queue: media-indexing
   max_concurrent_activity_execution_size: 50
   worker_activities_per_second: 50

@@ -172,7 +172,7 @@ func main() {
 	sentryInterceptor := temporal.NewSentryActivityInterceptor()
 	temporalWorker := worker.New(
 		temporalClient,
-		cfg.Temporal.TaskQueue,
+		cfg.Temporal.TokenTaskQueue,
 		worker.Options{
 			MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
 			WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
@@ -180,7 +180,7 @@ func main() {
 				sentryInterceptor,
 			},
 		})
-	logger.InfoCtx(ctx, "Created Temporal worker", zap.String("taskQueue", cfg.Temporal.TaskQueue))
+	logger.InfoCtx(ctx, "Created Temporal worker", zap.String("taskQueue", cfg.Temporal.TokenTaskQueue))
 
 	// Create worker core instance
 	workerCore := workflows.NewWorkerCore(executor,

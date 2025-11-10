@@ -254,6 +254,8 @@ workerMedia:
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 70
   temporal:
+    taskQueue: "token-indexing"
+    mediaTaskQueue: "media-indexing"
     maxConcurrentActivityExecutionSize: 10
     workerActivitiesPerSecond: 10
   # Media file size limits (in bytes)

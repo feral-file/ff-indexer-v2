@@ -109,7 +109,7 @@ func main() {
 		ReadTimeout:           time.Duration(cfg.Server.ReadTimeout) * time.Second,
 		WriteTimeout:          time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		IdleTimeout:           time.Duration(cfg.Server.IdleTimeout) * time.Second,
-		OrchestratorTaskQueue: cfg.Temporal.TaskQueue,
+		OrchestratorTaskQueue: cfg.Temporal.TokenTaskQueue,
 		Auth: middleware.AuthConfig{
 			JWTPublicKey: cfg.Auth.JWTPublicKey,
 			APIKeys:      cfg.Auth.APIKeys,

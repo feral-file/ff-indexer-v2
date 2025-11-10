@@ -144,13 +144,15 @@ func main() {
 
 	// Create Temporal worker with logger and Sentry interceptor
 	sentryInterceptor := temporal.NewSentryActivityInterceptor()
-	temporalWorker := worker.New(temporalClient, cfg.Temporal.MediaTaskQueue, worker.Options{
-		MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
-		WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
-		Interceptors: []interceptor.WorkerInterceptor{
-			sentryInterceptor,
-		},
-	})
+	temporalWorker := worker.New(temporalClient,
+		cfg.Temporal.MediaTaskQueue,
+		worker.Options{
+			MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
+			WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
+			Interceptors: []interceptor.WorkerInterceptor{
+				sentryInterceptor,
+			},
+		})
 
 	// Create worker media instance
 	workerMedia := workflows.NewWorkerMedia(executor)
@@ -171,7 +173,7 @@ func main() {
 	}
 
 	logger.InfoCtx(ctx, "Worker Media started successfully",
-		zap.String("task_queue", cfg.Temporal.TaskQueue),
+		zap.String("token_task_queue", cfg.Temporal.TokenTaskQueue),
 	)
 
 	// Wait for interrupt signal
