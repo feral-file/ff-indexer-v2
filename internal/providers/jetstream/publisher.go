@@ -3,6 +3,7 @@ package jetstream
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -28,10 +29,18 @@ type publisher struct {
 	js         adapter.JetStream
 	streamName string
 	json       adapter.JSON
+	closeOnce  sync.Once
+	closeCh    chan struct{} // Signal unexpected closure
 }
 
 // NewPublisher creates a new NATS JetStream publisher
 func NewPublisher(ctx context.Context, cfg Config, natsJS adapter.NatsJetStream, jsonAdapter adapter.JSON) (messaging.Publisher, error) {
+	p := &publisher{
+		closeCh:    make(chan struct{}),
+		closeOnce:  sync.Once{},
+		streamName: cfg.StreamName,
+		json:       jsonAdapter,
+	}
 	opts := []nats.Option{
 		nats.Name(cfg.ConnectionName),
 		nats.MaxReconnects(cfg.MaxReconnects),
@@ -45,7 +54,14 @@ func NewPublisher(ctx context.Context, cfg Config, natsJS adapter.NatsJetStream,
 			logger.InfoCtx(ctx, "Reconnected to NATS", zap.String("url", nc.ConnectedUrl()))
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
-			logger.InfoCtx(ctx, "NATS connection closed")
+			if nc != nil && nc.LastError() != nil {
+				logger.ErrorCtx(ctx, nc.LastError(), zap.String("message", "NATS connection closed due to error"))
+				p.closeOnce.Do(func() {
+					close(p.closeCh)
+				})
+			} else {
+				logger.InfoCtx(ctx, "NATS connection closed gracefully")
+			}
 		}),
 	}
 
@@ -54,12 +70,10 @@ func NewPublisher(ctx context.Context, cfg Config, natsJS adapter.NatsJetStream,
 		return nil, fmt.Errorf("failed to connect to NATS and create JetStream: %w", err)
 	}
 
-	return &publisher{
-		nc:         nc,
-		js:         js,
-		streamName: cfg.StreamName,
-		json:       jsonAdapter,
-	}, nil
+	p.nc = nc
+	p.js = js
+
+	return p, nil
 }
 
 // PublishEvent publishes a blockchain event to NATS JetStream
@@ -100,4 +114,9 @@ func (p *publisher) Close() {
 	}
 
 	p.nc.Close()
+}
+
+// CloseChan returns a channel that is closed when the publisher is closed
+func (p *publisher) CloseChan() <-chan struct{} {
+	return p.closeCh
 }

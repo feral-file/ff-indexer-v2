@@ -41,7 +41,7 @@ func (m *MockAPIExecutor) EXPECT() *MockAPIExecutorMockRecorder {
 }
 
 // GetChanges mocks base method.
-func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenIDs, tokenCIDs, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
+func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetChanges", ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, since, limit, offset, order, expand)
 	ret0, _ := ret[0].(*dto.ChangeListResponse)

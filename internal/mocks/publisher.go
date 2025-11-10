@@ -48,6 +48,20 @@ func (mr *MockPublisherMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockPublisher)(nil).Close))
 }
 
+// CloseChan mocks base method.
+func (m *MockPublisher) CloseChan() <-chan struct{} {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CloseChan")
+	ret0, _ := ret[0].(<-chan struct{})
+	return ret0
+}
+
+// CloseChan indicates an expected call of CloseChan.
+func (mr *MockPublisherMockRecorder) CloseChan() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseChan", reflect.TypeOf((*MockPublisher)(nil).CloseChan))
+}
+
 // PublishEvent mocks base method.
 func (m *MockPublisher) PublishEvent(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()

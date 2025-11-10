@@ -147,6 +147,9 @@ func main() {
 	case sig := <-sigCh:
 		logger.InfoCtx(ctx, "Received shutdown signal", zap.String("signal", sig.String()))
 		cancel()
+	case <-natsPublisher.CloseChan():
+		logger.InfoCtx(ctx, "NATS connection closed unexpectedly")
+		cancel()
 	case err := <-errCh:
 		logger.ErrorCtx(ctx, err, zap.String("component", "emitter"))
 		cancel()

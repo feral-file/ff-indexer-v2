@@ -14,4 +14,6 @@ type Publisher interface {
 	PublishEvent(ctx context.Context, event *domain.BlockchainEvent) error
 	// Close closes the connection
 	Close()
+	// CloseChan returns a channel that is closed when the publisher is closed
+	CloseChan() <-chan struct{}
 }
