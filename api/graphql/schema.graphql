@@ -182,7 +182,7 @@ type Query {
   # Equivalent to: GET /api/v1/tokens/:cid
   token(
     cid: String!
-    expand: [String!]
+    expands: [String!]
     owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
     provenance_events_limit: Uint8 = 10
@@ -193,15 +193,15 @@ type Query {
   # List tokens with filters
   # Equivalent to: GET /api/v1/tokens
   tokens(
-    owner: [String!]
-    chain: [String!]
-    contract_address: [String!]
+    owners: [String!]
+    chains: [String!]
+    contract_addresses: [String!]
     token_numbers: [String!]
     token_ids: [Uint64!]
     token_cids: [String!]
     limit: Uint8 = 20
     offset: Uint64 = 0
-    expand: [String!]
+    expands: [String!]
     owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
     provenance_events_limit: Uint8 = 10

@@ -297,23 +297,23 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 	}
 
 	if len(filter.TokenIDs) > 0 {
-		query = query.Where("id IN ?", filter.TokenIDs)
+		query = query.Where("tokens.id IN ?", filter.TokenIDs)
 	}
 
 	if len(filter.Chains) > 0 {
-		query = query.Where("chain IN ?", filter.Chains)
+		query = query.Where("tokens.chain IN ?", filter.Chains)
 	}
 
 	if len(filter.ContractAddresses) > 0 {
-		query = query.Where("contract_address IN ?", filter.ContractAddresses)
+		query = query.Where("tokens.contract_address IN ?", filter.ContractAddresses)
 	}
 
 	if len(filter.TokenNumbers) > 0 {
-		query = query.Where("token_number IN ?", filter.TokenNumbers)
+		query = query.Where("tokens.token_number IN ?", filter.TokenNumbers)
 	}
 
 	if len(filter.TokenCIDs) > 0 {
-		query = query.Where("token_cid IN ?", filter.TokenCIDs)
+		query = query.Where("tokens.token_cid IN ?", filter.TokenCIDs)
 	}
 
 	// Count total before pagination
