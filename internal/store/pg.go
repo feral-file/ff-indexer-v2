@@ -224,6 +224,7 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			From:        input.ProvenanceEvent.FromAddress,
 			To:          input.ProvenanceEvent.ToAddress,
 			Quantity:    input.ProvenanceEvent.Quantity,
+			TxHash:      input.ProvenanceEvent.TxHash,
 		}
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
@@ -745,6 +746,7 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 			From:        input.ProvenanceEvent.FromAddress,
 			To:          input.ProvenanceEvent.ToAddress,
 			Quantity:    input.ProvenanceEvent.Quantity,
+			TxHash:      input.ProvenanceEvent.TxHash,
 		}
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
@@ -950,6 +952,7 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 			From:        input.ProvenanceEvent.FromAddress,
 			To:          input.ProvenanceEvent.ToAddress,
 			Quantity:    input.ProvenanceEvent.Quantity,
+			TxHash:      input.ProvenanceEvent.TxHash,
 		}
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
@@ -1107,6 +1110,9 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 					From:        evt.FromAddress,
 					To:          evt.ToAddress,
 					Quantity:    *evt.Quantity,
+				}
+				if evt.TxHash != nil {
+					meta.TxHash = *evt.TxHash
 				}
 				metaJSON, err := json.Marshal(meta)
 				if err != nil {

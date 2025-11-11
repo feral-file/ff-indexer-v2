@@ -37,6 +37,7 @@ type ProvenanceChangeMeta struct {
 	From        *string              `json:"from,omitempty"`     // Sender address (nil for mints)
 	To          *string              `json:"to,omitempty"`       // Receiver address (nil for burns)
 	Quantity    string               `json:"quantity,omitempty"` // Quantity transferred/minted/burned
+	TxHash      string               `json:"tx_hash,omitempty"`  // Transaction hash
 }
 
 // MetadataChangeMeta represents the metadata for metadata update changes
