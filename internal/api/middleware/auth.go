@@ -149,7 +149,7 @@ func Auth(cfg AuthConfig) gin.HandlerFunc {
 // validateJWT validates a JWT token with RSA signature and returns claims
 func validateJWT(tokenString string, publicKeyPEM string) (*jwt.RegisteredClaims, error) {
 	if publicKeyPEM == "" {
-		return nil, errors.New("JWT public key not configured")
+		return nil, errors.New("jwt public key not configured")
 	}
 
 	// Parse the RSA public key

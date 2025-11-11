@@ -48,7 +48,7 @@ func NewPublisher(ctx context.Context, cfg Config, natsJS adapter.NatsJetStream,
 		nats.ReconnectWait(cfg.ReconnectWait),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			if err != nil {
-				logger.ErrorCtx(ctx, errors.New("Disconnected from NATS"), zap.Error(err))
+				logger.ErrorCtx(ctx, errors.New("disconnected from NATS"), zap.Error(err))
 			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
@@ -56,7 +56,7 @@ func NewPublisher(ctx context.Context, cfg Config, natsJS adapter.NatsJetStream,
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
 			if nc != nil && nc.LastError() != nil {
-				logger.ErrorCtx(ctx, errors.New("NATS connection closed due to error"), zap.Error(nc.LastError()))
+				logger.ErrorCtx(ctx, errors.New("nats connection closed due to error"), zap.Error(nc.LastError()))
 				p.closeOnce.Do(func() {
 					close(p.closeCh)
 				})

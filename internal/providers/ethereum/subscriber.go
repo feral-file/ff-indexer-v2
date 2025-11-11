@@ -171,7 +171,7 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 			pool.SubmitErr(func() error {
 				event, err := s.client.ParseEventLog(ctx, logEntry)
 				if err != nil && !errors.Is(err, context.Canceled) {
-					logger.ErrorCtx(ctx, errors.New("Error parsing log"), zap.Error(err))
+					logger.ErrorCtx(ctx, errors.New("error parsing log"), zap.Error(err))
 					return nil
 				}
 
@@ -180,8 +180,8 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 				}
 
 				if err := handler(event); err != nil {
-					logger.ErrorCtx(ctx, err,
-						zap.Error(errors.New("Error handling event")),
+					logger.ErrorCtx(ctx, errors.New("error handling event"),
+						zap.Error(err),
 						zap.String("tx_hash", event.TxHash),
 						zap.Uint64("block", event.BlockNumber))
 					return err
