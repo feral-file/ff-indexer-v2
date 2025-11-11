@@ -96,7 +96,9 @@ func (w *workerMedia) IndexMediaWorkflow(ctx workflow.Context, url string) error
 	// Execute the media indexing activity
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexMediaFile, url).Get(ctx, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to index media file: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to index media file"),
+			zap.Error(err),
 			zap.String("url", url),
 		)
 		return err

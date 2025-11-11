@@ -30,7 +30,9 @@ func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain
 	// Index token with full provenances
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithFullProvenancesByTokenCID, tokenCID).Get(ctx, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to index token provenances: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to index token provenances"),
+			zap.Error(err),
 			zap.String("tokenCID", tokenCID.String()),
 		)
 		return err

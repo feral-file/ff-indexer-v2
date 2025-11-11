@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -143,7 +144,7 @@ func main() {
 		logger.InfoCtx(ctx, "Received shutdown signal", zap.String("signal", sig.String()))
 		cancel()
 	case err := <-errCh:
-		logger.ErrorCtx(ctx, err, zap.String("component", "server"))
+		logger.ErrorCtx(ctx, errors.New("api server error"), zap.Error(err))
 		cancel()
 	}
 

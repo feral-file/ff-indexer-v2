@@ -3,7 +3,6 @@ package graphql
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/vektah/gqlparser/v2/gqlerror"
 	"go.uber.org/zap"
@@ -52,7 +51,7 @@ func ErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
 
 // handleInternalError handles internal errors and returns a gqlerror.Error
 func handleInternalError(err error) *gqlerror.Error {
-	logger.Error(err, zap.String("error", "Unhandled GraphQL error"))
+	logger.Error(errors.New("unhandled GraphQL error"), zap.Error(err))
 	return &gqlerror.Error{
 		Message: "Internal server error",
 		Extensions: map[string]interface{}{
@@ -75,6 +74,6 @@ func handleNotFoundError(err error) *gqlerror.Error {
 
 // RecoverFunc handles panics in resolvers
 func RecoverFunc(ctx context.Context, err interface{}) error {
-	logger.ErrorCtx(ctx, fmt.Errorf("panic: %v", err), zap.Any("panic", err))
+	logger.ErrorCtx(ctx, errors.New("graphQL panic recovered"), zap.Any("error", err))
 	return apierrors.NewInternalError("Internal server error")
 }

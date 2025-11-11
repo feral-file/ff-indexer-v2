@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -66,9 +66,7 @@ func Recovery() gin.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				// Use context-aware logger for errors (Error level sends to sentry)
-				logger.ErrorCtx(c.Request.Context(), fmt.Errorf("panic recovered: %v", err),
-					zap.String("path", c.Request.URL.Path),
-				)
+				logger.ErrorCtx(c.Request.Context(), errors.New("API panic recovered"), zap.Any("error", err))
 				c.AbortWithStatusJSON(500, gin.H{
 					"error": "Internal server error",
 				})

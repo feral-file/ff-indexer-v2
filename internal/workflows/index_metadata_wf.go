@@ -35,8 +35,10 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	// Step 1: Create the metadata update record in the database
 	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdate, event).Get(ctx, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to create metadata update record: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to create metadata update record"),
 			zap.String("tokenCID", event.TokenCID().String()),
+			zap.Error(err),
 		)
 		return err
 	}
@@ -53,8 +55,10 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	// Execute the child workflow without waiting for the result
 	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
 	if err := childWorkflowExec.Get(ctx, nil); err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to execute child workflow IndexTokenMetadata"),
 			zap.String("tokenCID", event.TokenCID().String()),
+			zap.Error(err),
 		)
 		return err
 	}
@@ -88,8 +92,10 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	var normalizedMetadata *metadata.NormalizedMetadata
 	err := workflow.ExecuteActivity(ctx, w.executor.FetchTokenMetadata, tokenCID).Get(ctx, &normalizedMetadata)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to fetch token metadata: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to fetch token metadata"),
 			zap.String("tokenCID", tokenCID.String()),
+			zap.Error(err),
 		)
 		return err
 	}
@@ -109,7 +115,9 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	if normalizedMetadata != nil {
 		err = workflow.ExecuteActivity(ctx, w.executor.UpsertTokenMetadata, tokenCID, normalizedMetadata).Get(ctx, nil)
 		if err != nil {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to upsert token metadata: %w", err),
+			logger.ErrorWf(ctx,
+				fmt.Errorf("failed to upsert token metadata"),
+				zap.Error(err),
 				zap.String("tokenCID", tokenCID.String()),
 			)
 			return err

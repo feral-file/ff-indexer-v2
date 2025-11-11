@@ -156,7 +156,7 @@ func main() {
 		logger.InfoCtx(ctx, "Received shutdown signal", zap.String("signal", sig.String()))
 		cancel()
 	case err := <-errCh:
-		logger.ErrorCtx(ctx, err, zap.String("component", "bridge"))
+		logger.ErrorCtx(ctx, errors.New("event bridge error"), zap.Error(err))
 		cancel()
 	}
 

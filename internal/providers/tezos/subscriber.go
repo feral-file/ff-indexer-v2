@@ -3,6 +3,7 @@ package tezos
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -203,14 +204,14 @@ func (c *tzSubscriber) Transfers(data interface{}) {
 	// Marshal data to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		logger.ErrorCtx(c.ctx, fmt.Errorf("error marshaling transfers data: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, errors.New("error marshaling transfers data"), zap.Error(err))
 		return
 	}
 
 	// Unmarshal data to TzKTMessage
 	var msg TzKTMessage
 	if err := json.Unmarshal(jsonData, &msg); err != nil {
-		logger.ErrorCtx(c.ctx, fmt.Errorf("error unmarshaling transfers message: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, errors.New("error unmarshaling transfers message"), zap.Error(err))
 		return
 	}
 
@@ -235,7 +236,7 @@ func (c *tzSubscriber) Transfers(data interface{}) {
 	// Unmarshal data array into transfer events
 	var transfers []TzKTTokenTransfer
 	if err := json.Unmarshal(msg.Data, &transfers); err != nil {
-		logger.ErrorCtx(c.ctx, fmt.Errorf("error unmarshaling transfers data: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, errors.New("error unmarshaling transfers data"), zap.Error(err))
 		return
 	}
 
@@ -256,7 +257,7 @@ func (c *tzSubscriber) Transfers(data interface{}) {
 				// Parse the transfer to event
 				event, err := c.tzktClient.ParseTransfer(c.ctx, &transfer)
 				if err != nil {
-					logger.ErrorCtx(c.ctx, fmt.Errorf("error parsing transfer: %w", err), zap.Error(err))
+					logger.ErrorCtx(c.ctx, errors.New("error parsing transfer"), zap.Error(err))
 					return nil
 				}
 
@@ -265,7 +266,7 @@ func (c *tzSubscriber) Transfers(data interface{}) {
 				}
 
 				if err := c.handler(event); err != nil {
-					logger.ErrorCtx(c.ctx, fmt.Errorf("error handling transfer event: %w", err),
+					logger.ErrorCtx(c.ctx, errors.New("error handling transfer event"), zap.Error(err),
 						zap.Error(err),
 						zap.String("tx_hash", event.TxHash),
 						zap.Uint64("block", event.BlockNumber))
@@ -283,14 +284,14 @@ func (c *tzSubscriber) Bigmaps(data interface{}) {
 	// Marshal data to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		logger.ErrorCtx(c.ctx, fmt.Errorf("error marshaling bigmaps data: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, errors.New("error marshaling bigmaps data"), zap.Error(err))
 		return
 	}
 
 	// Unmarshal data to TzKTMessage
 	var msg TzKTMessage
 	if err := json.Unmarshal(jsonData, &msg); err != nil {
-		logger.ErrorCtx(c.ctx, fmt.Errorf("error unmarshaling bigmaps message: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, errors.New("error unmarshaling bigmaps message"), zap.Error(err))
 		return
 	}
 
@@ -315,7 +316,7 @@ func (c *tzSubscriber) Bigmaps(data interface{}) {
 	// Unmarshal data array into bigmap updates
 	var updates []TzKTBigMapUpdate
 	if err := json.Unmarshal(msg.Data, &updates); err != nil {
-		logger.ErrorCtx(c.ctx, fmt.Errorf("error unmarshaling bigmaps data: %w", err), zap.Error(err))
+		logger.ErrorCtx(c.ctx, errors.New("error unmarshaling bigmaps data"), zap.Error(err))
 		return
 	}
 
@@ -334,7 +335,7 @@ func (c *tzSubscriber) Bigmaps(data interface{}) {
 				// Parse the big map update to event
 				event, err := c.tzktClient.ParseBigMapUpdate(c.ctx, &update)
 				if err != nil {
-					logger.ErrorCtx(c.ctx, fmt.Errorf("error parsing big map update: %w", err), zap.Error(err))
+					logger.ErrorCtx(c.ctx, errors.New("error parsing big map update"), zap.Error(err))
 					return nil
 				}
 
@@ -343,7 +344,7 @@ func (c *tzSubscriber) Bigmaps(data interface{}) {
 				}
 
 				if err := c.handler(event); err != nil {
-					logger.ErrorCtx(c.ctx, fmt.Errorf("error handling metadata update event: %w", err),
+					logger.ErrorCtx(c.ctx, errors.New("error handling metadata update event"), zap.Error(err),
 						zap.Error(err),
 						zap.String("tx_hash", event.TxHash),
 						zap.Uint64("block", event.BlockNumber))

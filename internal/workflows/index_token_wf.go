@@ -42,7 +42,9 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	// Step 1: Create the token mint in the database
 	err := workflow.ExecuteActivity(ctx, w.executor.CreateTokenMint, event).Get(ctx, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to create token mint: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to create token mint"),
+			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -61,7 +63,9 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	// Execute the child workflow without waiting for the result
 	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
 	if err := childWorkflowExec.Get(ctx, nil); err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to execute child workflow IndexTokenMetadata: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to execute child workflow IndexTokenMetadata"),
+			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -105,7 +109,9 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 	var tokenExists bool
 	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to check if token exists: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to check if token exists"),
+			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -128,7 +134,9 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 		// Execute the child workflow and waiting for the result
 		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenFromEvent, event)
 		if err := childWorkflowExec.Get(ctx, nil); err != nil {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to execute child workflow IndexFullToken: %w", err),
+			logger.ErrorWf(ctx,
+				fmt.Errorf("failed to execute child workflow IndexFullToken"),
+				zap.Error(err),
 				zap.String("tokenCID", event.TokenCID().String()),
 			)
 			return err
@@ -144,7 +152,9 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 	// Step 3: Token exists, update the token transfer
 	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenTransfer, event).Get(ctx, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to update token transfer: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to update token transfer"),
+			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -187,7 +197,9 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	var tokenExists bool
 	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to check if token exists: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to check if token exists"),
+			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -210,7 +222,9 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 		// Execute the child workflow and waiting for the result
 		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenFromEvent, event)
 		if err := childWorkflowExec.Get(ctx, nil); err != nil {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to execute child workflow IndexFullToken: %w", err),
+			logger.ErrorWf(ctx,
+				fmt.Errorf("failed to execute child workflow IndexFullToken"),
+				zap.Error(err),
 				zap.String("tokenCID", event.TokenCID().String()),
 			)
 			return err
@@ -226,7 +240,9 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	// Step 3: Token exists, update the token burn
 	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenBurn, event).Get(ctx, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to update token burn: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to update token burn"),
+			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -266,7 +282,9 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	// Step 1: Create token with minimal provenance (from/to balances only) for speed
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, event).Get(ctx, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to create token with minimal provenances: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to create token with minimal provenances"),
+			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return err
@@ -395,7 +413,9 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 	// Step 1: Index token with minimal provenances (from blockchain query)
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID).Get(ctx, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to index token with minimal provenances: %w", err),
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to index token with minimal provenances"),
+			zap.Error(err),
 			zap.String("tokenCID", tokenCID.String()),
 		)
 		return err

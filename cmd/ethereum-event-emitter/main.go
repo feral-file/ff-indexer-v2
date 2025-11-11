@@ -159,7 +159,7 @@ func main() {
 		logger.InfoCtx(ctx, "NATS connection closed unexpectedly")
 		cancel()
 	case err := <-errCh:
-		logger.ErrorCtx(ctx, err, zap.String("component", "emitter"))
+		logger.ErrorCtx(ctx, errors.New("ethereum event emitter error"), zap.Error(err))
 		cancel()
 	}
 

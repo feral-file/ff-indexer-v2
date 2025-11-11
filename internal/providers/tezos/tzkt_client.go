@@ -2,6 +2,7 @@ package tezos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -409,7 +410,7 @@ func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 	if transfer.TransactionID != nil {
 		txs, err := c.GetTransactionsByID(ctx, *transfer.TransactionID)
 		if err != nil {
-			logger.ErrorCtx(ctx, fmt.Errorf("failed to get transaction hash for ID %d: %w", *transfer.TransactionID, err))
+			logger.ErrorCtx(ctx, errors.New("failed to get transaction hash"), zap.Error(err), zap.Uint64("transaction_id", *transfer.TransactionID))
 			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
 		}
 		if len(txs) > 0 {
@@ -455,7 +456,7 @@ func (c *tzktClient) ParseBigMapUpdate(ctx context.Context, update *TzKTBigMapUp
 	if update.TransactionID != nil {
 		txs, err := c.GetTransactionsByID(ctx, *update.TransactionID)
 		if err != nil {
-			logger.ErrorCtx(ctx, fmt.Errorf("failed to get transaction hash for ID %d: %w", *update.TransactionID, err))
+			logger.ErrorCtx(ctx, errors.New("failed to get transaction hash"), zap.Error(err), zap.Uint64("transaction_id", *update.TransactionID))
 			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
 		}
 		if len(txs) > 0 {

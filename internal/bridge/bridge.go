@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -68,7 +69,7 @@ func NewBridge(
 		nats.ReconnectWait(cfg.ReconnectWait),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			if err != nil {
-				logger.ErrorCtx(ctx, err, zap.String("message", "Disconnected from NATS"))
+				logger.ErrorCtx(ctx, errors.New("Disconnected from NATS"), zap.Error(err))
 			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
@@ -194,10 +195,10 @@ func (b *bridge) handleMessage(ctx context.Context, msg adapter.Message) {
 	// Parse event
 	var event domain.BlockchainEvent
 	if err := b.json.Unmarshal(msg.Data(), &event); err != nil {
-		logger.ErrorCtx(ctx, err, zap.String("message", "Failed to unmarshal event"))
+		logger.ErrorCtx(ctx, errors.New("Failed to unmarshal event"), zap.Error(err))
 		// Terminate message for unparseable data
 		if err := msg.Term(); err != nil {
-			logger.ErrorCtx(ctx, err, zap.String("message", "Failed to terminate message"))
+			logger.ErrorCtx(ctx, errors.New("Failed to terminate message"), zap.Error(err))
 		}
 		return
 	}
@@ -213,10 +214,10 @@ func (b *bridge) handleMessage(ctx context.Context, msg adapter.Message) {
 	// Check if event should be processed
 	shouldProcess, err := b.shouldProcessEvent(ctx, &event)
 	if err != nil {
-		logger.ErrorCtx(ctx, err, zap.String("message", "Failed to check if event should be processed"))
+		logger.ErrorCtx(ctx, errors.New("Failed to check if event should be processed"), zap.Error(err))
 		// NAK to retry
 		if err := msg.Nak(); err != nil {
-			logger.ErrorCtx(ctx, err, zap.String("message", "Failed to NAK message"))
+			logger.ErrorCtx(ctx, errors.New("Failed to NAK message"), zap.Error(err))
 		}
 		return
 	}
@@ -231,24 +232,24 @@ func (b *bridge) handleMessage(ctx context.Context, msg adapter.Message) {
 		)
 		// ACK to remove from queue
 		if err := msg.Ack(); err != nil {
-			logger.ErrorCtx(ctx, err, zap.String("message", "Failed to ACK message"))
+			logger.ErrorCtx(ctx, errors.New("Failed to ACK message"), zap.Error(err))
 		}
 		return
 	}
 
 	// Forward to appropriate worker
 	if err := b.forwardToWorker(ctx, &event); err != nil {
-		logger.ErrorCtx(ctx, err, zap.String("message", "Failed to forward event to worker"))
+		logger.ErrorCtx(ctx, errors.New("Failed to forward event to worker"), zap.Error(err))
 		// NAK to retry
 		if err := msg.Nak(); err != nil {
-			logger.ErrorCtx(ctx, err, zap.String("message", "Failed to NAK message"))
+			logger.ErrorCtx(ctx, errors.New("Failed to NAK message"), zap.Error(err))
 		}
 		return
 	}
 
 	// ACK message after successful processing
 	if err := msg.Ack(); err != nil {
-		logger.ErrorCtx(ctx, err, zap.String("message", "Failed to ACK message"))
+		logger.ErrorCtx(ctx, errors.New("Failed to ACK message"), zap.Error(err))
 	}
 }
 
