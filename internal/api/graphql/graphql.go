@@ -57,43 +57,60 @@ func NewHandler(exec executor.Executor, authCfg middleware.AuthConfig) (Handler,
 }
 
 // authMiddleware authenticates GraphQL mutations using the shared authentication logic
+// Only applies authentication to mutations that require it (e.g., triggerOwnerIndexing)
 func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
 	opctx := graphql.GetOperationContext(ctx)
 
-	// Only authenticate mutations, allow queries without auth
+	// Only authenticate specific mutations that require authentication
 	if opctx.Operation != nil && opctx.Operation.Operation == ast.Mutation {
-		// Get Authorization header from the HTTP request
-		authHeader := ""
-		if opctx.Headers != nil {
-			authHeader = opctx.Headers.Get("Authorization")
-		}
-
-		// Authenticate using the shared authentication logic
-		result := middleware.Authenticate(authHeader, h.authConfig)
-
-		if !result.Success {
-			logger.WarnCtx(ctx, "GraphQL mutation authentication failed",
-				zap.Error(result.Error),
-				zap.String("operation", opctx.OperationName),
-			)
-			return func(ctx context.Context) *graphql.Response {
-				return graphql.ErrorResponse(ctx, "Authentication required for mutations")
+		// Check if this is a mutation that requires authentication
+		requiresAuth := false
+		if opctx.Operation.SelectionSet != nil {
+			for _, selection := range opctx.Operation.SelectionSet {
+				if field, ok := selection.(*ast.Field); ok {
+					// Only triggerOwnerIndexing requires authentication
+					if field.Name == "triggerOwnerIndexing" {
+						requiresAuth = true
+						break
+					}
+				}
 			}
 		}
 
-		// Store authentication info in context for resolvers to access
-		ctx = context.WithValue(ctx, middleware.AUTH_TYPE_KEY, result.AuthType)
-		if result.Claims != nil {
-			ctx = context.WithValue(ctx, middleware.JWT_CLAIMS_KEY, result.Claims)
-		}
-		if result.AuthSubject != "" {
-			ctx = context.WithValue(ctx, middleware.AUTH_SUBJECT_KEY, result.AuthSubject)
-		}
+		if requiresAuth {
+			// Get Authorization header from the HTTP request
+			authHeader := ""
+			if opctx.Headers != nil {
+				authHeader = opctx.Headers.Get("Authorization")
+			}
 
-		logger.DebugCtx(ctx, "GraphQL mutation authentication successful",
-			zap.String("operation", opctx.OperationName),
-			zap.String("auth_type", result.AuthType),
-		)
+			// Authenticate using the shared authentication logic
+			result := middleware.Authenticate(authHeader, h.authConfig)
+
+			if !result.Success {
+				logger.WarnCtx(ctx, "GraphQL mutation authentication failed",
+					zap.Error(result.Error),
+					zap.String("operation", opctx.OperationName),
+				)
+				return func(ctx context.Context) *graphql.Response {
+					return graphql.ErrorResponse(ctx, "Authentication required for this mutation")
+				}
+			}
+
+			// Store authentication info in context for resolvers to access
+			ctx = context.WithValue(ctx, middleware.AUTH_TYPE_KEY, result.AuthType)
+			if result.Claims != nil {
+				ctx = context.WithValue(ctx, middleware.JWT_CLAIMS_KEY, result.Claims)
+			}
+			if result.AuthSubject != "" {
+				ctx = context.WithValue(ctx, middleware.AUTH_SUBJECT_KEY, result.AuthSubject)
+			}
+
+			logger.DebugCtx(ctx, "GraphQL mutation authentication successful",
+				zap.String("operation", opctx.OperationName),
+				zap.String("auth_type", result.AuthType),
+			)
+		}
 	}
 
 	return next(ctx)

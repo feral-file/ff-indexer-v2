@@ -18,8 +18,11 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 		v1.GET("/tokens/:cid", handler.GetToken)
 		v1.GET("/tokens", handler.ListTokens)
 
-		// Protected token indexing endpoint (requires authentication)
-		v1.POST("/tokens/index", middleware.Auth(authCfg), handler.TriggerTokenIndexing)
+		// Token indexing by CIDs (open, no authentication required)
+		v1.POST("/tokens/index", handler.TriggerTokenIndexing)
+
+		// Token indexing by owner addresses (requires authentication)
+		v1.POST("/tokens/owners/index", middleware.Auth(authCfg), handler.TriggerOwnerIndexing)
 
 		// Changes endpoint (public read access)
 		v1.GET("/changes", handler.GetChanges)

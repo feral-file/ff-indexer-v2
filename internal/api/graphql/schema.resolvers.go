@@ -87,31 +87,16 @@ func (r *mediaAssetResolver) VariantURLs(ctx context.Context, obj *dto.MediaAsse
 	return JSON(obj.VariantURLs), nil
 }
 
-// TriggerIndexing is the resolver for the triggerIndexing field.
-func (r *mutationResolver) TriggerIndexing(ctx context.Context, tokenCids []string, addresses []string) (*dto.TriggerIndexingResponse, error) {
-	hasTokenCIDs := len(tokenCids) > 0
-	hasAddresses := len(addresses) > 0
-
-	// Validate: only one type of input should be provided
-	if hasTokenCIDs && hasAddresses {
-		return nil, apierrors.NewValidationError("cannot provide both token_cids and addresses")
+// TriggerTokenIndexing is the resolver for the triggerTokenIndexing field.
+func (r *mutationResolver) TriggerTokenIndexing(ctx context.Context, tokenCids []string) (*dto.TriggerIndexingResponse, error) {
+	// Validate: token CIDs must be provided
+	if len(tokenCids) == 0 {
+		return nil, apierrors.NewValidationError("token_cids is required")
 	}
 
 	// Validate: maximum number of token CIDs allowed
-	if hasTokenCIDs && len(tokenCids) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+	if len(tokenCids) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
 		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
-	}
-
-	// Validate: maximum number of addresses allowed
-	if hasAddresses && len(addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
-		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
-	}
-
-	// Validate: addresses must be valid
-	for _, address := range addresses {
-		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
-		}
 	}
 
 	// Validate: token CIDs must be valid
@@ -123,8 +108,35 @@ func (r *mutationResolver) TriggerIndexing(ctx context.Context, tokenCids []stri
 		}
 	}
 
-	// Trigger indexing
-	wr, err := r.executor.TriggerTokenIndexing(ctx, tokenCIDs, addresses)
+	// Trigger indexing with only token CIDs (no addresses)
+	wr, err := r.executor.TriggerTokenIndexing(ctx, tokenCIDs, nil)
+	if err != nil {
+		return nil, err
+	}
+	return wr, nil
+}
+
+// TriggerOwnerIndexing is the resolver for the triggerOwnerIndexing field.
+func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error) {
+	// Validate: addresses must be provided
+	if len(addresses) == 0 {
+		return nil, apierrors.NewValidationError("addresses is required")
+	}
+
+	// Validate: maximum number of addresses allowed
+	if len(addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
+	}
+
+	// Validate: addresses must be valid
+	for _, address := range addresses {
+		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+		}
+	}
+
+	// Trigger indexing with only addresses (no token CIDs)
+	wr, err := r.executor.TriggerTokenIndexing(ctx, nil, addresses)
 	if err != nil {
 		return nil, err
 	}
@@ -439,3 +451,54 @@ type tokenResolver struct{ *Resolver }
 type tokenListResolver struct{ *Resolver }
 type tokenMetadataResolver struct{ *Resolver }
 type workflowStatusResolver struct{ *Resolver }
+
+// !!! WARNING !!!
+// The code below was going to be deleted when updating resolvers. It has been copied here so you have
+// one last chance to move it out of harms way if you want. There are two reasons this happens:
+//  - When renaming or deleting a resolver the old code will be put in here. You can safely delete
+//    it when you're done.
+//  - You have helper methods in this file. Move them out to keep these resolver files clean.
+/*
+	func (r *mutationResolver) TriggerIndexing(ctx context.Context, tokenCids []string, addresses []string) (*dto.TriggerIndexingResponse, error) {
+	hasTokenCIDs := len(tokenCids) > 0
+	hasAddresses := len(addresses) > 0
+
+	// Validate: only one type of input should be provided
+	if hasTokenCIDs && hasAddresses {
+		return nil, apierrors.NewValidationError("cannot provide both token_cids and addresses")
+	}
+
+	// Validate: maximum number of token CIDs allowed
+	if hasTokenCIDs && len(tokenCids) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
+	}
+
+	// Validate: maximum number of addresses allowed
+	if hasAddresses && len(addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
+	}
+
+	// Validate: addresses must be valid
+	for _, address := range addresses {
+		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+		}
+	}
+
+	// Validate: token CIDs must be valid
+	tokenCIDs := make([]domain.TokenCID, len(tokenCids))
+	for i, cid := range tokenCids {
+		tokenCIDs[i] = domain.TokenCID(cid)
+		if !tokenCIDs[i].Valid() {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token CID: %s", cid))
+		}
+	}
+
+	// Trigger indexing
+	wr, err := r.executor.TriggerTokenIndexing(ctx, tokenCIDs, addresses)
+	if err != nil {
+		return nil, err
+	}
+	return wr, nil
+}
+*/

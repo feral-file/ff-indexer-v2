@@ -21,8 +21,8 @@ info:
     
     ## Authentication
     Some endpoints require authentication:
-    - REST: `POST /api/v1/tokens/index` (trigger token indexing)
-    - GraphQL: All mutations (queries are public)
+    - REST: `POST /api/v1/tokens/owners/index` (trigger token indexing by owner addresses)
+    - GraphQL: `triggerOwnerIndexing` mutation (queries and `triggerTokenIndexing` mutation are public)
     
     Two authentication methods are supported:
     
@@ -490,26 +490,60 @@ paths:
 
   /api/v1/tokens/index:
     post:
-      summary: Trigger token indexing
+      summary: Trigger token indexing by CIDs
       description: |
-        Triggers indexing workflows for one or more tokens or addresses.
+        Triggers indexing workflows for one or more tokens by their CIDs.
         
-        This endpoint accepts either:
-        - A list of token CIDs (up to 20)
-        - A list of addresses (up to 5)
-        
-        You cannot provide both token CIDs and addresses in the same request.
-        
-        ## Token CIDs
-        When providing token CIDs, the indexer will re-index those specific tokens,
+        This endpoint accepts a list of token CIDs (up to 20) and will re-index those specific tokens,
         including metadata, provenance events, and media assets.
         
-        ## Addresses
-        When providing addresses, the indexer will index all tokens owned by those addresses.
+        **This endpoint does not require authentication** - it is open for public use.
         
         ## Response
         Returns a workflow ID and run ID that can be used to track the indexing progress.
       operationId: triggerTokenIndexing
+      tags:
+        - tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerTokenIndexingRequest'
+      responses:
+        '202':
+          description: Indexing triggered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerIndexingResponse'
+        '422':
+          description: Validation error - Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/tokens/owners/index:
+    post:
+      summary: Trigger token indexing by owner addresses
+      description: |
+        Triggers indexing workflows for all tokens owned by one or more addresses.
+        
+        This endpoint accepts a list of owner addresses (up to 5) and will index all tokens
+        owned by those addresses across all supported blockchains.
+        
+        **This endpoint requires authentication** - use JWT Bearer token or API Key.
+        
+        ## Response
+        Returns a workflow ID and run ID that can be used to track the indexing progress.
+      operationId: triggerOwnerIndexing
       tags:
         - tokens
       security:
@@ -520,7 +554,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TriggerIndexingRequest'
+              $ref: '#/components/schemas/TriggerOwnerIndexingRequest'
       responses:
         '401':
           description: Unauthorized - Missing or invalid authentication
@@ -1179,21 +1213,31 @@ components:
           description: Total number of changes matching the filter
           example: 500
 
-    TriggerIndexingRequest:
+    TriggerTokenIndexingRequest:
       type: object
+      required:
+        - token_cids
       properties:
         token_cids:
           type: array
           items:
             type: string
-          description: List of token CIDs to index (max 20, mutually exclusive with addresses)
+          description: List of token CIDs to index (max 20, required)
+          minItems: 1
           maxItems: 20
           example: ["eip155:1:erc721:0xabc123:1234", "eip155:1:erc721:0xabc123:5678"]
+
+    TriggerOwnerIndexingRequest:
+      type: object
+      required:
+        - addresses
+      properties:
         addresses:
           type: array
           items:
             type: string
-          description: List of addresses to index all tokens for (max 5, mutually exclusive with token_cids)
+          description: List of owner addresses to index all tokens for (max 5, required)
+          minItems: 1
           maxItems: 5
           example: ["0xowner123", "tz1abc123"]
 

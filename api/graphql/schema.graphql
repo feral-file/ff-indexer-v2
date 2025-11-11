@@ -233,11 +233,16 @@ type Query {
 
 # Root Mutation type
 type Mutation {
-  # Trigger indexing for tokens or addresses
+  # Trigger indexing for tokens by CIDs (open, no authentication required)
   # Equivalent to: POST /api/v1/tokens/index
-  triggerIndexing(
-    token_cids: [String!]
-    addresses: [String!]
+  triggerTokenIndexing(
+    token_cids: [String!]!
+  ): TriggerIndexingResult
+
+  # Trigger indexing for tokens by owner addresses (requires authentication)
+  # Equivalent to: POST /api/v1/tokens/owners/index
+  triggerOwnerIndexing(
+    addresses: [String!]!
   ): TriggerIndexingResult
 }
 

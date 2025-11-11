@@ -343,17 +343,21 @@ nats consumer info BLOCKCHAIN_EVENTS event-bridge
 Use the API to trigger indexing:
 
 ```bash
-# Index a single token
+# Index tokens by CIDs (open, no authentication required)
 curl -X POST http://localhost:8081/api/v1/tokens/index \
-  -H "Authorization: ApiKey test-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"token_cid": "eip155:1:erc721:0x1234567890123456789012345678901234567890:1"}'
+  -d '{"token_cids": ["eip155:1:erc721:0x1234567890123456789012345678901234567890:1"]}'
 
-# Index multiple tokens
-curl -X POST http://localhost:8081/api/v1/tokens/index-batch \
-  -H "Authorization: ApiKey test-api-key" \
+# Index multiple tokens by CIDs
+curl -X POST http://localhost:8081/api/v1/tokens/index \
   -H "Content-Type: application/json" \
   -d '{"token_cids": ["eip155:1:erc721:0x123...:1", "eip155:1:erc721:0x123...:2"]}'
+
+# Index tokens by owner addresses (requires authentication)
+curl -X POST http://localhost:8081/api/v1/tokens/owners/index \
+  -H "Authorization: ApiKey test-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"addresses": ["0xowner123", "tz1abc123"]}'
 ```
 
 ### Monitoring

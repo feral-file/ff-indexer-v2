@@ -28,9 +28,13 @@ type Handler interface {
 	// GET /api/v1/changes?token_cid=<cid>&address=<address>&since=<timestamp>&limit=<limit>&offset=<offset>&order=<order>&expand=<expand>
 	GetChanges(c *gin.Context)
 
-	// TriggerTokenIndexing triggers indexing for one or more tokens
+	// TriggerTokenIndexing triggers indexing for tokens by CIDs (open, no authentication required)
 	// POST /api/v1/tokens/index
 	TriggerTokenIndexing(c *gin.Context)
+
+	// TriggerOwnerIndexing triggers indexing for tokens by owner addresses (requires authentication)
+	// POST /api/v1/tokens/owners/index
+	TriggerOwnerIndexing(c *gin.Context)
 
 	// GetWorkflowStatus retrieves the status of a Temporal workflow execution
 	// GET /api/v1/workflows/:workflow_id/runs/:run_id
@@ -213,9 +217,9 @@ func (h *handler) GetChanges(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// TriggerTokenIndexing triggers indexing for one or more tokens
+// TriggerTokenIndexing triggers indexing for tokens by CIDs (open, no authentication required)
 func (h *handler) TriggerTokenIndexing(c *gin.Context) {
-	var req dto.TriggerIndexingRequest
+	var req dto.TriggerTokenIndexingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
 		return
@@ -228,10 +232,40 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 		return
 	}
 
-	// Call executor's TriggerTokenIndexing method
+	// Call executor's TriggerTokenIndexing method with only token CIDs
 	response, err := h.executor.TriggerTokenIndexing(
 		c.Request.Context(),
 		req.TokenCIDs,
+		nil, // No addresses for this endpoint
+	)
+
+	if err != nil {
+		respondInternalError(c, err, "Failed to trigger indexing")
+		return
+	}
+
+	c.JSON(http.StatusAccepted, response)
+}
+
+// TriggerOwnerIndexing triggers indexing for tokens by owner addresses (requires authentication)
+func (h *handler) TriggerOwnerIndexing(c *gin.Context) {
+	var req dto.TriggerOwnerIndexingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	// Validate request body
+	err := req.Validate()
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	// Call executor's TriggerTokenIndexing method with only addresses
+	response, err := h.executor.TriggerTokenIndexing(
+		c.Request.Context(),
+		nil, // No token CIDs for this endpoint
 		req.Addresses,
 	)
 

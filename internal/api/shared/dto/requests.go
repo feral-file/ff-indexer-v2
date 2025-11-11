@@ -9,30 +9,21 @@ import (
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
-// TriggerIndexingRequest represents the request body for triggering indexing
-type TriggerIndexingRequest struct {
-	TokenCIDs []domain.TokenCID `json:"token_cids,omitempty"`
-	Addresses []string          `json:"addresses,omitempty"`
+// TriggerTokenIndexingRequest represents the request body for triggering token indexing by CIDs
+type TriggerTokenIndexingRequest struct {
+	TokenCIDs []domain.TokenCID `json:"token_cids"`
 }
 
 // Validate validates the request body
-func (r *TriggerIndexingRequest) Validate() error {
-	hasTokenCIDs := len(r.TokenCIDs) > 0
-	hasAddresses := len(r.Addresses) > 0
-
-	// Validate: only one type of input should be provided
-	if hasTokenCIDs && hasAddresses {
-		return apierrors.NewValidationError("cannot provide both token_cids and addresses")
+func (r *TriggerTokenIndexingRequest) Validate() error {
+	// Validate: token CIDs must be provided
+	if len(r.TokenCIDs) == 0 {
+		return apierrors.NewValidationError("token_cids is required")
 	}
 
 	// Validate: maximum number of token CIDs allowed
-	if hasTokenCIDs && len(r.TokenCIDs) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+	if len(r.TokenCIDs) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
 		return apierrors.NewValidationError(fmt.Sprintf("maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
-	}
-
-	// Validate: maximum number of addresses allowed
-	if hasAddresses && len(r.Addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
-		return apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
 	}
 
 	// Validate: token CIDs must be valid
@@ -40,6 +31,26 @@ func (r *TriggerIndexingRequest) Validate() error {
 		if !domain.TokenCID(cid).Valid() {
 			return apierrors.NewValidationError(fmt.Sprintf("invalid token CID: %s", cid))
 		}
+	}
+
+	return nil
+}
+
+// TriggerOwnerIndexingRequest represents the request body for triggering token indexing by owner addresses
+type TriggerOwnerIndexingRequest struct {
+	Addresses []string `json:"addresses"`
+}
+
+// Validate validates the request body
+func (r *TriggerOwnerIndexingRequest) Validate() error {
+	// Validate: addresses must be provided
+	if len(r.Addresses) == 0 {
+		return apierrors.NewValidationError("addresses is required")
+	}
+
+	// Validate: maximum number of addresses allowed
+	if len(r.Addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
+		return apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
 	}
 
 	// Validate: addresses must be valid
