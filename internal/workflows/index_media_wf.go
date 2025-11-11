@@ -1,8 +1,9 @@
 package workflows
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
-	gourl "net/url"
 	"time"
 
 	"go.temporal.io/api/enums/v1"
@@ -48,7 +49,12 @@ func (w *workerMedia) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []st
 
 	// Start all child workflows concurrently (fire and forget)
 	for url := range uniqueURLs {
-		childWorkflowOptions.WorkflowID = fmt.Sprintf("index-media-%s", gourl.QueryEscape(url))
+		// Generate a deterministic, fixed-length workflow ID from URL
+		// Using SHA-256 hash ensures it's always within Temporal's 255 char limit
+		// and is safe for use in workflow IDs
+		hash := sha256.Sum256([]byte(url))
+		workflowID := fmt.Sprintf("index-media-%s", base64.RawURLEncoding.EncodeToString(hash[:]))
+		childWorkflowOptions.WorkflowID = workflowID
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 		// Start child workflow without waiting for result

@@ -50,5 +50,6 @@ config.yaml
 **/config.yaml
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+.DS_Store
