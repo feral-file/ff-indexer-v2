@@ -56,7 +56,8 @@ type ListTokensQueryParams struct {
 	Owners            []string       `form:"owner"`
 	Chains            []domain.Chain `form:"chain"`
 	ContractAddresses []string       `form:"contract_address"`
-	TokenIDs          []string       `form:"token_id"`
+	TokenNumbers      []string       `form:"token_number"`
+	TokenIDs          []uint64       `form:"token_id"`
 	TokenCIDs         []string       `form:"token_cid"`
 
 	// Pagination
@@ -99,17 +100,17 @@ func (p *ListTokensQueryParams) Validate() error {
 		}
 	}
 
-	// Validate token IDs
-	for _, tokenID := range p.TokenIDs {
-		if !internalTypes.IsNumeric(tokenID) {
-			return apierrors.NewValidationError(fmt.Sprintf("Invalid token ID: %s. Must be a valid positive numeric value", tokenID))
-		}
-	}
-
 	// Validate token CIDs
 	for _, tokenCID := range p.TokenCIDs {
 		if !domain.TokenCID(tokenCID).Valid() {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid token CID: %s. Must be a valid token CID", tokenCID))
+		}
+	}
+
+	// Validate token numbers
+	for _, tokenNumber := range p.TokenNumbers {
+		if !internalTypes.IsNumeric(tokenNumber) {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid token number: %s. Must be a valid positive numeric value", tokenNumber))
 		}
 	}
 

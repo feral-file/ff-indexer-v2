@@ -196,7 +196,8 @@ type Query {
     owner: [String!]
     chain: [String!]
     contract_address: [String!]
-    token_id: [String!]
+    token_numbers: [String!]
+    token_ids: [Uint64!]
     token_cids: [String!]
     limit: Uint8 = 20
     offset: Uint64 = 0

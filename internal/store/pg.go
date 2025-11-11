@@ -296,6 +296,10 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 			Where("balances.owner_address IN ? OR tokens.current_owner IN ?", filter.Owners, filter.Owners)
 	}
 
+	if len(filter.TokenIDs) > 0 {
+		query = query.Where("id IN ?", filter.TokenIDs)
+	}
+
 	if len(filter.Chains) > 0 {
 		query = query.Where("chain IN ?", filter.Chains)
 	}

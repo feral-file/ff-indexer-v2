@@ -21,7 +21,7 @@ type Handler interface {
 	GetToken(c *gin.Context)
 
 	// ListTokens retrieves tokens with optional filters
-	// GET /api/v1/tokens?owners=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_id=<id1>,<id2>&limit=<limit>&offset=<offset>&expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
+	// GET /api/v1/tokens?owner=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_number=<number1>,<number2>&token_id=<id1>,<id2>&token_cid=<cid1>,<cid2>&limit=<limit>&offset=<offset>&expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	ListTokens(c *gin.Context)
 
 	// GetChanges retrieves changes with optional filters
@@ -152,6 +152,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 		queryParams.Owners,
 		queryParams.Chains,
 		queryParams.ContractAddresses,
+		queryParams.TokenNumbers,
 		queryParams.TokenIDs,
 		queryParams.TokenCIDs,
 		limit,

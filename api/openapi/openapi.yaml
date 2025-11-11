@@ -209,6 +209,9 @@ paths:
         - Filter by owners: `?owner=0xabc123&owner=0xdef456`
         - Filter by chain: `?chain=eip155:1&chain=tezos:mainnet`
         - Filter by contract: `?contract_address=0xabc123`
+        - Filter by token number: `?token_number=1234&token_number=5678`
+        - Filter by token ID: `?token_id=12345&token_id=67890`
+        - Filter by token CID: `?token_cid=eip155:1:erc721:0xabc123:1234`
         - Combine filters: `?owner=0xabc123&chain=eip155:1`
         
         ## Pagination
@@ -254,7 +257,18 @@ paths:
           example: ["0xabc123"]
         - name: token_id
           in: query
-          description: Filter by token ID(s) - supports multiple values
+          description: Filter by internal database token ID(s) - supports multiple values
+          schema:
+            type: array
+            items:
+              type: integer
+              format: uint64
+          style: form
+          explode: true
+          example: [12345, 67890]
+        - name: token_number
+          in: query
+          description: Filter by token number(s) within contract - supports multiple values
           schema:
             type: array
             items:
@@ -263,6 +277,16 @@ paths:
           style: form
           explode: true
           example: ["1234", "5678"]
+        - name: token_cid
+          in: query
+          description: Filter by token CID(s) - supports multiple values
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example: ["eip155:1:erc721:0xabc123:1234"]
         - name: limit
           in: query
           description: Maximum number of tokens to return (max 100)
@@ -736,7 +760,7 @@ components:
         id:
           type: integer
           format: uint64
-          description: Internal database ID
+          description: Internal database token ID (can be used for filtering with token_id parameter)
           example: 12345
         token_cid:
           type: string
@@ -752,7 +776,7 @@ components:
           example: "0xabc123def456"
         token_number:
           type: string
-          description: Token ID/number as a string (supports large numbers)
+          description: Token number within the contract as a string (supports large numbers, can be used for filtering with token_number parameter)
           example: "1234"
         current_owner:
           type: string

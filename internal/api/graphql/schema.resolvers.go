@@ -240,7 +240,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expand []string, 
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenID []string, tokenCids []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []string, contractAddress []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, expand []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Convert query parameters to executor parameters
 	expansions := convertExpansionStrings(expand)
 	chains := convertChainStrings(chain)
@@ -266,10 +266,10 @@ func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []stri
 		}
 	}
 
-	// Validate token IDs
-	for _, t := range tokenID {
+	// Validate token numbers
+	for _, t := range tokenNumbers {
 		if !internalTypes.IsNumeric(t) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token ID: %s. Must be a valid positive numeric value", t))
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token number: %s. Must be a valid positive numeric value", t))
 		}
 	}
 
@@ -296,7 +296,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owner []string, chain []stri
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", *provenanceEventsOrder))
 	}
 
-	return r.executor.GetTokens(ctx, owner, chains, contractAddress, tokenID, tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
+	return r.executor.GetTokens(ctx, owner, chains, contractAddress, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
 }
 
 // Changes is the resolver for the changes field.
@@ -451,54 +451,3 @@ type tokenResolver struct{ *Resolver }
 type tokenListResolver struct{ *Resolver }
 type tokenMetadataResolver struct{ *Resolver }
 type workflowStatusResolver struct{ *Resolver }
-
-// !!! WARNING !!!
-// The code below was going to be deleted when updating resolvers. It has been copied here so you have
-// one last chance to move it out of harms way if you want. There are two reasons this happens:
-//  - When renaming or deleting a resolver the old code will be put in here. You can safely delete
-//    it when you're done.
-//  - You have helper methods in this file. Move them out to keep these resolver files clean.
-/*
-	func (r *mutationResolver) TriggerIndexing(ctx context.Context, tokenCids []string, addresses []string) (*dto.TriggerIndexingResponse, error) {
-	hasTokenCIDs := len(tokenCids) > 0
-	hasAddresses := len(addresses) > 0
-
-	// Validate: only one type of input should be provided
-	if hasTokenCIDs && hasAddresses {
-		return nil, apierrors.NewValidationError("cannot provide both token_cids and addresses")
-	}
-
-	// Validate: maximum number of token CIDs allowed
-	if hasTokenCIDs && len(tokenCids) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
-		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
-	}
-
-	// Validate: maximum number of addresses allowed
-	if hasAddresses && len(addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
-		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
-	}
-
-	// Validate: addresses must be valid
-	for _, address := range addresses {
-		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
-		}
-	}
-
-	// Validate: token CIDs must be valid
-	tokenCIDs := make([]domain.TokenCID, len(tokenCids))
-	for i, cid := range tokenCids {
-		tokenCIDs[i] = domain.TokenCID(cid)
-		if !tokenCIDs[i].Valid() {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token CID: %s", cid))
-		}
-	}
-
-	// Trigger indexing
-	wr, err := r.executor.TriggerTokenIndexing(ctx, tokenCIDs, addresses)
-	if err != nil {
-		return nil, err
-	}
-	return wr, nil
-}
-*/
