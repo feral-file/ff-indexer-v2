@@ -3,7 +3,7 @@ package constants
 import "github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 
 const (
-	MAX_TOKEN_CIDS_PER_REQUEST      = 20
+	MAX_TOKEN_CIDS_PER_REQUEST      = 50
 	MAX_ADDRESSES_PER_REQUEST       = 5
 	MAX_PAGE_SIZE                   = uint8(100)
 	DEFAULT_OFFSET                  = uint64(0)
