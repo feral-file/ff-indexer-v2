@@ -80,6 +80,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 - **[Database Schema](docs/schema.md)** - Complete database schema and migration notes
 - **[Development Guide](DEVELOPMENT.md)** - Local development setup, seed data, and scripts
 - **[Contributing Guide](CONTRIBUTING.md)** - Setup, linting, testing, and PR process
+- **[Roadmap](roadmap.md)** - Planned features and future improvements
 
 ## Components
 
