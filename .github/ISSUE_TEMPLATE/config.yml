@@ -1,0 +1,12 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://github.com/feral-file/ff-indexer-v2/tree/main/docs
+    about: Check the documentation for more information
+  - name: 📝 Contributing Guide
+    url: https://github.com/feral-file/ff-indexer-v2/blob/main/CONTRIBUTING.md
+    about: Learn how to contribute to this project
+  - name: 🚀 Development Guide
+    url: https://github.com/feral-file/ff-indexer-v2/blob/main/DEVELOPMENT.md
+    about: Setup and development instructions
+
