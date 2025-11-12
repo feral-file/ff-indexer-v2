@@ -2,6 +2,7 @@ package emitter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -134,7 +135,11 @@ func (e *emitter) Run(ctx context.Context) error {
 	// Wait for error or context cancellation
 	select {
 	case err := <-errCh:
-		logger.WarnCtx(ctx, "Error subscribing to events", zap.Error(err), zap.String("chain", string(e.config.ChainID)))
+		if errors.Is(err, context.Canceled) {
+			logger.WarnCtx(ctx, "Error subscribing to events", zap.Error(err), zap.String("chain", string(e.config.ChainID)))
+		} else {
+			logger.ErrorCtx(ctx, errors.New("error subscribing to events"), zap.Error(err), zap.String("chain", string(e.config.ChainID)))
+		}
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
