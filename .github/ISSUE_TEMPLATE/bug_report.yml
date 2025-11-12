@@ -81,7 +81,7 @@ body:
     attributes:
       label: PostgreSQL Version
       description: e.g., 15.3
-      placeholder: 15.3
+      placeholder: "15.3"
     validations:
       required: false
 
@@ -120,11 +120,7 @@ body:
     attributes:
       label: Steps to Reproduce
       description: Provide detailed steps to reproduce the bug
-      placeholder: |
-        1.
-        2.
-        3.
-        4.
+      placeholder: "Enter steps to reproduce (e.g., 1. First, 2. Second)"
     validations:
       required: true
 
@@ -151,10 +147,7 @@ body:
     attributes:
       label: Error Messages / Logs
       description: Paste relevant error messages, stack traces, or log excerpts
-      placeholder: |
-        ```
-        Paste logs here
-        ```
+      placeholder: "Paste error messages, stack traces, or log excerpts here"
       render: shell
     validations:
       required: false
@@ -174,10 +167,7 @@ body:
       description: |
         Paste relevant config section
         (sanitize sensitive information)
-      placeholder: |
-        ```yaml
-        # Paste relevant config section
-        ```
+      placeholder: "Paste config section (sanitize sensitive info)"
       render: yaml
     validations:
       required: false
@@ -187,8 +177,7 @@ body:
     attributes:
       label: Environment Variables
       description: Paste relevant env vars (sanitize sensitive values)
-      placeholder: |
-        # Paste relevant env vars
+      placeholder: "# Paste relevant env vars"
       render: shell
     validations:
       required: false
@@ -214,7 +203,7 @@ body:
     attributes:
       label: Token ID
       description: e.g., 123
-      placeholder: 123
+      placeholder: "123"
     validations:
       required: false
 
