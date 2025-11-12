@@ -1,0 +1,328 @@
+---
+name: Bug Report
+description: File a bug report to help us improve
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Bug Report
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Provide a clear and concise description of the bug
+      placeholder: Describe the bug...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: components
+    attributes:
+      label: Affected Component(s)
+      description: Mark all relevant components
+      options:
+        - label: API Server (REST/GraphQL)
+        - label: Ethereum Event Emitter
+        - label: Tezos Event Emitter
+        - label: Event Bridge
+        - label: Worker Core
+        - label: Worker Media
+        - label: Database/Storage
+        - label: Infrastructure (PostgreSQL, NATS, Temporal)
+        - label: Other
+
+  - type: textarea
+    id: component_other
+    attributes:
+      label: Other Component
+      description: If "Other" is selected, please specify
+      placeholder: Specify the component...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: blockchain
+    attributes:
+      label: Blockchain Network
+      description: Mark the affected network(s)
+      options:
+        - label: Ethereum
+        - label: Tezos
+        - label: Both
+        - label: Not applicable
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Environment
+
+  - type: input
+    id: version
+    attributes:
+      label: Version/Commit
+      description: e.g., v2.1.0, commit hash, or branch name
+      placeholder: v2.1.0 or commit hash
+    validations:
+      required: false
+
+  - type: input
+    id: go_version
+    attributes:
+      label: Go Version
+      description: e.g., go1.24
+      placeholder: go1.24
+    validations:
+      required: false
+
+  - type: input
+    id: postgres_version
+    attributes:
+      label: PostgreSQL Version
+      description: e.g., 15.3
+      placeholder: 15.3
+    validations:
+      required: false
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      description: How is the system deployed?
+      options:
+        - Docker Compose
+        - Kubernetes
+        - Local
+        - Other
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Steps to Reproduce
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Provide detailed steps to reproduce the bug
+      placeholder: |
+        1.
+        2.
+        3.
+        4.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: Describe what you expected to happen
+      placeholder: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: Describe what actually happened
+      placeholder: What actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: errors
+    attributes:
+      label: Error Messages / Logs
+      description: Paste relevant error messages, stack traces, or log excerpts
+      placeholder: |
+        ```
+        Paste logs here
+        ```
+      render: shell
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Configuration
+
+        If relevant, provide configuration details
+        (sanitize sensitive information)
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Service Config
+      description: |
+        Paste relevant config section
+        (sanitize sensitive information)
+      placeholder: |
+        ```yaml
+        # Paste relevant config section
+        ```
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: env_vars
+    attributes:
+      label: Environment Variables
+      description: Paste relevant env vars (sanitize sensitive values)
+      placeholder: |
+        # Paste relevant env vars
+      render: shell
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Token/Contract Details
+
+        If the bug is related to a specific token or contract
+
+  - type: input
+    id: contract_address
+    attributes:
+      label: Contract Address
+      description: e.g., 0x... or tz...
+      placeholder: 0x... or tz...
+    validations:
+      required: false
+
+  - type: input
+    id: token_id
+    attributes:
+      label: Token ID
+      description: e.g., 123
+      placeholder: 123
+    validations:
+      required: false
+
+  - type: input
+    id: token_cid
+    attributes:
+      label: Token CID
+      description: e.g., eth:0x...:123 or tz:tz...:123
+      placeholder: eth:0x...:123 or tz:tz...:123
+    validations:
+      required: false
+
+  - type: dropdown
+    id: token_blockchain
+    attributes:
+      label: Blockchain
+      options:
+        - Ethereum
+        - Tezos
+        - Not applicable
+    validations:
+      required: false
+
+  - type: input
+    id: block_number
+    attributes:
+      label: Block Number/Level
+      description: If relevant
+      placeholder: Block number or level
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Workflow/Event Details
+
+        If the bug is related to a Temporal workflow or blockchain event
+
+  - type: input
+    id: workflow_type
+    attributes:
+      label: Workflow Type
+      description: e.g., IndexTokenMint, IndexTokenMetadata
+      placeholder: IndexTokenMint
+    validations:
+      required: false
+
+  - type: dropdown
+    id: event_type
+    attributes:
+      label: Event Type
+      options:
+        - mint
+        - transfer
+        - burn
+        - metadata_update
+        - Not applicable
+    validations:
+      required: false
+
+  - type: input
+    id: workflow_id
+    attributes:
+      label: Workflow ID
+      description: If available from Temporal UI
+      placeholder: Workflow ID
+    validations:
+      required: false
+
+  - type: input
+    id: event_subject
+    attributes:
+      label: Event Subject
+      description: e.g., events.ethereum.mint
+      placeholder: events.ethereum.mint
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, screenshots, or information
+        that might be helpful
+      placeholder: Any additional information...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Select the severity level
+      options:
+        - Critical (system down, data loss, security issue)
+        - High (major functionality broken)
+        - Medium (minor functionality broken, workaround available)
+        - Low (cosmetic issue, edge case)
+    validations:
+      required: true
+
+  - type: textarea
+    id: possible_solution
+    attributes:
+      label: Possible Solution
+      description: If you have ideas on how to fix this, please share
+      placeholder: Your ideas on how to fix this...
+    validations:
+      required: false
