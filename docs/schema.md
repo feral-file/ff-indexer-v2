@@ -13,6 +13,19 @@ The database uses PostgreSQL 15+ with the following design principles:
 
 ## Core Tables
 
+The database includes the following main tables:
+
+- `tokens` - Primary token entity across all blockchains
+- `token_metadata` - NFT metadata (name, description, media, attributes, etc.)
+- `enrichment_sources` - Additional data sources enriching token information
+- `balances` - Current token ownership balances (multi-edition tokens)
+- `token_ownership_periods` - Historical ownership periods for efficient address-based queries
+- `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
+- `media_assets` - Media files associated with tokens (images, videos, etc.)
+- `changes_journal` - Change tracking for all entities
+- `watched_addresses` - Addresses being monitored for indexing
+- `key_value_store` - Configuration and state management
+
 ### tokens
 
 Primary entity for tracking tokens across all supported blockchains.
@@ -124,6 +137,41 @@ Tracks ownership quantities for multi-edition tokens (ERC1155, FA2).
 
 **Relationships**:
 - Many-to-one with `tokens`
+
+---
+
+### token_ownership_periods
+
+Tracks historical ownership periods for tokens to efficiently query metadata and media changes that occurred during an address's ownership. This table pre-computes ownership time windows to optimize the `GetChanges` query when filtering by addresses.
+
+**Purpose:**
+- Enables fast address-based filtering for metadata/media changes
+- Avoids expensive subqueries with `provenance_events` table
+- Supports both single-owner (ERC721) and multi-edition (ERC1155/FA2) tokens
+
+**Schema:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | BIGSERIAL | Primary key |
+| `token_id` | BIGINT | Reference to token (FK, CASCADE DELETE) |
+| `owner_address` | TEXT | Address that owned the token |
+| `acquired_at` | TIMESTAMPTZ | When the address first received the token |
+| `released_at` | TIMESTAMPTZ | When the address's balance became 0 (NULL if still owns) |
+| `created_at` | TIMESTAMPTZ | Record creation timestamp |
+| `updated_at` | TIMESTAMPTZ | Last update timestamp (auto-updated by trigger) |
+
+**Indexes:**
+- `unique_active_token_owner` (partial unique) on `(token_id, owner_address) WHERE released_at IS NULL`
+- `idx_token_ownership_token_owner_periods` on `(token_id, owner_address, acquired_at, released_at)`
+- `idx_token_ownership_owner_periods` on `(owner_address, acquired_at, released_at)`
+- `idx_token_ownership_token_id_text_periods` on `(CAST(token_id AS TEXT), owner_address, acquired_at, released_at)` - for text-based joins
+- `idx_token_ownership_current_owners` (partial) on `(token_id, owner_address) WHERE released_at IS NULL`
+
+**Relationships**:
+- Many-to-one with `tokens` (CASCADE DELETE)
+
+---
 
 ### media_assets
 
@@ -340,12 +388,11 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_provenance_events_updated_at`
 - `update_watched_addresses_updated_at`
 - `update_key_value_store_updated_at`
+- `update_token_ownership_periods_updated_at`
 
 ## Migrations
 
-### Initial Schema (001.sql)
-
-The initial schema is created by `db/init_pg_db.sql` which is run automatically when the PostgreSQL container starts.
+### Initial Schema (init_pg_db.sql)
 
 **Migration Notes**:
 - All ENUM types are created first
@@ -357,7 +404,7 @@ The initial schema is created by `db/init_pg_db.sql` which is run automatically 
 ### Future Migrations
 
 Migrations should be placed in `db/migrations/` directory with sequential numbering:
-- `001.sql` - Initial schema
+- `001.sql` - Add the `token_ownership_periods` table, migrate the existing data.
 - `002.sql` - Future changes
 - etc.
 

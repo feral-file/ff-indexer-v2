@@ -212,7 +212,12 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
-		// 4. Create the change journal entry
+		// 4. Update ownership periods based on the provenance event
+		if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvent, input.Token.Standard); err != nil {
+			return fmt.Errorf("failed to update ownership periods: %w", err)
+		}
+
+		// 5. Create the change journal entry
 		// For mint events: subject_type = 'token', subject_id = provenance_event_id
 		// Populate meta with provenance information
 		meta := schema.ProvenanceChangeMeta{
@@ -734,7 +739,12 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
-		// 5. Create the change journal entry
+		// 5. Update ownership periods based on the provenance event
+		if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvent, token.Standard); err != nil {
+			return fmt.Errorf("failed to update ownership periods: %w", err)
+		}
+
+		// 6. Create the change journal entry
 		// For burn events: subject_type = 'token', subject_id = provenance_event_id
 		// Populate meta with provenance information
 		meta := schema.ProvenanceChangeMeta{
@@ -938,7 +948,12 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
-		// 6. Create the change journal entry
+		// 6. Update ownership periods based on the provenance event
+		if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvent, token.Standard); err != nil {
+			return fmt.Errorf("failed to update ownership periods: %w", err)
+		}
+
+		// 7. Create the change journal entry
 		// For transfer events: subject_type depends on token standard
 		// - ERC721 (single token): subject_type = 'owner'
 		// - ERC1155/FA2 (multi-token): subject_type = 'balance'
@@ -1033,6 +1048,11 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			if err := tx.Where("token_id = ?", token.ID).Delete(&schema.ProvenanceEvent{}).Error; err != nil {
 				return fmt.Errorf("failed to delete existing provenance events: %w", err)
 			}
+
+			// Delete existing ownership periods since we're re-creating all provenance data
+			if err := tx.Where("token_id = ?", token.ID).Delete(&schema.TokenOwnershipPeriod{}).Error; err != nil {
+				return fmt.Errorf("failed to delete existing ownership periods: %w", err)
+			}
 		}
 
 		if len(input.Balances) > 0 {
@@ -1091,7 +1111,19 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				return fmt.Errorf("failed to create provenance events: %w", err)
 			}
 
-			// 5. Batch insert changes_journal entries for all events
+			// 5. Update ownership periods for all provenance events
+			for i := range provenanceEvents {
+				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
+				if provenanceEvents[i].ID == 0 {
+					continue
+				}
+
+				if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvents[i], token.Standard); err != nil {
+					return fmt.Errorf("failed to update ownership periods for event %d: %w", i, err)
+				}
+			}
+
+			// 6. Batch insert changes_journal entries for all events
 			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
 			for _, evt := range provenanceEvents {
 				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
@@ -1222,39 +1254,24 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 	// Filter by addresses - include both provenance-linked changes and metadata/enrich_source changes
 	if len(filter.Addresses) > 0 {
 		// For provenance changes, match by addresses in provenance_events
-		// For metadata/enrich_source, match if the token had the address as owner during the change
+		// For metadata/enrich_source, use the ownership periods table for fast lookups
 		query = query.Where(`
 			(
 				-- Include provenance-related changes (owner/balance/token) linked to specific provenance events
-				subject_type IN (?, ?, ?) AND subject_id IN (
-					SELECT CAST(id AS TEXT) FROM provenance_events 
-					WHERE from_address IN ? OR to_address IN ?
+				subject_type IN (?, ?, ?) AND EXISTS (
+					SELECT 1 FROM provenance_events pe
+					WHERE pe.id::text = changes_journal.subject_id
+					AND (pe.from_address IN ? OR pe.to_address IN ?)
 				)
 			) OR (
 				-- Include metadata/enrich_source changes that occurred during ownership periods
+				-- Use the pre-computed ownership periods table for fast lookups
 				subject_type IN (?, ?) AND EXISTS (
-					SELECT 1 FROM provenance_events pe
-					WHERE CAST(pe.token_id AS TEXT) = changes_journal.subject_id
-					AND pe.to_address IN ?
-					AND pe.timestamp <= changes_journal.changed_at
-					-- Check if change happened before token was transferred out (if at all)
-					AND (
-						-- Either no subsequent transfer from this address
-						NOT EXISTS (
-							SELECT 1 FROM provenance_events pe_out
-							WHERE pe_out.token_id = pe.token_id
-							AND pe_out.from_address = pe.to_address
-							AND pe_out.timestamp > pe.timestamp
-						)
-						-- Or the change happened before the transfer out
-						OR changes_journal.changed_at < (
-							SELECT MIN(pe_out.timestamp)
-							FROM provenance_events pe_out
-							WHERE pe_out.token_id = pe.token_id
-							AND pe_out.from_address = pe.to_address
-							AND pe_out.timestamp > pe.timestamp
-						)
-					)
+					SELECT 1 FROM token_ownership_periods op
+					WHERE op.token_id::text = changes_journal.subject_id
+					AND op.owner_address IN ?
+					AND changes_journal.changed_at >= op.acquired_at
+					AND (op.released_at IS NULL OR changes_journal.changed_at < op.released_at)
 				)
 			)
 		`,
@@ -1312,6 +1329,147 @@ func (s *pgStore) GetProvenanceEventByID(ctx context.Context, id uint64) (*schem
 		return nil, fmt.Errorf("failed to get provenance event: %w", err)
 	}
 	return &event, nil
+}
+
+// updateOwnershipPeriods updates ownership periods after a provenance event
+// This is an internal method called within the same transaction as the provenance event creation
+func (s *pgStore) updateOwnershipPeriods(ctx context.Context, txInterface interface{}, event *schema.ProvenanceEvent, tokenStandard domain.ChainStandard) error {
+	// Cast the transaction interface to *gorm.DB
+	tx, ok := txInterface.(*gorm.DB)
+	if !ok {
+		return fmt.Errorf("invalid transaction type: expected *gorm.DB")
+	}
+
+	// Skip if not a transfer, mint, or burn event (metadata updates don't affect ownership)
+	if event.EventType != schema.ProvenanceEventTypeTransfer &&
+		event.EventType != schema.ProvenanceEventTypeMint &&
+		event.EventType != schema.ProvenanceEventTypeBurn {
+		return nil
+	}
+
+	// Handle based on token standard
+	if tokenStandard == domain.StandardERC721 {
+		return s.updateERC721OwnershipPeriods(ctx, tx, event)
+	}
+	// ERC1155, FA2 - check balances
+	return s.updateMultiEditionOwnershipPeriods(ctx, tx, event)
+}
+
+// updateERC721OwnershipPeriods handles ownership periods for ERC721 tokens (single owner)
+func (s *pgStore) updateERC721OwnershipPeriods(ctx context.Context, tx *gorm.DB, event *schema.ProvenanceEvent) error {
+	// For ERC721, it's simple: one owner at a time
+
+	// If event is not a mint, close their ownership period
+	if event.EventType != schema.ProvenanceEventTypeMint {
+		result := tx.WithContext(ctx).
+			Model(&schema.TokenOwnershipPeriod{}).
+			Where("token_id = ? AND owner_address = ? AND released_at IS NULL",
+				event.TokenID, *event.FromAddress).
+			Update("released_at", event.Timestamp)
+
+		if result.Error != nil {
+			return fmt.Errorf("failed to close ownership period for from_address: %w", result.Error)
+		}
+	}
+
+	// If event is not a burn, create new ownership period
+	if event.EventType != schema.ProvenanceEventTypeBurn {
+		ownershipPeriod := &schema.TokenOwnershipPeriod{
+			TokenID:      event.TokenID,
+			OwnerAddress: *event.ToAddress,
+			AcquiredAt:   event.Timestamp,
+			ReleasedAt:   nil,
+		}
+
+		// Handle conflict: if an active period already exists, do nothing
+		// The partial unique index ensures only one active period exists per token-owner
+		if err := tx.WithContext(ctx).
+			Clauses(clause.OnConflict{
+				DoNothing: true,
+			}).
+			Create(ownershipPeriod).Error; err != nil {
+			return fmt.Errorf("failed to create ownership period for to_address: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// updateMultiEditionOwnershipPeriods handles ownership periods for ERC1155/FA2 tokens (multiple owners, quantities)
+func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *gorm.DB, event *schema.ProvenanceEvent) error {
+	// For ERC1155/FA2, check actual balances after the event
+
+	// Check from_address balance (if exists and not zero address)
+	if event.FromAddress != nil && *event.FromAddress != "" && *event.FromAddress != domain.ETHEREUM_ZERO_ADDRESS {
+		var balance schema.Balance
+		err := tx.WithContext(ctx).
+			Where("token_id = ? AND owner_address = ?",
+				event.TokenID, *event.FromAddress).
+			First(&balance).Error
+
+		// If balance is now 0 or doesn't exist, close ownership period
+		if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && balance.Quantity == "0") {
+			result := tx.WithContext(ctx).
+				Model(&schema.TokenOwnershipPeriod{}).
+				Where("token_id = ? AND owner_address = ? AND released_at IS NULL",
+					event.TokenID, *event.FromAddress).
+				Update("released_at", event.Timestamp)
+
+			if result.Error != nil {
+				return fmt.Errorf("failed to close ownership period for from_address: %w", result.Error)
+			}
+		} else if err != nil {
+			return fmt.Errorf("failed to get balance for from_address: %w", err)
+		}
+		// If balance > 0, keep ownership period open
+	}
+
+	// Check to_address balance (if exists and not zero address)
+	if event.ToAddress != nil && *event.ToAddress != "" && *event.ToAddress != domain.ETHEREUM_ZERO_ADDRESS {
+		var balance schema.Balance
+		err := tx.WithContext(ctx).
+			Where("token_id = ? AND owner_address = ?",
+				event.TokenID, *event.ToAddress).
+			First(&balance).Error
+
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to get balance for to_address: %w", err)
+		}
+
+		// If they have a balance > 0, ensure ownership period exists
+		if err == nil && balance.Quantity != "0" {
+			var existingPeriod schema.TokenOwnershipPeriod
+			err := tx.WithContext(ctx).
+				Where("token_id = ? AND owner_address = ? AND released_at IS NULL",
+					event.TokenID, *event.ToAddress).
+				First(&existingPeriod).Error
+
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// Create new ownership period with conflict handling
+				ownershipPeriod := &schema.TokenOwnershipPeriod{
+					TokenID:      event.TokenID,
+					OwnerAddress: *event.ToAddress,
+					AcquiredAt:   event.Timestamp,
+					ReleasedAt:   nil,
+				}
+
+				// Handle conflict: if an active period already exists, do nothing
+				// The partial unique index ensures only one active period exists per token-owner
+				if err := tx.WithContext(ctx).
+					Clauses(clause.OnConflict{
+						DoNothing: true,
+					}).
+					Create(ownershipPeriod).Error; err != nil {
+					return fmt.Errorf("failed to create ownership period for to_address: %w", err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("failed to check existing ownership period: %w", err)
+			}
+			// If period already exists and is open, nothing to do
+		}
+	}
+
+	return nil
 }
 
 // GetBalanceByID retrieves a balance by ID

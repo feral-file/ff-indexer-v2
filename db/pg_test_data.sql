@@ -507,6 +507,134 @@ VALUES (
 SELECT setval('provenance_events_id_seq', 100, true);
 
 -- =============================================================================
+-- Token Ownership Periods
+-- =============================================================================
+
+-- Ownership period for Token 1 (ERC721 - still owned by minter)
+INSERT INTO token_ownership_periods (
+    id, token_id, owner_address, acquired_at, released_at,
+    created_at, updated_at
+)
+VALUES (
+    1,
+    1,
+    '0x1234567890123456789012345678901234567890',
+    now() - interval '30 days',
+    NULL, -- Still owned
+    now() - interval '30 days',
+    now() - interval '30 days'
+);
+
+-- Ownership period for Token 2 (ERC721 - still owned by minter)
+INSERT INTO token_ownership_periods (
+    id, token_id, owner_address, acquired_at, released_at,
+    created_at, updated_at
+)
+VALUES (
+    2,
+    2,
+    '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+    now() - interval '25 days',
+    NULL, -- Still owned
+    now() - interval '25 days',
+    now() - interval '25 days'
+);
+
+-- Ownership period for Token 3 (ERC721 - still owned by minter)
+INSERT INTO token_ownership_periods (
+    id, token_id, owner_address, acquired_at, released_at,
+    created_at, updated_at
+)
+VALUES (
+    3,
+    3,
+    '0x2222222222222222222222222222222222222222',
+    now() - interval '20 days',
+    NULL, -- Still owned
+    now() - interval '20 days',
+    now() - interval '20 days'
+);
+
+-- Ownership periods for Token 4 (ERC1155 - multiple owners)
+-- Owner 1: Original minter (still owns 50 tokens)
+INSERT INTO token_ownership_periods (
+    id, token_id, owner_address, acquired_at, released_at,
+    created_at, updated_at
+)
+VALUES (
+    4,
+    4,
+    '0x4444444444444444444444444444444444444444',
+    now() - interval '15 days',
+    NULL, -- Still owns 50 tokens
+    now() - interval '15 days',
+    now() - interval '15 days'
+);
+
+-- Owner 2: Received 30 tokens via first transfer
+INSERT INTO token_ownership_periods (
+    id, token_id, owner_address, acquired_at, released_at,
+    created_at, updated_at
+)
+VALUES (
+    5,
+    4,
+    '0x5555555555555555555555555555555555555555',
+    now() - interval '12 days',
+    NULL, -- Still owns 30 tokens
+    now() - interval '12 days',
+    now() - interval '12 days'
+);
+
+-- Owner 3: Received 20 tokens via second transfer
+INSERT INTO token_ownership_periods (
+    id, token_id, owner_address, acquired_at, released_at,
+    created_at, updated_at
+)
+VALUES (
+    6,
+    4,
+    '0x6666666666666666666666666666666666666666',
+    now() - interval '10 days',
+    NULL, -- Still owns 20 tokens
+    now() - interval '10 days',
+    now() - interval '10 days'
+);
+
+-- Ownership period for Token 5 (ERC721 - burned, period closed)
+INSERT INTO token_ownership_periods (
+    id, token_id, owner_address, acquired_at, released_at,
+    created_at, updated_at
+)
+VALUES (
+    7,
+    5,
+    '0x3333333333333333333333333333333333333333',
+    now() - interval '10 days',
+    now() - interval '5 days', -- Released when burned
+    now() - interval '10 days',
+    now() - interval '10 days'
+);
+
+-- Ownership period for Token 6 (FA2 - Tezos, still owned)
+INSERT INTO token_ownership_periods (
+    id, token_id, owner_address, acquired_at, released_at,
+    created_at, updated_at
+)
+VALUES (
+    8,
+    6,
+    'tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb',
+    now() - interval '8 days',
+    NULL, -- Still owned
+    now() - interval '8 days',
+    now() - interval '8 days'
+);
+
+-- Reset sequence
+SELECT setval('token_ownership_periods_id_seq', 100, true);
+
+-- =============================================================================
 -- Changes Journal
 -- =============================================================================
 

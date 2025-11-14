@@ -146,6 +146,21 @@ ADD CONSTRAINT provenance_events_unique UNIQUE (
     event_type
 );
 
+-- Token Ownership Periods table - Tracks when addresses owned tokens with quantity > 0
+-- Used for efficiently querying ownership history and metadata changes during ownership
+CREATE TABLE token_ownership_periods (
+    id BIGSERIAL PRIMARY KEY,
+    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
+    owner_address TEXT NOT NULL,
+    acquired_at TIMESTAMPTZ NOT NULL,       -- When the address acquired the token (first transfer in)
+    released_at TIMESTAMPTZ,                -- When the address released the token (balance became 0); NULL means still owns it
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create partial unique index to ensure only one active ownership period per token-owner combination
+CREATE UNIQUE INDEX unique_active_token_owner ON token_ownership_periods (token_id, owner_address) WHERE (released_at IS NULL);
+
 -- Watched Addresses table - For owner-based indexing
 CREATE TABLE watched_addresses (
     chain          TEXT        NOT NULL,
@@ -219,6 +234,12 @@ CREATE INDEX idx_provenance_events_to_address ON provenance_events (to_address);
 CREATE INDEX idx_provenance_events_token_id_from_address_timestamp ON provenance_events (token_id, from_address, timestamp);
 CREATE INDEX idx_provenance_events_token_id_to_address_timestamp ON provenance_events (token_id, to_address, timestamp);
 CREATE INDEX idx_provenance_events_id_text ON provenance_events (CAST(id AS TEXT));
+
+-- Token Ownership Periods table indexes
+CREATE INDEX idx_token_ownership_token_owner_periods ON token_ownership_periods (token_id, owner_address, acquired_at, released_at);
+CREATE INDEX idx_token_ownership_owner_periods ON token_ownership_periods (owner_address, acquired_at, released_at);
+CREATE INDEX idx_token_ownership_token_id_text_periods ON token_ownership_periods (CAST(token_id AS TEXT), owner_address, acquired_at, released_at);
+CREATE INDEX idx_token_ownership_current_owners ON token_ownership_periods (token_id, owner_address) WHERE released_at IS NULL;
 
 -- Watched Addresses table indexes
 CREATE INDEX idx_watched_addresses_watching ON watched_addresses (watching, chain, address);
@@ -307,6 +328,11 @@ CREATE TRIGGER update_key_value_store_updated_at
     BEFORE UPDATE ON key_value_store 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to token_ownership_periods
+CREATE TRIGGER update_token_ownership_periods_updated_at 
+    BEFORE UPDATE ON token_ownership_periods 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ============================================================================
 -- INITIAL DATA
 -- ============================================================================
@@ -331,5 +357,6 @@ COMMENT ON TABLE enrichment_sources IS 'Stores enriched metadata from vendor API
 COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
 COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. subject_id is polymorphic: provenance_event_id (token/owner/balance), token_id (metadata/enrich_source), media_asset_id (media_asset). Token association is resolved through subject_id based on subject_type';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
+COMMENT ON TABLE token_ownership_periods IS 'Tracks when addresses owned tokens with quantity > 0. Used for efficiently querying ownership history and metadata changes during ownership. Automatically maintained by application logic on provenance event creation';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';
