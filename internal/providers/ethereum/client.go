@@ -638,7 +638,7 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 // If the operation times out (30 seconds), it returns partial balances gracefully
 //
 // FIXME: This approach has limitations for high-activity ERC1155 contracts:
-// 1. Scanning only recent 5M blocks may miss historical transfers, resulting in incomplete balances
+// 1. Scanning only recent 10M blocks may miss historical transfers, resulting in incomplete balances
 // 2. Fetching all contract events and filtering client-side is inefficient (can't filter by token ID at RPC level)
 // 3. For contracts with millions of events, this can still hit Infura's 10k log limitation repeatedly
 func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error) {

@@ -202,6 +202,9 @@ CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
 CREATE INDEX idx_changes_journal_subject ON changes_journal (subject_type, subject_id);
 CREATE INDEX idx_changes_journal_changed_at ON changes_journal (changed_at);
 CREATE INDEX idx_changes_journal_subject_type ON changes_journal (subject_type);
+CREATE INDEX idx_changes_journal_subject_id ON changes_journal (subject_id);
+CREATE INDEX idx_changes_journal_subject_type_changed_at_id ON changes_journal (subject_type, changed_at, id);
+CREATE INDEX idx_changes_journal_changed_at_id ON changes_journal (changed_at, id);
 
 -- Provenance Events table indexes
 CREATE INDEX idx_provenance_events_token_id ON provenance_events (token_id);
@@ -211,6 +214,11 @@ CREATE INDEX idx_provenance_events_timestamp ON provenance_events (timestamp);
 CREATE INDEX idx_provenance_events_tx_hash ON provenance_events (tx_hash) WHERE tx_hash IS NOT NULL;
 CREATE INDEX idx_provenance_events_block_number ON provenance_events (block_number) WHERE block_number IS NOT NULL;
 CREATE INDEX idx_provenance_events_raw ON provenance_events USING GIN (raw);
+CREATE INDEX idx_provenance_events_from_address ON provenance_events (from_address);
+CREATE INDEX idx_provenance_events_to_address ON provenance_events (to_address);
+CREATE INDEX idx_provenance_events_token_id_from_address_timestamp ON provenance_events (token_id, from_address, timestamp);
+CREATE INDEX idx_provenance_events_token_id_to_address_timestamp ON provenance_events (token_id, to_address, timestamp);
+CREATE INDEX idx_provenance_events_id_text ON provenance_events (CAST(id AS TEXT));
 
 -- Watched Addresses table indexes
 CREATE INDEX idx_watched_addresses_watching ON watched_addresses (watching, chain, address);
