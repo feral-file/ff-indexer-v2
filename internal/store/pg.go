@@ -1283,7 +1283,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 
 	// Count total matching records
 	var total int64
-	if err := query.Debug().Count(&total).Error; err != nil {
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count changes: %w", err)
 	}
 
@@ -1305,7 +1305,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 
 	// Execute the query
 	var changes []schema.ChangesJournal
-	if err := query.Debug().Find(&changes).Error; err != nil {
+	if err := query.Find(&changes).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to query changes: %w", err)
 	}
 
