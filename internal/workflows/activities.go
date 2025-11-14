@@ -189,16 +189,6 @@ func (e *executor) CreateTokenMint(ctx context.Context, event *domain.Blockchain
 		return domain.ErrInvalidBlockchainEvent
 	}
 
-	// Check if token already exists
-	existingToken, err := e.store.GetTokenByTokenCID(ctx, event.TokenCID().String())
-	if err != nil {
-		return fmt.Errorf("failed to check if token exists: %w", err)
-	}
-
-	if existingToken != nil {
-		return domain.ErrTokenAlreadyExists
-	}
-
 	// Marshal raw event
 	rawEventData, err := e.json.Marshal(event)
 	if err != nil {

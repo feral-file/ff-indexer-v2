@@ -186,6 +186,7 @@ type Store interface {
 	// GetTokensByFilter retrieves tokens with their metadata based on filters
 	GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]*TokensWithMetadataResult, uint64, error)
 	// CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
+	// For multi-edition tokens (FA2/ERC1155), this also handles subsequent mints via conflict resolution
 	CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error
 	// UpdateTokenTransfer updates a token transfer (assumes token exists)
 	UpdateTokenTransfer(ctx context.Context, input UpdateTokenTransferInput) error

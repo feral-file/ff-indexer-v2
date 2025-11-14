@@ -155,7 +155,7 @@ func (s *pgStore) SetBlockCursor(ctx context.Context, chain string, blockNumber 
 // CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
 func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Create the token
+		// 1. Create or get the token (handle multi-edition tokens like FA2/ERC1155)
 		token := schema.Token{
 			TokenCID:        input.Token.TokenCID,
 			Chain:           input.Token.Chain,
@@ -166,18 +166,34 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			Burned:          input.Token.Burned,
 		}
 
-		if err := tx.Create(&token).Error; err != nil {
+		// Use ON CONFLICT DO NOTHING for token_cid (unique constraint)
+		// This allows subsequent mints for FA2/ERC1155 tokens
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "token_cid"}},
+			DoNothing: true,
+		}).Create(&token).Error; err != nil {
 			return fmt.Errorf("failed to create token: %w", err)
 		}
 
-		// 2. Create the balance record
+		// If token.ID is 0, it means the token already existed, so fetch it
+		if token.ID == 0 {
+			if err := tx.Where("token_cid = ?", input.Token.TokenCID).First(&token).Error; err != nil {
+				return fmt.Errorf("failed to get existing token: %w", err)
+			}
+		}
+
+		// 2. Upsert the balance record (create or update)
 		balance := schema.Balance{
 			TokenID:      token.ID,
 			OwnerAddress: input.Balance.OwnerAddress,
 			Quantity:     input.Balance.Quantity,
 		}
-		if err := tx.Create(&balance).Error; err != nil {
-			return fmt.Errorf("failed to create balance: %w", err)
+		// Use ON CONFLICT DO UPDATE to update the quantity if balance already exists
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "token_id"}, {Name: "owner_address"}},
+			DoUpdates: clause.AssignmentColumns([]string{"quantity"}),
+		}).Create(&balance).Error; err != nil {
+			return fmt.Errorf("failed to upsert balance: %w", err)
 		}
 
 		// 3. Create the provenance event with conflict handling
@@ -205,11 +221,10 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			return fmt.Errorf("failed to create provenance event: %w", err)
 		}
 
-		// If the event was a duplicate (ID == 0), rollback the transaction
-		// This prevents creating a token with a provenance event that belongs to another token
+		// If the event was a duplicate (ID == 0), just return success
+		// This is expected for re-processing the same transaction
 		if provenanceEvent.ID == 0 {
-			return fmt.Errorf("duplicate provenance event detected for chain=%s, tx_hash=%s",
-				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
+			return nil
 		}
 
 		// 4. Update ownership periods based on the provenance event
@@ -1333,13 +1348,7 @@ func (s *pgStore) GetProvenanceEventByID(ctx context.Context, id uint64) (*schem
 
 // updateOwnershipPeriods updates ownership periods after a provenance event
 // This is an internal method called within the same transaction as the provenance event creation
-func (s *pgStore) updateOwnershipPeriods(ctx context.Context, txInterface interface{}, event *schema.ProvenanceEvent, tokenStandard domain.ChainStandard) error {
-	// Cast the transaction interface to *gorm.DB
-	tx, ok := txInterface.(*gorm.DB)
-	if !ok {
-		return fmt.Errorf("invalid transaction type: expected *gorm.DB")
-	}
-
+func (s *pgStore) updateOwnershipPeriods(ctx context.Context, tx *gorm.DB, event *schema.ProvenanceEvent, tokenStandard domain.ChainStandard) error {
 	// Skip if not a transfer, mint, or burn event (metadata updates don't affect ownership)
 	if event.EventType != schema.ProvenanceEventTypeTransfer &&
 		event.EventType != schema.ProvenanceEventTypeMint &&

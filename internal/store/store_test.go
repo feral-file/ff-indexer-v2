@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -155,7 +154,7 @@ func testCreateTokenMint(t *testing.T, store Store) {
 		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
 	})
 
-	t.Run("duplicate event with same token and addresses should rollback transaction", func(t *testing.T) {
+	t.Run("duplicate event with same token and addresses should be idempotent", func(t *testing.T) {
 		input := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
 			domain.StandardERC721,
@@ -173,21 +172,15 @@ func testCreateTokenMint(t *testing.T, store Store) {
 		require.NotNil(t, token1)
 
 		// Try to create the SAME token with the SAME tx hash and addresses
-		// This should fail because it's an exact duplicate event
+		// This should succeed (idempotent behavior) but not create duplicates
 		input2 := input
 
-		// This should fail because we're trying to create the same token again
-		// (duplicate token_cid)
+		// This should succeed without creating duplicate records
+		// The conflict resolution handles both token and provenance event duplicates gracefully
 		err = store.CreateTokenMint(ctx, input2)
-		require.Error(t, err)
-		// Error could be either duplicate token or duplicate provenance event
-		assert.True(t,
-			strings.Contains(err.Error(), "duplicate key") ||
-				strings.Contains(err.Error(), "duplicate provenance event") ||
-				strings.Contains(err.Error(), "already exists"),
-		)
+		require.NoError(t, err)
 
-		// Verify the token still has exactly one provenance event
+		// Verify the token still has exactly one provenance event (no duplicates created)
 		events, total, err := store.GetTokenProvenanceEvents(ctx, token1.ID, 10, 0, false)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(1), total)
