@@ -18,11 +18,12 @@ info:
     - Metadata enrichment from vendor APIs
     - Change journal for tracking data updates
     - Token indexing triggers
+    - Metadata refresh triggers
     
     ## Authentication
     Some endpoints require authentication:
     - REST: `POST /api/v1/tokens/owners/index` (trigger token indexing by owner addresses)
-    - GraphQL: `triggerOwnerIndexing` mutation (queries and `triggerTokenIndexing` mutation are public)
+    - GraphQL: `triggerOwnerIndexing` mutation (queries, `triggerTokenIndexing`, and `triggerMetadataIndexing` mutations are public)
     
     Two authentication methods are supported:
     
@@ -598,6 +599,89 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/tokens/metadata/index:
+    post:
+      summary: Trigger metadata refresh by token IDs or CIDs
+      description: |
+        Triggers metadata refresh workflows for one or more tokens by their IDs or CIDs.
+        
+        This endpoint accepts either:
+        - A list of token IDs (internal database IDs, up to 50)
+        - A list of token CIDs (canonical identifiers, up to 50)
+        - Or both (at least one is required)
+        
+        The endpoint will validate that all provided IDs and CIDs exist in the database
+        before triggering the metadata refresh workflow. If any token is not found, a 404
+        error will be returned with details about which token was not found.
+        
+        Metadata refresh includes:
+        - Fetching latest on-chain metadata
+        - Enriching with vendor API data (ArtBlocks, fxhash, etc.)
+        - Updating media asset references
+        - Refreshing enrichment sources
+        
+        **This endpoint does not require authentication** - it is open for public use.
+        
+        ## Response
+        Returns a workflow ID and run ID that can be used to track the metadata refresh progress.
+        The workflow will trigger child workflows for each token in parallel.
+      operationId: triggerMetadataIndexing
+      tags:
+        - tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerMetadataIndexingRequest'
+      responses:
+        '202':
+          description: Metadata refresh triggered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerIndexingResponse'
+        '404':
+          description: One or more tokens not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          examples:
+            tokenIdNotFound:
+              summary: Token ID not found
+              value:
+                code: not_found
+                message: Token with ID 12345 not found
+            tokenCIDNotFound:
+              summary: Token CID not found
+              value:
+                code: not_found
+                message: Token with CID eip155:1:erc721:0xabc123:9999 not found
+        '422':
+          description: Validation error - Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          examples:
+            missingBoth:
+              summary: Missing both token_ids and token_cids
+              value:
+                code: validation_failed
+                message: at least one of token_ids or token_cids is required
+            tooManyTokens:
+              summary: Too many tokens provided
+              value:
+                code: validation_failed
+                message: maximum 20 token IDs allowed
         '500':
           description: Internal server error
           content:
@@ -1264,6 +1348,40 @@ components:
           minItems: 1
           maxItems: 5
           example: ["0xowner123", "tz1abc123"]
+
+    TriggerMetadataIndexingRequest:
+      type: object
+      description: |
+        Request to trigger metadata refresh for tokens.
+        
+        At least one of `token_ids` or `token_cids` must be provided.
+        Both can be provided together, and duplicate CIDs will be automatically deduplicated.
+      properties:
+        token_ids:
+          type: array
+          items:
+            type: integer
+            format: uint64
+          description: |
+            List of internal database token IDs to refresh metadata for (max 20, optional).
+            All provided IDs must exist in the database.
+          minItems: 1
+          maxItems: 50
+          example: [12345, 67890]
+        token_cids:
+          type: array
+          items:
+            type: string
+          description: |
+            List of token CIDs to refresh metadata for (max 20, optional).
+            All provided CIDs must exist in the database.
+            Format: `{chain}:{standard}:{contract_address}:{token_number}`
+          minItems: 1
+          maxItems: 50
+          example: ["eip155:1:erc721:0xabc123:1234", "tezos:mainnet:fa2:KT1abc123:5678"]
+      example:
+        token_ids: [12345, 67890]
+        token_cids: ["eip155:1:erc721:0xabc123:1234"]
 
     TriggerIndexingResponse:
       type: object
