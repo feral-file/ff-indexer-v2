@@ -35,6 +35,7 @@ tezos:
 
 vendors:
   artblocks_url: https://artblocks-mainnet.hasura.app/v1/graphql
+  feralfile_url: https://feralfile.com/api
 
 ethereum_token_sweep_start_block: 10000000
 tezos_token_sweep_start_block: 5000000

@@ -25,6 +25,7 @@ import (
 	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -108,6 +109,7 @@ func main() {
 
 	// Initialize vendors
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL)
+	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
 	fxhashClient := fxhash.NewClient(httpClient)
 
 	// Initialize registry loaders
@@ -150,7 +152,7 @@ func main() {
 	})
 
 	// Initialize metadata enhancer and resolver
-	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, fxhashClient, jsonAdapter, jcsAdapter)
+	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, fxhashClient, jsonAdapter, jcsAdapter)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, jcsAdapter, base64Adapter, dataStore, publisherRegistry)
 
 	// Load deployer cache from DB if resolver has store and registry

@@ -13,6 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
@@ -22,6 +23,7 @@ type testEnhancerMocks struct {
 	httpClient      *mocks.MockHTTPClient
 	uriResolver     *mocks.MockURIResolver
 	artblocksClient *mocks.MockArtBlocksClient
+	feralfileClient *mocks.MockFeralFileClient
 	fxhashClient    *mocks.MockFxhashClient
 	json            *mocks.MockJSON
 	jcs             *mocks.MockJCS
@@ -37,6 +39,7 @@ func setupTestEnhancer(t *testing.T) *testEnhancerMocks {
 		httpClient:      mocks.NewMockHTTPClient(ctrl),
 		uriResolver:     mocks.NewMockURIResolver(ctrl),
 		artblocksClient: mocks.NewMockArtBlocksClient(ctrl),
+		feralfileClient: mocks.NewMockFeralFileClient(ctrl),
 		fxhashClient:    mocks.NewMockFxhashClient(ctrl),
 		json:            mocks.NewMockJSON(ctrl),
 		jcs:             mocks.NewMockJCS(ctrl),
@@ -46,6 +49,7 @@ func setupTestEnhancer(t *testing.T) *testEnhancerMocks {
 		tm.httpClient,
 		tm.uriResolver,
 		tm.artblocksClient,
+		tm.feralfileClient,
 		tm.fxhashClient,
 		tm.json,
 		tm.jcs,
@@ -514,6 +518,168 @@ func TestEnhancer_VendorJsonHash_JCSError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, hash)
 	assert.Contains(t, err.Error(), "failed to canonicalize vendor JSON")
+}
+
+func TestEnhancer_Enhance_FeralFile(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890abcdef", "68133196527112232794835997367314869505960984666033462681082934679485439444096")
+	publisherName := registry.PublisherNameFeralFile
+
+	// Create normalized metadata with Feral File publisher
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name":  "Test Feral File",
+			"image": "https://example.com/image.png",
+		},
+		Publisher: &metadata.Publisher{
+			Name: &publisherName,
+			URL:  stringPtr("https://feralfile.com"),
+		},
+	}
+
+	// Mock Feral File client to return artwork data
+	artwork := &feralfile.Artwork{
+		ID:           "68133196527112232794835997367314869505960984666033462681082934679485439444096",
+		Name:         "Money Vortex: Binaural Beats",
+		ThumbnailURI: "previews/test/thumbnail.jpg",
+		PreviewURI:   "previews/test/preview.html",
+		Series: feralfile.Series{
+			Medium:      "software",
+			Description: "Test description",
+			Artist: feralfile.Artist{
+				AlumniAccount: feralfile.AlumniAccount{
+					ID:    "adad3710-916d-44c5-bb74-b0a516ad1836",
+					Alias: "Steve Pikelny",
+					Addresses: map[string]string{
+						"ethereum": "0x47144372eb383466d18fc91db9cd0396aa6c87a4",
+					},
+				}},
+		},
+	}
+
+	mocks.feralfileClient.
+		EXPECT().
+		GetArtwork(gomock.Any(), "68133196527112232794835997367314869505960984666033462681082934679485439444096").
+		Return(artwork, nil)
+
+	// Mock JSON marshal for artwork
+	vendorJSON := []byte(`{"id":"68133196527112232794835997367314869505960984666033462681082934679485439444096","name":"Money Vortex: Binaural Beats"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(artwork).
+		Return(vendorJSON, nil)
+
+	// Mock URI resolver and HTTP client for MIME type detection
+	expectedImageURL := "https://cdn.feralfileassets.com/previews/test/thumbnail.jpg"
+	expectedAnimationURL := "https://cdn.feralfileassets.com/previews/test/preview.html"
+
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), expectedAnimationURL).
+		Return(expectedAnimationURL, nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), expectedAnimationURL).
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), expectedAnimationURL, gomock.Any()).
+		Return([]byte("fake html data"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, registry.PublisherNameFeralFile, result.Vendor)
+	assert.Equal(t, "Money Vortex: Binaural Beats", *result.Name)
+	assert.Equal(t, "Test description", *result.Description)
+	assert.Equal(t, expectedImageURL, *result.ImageURL)
+	assert.Equal(t, expectedAnimationURL, *result.AnimationURL)
+	assert.Len(t, result.Artists, 1)
+	assert.Equal(t, "Steve Pikelny", result.Artists[0].Name)
+	expectedDID := domain.NewDID("0x47144372eb383466d18fc91db9cd0396aa6c87a4", domain.ChainEthereumMainnet)
+	assert.Equal(t, expectedDID, result.Artists[0].DID)
+}
+
+func TestEnhancer_Enhance_FeralFile_ImageMedium(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1TestContract", "12345")
+	publisherName := registry.PublisherNameFeralFile
+
+	// Create normalized metadata with Feral File publisher
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Test Image",
+		},
+		Publisher: &metadata.Publisher{
+			Name: &publisherName,
+			URL:  stringPtr("https://feralfile.com"),
+		},
+	}
+
+	// Mock Feral File client to return artwork data with image medium
+	artwork := &feralfile.Artwork{
+		ID:           "12345",
+		Name:         "Test Image Artwork",
+		ThumbnailURI: "thumbnails/test.jpg",
+		PreviewURI:   "previews/test-full.jpg",
+		Series: feralfile.Series{
+			Medium:      "image",
+			Description: "Image artwork",
+			Artist: feralfile.Artist{
+				AlumniAccount: feralfile.AlumniAccount{
+					Alias: "Test Artist",
+					Addresses: map[string]string{
+						"tezos": "tz1TestAddress",
+					},
+				},
+			},
+		},
+	}
+
+	mocks.feralfileClient.
+		EXPECT().
+		GetArtwork(gomock.Any(), "12345").
+		Return(artwork, nil)
+
+	// Mock JSON marshal for artwork
+	vendorJSON := []byte(`{"id":"12345","name":"Test Image Artwork"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(artwork).
+		Return(vendorJSON, nil)
+
+	// Mock URI resolver and HTTP client for MIME type detection (only for image, no animation)
+	expectedImageURL := "https://cdn.feralfileassets.com/previews/test-full.jpg"
+
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), expectedImageURL).
+		Return(expectedImageURL, nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), expectedImageURL).
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), expectedImageURL, gomock.Any()).
+		Return([]byte("fake image data"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, registry.PublisherNameFeralFile, result.Vendor)
+	assert.Equal(t, expectedImageURL, *result.ImageURL)
+	assert.Nil(t, result.AnimationURL) // No animation URL for image medium
+	assert.Len(t, result.Artists, 1)
+	assert.Equal(t, "Test Artist", result.Artists[0].Name)
+	expectedDID := domain.NewDID("tz1TestAddress", domain.ChainTezosMainnet)
+	assert.Equal(t, expectedDID, result.Artists[0].DID)
 }
 
 // Helper function to create string pointers

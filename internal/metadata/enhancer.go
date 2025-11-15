@@ -12,6 +12,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -44,13 +45,14 @@ type enhancer struct {
 	httpClient      adapter.HTTPClient
 	uriResolver     uri.Resolver
 	artblocksClient artblocks.Client
+	feralfileClient feralfile.Client
 	fxhashClient    fxhash.Client
 	json            adapter.JSON
 	jcs             adapter.JCS
 }
 
-func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, fxhashClient fxhash.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
-	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, fxhashClient: fxhashClient, json: json, jcs: jcs}
+func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, feralfileClient feralfile.Client, fxhashClient fxhash.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
+	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, feralfileClient: feralfileClient, fxhashClient: fxhashClient, json: json, jcs: jcs}
 }
 
 // VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
@@ -87,11 +89,18 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 			}
 		}
 
+	case registry.PublisherNameFeralFile:
+		// Enhance Feral File tokens for both Ethereum and Tezos
+		if chain == domain.ChainEthereumMainnet || chain == domain.ChainTezosMainnet {
+			enhancedMetadata, err = e.enhanceFeralFile(ctx, tokenCID, chain, tokenNumber, meta.Raw)
+			if err != nil {
+				return nil, fmt.Errorf("failed to enhance Feral File metadata: %w", err)
+			}
+		}
+
 	// TODO: Add support for other vendors
 	// case "fxhash":
 	//     return e.enhanceFxhash(ctx, tokenCID, contractAddress, tokenNumber, meta)
-	// case "Feral File":
-	//     return e.enhanceFeralFile(ctx, tokenCID, contractAddress, tokenNumber, meta)
 
 	default:
 		// No enhancement available for this publisher
@@ -169,6 +178,87 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCI
 	// Image URL is the raw metadata image URL
 	if i, ok := rawMetadata["image"].(string); ok {
 		enhanced.ImageURL = &i
+	}
+
+	return enhanced, nil
+}
+
+// enhanceFeralFile enhances metadata from Feral File API
+func (e *enhancer) enhanceFeralFile(ctx context.Context, tokenCID domain.TokenCID, chain domain.Chain, tokenNumber string, rawMetadata map[string]interface{}) (*EnhancedMetadata, error) {
+	logger.InfoCtx(ctx, "Enhancing Feral File metadata", zap.String("tokenCID", tokenCID.String()))
+
+	// Fetch artwork data from Feral File API
+	artwork, err := e.feralfileClient.GetArtwork(ctx, tokenNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch Feral File artwork: %w", err)
+	}
+
+	vendorJSON, err := e.json.Marshal(artwork)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Feral File artwork: %w", err)
+	}
+
+	// Build enhanced metadata
+	enhanced := &EnhancedMetadata{
+		Vendor:     registry.PublisherNameFeralFile,
+		VendorJSON: vendorJSON,
+	}
+
+	// Set the artwork name
+	enhanced.Name = &artwork.Name
+
+	// Set the series description
+	if artwork.Series.Description != "" {
+		enhanced.Description = &artwork.Series.Description
+	}
+
+	// Determine which URI to use for image and animation based on the medium
+	medium := strings.ToLower(artwork.Series.Medium)
+
+	if medium == "image" {
+		// For image medium, use previewURI as image
+		if artwork.PreviewURI != "" {
+			imageURL := feralfile.URL(artwork.PreviewURI)
+			enhanced.ImageURL = &imageURL
+		}
+	} else {
+		// For non-image mediums, use thumbnailURI as image and previewURI as animation
+		if artwork.ThumbnailURI != "" {
+			imageURL := feralfile.URL(artwork.ThumbnailURI)
+			enhanced.ImageURL = &imageURL
+		}
+		if artwork.PreviewURI != "" {
+			animationURL := feralfile.URL(artwork.PreviewURI)
+			enhanced.AnimationURL = &animationURL
+		}
+	}
+
+	// Build artist information from alumni account
+	// Try to get the address for the specific blockchain first
+	var artistAddress string
+	chainKey := ""
+	switch chain {
+	case domain.ChainEthereumMainnet:
+		chainKey = "ethereum"
+	case domain.ChainTezosMainnet:
+		chainKey = "tezos"
+	}
+
+	if chainKey != "" {
+		if addr, ok := artwork.Series.Artist.AlumniAccount.Addresses[chainKey]; ok {
+			artistAddress = addr
+		}
+	}
+
+	// If we found an artist address, create the DID and add artist info
+	if artistAddress != "" {
+		artistDID := domain.NewDID(artistAddress, chain)
+		enhanced.Artists = []Artist{
+			{
+				DID:  artistDID,
+				Name: artwork.Series.Artist.AlumniAccount.Alias,
+			},
+		}
 	}
 
 	return enhanced, nil

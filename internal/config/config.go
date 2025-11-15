@@ -82,6 +82,7 @@ type TemporalConfig struct {
 // VendorsConfig holds vendor API configurations
 type VendorsConfig struct {
 	ArtBlocksURL string `mapstructure:"artblocks_url"`
+	FeralFileURL string `mapstructure:"feralfile_url"`
 }
 
 // ServerConfig holds HTTP server configuration
@@ -283,6 +284,7 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
+	v.SetDefault("vendors.feralfile_url", "https://feralfile.com/api")
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 
 	if err := v.ReadInConfig(); err != nil {

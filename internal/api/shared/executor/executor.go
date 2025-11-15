@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/client"
+	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -614,12 +616,14 @@ func (e *executor) expandEnrichmentSourceMediaAssets(ctx context.Context, tokenD
 
 	// Collect source URLs from enrichment source
 	var sourceURLs []string
-	if internalTypes.StringNilOrEmpty(tokenDTO.EnrichmentSource.ImageURL) {
+	if !internalTypes.StringNilOrEmpty(tokenDTO.EnrichmentSource.ImageURL) {
 		sourceURLs = append(sourceURLs, *tokenDTO.EnrichmentSource.ImageURL)
 	}
-	if internalTypes.StringNilOrEmpty(tokenDTO.EnrichmentSource.AnimationURL) {
+	if !internalTypes.StringNilOrEmpty(tokenDTO.EnrichmentSource.AnimationURL) {
 		sourceURLs = append(sourceURLs, *tokenDTO.EnrichmentSource.AnimationURL)
 	}
+
+	logger.Debug("sourceURLs", zap.Any("sourceURLs", sourceURLs))
 
 	if len(sourceURLs) == 0 {
 		return nil
