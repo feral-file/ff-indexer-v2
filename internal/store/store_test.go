@@ -855,6 +855,183 @@ func testGetTokenByTokenCID(t *testing.T, store Store) {
 	})
 }
 
+func testGetTokensByCIDs(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("get multiple existing tokens by CIDs", func(t *testing.T) {
+		// Create multiple tokens
+		owner1 := "0xowner7000000000000000000000000000000000001"
+		owner2 := "0xowner7000000000000000000000000000000000002"
+		contractAddress1 := "0x7000000000000000000000000000000000000001"
+		contractAddress2 := "0x7000000000000000000000000000000000000002"
+
+		mintInput1 := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contractAddress1,
+			"1",
+			owner1,
+		)
+		err := store.CreateTokenMint(ctx, mintInput1)
+		require.NoError(t, err)
+
+		mintInput2 := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contractAddress2,
+			"2",
+			owner2,
+		)
+		err = store.CreateTokenMint(ctx, mintInput2)
+		require.NoError(t, err)
+
+		// Batch get tokens by CIDs
+		tokens, err := store.GetTokensByCIDs(ctx, []string{mintInput1.Token.TokenCID, mintInput2.Token.TokenCID})
+		require.NoError(t, err)
+		require.Len(t, tokens, 2)
+
+		// Verify tokens are returned (order may vary)
+		tokenMap := make(map[string]*schema.Token)
+		for _, token := range tokens {
+			tokenMap[token.TokenCID] = token
+		}
+
+		assert.Contains(t, tokenMap, mintInput1.Token.TokenCID)
+		assert.Contains(t, tokenMap, mintInput2.Token.TokenCID)
+		assert.Equal(t, owner1, *tokenMap[mintInput1.Token.TokenCID].CurrentOwner)
+		assert.Equal(t, owner2, *tokenMap[mintInput2.Token.TokenCID].CurrentOwner)
+	})
+
+	t.Run("get tokens with some non-existent CIDs", func(t *testing.T) {
+		// Create one token
+		owner := "0xowner7000000000000000000000000000000000003"
+		contractAddress := "0x7000000000000000000000000000000000000003"
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contractAddress,
+			"3",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		// Batch get with existing and non-existing CIDs
+		tokens, err := store.GetTokensByCIDs(ctx, []string{mintInput.Token.TokenCID, "eip155:1:erc721:0xnonexistent:999"})
+		require.NoError(t, err)
+		// Should only return the existing token
+		require.Len(t, tokens, 1)
+		assert.Equal(t, mintInput.Token.TokenCID, tokens[0].TokenCID)
+	})
+
+	t.Run("get tokens with empty CIDs returns empty list", func(t *testing.T) {
+		tokens, err := store.GetTokensByCIDs(ctx, []string{})
+		require.NoError(t, err)
+		assert.Len(t, tokens, 0)
+	})
+
+	t.Run("get tokens with all non-existent CIDs returns empty list", func(t *testing.T) {
+		tokens, err := store.GetTokensByCIDs(ctx, []string{"eip155:1:erc721:0xnonexistent:998", "eip155:1:erc721:0xnonexistent:999"})
+		require.NoError(t, err)
+		assert.Len(t, tokens, 0)
+	})
+}
+
+func testGetTokensByIDs(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("get multiple existing tokens", func(t *testing.T) {
+		// Create multiple tokens
+		owner1 := "0xowner6000000000000000000000000000000000001"
+		owner2 := "0xowner6000000000000000000000000000000000002"
+		contractAddress1 := "0x6000000000000000000000000000000000000001"
+		contractAddress2 := "0x6000000000000000000000000000000000000002"
+
+		mintInput1 := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contractAddress1,
+			"1",
+			owner1,
+		)
+		err := store.CreateTokenMint(ctx, mintInput1)
+		require.NoError(t, err)
+
+		mintInput2 := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contractAddress2,
+			"2",
+			owner2,
+		)
+		err = store.CreateTokenMint(ctx, mintInput2)
+		require.NoError(t, err)
+
+		// Get both tokens by their CIDs to retrieve their IDs
+		token1, err := store.GetTokenByTokenCID(ctx, mintInput1.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token1)
+
+		token2, err := store.GetTokenByTokenCID(ctx, mintInput2.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token2)
+
+		// Batch get tokens by IDs
+		tokens, err := store.GetTokensByIDs(ctx, []uint64{token1.ID, token2.ID})
+		require.NoError(t, err)
+		require.Len(t, tokens, 2)
+
+		// Verify tokens are returned (order may vary)
+		tokenMap := make(map[uint64]*schema.Token)
+		for _, token := range tokens {
+			tokenMap[token.ID] = token
+		}
+
+		assert.Contains(t, tokenMap, token1.ID)
+		assert.Contains(t, tokenMap, token2.ID)
+		assert.Equal(t, mintInput1.Token.TokenCID, tokenMap[token1.ID].TokenCID)
+		assert.Equal(t, mintInput2.Token.TokenCID, tokenMap[token2.ID].TokenCID)
+	})
+
+	t.Run("get tokens with some non-existent IDs", func(t *testing.T) {
+		// Create one token
+		owner := "0xowner6000000000000000000000000000000000003"
+		contractAddress := "0x6000000000000000000000000000000000000003"
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contractAddress,
+			"3",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token)
+
+		// Batch get with existing and non-existing IDs
+		tokens, err := store.GetTokensByIDs(ctx, []uint64{token.ID, 999999999})
+		require.NoError(t, err)
+		// Should only return the existing token
+		require.Len(t, tokens, 1)
+		assert.Equal(t, token.ID, tokens[0].ID)
+	})
+
+	t.Run("get tokens with empty IDs returns empty list", func(t *testing.T) {
+		tokens, err := store.GetTokensByIDs(ctx, []uint64{})
+		require.NoError(t, err)
+		assert.Len(t, tokens, 0)
+	})
+
+	t.Run("get tokens with all non-existent IDs returns empty list", func(t *testing.T) {
+		tokens, err := store.GetTokensByIDs(ctx, []uint64{999999998, 999999999})
+		require.NoError(t, err)
+		assert.Len(t, tokens, 0)
+	})
+}
+
 func testGetTokensByFilter(t *testing.T, store Store) {
 	ctx := context.Background()
 
@@ -2216,6 +2393,8 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"UpdateTokenBurn", testUpdateTokenBurn},
 		{"CreateTokenWithProvenances", testCreateTokenWithProvenances},
 		{"GetTokenByTokenCID", testGetTokenByTokenCID},
+		{"GetTokensByCIDs", testGetTokensByCIDs},
+		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
 		{"UpsertTokenMetadata", testUpsertTokenMetadata},
 		{"EnrichmentSource", testEnrichmentSource},

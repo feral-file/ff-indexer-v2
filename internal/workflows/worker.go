@@ -26,6 +26,9 @@ type WorkerCore interface {
 	// IndexTokenMetadata index token metadata
 	IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error
 
+	// IndexMultipleTokensMetadata indexes metadata for multiple tokens by triggering child workflows
+	IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error
+
 	// IndexTokenFromEvent indexes metadata and full provenances (provenance events and balances) for a token
 	IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error
 

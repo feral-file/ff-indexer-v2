@@ -95,6 +95,40 @@ func (s *pgStore) GetTokenByTokenCID(ctx context.Context, tokenCID string) (*sch
 	return &token, nil
 }
 
+// GetTokensByCIDs retrieves multiple tokens by their canonical IDs
+func (s *pgStore) GetTokensByCIDs(ctx context.Context, tokenCIDs []string) ([]*schema.Token, error) {
+	if len(tokenCIDs) == 0 {
+		return []*schema.Token{}, nil
+	}
+
+	var tokens []*schema.Token
+	err := s.db.WithContext(ctx).
+		Where("token_cid IN ?", tokenCIDs).
+		Find(&tokens).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tokens by CIDs: %w", err)
+	}
+
+	return tokens, nil
+}
+
+// GetTokensByIDs retrieves multiple tokens by their internal IDs
+func (s *pgStore) GetTokensByIDs(ctx context.Context, tokenIDs []uint64) ([]*schema.Token, error) {
+	if len(tokenIDs) == 0 {
+		return []*schema.Token{}, nil
+	}
+
+	var tokens []*schema.Token
+	err := s.db.WithContext(ctx).
+		Where("id IN ?", tokenIDs).
+		Find(&tokens).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tokens by IDs: %w", err)
+	}
+
+	return tokens, nil
+}
+
 // IsAnyAddressWatched checks if any of the given addresses are being watched on a specific chain
 func (s *pgStore) IsAnyAddressWatched(ctx context.Context, chain domain.Chain, addresses []string) (bool, error) {
 	if len(addresses) == 0 {

@@ -36,6 +36,10 @@ type Handler interface {
 	// POST /api/v1/tokens/owners/index
 	TriggerOwnerIndexing(c *gin.Context)
 
+	// TriggerMetadataIndexing triggers metadata refresh for tokens by IDs or CIDs (open, no authentication required)
+	// POST /api/v1/tokens/metadata/index
+	TriggerMetadataIndexing(c *gin.Context)
+
 	// GetWorkflowStatus retrieves the status of a Temporal workflow execution
 	// GET /api/v1/workflows/:workflow_id/runs/:run_id
 	GetWorkflowStatus(c *gin.Context)
@@ -272,6 +276,36 @@ func (h *handler) TriggerOwnerIndexing(c *gin.Context) {
 
 	if err != nil {
 		respondInternalError(c, err, "Failed to trigger indexing")
+		return
+	}
+
+	c.JSON(http.StatusAccepted, response)
+}
+
+// TriggerMetadataIndexing triggers metadata refresh for tokens by IDs or CIDs (open, no authentication required)
+func (h *handler) TriggerMetadataIndexing(c *gin.Context) {
+	var req dto.TriggerMetadataIndexingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	// Validate request body
+	err := req.Validate()
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	// Call executor's TriggerMetadataIndexing method
+	response, err := h.executor.TriggerMetadataIndexing(
+		c.Request.Context(),
+		req.TokenIDs,
+		req.TokenCIDs,
+	)
+
+	if err != nil {
+		respondInternalError(c, err, "Failed to trigger metadata indexing")
 		return
 	}
 

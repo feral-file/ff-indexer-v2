@@ -398,6 +398,21 @@ func (mr *MockStoreMockRecorder) GetTokenWithMetadataByTokenCID(ctx, tokenCID in
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenWithMetadataByTokenCID", reflect.TypeOf((*MockStore)(nil).GetTokenWithMetadataByTokenCID), ctx, tokenCID)
 }
 
+// GetTokensByCIDs mocks base method.
+func (m *MockStore) GetTokensByCIDs(ctx context.Context, tokenCIDs []string) ([]*schema.Token, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokensByCIDs", ctx, tokenCIDs)
+	ret0, _ := ret[0].([]*schema.Token)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokensByCIDs indicates an expected call of GetTokensByCIDs.
+func (mr *MockStoreMockRecorder) GetTokensByCIDs(ctx, tokenCIDs interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensByCIDs", reflect.TypeOf((*MockStore)(nil).GetTokensByCIDs), ctx, tokenCIDs)
+}
+
 // GetTokensByFilter mocks base method.
 func (m *MockStore) GetTokensByFilter(ctx context.Context, filter store.TokenQueryFilter) ([]*store.TokensWithMetadataResult, uint64, error) {
 	m.ctrl.T.Helper()
@@ -412,6 +427,21 @@ func (m *MockStore) GetTokensByFilter(ctx context.Context, filter store.TokenQue
 func (mr *MockStoreMockRecorder) GetTokensByFilter(ctx, filter interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensByFilter", reflect.TypeOf((*MockStore)(nil).GetTokensByFilter), ctx, filter)
+}
+
+// GetTokensByIDs mocks base method.
+func (m *MockStore) GetTokensByIDs(ctx context.Context, tokenIDs []uint64) ([]*schema.Token, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokensByIDs", ctx, tokenIDs)
+	ret0, _ := ret[0].([]*schema.Token)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokensByIDs indicates an expected call of GetTokensByIDs.
+func (mr *MockStoreMockRecorder) GetTokensByIDs(ctx, tokenIDs interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensByIDs", reflect.TypeOf((*MockStore)(nil).GetTokensByIDs), ctx, tokenIDs)
 }
 
 // IsAnyAddressWatched mocks base method.

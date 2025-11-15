@@ -203,3 +203,43 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 
 	return nil
 }
+
+// IndexMultipleTokensMetadata indexes metadata for multiple tokens by triggering child workflows
+func (w *workerCore) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+	logger.InfoWf(ctx, "Indexing multiple tokens metadata", zap.Int("count", len(tokenCIDs)))
+
+	if len(tokenCIDs) == 0 {
+		logger.WarnWf(ctx, "No token CIDs provided for batch metadata indexing")
+		return nil
+	}
+
+	// Trigger child workflows for each token
+	// Each child workflow runs independently and in parallel
+	var childFutures []workflow.ChildWorkflowFuture
+	for _, tokenCID := range tokenCIDs {
+		childWorkflowOptions := workflow.ChildWorkflowOptions{
+			WorkflowID:               fmt.Sprintf("index-metadata-%s", tokenCID.String()),
+			WorkflowExecutionTimeout: 15 * time.Minute,
+			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for children to complete
+		}
+		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
+
+		// Start the child workflow without waiting for result (fire and forget)
+		childWorkflowFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, tokenCID)
+		childFutures = append(childFutures, childWorkflowFuture)
+
+	}
+
+	for _, childFuture := range childFutures {
+		if err := childFuture.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
+			return err
+		}
+	}
+
+	logger.InfoWf(ctx, "Multiple tokens metadata indexing workflows triggered",
+		zap.Int("count", len(tokenCIDs)),
+	)
+
+	return nil
+}

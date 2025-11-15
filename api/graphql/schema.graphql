@@ -245,5 +245,13 @@ type Mutation {
   triggerOwnerIndexing(
     addresses: [String!]!
   ): TriggerIndexingResult
+
+  # Trigger metadata refresh for tokens by IDs or CIDs (open, no authentication required)
+  # Equivalent to: POST /api/v1/tokens/metadata/index
+  # At least one of token_ids or token_cids must be provided
+  triggerMetadataIndexing(
+    token_ids: [Uint64!]
+    token_cids: [String!]
+  ): TriggerIndexingResult
 }
 

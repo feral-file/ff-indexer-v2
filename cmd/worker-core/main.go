@@ -214,6 +214,7 @@ func main() {
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenOwner)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTezosTokenOwner)
 	temporalWorker.RegisterWorkflow(workerCore.IndexEthereumTokenOwner)
+	temporalWorker.RegisterWorkflow(workerCore.IndexMultipleTokensMetadata)
 	logger.InfoCtx(ctx, "Registered workflows")
 
 	// Register activities

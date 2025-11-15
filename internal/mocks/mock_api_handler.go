@@ -94,6 +94,30 @@ func (mr *MockAPIHandlerMockRecorder) ListTokens(c interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokens", reflect.TypeOf((*MockAPIHandler)(nil).ListTokens), c)
 }
 
+// TriggerMetadataIndexing mocks base method.
+func (m *MockAPIHandler) TriggerMetadataIndexing(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "TriggerMetadataIndexing", c)
+}
+
+// TriggerMetadataIndexing indicates an expected call of TriggerMetadataIndexing.
+func (mr *MockAPIHandlerMockRecorder) TriggerMetadataIndexing(c interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerMetadataIndexing", reflect.TypeOf((*MockAPIHandler)(nil).TriggerMetadataIndexing), c)
+}
+
+// TriggerOwnerIndexing mocks base method.
+func (m *MockAPIHandler) TriggerOwnerIndexing(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "TriggerOwnerIndexing", c)
+}
+
+// TriggerOwnerIndexing indicates an expected call of TriggerOwnerIndexing.
+func (mr *MockAPIHandlerMockRecorder) TriggerOwnerIndexing(c interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerOwnerIndexing", reflect.TypeOf((*MockAPIHandler)(nil).TriggerOwnerIndexing), c)
+}
+
 // TriggerTokenIndexing mocks base method.
 func (m *MockAPIHandler) TriggerTokenIndexing(c *gin.Context) {
 	m.ctrl.T.Helper()

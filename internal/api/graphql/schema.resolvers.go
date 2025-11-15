@@ -143,6 +143,53 @@ func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses [
 	return wr, nil
 }
 
+// TriggerMetadataIndexing is the resolver for the triggerMetadataIndexing field.
+func (r *mutationResolver) TriggerMetadataIndexing(ctx context.Context, tokenIds []Uint64, tokenCids []string) (*dto.TriggerIndexingResponse, error) {
+	// Validate: at least one of token IDs or token CIDs must be provided
+	if len(tokenIds) == 0 && len(tokenCids) == 0 {
+		return nil, apierrors.NewValidationError("at least one of token_ids or token_cids is required")
+	}
+
+	// Convert token IDs from Uint64 to uint64
+	var tokenIDsNative []uint64
+	if len(tokenIds) > 0 {
+		// Validate: maximum number of token IDs allowed
+		if len(tokenIds) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d token IDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
+		}
+
+		tokenIDsNative = make([]uint64, len(tokenIds))
+		for i, id := range tokenIds {
+			ti := ToNativeUint64(&id)
+			tokenIDsNative[i] = *ti
+		}
+	}
+
+	// Convert and validate token CIDs
+	var tokenCIDs []domain.TokenCID
+	if len(tokenCids) > 0 {
+		// Validate: maximum number of token CIDs allowed
+		if len(tokenCids) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
+		}
+
+		tokenCIDs = make([]domain.TokenCID, len(tokenCids))
+		for i, cid := range tokenCids {
+			tokenCIDs[i] = domain.TokenCID(cid)
+			if !tokenCIDs[i].Valid() {
+				return nil, apierrors.NewValidationError(fmt.Sprintf("invalid token CID: %s", cid))
+			}
+		}
+	}
+
+	// Trigger metadata indexing
+	wr, err := r.executor.TriggerMetadataIndexing(ctx, tokenIDsNative, tokenCIDs)
+	if err != nil {
+		return nil, err
+	}
+	return wr, nil
+}
+
 // Offset is the resolver for the offset field.
 func (r *paginatedOwnersResolver) Offset(ctx context.Context, obj *dto.PaginatedOwners) (*Uint64, error) {
 	return FromNativeUint64(obj.Offset), nil

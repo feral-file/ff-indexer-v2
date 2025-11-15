@@ -37,6 +37,9 @@ type Executor interface {
 	// TriggerTokenIndexing triggers indexing for one or more tokens and addresses
 	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error)
 
+	// TriggerMetadataIndexing triggers metadata refresh for one or more tokens by IDs or CIDs
+	TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint64, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error)
+
 	// GetWorkflowStatus retrieves the status of a Temporal workflow execution
 	GetWorkflowStatus(ctx context.Context, workflowID, runID string) (*dto.WorkflowStatusResponse, error)
 }
@@ -285,6 +288,104 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 		workflowID = wfRun.GetID()
 		runID = wfRun.GetRunID()
 	}
+
+	return &dto.TriggerIndexingResponse{
+		WorkflowID: workflowID,
+		RunID:      runID,
+	}, nil
+}
+
+func (e *executor) TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint64, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error) {
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil)
+	var workflowID string
+	var runID string
+
+	if len(tokenIDs) == 0 && len(tokenCIDs) == 0 {
+		return nil, apierrors.NewValidationError("at least one of token_ids or token_cids is required")
+	}
+
+	// Validate provided token CIDs exist in database
+	if len(tokenCIDs) > 0 {
+		// Convert to strings for database query
+		cidStrings := make([]string, len(tokenCIDs))
+		for i, cid := range tokenCIDs {
+			cidStrings[i] = cid.String()
+		}
+
+		// Batch fetch to validate all CIDs exist
+		existingTokens, err := e.store.GetTokensByCIDs(ctx, cidStrings)
+		if err != nil {
+			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to validate token CIDs: %v", err))
+		}
+
+		// Check if all token CIDs were found
+		if len(existingTokens) != len(tokenCIDs) {
+			foundCIDs := make(map[string]bool)
+			for _, token := range existingTokens {
+				foundCIDs[token.TokenCID] = true
+			}
+			for _, tokenCID := range tokenCIDs {
+				if !foundCIDs[string(tokenCID)] {
+					return nil, apierrors.NewNotFoundError(fmt.Sprintf("Token with CID %s not found", tokenCID))
+				}
+			}
+		}
+	}
+
+	// Collect all token CIDs (from both provided CIDs and fetched by IDs)
+	allTokenCIDs := make([]domain.TokenCID, 0, len(tokenIDs)+len(tokenCIDs))
+
+	// Add provided token CIDs
+	allTokenCIDs = append(allTokenCIDs, tokenCIDs...)
+
+	// Batch fetch token CIDs for provided token IDs
+	if len(tokenIDs) > 0 {
+		tokens, err := e.store.GetTokensByIDs(ctx, tokenIDs)
+		if err != nil {
+			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get tokens by IDs: %v", err))
+		}
+
+		// Check if all token IDs were found
+		if len(tokens) != len(tokenIDs) {
+			foundIDs := make(map[uint64]bool)
+			for _, token := range tokens {
+				foundIDs[token.ID] = true
+			}
+			for _, tokenID := range tokenIDs {
+				if !foundIDs[tokenID] {
+					return nil, apierrors.NewNotFoundError(fmt.Sprintf("Token with ID %d not found", tokenID))
+				}
+			}
+		}
+
+		// Add token CIDs from fetched tokens
+		for _, token := range tokens {
+			allTokenCIDs = append(allTokenCIDs, domain.TokenCID(token.TokenCID))
+		}
+	}
+
+	// Deduplicate token CIDs
+	cidMap := make(map[domain.TokenCID]bool)
+	uniqueTokenCIDs := make([]domain.TokenCID, 0, len(allTokenCIDs))
+	for _, tokenCID := range allTokenCIDs {
+		if !cidMap[tokenCID] {
+			cidMap[tokenCID] = true
+			uniqueTokenCIDs = append(uniqueTokenCIDs, tokenCID)
+		}
+	}
+
+	// Trigger batch metadata indexing workflow
+	// The workflow will handle child workflows for individual tokens
+	options := client.StartWorkflowOptions{
+		TaskQueue:                e.orchestratorTaskQueue,
+		WorkflowExecutionTimeout: 30 * time.Minute,
+	}
+	wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexMultipleTokensMetadata, uniqueTokenCIDs)
+	if err != nil {
+		return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger metadata indexing: %v", err))
+	}
+	workflowID = wfRun.GetID()
+	runID = wfRun.GetRunID()
 
 	return &dto.TriggerIndexingResponse{
 		WorkflowID: workflowID,

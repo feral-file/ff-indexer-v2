@@ -179,8 +179,12 @@ type Store interface {
 
 	// GetTokenByTokenCID retrieves a token by its canonical ID
 	GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error)
+	// GetTokensByCIDs retrieves multiple tokens by their canonical IDs
+	GetTokensByCIDs(ctx context.Context, tokenCIDs []string) ([]*schema.Token, error)
 	// GetTokenByID retrieves a token by its internal ID
 	GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error)
+	// GetTokensByIDs retrieves multiple tokens by their internal IDs
+	GetTokensByIDs(ctx context.Context, tokenIDs []uint64) ([]*schema.Token, error)
 	// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID
 	GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*TokensWithMetadataResult, error)
 	// GetTokensByFilter retrieves tokens with their metadata based on filters

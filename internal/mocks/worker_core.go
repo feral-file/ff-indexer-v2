@@ -64,6 +64,20 @@ func (mr *MockWorkerCoreMockRecorder) IndexMetadataUpdate(ctx, event interface{}
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexMetadataUpdate", reflect.TypeOf((*MockWorkerCore)(nil).IndexMetadataUpdate), ctx, event)
 }
 
+// IndexMultipleTokensMetadata mocks base method.
+func (m *MockWorkerCore) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IndexMultipleTokensMetadata", ctx, tokenCIDs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IndexMultipleTokensMetadata indicates an expected call of IndexMultipleTokensMetadata.
+func (mr *MockWorkerCoreMockRecorder) IndexMultipleTokensMetadata(ctx, tokenCIDs interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexMultipleTokensMetadata", reflect.TypeOf((*MockWorkerCore)(nil).IndexMultipleTokensMetadata), ctx, tokenCIDs)
+}
+
 // IndexTezosTokenOwner mocks base method.
 func (m *MockWorkerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) error {
 	m.ctrl.T.Helper()

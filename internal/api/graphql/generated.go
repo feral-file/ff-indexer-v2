@@ -14,11 +14,10 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
-	gqlparser "github.com/vektah/gqlparser/v2"
-	"github.com/vektah/gqlparser/v2/ast"
-
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
+	gqlparser "github.com/vektah/gqlparser/v2"
+	"github.com/vektah/gqlparser/v2/ast"
 )
 
 // region    ************************** generated!.gotpl **************************
@@ -111,8 +110,9 @@ type ComplexityRoot struct {
 	}
 
 	Mutation struct {
-		TriggerOwnerIndexing func(childComplexity int, addresses []string) int
-		TriggerTokenIndexing func(childComplexity int, tokenCids []string) int
+		TriggerMetadataIndexing func(childComplexity int, tokenIds []Uint64, tokenCids []string) int
+		TriggerOwnerIndexing    func(childComplexity int, addresses []string) int
+		TriggerTokenIndexing    func(childComplexity int, tokenCids []string) int
 	}
 
 	Owner struct {
@@ -244,6 +244,7 @@ type MediaAssetResolver interface {
 type MutationResolver interface {
 	TriggerTokenIndexing(ctx context.Context, tokenCids []string) (*dto.TriggerIndexingResponse, error)
 	TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error)
+	TriggerMetadataIndexing(ctx context.Context, tokenIds []Uint64, tokenCids []string) (*dto.TriggerIndexingResponse, error)
 }
 type PaginatedOwnersResolver interface {
 	Offset(ctx context.Context, obj *dto.PaginatedOwners) (*Uint64, error)
@@ -522,6 +523,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.MediaAsset.VariantURLs(childComplexity), true
 
+	case "Mutation.triggerMetadataIndexing":
+		if e.complexity.Mutation.TriggerMetadataIndexing == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_triggerMetadataIndexing_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.TriggerMetadataIndexing(childComplexity, args["token_ids"].([]Uint64), args["token_cids"].([]string)), true
 	case "Mutation.triggerOwnerIndexing":
 		if e.complexity.Mutation.TriggerOwnerIndexing == nil {
 			break
@@ -1359,6 +1371,14 @@ type Mutation {
   triggerOwnerIndexing(
     addresses: [String!]!
   ): TriggerIndexingResult
+
+  # Trigger metadata refresh for tokens by IDs or CIDs (open, no authentication required)
+  # Equivalent to: POST /api/v1/tokens/metadata/index
+  # At least one of token_ids or token_cids must be provided
+  triggerMetadataIndexing(
+    token_ids: [Uint64!]
+    token_cids: [String!]
+  ): TriggerIndexingResult
 }
 
 `, BuiltIn: false},
@@ -1368,6 +1388,22 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 // endregion ************************** generated!.gotpl **************************
 
 // region    ***************************** args.gotpl *****************************
+
+func (ec *executionContext) field_Mutation_triggerMetadataIndexing_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "token_ids", ec.unmarshalOUint642ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64ᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["token_ids"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "token_cids", ec.unmarshalOString2ᚕstringᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["token_cids"] = arg1
+	return args, nil
+}
 
 func (ec *executionContext) field_Mutation_triggerOwnerIndexing_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
@@ -2770,6 +2806,53 @@ func (ec *executionContext) fieldContext_Mutation_triggerOwnerIndexing(ctx conte
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_triggerOwnerIndexing_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_triggerMetadataIndexing(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_triggerMetadataIndexing,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().TriggerMetadataIndexing(ctx, fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string))
+		},
+		nil,
+		ec.marshalOTriggerIndexingResult2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTriggerIndexingResponse,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_triggerMetadataIndexing(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "workflow_id":
+				return ec.fieldContext_TriggerIndexingResult_workflow_id(ctx, field)
+			case "run_id":
+				return ec.fieldContext_TriggerIndexingResult_run_id(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TriggerIndexingResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_triggerMetadataIndexing_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -7378,6 +7461,10 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 		case "triggerOwnerIndexing":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_triggerOwnerIndexing(ctx, field)
+			})
+		case "triggerMetadataIndexing":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_triggerMetadataIndexing(ctx, field)
 			})
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))

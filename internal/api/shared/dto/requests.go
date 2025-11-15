@@ -62,3 +62,36 @@ func (r *TriggerOwnerIndexingRequest) Validate() error {
 
 	return nil
 }
+
+// TriggerMetadataIndexingRequest represents the request body for triggering token metadata refresh by IDs or CIDs
+type TriggerMetadataIndexingRequest struct {
+	TokenIDs  []uint64          `json:"token_ids,omitempty"`
+	TokenCIDs []domain.TokenCID `json:"token_cids,omitempty"`
+}
+
+// Validate validates the request body
+func (r *TriggerMetadataIndexingRequest) Validate() error {
+	// Validate: at least one of token IDs or token CIDs must be provided
+	if len(r.TokenIDs) == 0 && len(r.TokenCIDs) == 0 {
+		return apierrors.NewValidationError("at least one of token_ids or token_cids is required")
+	}
+
+	// Validate: maximum number of token IDs allowed
+	if len(r.TokenIDs) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+		return apierrors.NewValidationError(fmt.Sprintf("maximum %d token IDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
+	}
+
+	// Validate: maximum number of token CIDs allowed
+	if len(r.TokenCIDs) > constants.MAX_TOKEN_CIDS_PER_REQUEST {
+		return apierrors.NewValidationError(fmt.Sprintf("maximum %d token CIDs allowed", constants.MAX_TOKEN_CIDS_PER_REQUEST))
+	}
+
+	// Validate: token CIDs must be valid
+	for _, cid := range r.TokenCIDs {
+		if !domain.TokenCID(cid).Valid() {
+			return apierrors.NewValidationError(fmt.Sprintf("invalid token CID: %s", cid))
+		}
+	}
+
+	return nil
+}
