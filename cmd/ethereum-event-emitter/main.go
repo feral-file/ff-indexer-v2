@@ -145,7 +145,7 @@ func main() {
 
 	// Start the emitter
 	go func() {
-		if err := eventEmitter.Run(ctx); err != nil && errors.Is(err, context.Canceled) {
+		if err := eventEmitter.Run(ctx); err != nil {
 			errCh <- err
 		}
 	}()
