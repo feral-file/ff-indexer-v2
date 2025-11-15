@@ -159,8 +159,8 @@ func (r *mutationResolver) TriggerMetadataIndexing(ctx context.Context, tokenIds
 		}
 
 		tokenIDsNative = make([]uint64, len(tokenIds))
-		for i, id := range tokenIds {
-			ti := ToNativeUint64(&id)
+		for i := range tokenIds {
+			ti := ToNativeUint64(&tokenIds[i])
 			tokenIDsNative[i] = *ti
 		}
 	}
