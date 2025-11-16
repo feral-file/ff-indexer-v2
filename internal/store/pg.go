@@ -1598,6 +1598,14 @@ func (s *pgStore) EnsureWatchedAddressExists(ctx context.Context, address string
 // UpdateIndexingBlockRangeForAddress updates the indexing block range for an address and chain
 // Assumes the watched address record already exists
 func (s *pgStore) UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error {
+	// Validate the block range is valid
+	if minBlock > maxBlock {
+		return fmt.Errorf("min block must be less than max block")
+	}
+	if minBlock == 0 && maxBlock == 0 {
+		return fmt.Errorf("min block and max block must not be 0")
+	}
+
 	// Use a transaction with row-level locking
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Lock the record for update
@@ -1613,6 +1621,15 @@ func (s *pgStore) UpdateIndexingBlockRangeForAddress(ctx context.Context, addres
 		if watchedAddr.LastSuccessfulIndexingBlkRange == nil {
 			ranges := schema.IndexingBlockRanges{}
 			watchedAddr.LastSuccessfulIndexingBlkRange = &ranges
+		} else {
+			// Validate the new min block is less than or equal to the current min block
+			if (*watchedAddr.LastSuccessfulIndexingBlkRange)[chainID].MinBlock < minBlock {
+				return fmt.Errorf("min block must be less than or equal to the current min block")
+			}
+			// Validate the new max block is greater than or equal to the current max block
+			if (*watchedAddr.LastSuccessfulIndexingBlkRange)[chainID].MaxBlock > maxBlock {
+				return fmt.Errorf("max block must be greater than or equal to the current max block")
+			}
 		}
 
 		// Update the block range for the specific chain

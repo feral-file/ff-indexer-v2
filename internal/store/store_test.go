@@ -2191,6 +2191,56 @@ func testWatchedAddresses(t *testing.T, store Store) {
 		assert.Equal(t, uint64(1000), minBlock)
 		assert.Equal(t, uint64(2000), maxBlock)
 	})
+
+	t.Run("update range with invalid block range which min block is greater than max block", func(t *testing.T) {
+		address := "0xwatched3000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		err := store.UpdateIndexingBlockRangeForAddress(ctx, address, chain, 2000, 1000)
+		require.Error(t, err)
+	})
+
+	t.Run("update range with invalid block range which min block and max block are 0", func(t *testing.T) {
+		address := "0xwatched3000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		err := store.UpdateIndexingBlockRangeForAddress(ctx, address, chain, 0, 0)
+		require.Error(t, err)
+	})
+
+	t.Run("update range with invalid block range which min block is less than current min block", func(t *testing.T) {
+		address := "0xwatched4000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		// Ensure address exists
+		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Set up initial range
+		err = store.UpdateIndexingBlockRangeForAddress(ctx, address, chain, 1000, 2000)
+		require.NoError(t, err)
+
+		// Try to update with minBlock greater than current minBlock (should fail)
+		err = store.UpdateIndexingBlockRangeForAddress(ctx, address, chain, 1500, 2000)
+		require.Error(t, err)
+	})
+
+	t.Run("update range with invalid block range which max block is less than current max block", func(t *testing.T) {
+		address := "0xwatched4000000000000000000000000000000002"
+		chain := domain.ChainEthereumMainnet
+
+		// Ensure address exists
+		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Set up initial range
+		err = store.UpdateIndexingBlockRangeForAddress(ctx, address, chain, 1000, 2000)
+		require.NoError(t, err)
+
+		// Try to update with maxBlock less than current maxBlock (should fail)
+		err = store.UpdateIndexingBlockRangeForAddress(ctx, address, chain, 1000, 1500)
+		require.Error(t, err)
+	})
 }
 
 // =============================================================================
