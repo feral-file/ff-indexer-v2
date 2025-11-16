@@ -209,7 +209,8 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, tokenCID domain.TokenCI
 	}
 
 	// Set the artwork name
-	enhanced.Name = &artwork.Name
+	artworkName := artwork.CanonicalName()
+	enhanced.Name = &artworkName
 
 	// Set the series description
 	if artwork.Series.Description != "" {

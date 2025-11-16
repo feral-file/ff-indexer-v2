@@ -3,6 +3,7 @@ package feralfile
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 )
@@ -26,8 +27,20 @@ type Artwork struct {
 	Series       Series `json:"series"`
 }
 
+// CanonicalName returns the canonical name for an artwork
+func (a *Artwork) CanonicalName() string {
+	if strings.HasPrefix(a.Name, "#") ||
+		strings.HasPrefix(a.Name, "AE") ||
+		strings.HasPrefix(a.Name, "AP") ||
+		strings.HasPrefix(a.Name, "PP") {
+		return fmt.Sprintf("%s %s", a.Series.Title, a.Name)
+	}
+	return a.Name
+}
+
 // Series represents a series (collection) in Feral File
 type Series struct {
+	Title       string `json:"title"`
 	Description string `json:"description"`
 	Medium      string `json:"medium"`
 	Artist      Artist `json:"artist"`
