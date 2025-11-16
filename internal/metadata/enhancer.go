@@ -13,14 +13,16 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
 // EnhancedMetadata represents metadata enhanced from vendor APIs
 type EnhancedMetadata struct {
-	Vendor       registry.PublisherName
+	Vendor       schema.Vendor
 	VendorJSON   []byte
 	Name         *string
 	Description  *string
@@ -46,13 +48,13 @@ type enhancer struct {
 	uriResolver     uri.Resolver
 	artblocksClient artblocks.Client
 	feralfileClient feralfile.Client
-	fxhashClient    fxhash.Client
+	objktClient     objkt.Client
 	json            adapter.JSON
 	jcs             adapter.JCS
 }
 
-func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, feralfileClient feralfile.Client, fxhashClient fxhash.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
-	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, feralfileClient: feralfileClient, fxhashClient: fxhashClient, json: json, jcs: jcs}
+func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, feralfileClient feralfile.Client, objktClient objkt.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
+	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, feralfileClient: feralfileClient, objktClient: objktClient, json: json, jcs: jcs}
 }
 
 // VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
@@ -98,16 +100,20 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 			}
 		}
 
-	// TODO: Add support for other vendors
-	// case "fxhash":
-	//     return e.enhanceFxhash(ctx, tokenCID, contractAddress, tokenNumber, meta)
-
 	default:
-		// No enhancement available for this publisher
-		return nil, nil
+		// For Tezos tokens that are not Feral File, use objkt
+		if chain == domain.ChainTezosMainnet {
+			enhancedMetadata, err = e.enhanceObjkt(ctx, tokenCID, contractAddress, tokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("failed to enhance objkt metadata: %w", err)
+			}
+		} else {
+			// No enhancement available for this publisher
+			return nil, nil
+		}
 	}
 
-	if enhancedMetadata != nil {
+	if enhancedMetadata != nil && types.StringNilOrEmpty(enhancedMetadata.MimeType) {
 		enhancedMetadata.MimeType = detectMimeType(ctx, e.httpClient, e.uriResolver, enhancedMetadata.AnimationURL, enhancedMetadata.ImageURL)
 	}
 
@@ -146,7 +152,7 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCI
 
 	// Build enhanced metadata
 	enhanced := &EnhancedMetadata{
-		Vendor:     registry.PublisherNameArtBlocks,
+		Vendor:     schema.VendorArtBlocks,
 		VendorJSON: vendorJSON,
 	}
 
@@ -200,7 +206,7 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, tokenCID domain.TokenCI
 
 	// Build enhanced metadata
 	enhanced := &EnhancedMetadata{
-		Vendor:     registry.PublisherNameFeralFile,
+		Vendor:     schema.VendorFeralFile,
 		VendorJSON: vendorJSON,
 	}
 
@@ -258,6 +264,78 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, tokenCID domain.TokenCI
 				DID:  artistDID,
 				Name: artwork.Series.Artist.AlumniAccount.Alias,
 			},
+		}
+	}
+
+	return enhanced, nil
+}
+
+// enhanceObjkt enhances metadata from objkt v3 API for Tezos tokens
+func (e *enhancer) enhanceObjkt(ctx context.Context, tokenCID domain.TokenCID, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
+	logger.InfoCtx(ctx, "Enhancing objkt metadata", zap.String("tokenCID", tokenCID.String()))
+
+	// Fetch token data from objkt v3 API
+	token, err := e.objktClient.GetToken(ctx, contractAddress, tokenNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch objkt token: %w", err)
+	}
+
+	vendorJSON, err := e.json.Marshal(token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal objkt token: %w", err)
+	}
+
+	// Build enhanced metadata
+	enhanced := &EnhancedMetadata{
+		Vendor:     schema.VendorObjkt,
+		VendorJSON: vendorJSON,
+	}
+
+	// Set the token name
+	if token.Name != nil {
+		enhanced.Name = token.Name
+	}
+
+	// Set the token description
+	if token.Description != nil {
+		enhanced.Description = token.Description
+	}
+
+	// Set display_uri as image (this is the main display image)
+	if !types.StringNilOrEmpty(token.DisplayURI) {
+		url := domain.UriToGateway(*token.DisplayURI)
+		enhanced.ImageURL = &url
+	}
+
+	// Set artifact_uri as animation_url (this is the actual artwork/animation)
+	if !types.StringNilOrEmpty(token.ArtifactURI) {
+		url := domain.UriToGateway(*token.ArtifactURI)
+		enhanced.AnimationURL = &url
+	}
+
+	// Set mime type (objkt provides this, so no need to detect)
+	if !types.StringNilOrEmpty(token.Mime) {
+		enhanced.MimeType = token.Mime
+	}
+
+	// Build artist information from creators
+	if len(token.Creators) > 0 {
+		artists := make([]Artist, 0, len(token.Creators))
+		for _, creator := range token.Creators {
+			if types.IsTezosAddress(creator.Holder.Address) {
+				artistDID := domain.NewDID(creator.Holder.Address, domain.ChainTezosMainnet)
+				artistName := ""
+				if creator.Holder.Alias != nil {
+					artistName = *creator.Holder.Alias
+				}
+				artists = append(artists, Artist{
+					DID:  artistDID,
+					Name: artistName,
+				})
+			}
+		}
+		if len(artists) > 0 {
+			enhanced.Artists = artists
 		}
 	}
 

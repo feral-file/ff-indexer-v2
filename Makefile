@@ -274,15 +274,9 @@ prune: ## Prune Docker system (removes unused data)
 ##@ Setup Commands
 
 setup: ## Initial setup - create env files if they don't exist
-	@if [ ! -f config/.env ]; then \
-		echo "$(COLOR_YELLOW)Creating config/.env from sample...$(COLOR_RESET)"; \
-		cp config/.env.sample config/.env; \
-	else \
-		echo "$(COLOR_GREEN)config/.env already exists$(COLOR_RESET)"; \
-	fi
 	@if [ ! -f config/.env.local ]; then \
 		echo "$(COLOR_YELLOW)Creating config/.env.local from sample...$(COLOR_RESET)"; \
-		cp config/.env.sample config/.env.local; \
+		cp config/.env config/.env.local; \
 		echo "$(COLOR_YELLOW)⚠️  Please update config/.env.local with your credentials$(COLOR_RESET)"; \
 	else \
 		echo "$(COLOR_GREEN)config/.env.local already exists$(COLOR_RESET)"; \

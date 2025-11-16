@@ -2,58 +2,6 @@
 
 This document outlines the planned features and improvements for FF-Indexer v2. The items are ordered by priority and represent our vision for expanding the platform's capabilities.
 
-## Metadata Enrichment from Additional Platforms
-
-### Overview
-
-Currently, FF-Indexer v2 supports metadata enrichment from Art Blocks, providing enhanced metadata including project information, artist details, and normalized fields. We plan to extend this enrichment capability to additional NFT platforms to provide comprehensive metadata coverage across the ecosystem.
-
-### Planned Platforms
-
-#### fxhash
-
-fxhash is a generative art platform on Tezos that hosts a large collection of generative NFT projects. Enrichment from fxhash will provide:
-
-- Project metadata and curation information
-- Artist profiles and attribution
-- Generative script information
-- Platform-specific metadata fields
-
-#### objkt
-
-objkt is a major NFT marketplace on Tezos that aggregates tokens from various platforms. Enrichment from objkt will provide:
-
-- Collection metadata
-- Creator and artist information
-- Platform-specific metadata fields
-
-#### Feral File
-
-Feral File is a curated Digital Art platform that hosts exhibitions and collections. Enrichment from Feral File will provide:
-
-- Exhibition and collection context
-- Curator information
-- Artist profiles and statements
-- Platform-specific metadata enhancements
-
-### Technical Approach
-
-The enrichment system follows a consistent pattern:
-
-1. **Client Provider**: Each platform will have a dedicated client in `internal/providers/vendors/` that handles API communication
-2. **Enhancement Logic**: Platform-specific enhancement functions in `internal/metadata/enhancer.go` that normalize vendor-specific data
-3. **Storage**: Enriched metadata is stored in the `enrichment_sources` table with vendor-specific JSON for auditing
-4. **Integration**: The enhancement is automatically triggered during the `IndexTokenMetadata` workflow when a matching publisher is detected
-
-### Benefits
-
-- **Comprehensive Coverage**: Support for major NFT platforms across Ethereum and Tezos
-- **Data Quality**: Normalized and enriched metadata from authoritative sources
-- **Audit Trail**: Raw vendor JSON stored for reprocessing and verification
-- **Extensibility**: Easy to add new platforms following the established pattern
-
----
-
 ## Lighter Version for FF1 Deployment
 
 ### Overview

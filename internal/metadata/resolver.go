@@ -200,8 +200,8 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 
 	normalizedMetadata := &NormalizedMetadata{
 		Raw:         metadata,
-		Image:       uriToGateway(displayUri),
-		Animation:   uriToGateway(artifactUri),
+		Image:       domain.UriToGateway(displayUri),
+		Animation:   domain.UriToGateway(artifactUri),
 		Name:        name,
 		Description: description,
 		Artists:     artists,
@@ -245,8 +245,8 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 
 	normalizedMetadata := &NormalizedMetadata{
 		Raw:         metadata,
-		Image:       uriToGateway(image),
-		Animation:   uriToGateway(animationURL),
+		Image:       domain.UriToGateway(image),
+		Animation:   domain.UriToGateway(animationURL),
 		Name:        name,
 		Description: description,
 		Artists:     artists,
@@ -379,20 +379,6 @@ func (r *resolver) fetchFromHTTP(ctx context.Context, url string) (map[string]in
 	}
 
 	return metadata, nil
-}
-
-// uriToGateway converts a URI to a gateway URL
-func uriToGateway(uri string) string {
-	if after, ok := strings.CutPrefix(uri, "ipfs://"); ok {
-		return fmt.Sprintf("%s/ipfs/%s", domain.DEFAULT_IPFS_GATEWAY, after)
-	}
-	if after, ok := strings.CutPrefix(uri, "ar://"); ok {
-		return fmt.Sprintf("%s/%s", domain.DEFAULT_ARWEAVE_GATEWAY, after)
-	}
-	if after, ok := strings.CutPrefix(uri, "onchfs://"); ok {
-		return fmt.Sprintf("%s/%s", domain.DEFAULT_ONCHFS_GATEWAY, after)
-	}
-	return uri
 }
 
 // LoadDeployerCacheFromDB loads all cached deployer addresses from the database

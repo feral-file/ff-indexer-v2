@@ -17,7 +17,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
-	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -443,12 +442,6 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 	}
 	hashString := hex.EncodeToString(hash)
 
-	// Convert publisher name to vendor
-	vendor := registry.PublisherNameToVendor(enhanced.Vendor)
-	if vendor == "" {
-		return nil, fmt.Errorf("invalid publisher name: %s", enhanced.Vendor)
-	}
-
 	// Convert artists to schema.Artists
 	var artists schema.Artists
 	for _, artist := range enhanced.Artists {
@@ -461,7 +454,7 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 	// Upsert enrichment source (which also updates enrichment_level to 'vendor' in the same transaction)
 	enrichmentInput := store.CreateEnrichmentSourceInput{
 		TokenID:      token.ID,
-		Vendor:       vendor,
+		Vendor:       enhanced.Vendor,
 		VendorJSON:   enhanced.VendorJSON,
 		VendorHash:   &hashString,
 		ImageURL:     enhanced.ImageURL,

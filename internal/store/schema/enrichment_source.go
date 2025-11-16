@@ -20,6 +20,8 @@ const (
 	VendorSuperRare Vendor = "superrare"
 	// VendorFeralFile represents metadata from Feral File API
 	VendorFeralFile Vendor = "feralfile"
+	// VendorObjkt represents metadata from objkt v3 API
+	VendorObjkt Vendor = "objkt"
 )
 
 // EnrichmentSource represents the enrichment_sources table - stores enriched metadata from vendor APIs

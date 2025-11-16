@@ -28,7 +28,7 @@ type Config struct {
 //go:generate mockgen -source=resolver.go -destination=../mocks/uri_resolver.go -package=mocks -mock_names=Resolver=MockURIResolver
 type Resolver interface {
 	// Resolve resolves the URI to a canonical URL
-	// It handles special URL schemes like ipfs:// and ar://
+	// It handles special URL schemes like ipfs://, ar:// and onchfs://
 	// Returns the canonical URL
 	// It will make a HEAD request to the URL to check if it is accessible
 	// If the URL is not accessible, it will return an error

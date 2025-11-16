@@ -73,6 +73,7 @@ data:
     vendors:
       artblocks_url: {{ .Values.config.vendors.artblocksUrl }}
       feralfile_url: {{ .Values.config.vendors.feralfileUrl }}
+      objkt_url: {{ .Values.config.vendors.objktUrl }}
     
     ethereum_token_sweep_start_block: {{ .Values.config.ethereum.tokenSweepStartBlock }}
     tezos_token_sweep_start_block: {{ .Values.config.tezos.tokenSweepStartBlock }}

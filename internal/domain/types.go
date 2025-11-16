@@ -272,3 +272,17 @@ func NormalizeAddress(address string) string {
 func validTokenNumber(tokenNumber string) bool {
 	return regexp.MustCompile(`^[0-9]*$`).MatchString(tokenNumber)
 }
+
+// UriToGateway converts a URI to a gateway URL
+func UriToGateway(uri string) string {
+	if after, ok := strings.CutPrefix(uri, "ipfs://"); ok {
+		return fmt.Sprintf("%s/ipfs/%s", DEFAULT_IPFS_GATEWAY, after)
+	}
+	if after, ok := strings.CutPrefix(uri, "ar://"); ok {
+		return fmt.Sprintf("%s/%s", DEFAULT_ARWEAVE_GATEWAY, after)
+	}
+	if after, ok := strings.CutPrefix(uri, "onchfs://"); ok {
+		return fmt.Sprintf("%s/%s", DEFAULT_ONCHFS_GATEWAY, after)
+	}
+	return uri
+}

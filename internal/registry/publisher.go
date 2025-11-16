@@ -6,7 +6,6 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // PublisherRegistry defines the interface for publisher operations
@@ -38,24 +37,6 @@ const (
 	// PublisherNameSuperRare represents the name of the SuperRare publisher
 	PublisherNameSuperRare PublisherName = "SuperRare"
 )
-
-// PublisherNameToVendor converts a publisher name to a vendor
-func PublisherNameToVendor(publisherName PublisherName) schema.Vendor {
-	switch publisherName {
-	case PublisherNameArtBlocks:
-		return schema.VendorArtBlocks
-	case PublisherNameFXHash:
-		return schema.VendorFXHash
-	case PublisherNameFeralFile:
-		return schema.VendorFeralFile
-	case PublisherNameFoundation:
-		return schema.VendorFoundation
-	case PublisherNameSuperRare:
-		return schema.VendorSuperRare
-	default:
-		return ""
-	}
-}
 
 // PublisherChainConfig represents chain-specific configuration for a publisher
 type PublisherChainConfig struct {

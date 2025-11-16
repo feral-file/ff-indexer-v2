@@ -6,7 +6,7 @@
 CREATE TYPE token_standard AS ENUM ('erc721', 'erc1155', 'fa2');
 CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:mainnet', 'tezos:ghostnet');
 CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
-CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile');
+CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile', 'objkt');
 CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
 CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');

@@ -43,6 +43,7 @@ config:
   vendors:
     artblocksUrl: "https://artblocks-mainnet.hasura.app/v1/graphql"
     feralfileUrl: "https://feralfile.com/api"
+    objktUrl: "https://data.objkt.com/v3/graphql"
   
   # Cloudflare configuration for media processing
   cloudflare:
