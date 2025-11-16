@@ -3,7 +3,6 @@ package objkt
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -58,13 +57,15 @@ type Client interface {
 type ObjktClient struct {
 	httpClient adapter.HTTPClient
 	apiURL     string
+	json       adapter.JSON
 }
 
 // NewClient creates a new objkt client
-func NewClient(httpClient adapter.HTTPClient, apiURL string) Client {
+func NewClient(httpClient adapter.HTTPClient, apiURL string, json adapter.JSON) Client {
 	return &ObjktClient{
 		httpClient: httpClient,
 		apiURL:     apiURL,
+		json:       json,
 	}
 }
 
@@ -99,7 +100,7 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
 	}
 
 	// Marshal the request to JSON
-	requestBody, err := json.Marshal(request)
+	requestBody, err := c.json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
 	}
@@ -112,7 +113,7 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
 
 	// Unmarshal the response
 	var response TokenResponse
-	if err := json.Unmarshal(responseBody, &response); err != nil {
+	if err := c.json.Unmarshal(responseBody, &response); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal objkt response: %w", err)
 	}
 

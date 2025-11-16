@@ -69,15 +69,13 @@ func (e *enhancer) VendorJsonHash(metadata *EnhancedMetadata) ([]byte, error) {
 
 // Enhance enhances metadata from vendor APIs based on the token CID
 func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *NormalizedMetadata) (*EnhancedMetadata, error) {
-	// Skip if no publisher information is available
-	if meta.Publisher == nil || meta.Publisher.Name == nil {
-		return nil, nil
-	}
-
 	chain, _, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Check publisher name and route to appropriate enhancer
-	publisherName := registry.PublisherName(*meta.Publisher.Name)
+	var publisherName registry.PublisherName
+	if meta.Publisher != nil && meta.Publisher.Name != nil {
+		publisherName = registry.PublisherName(*meta.Publisher.Name)
+	}
 
 	var enhancedMetadata *EnhancedMetadata
 	var err error
@@ -108,7 +106,7 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 				return nil, fmt.Errorf("failed to enhance objkt metadata: %w", err)
 			}
 		} else {
-			// No enhancement available for this publisher
+			// No enhancement available
 			return nil, nil
 		}
 	}

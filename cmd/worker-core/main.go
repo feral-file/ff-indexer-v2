@@ -110,7 +110,7 @@ func main() {
 	// Initialize vendors
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
-	objktClient := objkt.NewClient(httpClient, cfg.Vendors.ObjktURL)
+	objktClient := objkt.NewClient(httpClient, cfg.Vendors.ObjktURL, jsonAdapter)
 
 	// Initialize registry loaders
 	publisherLoader := registry.NewPublisherRegistryLoader(fs, jsonAdapter)
