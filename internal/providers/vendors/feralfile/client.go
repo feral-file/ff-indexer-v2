@@ -3,6 +3,7 @@ package feralfile
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -11,6 +12,9 @@ import (
 const (
 	// CDN is the base URL for Feral File CDN
 	CDN = "https://cdn.feralfileassets.com"
+
+	// API_ENDPOINT is the base URL for Feral File API
+	API_ENDPOINT = "https://feralfile.com/api"
 )
 
 // ArtworkResponse represents the API response from Feral File
@@ -30,9 +34,9 @@ type Artwork struct {
 // CanonicalName returns the canonical name for an artwork
 func (a *Artwork) CanonicalName() string {
 	if strings.HasPrefix(a.Name, "#") ||
-		strings.HasPrefix(a.Name, "AE") ||
-		strings.HasPrefix(a.Name, "AP") ||
-		strings.HasPrefix(a.Name, "PP") {
+		a.Name == "AE" ||
+		a.Name == "AP" ||
+		a.Name == "PP" {
 		return fmt.Sprintf("%s %s", a.Series.Title, a.Name)
 	}
 	return a.Name
@@ -59,9 +63,17 @@ type AlumniAccount struct {
 	Addresses map[string]string `json:"addresses"`
 }
 
-// URL returns the full URL for a given path
-func URL(path string) string {
-	return fmt.Sprintf("%s/%s", CDN, path)
+// URL returns the full URL for a given URI
+func URL(uri string) string {
+	if uri == "" {
+		return ""
+	}
+
+	url, _ := url.Parse(uri)
+	if url.Scheme == "" && url.Host == "" {
+		return fmt.Sprintf("%s/%s", CDN, strings.TrimPrefix(uri, "/"))
+	}
+	return uri
 }
 
 // Client defines the interface for Feral File client operations to enable mocking
