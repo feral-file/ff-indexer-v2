@@ -267,8 +267,8 @@ func resolveArtistName(metadata map[string]interface{}) string {
 		return artist
 	}
 
-	// Resolve from `traits` field
-	traits, ok := metadata["traits"].([]interface{})
+	// Resolve from `attributes` field
+	traits, ok := metadata["attributes"].([]interface{})
 	if ok {
 		for _, trait := range traits {
 			traitMap, ok := trait.(map[string]interface{})
