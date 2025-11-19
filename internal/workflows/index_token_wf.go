@@ -147,17 +147,21 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 		)
 
 		return nil
-	}
-
-	// Step 3: Token exists, update the token transfer
-	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenTransfer, event).Get(ctx, nil)
-	if err != nil {
-		logger.ErrorWf(ctx,
-			fmt.Errorf("failed to update token transfer"),
-			zap.Error(err),
+	} else {
+		// Step 3: Token exists, update the token transfer
+		logger.InfoWf(ctx, "Token exists, updating token transfer",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
-		return err
+
+		err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenTransfer, event).Get(ctx, nil)
+		if err != nil {
+			logger.ErrorWf(ctx,
+				fmt.Errorf("failed to update token transfer"),
+				zap.Error(err),
+				zap.String("tokenCID", event.TokenCID().String()),
+			)
+			return err
+		}
 	}
 
 	logger.InfoWf(ctx, "Token transfer processed successfully",
@@ -205,36 +209,9 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 		return err
 	}
 
-	// Step 2: If token doesn't exist, trigger full token indexing workflow
+	// Step 2: Token doesn't exist, return error
 	if !tokenExists {
-		logger.InfoWf(ctx, "Token doesn't exist, starting full token indexing",
-			zap.String("tokenCID", event.TokenCID().String()),
-		)
-
-		childWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowID:               "index-full-token-" + event.TokenCID().String(),
-			WorkflowExecutionTimeout: 30 * time.Minute,
-			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		}
-		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
-		// Execute the child workflow and waiting for the result
-		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenFromEvent, event)
-		if err := childWorkflowExec.Get(ctx, nil); err != nil {
-			logger.ErrorWf(ctx,
-				fmt.Errorf("failed to execute child workflow IndexFullToken"),
-				zap.Error(err),
-				zap.String("tokenCID", event.TokenCID().String()),
-			)
-			return err
-		}
-
-		logger.InfoWf(ctx, "Full token indexing workflow started",
-			zap.String("tokenCID", event.TokenCID().String()),
-		)
-
-		return nil
+		return fmt.Errorf("token doesn't exist")
 	}
 
 	// Step 3: Token exists, update the token burn
