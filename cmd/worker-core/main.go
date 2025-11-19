@@ -208,6 +208,7 @@ func main() {
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenBurn)
 	temporalWorker.RegisterWorkflow(workerCore.IndexMetadataUpdate)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMetadata)
+	temporalWorker.RegisterWorkflow(workerCore.IndexTokenFromEvent)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenProvenances)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokens)
 	temporalWorker.RegisterWorkflow(workerCore.IndexToken)

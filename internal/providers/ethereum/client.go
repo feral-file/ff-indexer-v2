@@ -1044,33 +1044,25 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 
 	case metadataUpdateEventSignature:
 		// EIP-4906 MetadataUpdate(uint256 _tokenId)
-		// _tokenId is not indexed, so it's in the data field
-		if len(vLog.Topics) != 1 {
-			return nil, fmt.Errorf("invalid MetadataUpdate event: expected 1 topic, got %d", len(vLog.Topics))
-		}
-		if len(vLog.Data) < 32 {
-			return nil, fmt.Errorf("invalid MetadataUpdate event: insufficient data")
+		if len(vLog.Topics) != 2 {
+			return nil, fmt.Errorf("invalid MetadataUpdate event: expected 2 topics, got %d", len(vLog.Topics))
 		}
 
 		event.Standard = domain.StandardERC721 // EIP-4906 is for ERC721
-		event.TokenNumber = new(big.Int).SetBytes(vLog.Data[0:32]).String()
+		event.TokenNumber = new(big.Int).SetBytes(vLog.Topics[1].Bytes()).String()
 		event.EventType = domain.EventTypeMetadataUpdate
 		event.Quantity = "1"
 
 	case batchMetadataUpdateEventSignature:
 		// EIP-4906 BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId)
-		// _fromTokenId and _toTokenId are not indexed, so they're in the data field
 		// Emit a single range event to avoid flooding NATS queue
 		// The event-bridge will handle expanding this into individual token updates
-		if len(vLog.Topics) != 1 {
-			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: expected 1 topic, got %d", len(vLog.Topics))
-		}
-		if len(vLog.Data) < 64 {
-			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: insufficient data")
+		if len(vLog.Topics) != 3 {
+			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: expected 3 topics, got %d", len(vLog.Topics))
 		}
 
-		fromTokenId := new(big.Int).SetBytes(vLog.Data[0:32])
-		toTokenId := new(big.Int).SetBytes(vLog.Data[32:64])
+		fromTokenId := new(big.Int).SetBytes(vLog.Topics[1].Bytes())
+		toTokenId := new(big.Int).SetBytes(vLog.Topics[2].Bytes())
 
 		event.Standard = domain.StandardERC721
 		event.TokenNumber = fromTokenId.String()
