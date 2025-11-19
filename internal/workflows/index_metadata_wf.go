@@ -32,8 +32,23 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
-	// Step 1: Create the metadata update record in the database
-	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdate, event).Get(ctx, nil)
+	// Step 1: Check if token exists
+	var tokenExists bool
+	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
+	if err != nil {
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to check if token exists"),
+			zap.String("tokenCID", event.TokenCID().String()),
+			zap.Error(err),
+		)
+		return err
+	}
+	if !tokenExists {
+		return fmt.Errorf("token doesn't exist")
+	}
+
+	// Step 2: Create the metadata update record in the database
+	err = workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdate, event).Get(ctx, nil)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to create metadata update record"),
@@ -43,7 +58,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 		return err
 	}
 
-	// Step 2: Start child workflow to index token metadata
+	// Step 3: Start child workflow to index token metadata
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
 		WorkflowExecutionTimeout: 15 * time.Minute,
@@ -83,14 +98,29 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
-	// Step 1: Fetch the token normalizedMetadata from the blockchain
+	// Step 1: Check if token exists
+	var tokenExists bool
+	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, tokenCID).Get(ctx, &tokenExists)
+	if err != nil {
+		logger.ErrorWf(ctx,
+			fmt.Errorf("failed to check if token exists"),
+			zap.String("tokenCID", tokenCID.String()),
+			zap.Error(err),
+		)
+		return err
+	}
+	if !tokenExists {
+		return fmt.Errorf("token doesn't exist")
+	}
+
+	// Step 2: Fetch the token normalizedMetadata from the blockchain
 	// This activity handles:
 	// - ERC721: Call tokenURI() contract method
 	// - ERC1155: Call uri() contract method
 	// - FA2: Use TzKT API to get normalizedMetadata
 	// It also processes the URI (IPFS, Arweave, HTTP, data URIs)
 	var normalizedMetadata *metadata.NormalizedMetadata
-	err := workflow.ExecuteActivity(ctx, w.executor.FetchTokenMetadata, tokenCID).Get(ctx, &normalizedMetadata)
+	err = workflow.ExecuteActivity(ctx, w.executor.FetchTokenMetadata, tokenCID).Get(ctx, &normalizedMetadata)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to fetch token metadata"),
@@ -111,7 +141,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		}
 	}
 
-	// Step 2: Store or update the metadata in the database
+	// Step 3: Store or update the metadata in the database
 	if normalizedMetadata != nil {
 		err = workflow.ExecuteActivity(ctx, w.executor.UpsertTokenMetadata, tokenCID, normalizedMetadata).Get(ctx, nil)
 		if err != nil {
@@ -124,7 +154,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		}
 	}
 
-	// Step 3: Enhance metadata from vendor APIs (ArtBlocks, fxhash, etc.)
+	// Step 4: Enhance metadata from vendor APIs (ArtBlocks, fxhash, etc.)
 	// This activity will:
 	// - Detect if the token is from a known vendor (ArtBlocks, fxhash, etc.)
 	// - Fetch additional metadata from vendor APIs
@@ -153,7 +183,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		}
 	}
 
-	// Step 4: Trigger media indexing workflow (fire and forget)
+	// Step 5: Trigger media indexing workflow (fire and forget)
 	// This should not fail the parent workflow
 	if len(mediaURLs) > 0 {
 		// Convert map to slice
