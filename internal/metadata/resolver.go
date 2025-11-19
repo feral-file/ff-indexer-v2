@@ -277,7 +277,12 @@ func resolveArtistName(metadata map[string]interface{}) string {
 			}
 
 			traitType, ok := traitMap["trait_type"].(string)
-			if !ok || (traitType != "artist" && traitType != "Artist" && traitType != "Creator" && traitType != "creator") {
+			if !ok || (traitType != "artist" &&
+				traitType != "Artist" &&
+				traitType != "Creator" &&
+				traitType != "creator" &&
+				traitType != "Artists" &&
+				traitType != "artists") {
 				continue
 			}
 
