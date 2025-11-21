@@ -684,6 +684,92 @@ func TestEnhancer_Enhance_FeralFile_ImageMedium(t *testing.T) {
 	assert.Equal(t, expectedDID, result.Artists[0].DID)
 }
 
+func TestEnhancer_Enhance_FeralFile_MayaManStarQuest(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	// Use the Maya Man StarQuest contract address
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, feralfile.MAYA_MAN_STARQUEST_CONTRACT, "12345")
+	publisherName := registry.PublisherNameFeralFile
+
+	// Create normalized metadata with Feral File publisher
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Test Maya Man StarQuest",
+		},
+		Publisher: &metadata.Publisher{
+			Name: &publisherName,
+			URL:  stringPtr("https://feralfile.com"),
+		},
+	}
+
+	// Mock Feral File client to return artwork data with non-image medium (software)
+	artwork := &feralfile.Artwork{
+		ID:           "12345",
+		Name:         "Maya Man StarQuest Episode",
+		ThumbnailURI: "previews/maya/thumbnail.jpg",
+		PreviewURI:   "previews/maya/preview.html",
+		Series: feralfile.Series{
+			Medium:      "software",
+			Description: "Maya Man StarQuest episode description",
+			Artist: feralfile.Artist{
+				AlumniAccount: feralfile.AlumniAccount{
+					ID:    "maya-artist-id",
+					Alias: "Maya Artist",
+					Addresses: map[string]string{
+						"ethereum": "0x1234567890123456789012345678901234567890",
+					},
+				},
+			},
+		},
+	}
+
+	mocks.feralfileClient.
+		EXPECT().
+		GetArtwork(gomock.Any(), "12345").
+		Return(artwork, nil)
+
+	// Mock JSON marshal for artwork
+	vendorJSON := []byte(`{"id":"12345","name":"Maya Man StarQuest Episode"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(artwork).
+		Return(vendorJSON, nil)
+
+	// Mock URI resolver and HTTP client for MIME type detection
+	// The animation URL should have &mode=episode appended for Maya Man StarQuest
+	expectedAnimationURL := "https://cdn.feralfileassets.com/previews/maya/preview.html&mode=episode"
+	expectedImageURL := "https://cdn.feralfileassets.com/previews/maya/thumbnail.jpg"
+
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), expectedAnimationURL).
+		Return(expectedAnimationURL, nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), expectedAnimationURL).
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), expectedAnimationURL, gomock.Any()).
+		Return([]byte("fake html data"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, schema.VendorFeralFile, result.Vendor)
+	assert.Equal(t, "Maya Man StarQuest Episode", *result.Name)
+	assert.Equal(t, "Maya Man StarQuest episode description", *result.Description)
+	assert.Equal(t, expectedImageURL, *result.ImageURL)
+	// Verify that the animation URL has &mode=episode appended
+	assert.Equal(t, expectedAnimationURL, *result.AnimationURL)
+	assert.Len(t, result.Artists, 1)
+	assert.Equal(t, "Maya Artist", result.Artists[0].Name)
+	expectedDID := domain.NewDID("0x1234567890123456789012345678901234567890", domain.ChainEthereumMainnet)
+	assert.Equal(t, expectedDID, result.Artists[0].DID)
+}
+
 func TestEnhancer_Enhance_Objkt(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)

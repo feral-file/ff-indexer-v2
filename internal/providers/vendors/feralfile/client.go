@@ -16,6 +16,9 @@ const (
 
 	// API_ENDPOINT is the base URL for Feral File API
 	API_ENDPOINT = "https://feralfile.com/api"
+
+	// Maya Man StarQuest contract
+	MAYA_MAN_STARQUEST_CONTRACT = "0x67E3ad1902A55074AAdD84d9b335105B2D52b813"
 )
 
 // ArtworkResponse represents the API response from Feral File
@@ -81,6 +84,7 @@ func URL(uri string) string {
 	if url.Scheme == "" && url.Host == "" {
 		return fmt.Sprintf("%s/%s", CDN, strings.TrimPrefix(uri, "/"))
 	}
+
 	return uri
 }
 

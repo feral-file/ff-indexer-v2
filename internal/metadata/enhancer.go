@@ -83,7 +83,7 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	case registry.PublisherNameArtBlocks:
 		// Only enhance Ethereum mainnet tokens
 		if chain == domain.ChainEthereumMainnet {
-			enhancedMetadata, err = e.enhanceArtBlocks(ctx, tokenCID, contractAddress, tokenNumber, meta.Raw)
+			enhancedMetadata, err = e.enhanceArtBlocks(ctx, contractAddress, tokenNumber, meta.Raw)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance ArtBlocks metadata: %w", err)
 			}
@@ -92,7 +92,7 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	case registry.PublisherNameFeralFile:
 		// Enhance Feral File tokens for both Ethereum and Tezos
 		if chain == domain.ChainEthereumMainnet || chain == domain.ChainTezosMainnet {
-			enhancedMetadata, err = e.enhanceFeralFile(ctx, tokenCID, chain, tokenNumber, meta.Raw)
+			enhancedMetadata, err = e.enhanceFeralFile(ctx, chain, contractAddress, tokenNumber)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance Feral File metadata: %w", err)
 			}
@@ -101,7 +101,7 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	default:
 		// For Tezos tokens that are not Feral File, use objkt
 		if chain == domain.ChainTezosMainnet {
-			enhancedMetadata, err = e.enhanceObjkt(ctx, tokenCID, contractAddress, tokenNumber)
+			enhancedMetadata, err = e.enhanceObjkt(ctx, contractAddress, tokenNumber)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance objkt metadata: %w", err)
 			}
@@ -119,8 +119,8 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 }
 
 // enhanceArtBlocks enhances metadata from ArtBlocks API
-func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCID, contractAddress, tokenNumber string, rawMetadata map[string]interface{}) (*EnhancedMetadata, error) {
-	logger.InfoCtx(ctx, "Enhancing ArtBlocks metadata", zap.String("tokenCID", tokenCID.String()))
+func (e *enhancer) enhanceArtBlocks(ctx context.Context, contractAddress, tokenNumber string, rawMetadata map[string]interface{}) (*EnhancedMetadata, error) {
+	logger.InfoCtx(ctx, "Enhancing ArtBlocks metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
 
 	// Parse the token ID to get project ID and mint number
 	projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
@@ -138,7 +138,8 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCI
 	}
 
 	logger.InfoCtx(ctx, "Fetched ArtBlocks project metadata",
-		zap.String("tokenCID", tokenCID.String()),
+		zap.String("contractAddress", contractAddress),
+		zap.String("tokenNumber", tokenNumber),
 		zap.String("projectID", projectIDStr),
 		zap.String("projectName", project.Name),
 		zap.Int64("mintNumber", mintNumber))
@@ -188,8 +189,8 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, tokenCID domain.TokenCI
 }
 
 // enhanceFeralFile enhances metadata from Feral File API
-func (e *enhancer) enhanceFeralFile(ctx context.Context, tokenCID domain.TokenCID, chain domain.Chain, tokenNumber string, rawMetadata map[string]interface{}) (*EnhancedMetadata, error) {
-	logger.InfoCtx(ctx, "Enhancing Feral File metadata", zap.String("tokenCID", tokenCID.String()))
+func (e *enhancer) enhanceFeralFile(ctx context.Context, chain domain.Chain, contractAddress string, tokenNumber string) (*EnhancedMetadata, error) {
+	logger.InfoCtx(ctx, "Enhancing Feral File metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
 
 	// Fetch artwork data from Feral File API
 	artwork, err := e.feralfileClient.GetArtwork(ctx, tokenNumber)
@@ -234,6 +235,12 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, tokenCID domain.TokenCI
 		}
 		if artwork.PreviewURI != "" {
 			animationURL := feralfile.URL(artwork.PreviewURI)
+
+			// If the contract address is Maya Man StarQuest, add the mode=episode parameter to the animation URL
+			if contractAddress == feralfile.MAYA_MAN_STARQUEST_CONTRACT {
+				animationURL = fmt.Sprintf("%s&mode=episode", animationURL)
+			}
+
 			enhanced.AnimationURL = &animationURL
 		}
 	}
@@ -270,8 +277,8 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, tokenCID domain.TokenCI
 }
 
 // enhanceObjkt enhances metadata from objkt v3 API for Tezos tokens
-func (e *enhancer) enhanceObjkt(ctx context.Context, tokenCID domain.TokenCID, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
-	logger.InfoCtx(ctx, "Enhancing objkt metadata", zap.String("tokenCID", tokenCID.String()))
+func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
+	logger.InfoCtx(ctx, "Enhancing objkt metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
 
 	// Fetch token data from objkt v3 API
 	token, err := e.objktClient.GetToken(ctx, contractAddress, tokenNumber)
