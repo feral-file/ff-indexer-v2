@@ -389,6 +389,21 @@ func TestURL(t *testing.T) {
 			uri:      "ipfs://QmHash",
 			expected: "ipfs://QmHash",
 		},
+		{
+			name:     "Cloudflare Images URI",
+			uri:      "https://imagedelivery.net/account/image",
+			expected: "https://imagedelivery.net/account/image/xl",
+		},
+		{
+			name:     "Cloudflare Images URI with variant",
+			uri:      "https://imagedelivery.net/account/image/variant",
+			expected: "https://imagedelivery.net/account/image/variant",
+		},
+		{
+			name:     "Cloudflare Stream URI",
+			uri:      "https://example.com/stream/1234567890",
+			expected: "https://example.com/stream/1234567890",
+		},
 	}
 
 	for _, tt := range tests {

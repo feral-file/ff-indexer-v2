@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 )
 
 const (
@@ -69,6 +70,13 @@ func URL(uri string) string {
 		return ""
 	}
 
+	// If the URI is a Cloudflare Images URL and does not have a variant, return the XL variant as default
+	cloudFlareImage, hasVariant := cloudflare.IsCloudflareImageURL(uri)
+	if cloudFlareImage && !hasVariant {
+		return fmt.Sprintf("%s/%s", uri, "xl")
+	}
+
+	// If the URI is a relative URI, return the full URL with the CDN
 	url, _ := url.Parse(uri)
 	if url.Scheme == "" && url.Host == "" {
 		return fmt.Sprintf("%s/%s", CDN, strings.TrimPrefix(uri, "/"))

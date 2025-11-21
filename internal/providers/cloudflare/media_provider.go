@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,8 +25,8 @@ import (
 
 const (
 	CLOUDFLARE_PROVIDER_NAME         = "cloudflare"
-	CLOUDFLARE_IMAGE_ENDPOINT_REGEX  = `^https://imagedelivery\.net/`
-	CLOUDFLARE_STREAM_ENDPOINT_REGEX = `^https://[^/]+\.cloudflarestream\.com/`
+	CLOUDFLARE_IMAGE_ENDPOINT_REGEX  = `^(https://imagedelivery\.net/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?$`
+	CLOUDFLARE_STREAM_ENDPOINT_REGEX = `^(https://customer-[A-Za-z0-9]+\.cloudflarestream\.com/[A-Za-z0-9]+/manifest/video)\.(m3u8|mpd)$`
 )
 
 // Config holds configuration for Cloudflare Images and Stream
@@ -78,7 +79,7 @@ func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metad
 	}
 
 	// Validate the source URL is a Cloudflare Images URL
-	if isCloudflareImageURL(sourceURL) {
+	if ok, _ := IsCloudflareImageURL(sourceURL); ok {
 		logger.WarnCtx(ctx, "Unsupported self-hosted image URL", zap.String("url", sourceURL))
 		return nil, domain.ErrUnsupportedSelfHostedMediaFile
 	}
@@ -456,14 +457,20 @@ func extractVariantName(variantURL string) string {
 	return ""
 }
 
-// isCloudflareImageURL checks if a URL is a Cloudflare Images URL
-func isCloudflareImageURL(url string) bool {
-	return strings.HasPrefix(url, CLOUDFLARE_IMAGE_ENDPOINT_REGEX)
+// IsCloudflareImageURL checks if a URL is a Cloudflare Images URL
+// It returns a boolean indicating if the URL is a Cloudflare Images URL and a boolean indicating if the URL has a variant
+func IsCloudflareImageURL(url string) (bool, bool) {
+	reg := regexp.MustCompile(CLOUDFLARE_IMAGE_ENDPOINT_REGEX)
+	matches := reg.FindStringSubmatch(url)
+	if len(matches) == 0 {
+		return false, false
+	}
+	return true, len(matches) > 2 && matches[2] != ""
 }
 
 // isCloudflareStreamURL checks if a URL is a Cloudflare Stream URL
 func isCloudflareStreamURL(url string) bool {
-	return strings.HasPrefix(url, CLOUDFLARE_STREAM_ENDPOINT_REGEX)
+	return regexp.MustCompile(CLOUDFLARE_STREAM_ENDPOINT_REGEX).MatchString(url)
 }
 
 // getFileExtFromMimeType returns a file extension for a given mime type
