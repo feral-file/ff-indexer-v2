@@ -45,8 +45,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # Configure AWS credentials
-      # Note: Set either AWS_ECR_ROLE_ARN_USW2 (for OIDC) OR AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (for access keys)
-      # If AWS_ECR_ROLE_ARN is set, OIDC will be used; otherwise, access keys will be used
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
