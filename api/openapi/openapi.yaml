@@ -384,18 +384,22 @@ paths:
         - Metadata changes
         - Media asset changes
         
+        Changes are always returned in ascending order by ID (sequential audit log).
+        
         ## Filters
         - `token_id` - Filter by token ID(s) - supports multiple values
         - `token_cid` - Filter by token CID(s)
         - `address` - Filter by address(es) involved in the change
         - `subject_type` - Filter by subject type(s) - supports multiple values
         - `subject_id` - Filter by subject ID(s) - supports multiple values
-        - `since` - Only show changes after this timestamp (RFC3339 format)
+        - `anchor` - Only show changes after this anchor ID (recommended for cursor-based pagination)
+        - `since` - Deprecated: Only show changes after this timestamp (RFC3339 format)
         
-        ## Pagination & Ordering
+        ## Pagination
         - `limit` - Number of items per page (default: 20, max: 100)
-        - `offset` - Starting position (default: 0)
-        - `order` - Sort order by changed_at (asc/desc, default: asc)
+        - `anchor` - Recommended: Use next_anchor from previous response for cursor-based pagination
+        - `offset` - Deprecated: Starting position (only applies with 'since' parameter, ignored with 'anchor')
+        - `order` - Deprecated: Sort order (only applies with 'since' parameter, ignored with 'anchor')
         
         ## Expansions
         - `subject` - Include the full subject data based on subject_type
@@ -453,9 +457,16 @@ paths:
           style: form
           explode: true
           example: ["1234"]
+        - name: anchor
+          in: query
+          description: Only show changes after this anchor ID
+          schema:
+            type: integer
+            format: uint64
+          example: 1234
         - name: since
           in: query
-          description: Only show changes after this timestamp (RFC3339 format)
+          description: "Deprecated: Only show changes after this timestamp (RFC3339 format)"
           schema:
             type: string
             format: date-time
@@ -470,14 +481,14 @@ paths:
             default: 20
         - name: offset
           in: query
-          description: Offset for pagination
+          description: "Deprecated: Offset for pagination (only applies when using 'since' parameter, ignored with 'anchor')"
           schema:
             type: integer
             minimum: 0
             default: 0
         - name: order
           in: query
-          description: Sort order by changed_at timestamp
+          description: "Deprecated: Sort order (only applies when using 'since' parameter, ignored with 'anchor')"
           schema:
             type: string
             enum: [asc, desc]

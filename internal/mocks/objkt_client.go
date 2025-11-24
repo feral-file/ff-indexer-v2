@@ -8,8 +8,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	objkt "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	gomock "github.com/golang/mock/gomock"
+
+	objkt "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 )
 
 // MockObjktClient is a mock of Client interface.

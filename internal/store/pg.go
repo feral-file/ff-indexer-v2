@@ -1228,9 +1228,13 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 	// Build the base query for changes
 	query := s.db.WithContext(ctx).Model(&schema.ChangesJournal{})
 
-	// Apply timestamp filter
-	if filter.Since != nil {
-		// Since is a filter, not pagination - only show records after this timestamp
+	// Apply anchor filter (ID-based cursor) - takes precedence over since
+	if filter.Anchor != nil {
+		// Anchor is a cursor - show records after this ID (ascending order)
+		query = query.Where("id > ?", *filter.Anchor)
+	} else if filter.Since != nil {
+		// Deprecated: timestamp filter - kept for backward compatibility
+		// Note: This may cause inconsistent results due to different timestamp semantics across subject types
 		query = query.Where("changed_at >= ?", *filter.Since)
 	}
 
@@ -1336,16 +1340,23 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 		return nil, 0, fmt.Errorf("failed to count changes: %w", err)
 	}
 
-	// Apply ordering - always by changed_at for consistent results
-	// Add id as secondary sort for stable ordering when timestamps are identical
-	if filter.OrderDesc {
-		query = query.Order("changed_at DESC, id DESC")
+	// Apply ordering
+	// For backward compatibility: when using deprecated 'since' parameter, order by changed_at with configurable direction
+	// Otherwise, always order by ID ascending for sequential audit log
+	if filter.Anchor == nil && filter.Since != nil {
+		if filter.OrderDesc {
+			query = query.Order("changed_at DESC, id DESC")
+		} else {
+			query = query.Order("changed_at ASC, id ASC")
+		}
 	} else {
-		query = query.Order("changed_at ASC, id ASC")
+		query = query.Order("id ASC, changed_at ASC")
 	}
 
-	// Apply pagination with offset
-	if filter.Offset > 0 {
+	// Apply pagination
+	// Offset is only applied when using deprecated 'since' parameter (offset-based pagination)
+	// When using 'anchor' for cursor-based pagination, offset is ignored (cursor continues from anchor ID)
+	if filter.Offset > 0 && filter.Since != nil && filter.Anchor == nil {
 		query = query.Offset(int(filter.Offset)) //nolint:gosec,G115
 	}
 	if filter.Limit > 0 {

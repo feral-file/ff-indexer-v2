@@ -23,9 +23,10 @@ type ChangeResponse struct {
 
 // ChangeListResponse represents a paginated list of changes
 type ChangeListResponse struct {
-	Changes []ChangeResponse `json:"items"`
-	Offset  *uint64          `json:"offset,omitempty"` // Offset for the next page
-	Total   uint64           `json:"total"`
+	Changes    []ChangeResponse `json:"items"`
+	Offset     *uint64          `json:"offset,omitempty"`      // Deprecated: Offset for the next page (offset-based pagination)
+	NextAnchor *uint64          `json:"next_anchor,omitempty"` // ID-based cursor for the next page (cursor-based pagination)
+	Total      uint64           `json:"total"`
 }
 
 // MapChangeToDTO maps a schema.ChangesJournal to ChangeResponse

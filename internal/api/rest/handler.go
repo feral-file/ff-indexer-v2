@@ -25,7 +25,10 @@ type Handler interface {
 	ListTokens(c *gin.Context)
 
 	// GetChanges retrieves changes with optional filters
-	// GET /api/v1/changes?token_cid=<cid>&address=<address>&since=<timestamp>&limit=<limit>&offset=<offset>&order=<order>&expand=<expand>
+	// GET /api/v1/changes?token_cid=<cid>&address=<address>&anchor=<id>&limit=<limit>&offset=<offset>&order=<order>&expand=<expand>
+	// Returns changes in ascending order by ID (sequential audit log)
+	// Note: 'order' parameter only applies when using deprecated 'since' parameter
+	// Deprecated parameter: since=<timestamp> (use anchor instead for reliable pagination)
 	GetChanges(c *gin.Context)
 
 	// TriggerTokenIndexing triggers indexing for tokens by CIDs (open, no authentication required)
@@ -207,7 +210,8 @@ func (h *handler) GetChanges(c *gin.Context) {
 		queryParams.Addresses,
 		queryParams.SubjectTypes,
 		queryParams.SubjectIDs,
-		queryParams.Since,
+		queryParams.Anchor,
+		queryParams.Since, // Deprecated but supported for backward compatibility
 		limit,
 		offset,
 		order,

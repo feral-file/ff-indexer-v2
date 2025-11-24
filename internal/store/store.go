@@ -146,10 +146,11 @@ type ChangesQueryFilter struct {
 	Addresses    []string             // Filter by addresses (matches from/to addresses in provenance events)
 	SubjectTypes []schema.SubjectType // Filter by subject types
 	SubjectIDs   []string             // Filter by subject IDs
-	Since        *time.Time           // Timestamp filter - only show changes after this time (exclusive)
+	Anchor       *uint64              // ID-based cursor - only show changes after this ID (exclusive) - recommended
+	Since        *time.Time           // Deprecated: Timestamp filter - only show changes after this time (use Anchor instead)
 	Limit        int                  // Number of results to return
-	Offset       uint64               // Offset for pagination
-	OrderDesc    bool                 // Order by changed_at descending (default: false = ascending)
+	Offset       uint64               // Deprecated: Offset for pagination (only applies when using 'since' parameter, not used with 'anchor')
+	OrderDesc    bool                 // Deprecated: Order descending (only applies when using 'since' parameter)
 }
 
 // TokensWithMetadataResult represents a token with its metadata
