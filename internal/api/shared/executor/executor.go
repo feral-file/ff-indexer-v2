@@ -259,7 +259,7 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 
 	// Set next anchor for cursor-based pagination
 	// Always provide next_anchor when results are present for clients to continue from this point
-	if anchor != nil && len(results) > 0 {
+	if (anchor != nil || since == nil) && len(results) > 0 {
 		maxID := results[0].ID
 		for _, change := range results {
 			if change.ID > maxID {
