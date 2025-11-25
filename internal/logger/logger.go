@@ -36,6 +36,7 @@ func Initialize(cfg Config) error {
 		zapConfig = zap.NewProductionConfig()
 	}
 	zapConfig.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
+	zapConfig.EncoderConfig.EncodeTime = zapcore.RFC3339TimeEncoder
 	if cfg.Debug {
 		zapConfig.Level = zap.NewAtomicLevelAt(zapcore.DebugLevel)
 	}
