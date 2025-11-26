@@ -94,7 +94,6 @@ jobs:
           images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
           tags: |
             type=raw,value=${{ matrix.service }}-${{ steps.determine-tag.outputs.tag }}
-            type=raw,value=${{ matrix.service }}-latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
