@@ -41,18 +41,18 @@ func (m *MockAPIExecutor) EXPECT() *MockAPIExecutorMockRecorder {
 }
 
 // GetChanges mocks base method.
-func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
+func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetChanges", ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, since, limit, offset, order, expand)
+	ret := m.ctrl.Call(m, "GetChanges", ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, anchor, since, limit, offset, order, expand)
 	ret0, _ := ret[0].(*dto.ChangeListResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetChanges indicates an expected call of GetChanges.
-func (mr *MockAPIExecutorMockRecorder) GetChanges(ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, since, limit, offset, order, expand interface{}) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) GetChanges(ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, anchor, since, limit, offset, order, expand interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChanges", reflect.TypeOf((*MockAPIExecutor)(nil).GetChanges), ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, since, limit, offset, order, expand)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChanges", reflect.TypeOf((*MockAPIExecutor)(nil).GetChanges), ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, anchor, since, limit, offset, order, expand)
 }
 
 // GetToken mocks base method.

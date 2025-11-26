@@ -34,7 +34,10 @@ type Executor interface {
 	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 
 	// GetChanges retrieves changes with optional filters and expansions
-	GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
+	// Returns changes in ascending order by ID (sequential audit log)
+	// Note: 'order' parameter only applies when using deprecated 'since' parameter
+	// Deprecated parameter: since, offset, order (use anchor instead for reliable pagination)
+	GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens and addresses
 	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error)
@@ -182,7 +185,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	}, nil
 }
 
-func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
+func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_CHANGES_LIMIT
@@ -192,7 +195,17 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 		defaultOffset := constants.DEFAULT_OFFSET
 		offset = &defaultOffset
 	}
-	orderDesc := order == nil || order.Desc() // Default to DESC
+
+	// Determine ordering: 'order' only applies when using deprecated 'since' parameter
+	// When using 'anchor' or neither, always ascending by ID
+	orderDesc := anchor == nil && since != nil && order != nil && order.Desc()
+
+	// Determine offset: only applies when using deprecated 'since' parameter
+	// When using 'anchor' for cursor-based pagination, offset is not used (cursor continues from anchor ID)
+	var offsetValue uint64
+	if anchor == nil && since != nil {
+		offsetValue = *offset
+	}
 
 	// Build filter
 	filter := store.ChangesQueryFilter{
@@ -201,10 +214,11 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 		Addresses:    addresses,
 		SubjectTypes: subjectTypes,
 		SubjectIDs:   subjectIDs,
-		Since:        since,
+		Anchor:       anchor,
+		Since:        since, // Deprecated: kept for backward compatibility
 		Limit:        int(*limit),
-		Offset:       *offset,
-		OrderDesc:    orderDesc,
+		Offset:       offsetValue, // Deprecated: only applies when using 'since' parameter
+		OrderDesc:    orderDesc,   // Deprecated: only applies when using 'since' parameter
 	}
 
 	// Get changes
@@ -234,15 +248,32 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 
 	// Build response with pagination
 	var nextOffset *uint64
-	if *offset+uint64(len(results)) < total { //nolint:gosec,G115
-		offsetVal := *offset + uint64(len(results))
+	var nextAnchor *uint64
+
+	// Calculate next offset only when using deprecated 'since' parameter (offset-based pagination)
+	// For cursor-based pagination with 'anchor', use next_anchor instead
+	if anchor == nil && since != nil && offsetValue+uint64(len(results)) < total { //nolint:gosec,G115
+		offsetVal := offsetValue + uint64(len(results))
 		nextOffset = &offsetVal
 	}
 
+	// Set next anchor for cursor-based pagination
+	// Always provide next_anchor when results are present for clients to continue from this point
+	if (anchor != nil || since == nil) && len(results) > 0 {
+		maxID := results[0].ID
+		for _, change := range results {
+			if change.ID > maxID {
+				maxID = change.ID
+			}
+		}
+		nextAnchor = &maxID
+	}
+
 	return &dto.ChangeListResponse{
-		Changes: changeDTOs,
-		Offset:  nextOffset,
-		Total:   total,
+		Changes:    changeDTOs,
+		Offset:     nextOffset,
+		NextAnchor: nextAnchor,
+		Total:      total,
 	}, nil
 }
 

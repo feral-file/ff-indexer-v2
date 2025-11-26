@@ -1679,6 +1679,44 @@ func testGetChanges(t *testing.T, store Store) {
 		}
 	})
 
+	t.Run("order by ID ascending", func(t *testing.T) {
+		// Get changes (always ascending by ID)
+		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Limit: 10,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, changes)
+
+		// Verify ascending order by ID
+		for i := 1; i < len(changes); i++ {
+			assert.Greater(t, changes[i].ID, changes[i-1].ID, "IDs should always be in ascending order")
+		}
+	})
+
+	t.Run("pagination", func(t *testing.T) {
+		// Get first page using cursor-based pagination (no anchor)
+		page1, total1, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Limit: 2,
+		})
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, total1, uint64(2))
+		require.Len(t, page1, 2)
+
+		// Get second page using anchor from last item of first page
+		anchorID := page1[1].ID
+		page2, total2, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Limit:  2,
+			Anchor: &anchorID,
+		})
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, total2, uint64(2))
+
+		// Ensure pages don't overlap and are sequential
+		assert.NotEqual(t, page1[0].ID, page2[0].ID)
+		assert.NotEqual(t, page1[1].ID, page2[0].ID)
+		assert.Greater(t, page2[0].ID, page1[1].ID, "Second page should start after anchor")
+	})
+
 	t.Run("order ascending and descending", func(t *testing.T) {
 		owner := "0xchanges200000000000000000000000000000000002"
 
@@ -1721,27 +1759,6 @@ func testGetChanges(t *testing.T, store Store) {
 		}
 	})
 
-	t.Run("pagination", func(t *testing.T) {
-		// Get first page
-		page1, total1, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Limit:  2,
-			Offset: 0,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total1, uint64(2))
-
-		// Get second page
-		page2, total2, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Limit:  2,
-			Offset: 2,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total2, uint64(2))
-
-		assert.NotEqual(t, page1[0].ID, page2[0].ID)
-		assert.NotEqual(t, page1[1].ID, page2[0].ID)
-	})
-
 	t.Run("filter by since timestamp", func(t *testing.T) {
 		cutoffTime := time.Now().UTC()
 		time.Sleep(10 * time.Millisecond)
@@ -1770,6 +1787,45 @@ func testGetChanges(t *testing.T, store Store) {
 		// All changes should be after cutoff
 		for _, change := range changes {
 			assert.True(t, change.ChangedAt.After(cutoffTime) || change.ChangedAt.Equal(cutoffTime))
+		}
+	})
+
+	t.Run("filter by anchor id", func(t *testing.T) {
+		// Get current max ID before creating new token
+		allChanges, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Limit:     1000,
+			OrderDesc: true, // Get newest first
+		})
+		require.NoError(t, err)
+		var anchorID uint64
+		if len(allChanges) > 0 {
+			anchorID = allChanges[0].ID
+		}
+
+		// Create token after anchor
+		owner := "0xchanges300000000000000000000000000000000004"
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xchanges300000000000000000000000000000004",
+			"1",
+			owner,
+		)
+		mintInput.ProvenanceEvent.Timestamp = time.Now().UTC()
+		err = store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		// Query with anchor filter
+		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+			Anchor: &anchorID,
+			Limit:  100,
+		})
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, total, uint64(1))
+
+		// All changes should be after anchor ID
+		for _, change := range changes {
+			assert.Greater(t, change.ID, anchorID)
 		}
 	})
 

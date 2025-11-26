@@ -296,6 +296,8 @@ models:
         fieldName: Changes
       offset:
         fieldName: Offset
+      next_anchor:
+        fieldName: NextAnchor
       total:
         fieldName: Total
 

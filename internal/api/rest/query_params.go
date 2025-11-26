@@ -194,13 +194,26 @@ type GetChangesQueryParams struct {
 	Addresses    []string             `form:"address"`
 	SubjectTypes []schema.SubjectType `form:"subject_type"`
 	SubjectIDs   []string             `form:"subject_id"`
-	Since        *time.Time           `form:"since" time_format:"2006-01-02T15:04:05Z07:00"` // Timestamp filter - only show changes after this time
+
+	// Cursor-based pagination
+	Anchor *uint64 `form:"anchor"` // ID-based cursor - show changes after this ID
+
+	// Deprecated: Use anchor instead for reliable pagination
+	// Timestamp filter - only show changes after this time
+	// Note: Different subject types use different timestamp semantics which may cause inconsistent results
+	Since *time.Time `form:"since" time_format:"2006-01-02T15:04:05.999999999Z07:00"`
 
 	// Pagination
-	Limit  uint8             `form:"limit,default=20"`
-	Offset uint64            `form:"offset,default=0"`
-	Order  types.Order       `form:"order,default=asc"` // asc or desc (based on changed_at)
-	Expand []types.Expansion `form:"expand"`            // Expansion options: subject
+	Limit uint8 `form:"limit,default=20"`
+
+	// Deprecated: Use anchor for cursor-based pagination instead
+	// Offset only applies when using 'since' parameter - not used with 'anchor'
+	Offset uint64 `form:"offset,default=0"`
+
+	// Deprecated: Only applies when using 'since' parameter - always ascending with 'anchor' for sequential audit log
+	Order types.Order `form:"order,default=asc"`
+
+	Expand []types.Expansion `form:"expand"` // Expansion options: subject
 }
 
 // Validate validates the query parameters for GET /changes

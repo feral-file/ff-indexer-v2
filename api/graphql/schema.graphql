@@ -157,6 +157,7 @@ type Change {
 type ChangeList {
   items: [Change!]!
   offset: Uint64
+  next_anchor: Uint64
   total: Uint64!
 }
 
@@ -211,16 +212,20 @@ type Query {
 
   # Get changes with filters
   # Equivalent to: GET /api/v1/changes
+  # Returns changes in ascending order by ID (sequential audit log)
+  # Recommended: Use 'anchor' with 'next_anchor' from previous response for cursor-based pagination
+  # Deprecated parameters: 'since', 'offset', 'order' - use 'anchor' instead
   changes(
     token_ids: [Uint64!]
     token_cids: [String!]
     addresses: [String!]
     subject_types: [String!]
     subject_ids: [String!]
-    since: String
+    anchor: Uint64
+    since: String @deprecated(reason: "Use 'anchor' for reliable ID-based pagination. Different subject types use different timestamp semantics.")
     limit: Uint8 = 20
-    offset: Uint64 = 0
-    order: Order = asc
+    offset: Uint64 = 0 @deprecated(reason: "Use 'anchor' for cursor-based pagination instead. Offset only applies with 'since' parameter.")
+    order: Order = asc @deprecated(reason: "Order parameter only applies when using deprecated 'since' parameter. Always ascending with 'anchor'.")
     expand: [String!]
   ): ChangeList
 
