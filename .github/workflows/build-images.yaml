@@ -1,37 +1,26 @@
 name: Build and Push Docker Images
 
-# Required IAM permissions for AWS credentials:
-# - ecr:GetAuthorizationToken
-# - ecr:BatchCheckLayerAvailability
-# - ecr:InitiateLayerUpload
-# - ecr:UploadLayerPart
-# - ecr:CompleteLayerUpload
-# - ecr:PutImage
-# - ecr:DescribeRepositories
-# - ecr:CreateRepository (if auto-creating repos)
-# - ecr:GetRepositoryPolicy
-
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag suffix for images (e.g., v1.2.3, dev, staging)'
+        description: "Tag suffix for images (e.g., v1.2.3, dev, staging)"
         required: true
         type: string
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 env:
-  ECR_REGISTRY: 083397868157.dkr.ecr.ap-northeast-1.amazonaws.com
+  ECR_REGISTRY: 083397868157.dkr.ecr.us-west-2.amazonaws.com
   ECR_REPOSITORY: ff-indexer
-  AWS_REGION: ap-northeast-1
+  AWS_REGION: us-west-2
 
 jobs:
   build-and-push:
     name: Build ${{ matrix.service }}
     runs-on: ubuntu-latest
-    
+
     # Run all services in parallel
     strategy:
       fail-fast: false
@@ -43,34 +32,34 @@ jobs:
           - event-bridge
           - worker-core
           - worker-media
-    
+
     permissions:
       contents: read
-      id-token: write  # Required for AWS OIDC (only if using role-to-assume)
-    
+      id-token: write # Required for AWS OIDC (only if using role-to-assume)
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN_USW2 }}
           aws-region: ${{ env.AWS_REGION }}
-      
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-      
+
       - name: Verify AWS credentials and ECR permissions
         run: |
           echo "Verifying AWS authentication..."
           aws sts get-caller-identity
-          
+
           echo "Checking ECR repository..."
           if aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
             echo "✅ ECR repository '${{ env.ECR_REPOSITORY }}' exists"
@@ -85,7 +74,7 @@ jobs:
               --image-scanning-configuration scanOnPush=true \
               --encryption-configuration encryptionType=AES256 || true
           fi
-      
+
       - name: Determine tag
         id: determine-tag
         run: |
@@ -97,7 +86,7 @@ jobs:
           fi
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "Using tag: ${TAG}"
-      
+
       - name: Generate Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -106,7 +95,7 @@ jobs:
           tags: |
             type=raw,value=${{ matrix.service }}-${{ steps.determine-tag.outputs.tag }}
             type=raw,value=${{ matrix.service }}-latest,enable=${{ github.ref == 'refs/heads/main' }}
-      
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -122,16 +111,16 @@ jobs:
             VERSION=${{ steps.determine-tag.outputs.tag }}
             REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
           provenance: false
-      
+
       - name: Image digest
         run: echo "Built and pushed ${{ matrix.service }} - ${{ steps.meta.outputs.tags }}"
-  
+
   summary:
     name: Build Summary
     runs-on: ubuntu-latest
     needs: build-and-push
     if: always()
-    
+
     steps:
       - name: Check build status
         run: |
@@ -141,7 +130,7 @@ jobs:
             echo "❌ Some images failed to build"
             exit 1
           fi
-      
+
       - name: Output image tags
         run: |
           TAG="${{ inputs.tag || github.ref_name }}"
@@ -189,4 +178,3 @@ jobs:
           echo "  image:" >> $GITHUB_STEP_SUMMARY
           echo "    tag: worker-media-${TAG}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
