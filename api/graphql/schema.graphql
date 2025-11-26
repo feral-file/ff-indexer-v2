@@ -181,9 +181,10 @@ type WorkflowStatus {
 type Query {
   # Get a single token by CID
   # Equivalent to: GET /api/v1/tokens/:cid
+  # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
   token(
     cid: String!
-    expands: [String!]
+    expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
     provenance_events_limit: Uint8 = 10
@@ -193,6 +194,7 @@ type Query {
 
   # List tokens with filters
   # Equivalent to: GET /api/v1/tokens
+  # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
   tokens(
     owners: [String!]
     chains: [String!]
@@ -202,7 +204,7 @@ type Query {
     token_cids: [String!]
     limit: Uint8 = 20
     offset: Uint64 = 0
-    expands: [String!]
+    expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
     provenance_events_limit: Uint8 = 10
@@ -215,6 +217,7 @@ type Query {
   # Returns changes in ascending order by ID (sequential audit log)
   # Recommended: Use 'anchor' with 'next_anchor' from previous response for cursor-based pagination
   # Deprecated parameters: 'since', 'offset', 'order' - use 'anchor' instead
+  # Note: The 'subject' field expansion is auto-detected from your query. The 'expand' parameter is optional for backward compatibility.
   changes(
     token_ids: [Uint64!]
     token_cids: [String!]
@@ -226,7 +229,7 @@ type Query {
     limit: Uint8 = 20
     offset: Uint64 = 0 @deprecated(reason: "Use 'anchor' for cursor-based pagination instead. Offset only applies with 'since' parameter.")
     order: Order = asc @deprecated(reason: "Order parameter only applies when using deprecated 'since' parameter. Always ascending with 'anchor'.")
-    expand: [String!]
+    expand: [String!] @deprecated(reason: "Expansion is now auto-detected from your GraphQL query fields (subject). Explicitly specifying expand is no longer necessary.")
   ): ChangeList
 
   # Get workflow status by workflow ID and run ID

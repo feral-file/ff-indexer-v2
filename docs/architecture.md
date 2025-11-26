@@ -113,6 +113,49 @@ FF-Indexer v2 is a distributed system that indexes NFT data from multiple blockc
 - CORS support
 - Blacklist validation for indexing requests
 
+**GraphQL Auto-Detection**:
+
+The GraphQL API automatically detects which fields to expand based on your query structure, eliminating the need for explicit `expands` parameters (which are required for REST APIs).
+
+**How it works**:
+1. When you query for nested fields (e.g., `owners`, `provenance_events`, `enrichment_source`), the system automatically detects these fields from your GraphQL query
+2. The appropriate data is fetched and populated without needing to specify `expands: ["owners", "provenance_events"]`
+3. This provides a more natural GraphQL experience where you simply request the fields you need
+
+**Example**:
+
+```graphql
+# Auto-detects that owners and metadata are needed
+query {
+  token(cid: "tez-KT1...") {
+    token_cid
+    metadata {
+      name
+      image_url
+    }
+    owners {
+      items {
+        owner_address
+        quantity
+      }
+    }
+  }
+}
+```
+
+**Backward Compatibility**:
+- The `expands` parameter is still supported for backward compatibility but is now deprecated
+- Manual expansions specified via `expands` are merged with auto-detected expansions
+- REST API still requires explicit `expands` query parameter as it cannot auto-detect field selections
+
+**Field to Expansion Mapping**:
+- `owners` → `ExpansionOwners`
+- `provenance_events` → `ExpansionProvenanceEvents`
+- `enrichment_source` → `ExpansionEnrichmentSource`
+- `metadata_media_assets` → `ExpansionMetadataMediaAsset`
+- `enrichment_source_media_assets` → `ExpansionEnrichmentSourceMediaAsset`
+- `subject` (in changes) → `ExpansionSubject`
+
 ## Data Flow
 
 ### Event-Driven Indexing Flow

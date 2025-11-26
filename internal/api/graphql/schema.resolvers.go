@@ -260,11 +260,14 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expands []string,
 		return nil, apierrors.NewValidationError("Invalid token CID")
 	}
 
-	// Convert expansions to domain.Expansion
-	expansions := convertExpansionStrings(expands)
+	// Auto-detect expansions from GraphQL query fields
+	autoExpansions := autoDetectTokenExpansions(ctx)
 
-	// Validate expansions
-	for _, expansion := range expansions {
+	// Convert manual expansions to domain.Expansion (for backward compatibility)
+	manualExpansions := convertExpansionStrings(expands)
+
+	// Validate manual expansions
+	for _, expansion := range manualExpansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
 			expansion != types.ExpansionEnrichmentSource &&
@@ -273,6 +276,9 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expands []string,
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
+
+	// Merge manual and auto-detected expansions
+	expansions := mergeExpansions(manualExpansions, autoExpansions)
 
 	// Validate provenance event order
 	if provenanceEventsOrder != nil && !provenanceEventsOrder.Valid() {
@@ -294,8 +300,11 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expands []string,
 
 // Tokens is the resolver for the tokens field.
 func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
-	// Convert query parameters to executor parameters
-	expansions := convertExpansionStrings(expands)
+	// Auto-detect expansions from GraphQL query fields
+	autoExpansions := autoDetectTokenExpansions(ctx)
+
+	// Convert manual expansions to domain.Expansion (for backward compatibility)
+	manualExpansions := convertExpansionStrings(expands)
 	blockchains := convertChainStrings(chains)
 
 	// Validate owners
@@ -333,8 +342,8 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		}
 	}
 
-	// Validate expansions
-	for _, expansion := range expansions {
+	// Validate manual expansions
+	for _, expansion := range manualExpansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
 			expansion != types.ExpansionEnrichmentSource &&
@@ -343,6 +352,9 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
+
+	// Merge manual and auto-detected expansions
+	expansions := mergeExpansions(manualExpansions, autoExpansions)
 
 	// Validate provenance event order
 	if provenanceEventsOrder != nil && !provenanceEventsOrder.Valid() {
@@ -354,8 +366,11 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 
 // Changes is the resolver for the changes field.
 func (r *queryResolver) Changes(ctx context.Context, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, anchor *Uint64, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error) {
-	// Convert query parameters to executor parameters
-	expansions := convertExpansionStrings(expand)
+	// Auto-detect expansions from GraphQL query fields
+	autoExpansions := autoDetectChangeExpansions(ctx)
+
+	// Convert manual expansions to domain.Expansion (for backward compatibility)
+	manualExpansions := convertExpansionStrings(expand)
 
 	// Validate token CIDs
 	for _, tokenCid := range tokenCids {
@@ -371,12 +386,15 @@ func (r *queryResolver) Changes(ctx context.Context, tokenIds []Uint64, tokenCid
 		}
 	}
 
-	// Validate expansions
-	for _, expansion := range expansions {
+	// Validate manual expansions
+	for _, expansion := range manualExpansions {
 		if expansion != types.ExpansionSubject {
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
+
+	// Merge manual and auto-detected expansions
+	expansions := mergeExpansions(manualExpansions, autoExpansions)
 
 	// Parse deprecated 'since' parameter
 	var sinceTime *time.Time
