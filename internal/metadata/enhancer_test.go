@@ -88,9 +88,7 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	// Mock ArtBlocks client to return project metadata
 	// Token ID 1000005 = project 1, mint 5
 	projectMetadata := &artblocks.ProjectMetadata{
-		ID:            "0xa7d8d9ef8D8Ce8992Df33D8b8CF4Aebabd5bD270-1",
 		Name:          "Fidenza",
-		Slug:          "fidenza",
 		ArtistName:    "Tyler Hobbs",
 		ArtistAddress: "0x1234567890123456789012345678901234567890",
 		Description:   stringPtr("A generative art project"),
@@ -164,9 +162,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
 
 	// Mock ArtBlocks client to return project metadata without description
 	projectMetadata := &artblocks.ProjectMetadata{
-		ID:            "0xa7d8d9ef8D8Ce8992Df33D8b8CF4Aebabd5bD270-1",
 		Name:          "Fidenza",
-		Slug:          "fidenza",
 		ArtistName:    "Tyler Hobbs",
 		ArtistAddress: "0x1234567890123456789012345678901234567890",
 		Description:   nil,
@@ -228,9 +224,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {
 
 	// Mock ArtBlocks client to return project metadata without artist address
 	projectMetadata := &artblocks.ProjectMetadata{
-		ID:            "0xa7d8d9ef8D8Ce8992Df33D8b8CF4Aebabd5bD270-1",
 		Name:          "Fidenza",
-		Slug:          "fidenza",
 		ArtistName:    "Tyler Hobbs",
 		ArtistAddress: "", // Empty artist address
 		Description:   stringPtr("A generative art project"),
@@ -447,9 +441,7 @@ func TestEnhancer_Enhance_ArtBlocks_MarshalError(t *testing.T) {
 
 	// Mock ArtBlocks client to return project metadata
 	projectMetadata := &artblocks.ProjectMetadata{
-		ID:            "0xa7d8d9ef8D8Ce8992Df33D8b8CF4Aebabd5bD270-1",
 		Name:          "Fidenza",
-		Slug:          "fidenza",
 		ArtistName:    "Tyler Hobbs",
 		ArtistAddress: "0x1234567890123456789012345678901234567890",
 	}

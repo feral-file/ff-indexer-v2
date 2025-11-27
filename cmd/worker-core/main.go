@@ -108,7 +108,7 @@ func main() {
 	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter)
 
 	// Initialize vendors
-	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL)
+	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
 	objktClient := objkt.NewClient(httpClient, cfg.Vendors.ObjktURL, jsonAdapter)
 

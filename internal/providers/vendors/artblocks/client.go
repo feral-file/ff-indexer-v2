@@ -3,7 +3,6 @@ package artblocks
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 
@@ -17,14 +16,10 @@ const (
 
 // ProjectMetadata represents the project metadata from ArtBlocks API
 type ProjectMetadata struct {
-	ID            string  `json:"id"`
 	Name          string  `json:"name"`
-	Slug          string  `json:"slug"`
 	ArtistName    string  `json:"artist_name"`
 	ArtistAddress string  `json:"artist_address"`
 	Description   *string `json:"description"`
-	Website       *string `json:"website"`
-	License       *string `json:"license"`
 }
 
 // GraphQLRequest represents a GraphQL request
@@ -55,13 +50,15 @@ type Client interface {
 type ArtBlocksClient struct {
 	httpClient adapter.HTTPClient
 	graphqlURL string
+	json       adapter.JSON
 }
 
 // NewClient creates a new ArtBlocks client
-func NewClient(httpClient adapter.HTTPClient, graphqlURL string) Client {
+func NewClient(httpClient adapter.HTTPClient, graphqlURL string, json adapter.JSON) Client {
 	return &ArtBlocksClient{
 		httpClient: httpClient,
 		graphqlURL: graphqlURL,
+		json:       json,
 	}
 }
 
@@ -69,14 +66,10 @@ func NewClient(httpClient adapter.HTTPClient, graphqlURL string) Client {
 func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, projectID string) (*ProjectMetadata, error) {
 	query := `query GetABProject($id: String!) {
 		projects_metadata_by_pk(id: $id) {
-			id
 			name
-			slug
 			artist_name
 			artist_address
 			description
-			website
-			license
 		}
 	}`
 
@@ -87,7 +80,7 @@ func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, projectID stri
 		},
 	}
 
-	requestBody, err := json.Marshal(request)
+	requestBody, err := c.json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
 	}
@@ -98,7 +91,7 @@ func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, projectID stri
 	}
 
 	var response GraphQLResponse
-	if err := json.Unmarshal(respBody, &response); err != nil {
+	if err := c.json.Unmarshal(respBody, &response); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal GraphQL response: %w", err)
 	}
 
