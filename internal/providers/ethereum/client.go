@@ -48,6 +48,7 @@ type EthereumClient interface {
 	ERC1155BalanceOf(ctx context.Context, contractAddress, ownerAddress, tokenNumber string) (string, error)
 
 	// GetTokenEvents fetches all historical events for a specific token
+	// Returns events in ascending order of timestamp
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) ([]domain.BlockchainEvent, error)
 
 	// ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events
@@ -629,6 +630,22 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 			events = append(events, *event)
 		}
 	}
+
+	// Sort events by timestamp, then block number, then transaction index for deterministic ordering
+	sort.SliceStable(events, func(i, j int) bool {
+		// First, compare timestamps
+		if !events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].Timestamp.Before(events[j].Timestamp)
+		}
+
+		// If timestamps are equal, compare block numbers
+		if events[i].BlockNumber != events[j].BlockNumber {
+			return events[i].BlockNumber < events[j].BlockNumber
+		}
+
+		// If block numbers are also equal, compare transaction indices
+		return events[i].TxIndex < events[j].TxIndex
+	})
 
 	return events, nil
 }

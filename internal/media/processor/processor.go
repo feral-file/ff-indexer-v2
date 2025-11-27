@@ -23,6 +23,8 @@ import (
 )
 
 // Processor defines the interface for processing media files
+//
+//go:generate mockgen -source=processor.go -destination=../../mocks/media_processor.go -package=mocks -mock_names=Processor=MockMediaProcessor
 type Processor interface {
 	// Process uploads a media file from URL to a provider and stores the reference in the database
 	// This is an atomic operation - all steps succeed or all fail

@@ -85,29 +85,17 @@ type UpdateBalanceInput struct {
 	Delta        string // Delta to add/subtract (can be negative)
 }
 
-// CreateOrUpdateTokenTransferInput represents the complete input for creating or updating a token transfer with all related data
-type CreateOrUpdateTokenTransferInput struct {
-	Token                 CreateTokenInput
-	SenderBalanceUpdate   *UpdateBalanceInput // nil if sender is zero address (mint)
-	ReceiverBalanceUpdate *UpdateBalanceInput // nil if receiver is zero address (burn)
-	ProvenanceEvent       CreateProvenanceEventInput
-	TokenCID              string    // For change journal
-	ChangedAt             time.Time // For change journal
-}
-
 // CreateTokenBurnInput represents the complete input for updating a token burn with all related data
 type CreateTokenBurnInput struct {
 	TokenCID            string
 	SenderBalanceUpdate *UpdateBalanceInput // Update sender balance (decrease by quantity)
 	ProvenanceEvent     CreateProvenanceEventInput
-	ChangedAt           time.Time // For change journal
 }
 
 // CreateMetadataUpdateInput represents the complete input for creating a metadata update record
 type CreateMetadataUpdateInput struct {
 	TokenCID        string
 	ProvenanceEvent CreateProvenanceEventInput
-	ChangedAt       time.Time // For change journal
 }
 
 // UpdateTokenTransferInput represents the input for updating a token transfer (assumes token exists)
@@ -117,7 +105,6 @@ type UpdateTokenTransferInput struct {
 	SenderBalanceUpdate   *UpdateBalanceInput // nil if sender is zero address (mint)
 	ReceiverBalanceUpdate *UpdateBalanceInput // nil if receiver is zero address (burn)
 	ProvenanceEvent       CreateProvenanceEventInput
-	ChangedAt             time.Time // For change journal
 }
 
 // CreateTokenWithProvenancesInput represents the input for creating/upserting a token with all its provenance data

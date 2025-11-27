@@ -815,7 +815,7 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 		changeJournal := schema.ChangesJournal{
 			SubjectType: schema.SubjectTypeToken,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
-			ChangedAt:   input.ChangedAt,
+			ChangedAt:   input.ProvenanceEvent.Timestamp,
 			Meta:        metaJSON,
 		}
 
@@ -1027,7 +1027,7 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 		changeJournal := schema.ChangesJournal{
 			SubjectType: subjectType,
 			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
-			ChangedAt:   input.ChangedAt,
+			ChangedAt:   input.ProvenanceEvent.Timestamp,
 			Meta:        metaJSON,
 		}
 

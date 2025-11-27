@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"go.uber.org/zap"
@@ -321,6 +322,7 @@ func (c *tzktClient) hasTokenMetadataDiff(diffs []TzKTStorageDiff) bool {
 }
 
 // GetTokenEvents retrieves all token-related events (transfers + metadata updates) for a specific token
+// Returns events in ascending order of timestamp
 func (c *tzktClient) GetTokenEvents(ctx context.Context, contractAddress string, tokenID string) ([]domain.BlockchainEvent, error) {
 	events := make([]domain.BlockchainEvent, 0)
 
@@ -359,6 +361,22 @@ func (c *tzktClient) GetTokenEvents(ctx context.Context, contractAddress string,
 			events = append(events, *event)
 		}
 	}
+
+	// Sort events by timestamp, then block number, then transaction index for deterministic ordering
+	sort.SliceStable(events, func(i, j int) bool {
+		// First, compare timestamps
+		if !events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].Timestamp.Before(events[j].Timestamp)
+		}
+
+		// If timestamps are equal, compare block numbers
+		if events[i].BlockNumber != events[j].BlockNumber {
+			return events[i].BlockNumber < events[j].BlockNumber
+		}
+
+		// If block numbers are also equal, compare transaction indices
+		return events[i].TxIndex < events[j].TxIndex
+	})
 
 	return events, nil
 }

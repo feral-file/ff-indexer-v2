@@ -133,7 +133,7 @@ func NewExecutor(
 // CheckTokenExists checks if a token exists in the database
 func (e *executor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
 	if !tokenCID.Valid() {
-		return false, domain.ErrTokenNotFound
+		return false, domain.ErrInvalidTokenCID
 	}
 
 	token, err := e.store.GetTokenByTokenCID(ctx, tokenCID.String())
@@ -225,6 +225,8 @@ func (e *executor) CreateTokenMint(ctx context.Context, event *domain.Blockchain
 		Quantity:     event.Quantity,
 	}
 	// For erc1155 & fa2, the balance should be fetched again
+	// to ensure the balance is correct.
+	// erc1155 & fa2 can be minted multiple times for the same token.
 	switch event.Standard {
 	case domain.StandardFA2:
 		balance, err := e.tzktClient.GetTokenOwnerBalance(
@@ -307,7 +309,6 @@ func (e *executor) UpdateTokenTransfer(ctx context.Context, event *domain.Blockc
 			Raw:         rawEventData,
 			Timestamp:   event.Timestamp,
 		},
-		ChangedAt: event.Timestamp,
 	}
 
 	// Update the token atomically with balance updates, provenance event, and change journal
@@ -514,7 +515,6 @@ func (e *executor) UpdateTokenBurn(ctx context.Context, event *domain.Blockchain
 			Raw:         rawEventData,
 			Timestamp:   event.Timestamp,
 		},
-		ChangedAt: event.Timestamp,
 	}
 
 	// Update the token burn atomically with balance update, provenance event, and change journal
@@ -553,7 +553,6 @@ func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.Block
 			Raw:         rawEventData,
 			Timestamp:   event.Timestamp,
 		},
-		ChangedAt: event.Timestamp,
 	}
 
 	// Create metadata update provenance event
@@ -956,13 +955,25 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 	if len(allEvents) > 0 {
 		// Since the events are in ascending order, check from the end
 		for i := len(allEvents) - 1; i >= 0; i-- {
-			if allEvents[i].EventType == domain.EventTypeTransfer ||
-				allEvents[i].EventType == domain.EventTypeBurn ||
-				allEvents[i].EventType == domain.EventTypeMint {
-				currentOwner = allEvents[i].CurrentOwner()
-				if allEvents[i].EventType == domain.EventTypeBurn {
-					burned = true
+			evt := allEvents[i]
+			if evt.EventType == domain.EventTypeTransfer ||
+				evt.EventType == domain.EventTypeBurn ||
+				evt.EventType == domain.EventTypeMint {
+				currentOwner = evt.CurrentOwner()
+
+				switch evt.Standard {
+				case domain.StandardERC721:
+					// For ERC721, the token is burned if the burn event is found
+					if evt.EventType == domain.EventTypeBurn {
+						burned = true
+					}
+				case domain.StandardFA2, domain.StandardERC1155:
+					// For ERC1155 & FA2, the token is burned if there are no balances
+					if len(allBalances) == 0 {
+						burned = true
+					}
 				}
+
 				break
 			}
 		}
@@ -981,6 +992,13 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 		},
 		Balances: []store.CreateBalanceInput{},
 		Events:   []store.CreateProvenanceEventInput{},
+	}
+
+	// For ERC721, the token is owned by a single address, so we can add the current owner with a balance of 1
+	if standard == domain.StandardERC721 && currentOwner != nil && !burned {
+		allBalances = map[string]string{
+			*currentOwner: "1",
+		}
 	}
 
 	for addr, quantity := range allBalances {

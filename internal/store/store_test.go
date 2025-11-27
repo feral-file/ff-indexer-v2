@@ -282,7 +282,6 @@ func testUpdateTokenTransfer(t *testing.T, store Store) {
 				"0xtransfer555",
 				1001,
 			),
-			ChangedAt: time.Now().UTC(),
 		}
 
 		err = store.UpdateTokenTransfer(ctx, transferInput)
@@ -375,7 +374,6 @@ func testUpdateTokenTransfer(t *testing.T, store Store) {
 				"0xtransfer777",
 				1002,
 			),
-			ChangedAt: time.Now().UTC(),
 		}
 
 		err = store.UpdateTokenTransfer(ctx, transferInput)
@@ -444,7 +442,6 @@ func testUpdateTokenTransfer(t *testing.T, store Store) {
 				"0xtransfer999",
 				1003,
 			),
-			ChangedAt: time.Now().UTC(),
 		}
 
 		err = store.UpdateTokenTransfer(ctx, transferInput)
@@ -480,7 +477,6 @@ func testUpdateTokenTransfer(t *testing.T, store Store) {
 				"0xtransfernonexistent",
 				1004,
 			),
-			ChangedAt: time.Now().UTC(),
 		}
 
 		err := store.UpdateTokenTransfer(ctx, transferInput)
@@ -529,7 +525,6 @@ func testUpdateTokenBurn(t *testing.T, store Store) {
 				"0xburndddd",
 				1005,
 			),
-			ChangedAt: time.Now().UTC(),
 		}
 
 		err = store.UpdateTokenBurn(ctx, burnInput)
@@ -592,7 +587,6 @@ func testUpdateTokenBurn(t *testing.T, store Store) {
 				"0xburneeee",
 				1006,
 			),
-			ChangedAt: time.Now().UTC(),
 		}
 
 		err = store.UpdateTokenBurn(ctx, burnInput)
@@ -628,7 +622,6 @@ func testUpdateTokenBurn(t *testing.T, store Store) {
 				"0xburnnonexistent",
 				1007,
 			),
-			ChangedAt: time.Now().UTC(),
 		}
 
 		err := store.UpdateTokenBurn(ctx, burnInput)
@@ -1869,7 +1862,6 @@ func testGetChanges(t *testing.T, store Store) {
 				"0xtransfer_changes400",
 				1001,
 			),
-			ChangedAt: time.Now().UTC(),
 		}
 		err = store.UpdateTokenTransfer(ctx, transferInput)
 		require.NoError(t, err)
@@ -1964,7 +1956,6 @@ func testGetChanges(t *testing.T, store Store) {
 				"0xtransfer_changes500",
 				1002,
 			),
-			ChangedAt: transferTime,
 		}
 		transferInput.ProvenanceEvent.Timestamp = transferTime
 		err = store.UpdateTokenTransfer(ctx, transferInput)
@@ -2037,7 +2028,6 @@ func testGetChanges(t *testing.T, store Store) {
 				"0xtransfer_changes600",
 				1002,
 			),
-			ChangedAt: transferTime,
 		}
 		transferInput.ProvenanceEvent.Timestamp = transferTime
 		err = store.UpdateTokenTransfer(ctx, transferInput)
