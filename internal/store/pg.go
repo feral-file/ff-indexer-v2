@@ -205,7 +205,8 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "token_cid"}},
 			DoNothing: true,
-		}).Create(&token).Error; err != nil {
+		}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+			Create(&token).Error; err != nil {
 			return fmt.Errorf("failed to create token: %w", err)
 		}
 
@@ -1156,7 +1157,8 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
 				DoNothing: true,
-			}).Create(&provenanceEvents).Error; err != nil {
+			}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+				Create(&provenanceEvents).Error; err != nil {
 				return fmt.Errorf("failed to create provenance events: %w", err)
 			}
 
@@ -1178,6 +1180,13 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
 				// These event could have ID == 0 and already have change journals from when they were first inserted
 				if evt.ID == 0 {
+					continue
+				}
+
+				// Skip events that are not on-chain events (metadata updates considered as off-chain for change journal)
+				if evt.EventType != schema.ProvenanceEventTypeMint &&
+					evt.EventType != schema.ProvenanceEventTypeBurn &&
+					evt.EventType != schema.ProvenanceEventTypeTransfer {
 					continue
 				}
 
@@ -1214,7 +1223,8 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 				DoNothing: true,
-			}).Create(&changeJournals).Error; err != nil {
+			}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+				Create(&changeJournals).Error; err != nil {
 				return fmt.Errorf("failed to create changes_journal entries: %w", err)
 			}
 		}
@@ -1441,6 +1451,7 @@ func (s *pgStore) updateERC721OwnershipPeriods(ctx context.Context, tx *gorm.DB,
 			Clauses(clause.OnConflict{
 				DoNothing: true,
 			}).
+			Clauses(clause.Returning{Columns: []clause.Column{}}).
 			Create(ownershipPeriod).Error; err != nil {
 			return fmt.Errorf("failed to create ownership period for to_address: %w", err)
 		}
@@ -1513,6 +1524,7 @@ func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *go
 					Clauses(clause.OnConflict{
 						DoNothing: true,
 					}).
+					Clauses(clause.Returning{Columns: []clause.Column{}}).
 					Create(ownershipPeriod).Error; err != nil {
 					return fmt.Errorf("failed to create ownership period for to_address: %w", err)
 				}

@@ -58,7 +58,7 @@ func TestMain(m *testing.M) {
 	} else {
 		// Start a PostgreSQL container for testing
 		pgContainer, err = postgres.Run(ctx,
-			"postgres:16-alpine",
+			"postgres:18-alpine",
 			postgres.WithDatabase("test_db"),
 			postgres.WithUsername("postgres"),
 			postgres.WithPassword("postgres"),
