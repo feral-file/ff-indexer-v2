@@ -12,6 +12,7 @@ import (
 
 // autoDetectTokenExpansions automatically detects which token expansions are needed
 // based on the GraphQL query fields that are being requested.
+// Supports both individual item queries and list queries by recursively traversing field selections.
 func autoDetectTokenExpansions(ctx context.Context) []types.Expansion {
 	fc := graphql.GetFieldContext(ctx)
 	if fc == nil {
@@ -24,6 +25,22 @@ func autoDetectTokenExpansions(ctx context.Context) []types.Expansion {
 	// Collect all selected fields from the GraphQL query
 	fields := graphql.CollectFieldsCtx(ctx, nil)
 
+	// Get the operation context for recursive field collection
+	reqCtx := graphql.GetOperationContext(ctx)
+
+	// Recursively process fields to handle both individual and list queries
+	processTokenFields(reqCtx, fields, expansionSet)
+
+	// Convert set to slice
+	for expansion := range expansionSet {
+		expansions = append(expansions, expansion)
+	}
+
+	return expansions
+}
+
+// processTokenFields recursively processes GraphQL fields to detect token expansions
+func processTokenFields(reqCtx *graphql.OperationContext, fields []graphql.CollectedField, expansionSet map[types.Expansion]bool) {
 	for _, field := range fields {
 		var expansion types.Expansion
 		switch field.Name {
@@ -37,22 +54,24 @@ func autoDetectTokenExpansions(ctx context.Context) []types.Expansion {
 			expansion = types.ExpansionMetadataMediaAsset
 		case "enrichment_source_media_assets":
 			expansion = types.ExpansionEnrichmentSourceMediaAsset
-		default:
-			continue
 		}
 
-		// Add to set to avoid duplicates
-		if !expansionSet[expansion] {
+		// Add to set if we found an expansion
+		if expansion != "" {
 			expansionSet[expansion] = true
-			expansions = append(expansions, expansion)
+		}
+
+		// Recursively process nested selections (e.g., for "items" in list queries)
+		if len(field.Selections) > 0 {
+			nestedFields := graphql.CollectFields(reqCtx, field.Selections, nil)
+			processTokenFields(reqCtx, nestedFields, expansionSet)
 		}
 	}
-
-	return expansions
 }
 
 // autoDetectChangeExpansions automatically detects which change expansions are needed
 // based on the GraphQL query fields that are being requested.
+// Supports both individual item queries and list queries by recursively traversing field selections.
 func autoDetectChangeExpansions(ctx context.Context) []types.Expansion {
 	fc := graphql.GetFieldContext(ctx)
 	if fc == nil {
@@ -60,18 +79,38 @@ func autoDetectChangeExpansions(ctx context.Context) []types.Expansion {
 	}
 
 	var expansions []types.Expansion
+	expansionSet := make(map[types.Expansion]bool)
 
 	// Collect all selected fields from the GraphQL query
 	fields := graphql.CollectFieldsCtx(ctx, nil)
 
-	for _, field := range fields {
-		if field.Name == "subject" {
-			expansions = append(expansions, types.ExpansionSubject)
-			break
-		}
+	// Get the operation context for recursive field collection
+	reqCtx := graphql.GetOperationContext(ctx)
+
+	// Recursively process fields to handle both individual and list queries
+	processChangeFields(reqCtx, fields, expansionSet)
+
+	// Convert set to slice
+	for expansion := range expansionSet {
+		expansions = append(expansions, expansion)
 	}
 
 	return expansions
+}
+
+// processChangeFields recursively processes GraphQL fields to detect change expansions
+func processChangeFields(reqCtx *graphql.OperationContext, fields []graphql.CollectedField, expansionSet map[types.Expansion]bool) {
+	for _, field := range fields {
+		if field.Name == "subject" {
+			expansionSet[types.ExpansionSubject] = true
+		}
+
+		// Recursively process nested selections (e.g., for "items" in list queries)
+		if len(field.Selections) > 0 {
+			nestedFields := graphql.CollectFields(reqCtx, field.Selections, nil)
+			processChangeFields(reqCtx, nestedFields, expansionSet)
+		}
+	}
 }
 
 // mergeExpansions merges manual and auto-detected expansions, removing duplicates
