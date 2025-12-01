@@ -1,0 +1,884 @@
+package workflows_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/workflow"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/workflows"
+)
+
+// IndexTokenWorkflowTestSuite is the test suite for token workflow tests
+type IndexTokenWorkflowTestSuite struct {
+	suite.Suite
+	testsuite.WorkflowTestSuite
+
+	env         *testsuite.TestWorkflowEnvironment
+	ctrl        *gomock.Controller
+	executor    *mocks.MockExecutor
+	blacklist   *mocks.MockBlacklistRegistry
+	workerCore  workflows.WorkerCore
+	workerMedia workflows.WorkerMedia
+}
+
+// SetupTest is called before each test
+func (s *IndexTokenWorkflowTestSuite) SetupTest() {
+	// Initialize logger for tests
+	_ = logger.Initialize(logger.Config{
+		Debug: true,
+	})
+
+	s.env = s.NewTestWorkflowEnvironment()
+	s.ctrl = gomock.NewController(s.T())
+	s.executor = mocks.NewMockExecutor(s.ctrl)
+	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
+	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+		TezosChainID:                 domain.ChainTezosMainnet,
+		EthereumChainID:              domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock: 0,
+		TezosTokenSweepStartBlock:    0,
+		MediaTaskQueue:               "media-task-queue",
+	}, s.blacklist)
+	s.workerMedia = workflows.NewWorkerMedia(s.executor)
+
+	// Register activities with the test environment
+	s.env.RegisterActivity(s.executor.CreateTokenMint)
+	s.env.RegisterActivity(s.executor.CheckTokenExists)
+	s.env.RegisterActivity(s.executor.UpdateTokenTransfer)
+	s.env.RegisterActivity(s.executor.UpdateTokenBurn)
+	s.env.RegisterActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent)
+	s.env.RegisterActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID)
+}
+
+// TearDownTest is called after each test
+func (s *IndexTokenWorkflowTestSuite) TearDownTest() {
+	s.env.AssertExpectations(s.T())
+	s.ctrl.Finish()
+}
+
+// TestIndexTokenWorkflowTestSuite runs the test suite
+func TestIndexTokenWorkflowTestSuite(t *testing.T) {
+	suite.Run(t, new(IndexTokenWorkflowTestSuite))
+}
+
+// ====================================================================================
+// IndexTokenMint Tests
+// ====================================================================================
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_Success() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CreateTokenMint activity
+	s.env.OnActivity(s.executor.CreateTokenMint, mock.Anything, event).Return(nil)
+
+	// Mock child workflow IndexTokenMetadata
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMint, event)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_Blacklisted() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check - return true (blacklisted)
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
+
+	// No other activities should be called
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMint, event)
+
+	// Verify workflow completed successfully (skipped due to blacklist)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_CreateTokenMintError() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+	expectedError := errors.New("database error")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Track retry attempts - MaximumAttempts: 2 (1 retry)
+	var activityCallCount int
+	s.env.OnActivity(s.executor.CreateTokenMint, mock.Anything, event).Return(
+		func(ctx context.Context, event *domain.BlockchainEvent) error {
+			activityCallCount++
+			return expectedError
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMint, event)
+
+	// Verify workflow completed with error
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+
+	// Verify retries (MaximumAttempts: 2)
+	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_ChildWorkflowStartFailure() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CreateTokenMint activity
+	s.env.OnActivity(s.executor.CreateTokenMint, mock.Anything, event).Return(nil)
+
+	// Mock child workflow to fail at start
+	// Note: ErrMockStartChildWorkflowFailed is special and prevents workflow invocation
+	var childWorkflowCallCount int
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(
+		func(ctx workflow.Context, tokenCID domain.TokenCID) error {
+			childWorkflowCallCount++
+			return testsuite.ErrMockStartChildWorkflowFailed
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMint, event)
+
+	// Verify workflow completed with error
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), "start child workflow failed")
+
+	s.Equal(2, childWorkflowCallCount, "Child workflow should be attempted 2 times (initial + 1 retry)")
+}
+
+// ====================================================================================
+// IndexTokenTransfer Tests
+// ====================================================================================
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_TokenExists() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		FromAddress:     stringPtr("0xfrom"),
+		ToAddress:       stringPtr("0xto"),
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CheckTokenExists activity - returns true
+	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(true, nil)
+
+	// Mock UpdateTokenTransfer activity
+	s.env.OnActivity(s.executor.UpdateTokenTransfer, mock.Anything, event).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_TokenDoesNotExist() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		FromAddress:     stringPtr("0xfrom"),
+		ToAddress:       stringPtr("0xto"),
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CheckTokenExists activity - returns false
+	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(false, nil)
+
+	// Mock child workflow IndexTokenFromEvent
+	s.env.OnWorkflow(s.workerCore.IndexTokenFromEvent, mock.Anything, event).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_Blacklisted() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		FromAddress:     stringPtr("0xfrom"),
+		ToAddress:       stringPtr("0xto"),
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check - return true (blacklisted)
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
+
+	// No other activities should be called
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+
+	// Verify workflow completed successfully (skipped due to blacklist)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_CheckTokenExistsError() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		FromAddress:     stringPtr("0xfrom"),
+		ToAddress:       stringPtr("0xto"),
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+	expectedError := errors.New("database error")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Track retry attempts
+	var activityCallCount int
+	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(
+		func(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+			activityCallCount++
+			return false, expectedError
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+
+	// Verify workflow completed with error
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+
+	// Verify retries
+	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_IndexTokenFromEventError() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+	}
+	tokenCID := event.TokenCID()
+	expectedError := errors.New("indexing error")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CheckTokenExists activity - returns false
+	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(false, nil)
+
+	// Mock IndexTokenFromEvent activity - returns error
+	var workflowCallCount int
+	s.env.OnWorkflow(s.workerCore.IndexTokenFromEvent, mock.Anything, event).Return(
+		func(ctx workflow.Context, event *domain.BlockchainEvent) error {
+			workflowCallCount++
+			return expectedError
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+
+	// Verify workflow completed with error
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), "indexing error")
+
+	// Verify retries
+	s.Equal(1, workflowCallCount, "Workflow should be attempted 1 time (initial)")
+}
+
+// ====================================================================================
+// IndexTokenBurn Tests
+// ====================================================================================
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_Success() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeBurn,
+		FromAddress:     stringPtr("0xfrom"),
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CheckTokenExists activity - returns true
+	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(true, nil)
+
+	// Mock UpdateTokenBurn activity
+	s.env.OnActivity(s.executor.UpdateTokenBurn, mock.Anything, event).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_TokenDoesNotExist() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeBurn,
+		FromAddress:     stringPtr("0xfrom"),
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CheckTokenExists activity - returns false
+	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(false, nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+
+	// Verify workflow completed with error (token doesn't exist)
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), "token doesn't exist")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_Blacklisted() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeBurn,
+		FromAddress:     stringPtr("0xfrom"),
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check - return true (blacklisted)
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+
+	// Verify workflow completed successfully (skipped due to blacklist)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_CheckTokenExistsError() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeBurn,
+	}
+
+	tokenCID := event.TokenCID()
+	expectedError := errors.New("database error")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CheckTokenExists activity - returns error
+	var activityCallCount int
+	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(
+		func(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+			activityCallCount++
+			return false, expectedError
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+
+	// Verify workflow completed with error
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), "database error")
+
+	// Verify retries
+	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_UpdateTokenBurnError() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeBurn,
+	}
+	tokenCID := event.TokenCID()
+	expectedError := errors.New("database error")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock CheckTokenExists activity - returns true
+	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(true, nil)
+
+	// Mock UpdateTokenBurn activity - returns error
+	var activityCallCount int
+	s.env.OnActivity(s.executor.UpdateTokenBurn, mock.Anything, event).Return(
+		func(ctx context.Context, event *domain.BlockchainEvent) error {
+			activityCallCount++
+			return expectedError
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+
+	// Verify workflow completed with error
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), "database error")
+
+	// Verify retries
+	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
+}
+
+// ====================================================================================
+// IndexTokenFromEvent Tests
+// ====================================================================================
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_Success() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByBlockchainEvent activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, mock.Anything, event).Return(nil)
+
+	// Mock metadata child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// Mock provenance child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_Blacklisted() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check - return true (blacklisted)
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+
+	// Verify workflow completed successfully (skipped due to blacklist)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ActivityError() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+	expectedError := errors.New("indexing error")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Track retry attempts
+	var activityCallCount int
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, mock.Anything, event).Return(
+		func(ctx context.Context, event *domain.BlockchainEvent) error {
+			activityCallCount++
+			return expectedError
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+
+	// Verify workflow completed with error
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+
+	// Verify retries
+	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_MetadataWorkflowStartFailure_NonFatal() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByBlockchainEvent activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, mock.Anything, event).Return(nil)
+
+	// Mock metadata child workflow to fail - should not fail parent workflow
+	var workflowCallCount int
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(
+		func(ctx workflow.Context, tokenCID domain.TokenCID) error {
+			workflowCallCount++
+			return testsuite.ErrMockStartChildWorkflowFailed
+		},
+	)
+
+	// Mock provenance child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+
+	// Verify workflow completed successfully (metadata failure is non-fatal)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	// Verify retries
+	s.Equal(2, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ProvenanceWorkflowStartFailure_NonFatal() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+	}
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByBlockchainEvent activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, mock.Anything, event).Return(nil)
+
+	// Mock metadata child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// Mock provenance child workflow to fail - should not fail parent workflow
+	var workflowCallCount int
+	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(
+		func(ctx workflow.Context, tokenCID domain.TokenCID) error {
+			workflowCallCount++
+			return testsuite.ErrMockStartChildWorkflowFailed
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+
+	// Verify workflow completed successfully (provenance failure is non-fatal)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	// Verify retries
+	s.Equal(1, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
+}
+
+// ====================================================================================
+// IndexTokens Tests
+// ====================================================================================
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_Success() {
+	tokenCIDs := []domain.TokenCID{
+		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1"),
+		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2"),
+		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "3"),
+	}
+
+	// Mock child workflows for each token
+	for _, tokenCID := range tokenCIDs {
+		s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCID).Return(nil)
+	}
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_OneChildWorkflowFails() {
+	tokenCIDs := []domain.TokenCID{
+		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1"),
+		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2"),
+		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "3"),
+	}
+
+	// Mock child workflows - one fails
+	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[0]).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[1]).Return(errors.New("child workflow error"))
+	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[2]).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs)
+
+	// Verify workflow completed successfully (continues despite one failure)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+// ====================================================================================
+// IndexToken Tests
+// ====================================================================================
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Success() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID).Return(nil)
+
+	// Mock metadata child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// Mock provenance child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Blacklisted() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	// Mock blacklist check - return true (blacklisted)
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+
+	// Verify workflow completed successfully (skipped due to blacklist)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ActivityError() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	expectedError := errors.New("indexing error")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Track retry attempts
+	var activityCallCount int
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID).Return(
+		func(ctx context.Context, tokenCID domain.TokenCID) error {
+			activityCallCount++
+			return expectedError
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+
+	// Verify workflow completed with error
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+
+	// Verify retries
+	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ChildWorkflowStartFailure_NonFatal() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID).Return(nil)
+
+	// Mock metadata child workflow to fail - should not fail parent workflow
+	var workflowCallCount int
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(
+		func(ctx workflow.Context, tokenCID domain.TokenCID) error {
+			workflowCallCount++
+			return testsuite.ErrMockStartChildWorkflowFailed
+		},
+	)
+
+	// Mock provenance child workflow to fail - should not fail parent workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(testsuite.ErrMockStartChildWorkflowFailed)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+
+	// Verify workflow completed successfully (child workflow failures are non-fatal)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	// Verify retries
+	s.Equal(2, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFailure_NonFatal() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID).Return(nil)
+
+	// Mock metadata child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// Mock provenance child workflow to fail - should not fail parent workflow
+	var workflowCallCount int
+	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(
+		func(ctx workflow.Context, tokenCID domain.TokenCID) error {
+			workflowCallCount++
+			return testsuite.ErrMockStartChildWorkflowFailed
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+
+	// Verify workflow completed successfully (provenance failure is non-fatal)
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	// Verify retries
+	s.Equal(1, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
+}

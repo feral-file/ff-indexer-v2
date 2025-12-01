@@ -843,7 +843,7 @@ func (e *executor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]d
 // GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
 // This is used to sweep tokens by block ranges for incremental indexing
 func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
-	blockchain := domain.AddressToBlockchain(address)
+	blockchain := types.AddressToBlockchain(address)
 	if blockchain != domain.BlockchainEthereum {
 		return nil, fmt.Errorf("unsupported blockchain for address: %s", address)
 	}

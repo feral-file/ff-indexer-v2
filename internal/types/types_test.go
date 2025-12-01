@@ -510,6 +510,57 @@ func TestProvenanceEventTypeToSubjectType(t *testing.T) {
 	}
 }
 
+func TestAddressToBlockchain(t *testing.T) {
+	tests := []struct {
+		name     string
+		address  string
+		expected domain.Blockchain
+	}{
+		{
+			name:     "ethereum address",
+			address:  "0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97",
+			expected: domain.BlockchainEthereum,
+		},
+		{
+			name:     "ethereum with all lowercase",
+			address:  "0x4838b106fce9647bdf1e7877bf73ce8b0bad5f97",
+			expected: domain.BlockchainEthereum,
+		},
+		{
+			name:     "ethereum address uppercase 0X prefix defaults to unknown",
+			address:  "0X742D35CC6634C0532925A3B844BC9E7595F0BEB",
+			expected: domain.BlockchainUnknown,
+		},
+		{
+			name:     "tezos address",
+			address:  "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb",
+			expected: domain.BlockchainTezos,
+		},
+		{
+			name:     "tezos contract address",
+			address:  "KT1BvXTW1XqhE1GHTRKRvz8w3a7X5f5NqEZr",
+			expected: domain.BlockchainTezos,
+		},
+		{
+			name:     "empty address defaults to unknown",
+			address:  "",
+			expected: domain.BlockchainUnknown,
+		},
+		{
+			name:     "non-0x address defaults to unknown",
+			address:  "someaddress",
+			expected: domain.BlockchainUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := AddressToBlockchain(tt.address)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 // Helper function for tests
 func stringPtr(s string) *string {
 	return &s

@@ -1515,7 +1515,7 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_Success(t *testing.T) {
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	address := "0xowner123"
+	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
 	fromBlock := uint64(100)
 	toBlock := uint64(200)
 
@@ -1546,7 +1546,7 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_UnsupportedAddress(t *testi
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	address := "tz1tezosaddress" // Tezos address
+	address := "tz1fPKAtsYydh4f1wfWNfeNxWYu72TmM48fu" // Tezos address
 	fromBlock := uint64(100)
 	toBlock := uint64(200)
 
@@ -1562,7 +1562,7 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	address := "0xowner123"
+	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
 	fromBlock := uint64(100)
 	toBlock := uint64(200)
 

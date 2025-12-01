@@ -16,6 +16,7 @@ type Blockchain string
 const (
 	BlockchainEthereum Blockchain = "ethereum"
 	BlockchainTezos    Blockchain = "tezos"
+	BlockchainUnknown  Blockchain = "unknown"
 )
 
 // Chain represents the blockchain network identifier using CAIP-2 format
@@ -242,14 +243,6 @@ func TransferEventType(from *string, to *string) EventType {
 		return EventTypeBurn
 	}
 	return EventTypeTransfer
-}
-
-// AddressToBlockchain converts an address to the blockchain it belongs to
-func AddressToBlockchain(address string) Blockchain {
-	if strings.HasPrefix(address, "0x") {
-		return BlockchainEthereum
-	}
-	return BlockchainTezos
 }
 
 // NormalizeAddresses normalizes a list of addresses to the format used by the blockchain

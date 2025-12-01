@@ -12,6 +12,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 const (
@@ -36,7 +37,7 @@ func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) 
 			WorkflowID:               fmt.Sprintf("index-token-owner-%s", address),
 			WorkflowExecutionTimeout: 30 * time.Minute,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
+			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_TERMINATE,
 		}
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
@@ -48,8 +49,7 @@ func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) 
 				zap.Error(err),
 				zap.String("address", address),
 			)
-			// Continue with next address even if one fails
-			continue
+			return err
 		}
 
 		logger.InfoWf(ctx, "Completed indexing tokens for address",
@@ -72,7 +72,7 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 	)
 
 	// Determine blockchain from address format
-	blockchain := domain.AddressToBlockchain(address)
+	blockchain := types.AddressToBlockchain(address)
 
 	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
@@ -175,14 +175,15 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 1,
+			InitialInterval: 30 * time.Second,
+			MaximumAttempts: 2,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 	chainID := w.config.TezosChainID
 
 	// Step 1: Ensure watched address record exists
-	err := workflow.ExecuteActivity(ctx, w.executor.EnsureWatchedAddressExists, address, chainID, "workflow", "token_owner_indexing").Get(ctx, nil)
+	err := workflow.ExecuteActivity(ctx, w.executor.EnsureWatchedAddressExists, address, chainID).Get(ctx, nil)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to ensure watched address exists"),
@@ -849,7 +850,6 @@ func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.To
 
 	indexTokensWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowExecutionTimeout: 15 * time.Minute,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 	}
 	indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
 

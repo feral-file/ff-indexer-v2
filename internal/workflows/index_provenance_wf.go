@@ -20,8 +20,9 @@ func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain
 
 	// Configure activity options with longer timeout for full provenance fetching
 	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 20 * time.Minute,
+		StartToCloseTimeout: 30 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval: 30 * time.Second,
 			MaximumAttempts: 1,
 		},
 	}

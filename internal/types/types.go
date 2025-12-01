@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 // StringPtr converts a string to a pointer to a string
@@ -54,6 +56,17 @@ func IsTezosContractAddress(s string) bool {
 // IsEthereumAddress checks if a string is a valid Ethereum address
 func IsEthereumAddress(s string) bool {
 	return common.IsHexAddress(s)
+}
+
+// AddressToBlockchain converts an address to the blockchain it belongs to
+func AddressToBlockchain(address string) domain.Blockchain {
+	if IsEthereumAddress(address) {
+		return domain.BlockchainEthereum
+	}
+	if IsTezosAddress(address) {
+		return domain.BlockchainTezos
+	}
+	return domain.BlockchainUnknown
 }
 
 // IsValidURL checks if a string is a valid URL

@@ -992,52 +992,6 @@ func TestTransferEventType(t *testing.T) {
 	}
 }
 
-func TestAddressToBlockchain(t *testing.T) {
-	tests := []struct {
-		name     string
-		address  string
-		expected Blockchain
-	}{
-		{
-			name:     "ethereum address",
-			address:  "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-			expected: BlockchainEthereum,
-		},
-		{
-			name:     "ethereum address uppercase 0X prefix defaults to tezos",
-			address:  "0X742D35CC6634C0532925A3B844BC9E7595F0BEB",
-			expected: BlockchainTezos,
-		},
-		{
-			name:     "tezos address",
-			address:  "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb",
-			expected: BlockchainTezos,
-		},
-		{
-			name:     "tezos contract address",
-			address:  "KT1BvXTW1XqhE1GHTRKRvz8w3a7X5f5NqEZr",
-			expected: BlockchainTezos,
-		},
-		{
-			name:     "empty address defaults to tezos",
-			address:  "",
-			expected: BlockchainTezos,
-		},
-		{
-			name:     "non-0x address defaults to tezos",
-			address:  "someaddress",
-			expected: BlockchainTezos,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := AddressToBlockchain(tt.address)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestNormalizeAddress(t *testing.T) {
 	tests := []struct {
 		name     string
