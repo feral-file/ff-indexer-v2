@@ -384,7 +384,7 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		SELECT timestamp
 		FROM provenance_events
 		WHERE provenance_events.token_id = tokens.id
-		ORDER BY timestamp DESC, raw->>'tx_index' DESC
+		ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
 		LIMIT 1
 	) latest_pe ON true`)
 
@@ -500,11 +500,12 @@ func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, 
 		return nil, 0, fmt.Errorf("failed to count provenance events: %w", err)
 	}
 
-	// Apply ordering by timestamp (with ID as tiebreaker)
+	// Apply ordering by timestamp (with tx_index as tiebreaker)
+	// Use bigint to avoid overflow with large transaction indexes
 	if orderDesc {
-		query = query.Order("timestamp DESC, raw->>'tx_index' DESC")
+		query = query.Order("timestamp DESC, (raw->>'tx_index')::bigint DESC")
 	} else {
-		query = query.Order("timestamp ASC, raw->>'tx_index' ASC")
+		query = query.Order("timestamp ASC, (raw->>'tx_index')::bigint ASC")
 	}
 
 	// Apply pagination
@@ -535,13 +536,13 @@ func (s *pgStore) GetTokenProvenanceEventsBulk(ctx context.Context, tokenIDs []u
 		SELECT * FROM (
 			SELECT 
 				*, 
-				ROW_NUMBER() OVER (PARTITION BY token_id ORDER BY timestamp DESC, (raw->>'tx_index')::int DESC) as rn,
+				ROW_NUMBER() OVER (PARTITION BY token_id ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC) as rn,
 				COUNT(*) OVER (PARTITION BY token_id) as total_count
 			FROM provenance_events
 			WHERE token_id IN ?
 		) sub
 		WHERE rn <= ?
-		ORDER BY timestamp DESC, (raw->>'tx_index')::int DESC
+		ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
 	`, tokenIDs, limit).Scan(&eventsWithTotals).Error
 
 	if err != nil {
