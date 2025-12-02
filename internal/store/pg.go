@@ -450,6 +450,46 @@ func (s *pgStore) GetTokenOwners(ctx context.Context, tokenID uint64, limit int,
 	return balances, uint64(total), nil //nolint:gosec,G115
 }
 
+// GetTokenOwnersBulk retrieves owners (balances) for multiple tokens
+func (s *pgStore) GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.Balance, map[uint64]uint64, error) {
+	if len(tokenIDs) == 0 {
+		return make(map[uint64][]schema.Balance), make(map[uint64]uint64), nil
+	}
+
+	// Use a window function to limit results per token and get total counts
+	type balanceWithTotal struct {
+		schema.Balance
+		TotalCount uint64 `gorm:"column:total_count"`
+	}
+
+	var balancesWithTotals []balanceWithTotal
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT * FROM (
+			SELECT 
+				*, 
+				ROW_NUMBER() OVER (PARTITION BY token_id ORDER BY id ASC) as rn,
+				COUNT(*) OVER (PARTITION BY token_id) as total_count
+			FROM balances
+			WHERE token_id IN ?
+		) sub
+		WHERE rn <= ?
+	`, tokenIDs, limit).Scan(&balancesWithTotals).Error
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get owners bulk: %w", err)
+	}
+
+	// Group by token ID and collect totals
+	result := make(map[uint64][]schema.Balance)
+	totals := make(map[uint64]uint64)
+	for _, bwt := range balancesWithTotals {
+		result[bwt.TokenID] = append(result[bwt.TokenID], bwt.Balance)
+		totals[bwt.TokenID] = bwt.TotalCount
+	}
+
+	return result, totals, nil
+}
+
 // GetTokenProvenanceEvents retrieves provenance events for a token
 func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset uint64, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error) {
 	query := s.db.WithContext(ctx).Model(&schema.ProvenanceEvent{}).Where("token_id = ?", tokenID)
@@ -476,6 +516,47 @@ func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, 
 	}
 
 	return events, uint64(total), nil //nolint:gosec,G115
+}
+
+// GetTokenProvenanceEventsBulk retrieves provenance events for multiple tokens
+func (s *pgStore) GetTokenProvenanceEventsBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.ProvenanceEvent, map[uint64]uint64, error) {
+	if len(tokenIDs) == 0 {
+		return make(map[uint64][]schema.ProvenanceEvent), make(map[uint64]uint64), nil
+	}
+
+	// Use a window function to limit results per token and get total counts, ordered by timestamp DESC (most recent first)
+	type eventWithTotal struct {
+		schema.ProvenanceEvent
+		TotalCount uint64 `gorm:"column:total_count"`
+	}
+
+	var eventsWithTotals []eventWithTotal
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT * FROM (
+			SELECT 
+				*, 
+				ROW_NUMBER() OVER (PARTITION BY token_id ORDER BY timestamp DESC, (raw->>'tx_index')::int DESC) as rn,
+				COUNT(*) OVER (PARTITION BY token_id) as total_count
+			FROM provenance_events
+			WHERE token_id IN ?
+		) sub
+		WHERE rn <= ?
+		ORDER BY timestamp DESC, (raw->>'tx_index')::int DESC
+	`, tokenIDs, limit).Scan(&eventsWithTotals).Error
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get provenance events bulk: %w", err)
+	}
+
+	// Group by token ID and collect totals
+	result := make(map[uint64][]schema.ProvenanceEvent)
+	totals := make(map[uint64]uint64)
+	for _, ewt := range eventsWithTotals {
+		result[ewt.TokenID] = append(result[ewt.TokenID], ewt.ProvenanceEvent)
+		totals[ewt.TokenID] = ewt.TotalCount
+	}
+
+	return result, totals, nil
 }
 
 // GetTokenMetadataByTokenCID retrieves token metadata by token CID
@@ -596,6 +677,27 @@ func (s *pgStore) GetEnrichmentSourceByTokenID(ctx context.Context, tokenID uint
 		return nil, fmt.Errorf("failed to get enrichment source: %w", err)
 	}
 	return &enrichmentSource, nil
+}
+
+// GetEnrichmentSourcesByTokenIDs retrieves enrichment sources for multiple tokens
+func (s *pgStore) GetEnrichmentSourcesByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.EnrichmentSource, error) {
+	if len(tokenIDs) == 0 {
+		return make(map[uint64]*schema.EnrichmentSource), nil
+	}
+
+	var enrichmentSources []schema.EnrichmentSource
+	err := s.db.WithContext(ctx).Where("token_id IN ?", tokenIDs).Find(&enrichmentSources).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get enrichment sources bulk: %w", err)
+	}
+
+	// Map by token ID
+	result := make(map[uint64]*schema.EnrichmentSource)
+	for i := range enrichmentSources {
+		result[enrichmentSources[i].TokenID] = &enrichmentSources[i]
+	}
+
+	return result, nil
 }
 
 // GetEnrichmentSourceByTokenCID retrieves an enrichment source by token CID

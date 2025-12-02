@@ -115,6 +115,8 @@ func (p *ListTokensQueryParams) Validate() error {
 	}
 
 	// Validate expansions
+	hasOwnersExpansion := false
+	hasProvenanceExpansion := false
 	for _, expansion := range p.Expand {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
@@ -123,6 +125,28 @@ func (p *ListTokensQueryParams) Validate() error {
 			expansion != types.ExpansionEnrichmentSourceMediaAsset {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
+		if expansion == types.ExpansionOwners {
+			hasOwnersExpansion = true
+		}
+		if expansion == types.ExpansionProvenanceEvents {
+			hasProvenanceExpansion = true
+		}
+	}
+
+	// BACKWARD COMPATIBILITY: Cap deprecated pagination parameters to default values for bulk queries
+	// These parameters are deprecated for bulk token queries but kept for backward compatibility.
+	// They are silently overridden to prevent N+1 query issues while not breaking existing clients.
+	// TODO: Remove this capping logic and add validation errors in a future major version after sufficient deprecation period.
+	if hasOwnersExpansion {
+		// Override to defaults to prevent N+1 queries
+		p.OwnerLimit = constants.DEFAULT_OWNERS_LIMIT
+		p.OwnerOffset = constants.DEFAULT_OFFSET
+	}
+	if hasProvenanceExpansion {
+		// Override to defaults to prevent N+1 queries
+		p.ProvenanceEventLimit = constants.DEFAULT_PROVENANCE_EVENTS_LIMIT
+		p.ProvenanceEventOffset = constants.DEFAULT_OFFSET
+		p.ProvenanceEventOrder = types.OrderDesc // Force DESC for consistent behavior
 	}
 
 	// Validate provenance event order
@@ -166,17 +190,6 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	// Normalize addresses
 	params.Owners = domain.NormalizeAddresses(params.Owners)
 	params.ContractAddresses = domain.NormalizeAddresses(params.ContractAddresses)
-
-	// Cap limits
-	if params.Limit > constants.MAX_PAGE_SIZE {
-		params.Limit = constants.MAX_PAGE_SIZE
-	}
-	if params.OwnerLimit > constants.MAX_PAGE_SIZE {
-		params.OwnerLimit = constants.MAX_PAGE_SIZE
-	}
-	if params.ProvenanceEventLimit > constants.MAX_PAGE_SIZE {
-		params.ProvenanceEventLimit = constants.MAX_PAGE_SIZE
-	}
 
 	// Validate order
 	if !params.ProvenanceEventOrder.Asc() && !params.ProvenanceEventOrder.Desc() {

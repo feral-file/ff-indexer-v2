@@ -212,6 +212,9 @@ type Store interface {
 
 	// GetEnrichmentSourceByTokenID retrieves an enrichment source by token ID
 	GetEnrichmentSourceByTokenID(ctx context.Context, tokenID uint64) (*schema.EnrichmentSource, error)
+	// GetEnrichmentSourcesByTokenIDs retrieves enrichment sources for multiple tokens
+	// Returns a map of tokenID -> enrichment source
+	GetEnrichmentSourcesByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.EnrichmentSource, error)
 	// GetEnrichmentSourceByTokenCID retrieves an enrichment source by token CID
 	GetEnrichmentSourceByTokenCID(ctx context.Context, tokenCID string) (*schema.EnrichmentSource, error)
 	// UpsertEnrichmentSource creates or updates an enrichment source
@@ -223,6 +226,9 @@ type Store interface {
 
 	// GetTokenOwners retrieves owners (balances) for a token
 	GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset uint64) ([]schema.Balance, uint64, error)
+	// GetTokenOwnersBulk retrieves owners (balances) for multiple tokens
+	// Returns a map of tokenID -> balances and a map of tokenID -> total count. Limit is applied per token.
+	GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.Balance, map[uint64]uint64, error)
 	// GetBalanceByID retrieves a balance by ID
 	GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error)
 	// GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
@@ -234,6 +240,9 @@ type Store interface {
 
 	// GetTokenProvenanceEvents retrieves provenance events for a token
 	GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset uint64, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error)
+	// GetTokenProvenanceEventsBulk retrieves provenance events for multiple tokens
+	// Returns a map of tokenID -> events and a map of tokenID -> total count. Limit is applied per token. Results are ordered by timestamp DESC (most recent first).
+	GetTokenProvenanceEventsBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.ProvenanceEvent, map[uint64]uint64, error)
 	// GetProvenanceEventByID retrieves a provenance event by ID
 	GetProvenanceEventByID(ctx context.Context, id uint64) (*schema.ProvenanceEvent, error)
 

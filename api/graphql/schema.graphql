@@ -195,6 +195,9 @@ type Query {
   # List tokens with filters
   # Equivalent to: GET /api/v1/tokens
   # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
+  # Important: When querying multiple tokens, owners and provenance_events expansions return a fixed number of items (first 20 items per token).
+  # Pagination parameters (owners_limit, owners_offset, provenance_events_limit, provenance_events_offset, provenance_events_order) are NOT supported for bulk token queries.
+  # Use the single token query (token) for paginated owners and provenance_events.
   tokens(
     owners: [String!]
     chains: [String!]
@@ -205,11 +208,11 @@ type Query {
     limit: Uint8 = 20
     offset: Uint64 = 0
     expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
-    owners_limit: Uint8 = 10
-    owners_offset: Uint64 = 0
-    provenance_events_limit: Uint8 = 10
-    provenance_events_offset: Uint64 = 0
-    provenance_events_order: Order = desc
+    owners_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
+    owners_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
+    provenance_events_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
+    provenance_events_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
+    provenance_events_order: Order = desc @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
   ): TokenList
 
   # Get changes with filters

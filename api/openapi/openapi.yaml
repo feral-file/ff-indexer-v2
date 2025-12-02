@@ -98,9 +98,9 @@ paths:
         
         ## Sub-resource Pagination
         When expanding owners or provenance_events, you can control pagination:
-        - `owners.limit` - Limit number of owners (default: 10, max: 100)
+        - `owners.limit` - Limit number of owners (default: 20, max: 255)
         - `owners.offset` - Offset for owners pagination
-        - `provenance_events.limit` - Limit number of events (default: 10, max: 100)
+        - `provenance_events.limit` - Limit number of events (default: 20, max: 255)
         - `provenance_events.offset` - Offset for events pagination
         - `provenance_events.order` - Sort order for events (asc/desc, default: desc)
       operationId: getToken
@@ -128,12 +128,12 @@ paths:
           example: ["owners", "provenance_events"]
         - name: owners.limit
           in: query
-          description: Maximum number of owners to return (max 100)
+          description: Maximum number of owners to return (max 255)
           schema:
             type: integer
             minimum: 1
-            maximum: 100
-            default: 10
+            maximum: 255
+            default: 20
         - name: owners.offset
           in: query
           description: Offset for owners pagination
@@ -143,12 +143,12 @@ paths:
             default: 0
         - name: provenance_events.limit
           in: query
-          description: Maximum number of provenance events to return (max 100)
+          description: Maximum number of provenance events to return (max 255)
           schema:
             type: integer
             minimum: 1
-            maximum: 100
-            default: 10
+            maximum: 255
+            default: 20
         - name: provenance_events.offset
           in: query
           description: Offset for provenance events pagination
@@ -217,11 +217,20 @@ paths:
         
         ## Pagination
         Use `limit` and `offset` for pagination:
-        - `limit` - Number of items per page (default: 20, max: 100)
+        - `limit` - Number of items per page (default: 20, max: 255)
         - `offset` - Starting position (default: 0)
         
         ## Expansions
-        Same expansion options as GET /api/v1/tokens/{cid}
+        You can expand related data using the `expand` query parameter:
+        - `owners` - Include owner information (first 20 items per token)
+        - `provenance_events` - Include provenance events (first 20 items per token, ordered by timestamp DESC)
+        - `enrichment_source` - Include vendor enrichment data
+        - `metadata_media_assets` - Include media assets for token metadata
+        - `enrichment_source_media_assets` - Include media assets for enrichment source
+        
+        **Important**: When querying multiple tokens, the `owners` and `provenance_events` expansions return a fixed number of items (first 20) per token.
+        Pagination parameters (`owners.limit`, `owners.offset`, `provenance_events.limit`, `provenance_events.offset`, `provenance_events.order`) are NOT supported for this endpoint.
+        Use `GET /api/v1/tokens/{cid}` for paginated owners and provenance events for individual tokens.
       operationId: listTokens
       tags:
         - tokens
@@ -290,11 +299,11 @@ paths:
           example: ["eip155:1:erc721:0xabc123:1234"]
         - name: limit
           in: query
-          description: Maximum number of tokens to return (max 100)
+          description: Maximum number of tokens to return (max 255)
           schema:
             type: integer
             minimum: 1
-            maximum: 100
+            maximum: 255
             default: 20
         - name: offset
           in: query
@@ -305,46 +314,18 @@ paths:
             default: 0
         - name: expand
           in: query
-          description: Comma-separated list of expansions to include
+          description: |
+            Comma-separated list of expansions to include.
+            Note: owners and provenance_events expansions return first 20 items per token without pagination support.
+            Use GET /api/v1/tokens/{cid} for paginated results.
           schema:
             type: array
             items:
               type: string
-              enum: [owners, provenance_events, enrichment_source]
+              enum: [owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets]
           style: form
           explode: false
-          example: ["owners"]
-        - name: owners.limit
-          in: query
-          description: Maximum number of owners to return per token (max 100)
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 10
-        - name: owners.offset
-          in: query
-          description: Offset for owners pagination
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
-        - name: provenance_events.limit
-          in: query
-          description: Maximum number of provenance events to return per token (max 100)
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 10
-        - name: provenance_events.offset
-          in: query
-          description: Offset for provenance events pagination
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
-        - name: provenance_events.order
+          example: ["owners", "enrichment_source"]
           in: query
           description: Sort order for provenance events by timestamp
           schema:
@@ -396,7 +377,7 @@ paths:
         - `since` - Deprecated: Only show changes after this timestamp (RFC3339 format)
         
         ## Pagination
-        - `limit` - Number of items per page (default: 20, max: 100)
+        - `limit` - Number of items per page (default: 20, max: 255)
         - `anchor` - Recommended: Use next_anchor from previous response for cursor-based pagination
         - `offset` - Deprecated: Starting position (only applies with 'since' parameter, ignored with 'anchor')
         - `order` - Deprecated: Sort order (only applies with 'since' parameter, ignored with 'anchor')
@@ -473,11 +454,11 @@ paths:
           example: "2024-01-01T00:00:00Z"
         - name: limit
           in: query
-          description: Maximum number of changes to return (max 100)
+          description: Maximum number of changes to return (max 255)
           schema:
             type: integer
             minimum: 1
-            maximum: 100
+            maximum: 255
             default: 20
         - name: offset
           in: query

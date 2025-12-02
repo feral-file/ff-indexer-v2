@@ -2476,6 +2476,465 @@ func testMediaAssets(t *testing.T, store Store) {
 }
 
 // =============================================================================
+// Test: Bulk Query Methods
+// =============================================================================
+
+func testGetTokenOwnersBulk(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("returns owners for multiple tokens", func(t *testing.T) {
+		// Create token1 with 5 owners using CreateTokenWithProvenances (ERC1155 with multiple owners)
+		owner1_1 := "0xowner1111111111111111111111111111111111111"
+		owner1_2 := "0xowner2111111111111111111111111111111111111"
+		owner1_3 := "0xowner3111111111111111111111111111111111111"
+		owner1_4 := "0xowner4111111111111111111111111111111111111"
+		owner1_5 := "0xowner5111111111111111111111111111111111111"
+
+		token1Token := buildTestToken(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0xbulk1111111111111111111111111111111111111",
+			"1",
+		)
+		token1Token.CurrentOwner = nil
+
+		token1Input := CreateTokenWithProvenancesInput{
+			Token: token1Token,
+			Balances: []CreateBalanceInput{
+				{OwnerAddress: owner1_1, Quantity: "10"},
+				{OwnerAddress: owner1_2, Quantity: "20"},
+				{OwnerAddress: owner1_3, Quantity: "30"},
+				{OwnerAddress: owner1_4, Quantity: "40"},
+				{OwnerAddress: owner1_5, Quantity: "50"},
+			},
+			Events: []CreateProvenanceEventInput{
+				buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeMint,
+					nil,
+					&owner1_1,
+					"150",
+					"0xmintbulk1",
+					1000,
+				),
+			},
+		}
+		err := store.CreateTokenWithProvenances(ctx, token1Input)
+		require.NoError(t, err)
+
+		token1, err := store.GetTokenByTokenCID(ctx, token1Token.TokenCID)
+		require.NoError(t, err)
+
+		// Create token2 with 2 owners (ERC1155)
+		owner2_1 := "0xowner2111111111111111111111111111111111111"
+		owner2_2 := "0xowner2222222222222222222222222222222222222"
+
+		token2Token := buildTestToken(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0xbulk2222222222222222222222222222222222222",
+			"2",
+		)
+		token2Token.CurrentOwner = nil
+
+		token2Input := CreateTokenWithProvenancesInput{
+			Token: token2Token,
+			Balances: []CreateBalanceInput{
+				{OwnerAddress: owner2_1, Quantity: "100"},
+				{OwnerAddress: owner2_2, Quantity: "200"},
+			},
+			Events: []CreateProvenanceEventInput{
+				buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeMint,
+					nil,
+					&owner2_1,
+					"300",
+					"0xmintbulk2",
+					1000,
+				),
+			},
+		}
+		err = store.CreateTokenWithProvenances(ctx, token2Input)
+		require.NoError(t, err)
+
+		token2, err := store.GetTokenByTokenCID(ctx, token2Token.TokenCID)
+		require.NoError(t, err)
+
+		// Create token3 with 1 owner
+		token3Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xbulk3333333333333333333333333333333333333",
+			"3",
+			"0xowner3111111111111111111111111111111111111",
+		)
+		err = store.CreateTokenMint(ctx, token3Input)
+		require.NoError(t, err)
+
+		token3, err := store.GetTokenByTokenCID(ctx, token3Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Test bulk query with limit of 3
+		tokenIDs := []uint64{token1.ID, token2.ID, token3.ID}
+		bulkOwners, bulkOwnersTotals, err := store.GetTokenOwnersBulk(ctx, tokenIDs, 3)
+		require.NoError(t, err)
+
+		// Verify results
+		assert.Len(t, bulkOwners, 3)
+		assert.Len(t, bulkOwnersTotals, 3)
+
+		// Token1 should have 3 owners (limited by limit parameter) but total is 5
+		assert.Len(t, bulkOwners[token1.ID], 3)
+		assert.Equal(t, uint64(5), bulkOwnersTotals[token1.ID])
+
+		// Token2 should have 2 owners and total is 2
+		assert.Len(t, bulkOwners[token2.ID], 2)
+		assert.Equal(t, uint64(2), bulkOwnersTotals[token2.ID])
+
+		// Token3 should have 1 owner and total is 1
+		assert.Len(t, bulkOwners[token3.ID], 1)
+		assert.Equal(t, *token3Input.Token.CurrentOwner, bulkOwners[token3.ID][0].OwnerAddress)
+		assert.Equal(t, "1", bulkOwners[token3.ID][0].Quantity)
+	})
+
+	t.Run("returns empty map for empty token IDs", func(t *testing.T) {
+		bulkOwners, bulkOwnersTotals, err := store.GetTokenOwnersBulk(ctx, []uint64{}, 10)
+		require.NoError(t, err)
+		assert.Empty(t, bulkOwners)
+		assert.Empty(t, bulkOwnersTotals)
+	})
+
+	t.Run("handles tokens with no owners", func(t *testing.T) {
+		tokenInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xbulk4444444444444444444444444444444444444",
+			"4",
+			"0xowner4111111111111111111111111111111111111",
+		)
+		err := store.CreateTokenMint(ctx, tokenInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Query with a non-existent token ID mixed in
+		bulkOwners, bulkOwnersTotals, err := store.GetTokenOwnersBulk(ctx, []uint64{token.ID, 999999}, 10)
+		require.NoError(t, err)
+
+		// Should have owners for the real token only
+		assert.Len(t, bulkOwners[token.ID], 1)
+		assert.Equal(t, uint64(1), bulkOwnersTotals[token.ID])
+		assert.NotContains(t, bulkOwners, uint64(999999))
+		assert.NotContains(t, bulkOwnersTotals, uint64(999999))
+	})
+}
+
+func testGetTokenProvenanceEventsBulk(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("returns provenance events for multiple tokens", func(t *testing.T) {
+		// Create token1 with multiple events
+		token1Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xprov1111111111111111111111111111111111111",
+			"1",
+			"0xowner1111111111111111111111111111111111111",
+		)
+		err := store.CreateTokenMint(ctx, token1Input)
+		require.NoError(t, err)
+
+		token1, err := store.GetTokenByTokenCID(ctx, token1Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add 4 more transfer events to token1
+		for i := 2; i <= 5; i++ {
+			fromOwner := fmt.Sprintf("0xowner%d111111111111111111111111111111111111", i-1)
+			toOwner := fmt.Sprintf("0xowner%d111111111111111111111111111111111111", i)
+			transferInput := UpdateTokenTransferInput{
+				TokenCID:     token1Input.Token.TokenCID,
+				CurrentOwner: &toOwner,
+				SenderBalanceUpdate: &UpdateBalanceInput{
+					OwnerAddress: fromOwner,
+					Delta:        "1",
+				},
+				ReceiverBalanceUpdate: &UpdateBalanceInput{
+					OwnerAddress: toOwner,
+					Delta:        "1",
+				},
+				ProvenanceEvent: buildTestProvenanceEvent(
+					token1Input.Token.Chain,
+					schema.ProvenanceEventTypeTransfer,
+					&fromOwner,
+					&toOwner,
+					"1",
+					fmt.Sprintf("0xtransfer%d", i),
+					uint64(1000+i), //nolint:gosec,G115
+				),
+			}
+			err = store.UpdateTokenTransfer(ctx, transferInput)
+			require.NoError(t, err)
+
+			// Sleep to ensure different timestamps
+			time.Sleep(1 * time.Millisecond)
+		}
+
+		// Create token2 with 2 events
+		token2Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xprov2222222222222222222222222222222222222",
+			"2",
+			"0xowner2111111111111111111111111111111111111",
+		)
+		err = store.CreateTokenMint(ctx, token2Input)
+		require.NoError(t, err)
+
+		token2, err := store.GetTokenByTokenCID(ctx, token2Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add 1 more transfer to token2
+		fromOwner2 := *token2Input.Token.CurrentOwner
+		toOwner2 := "0xowner2222222222222222222222222222222222222"
+		transferInput2 := UpdateTokenTransferInput{
+			TokenCID:     token2Input.Token.TokenCID,
+			CurrentOwner: &toOwner2,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: fromOwner2,
+				Delta:        "1", // Positive value - implementation subtracts this
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: toOwner2,
+				Delta:        "1",
+			},
+			ProvenanceEvent: buildTestProvenanceEvent(
+				token2Input.Token.Chain,
+				schema.ProvenanceEventTypeTransfer,
+				&fromOwner2,
+				&toOwner2,
+				"1",
+				"0xtransfer_token2",
+				1006,
+			),
+		}
+		err = store.UpdateTokenTransfer(ctx, transferInput2)
+		require.NoError(t, err)
+
+		// Test bulk query with limit of 3
+		tokenIDs := []uint64{token1.ID, token2.ID}
+		bulkEvents, bulkEventsTotals, err := store.GetTokenProvenanceEventsBulk(ctx, tokenIDs, 3)
+		require.NoError(t, err)
+
+		// Verify results
+		assert.Len(t, bulkEvents, 2)
+		assert.Len(t, bulkEventsTotals, 2)
+
+		// Token1 should have 3 events (limited by limit parameter, DESC order so most recent) but total is 5 (1 mint + 4 transfers)
+		assert.Len(t, bulkEvents[token1.ID], 3)
+		assert.Equal(t, uint64(5), bulkEventsTotals[token1.ID])
+		// Verify DESC order (most recent first)
+		for i := 0; i < len(bulkEvents[token1.ID])-1; i++ {
+			assert.True(t, bulkEvents[token1.ID][i].Timestamp.After(bulkEvents[token1.ID][i+1].Timestamp) ||
+				bulkEvents[token1.ID][i].Timestamp.Equal(bulkEvents[token1.ID][i+1].Timestamp))
+		}
+
+		// Token2 should have 2 events and total is 2 (1 mint + 1 transfer)
+		assert.Len(t, bulkEvents[token2.ID], 2)
+		assert.Equal(t, uint64(2), bulkEventsTotals[token2.ID])
+		// Verify DESC order
+		assert.True(t, bulkEvents[token2.ID][0].Timestamp.After(bulkEvents[token2.ID][1].Timestamp) ||
+			bulkEvents[token2.ID][0].Timestamp.Equal(bulkEvents[token2.ID][1].Timestamp))
+	})
+
+	t.Run("returns empty map for empty token IDs", func(t *testing.T) {
+		bulkEvents, bulkEventsTotals, err := store.GetTokenProvenanceEventsBulk(ctx, []uint64{}, 10)
+		require.NoError(t, err)
+		assert.Empty(t, bulkEvents)
+		assert.Empty(t, bulkEventsTotals)
+	})
+
+	t.Run("handles tokens with no events", func(t *testing.T) {
+		tokenInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xprov3333333333333333333333333333333333333",
+			"3",
+			"0xowner3111111111111111111111111111111111111",
+		)
+		err := store.CreateTokenMint(ctx, tokenInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Query with a non-existent token ID mixed in
+		bulkEvents, bulkEventsTotals, err := store.GetTokenProvenanceEventsBulk(ctx, []uint64{token.ID, 999999}, 10)
+		require.NoError(t, err)
+
+		// Should have events for the real token only (mint event)
+		assert.Len(t, bulkEvents[token.ID], 1)
+		assert.Equal(t, uint64(1), bulkEventsTotals[token.ID])
+		assert.Equal(t, schema.ProvenanceEventTypeMint, bulkEvents[token.ID][0].EventType)
+		assert.NotContains(t, bulkEvents, uint64(999999))
+		assert.NotContains(t, bulkEventsTotals, uint64(999999))
+	})
+}
+
+func testGetEnrichmentSourcesByTokenIDs(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("returns enrichment sources for multiple tokens", func(t *testing.T) {
+		// Create 3 tokens
+		token1Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xenrich1111111111111111111111111111111111111",
+			"1",
+			"0xowner1111111111111111111111111111111111111",
+		)
+		err := store.CreateTokenMint(ctx, token1Input)
+		require.NoError(t, err)
+
+		token1, err := store.GetTokenByTokenCID(ctx, token1Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		token2Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xenrich2222222222222222222222222222222222222",
+			"2",
+			"0xowner2111111111111111111111111111111111111",
+		)
+		err = store.CreateTokenMint(ctx, token2Input)
+		require.NoError(t, err)
+
+		token2, err := store.GetTokenByTokenCID(ctx, token2Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		token3Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xenrich3333333333333333333333333333333333333",
+			"3",
+			"0xowner3111111111111111111111111111111111111",
+		)
+		err = store.CreateTokenMint(ctx, token3Input)
+		require.NoError(t, err)
+
+		token3, err := store.GetTokenByTokenCID(ctx, token3Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add enrichment sources for token1 and token2 only
+		imageURL1 := "https://artblocks.io/image1.png"
+		name1 := "Art #1"
+		desc1 := "First art piece"
+		enrichment1 := CreateEnrichmentSourceInput{
+			TokenID:      token1.ID,
+			Vendor:       schema.VendorArtBlocks,
+			VendorJSON:   []byte(`{"project":"test1"}`),
+			ImageURL:     &imageURL1,
+			Name:         &name1,
+			Description:  &desc1,
+			AnimationURL: nil,
+			Artists:      schema.Artists{},
+			MimeType:     nil,
+		}
+		err = store.UpsertEnrichmentSource(ctx, enrichment1)
+		require.NoError(t, err)
+
+		imageURL2 := "https://fxhash.xyz/image2.png"
+		name2 := "Art #2"
+		enrichment2 := CreateEnrichmentSourceInput{
+			TokenID:      token2.ID,
+			Vendor:       schema.VendorFXHash,
+			VendorJSON:   []byte(`{"iteration":"999"}`),
+			ImageURL:     &imageURL2,
+			Name:         &name2,
+			Description:  nil,
+			AnimationURL: nil,
+			Artists:      schema.Artists{},
+			MimeType:     nil,
+		}
+		err = store.UpsertEnrichmentSource(ctx, enrichment2)
+		require.NoError(t, err)
+
+		// Test bulk query
+		tokenIDs := []uint64{token1.ID, token2.ID, token3.ID}
+		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, tokenIDs)
+		require.NoError(t, err)
+
+		// Verify results
+		assert.Len(t, bulkEnrichments, 2) // Only token1 and token2 have enrichments
+
+		// Verify token1 enrichment
+		assert.NotNil(t, bulkEnrichments[token1.ID])
+		assert.Equal(t, schema.VendorArtBlocks, bulkEnrichments[token1.ID].Vendor)
+		assert.Equal(t, imageURL1, *bulkEnrichments[token1.ID].ImageURL)
+		assert.Equal(t, name1, *bulkEnrichments[token1.ID].Name)
+		assert.Equal(t, desc1, *bulkEnrichments[token1.ID].Description)
+
+		// Verify token2 enrichment
+		assert.NotNil(t, bulkEnrichments[token2.ID])
+		assert.Equal(t, schema.VendorFXHash, bulkEnrichments[token2.ID].Vendor)
+		assert.Equal(t, imageURL2, *bulkEnrichments[token2.ID].ImageURL)
+		assert.Equal(t, name2, *bulkEnrichments[token2.ID].Name)
+
+		// Verify token3 has no enrichment
+		assert.NotContains(t, bulkEnrichments, token3.ID)
+	})
+
+	t.Run("returns empty map for empty token IDs", func(t *testing.T) {
+		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{})
+		require.NoError(t, err)
+		assert.Empty(t, bulkEnrichments)
+	})
+
+	t.Run("handles non-existent token IDs", func(t *testing.T) {
+		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{999998, 999999})
+		require.NoError(t, err)
+		assert.Empty(t, bulkEnrichments)
+	})
+
+	t.Run("handles mix of existing and non-existing tokens", func(t *testing.T) {
+		// Create a token with enrichment
+		tokenInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xenrich4444444444444444444444444444444444444",
+			"4",
+			"0xowner4111111111111111111111111111111111111",
+		)
+		err := store.CreateTokenMint(ctx, tokenInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		imageURL := "https://example.com/image4.png"
+		enrichment := CreateEnrichmentSourceInput{
+			TokenID:    token.ID,
+			Vendor:     schema.VendorFeralFile,
+			VendorJSON: []byte(`{"test":"data"}`),
+			ImageURL:   &imageURL,
+		}
+		err = store.UpsertEnrichmentSource(ctx, enrichment)
+		require.NoError(t, err)
+
+		// Query with mix of existing and non-existing IDs
+		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{token.ID, 999997})
+		require.NoError(t, err)
+
+		// Should only have enrichment for the real token
+		assert.Len(t, bulkEnrichments, 1)
+		assert.NotNil(t, bulkEnrichments[token.ID])
+		assert.Equal(t, schema.VendorFeralFile, bulkEnrichments[token.ID].Vendor)
+		assert.NotContains(t, bulkEnrichments, uint64(999997))
+	})
+}
+
+// =============================================================================
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
 
@@ -2500,6 +2959,9 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"WatchedAddresses", testWatchedAddresses},
 		{"KeyValueStore", testKeyValueStore},
 		{"MediaAssets", testMediaAssets},
+		{"GetTokenOwnersBulk", testGetTokenOwnersBulk},
+		{"GetTokenProvenanceEventsBulk", testGetTokenProvenanceEventsBulk},
+		{"GetEnrichmentSourcesByTokenIDs", testGetEnrichmentSourcesByTokenIDs},
 	}
 
 	for _, tt := range tests {

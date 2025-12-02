@@ -137,33 +137,153 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get tokens: %v", err))
 	}
 
-	// Map to DTOs
+	// Collect token IDs for bulk queries
+	tokenIDsForBulk := make([]uint64, len(results))
+	for i, result := range results {
+		tokenIDsForBulk[i] = result.Token.ID
+	}
+
+	// Fetch bulk data for expansions
+	var bulkOwners map[uint64][]schema.Balance
+	var bulkOwnersTotals map[uint64]uint64
+	var bulkProvenanceEvents map[uint64][]schema.ProvenanceEvent
+	var bulkProvenanceTotals map[uint64]uint64
+	var bulkEnrichmentSources map[uint64]*schema.EnrichmentSource
+	var allMediaSourceURLs []string
+
+	for _, exp := range expand {
+		switch exp {
+		case types.ExpansionOwners:
+			// Default limit for bulk owner queries
+			bulkOwners, bulkOwnersTotals, err = e.store.GetTokenOwnersBulk(ctx, tokenIDsForBulk, int(constants.DEFAULT_OWNERS_LIMIT))
+			if err != nil {
+				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get owners: %v", err))
+			}
+		case types.ExpansionProvenanceEvents:
+			// Default limit for bulk provenance queries
+			bulkProvenanceEvents, bulkProvenanceTotals, err = e.store.GetTokenProvenanceEventsBulk(ctx, tokenIDsForBulk, int(constants.DEFAULT_PROVENANCE_EVENTS_LIMIT))
+			if err != nil {
+				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance events: %v", err))
+			}
+		case types.ExpansionEnrichmentSource, types.ExpansionEnrichmentSourceMediaAsset:
+			if bulkEnrichmentSources == nil { // Avoid fetching twice if both expansions are requested
+				bulkEnrichmentSources, err = e.store.GetEnrichmentSourcesByTokenIDs(ctx, tokenIDsForBulk)
+				if err != nil {
+					return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get enrichment sources: %v", err))
+				}
+			}
+		}
+	}
+
+	// Collect all source URLs for media assets if needed
+	for _, exp := range expand {
+		if exp == types.ExpansionMetadataMediaAsset || exp == types.ExpansionEnrichmentSourceMediaAsset {
+			for _, result := range results {
+				if exp == types.ExpansionMetadataMediaAsset && result.Metadata != nil {
+					if !internalTypes.StringNilOrEmpty(result.Metadata.ImageURL) {
+						allMediaSourceURLs = append(allMediaSourceURLs, *result.Metadata.ImageURL)
+					}
+					if !internalTypes.StringNilOrEmpty(result.Metadata.AnimationURL) {
+						allMediaSourceURLs = append(allMediaSourceURLs, *result.Metadata.AnimationURL)
+					}
+				}
+				if exp == types.ExpansionEnrichmentSourceMediaAsset {
+					if enrichment, ok := bulkEnrichmentSources[result.Token.ID]; ok && enrichment != nil {
+						if !internalTypes.StringNilOrEmpty(enrichment.ImageURL) {
+							allMediaSourceURLs = append(allMediaSourceURLs, *enrichment.ImageURL)
+						}
+						if !internalTypes.StringNilOrEmpty(enrichment.AnimationURL) {
+							allMediaSourceURLs = append(allMediaSourceURLs, *enrichment.AnimationURL)
+						}
+					}
+				}
+			}
+			break // Only need to collect once
+		}
+	}
+
+	// Fetch media assets in bulk if needed
+	var mediaAssetsMap map[string]schema.MediaAsset
+	if len(allMediaSourceURLs) > 0 {
+		mediaAssetsList, err := e.store.GetMediaAssetsBySourceURLs(ctx, allMediaSourceURLs)
+		if err != nil {
+			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media assets: %v", err))
+		}
+		// Create map for fast lookup
+		mediaAssetsMap = make(map[string]schema.MediaAsset)
+		for _, asset := range mediaAssetsList {
+			mediaAssetsMap[asset.SourceURL] = asset
+		}
+	}
+
+	// Map to DTOs and apply bulk data
 	tokenDTOs := make([]dto.TokenResponse, len(results))
 	for i, result := range results {
 		tokenDTO := dto.MapTokenToDTO(result.Token, result.Metadata)
 
-		// Handle expansions for each token
+		// Apply bulk expansions
 		for _, exp := range expand {
 			switch exp {
 			case types.ExpansionOwners:
-				if err := e.expandOwners(ctx, tokenDTO, result.Token.ID, ownersLimit, ownersOffset); err != nil {
-					return nil, err
+				if owners, ok := bulkOwners[result.Token.ID]; ok {
+					ownerDTOs := make([]dto.OwnerResponse, len(owners))
+					for j := range owners {
+						ownerDTOs[j] = *dto.MapOwnerToDTO(&owners[j])
+					}
+					total := bulkOwnersTotals[result.Token.ID] // Get actual total from DB
+					tokenDTO.Owners = &dto.PaginatedOwners{
+						Owners: ownerDTOs,
+						Offset: nil, // No pagination in bulk queries
+						Total:  total,
+					}
 				}
 			case types.ExpansionProvenanceEvents:
-				if err := e.expandProvenanceEvents(ctx, tokenDTO, result.Token.ID, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder); err != nil {
-					return nil, err
+				if events, ok := bulkProvenanceEvents[result.Token.ID]; ok {
+					eventDTOs := make([]dto.ProvenanceEventResponse, len(events))
+					for j := range events {
+						eventDTOs[j] = *dto.MapProvenanceEventToDTO(&events[j])
+					}
+					total := bulkProvenanceTotals[result.Token.ID] // Get actual total from DB
+					tokenDTO.ProvenanceEvents = &dto.PaginatedProvenanceEvents{
+						Events: eventDTOs,
+						Offset: nil, // No pagination in bulk queries
+						Total:  total,
+					}
 				}
 			case types.ExpansionEnrichmentSource:
-				if err := e.expandEnrichmentSource(ctx, tokenDTO, result.Token.ID); err != nil {
-					return nil, err
+				if enrichment, ok := bulkEnrichmentSources[result.Token.ID]; ok && enrichment != nil {
+					tokenDTO.EnrichmentSource = dto.MapEnrichmentSourceToDTO(enrichment)
 				}
 			case types.ExpansionMetadataMediaAsset:
-				if err := e.expandMetadataMediaAssets(ctx, tokenDTO); err != nil {
-					return nil, err
+				if result.Metadata != nil {
+					var mediaDTOs []dto.MediaAssetResponse
+					if !internalTypes.StringNilOrEmpty(result.Metadata.ImageURL) {
+						if asset, ok := mediaAssetsMap[*result.Metadata.ImageURL]; ok {
+							mediaDTOs = append(mediaDTOs, *dto.MapMediaAssetToDTO(&asset))
+						}
+					}
+					if !internalTypes.StringNilOrEmpty(result.Metadata.AnimationURL) {
+						if asset, ok := mediaAssetsMap[*result.Metadata.AnimationURL]; ok {
+							mediaDTOs = append(mediaDTOs, *dto.MapMediaAssetToDTO(&asset))
+						}
+					}
+					tokenDTO.MetadataMediaAssets = mediaDTOs
 				}
 			case types.ExpansionEnrichmentSourceMediaAsset:
-				if err := e.expandEnrichmentSourceMediaAssets(ctx, tokenDTO); err != nil {
-					return nil, err
+				if enrichment, ok := bulkEnrichmentSources[result.Token.ID]; ok && enrichment != nil {
+					tokenDTO.EnrichmentSource = dto.MapEnrichmentSourceToDTO(enrichment)
+					var mediaDTOs []dto.MediaAssetResponse
+					if !internalTypes.StringNilOrEmpty(enrichment.ImageURL) {
+						if asset, ok := mediaAssetsMap[*enrichment.ImageURL]; ok {
+							mediaDTOs = append(mediaDTOs, *dto.MapMediaAssetToDTO(&asset))
+						}
+					}
+					if !internalTypes.StringNilOrEmpty(enrichment.AnimationURL) {
+						if asset, ok := mediaAssetsMap[*enrichment.AnimationURL]; ok {
+							mediaDTOs = append(mediaDTOs, *dto.MapMediaAssetToDTO(&asset))
+						}
+					}
+					tokenDTO.EnrichmentSourceMediaAssets = mediaDTOs
 				}
 			}
 		}

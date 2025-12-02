@@ -361,6 +361,24 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", *provenanceEventsOrder))
 	}
 
+	// BACKWARD COMPATIBILITY: Cap deprecated pagination parameters to default values for bulk queries
+	// These parameters are deprecated for bulk token queries but kept for backward compatibility.
+	// They are silently overridden to prevent N+1 query issues while not breaking existing clients.
+	// TODO: Remove these parameters entirely in a future major version after sufficient deprecation period.
+	for _, exp := range expansions {
+		if exp == types.ExpansionOwners {
+			// Override to nil to use defaults in executor (will use DEFAULT_OWNERS_LIMIT)
+			ownersLimit = nil
+			ownersOffset = nil
+		}
+		if exp == types.ExpansionProvenanceEvents {
+			// Override to nil to use defaults in executor (will use DEFAULT_PROVENANCE_EVENTS_LIMIT)
+			provenanceEventsLimit = nil
+			provenanceEventsOffset = nil
+			provenanceEventsOrder = nil
+		}
+	}
+
 	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
 }
 
