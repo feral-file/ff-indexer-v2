@@ -1672,7 +1672,7 @@ func testGetChanges(t *testing.T, store Store) {
 		}
 	})
 
-	t.Run("order by ID ascending", func(t *testing.T) {
+	t.Run("order by changed_at ascending", func(t *testing.T) {
 		// Get changes (always ascending by ID)
 		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Limit: 10,
@@ -1680,13 +1680,31 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 		require.NotEmpty(t, changes)
 
-		// Verify ascending order by ID
+		// Verify ascending order by changed_at
 		for i := 1; i < len(changes); i++ {
-			assert.Greater(t, changes[i].ID, changes[i-1].ID, "IDs should always be in ascending order")
+			assert.True(t, changes[i].ChangedAt.After(changes[i-1].ChangedAt) || changes[i].ChangedAt.Equal(changes[i-1].ChangedAt), "changed_at should always be in ascending order")
 		}
 	})
 
 	t.Run("pagination", func(t *testing.T) {
+		owner := "0xchangespagination00000000000000000000001"
+
+		// Create test data - at least 5 tokens to test pagination
+		for i := range 5 {
+			mintInput := buildTestTokenMint(
+				domain.ChainEthereumMainnet,
+				domain.StandardERC721,
+				fmt.Sprintf("0xpagination%042d", i),
+				"1",
+				owner,
+			)
+			// Adjust timestamp to ensure different changed_at times
+			mintInput.ProvenanceEvent.Timestamp = time.Now().UTC().Add(time.Duration(i) * time.Minute)
+			err := store.CreateTokenMint(ctx, mintInput)
+			require.NoError(t, err)
+			time.Sleep(10 * time.Millisecond) // Small delay to ensure different created_at
+		}
+
 		// Get first page using cursor-based pagination (no anchor)
 		page1, total1, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Limit: 2,
@@ -1694,6 +1712,11 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total1, uint64(2))
 		require.Len(t, page1, 2)
+
+		// Verify first page is ordered by changed_at ASC, id ASC
+		assert.True(t, page1[1].ChangedAt.After(page1[0].ChangedAt) ||
+			(page1[1].ChangedAt.Equal(page1[0].ChangedAt) && page1[1].ID > page1[0].ID),
+			"First page should be ordered by changed_at ASC, id ASC")
 
 		// Get second page using anchor from last item of first page
 		anchorID := page1[1].ID
@@ -1704,10 +1727,17 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total2, uint64(2))
 
-		// Ensure pages don't overlap and are sequential
+		// Ensure pages don't overlap - anchor filters by ID
 		assert.NotEqual(t, page1[0].ID, page2[0].ID)
 		assert.NotEqual(t, page1[1].ID, page2[0].ID)
-		assert.Greater(t, page2[0].ID, page1[1].ID, "Second page should start after anchor")
+		assert.Greater(t, page2[0].ID, anchorID, "Second page should start after anchor ID")
+
+		// Verify second page is also ordered by changed_at ASC, id ASC
+		if len(page2) >= 2 {
+			assert.True(t, page2[1].ChangedAt.After(page2[0].ChangedAt) ||
+				(page2[1].ChangedAt.Equal(page2[0].ChangedAt) && page2[1].ID > page2[0].ID),
+				"Second page should be ordered by changed_at ASC, id ASC")
+		}
 	})
 
 	t.Run("order ascending and descending", func(t *testing.T) {

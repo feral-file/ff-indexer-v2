@@ -1463,7 +1463,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 			query = query.Order("changed_at ASC, id ASC")
 		}
 	} else {
-		query = query.Order("id ASC, changed_at ASC")
+		query = query.Order("changed_at ASC, id ASC")
 	}
 
 	// Apply pagination
