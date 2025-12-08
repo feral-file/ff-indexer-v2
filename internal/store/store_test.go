@@ -1028,7 +1028,7 @@ func testGetTokensByIDs(t *testing.T, store Store) {
 func testGetTokensByFilter(t *testing.T, store Store) {
 	ctx := context.Background()
 
-	// Setup: Create multiple tokens
+	// Setup: Create multiple tokens with metadata
 	setupTokensForFilter := func(t *testing.T) {
 		owner1 := "0xfilter100000000000000000000000000000000001"
 		owner2 := "0xfilter200000000000000000000000000000000002"
@@ -1040,8 +1040,23 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			buildTestTokenMint(domain.ChainEthereumSepolia, domain.StandardERC721, "0xcontract3", "1", owner1),
 		}
 
-		for _, token := range tokens {
-			err := store.CreateTokenMint(ctx, token)
+		for _, tokenInput := range tokens {
+			err := store.CreateTokenMint(ctx, tokenInput)
+			require.NoError(t, err)
+
+			// Add metadata to each token so they appear in queries by default
+			token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+			require.NoError(t, err)
+			require.NotNil(t, token)
+
+			now := time.Now().UTC()
+			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID:         token.ID,
+				OriginJSON:      datatypes.JSON(`{"name":"test"}`),
+				LatestJSON:      datatypes.JSON(`{"name":"test"}`),
+				EnrichmentLevel: schema.EnrichmentLevelNone,
+				LastRefreshedAt: &now,
+			})
 			require.NoError(t, err)
 		}
 	}
@@ -1113,6 +1128,54 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), total)
 		assert.Equal(t, 0, len(results))
+	})
+
+	t.Run("exclude tokens without metadata by default", func(t *testing.T) {
+		// Create a token without metadata
+		tokenWithoutMeta := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xnometa", "1", "0xowner")
+		err := store.CreateTokenMint(ctx, tokenWithoutMeta)
+		require.NoError(t, err)
+
+		// Create a token with metadata
+		tokenWithMeta := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xwithmeta", "1", "0xowner")
+		err = store.CreateTokenMint(ctx, tokenWithMeta)
+		require.NoError(t, err)
+
+		// Add metadata to the second token
+		token, err := store.GetTokenByTokenCID(ctx, tokenWithMeta.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token)
+
+		now := time.Now().UTC()
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			OriginJSON:      datatypes.JSON(`{"name":"test"}`),
+			LatestJSON:      datatypes.JSON(`{"name":"test"}`),
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: &now,
+		})
+		require.NoError(t, err)
+
+		// Default behavior: exclude tokens without metadata
+		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ContractAddresses: []string{"0xnometa", "0xwithmeta"},
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), total) // Only token with metadata
+		assert.Equal(t, 1, len(results))
+		assert.Equal(t, "0xwithmeta", results[0].Token.ContractAddress)
+		assert.NotNil(t, results[0].Metadata)
+
+		// Include broken: include tokens without metadata
+		resultsWithBroken, totalWithBroken, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ContractAddresses: []string{"0xnometa", "0xwithmeta"},
+			IncludeBroken:     true,
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), totalWithBroken) // Both tokens
+		assert.Equal(t, 2, len(resultsWithBroken))
 	})
 }
 

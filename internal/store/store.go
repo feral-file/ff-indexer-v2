@@ -122,6 +122,7 @@ type TokenQueryFilter struct {
 	TokenNumbers      []string
 	TokenIDs          []uint64
 	TokenCIDs         []string
+	IncludeBroken     bool // Include tokens with broken metadata
 	Limit             int
 	Offset            uint64 // Offset for pagination
 }

@@ -59,6 +59,7 @@ type ListTokensQueryParams struct {
 	TokenNumbers      []string       `form:"token_number"`
 	TokenIDs          []uint64       `form:"token_id"`
 	TokenCIDs         []string       `form:"token_cid"`
+	IncludeBroken     bool           `form:"include_broken,default=false"` // Include tokens with broken metadata (no metadata record)
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`

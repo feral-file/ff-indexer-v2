@@ -297,6 +297,13 @@ paths:
           style: form
           explode: true
           example: ["eip155:1:erc721:0xabc123:1234"]
+        - name: include_broken
+          in: query
+          description: Include tokens with broken metadata (no metadata record). Default is false - only tokens with metadata are returned.
+          schema:
+            type: boolean
+            default: false
+          example: false
         - name: limit
           in: query
           description: Maximum number of tokens to return (max 255)
