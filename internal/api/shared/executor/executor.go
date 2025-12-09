@@ -25,7 +25,7 @@ import (
 
 // Executor is the interface for the API executor
 //
-//go:generate mockgen -source=executor.go -destination=../../../mocks/mock_api_executor.go -package=mocks -mock_names=Executor=MockAPIExecutor
+//go:generate mockgen -source=executor.go -destination=../../../mocks/api_executor.go -package=mocks -mock_names=Executor=MockAPIExecutor
 type Executor interface {
 	// GetToken retrieves a single token by its CID with optional expansions
 	GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)

@@ -22,12 +22,11 @@ type IndexTokenWorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
-	env         *testsuite.TestWorkflowEnvironment
-	ctrl        *gomock.Controller
-	executor    *mocks.MockExecutor
-	blacklist   *mocks.MockBlacklistRegistry
-	workerCore  workflows.WorkerCore
-	workerMedia workflows.WorkerMedia
+	env        *testsuite.TestWorkflowEnvironment
+	ctrl       *gomock.Controller
+	executor   *mocks.MockCoreExecutor
+	blacklist  *mocks.MockBlacklistRegistry
+	workerCore workflows.WorkerCore
 }
 
 // SetupTest is called before each test
@@ -39,7 +38,7 @@ func (s *IndexTokenWorkflowTestSuite) SetupTest() {
 
 	s.env = s.NewTestWorkflowEnvironment()
 	s.ctrl = gomock.NewController(s.T())
-	s.executor = mocks.NewMockExecutor(s.ctrl)
+	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
@@ -48,7 +47,6 @@ func (s *IndexTokenWorkflowTestSuite) SetupTest() {
 		TezosTokenSweepStartBlock:    0,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
-	s.workerMedia = workflows.NewWorkerMedia(s.executor)
 
 	// Register activities with the test environment
 	s.env.RegisterActivity(s.executor.CreateTokenMint)

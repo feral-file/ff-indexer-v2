@@ -1,3 +1,5 @@
+//go:build cgo
+
 package main
 
 import (
@@ -22,11 +24,12 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/downloader"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
+	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
-	"github.com/feral-file/ff-indexer-v2/internal/workflows"
+	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
 
 var (
@@ -82,9 +85,11 @@ func main() {
 	dataStore := store.NewPGStore(db)
 
 	// Initialize adapters
+	ioAdapter := adapter.NewIO()
 	jsonAdapter := adapter.NewJSON()
-	clockAdapter := adapter.NewClock()
 	fileSystem := adapter.NewFileSystem()
+	resvgClient := adapter.NewResvgClient()
+	imageEncoder := adapter.NewImageEncoder()
 
 	// Initialize HTTP client
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
@@ -117,21 +122,16 @@ func main() {
 		zap.String("accountID", cfg.Cloudflare.AccountID),
 	)
 
-	// Initialize media processor
-	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, mediaProvider, dataStore, cfg.MaxStaticImageSize, cfg.MaxAnimatedImageSize, cfg.MaxVideoSize)
+	// Initialize SVG rasterizer with adapters and config
+	svgRasterizer := rasterizer.NewRasterizer(resvgClient, imageEncoder, &rasterizer.Config{
+		Width: cfg.Rasterizer.Width,
+	})
 
-	// Initialize executor for activities (minimal setup for media processing only)
-	// We pass nil for unused dependencies since worker-media only handles media activities
-	executor := workflows.NewExecutor(
-		dataStore,
-		nil, // metadataResolver - not needed for media worker
-		nil, // metadataEnhancer - not needed for media worker
-		nil, // ethereumClient - not needed for media worker
-		nil, // tzktClient - not needed for media worker
-		mediaProcessor,
-		jsonAdapter,
-		clockAdapter,
-	)
+	// Initialize media processor
+	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, cfg.MaxStaticImageSize, cfg.MaxAnimatedImageSize, cfg.MaxVideoSize)
+
+	// Initialize media executor for media processing activities
+	mediaExecutor := workflowsmedia.NewExecutor(dataStore, mediaProcessor)
 
 	// Connect to Temporal with logger integration
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
@@ -162,16 +162,16 @@ func main() {
 			},
 		})
 
-	// Create worker media instance
-	workerMedia := workflows.NewWorkerMedia(executor)
+	// Create media worker instance
+	mediaWorker := workflowsmedia.NewWorker(mediaExecutor)
 
 	// Register media workflows
-	temporalWorker.RegisterWorkflow(workerMedia.IndexMediaWorkflow)
-	temporalWorker.RegisterWorkflow(workerMedia.IndexMultipleMediaWorkflow)
+	temporalWorker.RegisterWorkflow(mediaWorker.IndexMediaWorkflow)
+	temporalWorker.RegisterWorkflow(mediaWorker.IndexMultipleMediaWorkflow)
 	logger.InfoCtx(ctx, "Registered media workflows")
 
 	// Register media processing activity
-	temporalWorker.RegisterActivity(executor.IndexMediaFile)
+	temporalWorker.RegisterActivity(mediaExecutor.IndexMediaFile)
 	logger.InfoCtx(ctx, "Registered media processing activity")
 
 	// Start the worker

@@ -24,6 +24,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.39.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.39.0
 	github.com/vektah/gqlparser/v2 v2.5.30
+	github.com/xo/resvg v0.6.0
 	go.temporal.io/api v1.54.0
 	go.temporal.io/sdk v1.38.0
 	go.uber.org/zap v1.27.0

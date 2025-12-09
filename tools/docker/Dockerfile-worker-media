@@ -4,6 +4,15 @@ FROM golang:1.24-alpine AS builder
 # Set working directory
 WORKDIR /build
 
+# Install build dependencies for CGO
+RUN apk add --no-cache \
+    build-base \
+    musl-dev
+
+# Copy resvg library and headers from pre-built image
+COPY --from=feralfile/resvg-builder:v0.45.1 /usr/local/lib/libresvg.a /usr/local/lib/
+COPY --from=feralfile/resvg-builder:v0.45.1 /usr/local/include/resvg.h /usr/local/include/
+
 # Copy go mod files
 COPY go.mod go.sum ./
 RUN go mod download
@@ -11,14 +20,21 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 go build -ldflags="-w -s" -o /build/bin/worker-media ./cmd/worker-media
+# Build the application with CGO enabled
+ENV CGO_ENABLED=1
+ENV CGO_LDFLAGS="-L/usr/local/lib"
+ENV CGO_CFLAGS="-I/usr/local/include"
+RUN go build -ldflags="-w -s" -o /build/bin/worker-media ./cmd/worker-media
 
 # Runtime stage
 FROM alpine:latest
 
-# Install runtime dependencies (ca-certificates for HTTPS)
-RUN apk --no-cache add ca-certificates
+# Install runtime dependencies
+# - ca-certificates: for HTTPS
+# - libgcc: required by statically linked Go binary with CGO
+RUN apk add --no-cache \
+    ca-certificates \
+    libgcc
 
 # Create non-root user
 RUN addgroup -g 1000 appuser && \

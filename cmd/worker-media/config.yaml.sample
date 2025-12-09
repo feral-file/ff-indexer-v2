@@ -40,6 +40,10 @@ cloudflare:
   account_id: ""
   api_token: ""
 
+# SVG Rasterizer Configuration
+rasterizer:
+  width: 2048      # Target width for SVG rasterization (height auto-calculated with best fit, 0 = use SVG natural size)
+
 max_static_image_size: 10485760      # 10MB
 max_animated_image_size: 52428800    # 50MB
 max_video_size: 314572800            # 300MB

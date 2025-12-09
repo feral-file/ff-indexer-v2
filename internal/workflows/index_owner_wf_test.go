@@ -25,7 +25,7 @@ type IndexOwnerWorkflowTestSuite struct {
 
 	env        *testsuite.TestWorkflowEnvironment
 	ctrl       *gomock.Controller
-	executor   *mocks.MockExecutor
+	executor   *mocks.MockCoreExecutor
 	blacklist  *mocks.MockBlacklistRegistry
 	workerCore workflows.WorkerCore
 }
@@ -39,7 +39,7 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 
 	s.env = s.NewTestWorkflowEnvironment()
 	s.ctrl = gomock.NewController(s.T())
-	s.executor = mocks.NewMockExecutor(s.ctrl)
+	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,

@@ -9,7 +9,7 @@ import (
 
 // WorkerCore defines the interface for processing blockchain events
 //
-//go:generate mockgen -source=worker.go -destination=../mocks/worker_core.go -package=mocks -mock_names=WorkerCore=MockWorkerCore
+//go:generate mockgen -source=worker.go -destination=../mocks/worker_core.go -package=mocks -mock_names=WorkerCore=MockCoreWorker
 type WorkerCore interface {
 	// IndexTokenMint processes a token mint event
 	IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error
@@ -54,15 +54,6 @@ type WorkerCore interface {
 	IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID) error
 }
 
-// WorkerMedia defines the interface for processing media events
-type WorkerMedia interface {
-	// IndexMediaWorkflow indexes a single media file
-	IndexMediaWorkflow(ctx workflow.Context, url string) error
-
-	// IndexMultipleMediaWorkflow indexes multiple media files
-	IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string) error
-}
-
 type WorkerCoreConfig struct {
 	// TezosChainID is the chain ID for the Tezos blockchain
 	TezosChainID domain.Chain
@@ -89,17 +80,5 @@ func NewWorkerCore(executor Executor, config WorkerCoreConfig, blacklist registr
 		executor:  executor,
 		config:    config,
 		blacklist: blacklist,
-	}
-}
-
-// workerMedia is the concrete implementation of WorkerMedia
-type workerMedia struct {
-	executor Executor
-}
-
-// NewWorkerMedia creates a new worker media instance
-func NewWorkerMedia(executor Executor) WorkerMedia {
-	return &workerMedia{
-		executor: executor,
 	}
 }

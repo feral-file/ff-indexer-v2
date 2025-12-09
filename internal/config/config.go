@@ -167,12 +167,20 @@ type CloudflareConfig struct {
 }
 
 // WorkerMediaConfig holds configuration for worker-media
+// RasterizerConfig holds SVG rasterizer configuration
+type RasterizerConfig struct {
+	// Width is the target width for SVG rasterization (0 = use SVG natural size)
+	// Height is automatically calculated to maintain aspect ratio using ScaleBestFit
+	Width int `mapstructure:"width"`
+}
+
 type WorkerMediaConfig struct {
 	BaseConfig           `mapstructure:",squash"`
 	Database             DatabaseConfig   `mapstructure:"database"`
 	Temporal             TemporalConfig   `mapstructure:"temporal"`
 	URI                  URIConfig        `mapstructure:"uri"`
 	Cloudflare           CloudflareConfig `mapstructure:"cloudflare"`
+	Rasterizer           RasterizerConfig `mapstructure:"rasterizer"`
 	MaxStaticImageSize   int64            `mapstructure:"max_static_image_size"`
 	MaxAnimatedImageSize int64            `mapstructure:"max_animated_image_size"`
 	MaxVideoSize         int64            `mapstructure:"max_video_size"`
@@ -355,6 +363,7 @@ func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfi
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
+	v.SetDefault("rasterizer.width", 2048)
 	v.SetDefault("max_static_image_size", 10*1024*1024)   // 10MB
 	v.SetDefault("max_animated_image_size", 50*1024*1024) // 50MB
 	v.SetDefault("max_video_size", 300*1024*1024)         // 300MB
@@ -474,6 +483,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"max_static_image_size",
 		"max_animated_image_size",
 		"max_video_size",
+		"rasterizer.width",
 		// Internal Worker config
 		"worker.pool_size",
 		"worker.queue_size",

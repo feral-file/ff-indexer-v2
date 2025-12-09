@@ -510,7 +510,7 @@ func TestBridge_ProcessMessage_Success_MintEvent(t *testing.T) {
 	assert.NotNil(t, b)
 
 	// Create a mock message
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -635,7 +635,7 @@ func TestBridge_ProcessMessage_Success_TransferEvent(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	fromAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEa"
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
@@ -742,7 +742,7 @@ func TestBridge_ProcessMessage_Success_BurnEvent(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	fromAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -850,7 +850,7 @@ func TestBridge_ProcessMessage_InvalidJSON(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	invalidJSON := []byte(`{invalid json}`)
 
 	msg.
@@ -930,7 +930,7 @@ func TestBridge_ProcessMessage_BlacklistedToken(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -1034,7 +1034,7 @@ func TestBridge_ProcessMessage_TokenNotIndexed_AddressNotWatched(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -1149,7 +1149,7 @@ func TestBridge_ProcessMessage_TokenNotIndexed_AddressWatched(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -1270,7 +1270,7 @@ func TestBridge_ProcessMessage_StoreError_GetToken(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -1378,7 +1378,7 @@ func TestBridge_ProcessMessage_StoreError_IsAddressWatched(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -1491,7 +1491,7 @@ func TestBridge_ProcessMessage_WorkflowError(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -1603,7 +1603,7 @@ func TestBridge_ProcessMessage_Success_MetadataUpdateEvent(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
 		Standard:        domain.StandardERC721,
@@ -1712,7 +1712,7 @@ func TestBridge_ProcessMessage_AckError(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -1822,7 +1822,7 @@ func TestBridge_ProcessMessage_NakError(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	toAddr := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -1929,7 +1929,7 @@ func TestBridge_ProcessMessage_TermError(t *testing.T) {
 	b, err := bridge.NewBridge(ctx, config, mocks.natsJS, mocks.store, mocks.orchestrator, mocks.json, mocks.blacklist)
 	assert.NoError(t, err)
 
-	msg := mockspkg.NewMockJetStreamMessage(mocks.ctrl)
+	msg := mockspkg.NewMockMessage(mocks.ctrl)
 	invalidJSON := []byte(`{invalid json}`)
 
 	msg.

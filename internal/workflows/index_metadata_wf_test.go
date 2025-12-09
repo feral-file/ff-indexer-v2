@@ -17,6 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
+	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
 
 // IndexMetadataWorkflowTestSuite is the test suite for metadata workflow tests
@@ -26,10 +27,10 @@ type IndexMetadataWorkflowTestSuite struct {
 
 	env         *testsuite.TestWorkflowEnvironment
 	ctrl        *gomock.Controller
-	executor    *mocks.MockExecutor
+	executor    *mocks.MockCoreExecutor
 	blacklist   *mocks.MockBlacklistRegistry
 	workerCore  workflows.WorkerCore
-	workerMedia workflows.WorkerMedia
+	workerMedia workflowsmedia.Worker
 }
 
 // SetupTest is called before each test
@@ -41,7 +42,7 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 
 	s.env = s.NewTestWorkflowEnvironment()
 	s.ctrl = gomock.NewController(s.T())
-	s.executor = mocks.NewMockExecutor(s.ctrl)
+	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
@@ -50,7 +51,7 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 		TezosTokenSweepStartBlock:    0,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
-	s.workerMedia = workflows.NewWorkerMedia(s.executor)
+	s.workerMedia = workflowsmedia.NewWorker(mocks.NewMockMediaExecutor(s.ctrl))
 
 	// Register activities with the test environment
 	s.env.RegisterActivity(s.executor.CreateMetadataUpdate)

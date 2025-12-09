@@ -3,6 +3,7 @@ package cloudflare
 import (
 	"context"
 	"fmt"
+	"io"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -60,9 +61,27 @@ func NewMediaProvider(cfClient adapter.CloudflareClient, config *Config, dl down
 	}
 }
 
-// UploadImage uploads an image to Cloudflare Images from a URL
-func (p *mediaProvider) UploadImage(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
-	return p.uploadImage(ctx, sourceURL, metadata)
+// UploadImageFromURL uploads an image to Cloudflare Images from a URL
+func (p *mediaProvider) UploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+	return p.uploadImageFromURLInternal(ctx, sourceURL, metadata)
+}
+
+// UploadImageFromReader uploads an image to Cloudflare Images from an io.Reader
+func (p *mediaProvider) UploadImageFromReader(ctx context.Context, reader io.Reader, filename, contentType string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+	logger.InfoCtx(ctx, "Uploading image from reader to Cloudflare Images",
+		zap.String("filename", filename),
+		zap.String("contentType", contentType),
+		zap.Any("metadata", metadata),
+	)
+
+	// Upload directly from the reader
+	image, err := p.uploadImageUsingReader(ctx, reader, filename, metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload image from reader: %w", err)
+	}
+
+	// Convert variants to result format
+	return p.buildImageUploadResult(ctx, image), nil
 }
 
 // UploadVideo uploads a video to Cloudflare Stream from a URL
@@ -70,8 +89,9 @@ func (p *mediaProvider) UploadVideo(ctx context.Context, sourceURL string, metad
 	return p.uploadVideo(ctx, sourceURL, metadata)
 }
 
-// uploadImage uploads an image to Cloudflare Images from a URL
-func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+// uploadImageFromURLInternal uploads an image to Cloudflare Images from a URL
+// with automatic fallback to download-and-upload if URL-based upload fails
+func (p *mediaProvider) uploadImageFromURLInternal(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
 	// Validate source URL is a valid image URL
 	if !types.IsValidURL(sourceURL) {
 		logger.WarnCtx(ctx, "Invalid image URL", zap.String("url", sourceURL))
@@ -87,7 +107,7 @@ func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metad
 	logger.InfoCtx(ctx, "Uploading to Cloudflare Images", zap.String("url", sourceURL), zap.Any("metadata", metadata))
 
 	// Try URL-based upload first
-	image, err := p.uploadImageFromURL(ctx, sourceURL, metadata)
+	image, err := p.uploadImageDirectlyFromURL(ctx, sourceURL, metadata)
 	if err != nil {
 		logger.WarnCtx(ctx, "URL-based image upload failed, trying download fallback",
 			zap.String("url", sourceURL),
@@ -95,7 +115,7 @@ func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metad
 		)
 
 		// Fallback to download and upload from reader
-		image, err = p.uploadImageFromReader(ctx, sourceURL, metadata)
+		image, err = p.uploadImageFromURLWithDownloadFallback(ctx, sourceURL, metadata)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upload image: %w", err)
 		}
@@ -105,8 +125,9 @@ func (p *mediaProvider) uploadImage(ctx context.Context, sourceURL string, metad
 	return p.buildImageUploadResult(ctx, image), nil
 }
 
-// uploadImageFromURL uploads an image to Cloudflare using URL-based upload
-func (p *mediaProvider) uploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*cloudflare.Image, error) {
+// uploadImageDirectlyFromURL uploads an image to Cloudflare using URL-based upload
+// (without downloading - lets Cloudflare fetch the URL)
+func (p *mediaProvider) uploadImageDirectlyFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*cloudflare.Image, error) {
 	params := cloudflare.UploadImageParams{
 		URL:      sourceURL,
 		Metadata: metadata,
@@ -125,8 +146,9 @@ func (p *mediaProvider) uploadImageFromURL(ctx context.Context, sourceURL string
 	return &image, nil
 }
 
-// uploadImageFromReader downloads and uploads an image using io.Reader
-func (p *mediaProvider) uploadImageFromReader(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*cloudflare.Image, error) {
+// uploadImageFromURLWithDownloadFallback downloads an image from URL and uploads using io.Reader
+// This is used as a fallback when direct URL-based upload fails
+func (p *mediaProvider) uploadImageFromURLWithDownloadFallback(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*cloudflare.Image, error) {
 	// Download the file
 	downloadResult, err := p.downloader.Download(ctx, sourceURL)
 	if err != nil {
@@ -146,9 +168,24 @@ func (p *mediaProvider) uploadImageFromReader(ctx context.Context, sourceURL str
 		filename = fmt.Sprintf("%s%s", filename, ext)
 	}
 
-	// Upload using io.Reader (streaming, no disk/mem copy)
+	// Upload using the reader
+	return p.uploadImageUsingReader(ctx, downloadResult.Reader(), filename, metadata)
+}
+
+// uploadImageUsingReader uploads an image to Cloudflare using an io.Reader
+// This is a low-level helper used by both the public UploadImageFromReader method
+// and the download fallback mechanism
+func (p *mediaProvider) uploadImageUsingReader(ctx context.Context, reader io.Reader, filename string, metadata map[string]interface{}) (*cloudflare.Image, error) {
+	// Wrap reader with NopCloser if it doesn't implement io.ReadCloser
+	var readCloser io.ReadCloser
+	if rc, ok := reader.(io.ReadCloser); ok {
+		readCloser = rc
+	} else {
+		readCloser = io.NopCloser(reader)
+	}
+
 	params := cloudflare.UploadImageParams{
-		File:     downloadResult.Reader(),
+		File:     readCloser,
 		Name:     filename,
 		Metadata: metadata,
 	}
@@ -158,8 +195,8 @@ func (p *mediaProvider) uploadImageFromReader(ctx context.Context, sourceURL str
 		return nil, fmt.Errorf("failed to upload image from reader: %w", err)
 	}
 
-	logger.InfoCtx(ctx, "Successfully uploaded image using download fallback",
-		zap.String("url", sourceURL),
+	logger.InfoCtx(ctx, "Successfully uploaded image from reader",
+		zap.String("filename", filename),
 		zap.String("imageID", image.ID),
 	)
 

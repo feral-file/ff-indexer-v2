@@ -28,6 +28,18 @@ type File interface {
 	io.Closer
 }
 
+// WritableFile defines an interface for writable file operations
+type WritableFile interface {
+	io.Writer
+	io.Closer
+	Name() string
+}
+
+// ReadableFile defines an interface for readable file operations
+type ReadableFile interface {
+	io.ReadCloser
+}
+
 // RealFileSystem implements FileSystem using the standard os package
 type RealFileSystem struct{}
 

@@ -1,0 +1,66 @@
+# Dockerfile-resvg-builder
+# Purpose: Build resvg C library and publish as a reusable Docker image
+# This image can be pushed to Docker Hub and reused across builds
+#
+# Build command:
+#   docker build -f tools/docker/Dockerfile-resvg-builder -t feralfile/resvg-builder:v0.45.1 .
+#   docker push feralfile/resvg-builder:v0.45.1
+#
+# Multi-arch build:
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     -f tools/docker/Dockerfile-resvg-builder \
+#     -t feralfile/resvg-builder:v0.45.1 \
+#     -t feralfile/resvg-builder:latest \
+#     --push .
+
+FROM alpine:3.19 AS builder
+
+# Install build dependencies for Rust/Cargo and C compilation
+RUN apk add --no-cache \
+    build-base \
+    pkgconf \
+    cargo \
+    rust \
+    git \
+    musl-dev
+
+# Build resvg C library from source
+# Clone specific version tag for reproducibility
+RUN git clone --depth 1 --branch v0.45.1 https://github.com/linebender/resvg.git /tmp/resvg && \
+    cd /tmp/resvg/crates/c-api && \
+    cargo build --release && \
+    mkdir -p /output/lib /output/include && \
+    cp /tmp/resvg/target/release/libresvg.a /output/lib/ && \
+    cp resvg.h /output/include/ && \
+    rm -rf /tmp/resvg ~/.cargo
+
+# Final stage - minimal image with just the built artifacts
+FROM alpine:3.19
+
+# Copy built library and headers
+COPY --from=builder /output/lib/libresvg.a /usr/local/lib/
+COPY --from=builder /output/include/resvg.h /usr/local/include/
+
+# Install minimal runtime dependencies needed for linking
+RUN apk add --no-cache pkgconf
+
+# Metadata
+LABEL maintainer="FeralFile"
+LABEL description="resvg C library v0.45.1 for Alpine Linux (static library)"
+LABEL version="0.45.1"
+LABEL org.opencontainers.image.source="https://github.com/linebender/resvg"
+LABEL org.opencontainers.image.version="0.45.1"
+LABEL org.opencontainers.image.title="resvg-builder"
+LABEL org.opencontainers.image.description="Pre-built resvg C library for Alpine-based Docker images"
+
+# Verify files exist (will fail build if missing)
+RUN test -f /usr/local/lib/libresvg.a && \
+    test -f /usr/local/include/resvg.h && \
+    echo "✓ resvg library and headers are available"
+
+# Default command (informational)
+CMD ["sh", "-c", "echo 'resvg v0.45.1 library available at:' && \
+     echo '  /usr/local/lib/libresvg.a' && \
+     echo '  /usr/local/include/resvg.h' && \
+     ls -lh /usr/local/lib/libresvg.a /usr/local/include/resvg.h"]
+

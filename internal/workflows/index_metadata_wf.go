@@ -194,8 +194,8 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 		// Start the child workflow without waiting for result
-		var wm workerMedia
-		childWorkflow := workflow.ExecuteChildWorkflow(childCtx, wm.IndexMultipleMediaWorkflow, urls)
+		// Use workflow name directly to avoid dependency on media package
+		childWorkflow := workflow.ExecuteChildWorkflow(childCtx, "IndexMultipleMediaWorkflow", urls)
 
 		// Only check if workflow started successfully, don't wait for completion
 		var childExecution workflow.Execution

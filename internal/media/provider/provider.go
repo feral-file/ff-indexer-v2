@@ -2,6 +2,7 @@ package mediaprovider
 
 import (
 	"context"
+	"io"
 )
 
 // UploadResult represents the result of uploading media to a provider
@@ -14,10 +15,18 @@ type UploadResult struct {
 	ProviderMetadata map[string]interface{}
 }
 
-// Provider defines the interface for media storage providers (URL-based uploads only)
+// Provider defines the interface for media storage providers
 type Provider interface {
-	// UploadImage uploads an image from a URL to the provider
-	UploadImage(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*UploadResult, error)
+	// UploadImageFromURL uploads an image from a URL to the provider
+	UploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*UploadResult, error)
+
+	// UploadImageFromReader uploads an image from an io.Reader to the provider
+	// Parameters:
+	//   - reader: the io.Reader containing the image data
+	//   - filename: the filename for the image (with extension)
+	//   - contentType: the MIME type of the image (e.g., "image/png")
+	//   - metadata: additional metadata to attach to the upload
+	UploadImageFromReader(ctx context.Context, reader io.Reader, filename, contentType string, metadata map[string]interface{}) (*UploadResult, error)
 
 	// UploadVideo uploads a video from a URL to the provider
 	UploadVideo(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*UploadResult, error)

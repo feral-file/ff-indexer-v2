@@ -1,4 +1,4 @@
-package workflows_test
+package workflowsmedia_test
 
 import (
 	"context"
@@ -13,22 +13,22 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
-	"github.com/feral-file/ff-indexer-v2/internal/workflows"
+	workflows_media "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
 
-// IndexMediaWorkflowTestSuite is the test suite for media workflow tests
-type IndexMediaWorkflowTestSuite struct {
+// WorkflowTestSuite is the test suite for media workflow tests
+type WorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
 	env      *testsuite.TestWorkflowEnvironment
 	ctrl     *gomock.Controller
-	executor *mocks.MockExecutor
-	worker   workflows.WorkerMedia
+	executor *mocks.MockMediaExecutor
+	worker   workflows_media.Worker
 }
 
 // SetupTest is called before each test
-func (s *IndexMediaWorkflowTestSuite) SetupTest() {
+func (s *WorkflowTestSuite) SetupTest() {
 	// Initialize logger for tests
 	_ = logger.Initialize(logger.Config{
 		Debug: true,
@@ -36,29 +36,29 @@ func (s *IndexMediaWorkflowTestSuite) SetupTest() {
 
 	s.env = s.NewTestWorkflowEnvironment()
 	s.ctrl = gomock.NewController(s.T())
-	s.executor = mocks.NewMockExecutor(s.ctrl)
-	s.worker = workflows.NewWorkerMedia(s.executor)
+	s.executor = mocks.NewMockMediaExecutor(s.ctrl)
+	s.worker = workflows_media.NewWorker(s.executor)
 
 	// Register the activity with the test environment
 	s.env.RegisterActivity(s.executor.IndexMediaFile)
 }
 
 // TearDownTest is called after each test
-func (s *IndexMediaWorkflowTestSuite) TearDownTest() {
+func (s *WorkflowTestSuite) TearDownTest() {
 	s.env.AssertExpectations(s.T())
 	s.ctrl.Finish()
 }
 
-// TestIndexMediaWorkflowTestSuite runs the test suite
-func TestIndexMediaWorkflowTestSuite(t *testing.T) {
-	suite.Run(t, new(IndexMediaWorkflowTestSuite))
+// TestWorkflowTestSuite runs the test suite
+func TestWorkflowTestSuite(t *testing.T) {
+	suite.Run(t, new(WorkflowTestSuite))
 }
 
 // ====================================================================================
 // IndexMediaWorkflow Tests
 // ====================================================================================
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMediaWorkflow_Success() {
+func (s *WorkflowTestSuite) TestIndexMediaWorkflow_Success() {
 	url := "https://example.com/media.jpg"
 
 	// Mock the IndexMediaFile activity to return success
@@ -72,7 +72,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMediaWorkflow_Success() {
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMediaWorkflow_ActivityError() {
+func (s *WorkflowTestSuite) TestIndexMediaWorkflow_ActivityError() {
 	url := "https://example.com/media.jpg"
 	expectedError := errors.New("failed to process media")
 
@@ -104,7 +104,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMediaWorkflow_ActivityError() {
 // IndexMultipleMediaWorkflow Tests
 // ====================================================================================
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_Success() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_Success() {
 	urls := []string{
 		"https://example.com/media1.jpg",
 		"https://example.com/media2.jpg",
@@ -124,7 +124,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_Success() {
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_EmptyList() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_EmptyList() {
 	urls := []string{}
 
 	// Execute the workflow with empty list
@@ -135,7 +135,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_EmptyList()
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_DuplicateURLs() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_DuplicateURLs() {
 	urls := []string{
 		"https://example.com/media1.jpg",
 		"https://example.com/media1.jpg", // duplicate
@@ -160,7 +160,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_DuplicateUR
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_InvalidURLs() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_InvalidURLs() {
 	urls := []string{
 		"not-a-url",
 		"",
@@ -178,7 +178,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_InvalidURLs
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_MixedValidInvalidURLs() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_MixedValidInvalidURLs() {
 	urls := []string{
 		"https://example.com/media1.jpg", // valid
 		"not-a-url",                      // invalid
@@ -205,7 +205,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_MixedValidI
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowStartFailure() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowStartFailure() {
 	urls := []string{
 		"https://example.com/media1.jpg",
 		"https://example.com/media2.jpg",
@@ -227,7 +227,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkfl
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowCompleteWithError() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowCompleteWithError() {
 	urls := []string{
 		"https://example.com/media1.jpg",
 		"https://example.com/media2.jpg",
@@ -249,7 +249,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkfl
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowRetryPolicy() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowRetryPolicy() {
 	// Test that verifies child workflows retry according to the configured retry policy
 	url := "https://example.com/media1.jpg"
 	urls := []string{url}
@@ -278,7 +278,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkfl
 	s.Equal(2, childWorkflowCallCount, "Child workflow should be attempted 2 times (initial + 1 retry)")
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_WorkflowIDReusePolicy() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_WorkflowIDReusePolicy() {
 	// Test that the workflow can be called multiple times with the same URLs
 	// The workflow generates deterministic IDs using SHA-256 hash of the URL
 	// and uses WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE to allow multiple executions
@@ -312,7 +312,7 @@ func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_WorkflowIDR
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMediaWorkflowTestSuite) TestIndexMultipleMediaWorkflow_LargeNumberOfURLs() {
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_LargeNumberOfURLs() {
 	// Test with a larger number of URLs to ensure concurrent processing works
 	urls := make([]string, 50)
 	for i := range 50 {

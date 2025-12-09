@@ -12,9 +12,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	mediaProcessor "github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -24,7 +22,7 @@ import (
 
 // Executor defines the interface for executing activities
 //
-//go:generate mockgen -source=activities.go -destination=../mocks/activities.go -package=mocks -mock_names=Executor=MockExecutor
+//go:generate mockgen -source=executor.go -destination=../mocks/executor_core.go -package=mocks -mock_names=Executor=MockCoreExecutor
 type Executor interface {
 	// CheckTokenExists checks if a token exists in the database
 	CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error)
@@ -84,9 +82,6 @@ type Executor interface {
 
 	// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT
 	GetLatestTezosBlock(ctx context.Context) (uint64, error)
-
-	// IndexMediaFile processes a media file by downloading, uploading to storage, and storing metadata
-	IndexMediaFile(ctx context.Context, url string) error
 }
 
 // BlockRangeResult represents the result of getting an indexing block range
@@ -100,7 +95,6 @@ type executor struct {
 	store            store.Store
 	metadataResolver metadata.Resolver
 	metadataEnhancer metadata.Enhancer
-	mediaProcessor   mediaProcessor.Processor
 	ethClient        ethereum.EthereumClient
 	tzktClient       tezos.TzKTClient
 	json             adapter.JSON
@@ -114,7 +108,6 @@ func NewExecutor(
 	metadataEnhancer metadata.Enhancer,
 	ethClient ethereum.EthereumClient,
 	tzktClient tezos.TzKTClient,
-	mediaProcessor mediaProcessor.Processor,
 	jsonAdapter adapter.JSON,
 	clock adapter.Clock,
 ) Executor {
@@ -124,7 +117,6 @@ func NewExecutor(
 		metadataEnhancer: metadataEnhancer,
 		ethClient:        ethClient,
 		tzktClient:       tzktClient,
-		mediaProcessor:   mediaProcessor,
 		json:             jsonAdapter,
 		clock:            clock,
 	}
@@ -1117,48 +1109,4 @@ func (e *executor) UpdateIndexingBlockRangeForAddress(ctx context.Context, addre
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
 func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
 	return e.store.EnsureWatchedAddressExists(ctx, address, chain)
-}
-
-// IndexMediaFile processes a media file by downloading, uploading to storage, and storing metadata
-func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
-	if url == "" {
-		return fmt.Errorf("media URL is empty")
-	}
-
-	// Check if media asset already exists
-	existingAsset, err := e.store.GetMediaAssetBySourceURL(ctx, url, e.toSchemaStorageProvider())
-	if err != nil {
-		return fmt.Errorf("failed to check existing media asset: %w", err)
-	}
-
-	if existingAsset != nil {
-		logger.InfoCtx(ctx, "Media asset already exists, skipping", zap.String("url", url))
-		return nil
-	}
-
-	// Process the media file
-	if err := e.mediaProcessor.Process(ctx, url); err != nil {
-		if errors.Is(err, domain.ErrUnsupportedMediaFile) ||
-			errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) ||
-			errors.Is(err, domain.ErrExceededMaxFileSize) ||
-			errors.Is(err, domain.ErrMissingContentLength) {
-			// Skip known errors
-			return nil
-		}
-
-		return fmt.Errorf("failed to process media file: %w", err)
-	}
-
-	logger.InfoCtx(ctx, "Successfully indexed media file", zap.String("url", url))
-	return nil
-}
-
-// toSchemaStorageProvider converts the provider name to a schema storage provider
-func (e *executor) toSchemaStorageProvider() schema.StorageProvider {
-	switch e.mediaProcessor.Provider() {
-	case cloudflare.CLOUDFLARE_PROVIDER_NAME:
-		return schema.StorageProviderCloudflare
-	default:
-		return schema.StorageProviderSelfHosted
-	}
 }

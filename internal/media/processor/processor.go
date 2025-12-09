@@ -1,8 +1,10 @@
+//go:build cgo
+
 package processor
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -14,8 +16,10 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/downloader"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
+	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -41,22 +45,49 @@ type Processor interface {
 
 // processor is the implementation of Processor
 type processor struct {
-	httpClient           adapter.HTTPClient
-	uriResolver          uri.Resolver
-	provider             mediaprovider.Provider
-	store                store.Store
+	// Dependencies
+	httpClient  adapter.HTTPClient
+	uriResolver uri.Resolver
+	provider    mediaprovider.Provider
+	store       store.Store
+	rasterizer  rasterizer.Rasterizer
+	downloader  downloader.Downloader
+
+	// Adapters
+	io         adapter.IO
+	json       adapter.JSON
+	filesystem adapter.FileSystem
+
+	// Configuration
 	maxStaticImageSize   int64
 	maxAnimatedImageSize int64
 	maxVideoSize         int64
 }
 
 // NewProcessor creates a new Processor instance
-func NewProcessor(httpClient adapter.HTTPClient, uriResolver uri.Resolver, provider mediaprovider.Provider, st store.Store, maxStaticImageSize int64, maxAnimatedImageSize int64, maxVideoSize int64) Processor {
+func NewProcessor(
+	httpClient adapter.HTTPClient,
+	uriResolver uri.Resolver,
+	provider mediaprovider.Provider,
+	st store.Store,
+	svgRasterizer rasterizer.Rasterizer,
+	filesystem adapter.FileSystem,
+	io adapter.IO,
+	json adapter.JSON,
+	dl downloader.Downloader,
+	maxStaticImageSize int64,
+	maxAnimatedImageSize int64,
+	maxVideoSize int64) Processor {
 	return &processor{
 		httpClient:           httpClient,
 		uriResolver:          uriResolver,
 		provider:             provider,
 		store:                st,
+		rasterizer:           svgRasterizer,
+		filesystem:           filesystem,
+		io:                   io,
+		json:                 json,
+		downloader:           dl,
 		maxStaticImageSize:   maxStaticImageSize,
 		maxAnimatedImageSize: maxAnimatedImageSize,
 		maxVideoSize:         maxVideoSize,
@@ -144,9 +175,10 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		return domain.ErrMissingContentLength
 	}
 
-	// Determine if this is a video or image
+	// Determine if this is a video, image, or SVG
 	isVideo := strings.HasPrefix(contentType, "video/")
 	isImage := strings.HasPrefix(contentType, "image/")
+	isSVG := contentType == "image/svg+xml" || contentType == "image/svg"
 	isAnimatedImage := strings.HasPrefix(contentType, "image/gif") || strings.HasPrefix(contentType, "image/webp")
 
 	if !isVideo && !isImage {
@@ -181,24 +213,77 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		}
 	}
 
-	// Step 3: Upload to provider based on media type
+	// Step 3: Handle SVG rasterization if needed
+	originalContentType := contentType
 	var uploadResult *mediaprovider.UploadResult
-	if isVideo {
-		logger.InfoCtx(ctx, "Uploading video", zap.String("url", resolvedURL))
-		uploadResult, err = p.provider.UploadVideo(ctx, resolvedURL, uploadMetadata)
-	} else {
-		logger.InfoCtx(ctx, "Uploading image", zap.String("url", resolvedURL))
-		uploadResult, err = p.provider.UploadImage(ctx, resolvedURL, uploadMetadata)
-	}
 
-	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrInvalidURL),
-			errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile):
-			// Known error, skip processing
-			return nil
-		default:
-			return fmt.Errorf("failed to upload media to provider: %w", err)
+	if isSVG {
+		logger.InfoCtx(ctx, "SVG detected, rasterizing to PNG", zap.String("url", resolvedURL))
+
+		// Download the SVG content using the downloader
+		downloadResult, err := p.downloader.Download(ctx, resolvedURL)
+		if err != nil {
+			return fmt.Errorf("failed to download SVG: %w", err)
+		}
+		defer func() {
+			if err := downloadResult.Close(); err != nil {
+				logger.WarnCtx(ctx, "Failed to close download result", zap.Error(err))
+			}
+		}()
+
+		// Read all SVG data
+		svgData, err := p.io.ReadAll(downloadResult.Reader())
+		if err != nil {
+			return fmt.Errorf("failed to read SVG data: %w", err)
+		}
+
+		// Rasterize SVG to PNG
+		pngData, err := p.rasterizer.Rasterize(ctx, svgData)
+		if err != nil {
+			logger.ErrorCtx(ctx, err)
+			return fmt.Errorf("failed to rasterize SVG: %w", err)
+		}
+
+		// Update content type and length for the rasterized image
+		contentType = "image/png"
+		contentLength = int64(len(pngData))
+
+		// Update upload metadata
+		uploadMetadata["original_mime_type"] = originalContentType
+		uploadMetadata["mime_type"] = contentType
+		uploadMetadata["file_size"] = contentLength
+		uploadMetadata["rasterized"] = true
+
+		logger.InfoCtx(ctx, "SVG rasterized successfully",
+			zap.Int("pngSize", len(pngData)),
+			zap.String("originalContentType", originalContentType),
+		)
+
+		// Upload the rasterized PNG from reader
+		logger.InfoCtx(ctx, "Uploading rasterized image from reader")
+		uploadResult, err = p.uploadImageFromBytes(ctx, pngData, "rasterized.png", contentType, uploadMetadata)
+		if err != nil {
+			return fmt.Errorf("failed to upload rasterized image: %w", err)
+		}
+	} else {
+		// Step 4: Upload to provider based on media type
+		if isVideo {
+			logger.InfoCtx(ctx, "Uploading video", zap.String("url", resolvedURL))
+			uploadResult, err = p.provider.UploadVideo(ctx, resolvedURL, uploadMetadata)
+		} else {
+			logger.InfoCtx(ctx, "Uploading image", zap.String("url", resolvedURL))
+			uploadResult, err = p.provider.UploadImageFromURL(ctx, resolvedURL, uploadMetadata)
+		}
+
+		if err != nil {
+			switch {
+			case errors.Is(err, domain.ErrInvalidURL),
+				errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile):
+				// Known error, skip processing
+				return nil
+			default:
+				return fmt.Errorf("failed to upload media to provider: %w", err)
+			}
 		}
 	}
 
@@ -208,8 +293,8 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		zap.Int("variantCount", len(uploadResult.VariantURLs)),
 	)
 
-	// Step 4: Convert variant URLs to JSON
-	variantURLsJSON, err := json.Marshal(uploadResult.VariantURLs)
+	// Step 5: Convert variant URLs to JSON
+	variantURLsJSON, err := p.json.Marshal(uploadResult.VariantURLs)
 	if err != nil {
 		return fmt.Errorf("failed to marshal variant URLs: %w", err)
 	}
@@ -217,14 +302,14 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	// Convert provider metadata to JSON
 	var providerMetadataJSON datatypes.JSON
 	if uploadResult.ProviderMetadata != nil {
-		metadataBytes, err := json.Marshal(uploadResult.ProviderMetadata)
+		metadataBytes, err := p.json.Marshal(uploadResult.ProviderMetadata)
 		if err != nil {
 			return fmt.Errorf("failed to marshal provider metadata: %w", err)
 		}
 		providerMetadataJSON = datatypes.JSON(metadataBytes)
 	}
 
-	// Step 5: Store in database
+	// Step 6: Store in database
 	mediaAssetInput := store.CreateMediaAssetInput{
 		SourceURL:        sourceURL,
 		MimeType:         &contentType,
@@ -265,4 +350,13 @@ func (p *processor) toSchemaStorageProvider() schema.StorageProvider {
 	default:
 		return schema.StorageProviderSelfHosted
 	}
+}
+
+// uploadImageFromBytes uploads image data from a byte slice using the provider's reader-based upload
+func (p *processor) uploadImageFromBytes(ctx context.Context, data []byte, filename, contentType string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+	// Create a reader from the byte slice
+	reader := bytes.NewReader(data)
+
+	// Upload using the provider's reader-based method
+	return p.provider.UploadImageFromReader(ctx, reader, filename, contentType, metadata)
 }

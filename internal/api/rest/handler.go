@@ -14,7 +14,7 @@ import (
 // Handler defines the interface for REST API handlers
 // This interface allows for easy mocking and testing
 //
-//go:generate mockgen -source=handler.go -destination=../../mocks/mock_api_handler.go -package=mocks -mock_names=Handler=MockAPIHandler
+//go:generate mockgen -source=handler.go -destination=../../mocks/api_handler.go -package=mocks -mock_names=Handler=MockAPIHandler
 type Handler interface {
 	// GetToken retrieves a single token by its CID
 	// GET /api/v1/tokens/:cid?expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>

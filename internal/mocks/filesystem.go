@@ -144,3 +144,121 @@ func (mr *MockFileMockRecorder) Write(p interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Write", reflect.TypeOf((*MockFile)(nil).Write), p)
 }
+
+// MockWritableFile is a mock of WritableFile interface.
+type MockWritableFile struct {
+	ctrl     *gomock.Controller
+	recorder *MockWritableFileMockRecorder
+}
+
+// MockWritableFileMockRecorder is the mock recorder for MockWritableFile.
+type MockWritableFileMockRecorder struct {
+	mock *MockWritableFile
+}
+
+// NewMockWritableFile creates a new mock instance.
+func NewMockWritableFile(ctrl *gomock.Controller) *MockWritableFile {
+	mock := &MockWritableFile{ctrl: ctrl}
+	mock.recorder = &MockWritableFileMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockWritableFile) EXPECT() *MockWritableFileMockRecorder {
+	return m.recorder
+}
+
+// Close mocks base method.
+func (m *MockWritableFile) Close() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockWritableFileMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockWritableFile)(nil).Close))
+}
+
+// Name mocks base method.
+func (m *MockWritableFile) Name() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Name")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// Name indicates an expected call of Name.
+func (mr *MockWritableFileMockRecorder) Name() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Name", reflect.TypeOf((*MockWritableFile)(nil).Name))
+}
+
+// Write mocks base method.
+func (m *MockWritableFile) Write(p []byte) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Write", p)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Write indicates an expected call of Write.
+func (mr *MockWritableFileMockRecorder) Write(p interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Write", reflect.TypeOf((*MockWritableFile)(nil).Write), p)
+}
+
+// MockReadableFile is a mock of ReadableFile interface.
+type MockReadableFile struct {
+	ctrl     *gomock.Controller
+	recorder *MockReadableFileMockRecorder
+}
+
+// MockReadableFileMockRecorder is the mock recorder for MockReadableFile.
+type MockReadableFileMockRecorder struct {
+	mock *MockReadableFile
+}
+
+// NewMockReadableFile creates a new mock instance.
+func NewMockReadableFile(ctrl *gomock.Controller) *MockReadableFile {
+	mock := &MockReadableFile{ctrl: ctrl}
+	mock.recorder = &MockReadableFileMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockReadableFile) EXPECT() *MockReadableFileMockRecorder {
+	return m.recorder
+}
+
+// Close mocks base method.
+func (m *MockReadableFile) Close() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockReadableFileMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockReadableFile)(nil).Close))
+}
+
+// Read mocks base method.
+func (m *MockReadableFile) Read(p []byte) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Read", p)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Read indicates an expected call of Read.
+func (mr *MockReadableFileMockRecorder) Read(p interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Read", reflect.TypeOf((*MockReadableFile)(nil).Read), p)
+}
