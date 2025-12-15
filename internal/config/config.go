@@ -77,6 +77,7 @@ type TemporalConfig struct {
 	MediaTaskQueue                     string  `mapstructure:"media_task_queue"`
 	MaxConcurrentActivityExecutionSize int     `mapstructure:"max_concurrent_activity_execution_size"`
 	WorkerActivitiesPerSecond          float64 `mapstructure:"worker_activities_per_second"`
+	MaxConcurrentActivityTaskPollers   int     `mapstructure:"max_concurrent_activity_task_pollers"`
 }
 
 // VendorsConfig holds vendor API configurations
@@ -291,6 +292,7 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("temporal.token_task_queue", "token-indexing")
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
 	v.SetDefault("temporal.worker_activities_per_second", 50)
+	v.SetDefault("temporal.max_concurrent_activity_task_pollers", 10)
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 	v.SetDefault("vendors.feralfile_url", "https://feralfile.com/api")
@@ -360,6 +362,7 @@ func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfi
 	v.SetDefault("temporal.media_task_queue", "media-indexing")
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 10)
 	v.SetDefault("temporal.worker_activities_per_second", 10)
+	v.SetDefault("temporal.max_concurrent_activity_task_pollers", 2)
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
@@ -454,6 +457,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"temporal.media_task_queue",
 		"temporal.max_concurrent_activity_execution_size",
 		"temporal.worker_activities_per_second",
+		"temporal.max_concurrent_activity_task_pollers",
 		// Vendors
 		"vendors.artblocks_url",
 		"vendors.feralfile_url",

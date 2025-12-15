@@ -157,6 +157,7 @@ func main() {
 		worker.Options{
 			MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
 			WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
+			MaxConcurrentActivityTaskPollers:   cfg.Temporal.MaxConcurrentActivityTaskPollers,
 			Interceptors: []interceptor.WorkerInterceptor{
 				sentryInterceptor,
 			},
