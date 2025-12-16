@@ -744,9 +744,10 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_OneChildWorkflowFails() {
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs)
 
-	// Verify workflow completed successfully (continues despite one failure)
+	// Verify workflow completed with error (fails when any child workflow fails)
 	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), "child workflow error")
 }
 
 // ====================================================================================
@@ -846,7 +847,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ChildWorkflowStartFailure_N
 	s.NoError(s.env.GetWorkflowError())
 
 	// Verify retries
-	s.Equal(2, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
+	s.Equal(1, workflowCallCount, "Workflow should be attempted 1 time (initial + 0 retries)")
 }
 
 func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFailure_NonFatal() {

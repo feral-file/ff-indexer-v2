@@ -365,13 +365,9 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 	}
 
 	// Wait for all workflows to complete
-	for i, childFuture := range childFutures {
+	for _, childFuture := range childFutures {
 		if err := childFuture.Get(ctx, nil); err != nil {
-			logger.WarnWf(ctx, "Child workflow failed",
-				zap.String("tokenCID", tokenCIDs[i].String()),
-				zap.Error(err),
-			)
-			// Continue with other workflows even if one fails
+			return err
 		}
 	}
 
@@ -428,11 +424,6 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 		WorkflowExecutionTimeout: 15 * time.Minute,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumAttempts:    2,
-		},
 	}
 	metadataCtx := workflow.WithChildOptions(ctx, metadataWorkflowOptions)
 
