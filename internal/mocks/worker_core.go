@@ -7,10 +7,9 @@ package mocks
 import (
 	reflect "reflect"
 
+	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	gomock "github.com/golang/mock/gomock"
 	workflow "go.temporal.io/sdk/workflow"
-
-	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 // MockCoreWorker is a mock of WorkerCore interface.
@@ -93,17 +92,17 @@ func (mr *MockCoreWorkerMockRecorder) IndexTezosTokenOwner(ctx, address interfac
 }
 
 // IndexToken mocks base method.
-func (m *MockCoreWorker) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) error {
+func (m *MockCoreWorker) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, skipExistenceCheck bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexToken", ctx, tokenCID)
+	ret := m.ctrl.Call(m, "IndexToken", ctx, tokenCID, skipExistenceCheck)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexToken indicates an expected call of IndexToken.
-func (mr *MockCoreWorkerMockRecorder) IndexToken(ctx, tokenCID interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexToken(ctx, tokenCID, skipExistenceCheck interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexToken", reflect.TypeOf((*MockCoreWorker)(nil).IndexToken), ctx, tokenCID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexToken", reflect.TypeOf((*MockCoreWorker)(nil).IndexToken), ctx, tokenCID, skipExistenceCheck)
 }
 
 // IndexTokenBurn mocks base method.
@@ -219,15 +218,15 @@ func (mr *MockCoreWorkerMockRecorder) IndexTokenTransfer(ctx, event interface{})
 }
 
 // IndexTokens mocks base method.
-func (m *MockCoreWorker) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+func (m *MockCoreWorker) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, skipExistenceCheck bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokens", ctx, tokenCIDs)
+	ret := m.ctrl.Call(m, "IndexTokens", ctx, tokenCIDs, skipExistenceCheck)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexTokens indicates an expected call of IndexTokens.
-func (mr *MockCoreWorkerMockRecorder) IndexTokens(ctx, tokenCIDs interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexTokens(ctx, tokenCIDs, skipExistenceCheck interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokens", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokens), ctx, tokenCIDs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokens", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokens), ctx, tokenCIDs, skipExistenceCheck)
 }

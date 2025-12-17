@@ -335,7 +335,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 }
 
 // IndexTokens indexes multiple tokens in chunks
-func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, skipExistenceCheck bool) error {
 	logger.InfoWf(ctx, "Starting batch token indexing",
 		zap.Int("count", len(tokenCIDs)),
 	)
@@ -355,7 +355,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 		// Execute child workflow
-		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID)
+		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID, skipExistenceCheck)
 		childFutures = append(childFutures, childFuture)
 
 		logger.InfoWf(ctx, "Triggered token indexing workflow",
@@ -379,7 +379,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 }
 
 // IndexToken indexes a single token (metadata and provenances)
-func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) error {
+func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, skipExistenceCheck bool) error {
 	logger.InfoWf(ctx, "Starting token indexing",
 		zap.String("tokenCID", tokenCID.String()),
 	)
@@ -404,7 +404,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID) 
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
 	// Step 1: Index token with minimal provenances (from blockchain query)
-	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID).Get(ctx, nil)
+	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID, skipExistenceCheck).Get(ctx, nil)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to index token with minimal provenances"),

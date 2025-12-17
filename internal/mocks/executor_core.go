@@ -8,11 +8,10 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
 	workflows "github.com/feral-file/ff-indexer-v2/internal/workflows"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockCoreExecutor is a mock of Executor interface.
@@ -229,17 +228,17 @@ func (mr *MockCoreExecutorMockRecorder) IndexTokenWithMinimalProvenancesByBlockc
 }
 
 // IndexTokenWithMinimalProvenancesByTokenCID mocks base method.
-func (m *MockCoreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
+func (m *MockCoreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, skipExistenceCheck bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokenWithMinimalProvenancesByTokenCID", ctx, tokenCID)
+	ret := m.ctrl.Call(m, "IndexTokenWithMinimalProvenancesByTokenCID", ctx, tokenCID, skipExistenceCheck)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexTokenWithMinimalProvenancesByTokenCID indicates an expected call of IndexTokenWithMinimalProvenancesByTokenCID.
-func (mr *MockCoreExecutorMockRecorder) IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID interface{}) *gomock.Call {
+func (mr *MockCoreExecutorMockRecorder) IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, skipExistenceCheck interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesByTokenCID", reflect.TypeOf((*MockCoreExecutor)(nil).IndexTokenWithMinimalProvenancesByTokenCID), ctx, tokenCID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesByTokenCID", reflect.TypeOf((*MockCoreExecutor)(nil).IndexTokenWithMinimalProvenancesByTokenCID), ctx, tokenCID, skipExistenceCheck)
 }
 
 // UpdateIndexingBlockRangeForAddress mocks base method.

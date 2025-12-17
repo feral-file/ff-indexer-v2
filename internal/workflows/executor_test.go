@@ -1943,15 +1943,6 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_Success_ERC721_TokenE
 
 	tokenCID := event.TokenCID()
 
-	// Mock CheckTokenExists to return true (token exists in DB)
-	token := &schema.Token{
-		ID:       1,
-		TokenCID: tokenCID.String(),
-	}
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(token, nil)
-
 	// Mock JSON marshal
 	rawEventData := []byte(`{"chain":"eip155:1"}`)
 	mocks.json.EXPECT().
@@ -2007,16 +1998,6 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_Success_ERC721_TokenN
 
 	tokenCID := event.TokenCID()
 
-	// Mock CheckTokenExists to return false (token doesn't exist in DB)
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock verifyTokenExistsOnChain to return true (token exists on chain)
-	mocks.ethClient.EXPECT().
-		TokenExists(ctx, event.ContractAddress, event.TokenNumber, event.Standard).
-		Return(true, nil)
-
 	// Mock JSON marshal
 	rawEventData := []byte(`{"chain":"eip155:1"}`)
 	mocks.json.EXPECT().
@@ -2062,17 +2043,6 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_Success_ERC1155(t *te
 		BlockHash:       stringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
-
-	tokenCID := event.TokenCID()
-
-	// Mock CheckTokenExists to return true
-	token := &schema.Token{
-		ID:       1,
-		TokenCID: tokenCID.String(),
-	}
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(token, nil)
 
 	// Mock JSON marshal
 	rawEventData := []byte(`{"chain":"eip155:1"}`)
@@ -2130,17 +2100,6 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_Success_FA2(t *testin
 		Timestamp:       timestamp,
 	}
 
-	tokenCID := event.TokenCID()
-
-	// Mock CheckTokenExists to return true
-	token := &schema.Token{
-		ID:       1,
-		TokenCID: tokenCID.String(),
-	}
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(token, nil)
-
 	// Mock JSON marshal
 	rawEventData := []byte(`{"chain":"tezos:mainnet"}`)
 	mocks.json.EXPECT().
@@ -2188,54 +2147,6 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_InvalidEvent(t *testi
 	assert.Equal(t, domain.ErrInvalidBlockchainEvent, err)
 }
 
-func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_TokenNotFoundOnChain(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	fromAddr := domain.ETHEREUM_ZERO_ADDRESS
-	toAddr := "0xreceiver123"
-	timestamp := time.Now()
-
-	event := &domain.BlockchainEvent{
-		Chain:           domain.ChainEthereumMainnet,
-		Standard:        domain.StandardERC721,
-		ContractAddress: "0x1234567890123456789012345678901234567890",
-		TokenNumber:     "1",
-		EventType:       domain.EventTypeMint,
-		FromAddress:     &fromAddr,
-		ToAddress:       &toAddr,
-		Quantity:        "1",
-		TxHash:          "0xtx123",
-		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
-		Timestamp:       timestamp,
-	}
-
-	tokenCID := event.TokenCID()
-
-	// Mock CheckTokenExists to return false (token doesn't exist in DB)
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock verifyTokenExistsOnChain to return false (token doesn't exist on chain)
-	mocks.ethClient.EXPECT().
-		TokenExists(ctx, event.ContractAddress, event.TokenNumber, event.Standard).
-		Return(false, nil)
-
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx, event)
-
-	assert.Error(t, err)
-	// This should return a non-retryable error
-	assert.IsType(t, &temporal.ApplicationError{}, err)
-	var appErr *temporal.ApplicationError
-	errOk := errors.As(err, &appErr)
-	assert.True(t, errOk)
-	assert.True(t, appErr.NonRetryable())
-	assert.Contains(t, err.Error(), "token not found on chain")
-}
-
 func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_BalanceFetchError(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
@@ -2259,17 +2170,6 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_BalanceFetchError(t *
 		BlockHash:       stringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
-
-	tokenCID := event.TokenCID()
-
-	// Mock CheckTokenExists to return true
-	token := &schema.Token{
-		ID:       1,
-		TokenCID: tokenCID.String(),
-	}
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(token, nil)
 
 	// Mock JSON marshal
 	rawEventData := []byte(`{"chain":"eip155:1"}`)
@@ -2332,7 +2232,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC721(t *testing.T)
 			return nil
 		})
 
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID)
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, false)
 
 	assert.NoError(t, err)
 }
@@ -2370,7 +2270,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC721_Burned(t *tes
 			return nil
 		})
 
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID)
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, false)
 
 	assert.NoError(t, err)
 }
@@ -2413,7 +2313,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155(t *testing.T
 			return nil
 		})
 
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID)
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, false)
 
 	assert.NoError(t, err)
 }
@@ -2460,7 +2360,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_FA2(t *testing.T) {
 			return nil
 		})
 
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID)
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, false)
 
 	assert.NoError(t, err)
 }
@@ -2482,7 +2382,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_TokenNotFoundOnChain(t *test
 		TokenExists(ctx, "0x1234567890123456789012345678901234567890", "1", domain.StandardERC721).
 		Return(false, nil)
 
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID)
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, false)
 
 	assert.Error(t, err)
 	assert.IsType(t, &temporal.ApplicationError{}, err)
@@ -2491,6 +2391,43 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_TokenNotFoundOnChain(t *test
 	assert.True(t, errOk)
 	assert.True(t, appErr.NonRetryable())
 	assert.Contains(t, err.Error(), "token not found on chain")
+}
+
+func TestIndexTokenWithMinimalProvenancesByTokenCID_SkipExistenceCheck_ERC721(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "1"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, contractAddress, tokenNumber)
+	ownerAddr := "0xowner123"
+
+	// When skipExistenceCheck = true, CheckTokenExists should NOT be called
+	// and verifyTokenExistsOnChain should NOT be called
+
+	// Mock ERC721OwnerOf to return current owner
+	mocks.ethClient.EXPECT().
+		ERC721OwnerOf(ctx, contractAddress, tokenNumber).
+		Return(ownerAddr, nil)
+
+	// Mock store CreateTokenWithProvenances
+	mocks.store.EXPECT().
+		CreateTokenWithProvenances(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenWithProvenancesInput) error {
+			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
+			assert.Equal(t, ownerAddr, *input.Token.CurrentOwner)
+			assert.False(t, input.Token.Burned)
+			assert.Len(t, input.Balances, 1)
+			assert.Equal(t, ownerAddr, input.Balances[0].OwnerAddress)
+			assert.Equal(t, "1", input.Balances[0].Quantity)
+			assert.Empty(t, input.Events) // No events for minimal provenance by TokenCID
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, true)
+
+	assert.NoError(t, err)
 }
 
 func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155Timeout(t *testing.T) {
@@ -2526,7 +2463,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155Timeout(t *testing.T)
 			return nil
 		})
 
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID)
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, false)
 
 	assert.NoError(t, err) // Should not error on timeout, continues with partial balances
 }
@@ -2543,16 +2480,6 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721(t *testing.T) {
 	contractAddress := "0x1234567890123456789012345678901234567890"
 	tokenNumber := "1"
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, contractAddress, tokenNumber)
-
-	// Mock CheckTokenExists to return false
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock verifyTokenExistsOnChain to return true
-	mocks.ethClient.EXPECT().
-		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC721).
-		Return(true, nil)
 
 	// Mock GetTokenEvents to return events
 	mintEvent := domain.BlockchainEvent{
@@ -2625,16 +2552,6 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721_Burned(t *testin
 	tokenNumber := "1"
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, contractAddress, tokenNumber)
 
-	// Mock CheckTokenExists to return false
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock verifyTokenExistsOnChain to return true
-	mocks.ethClient.EXPECT().
-		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC721).
-		Return(true, nil)
-
 	// Mock GetTokenEvents to return events including burn
 	mintEvent := domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
@@ -2704,16 +2621,6 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC1155_Burned(t *testi
 	contractAddress := "0x1234567890123456789012345678901234567890"
 	tokenNumber := "1"
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
-
-	// Mock CheckTokenExists to return false
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock verifyTokenExistsOnChain to return true
-	mocks.ethClient.EXPECT().
-		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
-		Return(true, nil)
 
 	// Mock GetTokenEvents - mint and burn events
 	mintEvent := domain.BlockchainEvent{
@@ -2790,16 +2697,6 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2(t *testing.T) {
 	tokenNumber := "1"
 	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, contractAddress, tokenNumber)
 
-	// Mock CheckTokenExists to return false
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock GetTokenMetadata to verify token exists on chain
-	mocks.tzktClient.EXPECT().
-		GetTokenMetadata(ctx, contractAddress, tokenNumber).
-		Return(map[string]interface{}{"name": "Test Token"}, nil)
-
 	// Mock GetTokenBalances
 	balances := []tezos.TzKTTokenBalance{
 		{
@@ -2868,16 +2765,6 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2_Burned(t *testing.T
 	tokenNumber := "1"
 	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, contractAddress, tokenNumber)
 
-	// Mock CheckTokenExists to return false
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock GetTokenMetadata to verify token exists on chain
-	mocks.tzktClient.EXPECT().
-		GetTokenMetadata(ctx, contractAddress, tokenNumber).
-		Return(map[string]interface{}{"name": "Test Token"}, nil)
-
 	// Mock GetTokenBalances - empty balances means token is burned
 	balances := []tezos.TzKTTokenBalance{}
 	mocks.tzktClient.EXPECT().
@@ -2944,29 +2831,6 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2_Burned(t *testing.T
 	assert.NoError(t, err)
 }
 
-func TestIndexTokenWithFullProvenancesByTokenCID_TokenNotFoundOnChain(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-
-	// Mock CheckTokenExists to return false
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock verifyTokenExistsOnChain to return false
-	mocks.ethClient.EXPECT().
-		TokenExists(ctx, "0x1234567890123456789012345678901234567890", "1", domain.StandardERC721).
-		Return(false, nil)
-
-	err := mocks.executor.IndexTokenWithFullProvenancesByTokenCID(ctx, tokenCID)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "token not found on chain")
-}
-
 func TestIndexTokenWithFullProvenancesByTokenCID_GetEventsError(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
@@ -2975,16 +2839,6 @@ func TestIndexTokenWithFullProvenancesByTokenCID_GetEventsError(t *testing.T) {
 	contractAddress := "0x1234567890123456789012345678901234567890"
 	tokenNumber := "1"
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, contractAddress, tokenNumber)
-
-	// Mock CheckTokenExists to return false
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID.String()).
-		Return(nil, nil)
-
-	// Mock verifyTokenExistsOnChain to return true
-	mocks.ethClient.EXPECT().
-		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC721).
-		Return(true, nil)
 
 	// Mock GetTokenEvents to return error
 	eventsErr := errors.New("failed to get events")

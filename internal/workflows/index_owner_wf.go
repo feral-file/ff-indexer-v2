@@ -234,6 +234,9 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 	)
 
 	// Step 4: Determine sweeping strategy
+	//
+	// We skip the existence check since we assume the owner tokens scanning ensure the existence of tokens on-chain
+	const skipExistenceCheck = true
 	if storedMinBlock == 0 && storedMaxBlock == 0 {
 		// First run: No previous indexing exists
 		// Fetch entire range from start to latest, process in chunks
@@ -279,7 +282,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 			)
 
 			// Index tokens
-			if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+			if err := w.indexTokenChunk(ctx, info.tokenCIDs, skipExistenceCheck); err != nil {
 				return err
 			}
 
@@ -376,7 +379,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+				if err := w.indexTokenChunk(ctx, info.tokenCIDs, skipExistenceCheck); err != nil {
 					return err
 				}
 
@@ -458,7 +461,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+				if err := w.indexTokenChunk(ctx, info.tokenCIDs, skipExistenceCheck); err != nil {
 					return err
 				}
 
@@ -571,6 +574,9 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 	)
 
 	// Step 4: Determine sweeping strategy
+	//
+	// We skip the existence check since we assume the owner tokens scanning ensure the existence of tokens on-chain
+	const skipExistenceCheck = true
 	if storedMinBlock == 0 && storedMaxBlock == 0 {
 		// First run: No previous indexing exists
 		// Fetch entire range from start to latest, process in chunks
@@ -616,7 +622,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			)
 
 			// Index tokens
-			if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+			if err := w.indexTokenChunk(ctx, info.tokenCIDs, skipExistenceCheck); err != nil {
 				return err
 			}
 
@@ -717,7 +723,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+				if err := w.indexTokenChunk(ctx, info.tokenCIDs, skipExistenceCheck); err != nil {
 					return err
 				}
 
@@ -799,7 +805,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				if err := w.indexTokenChunk(ctx, info.tokenCIDs); err != nil {
+				if err := w.indexTokenChunk(ctx, info.tokenCIDs, skipExistenceCheck); err != nil {
 					return err
 				}
 
@@ -843,7 +849,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 }
 
 // indexTokenChunk indexes a chunk of tokens using the IndexTokens workflow
-func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.TokenCID, skipExistenceCheck bool) error {
 	if len(tokenCIDs) == 0 {
 		return nil
 	}
@@ -853,7 +859,7 @@ func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.To
 	}
 	indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
 
-	err := workflow.ExecuteChildWorkflow(indexTokensCtx, w.IndexTokens, tokenCIDs).Get(ctx, nil)
+	err := workflow.ExecuteChildWorkflow(indexTokensCtx, w.IndexTokens, tokenCIDs, skipExistenceCheck).Get(ctx, nil)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to index tokens"),

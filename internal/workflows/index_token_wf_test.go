@@ -718,11 +718,11 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_Success() {
 
 	// Mock child workflows for each token
 	for _, tokenCID := range tokenCIDs {
-		s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCID).Return(nil)
+		s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCID, mock.Anything).Return(nil)
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs, false)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -737,12 +737,12 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_OneChildWorkflowFails() {
 	}
 
 	// Mock child workflows - one fails
-	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[0]).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[1]).Return(errors.New("child workflow error"))
-	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[2]).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[0], mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[1], mock.Anything).Return(errors.New("child workflow error"))
+	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[2], mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs, false)
 
 	// Verify workflow completed with error (fails when any child workflow fails)
 	s.True(s.env.IsWorkflowCompleted())
@@ -761,7 +761,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Success() {
 	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
 
 	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
-	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID).Return(nil)
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
 
 	// Mock metadata child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
@@ -770,7 +770,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Success() {
 	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -784,7 +784,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Blacklisted() {
 	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
 
 	// Verify workflow completed successfully (skipped due to blacklist)
 	s.True(s.env.IsWorkflowCompleted())
@@ -800,15 +800,15 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ActivityError() {
 
 	// Track retry attempts
 	var activityCallCount int
-	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID).Return(
-		func(ctx context.Context, tokenCID domain.TokenCID) error {
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(
+		func(ctx context.Context, tokenCID domain.TokenCID, skipExistenceCheck bool) error {
 			activityCallCount++
 			return expectedError
 		},
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -825,7 +825,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ChildWorkflowStartFailure_N
 	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
 
 	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
-	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID).Return(nil)
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
 
 	// Mock metadata child workflow to fail - should not fail parent workflow
 	var workflowCallCount int
@@ -840,7 +840,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ChildWorkflowStartFailure_N
 	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(testsuite.ErrMockStartChildWorkflowFailed)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
 
 	// Verify workflow completed successfully (child workflow failures are non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -857,7 +857,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFail
 	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
 
 	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
-	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID).Return(nil)
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
 
 	// Mock metadata child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
@@ -872,7 +872,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFail
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
 
 	// Verify workflow completed successfully (provenance failure is non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
