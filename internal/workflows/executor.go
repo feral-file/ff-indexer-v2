@@ -743,6 +743,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 	}
 
 	// Fetch current balances based on chain and standard
+	interrupted := false
 	switch chain {
 	case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
 		// For Tezos FA2, TzKT API provides all current token balances directly
@@ -790,6 +791,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 						zap.String("contract", contractAddress),
 						zap.String("tokenNumber", tokenNumber),
 					)
+					interrupted = true
 					// balances will be empty or partial, continue with whatever we got
 				} else {
 					return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
@@ -815,7 +817,8 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 	}
 
 	// Determine burned status from balances (if no positive balances, token is burned)
-	if len(input.Balances) == 0 {
+	// If the balances are interrupted, we tolerate the failure and do not set the burned status
+	if len(input.Balances) == 0 && !interrupted {
 		input.Token.Burned = true
 	}
 
