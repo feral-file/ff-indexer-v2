@@ -198,7 +198,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_ChildWorkflowStartFailu
 	s.Error(s.env.GetWorkflowError())
 	s.Contains(s.env.GetWorkflowError().Error(), "start child workflow failed")
 
-	s.Equal(2, childWorkflowCallCount, "Child workflow should be attempted 2 times (initial + 1 retry)")
+	s.Equal(1, childWorkflowCallCount, "Child workflow should be attempted 1 time (initial + 0 retries)")
 }
 
 // ====================================================================================
@@ -663,7 +663,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_MetadataWorkflowSt
 	s.NoError(s.env.GetWorkflowError())
 
 	// Verify retries
-	s.Equal(2, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
+	s.Equal(1, workflowCallCount, "Workflow should be attempted 1 time (initial + 0 retries)")
 }
 
 func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ProvenanceWorkflowStartFailure_NonFatal() {

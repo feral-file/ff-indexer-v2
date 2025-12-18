@@ -22,7 +22,6 @@ func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 30 * time.Second,
 			MaximumAttempts: 1,
 		},
 	}

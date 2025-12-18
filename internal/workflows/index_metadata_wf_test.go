@@ -164,7 +164,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_ChildWorkflowSt
 	s.True(s.env.IsWorkflowCompleted())
 	s.Error(s.env.GetWorkflowError())
 
-	s.Equal(2, childWorkflowCallCount, "Child workflow should be attempted 2 times (initial + 1 retry)")
+	s.Equal(1, childWorkflowCallCount, "Child workflow should be attempted 1 time (initial + 0 retries)")
 }
 
 // ====================================================================================

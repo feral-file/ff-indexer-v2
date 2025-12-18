@@ -27,9 +27,8 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumAttempts:    2,
+			InitialInterval: 10 * time.Second,
+			MaximumAttempts: 2,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -51,11 +50,6 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 		WorkflowExecutionTimeout: 15 * time.Minute,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumAttempts:    2,
-		},
 	}
 	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
@@ -85,9 +79,8 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute, // Longer timeout for fetching from IPFS/Arweave
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    10 * time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumAttempts:    2,
+			InitialInterval: 10 * time.Second,
+			MaximumAttempts: 2,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -183,11 +176,6 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 			TaskQueue:             w.config.MediaTaskQueue,
 			WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for completion
-			RetryPolicy: &temporal.RetryPolicy{
-				InitialInterval:    30 * time.Second,
-				BackoffCoefficient: 2.0,
-				MaximumAttempts:    2,
-			},
 		}
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
@@ -234,11 +222,6 @@ func (w *workerCore) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs
 			WorkflowExecutionTimeout: 15 * time.Minute,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for children to complete
-			RetryPolicy: &temporal.RetryPolicy{
-				InitialInterval:    30 * time.Second,
-				BackoffCoefficient: 2.0,
-				MaximumAttempts:    2,
-			},
 		}
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 

@@ -34,9 +34,8 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts:    2,
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
+			MaximumAttempts: 2,
+			InitialInterval: 10 * time.Second,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -59,11 +58,6 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 		WorkflowExecutionTimeout: 15 * time.Minute,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumAttempts:    2,
-		},
 	}
 	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
@@ -107,9 +101,8 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts:    2,
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
+			MaximumAttempts: 2,
+			InitialInterval: 10 * time.Second,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -201,9 +194,8 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts:    2,
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
+			MaximumAttempts: 2,
+			InitialInterval: 10 * time.Second,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -262,9 +254,8 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 15 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts:    2,
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
+			MaximumAttempts: 2,
+			InitialInterval: 10 * time.Second,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
@@ -290,11 +281,6 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 		WorkflowExecutionTimeout: 15 * time.Minute,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumAttempts:    2,
-		},
 	}
 	metadataCtx := workflow.WithChildOptions(ctx, metadataWorkflowOptions)
 
@@ -396,9 +382,8 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts:    2,
-			InitialInterval:    30 * time.Second,
-			BackoffCoefficient: 2.0,
+			MaximumAttempts: 2,
+			InitialInterval: 10 * time.Second,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
