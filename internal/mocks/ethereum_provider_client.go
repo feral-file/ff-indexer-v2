@@ -156,6 +156,21 @@ func (mr *MockEthereumProviderClientMockRecorder) GetContractDeployer(ctx, contr
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetContractDeployer", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetContractDeployer), ctx, contractAddress, minBlock)
 }
 
+// GetLatestBlock mocks base method.
+func (m *MockEthereumProviderClient) GetLatestBlock(ctx context.Context) (uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLatestBlock", ctx)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetLatestBlock indicates an expected call of GetLatestBlock.
+func (mr *MockEthereumProviderClientMockRecorder) GetLatestBlock(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestBlock", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetLatestBlock), ctx)
+}
+
 // GetTokenCIDsByOwnerAndBlockRange mocks base method.
 func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	m.ctrl.T.Helper()
@@ -184,21 +199,6 @@ func (m *MockEthereumProviderClient) GetTokenEvents(ctx context.Context, contrac
 func (mr *MockEthereumProviderClientMockRecorder) GetTokenEvents(ctx, contractAddress, tokenNumber, standard interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenEvents", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetTokenEvents), ctx, contractAddress, tokenNumber, standard)
-}
-
-// HeaderByNumber mocks base method.
-func (m *MockEthereumProviderClient) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HeaderByNumber", ctx, number)
-	ret0, _ := ret[0].(*types.Header)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// HeaderByNumber indicates an expected call of HeaderByNumber.
-func (mr *MockEthereumProviderClientMockRecorder) HeaderByNumber(ctx, number interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeaderByNumber", reflect.TypeOf((*MockEthereumProviderClient)(nil).HeaderByNumber), ctx, number)
 }
 
 // ParseEventLog mocks base method.

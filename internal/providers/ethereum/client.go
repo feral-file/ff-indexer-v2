@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
@@ -32,8 +33,8 @@ type EthereumClient interface {
 	// BlockByNumber returns a block by number
 	BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error)
 
-	// HeaderByNumber returns a header by number
-	HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error)
+	// GetLatestBlock returns the latest block number
+	GetLatestBlock(ctx context.Context) (uint64, error)
 
 	// ERC721TokenURI fetches the tokenURI from an ERC721 contract
 	ERC721TokenURI(ctx context.Context, contractAddress string, tokenNumber string) (string, error)
@@ -72,18 +73,25 @@ type EthereumClient interface {
 }
 
 type ethereumClient struct {
-	chainID domain.Chain
-	client  adapter.EthClient
-	clock   adapter.Clock
+	chainID           domain.Chain
+	client            adapter.EthClient
+	clock             adapter.Clock
+	blockHeadProvider block.BlockHeadProvider
 }
 
-func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock) EthereumClient {
-	return &ethereumClient{chainID: chainID, client: client, clock: clock}
+// NewClient creates a new Ethereum client with the provided dependencies
+func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock, blockHeadProvider block.BlockHeadProvider) EthereumClient {
+	return &ethereumClient{
+		chainID:           chainID,
+		client:            client,
+		clock:             clock,
+		blockHeadProvider: blockHeadProvider,
+	}
 }
 
 // SubscribeFilterLogs subscribes to filter logs
-func (c *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
-	return c.client.SubscribeFilterLogs(ctx, query, ch)
+func (f *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
+	return f.client.SubscribeFilterLogs(ctx, query, ch)
 }
 
 // calculateStepSize determines the optimal step size for pagination based on query specificity
@@ -96,7 +104,7 @@ func (c *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum
 // - 10M blocks (~4 years): ERC1155 with specific owner address
 // - 5M blocks (~2 years): ERC1155 queries for entire contract (moderate activity)
 // - 1M blocks (~5 months): ERC1155 queries for high-activity contracts
-func (c *ethereumClient) calculateStepSize(ctx context.Context, query ethereum.FilterQuery) uint64 {
+func (f *ethereumClient) calculateStepSize(ctx context.Context, query ethereum.FilterQuery) uint64 {
 	// Default conservative step size for unrecognized patterns
 	const (
 		defaultStepSize         = uint64(1_000_000)  // 1M blocks
@@ -208,7 +216,7 @@ func (c *ethereumClient) calculateStepSize(ctx context.Context, query ethereum.F
 
 // filterLogsWithPagination is an internal method that handles pagination for FilterLogs
 // to work around Infura's 10k log limitation
-func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+func (f *ethereumClient) filterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
 	// Use the parent context directly if it already has a deadline (e.g., from ERC1155Balances)
 	// Otherwise, create a context with timeout (1 minute)
 	timeoutCtx := ctx
@@ -220,7 +228,7 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 
 	// If blockhash is specified, use it directly (no pagination needed)
 	if query.BlockHash != nil {
-		return c.client.FilterLogs(timeoutCtx, query)
+		return f.client.FilterLogs(timeoutCtx, query)
 	}
 
 	// 1. Detect initial start/end blocks (genesis and latest)
@@ -234,19 +242,19 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 	if query.ToBlock != nil {
 		toBlock = query.ToBlock
 	} else {
-		// Get latest block
-		latestBlock, err := c.client.HeaderByNumber(timeoutCtx, nil)
+		// Get latest block using cached provider
+		latestBlockNum, err := f.GetLatestBlock(timeoutCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get latest block: %w", err)
 		}
-		toBlock = latestBlock.Number
+		toBlock = new(big.Int).SetUint64(latestBlockNum)
 	}
 
 	// 2. Calculate optimal step size based on query specificity
 	// More specific queries (with indexed parameters) can use larger steps
 	var allLogs []types.Log
 	currentFrom := new(big.Int).Set(fromBlock)
-	stepSize := c.calculateStepSize(timeoutCtx, query)
+	stepSize := f.calculateStepSize(timeoutCtx, query)
 
 	logger.DebugCtx(ctx, "Starting log pagination",
 		zap.Uint64("fromBlock", fromBlock.Uint64()),
@@ -282,7 +290,7 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 		rangeQuery.ToBlock = currentTo
 
 		// Try to get logs for current range with retry logic
-		logs, err := c.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize)
+		logs, err := f.getLogsWithRetry(timeoutCtx, rangeQuery, stepSize)
 		if err != nil {
 			// If timeout/canceled, return partial logs instead of error
 			if timeoutCtx.Err() != nil {
@@ -316,7 +324,7 @@ func (c *ethereumClient) filterLogsWithPagination(ctx context.Context, query eth
 // After successfully processing a chunk, the step size is reset to the original value for the
 // next chunk. This handles burst activity (e.g., popular NFT mints) in specific ranges without
 // unnecessarily reducing the step size for all remaining chunks.
-func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64) ([]types.Log, error) {
+func (f *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64) ([]types.Log, error) {
 	originalStepSize := stepSize
 	currentStepSize := stepSize
 
@@ -345,7 +353,7 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 		queryCopy.FromBlock = new(big.Int).Set(currentFrom)
 		queryCopy.ToBlock = new(big.Int).Set(currentTo)
 
-		logs, err := c.client.FilterLogs(ctx, queryCopy)
+		logs, err := f.client.FilterLogs(ctx, queryCopy)
 		if err == nil {
 			// Success - accumulate logs and move to next chunk
 			allLogs = append(allLogs, logs...)
@@ -381,7 +389,7 @@ func (c *ethereumClient) getLogsWithRetry(ctx context.Context, query ethereum.Fi
 		}
 
 		// Sleep for 1 second to avoid overwhelming the API
-		c.clock.Sleep(time.Second * 1)
+		f.clock.Sleep(time.Second * 1)
 
 		logger.DebugCtx(ctx, "Too many results, reducing step size and retrying same range",
 			zap.Uint64("oldStepSize", currentStepSize*2),
@@ -409,17 +417,17 @@ func isTooManyResultsError(err error) bool {
 }
 
 // BlockByNumber returns a block by number
-func (c *ethereumClient) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
-	return c.client.BlockByNumber(ctx, number)
+func (f *ethereumClient) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
+	return f.client.BlockByNumber(ctx, number)
 }
 
-// HeaderByNumber returns a header by number
-func (c *ethereumClient) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
-	return c.client.HeaderByNumber(ctx, number)
+// GetLatestBlock returns the latest block number using the cached provider
+func (f *ethereumClient) GetLatestBlock(ctx context.Context) (uint64, error) {
+	return f.blockHeadProvider.GetLatestBlock(ctx)
 }
 
 // ERC721TokenURI fetches the tokenURI from an ERC721 contract
-func (c *ethereumClient) ERC721TokenURI(ctx context.Context, contractAddress string, tokenNumber string) (string, error) {
+func (f *ethereumClient) ERC721TokenURI(ctx context.Context, contractAddress string, tokenNumber string) (string, error) {
 	// ERC721 tokenURI function signature: tokenURI(uint256) returns (string)
 	tokenURIABI, err := abi.JSON(strings.NewReader(`[{"constant":true,"inputs":[{"name":"tokenId","type":"uint256"}],"name":"tokenURI","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"}]`))
 	if err != nil {
@@ -437,7 +445,7 @@ func (c *ethereumClient) ERC721TokenURI(ctx context.Context, contractAddress str
 	}
 
 	contractAddr := common.HexToAddress(contractAddress)
-	result, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	result, err := f.client.CallContract(ctx, ethereum.CallMsg{
 		To:   &contractAddr,
 		Data: data,
 	}, nil)
@@ -454,7 +462,7 @@ func (c *ethereumClient) ERC721TokenURI(ctx context.Context, contractAddress str
 }
 
 // ERC721OwnerOf fetches the current owner of an ERC721 token
-func (c *ethereumClient) ERC721OwnerOf(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+func (f *ethereumClient) ERC721OwnerOf(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	// ERC721 ownerOf function signature: ownerOf(uint256) returns (address)
 	ownerOfABI, err := abi.JSON(strings.NewReader(`[{"constant":true,"inputs":[{"name":"tokenId","type":"uint256"}],"name":"ownerOf","outputs":[{"name":"","type":"address"}],"payable":false,"stateMutability":"view","type":"function"}]`))
 	if err != nil {
@@ -472,7 +480,7 @@ func (c *ethereumClient) ERC721OwnerOf(ctx context.Context, contractAddress, tok
 	}
 
 	contractAddr := common.HexToAddress(contractAddress)
-	result, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	result, err := f.client.CallContract(ctx, ethereum.CallMsg{
 		To:   &contractAddr,
 		Data: data,
 	}, nil)
@@ -489,7 +497,7 @@ func (c *ethereumClient) ERC721OwnerOf(ctx context.Context, contractAddress, tok
 }
 
 // ERC1155URI fetches the uri from an ERC1155 contract
-func (c *ethereumClient) ERC1155URI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+func (f *ethereumClient) ERC1155URI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	// ERC1155 uri function signature: uri(uint256) returns (string)
 	uriABI, err := abi.JSON(strings.NewReader(`[{"constant":true,"inputs":[{"name":"id","type":"uint256"}],"name":"uri","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"}]`))
 	if err != nil {
@@ -507,7 +515,7 @@ func (c *ethereumClient) ERC1155URI(ctx context.Context, contractAddress, tokenN
 	}
 
 	contractAddr := common.HexToAddress(contractAddress)
-	result, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	result, err := f.client.CallContract(ctx, ethereum.CallMsg{
 		To:   &contractAddr,
 		Data: data,
 	}, nil)
@@ -524,7 +532,7 @@ func (c *ethereumClient) ERC1155URI(ctx context.Context, contractAddress, tokenN
 }
 
 // ERC1155BalanceOf fetches the balance of a specific token ID for an owner from an ERC1155 contract
-func (c *ethereumClient) ERC1155BalanceOf(ctx context.Context, contractAddress, ownerAddress, tokenNumber string) (string, error) {
+func (f *ethereumClient) ERC1155BalanceOf(ctx context.Context, contractAddress, ownerAddress, tokenNumber string) (string, error) {
 	// ERC1155 balanceOf function signature: balanceOf(address,uint256) returns (uint256)
 	balanceOfABI, err := abi.JSON(strings.NewReader(`[{"constant":true,"inputs":[{"name":"account","type":"address"},{"name":"id","type":"uint256"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"}]`))
 	if err != nil {
@@ -543,7 +551,7 @@ func (c *ethereumClient) ERC1155BalanceOf(ctx context.Context, contractAddress, 
 	}
 
 	contractAddr := common.HexToAddress(contractAddress)
-	result, err := c.client.CallContract(ctx, ethereum.CallMsg{
+	result, err := f.client.CallContract(ctx, ethereum.CallMsg{
 		To:   &contractAddr,
 		Data: data,
 	}, nil)
@@ -560,7 +568,7 @@ func (c *ethereumClient) ERC1155BalanceOf(ctx context.Context, contractAddress, 
 }
 
 // GetTokenEvents fetches all historical events for a specific token
-func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) ([]domain.BlockchainEvent, error) {
+func (f *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) ([]domain.BlockchainEvent, error) {
 	// Parse token number to big.Int
 	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
 	if !ok {
@@ -612,7 +620,7 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 	}
 
 	// Fetch logs with pagination to handle Infura's 10k limitation
-	logs, err := c.filterLogsWithPagination(ctx, query)
+	logs, err := f.filterLogsWithPagination(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to filter logs: %w", err)
 	}
@@ -620,7 +628,7 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 	// Parse logs and convert to EthereumTokenEvent
 	events := make([]domain.BlockchainEvent, 0)
 	for _, vLog := range logs {
-		event, err := c.ParseEventLog(ctx, vLog)
+		event, err := f.ParseEventLog(ctx, vLog)
 		if err != nil {
 			// Log error but continue processing
 			logger.WarnCtx(ctx, "Failed to parse event log", zap.Error(err))
@@ -658,7 +666,7 @@ func (c *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 // 1. Scanning only recent 10M blocks may miss historical transfers, resulting in incomplete balances
 // 2. Fetching all contract events and filtering client-side is inefficient (can't filter by token ID at RPC level)
 // 3. For contracts with millions of events, this can still hit Infura's 10k log limitation repeatedly
-func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error) {
+func (f *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error) {
 	// Create a timeout context (30 seconds) to prevent indefinite blocking
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -671,12 +679,11 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 
 	contractAddr := common.HexToAddress(contractAddress)
 
-	// Get the latest block number
-	latestHeader, err := c.client.HeaderByNumber(timeoutCtx, nil)
+	// Get the latest block number using cached provider
+	latestBlock, err := f.GetLatestBlock(timeoutCtx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get latest block header: %w", err)
+		return nil, fmt.Errorf("failed to get latest block: %w", err)
 	}
-	latestBlock := latestHeader.Number.Uint64()
 
 	// Calculate fromBlock: scan backward from latest block with max 10M blocks threshold
 	const maxBlockThreshold = uint64(10_000_000)
@@ -711,7 +718,7 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 
 	// Fetch logs with pagination to handle Infura's 10k limitation
 	// If timeout occurs, we'll get partial logs
-	logs, err := c.filterLogsWithPagination(timeoutCtx, query)
+	logs, err := f.filterLogsWithPagination(timeoutCtx, query)
 	if err != nil {
 		// If context deadline exceeded, return partial balances with warning
 		if timeoutCtx.Err() == context.DeadlineExceeded {
@@ -786,7 +793,7 @@ func (c *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 // GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs with block numbers for an owner within a block range
 // It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
 // Returns tokens that the owner possesses at the end of the block range with their last interaction block
-func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
+func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	owner := common.HexToAddress(ownerAddress)
 	ownerHash := common.BytesToHash(owner.Bytes())
 
@@ -844,7 +851,7 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 	resultsCh := make(chan queryResult, len(queries))
 	for _, q := range queries {
 		go func(query ethereum.FilterQuery) {
-			logs, err := c.filterLogsWithPagination(ctx, query)
+			logs, err := f.filterLogsWithPagination(ctx, query)
 			resultsCh <- queryResult{logs: logs, err: err}
 		}(q)
 	}
@@ -894,7 +901,7 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 			}
 
 			tokenID := new(big.Int).SetBytes(vLog.Topics[3].Bytes())
-			tokenCID := domain.NewTokenCID(c.chainID, domain.StandardERC721, vLog.Address.Hex(), tokenID.String())
+			tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC721, vLog.Address.Hex(), tokenID.String())
 
 			// For ERC721, track the last transfer log (chronologically)
 			existing := balanceMap[tokenCID]
@@ -928,7 +935,7 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 			tokenID := new(big.Int).SetBytes(vLog.Data[0:32])
 			amount := new(big.Int).SetBytes(vLog.Data[32:64])
 
-			tokenCID := domain.NewTokenCID(c.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
+			tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
 
 			// For ERC1155, track net balance change
 			existing := balanceMap[tokenCID]
@@ -989,10 +996,10 @@ func (c *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 }
 
 // parseLog parses an Ethereum log into a standardized blockchain event
-func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
+func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	blockHash := vLog.BlockHash.Hex()
 	event := &domain.BlockchainEvent{
-		Chain:           c.chainID,
+		Chain:           f.chainID,
 		ContractAddress: vLog.Address.Hex(),
 		TxHash:          vLog.TxHash.Hex(),
 		BlockNumber:     vLog.BlockNumber,
@@ -1111,11 +1118,11 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 	}
 
 	// Get block to extract timestamp
-	block, err := c.client.BlockByNumber(ctx, new(big.Int).SetUint64(vLog.BlockNumber))
+	block, err := f.client.BlockByNumber(ctx, new(big.Int).SetUint64(vLog.BlockNumber))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get block: %w", err)
 	}
-	event.Timestamp = c.clock.Unix(int64(block.Time()), 0) //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
+	event.Timestamp = f.clock.Unix(int64(block.Time()), 0) //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
 
 	return event, nil
 }
@@ -1124,15 +1131,14 @@ func (c *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 // This method finds the contract creation transaction by binary searching for the block
 // where the contract was deployed
 // minBlock specifies the earliest block to search (0 = search from genesis)
-func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddress string, minBlock uint64) (string, error) {
+func (f *ethereumClient) GetContractDeployer(ctx context.Context, contractAddress string, minBlock uint64) (string, error) {
 	addr := common.HexToAddress(contractAddress)
 
-	// Get current block number
-	latestHeader, err := c.client.HeaderByNumber(ctx, nil)
+	// Get current block number using cached provider
+	latestBlock, err := f.GetLatestBlock(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to get latest header: %w", err)
+		return "", fmt.Errorf("failed to get latest block: %w", err)
 	}
-	latestBlock := latestHeader.Number.Uint64()
 
 	// Validate minBlock
 	if minBlock > latestBlock {
@@ -1147,7 +1153,7 @@ func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 	var searchErr error
 	relativeBlock := uint64(sort.Search(searchRange, func(i int) bool { //nolint:gosec,G115 // Casting int to uint64 is safe for block range, there is no negative block number
 		blockNum := minBlock + uint64(i) //nolint:gosec,G115 // Casting int to uint64 is safe for block range, there is no negative block number
-		code, err := c.client.CodeAt(ctx, addr, new(big.Int).SetUint64(blockNum))
+		code, err := f.client.CodeAt(ctx, addr, new(big.Int).SetUint64(blockNum))
 		if err != nil {
 			// Store error for later handling, but continue search
 			searchErr = err
@@ -1167,7 +1173,7 @@ func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 	}
 
 	// Get the block where contract was created
-	block, err := c.client.BlockByNumber(ctx, new(big.Int).SetUint64(creationBlock))
+	block, err := f.client.BlockByNumber(ctx, new(big.Int).SetUint64(creationBlock))
 	if err != nil {
 		return "", fmt.Errorf("failed to get block %d: %w", creationBlock, err)
 	}
@@ -1181,14 +1187,14 @@ func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 		}
 
 		// Get transaction receipt to check contract address
-		receipt, err := c.client.TransactionReceipt(ctx, tx.Hash())
+		receipt, err := f.client.TransactionReceipt(ctx, tx.Hash())
 		if err != nil {
 			continue
 		}
 
 		if receipt.ContractAddress == addr {
 			// Found the creation transaction
-			sender, err := c.client.TransactionSender(ctx, tx, block.Hash(), receipt.TransactionIndex)
+			sender, err := f.client.TransactionSender(ctx, tx, block.Hash(), receipt.TransactionIndex)
 			if err != nil {
 				return "", fmt.Errorf("failed to get transaction sender: %w", err)
 			}
@@ -1202,11 +1208,11 @@ func (c *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 // TokenExists checks if a token exists on the blockchain
 // For ERC721: uses ownerOf and catches execution revert errors
 // For ERC1155: checks recent transfers and balanceOf for multiple recipients
-func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
+func (f *ethereumClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
 	switch standard {
 	case domain.StandardERC721:
 		// For ERC721, try to call ownerOf. If it reverts, the token doesn't exist.
-		_, err := c.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
+		_, err := f.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
 		if err != nil {
 			// Check if it's an execution revert error (token doesn't exist)
 			if strings.Contains(err.Error(), "execution reverted") ||
@@ -1249,12 +1255,11 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 		contractAddr := common.HexToAddress(contractAddress)
 		zeroAddress := common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS)
 
-		// Get the latest block number
-		latestHeader, err := c.client.HeaderByNumber(timeoutCtx, nil)
+		// Get the latest block number using cached provider
+		latestBlock, err := f.GetLatestBlock(timeoutCtx)
 		if err != nil {
-			return false, fmt.Errorf("failed to get latest block header: %w", err)
+			return false, fmt.Errorf("failed to get latest block: %w", err)
 		}
-		latestBlock := latestHeader.Number.Uint64()
 
 		// Scan backward up to 10M blocks (~3-4 years on Ethereum)
 		const maxBlockThreshold = uint64(10_000_000)
@@ -1280,7 +1285,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 			},
 		}
 
-		logs, err := c.filterLogsWithPagination(timeoutCtx, query)
+		logs, err := f.filterLogsWithPagination(timeoutCtx, query)
 		if err != nil && timeoutCtx.Err() != context.DeadlineExceeded {
 			return false, fmt.Errorf("failed to fetch transfer logs: %w", err)
 		}
@@ -1367,7 +1372,7 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 		// Check balanceOf for each recipient until we find one with balance > 0
 		// This handles partial burns and transfers between holders
 		for i, recipient := range recentRecipients {
-			balanceStr, err := c.ERC1155BalanceOf(timeoutCtx, contractAddress, recipient.address.Hex(), tokenNumber)
+			balanceStr, err := f.ERC1155BalanceOf(timeoutCtx, contractAddress, recipient.address.Hex(), tokenNumber)
 			if err != nil {
 				logger.WarnCtx(timeoutCtx, "Failed to check balance for recipient, trying next",
 					zap.String("recipient", recipient.address.Hex()),
@@ -1413,6 +1418,6 @@ func (c *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 }
 
 // Close closes the connection
-func (c *ethereumClient) Close() {
-	c.client.Close()
+func (f *ethereumClient) Close() {
+	f.client.Close()
 }

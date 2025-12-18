@@ -55,18 +55,22 @@ type NATSConfig struct {
 
 // EthereumConfig holds Ethereum-specific configuration
 type EthereumConfig struct {
-	WebSocketURL string       `mapstructure:"websocket_url"`
-	RPCURL       string       `mapstructure:"rpc_url"`
-	ChainID      domain.Chain `mapstructure:"chain_id"`
-	StartBlock   uint64       `mapstructure:"start_block"`
+	WebSocketURL         string        `mapstructure:"websocket_url"`
+	RPCURL               string        `mapstructure:"rpc_url"`
+	ChainID              domain.Chain  `mapstructure:"chain_id"`
+	StartBlock           uint64        `mapstructure:"start_block"`
+	BlockHeadTTL         time.Duration `mapstructure:"block_head_ttl"`
+	BlockHeadStaleWindow time.Duration `mapstructure:"block_head_stale_window"`
 }
 
 // TezosConfig holds Tezos-specific configuration
 type TezosConfig struct {
-	APIURL       string       `mapstructure:"api_url"`
-	WebSocketURL string       `mapstructure:"websocket_url"`
-	ChainID      domain.Chain `mapstructure:"chain_id"`
-	StartLevel   uint64       `mapstructure:"start_level"`
+	APIURL               string        `mapstructure:"api_url"`
+	WebSocketURL         string        `mapstructure:"websocket_url"`
+	ChainID              domain.Chain  `mapstructure:"chain_id"`
+	StartLevel           uint64        `mapstructure:"start_level"`
+	BlockHeadTTL         time.Duration `mapstructure:"block_head_ttl"`
+	BlockHeadStaleWindow time.Duration `mapstructure:"block_head_stale_window"`
 }
 
 // TemporalConfig holds Temporal configuration
@@ -200,6 +204,8 @@ func LoadEthereumEmitterConfig(configFile string, envPath string) (*EthereumEmit
 	v.SetDefault("nats.reconnect_wait", "2s")
 	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
 	v.SetDefault("ethereum.chain_id", "eip155:1")
+	v.SetDefault("ethereum.block_head_ttl", 12)
+	v.SetDefault("ethereum.block_head_stale_window", 60)
 	v.SetDefault("worker.pool_size", 20)
 	v.SetDefault("worker.queue_size", 2048)
 
@@ -226,6 +232,8 @@ func LoadTezosEmitterConfig(configFile string, envPath string) (*TezosEmitterCon
 	v.SetDefault("nats.reconnect_wait", "2s")
 	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
+	v.SetDefault("tezos.block_head_ttl", 10)
+	v.SetDefault("tezos.block_head_stale_window", 60)
 	v.SetDefault("worker.pool_size", 20)
 	v.SetDefault("worker.queue_size", 2048)
 
@@ -295,7 +303,11 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 	v.SetDefault("temporal.max_concurrent_activity_task_pollers", 10)
+	v.SetDefault("ethereum.block_head_ttl", 12)
+	v.SetDefault("ethereum.block_head_stale_window", 60)
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
+	v.SetDefault("tezos.block_head_ttl", 10)
+	v.SetDefault("tezos.block_head_stale_window", 60)
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 	v.SetDefault("vendors.feralfile_url", "https://feralfile.com/api")
 	v.SetDefault("vendors.objkt_url", "https://data.objkt.com/v3/graphql")
@@ -448,11 +460,15 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.rpc_url",
 		"ethereum.chain_id",
 		"ethereum.start_block",
+		"ethereum.block_head_ttl",
+		"ethereum.block_head_stale_window",
 		// Tezos
 		"tezos.api_url",
 		"tezos.websocket_url",
 		"tezos.chain_id",
 		"tezos.start_level",
+		"tezos.block_head_ttl",
+		"tezos.block_head_stale_window",
 		// Temporal
 		"temporal.host_port",
 		"temporal.namespace",

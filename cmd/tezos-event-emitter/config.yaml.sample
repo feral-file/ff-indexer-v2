@@ -29,6 +29,8 @@ tezos:
   websocket_url: https://api.tzkt.io/v1/ws
   chain_id: tezos:mainnet
   start_level: 0
+  block_head_ttl: 10
+  block_head_stale_window: 60
 
 worker:
   pool_size: 20

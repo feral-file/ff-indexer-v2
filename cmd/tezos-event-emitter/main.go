@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/emitter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
@@ -99,8 +100,16 @@ func main() {
 	defer natsPublisher.Close()
 	logger.InfoCtx(ctx, "Connected to NATS JetStream")
 
+	// Create Tezos block head provider with appropriate TTL
+	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient)
+	tzBlockHeadProvider := block.NewBlockHeadProvider(tzBlockFetcher,
+		block.Config{
+			TTL:         cfg.Tezos.BlockHeadTTL * time.Second,
+			StaleWindow: cfg.Tezos.BlockHeadStaleWindow * time.Second,
+		}, clockAdapter)
+
 	// Initialize TzKT client
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter, tzBlockHeadProvider)
 
 	// Initialize Tezos subscriber
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{

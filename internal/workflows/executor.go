@@ -1035,16 +1035,16 @@ func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Contex
 	return allTokensWithBlocks, nil
 }
 
-// GetLatestEthereumBlock retrieves the latest block number from the Ethereum blockchain
+// GetLatestEthereumBlock retrieves the latest block number from the Ethereum blockchain using caching
 func (e *executor) GetLatestEthereumBlock(ctx context.Context) (uint64, error) {
-	header, err := e.ethClient.HeaderByNumber(ctx, nil)
+	blockNum, err := e.ethClient.GetLatestBlock(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get latest block: %w", err)
 	}
-	return header.Number.Uint64(), nil
+	return blockNum, nil
 }
 
-// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT
+// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT using caching
 func (e *executor) GetLatestTezosBlock(ctx context.Context) (uint64, error) {
 	latestBlock, err := e.tzktClient.GetLatestBlock(ctx)
 	if err != nil {

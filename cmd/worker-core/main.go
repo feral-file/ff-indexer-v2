@@ -18,6 +18,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
@@ -101,12 +102,29 @@ func main() {
 		logger.FatalCtx(ctx, "Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
 	defer adapterEthClient.Close()
-	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter)
+
+	// Create Ethereum block head provider with appropriate TTL
+	ethBlockFetcher := ethereum.NewEthereumBlockFetcher(adapterEthClient)
+	ethBlockHeadProvider := block.NewBlockHeadProvider(ethBlockFetcher,
+		block.Config{
+			TTL:         cfg.Ethereum.BlockHeadTTL * time.Second,
+			StaleWindow: cfg.Ethereum.BlockHeadStaleWindow * time.Second,
+		}, clockAdapter)
+
+	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockHeadProvider)
 
 	logger.InfoCtx(ctx, "Connected to Ethereum RPC", zap.String("rpc_url", cfg.Ethereum.RPCURL))
 
+	// Create Tezos block head provider with appropriate TTL
+	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient)
+	tzBlockHeadProvider := block.NewBlockHeadProvider(tzBlockFetcher,
+		block.Config{
+			TTL:         cfg.Tezos.BlockHeadTTL * time.Second,
+			StaleWindow: cfg.Tezos.BlockHeadStaleWindow * time.Second,
+		}, clockAdapter)
+
 	// Initialize Tezos client
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter, tzBlockHeadProvider)
 
 	// Initialize vendors
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)

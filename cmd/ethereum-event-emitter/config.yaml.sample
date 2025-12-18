@@ -28,6 +28,8 @@ ethereum:
   websocket_url: ""
   chain_id: eip155:1
   start_block: 0
+  block_head_ttl: 12
+  block_head_stale_window: 60
 
 worker:
   pool_size: 20

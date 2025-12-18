@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
@@ -150,7 +151,7 @@ type TzKTClient interface {
 	// GetTokenBalancesByAccountWithinBlockRange retrieves token balances for an account within a block range
 	GetTokenBalancesByAccountWithinBlockRange(ctx context.Context, accountAddress string, fromBlock, toBlock uint64, limit int, offset int) ([]TzKTTokenBalance, error)
 
-	// GetLatestBlock retrieves the current latest block level from the TzKT API
+	// GetLatestBlock retrieves the current latest block level
 	GetLatestBlock(ctx context.Context) (uint64, error)
 
 	// GetContractDeployer retrieves the deployer address for a contract
@@ -162,24 +163,27 @@ type TzKTClient interface {
 
 // tzktClient is the concrete implementation of TzKTClient
 type tzktClient struct {
-	chainID    domain.Chain
-	baseURL    string
-	httpClient adapter.HTTPClient
-	clock      adapter.Clock
+	chainID           domain.Chain
+	baseURL           string
+	httpClient        adapter.HTTPClient
+	clock             adapter.Clock
+	blockHeadProvider block.BlockHeadProvider
 }
 
-// NewTzKTClient creates a new TzKT API client
+// NewTzKTClient creates a new TzKT API client with the provided dependencies
 func NewTzKTClient(
 	chainID domain.Chain,
 	baseURL string,
 	httpClient adapter.HTTPClient,
 	clock adapter.Clock,
+	blockHeadProvider block.BlockHeadProvider,
 ) TzKTClient {
 	return &tzktClient{
-		chainID:    chainID,
-		baseURL:    baseURL,
-		httpClient: httpClient,
-		clock:      clock,
+		chainID:           chainID,
+		baseURL:           baseURL,
+		httpClient:        httpClient,
+		clock:             clock,
+		blockHeadProvider: blockHeadProvider,
 	}
 }
 
@@ -532,21 +536,9 @@ func (c *tzktClient) getTransactionFromBitmapUpdate(ctx context.Context, updates
 	return result, nil
 }
 
-// GetLatestBlock retrieves the current latest block level from the TzKT API
+// GetLatestBlock retrieves the current latest block level
 func (c *tzktClient) GetLatestBlock(ctx context.Context) (uint64, error) {
-	// TzKT API: GET /v1/head
-	// Returns the current head block information
-	url := fmt.Sprintf("%s/v1/head", c.baseURL)
-
-	var head struct {
-		Level uint64 `json:"level"`
-	}
-
-	if err := c.httpClient.Get(ctx, url, &head); err != nil {
-		return 0, fmt.Errorf("failed to get latest block from TzKT: %w", err)
-	}
-
-	return head.Level, nil
+	return c.blockHeadProvider.GetLatestBlock(ctx)
 }
 
 // TzKTOrigination represents an origination operation from the TzKT API

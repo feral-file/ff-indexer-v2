@@ -5,11 +5,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math/big"
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"go.temporal.io/sdk/temporal"
@@ -1706,13 +1704,10 @@ func TestGetLatestEthereumBlock_Success(t *testing.T) {
 	ctx := context.Background()
 	expectedBlock := uint64(12345678)
 
-	// Mock ethClient HeaderByNumber
-	header := &types.Header{
-		Number: big.NewInt(int64(expectedBlock)),
-	}
+	// Mock ethClient GetLatestBlock
 	mocks.ethClient.EXPECT().
-		HeaderByNumber(ctx, nil).
-		Return(header, nil)
+		GetLatestBlock(ctx).
+		Return(expectedBlock, nil)
 
 	result, err := mocks.executor.GetLatestEthereumBlock(ctx)
 
@@ -1729,8 +1724,8 @@ func TestGetLatestEthereumBlock_ClientError(t *testing.T) {
 	// Mock ethClient HeaderByNumber to return error
 	clientErr := errors.New("client error")
 	mocks.ethClient.EXPECT().
-		HeaderByNumber(ctx, nil).
-		Return(nil, clientErr)
+		GetLatestBlock(ctx).
+		Return(uint64(0), clientErr)
 
 	result, err := mocks.executor.GetLatestEthereumBlock(ctx)
 

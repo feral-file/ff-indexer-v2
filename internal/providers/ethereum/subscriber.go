@@ -192,13 +192,9 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 	}
 }
 
-// GetLatestBlock returns the latest block number
+// GetLatestBlock returns the latest block number using cached provider
 func (s *ethSubscriber) GetLatestBlock(ctx context.Context) (uint64, error) {
-	header, err := s.client.HeaderByNumber(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get latest block: %w", err)
-	}
-	return header.Number.Uint64(), nil
+	return s.client.GetLatestBlock(ctx)
 }
 
 // Close closes the connection

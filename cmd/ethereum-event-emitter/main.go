@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/emitter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
@@ -88,7 +89,16 @@ func main() {
 		logger.FatalCtx(ctx, "Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
 	defer adapterEthClient.Close()
-	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter)
+
+	// Create Ethereum block head provider with appropriate TTL
+	ethBlockFetcher := ethereum.NewEthereumBlockFetcher(adapterEthClient)
+	ethBlockHeadProvider := block.NewBlockHeadProvider(ethBlockFetcher,
+		block.Config{
+			TTL:         cfg.Ethereum.BlockHeadTTL * time.Second,
+			StaleWindow: cfg.Ethereum.BlockHeadStaleWindow * time.Second,
+		}, clockAdapter)
+
+	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockHeadProvider)
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(
