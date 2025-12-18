@@ -82,6 +82,7 @@ jobs:
           TEST_DB_USER: postgres
           TEST_DB_PASSWORD: postgres
           TEST_DB_NAME: test_db
+          FF_INDEXER_VENDORS_OPENSEA_API_KEY: ${{ secrets.OPENSEA_TEST_API_KEY }}
 
       - name: Filter generated files from coverage
         run: |
