@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -49,12 +51,13 @@ type enhancer struct {
 	artblocksClient artblocks.Client
 	feralfileClient feralfile.Client
 	objktClient     objkt.Client
+	openseaClient   opensea.Client
 	json            adapter.JSON
 	jcs             adapter.JCS
 }
 
-func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, feralfileClient feralfile.Client, objktClient objkt.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
-	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, feralfileClient: feralfileClient, objktClient: objktClient, json: json, jcs: jcs}
+func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, feralfileClient feralfile.Client, objktClient objkt.Client, openseaClient opensea.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
+	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, feralfileClient: feralfileClient, objktClient: objktClient, openseaClient: openseaClient, json: json, jcs: jcs}
 }
 
 // VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
@@ -73,7 +76,7 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 
 	// Check publisher name and route to appropriate enhancer
 	var publisherName registry.PublisherName
-	if meta.Publisher != nil && meta.Publisher.Name != nil {
+	if meta != nil && meta.Publisher != nil && meta.Publisher.Name != nil {
 		publisherName = registry.PublisherName(*meta.Publisher.Name)
 	}
 
@@ -100,12 +103,19 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 
 	default:
 		// For Tezos tokens that are not Feral File, use objkt
-		if chain == domain.ChainTezosMainnet {
+		switch chain {
+		case domain.ChainTezosMainnet:
 			enhancedMetadata, err = e.enhanceObjkt(ctx, contractAddress, tokenNumber)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance objkt metadata: %w", err)
 			}
-		} else {
+		case domain.ChainEthereumMainnet:
+			// For Ethereum tokens without a known publisher, try OpenSea
+			enhancedMetadata, err = e.enhanceOpenSea(ctx, contractAddress, tokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("failed to enhance OpenSea metadata: %w", err)
+			}
+		default:
 			// No enhancement available
 			return nil, nil
 		}
@@ -342,6 +352,68 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 		}
 		if len(artists) > 0 {
 			enhanced.Artists = artists
+		}
+	}
+
+	return enhanced, nil
+}
+
+// enhanceOpenSea enhances metadata from OpenSea API for Ethereum tokens
+func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
+	logger.InfoCtx(ctx, "Enhancing OpenSea metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
+
+	// Fetch NFT data from OpenSea API
+	nft, err := e.openseaClient.GetNFT(ctx, contractAddress, tokenNumber)
+	if err != nil {
+		if errors.Is(err, opensea.ErrNoAPIKey) {
+			logger.WarnCtx(ctx, "No API key provided for OpenSea", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to fetch OpenSea NFT: %w", err)
+	}
+
+	vendorJSON, err := e.json.Marshal(nft)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal OpenSea NFT: %w", err)
+	}
+
+	// Build enhanced metadata
+	enhanced := &EnhancedMetadata{
+		Vendor:     schema.VendorOpenSea,
+		VendorJSON: vendorJSON,
+	}
+
+	// Set name
+	if nft.Name != nil && *nft.Name != "" {
+		enhanced.Name = nft.Name
+	}
+
+	// Set description
+	if nft.Description != nil && *nft.Description != "" {
+		enhanced.Description = nft.Description
+	}
+
+	// Set image URL
+	if nft.ImageURL != nil && *nft.ImageURL != "" {
+		enhanced.ImageURL = nft.ImageURL
+	}
+
+	// Set animation URL
+	if nft.AnimationURL != nil && *nft.AnimationURL != "" {
+		enhanced.AnimationURL = nft.AnimationURL
+	}
+
+	// Try to extract artist from traits
+	if len(nft.Traits) > 0 {
+		artistName := opensea.ExtractArtistFromTraits(nft.Traits)
+		if artistName != "" {
+			// We don't have the artist's address from OpenSea, so we can't create a DID
+			// We'll just store the name
+			enhanced.Artists = []Artist{
+				{
+					Name: artistName,
+				},
+			}
 		}
 	}
 

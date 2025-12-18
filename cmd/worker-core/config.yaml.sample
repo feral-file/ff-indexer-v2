@@ -36,6 +36,9 @@ tezos:
 vendors:
   artblocks_url: https://artblocks-mainnet.hasura.app/v1/graphql
   feralfile_url: https://feralfile.com/api
+  objkt_url: https://data.objkt.com/v3/graphql
+  opensea_url: https://api.opensea.io/api/v2
+  opensea_api_key: ""  # OpenSea API key for metadata enrichment (optional)
 
 ethereum_token_sweep_start_block: 10000000
 tezos_token_sweep_start_block: 5000000

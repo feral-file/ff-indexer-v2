@@ -244,12 +244,15 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataErr
 		},
 	)
 
+	// Mock enhancement activity - returns nil (no enhancement)
+	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, mock.Anything).Return(nil, nil)
+
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
 
-	// Verify workflow completed with error
+	// Verify workflow completed without error
 	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
+	s.NoError(s.env.GetWorkflowError())
 
 	// Verify retries (MaximumAttempts: 2)
 	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
@@ -367,7 +370,8 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NilMetadata() {
 	// Mock FetchTokenMetadata activity to return nil metadata
 	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(nil, nil)
 
-	// No other activities should be called
+	// Mock EnhanceTokenMetadata activity - should still be called even with nil metadata
+	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, (*metadata.NormalizedMetadata)(nil)).Return(nil, nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)

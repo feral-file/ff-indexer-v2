@@ -81,7 +81,7 @@ func main() {
 	jsonAdapter := adapter.NewJSON()
 	natsJS := adapter.NewNatsJetStream()
 	signalR := adapter.NewSignalR()
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	httpClient := adapter.NewHTTPClient(15 * time.Second)
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(

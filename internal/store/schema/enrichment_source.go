@@ -22,6 +22,8 @@ const (
 	VendorFeralFile Vendor = "feralfile"
 	// VendorObjkt represents metadata from objkt v3 API
 	VendorObjkt Vendor = "objkt"
+	// VendorOpenSea represents metadata from OpenSea API
+	VendorOpenSea Vendor = "opensea"
 )
 
 // EnrichmentSource represents the enrichment_sources table - stores enriched metadata from vendor APIs

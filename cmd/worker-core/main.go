@@ -27,6 +27,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -93,7 +94,7 @@ func main() {
 	base64Adapter := adapter.NewBase64()
 
 	// Initialize ethereum client
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	httpClient := adapter.NewHTTPClient(15 * time.Second)
 	ethDialer := adapter.NewEthClientDialer()
 	adapterEthClient, err := ethDialer.Dial(ctx, cfg.Ethereum.RPCURL)
 	if err != nil {
@@ -111,6 +112,7 @@ func main() {
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
 	objktClient := objkt.NewClient(httpClient, cfg.Vendors.ObjktURL, jsonAdapter)
+	openseaClient := opensea.NewClient(httpClient, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
 
 	// Initialize registry loaders
 	publisherLoader := registry.NewPublisherRegistryLoader(fs, jsonAdapter)
@@ -152,7 +154,7 @@ func main() {
 	})
 
 	// Initialize metadata enhancer and resolver
-	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, objktClient, jsonAdapter, jcsAdapter)
+	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, objktClient, openseaClient, jsonAdapter, jcsAdapter)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, jcsAdapter, base64Adapter, dataStore, publisherRegistry)
 
 	// Load deployer cache from DB if resolver has store and registry

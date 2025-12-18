@@ -88,12 +88,12 @@ Stores original and enriched metadata for tokens.
 
 ### enrichment_sources
 
-Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File).
+Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File, Objkt, OpenSea).
 
 | Column | Type | Description |
 |--------|------|-------------|
 | token_id | BIGINT | Foreign key to tokens.id |
-| vendor | vendor_type | Vendor name (artblocks, fxhash, foundation, superrare, feralfile) |
+| vendor | vendor_type | Vendor name (artblocks, fxhash, foundation, superrare, feralfile, objkt, opensea) |
 | vendor_json | JSONB | Raw API response |
 | vendor_hash | TEXT | Hash of vendor_json for change detection |
 | image_url | TEXT | Normalized image URL from vendor |
@@ -332,6 +332,8 @@ Configuration and state management (cursors, version, etc.).
 - `foundation` - Foundation
 - `superrare` - SuperRare
 - `feralfile` - Feral File
+- `objkt` - Objkt
+- `opensea` - OpenSea
 
 ### storage_provider
 - `self_hosted` - Self-hosted storage

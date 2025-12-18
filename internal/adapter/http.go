@@ -3,9 +3,13 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"syscall"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -36,6 +40,9 @@ type HTTPClient interface {
 	// GetWithResponse performs a GET request and returns the full HTTP response
 	// The caller is responsible for checking status code and closing the response body
 	GetWithResponse(ctx context.Context, url string) (*http.Response, error)
+
+	// GetWithHeaders performs a GET request with custom headers and returns the response body
+	GetWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, error)
 }
 
 // RealHTTPClient implements HTTPClient using the standard http package
@@ -52,6 +59,69 @@ func NewHTTPClient(timeout time.Duration) HTTPClient {
 	}
 }
 
+// isRetryableError determines if an error should trigger a retry
+func isRetryableError(err error) bool {
+	// Context cancellation and deadline exceeded are not retryable
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	// Check for url.Error (wraps most HTTP client errors)
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		// Check the underlying error
+		err = urlErr.Err
+	}
+
+	// Check for net.Error interface (network-related errors)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		// Timeout errors are retryable
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	// Check for specific network errors that are retryable
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		// Connection refused is retryable (server might be temporarily down)
+		if errors.Is(opErr.Err, syscall.ECONNREFUSED) {
+			return true
+		}
+		// Connection reset by peer is retryable
+		if errors.Is(opErr.Err, syscall.ECONNRESET) {
+			return true
+		}
+		// Network unreachable is retryable
+		if errors.Is(opErr.Err, syscall.ENETUNREACH) {
+			return true
+		}
+		// Host unreachable is retryable
+		if errors.Is(opErr.Err, syscall.EHOSTUNREACH) {
+			return true
+		}
+	}
+
+	// DNS errors might be retryable
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		// Temporary DNS errors are retryable
+		if dnsErr.Temporary() {
+			return true
+		}
+		// DNS timeouts are retryable
+		if dnsErr.Timeout() {
+			return true
+		}
+		// Permanent DNS errors (e.g., no such host) are not retryable
+		return false
+	}
+
+	// By default, unknown errors are not retryable to avoid infinite retries
+	return false
+}
+
 // doRequestWithRetryAndResponse executes an HTTP request with exponential backoff retry for rate limiting
 // and returns the final response. The caller is responsible for closing the response body.
 func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req *http.Request) (*http.Response, error) {
@@ -60,8 +130,14 @@ func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req 
 	operation := func() error {
 		resp, err := c.client.Do(req)
 		if err != nil {
-			// Network errors are retryable
-			return fmt.Errorf("failed to perform request: %w", err)
+			// Check if the error is retryable
+			if isRetryableError(err) {
+				logger.WarnCtx(ctx, "retryable error encountered", zap.Error(err), zap.String("url", req.URL.String()))
+				return fmt.Errorf("retryable error: %w", err)
+			}
+			// Permanent errors should not be retried
+			logger.WarnCtx(ctx, "permanent error encountered", zap.Error(err), zap.String("url", req.URL.String()))
+			return backoff.Permanent(fmt.Errorf("permanent error: %w", err))
 		}
 
 		// Handle rate limiting - retry with backoff
@@ -212,4 +288,20 @@ func (c *RealHTTPClient) GetWithResponse(ctx context.Context, url string) (*http
 	}
 
 	return c.doRequestWithRetryAndResponse(ctx, req)
+}
+
+// GetWithHeaders performs a GET request with custom headers and returns the response body
+// Implements exponential backoff retry for rate limiting (429) responses
+func (c *RealHTTPClient) GetWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	return c.doRequestWithRetry(ctx, req)
 }

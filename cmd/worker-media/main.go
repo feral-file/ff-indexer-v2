@@ -92,7 +92,7 @@ func main() {
 	imageEncoder := adapter.NewImageEncoder()
 
 	// Initialize HTTP client
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	httpClient := adapter.NewHTTPClient(15 * time.Second)
 
 	// Initialize URI resolver
 	uriResolverConfig := &uri.Config{

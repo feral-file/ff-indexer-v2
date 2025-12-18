@@ -294,6 +294,26 @@ VALUES (
     now() - interval '14 days'
 );
 
+-- Enrichment source for Token 2 (using OpenSea)
+INSERT INTO enrichment_sources (
+    token_id, vendor, vendor_json, vendor_hash,
+    image_url, name, description, artists, mime_type,
+    created_at, updated_at
+)
+VALUES (
+    2,
+    'opensea',
+    '{"identifier":"2","collection":"bored-ape-yacht-club","contract":"0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D","name":"Bored Ape #2","description":"BAYC from OpenSea","image_url":"https://opensea.io/images/2.png"}',
+    'vendor_hash_opensea_2',
+    'https://opensea.io/images/2.png',
+    'Bored Ape #2',
+    'BAYC from OpenSea',
+    '[{"did":"did:pkh:eip155:1:0xartist789012345678901234567890","name":"BAYC Artist"}]',
+    'image/png',
+    now() - interval '24 days',
+    now() - interval '24 days'
+);
+
 -- =============================================================================
 -- Provenance Events
 -- =============================================================================

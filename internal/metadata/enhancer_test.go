@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
@@ -27,6 +28,7 @@ type testEnhancerMocks struct {
 	artblocksClient *mocks.MockArtBlocksClient
 	feralfileClient *mocks.MockFeralFileClient
 	objktClient     *mocks.MockObjktClient
+	openseaClient   *mocks.MockOpenSeaClient
 	json            *mocks.MockJSON
 	jcs             *mocks.MockJCS
 	enhancer        metadata.Enhancer
@@ -43,6 +45,7 @@ func setupTestEnhancer(t *testing.T) *testEnhancerMocks {
 		artblocksClient: mocks.NewMockArtBlocksClient(ctrl),
 		feralfileClient: mocks.NewMockFeralFileClient(ctrl),
 		objktClient:     mocks.NewMockObjktClient(ctrl),
+		openseaClient:   mocks.NewMockOpenSeaClient(ctrl),
 		json:            mocks.NewMockJSON(ctrl),
 		jcs:             mocks.NewMockJCS(ctrl),
 	}
@@ -53,6 +56,7 @@ func setupTestEnhancer(t *testing.T) *testEnhancerMocks {
 		tm.artblocksClient,
 		tm.feralfileClient,
 		tm.objktClient,
+		tm.openseaClient,
 		tm.json,
 		tm.jcs,
 	)
@@ -304,12 +308,16 @@ func TestEnhancer_Enhance_NoPublisher(t *testing.T) {
 		Publisher: nil,
 	}
 
-	// No mocks should be called since enhancement is skipped when no publisher
+	// Now should try OpenSea enrichment for Ethereum tokens without a publisher
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x123", "1").
+		Return(nil, opensea.ErrNoAPIKey)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
 	assert.NoError(t, err)
-	assert.Nil(t, result) // Should return nil when no publisher
+	assert.Nil(t, result) // Should return nil when OpenSea has no API key
 }
 
 func TestEnhancer_Enhance_NoPublisherName(t *testing.T) {
@@ -329,12 +337,16 @@ func TestEnhancer_Enhance_NoPublisherName(t *testing.T) {
 		},
 	}
 
-	// No mocks should be called since enhancement is skipped when no publisher name
+	// Now should try OpenSea enrichment for Ethereum tokens without a known publisher name
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x123", "1").
+		Return(nil, opensea.ErrNoAPIKey)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
 	assert.NoError(t, err)
-	assert.Nil(t, result) // Should return nil when no publisher name
+	assert.Nil(t, result) // Should return nil when OpenSea has no API key
 }
 
 func TestEnhancer_Enhance_UnsupportedPublisher(t *testing.T) {
@@ -355,12 +367,16 @@ func TestEnhancer_Enhance_UnsupportedPublisher(t *testing.T) {
 		},
 	}
 
-	// No mocks should be called since enhancement is skipped for unsupported publishers
+	// Now should try OpenSea enrichment for Ethereum tokens with unsupported publishers
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x123", "1").
+		Return(nil, opensea.ErrNoAPIKey)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
 	assert.NoError(t, err)
-	assert.Nil(t, result) // Should return nil for unsupported publishers
+	assert.Nil(t, result) // Should return nil when OpenSea has no API key
 }
 
 func TestEnhancer_Enhance_ArtBlocks_InvalidTokenID(t *testing.T) {
@@ -1206,7 +1222,7 @@ func TestEnhancer_Enhance_Objkt_NonTezosChain(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	// objkt should only work for Tezos, so Ethereum should return nil
+	// objkt should only work for Tezos, so Ethereum should try OpenSea instead
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
 	publisherName := registry.PublisherName("unknown_publisher")
 
@@ -1220,12 +1236,309 @@ func TestEnhancer_Enhance_Objkt_NonTezosChain(t *testing.T) {
 		},
 	}
 
-	// No mocks should be called since objkt enhancement is skipped for non-Tezos chains
+	// Should try OpenSea enrichment for Ethereum tokens with unknown publishers
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x123", "1").
+		Return(nil, opensea.ErrNoAPIKey)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
 	assert.NoError(t, err)
-	assert.Nil(t, result) // Should return nil for non-Tezos chains
+	assert.Nil(t, result) // Should return nil when OpenSea has no API key
+}
+
+func TestEnhancer_Enhance_OpenSea(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1")
+
+	// Create normalized metadata without publisher (unknown publisher case)
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name":  "Test NFT",
+			"image": "https://example.com/image.png",
+		},
+		Publisher: nil,
+	}
+
+	// Mock OpenSea client to return NFT metadata
+	name := "Bored Ape #1"
+	description := "A Bored Ape from OpenSea"
+	imageURL := "https://i.seadn.io/gae/1.png"
+	animationURL := "https://i.seadn.io/gae/1.mp4"
+
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier:   "1",
+		Collection:   "bored-ape-yacht-club",
+		Contract:     "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+		Name:         &name,
+		Description:  &description,
+		ImageURL:     &imageURL,
+		AnimationURL: &animationURL,
+		Traits: []opensea.Trait{
+			{
+				TraitType: "Background",
+				Value:     "Blue",
+			},
+			{
+				TraitType: "Artist",
+				Value:     "Yuga Labs",
+			},
+		},
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
+		Return(nftMetadata, nil)
+
+	// Mock JSON marshal for NFT metadata
+	vendorJSON := []byte(`{"identifier":"1","collection":"bored-ape-yacht-club","name":"Bored Ape #1","description":"A Bored Ape from OpenSea"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return(vendorJSON, nil)
+
+	// Mock URI resolver and HTTP client for MIME type detection
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), animationURL).
+		Return(animationURL, nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), animationURL).
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), animationURL, gomock.Any()).
+		Return([]byte("fake video data"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, schema.VendorOpenSea, result.Vendor)
+	assert.Equal(t, vendorJSON, result.VendorJSON)
+	assert.NotNil(t, result.Name)
+	assert.Equal(t, "Bored Ape #1", *result.Name)
+	assert.NotNil(t, result.Description)
+	assert.Equal(t, "A Bored Ape from OpenSea", *result.Description)
+	assert.NotNil(t, result.ImageURL)
+	assert.Equal(t, imageURL, *result.ImageURL)
+	assert.NotNil(t, result.AnimationURL)
+	assert.Equal(t, animationURL, *result.AnimationURL)
+	assert.Len(t, result.Artists, 1)
+	assert.Equal(t, "Yuga Labs", result.Artists[0].Name)
+	assert.NotNil(t, result.MimeType)
+}
+
+func TestEnhancer_Enhance_OpenSea_MinimalFields(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+
+	// Create normalized metadata without publisher
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Test NFT",
+		},
+		Publisher: nil,
+	}
+
+	// Mock OpenSea client to return NFT with minimal fields
+	name := "Minimal NFT"
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "1",
+		Collection: "test-collection",
+		Contract:   "0x123",
+		Name:       &name,
+		Traits:     []opensea.Trait{},
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x123", "1").
+		Return(nftMetadata, nil)
+
+	// Mock JSON marshal
+	vendorJSON := []byte(`{"identifier":"1","collection":"test-collection","name":"Minimal NFT"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return(vendorJSON, nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, schema.VendorOpenSea, result.Vendor)
+	assert.Equal(t, "Minimal NFT", *result.Name)
+	assert.Nil(t, result.Description)
+	assert.Nil(t, result.ImageURL)
+	assert.Nil(t, result.AnimationURL)
+	assert.Nil(t, result.MimeType)
+	assert.Empty(t, result.Artists)
+}
+
+func TestEnhancer_Enhance_OpenSea_NoAPIKey(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Test NFT",
+		},
+		Publisher: nil,
+	}
+
+	// Mock OpenSea client to return ErrorNoAPIKey
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x123", "1").
+		Return(nil, opensea.ErrNoAPIKey)
+
+	// OpenSea enrichment should return nil gracefully when no API key
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result) // Should return nil when no API key
+}
+
+func TestEnhancer_Enhance_OpenSea_APIError(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Test NFT",
+		},
+		Publisher: nil,
+	}
+
+	// Mock OpenSea client to return an error
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x123", "1").
+		Return(nil, assert.AnError)
+
+	// OpenSea enrichment errors should be returned as errors
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to enhance OpenSea metadata")
+}
+
+func TestEnhancer_Enhance_OpenSea_MarshalError(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Test NFT",
+		},
+		Publisher: nil,
+	}
+
+	name := "Test NFT"
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "1",
+		Name:       &name,
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x123", "1").
+		Return(nftMetadata, nil)
+
+	// Mock JSON marshal to return an error
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return(nil, assert.AnError)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to enhance OpenSea metadata")
+}
+
+func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x456", "10")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Artist NFT",
+		},
+		Publisher: nil,
+	}
+
+	name := "Artist NFT"
+	imageURL := "https://example.com/artist.png"
+
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "10",
+		Name:       &name,
+		ImageURL:   &imageURL,
+		Traits: []opensea.Trait{
+			{
+				TraitType: "Background",
+				Value:     "Purple",
+			},
+			{
+				TraitType: "Creator Name",
+				Value:     "Jane Artist",
+			},
+		},
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x456", "10").
+		Return(nftMetadata, nil)
+
+	vendorJSON := []byte(`{"identifier":"10","name":"Artist NFT"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return(vendorJSON, nil)
+
+	// Mock for MIME type detection
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), imageURL).
+		Return(imageURL, nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), imageURL).
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), imageURL, gomock.Any()).
+		Return([]byte("fake image data"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, schema.VendorOpenSea, result.Vendor)
+	assert.Len(t, result.Artists, 1)
+	assert.Equal(t, "Jane Artist", result.Artists[0].Name)
+	// DID should be empty since OpenSea doesn't provide artist address
+	assert.Empty(t, result.Artists[0].DID)
 }
 
 // Helper function to create string pointers

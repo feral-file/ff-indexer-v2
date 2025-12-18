@@ -82,9 +82,11 @@ type TemporalConfig struct {
 
 // VendorsConfig holds vendor API configurations
 type VendorsConfig struct {
-	ArtBlocksURL string `mapstructure:"artblocks_url"`
-	FeralFileURL string `mapstructure:"feralfile_url"`
-	ObjktURL     string `mapstructure:"objkt_url"`
+	ArtBlocksURL  string `mapstructure:"artblocks_url"`
+	FeralFileURL  string `mapstructure:"feralfile_url"`
+	ObjktURL      string `mapstructure:"objkt_url"`
+	OpenSeaURL    string `mapstructure:"opensea_url"`
+	OpenSeaAPIKey string `mapstructure:"opensea_api_key"`
 }
 
 // ServerConfig holds HTTP server configuration
@@ -297,6 +299,7 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 	v.SetDefault("vendors.feralfile_url", "https://feralfile.com/api")
 	v.SetDefault("vendors.objkt_url", "https://data.objkt.com/v3/graphql")
+	v.SetDefault("vendors.opensea_url", "https://api.opensea.io/api/v2")
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 
 	if err := v.ReadInConfig(); err != nil {
@@ -462,6 +465,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"vendors.artblocks_url",
 		"vendors.feralfile_url",
 		"vendors.objkt_url",
+		"vendors.opensea_url",
+		"vendors.opensea_api_key",
 		// Server
 		"server.host",
 		"server.port",

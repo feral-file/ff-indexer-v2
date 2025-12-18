@@ -85,7 +85,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute, // Longer timeout for fetching from IPFS/Arweave
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    30 * time.Second,
+			InitialInterval:    10 * time.Second,
 			BackoffCoefficient: 2.0,
 			MaximumAttempts:    2,
 		},
@@ -106,7 +106,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
-		return err
+		// Log the error but don't fail the workflow
 	}
 
 	// Collect media URLs from the normalized metadata
@@ -133,32 +133,30 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		}
 	}
 
-	// Step 3: Enhance metadata from vendor APIs (ArtBlocks, fxhash, etc.)
+	// Step 3: Enhance metadata from vendor APIs (ArtBlocks, fxhash, OpenSea, etc.)
 	// This activity will:
 	// - Detect if the token is from a known vendor (ArtBlocks, fxhash, etc.)
 	// - Fetch additional metadata from vendor APIs
 	// - Store enrichment data in enrichment_sources table
 	// - Update token_metadata with enriched data and set enrichment_level to 'vendor'
 	var enhancedMetadata *metadata.EnhancedMetadata
-	if normalizedMetadata != nil {
-		err = workflow.ExecuteActivity(ctx, w.executor.EnhanceTokenMetadata, tokenCID, normalizedMetadata).Get(ctx, &enhancedMetadata)
-		if err != nil {
-			// Log the error but don't fail the workflow
-			// Enrichment is optional and should not block the main indexing flow
-			logger.WarnWf(ctx, "Failed to enhance token metadata (non-fatal)",
-				zap.String("tokenCID", tokenCID.String()),
-				zap.Error(err),
-			)
-		}
+	err = workflow.ExecuteActivity(ctx, w.executor.EnhanceTokenMetadata, tokenCID, normalizedMetadata).Get(ctx, &enhancedMetadata)
+	if err != nil {
+		// Log the error but don't fail the workflow
+		// Enrichment is optional and should not block the main indexing flow
+		logger.WarnWf(ctx, "Failed to enhance token metadata (non-fatal)",
+			zap.String("tokenCID", tokenCID.String()),
+			zap.Error(err),
+		)
+	}
 
-		// Collect media URLs from enhanced metadata
-		if enhancedMetadata != nil {
-			if enhancedMetadata.ImageURL != nil && *enhancedMetadata.ImageURL != "" {
-				mediaURLs[*enhancedMetadata.ImageURL] = true
-			}
-			if enhancedMetadata.AnimationURL != nil && *enhancedMetadata.AnimationURL != "" {
-				mediaURLs[*enhancedMetadata.AnimationURL] = true
-			}
+	// Collect media URLs from enhanced metadata
+	if enhancedMetadata != nil {
+		if enhancedMetadata.ImageURL != nil && *enhancedMetadata.ImageURL != "" {
+			mediaURLs[*enhancedMetadata.ImageURL] = true
+		}
+		if enhancedMetadata.AnimationURL != nil && *enhancedMetadata.AnimationURL != "" {
+			mediaURLs[*enhancedMetadata.AnimationURL] = true
 		}
 	}
 
