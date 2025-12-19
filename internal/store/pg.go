@@ -344,10 +344,14 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 	query := s.db.WithContext(ctx).Model(&schema.Token{}).
 		Select("DISTINCT ON (tokens.id, latest_pe.timestamp) tokens.*")
 
-	// By default, exclude tokens without metadata (broken metadata)
+	// By default, exclude tokens without metadata AND enrichment (broken metadata)
+	// A token is broken only if it has NEITHER metadata NOR enrichment
 	// Unless IncludeBroken is explicitly set to true
 	if !filter.IncludeBroken {
-		query = query.Joins("INNER JOIN token_metadata ON tokens.id = token_metadata.token_id")
+		query = query.
+			Joins("LEFT JOIN token_metadata ON tokens.id = token_metadata.token_id").
+			Joins("LEFT JOIN enrichment_sources ON tokens.id = enrichment_sources.token_id").
+			Where("token_metadata.token_id IS NOT NULL OR enrichment_sources.token_id IS NOT NULL")
 	}
 
 	// Apply filters

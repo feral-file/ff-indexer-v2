@@ -1130,52 +1130,116 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.Equal(t, 0, len(results))
 	})
 
-	t.Run("exclude tokens without metadata by default", func(t *testing.T) {
-		// Create a token without metadata
-		tokenWithoutMeta := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xnometa", "1", "0xowner")
-		err := store.CreateTokenMint(ctx, tokenWithoutMeta)
+	t.Run("exclude tokens without metadata and enrichment by default", func(t *testing.T) {
+		// Create a token without metadata or enrichment (broken - has neither)
+		tokenBroken := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xbroken", "1", "0xowner")
+		err := store.CreateTokenMint(ctx, tokenBroken)
 		require.NoError(t, err)
 
-		// Create a token with metadata
-		tokenWithMeta := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xwithmeta", "1", "0xowner")
-		err = store.CreateTokenMint(ctx, tokenWithMeta)
+		// Create a token with metadata only (not broken - has metadata)
+		tokenWithMetaOnly := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xmetaonly", "1", "0xowner")
+		err = store.CreateTokenMint(ctx, tokenWithMetaOnly)
 		require.NoError(t, err)
 
-		// Add metadata to the second token
-		token, err := store.GetTokenByTokenCID(ctx, tokenWithMeta.Token.TokenCID)
+		// Add metadata to the second token (but no enrichment)
+		tokenMetaOnly, err := store.GetTokenByTokenCID(ctx, tokenWithMetaOnly.Token.TokenCID)
 		require.NoError(t, err)
-		require.NotNil(t, token)
+		require.NotNil(t, tokenMetaOnly)
 
 		now := time.Now().UTC()
 		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
-			TokenID:         token.ID,
-			OriginJSON:      datatypes.JSON(`{"name":"test"}`),
-			LatestJSON:      datatypes.JSON(`{"name":"test"}`),
+			TokenID:         tokenMetaOnly.ID,
+			OriginJSON:      datatypes.JSON(`{"name":"test metadata only"}`),
+			LatestJSON:      datatypes.JSON(`{"name":"test metadata only"}`),
 			EnrichmentLevel: schema.EnrichmentLevelNone,
 			LastRefreshedAt: &now,
 		})
 		require.NoError(t, err)
 
-		// Default behavior: exclude tokens without metadata
+		// Create a token with enrichment only (not broken - has enrichment)
+		tokenWithEnrichmentOnly := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xenrichonly", "1", "0xowner")
+		err = store.CreateTokenMint(ctx, tokenWithEnrichmentOnly)
+		require.NoError(t, err)
+
+		// Add enrichment to the third token (but no metadata)
+		tokenEnrichOnly, err := store.GetTokenByTokenCID(ctx, tokenWithEnrichmentOnly.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, tokenEnrichOnly)
+
+		vendorJSON := json.RawMessage(`{"platform": "artblocks", "project": "Test"}`)
+		vendorHash := "vendorhash123"
+		imageURL := "https://artblocks.io/image.png"
+		name := "Art Blocks #1"
+
+		err = store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
+			TokenID:    tokenEnrichOnly.ID,
+			Vendor:     schema.VendorArtBlocks,
+			VendorJSON: vendorJSON,
+			VendorHash: &vendorHash,
+			ImageURL:   &imageURL,
+			Name:       &name,
+		})
+		require.NoError(t, err)
+
+		// Create a token with both metadata and enrichment (not broken - has both)
+		tokenWithBoth := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xwithboth", "1", "0xowner")
+		err = store.CreateTokenMint(ctx, tokenWithBoth)
+		require.NoError(t, err)
+
+		// Add metadata to the fourth token
+		tokenBoth, err := store.GetTokenByTokenCID(ctx, tokenWithBoth.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, tokenBoth)
+
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenBoth.ID,
+			OriginJSON:      datatypes.JSON(`{"name":"test both"}`),
+			LatestJSON:      datatypes.JSON(`{"name":"test both"}`),
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: &now,
+		})
+		require.NoError(t, err)
+
+		// Add enrichment to the fourth token
+		vendorHash2 := "vendorhash456"
+		imageURL2 := "https://artblocks.io/image2.png"
+		name2 := "Art Blocks #2"
+
+		err = store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
+			TokenID:    tokenBoth.ID,
+			Vendor:     schema.VendorArtBlocks,
+			VendorJSON: vendorJSON,
+			VendorHash: &vendorHash2,
+			ImageURL:   &imageURL2,
+			Name:       &name2,
+		})
+		require.NoError(t, err)
+
+		// Default behavior: exclude tokens without both metadata AND enrichment
+		// Should include tokens with metadata only, enrichment only, or both
+		// Should exclude only the token with neither
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses: []string{"0xnometa", "0xwithmeta"},
+			ContractAddresses: []string{"0xbroken", "0xmetaonly", "0xenrichonly", "0xwithboth"},
 			Limit:             10,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(1), total) // Only token with metadata
-		assert.Equal(t, 1, len(results))
-		assert.Equal(t, "0xwithmeta", results[0].Token.ContractAddress)
-		assert.NotNil(t, results[0].Metadata)
+		assert.Equal(t, uint64(3), total) // Three tokens (metaonly, enrichonly, both) - excludes broken
+		assert.Equal(t, 3, len(results))
 
-		// Include broken: include tokens without metadata
+		// Verify the broken token is not in results
+		for _, result := range results {
+			assert.NotEqual(t, "0xbroken", result.Token.ContractAddress)
+		}
+
+		// Include broken: include all tokens including the one with neither metadata nor enrichment
 		resultsWithBroken, totalWithBroken, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses: []string{"0xnometa", "0xwithmeta"},
+			ContractAddresses: []string{"0xbroken", "0xmetaonly", "0xenrichonly", "0xwithboth"},
 			IncludeBroken:     true,
 			Limit:             10,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(2), totalWithBroken) // Both tokens
-		assert.Equal(t, 2, len(resultsWithBroken))
+		assert.Equal(t, uint64(4), totalWithBroken) // All four tokens
+		assert.Equal(t, 4, len(resultsWithBroken))
 	})
 }
 

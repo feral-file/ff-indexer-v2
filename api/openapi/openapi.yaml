@@ -299,7 +299,7 @@ paths:
           example: ["eip155:1:erc721:0xabc123:1234"]
         - name: include_broken
           in: query
-          description: Include tokens with broken metadata (no metadata record). Default is false - only tokens with metadata are returned.
+          description: Include tokens with broken metadata (no metadata and enrichment records). Default is false - only tokens with metadata and enrichment are returned.
           schema:
             type: boolean
             default: false

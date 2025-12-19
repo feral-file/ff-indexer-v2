@@ -102,9 +102,9 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 		}
 
 	default:
-		// For Tezos tokens that are not Feral File, use objkt
 		switch chain {
 		case domain.ChainTezosMainnet:
+			// For Tezos tokens that are not Feral File, use objkt
 			enhancedMetadata, err = e.enhanceObjkt(ctx, contractAddress, tokenNumber)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance objkt metadata: %w", err)
