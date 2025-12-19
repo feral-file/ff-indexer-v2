@@ -82,7 +82,7 @@ type CreateEnrichmentSourceInput struct {
 // UpdateBalanceInput represents the input for updating a balance record
 type UpdateBalanceInput struct {
 	OwnerAddress string
-	Delta        string // Delta to add/subtract (can be negative)
+	Delta        string // Delta to add/subtract (cannot be negative)
 }
 
 // CreateTokenBurnInput represents the complete input for updating a token burn with all related data

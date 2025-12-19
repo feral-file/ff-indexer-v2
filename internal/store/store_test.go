@@ -1241,6 +1241,145 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.Equal(t, uint64(4), totalWithBroken) // All four tokens
 		assert.Equal(t, 4, len(resultsWithBroken))
 	})
+
+	t.Run("sort by latest provenance event related to filtered owners", func(t *testing.T) {
+		owner1 := "0xsortowner1000000000000000000000000000001"
+		owner2 := "0xsortowner2000000000000000000000000000002"
+
+		// Create token1: initially minted to owner1
+		token1 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xsortcontract1", "1", owner1)
+		token1.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-10 * time.Hour) // T1: 10 hours ago
+		err := store.CreateTokenMint(ctx, token1)
+		require.NoError(t, err)
+
+		// Create token2: minted directly to owner2
+		token2 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xsortcontract2", "2", owner2)
+		token2.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-5 * time.Hour) // T2: 5 hours ago
+		err = store.CreateTokenMint(ctx, token2)
+		require.NoError(t, err)
+
+		// Create token3: initially minted to owner1
+		token3 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xsortcontract3", "3", owner1)
+		token3.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-8 * time.Hour) // T3: 8 hours ago
+		err = store.CreateTokenMint(ctx, token3)
+		require.NoError(t, err)
+
+		// Add metadata to all tokens so they appear in queries
+		for _, tokenInput := range []CreateTokenMintInput{token1, token2, token3} {
+			token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+			require.NoError(t, err)
+			require.NotNil(t, token)
+
+			now := time.Now().UTC()
+			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID:         token.ID,
+				OriginJSON:      datatypes.JSON(`{"name":"test"}`),
+				LatestJSON:      datatypes.JSON(`{"name":"test"}`),
+				EnrichmentLevel: schema.EnrichmentLevelNone,
+				LastRefreshedAt: &now,
+			})
+			require.NoError(t, err)
+		}
+
+		// Transfer token1 from owner1 to owner2 at T4 (most recent)
+		transferTime1 := time.Now().UTC().Add(-1 * time.Hour) // T4: 1 hour ago
+		transferInput1 := UpdateTokenTransferInput{
+			TokenCID:     token1.Token.TokenCID,
+			CurrentOwner: &owner2,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner1,
+				Delta:        "1",
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner2,
+				Delta:        "1",
+			},
+			ProvenanceEvent: CreateProvenanceEventInput{
+				Chain:       domain.ChainEthereumMainnet,
+				EventType:   schema.ProvenanceEventTypeTransfer,
+				FromAddress: &owner1,
+				ToAddress:   &owner2,
+				Quantity:    "1",
+				TxHash:      "0xtransfer1to2",
+				BlockNumber: 2000,
+				BlockHash:   stringPtr("0xblockhash2000"),
+				Raw:         []byte(`{"tx_hash":"0xtransfer1to2","block_number":2000,"tx_index":1}`),
+				Timestamp:   transferTime1,
+			},
+		}
+		err = store.UpdateTokenTransfer(ctx, transferInput1)
+		require.NoError(t, err)
+
+		// Transfer token3 from owner1 to owner2 at T5 (3 hours ago)
+		transferTime2 := time.Now().UTC().Add(-3 * time.Hour) // T5: 3 hours ago
+		transferInput2 := UpdateTokenTransferInput{
+			TokenCID:     token3.Token.TokenCID,
+			CurrentOwner: &owner2,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner1,
+				Delta:        "1",
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner2,
+				Delta:        "1",
+			},
+			ProvenanceEvent: CreateProvenanceEventInput{
+				Chain:       domain.ChainEthereumMainnet,
+				EventType:   schema.ProvenanceEventTypeTransfer,
+				FromAddress: &owner1,
+				ToAddress:   &owner2,
+				Quantity:    "1",
+				TxHash:      "0xtransfer3to2",
+				BlockNumber: 2001,
+				BlockHash:   stringPtr("0xblockhash2001"),
+				Raw:         []byte(`{"tx_hash":"0xtransfer3to2","block_number":2001,"tx_index":1}`),
+				Timestamp:   transferTime2,
+			},
+		}
+		err = store.UpdateTokenTransfer(ctx, transferInput2)
+		require.NoError(t, err)
+
+		// Timeline of provenance events:
+		// T1 (10h ago): token1 minted to owner1 (owner1 involved, NOT owner2)
+		// T3 (8h ago):  token3 minted to owner1 (owner1 involved, NOT owner2)
+		// T2 (5h ago):  token2 minted to owner2 (owner2 involved)
+		// T5 (3h ago):  token3 transferred to owner2 (owner1 and owner2 involved)
+		// T4 (1h ago):  token1 transferred to owner2 (owner1 and owner2 involved)
+		//
+		// Current ownership: owner2 owns all 3 tokens
+		// When filtering by owner2 and sorting by latest provenance event involving owner2:
+		// Expected order: token1 (T4) -> token3 (T5) -> token2 (T2)
+
+		// Get token IDs for assertions
+		token1Data, err := store.GetTokenByTokenCID(ctx, token1.Token.TokenCID)
+		require.NoError(t, err)
+		token2Data, err := store.GetTokenByTokenCID(ctx, token2.Token.TokenCID)
+		require.NoError(t, err)
+		token3Data, err := store.GetTokenByTokenCID(ctx, token3.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Query for owner2 (current owner of all 3 tokens)
+		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			Owners: []string{owner2},
+			Limit:  10,
+		})
+		require.NoError(t, err)
+		require.Equal(t, int(total), 3, "owner2 owns 3 tokens")
+		require.Equal(t, len(results), 3, "should return 3 results")
+
+		// Verify sorting: tokens sorted by latest provenance event involving owner2 (DESC)
+		// token1's latest event with owner2: T4 (1h ago) - most recent
+		// token3's latest event with owner2: T5 (3h ago)
+		// token2's latest event with owner2: T2 (5h ago) - oldest
+		assert.Equal(t, token1Data.ID, results[0].Token.ID, "token1 should be first (T4: most recent owner2 event)")
+		assert.Equal(t, token3Data.ID, results[1].Token.ID, "token3 should be second (T5: middle owner2 event)")
+		assert.Equal(t, token2Data.ID, results[2].Token.ID, "token2 should be third (T2: oldest owner2 event)")
+	})
+}
+
+// stringPtr is a helper to create a string pointer
+func stringPtr(s string) *string {
+	return &s
 }
 
 // =============================================================================

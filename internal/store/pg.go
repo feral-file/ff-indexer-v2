@@ -356,7 +356,7 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 
 	// Apply filters
 	if len(filter.Owners) > 0 {
-		// Join with balances to filter by owners
+		// Filter by current owners only (balances or current_owner)
 		query = query.
 			Joins("LEFT JOIN balances ON balances.token_id = tokens.id").
 			Where("balances.owner_address IN ? OR tokens.current_owner IN ?", filter.Owners, filter.Owners)
@@ -390,13 +390,25 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 	}
 
 	// Join with latest provenance event to sort by timestamp
-	query = query.Joins(`LEFT JOIN LATERAL (
-		SELECT timestamp
-		FROM provenance_events
-		WHERE provenance_events.token_id = tokens.id
-		ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
-		LIMIT 1
-	) latest_pe ON true`)
+	// When filtering by owners, only consider provenance events related to those owners
+	if len(filter.Owners) > 0 {
+		query = query.Joins(`LEFT JOIN LATERAL (
+			SELECT timestamp
+			FROM provenance_events
+			WHERE provenance_events.token_id = tokens.id
+			AND (provenance_events.from_address IN ? OR provenance_events.to_address IN ?)
+			ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
+			LIMIT 1
+		) latest_pe ON true`, filter.Owners, filter.Owners)
+	} else {
+		query = query.Joins(`LEFT JOIN LATERAL (
+			SELECT timestamp
+			FROM provenance_events
+			WHERE provenance_events.token_id = tokens.id
+			ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
+			LIMIT 1
+		) latest_pe ON true`)
+	}
 
 	// Apply pagination with sorting by latest provenance event timestamp descending
 	query = query.Order("latest_pe.timestamp DESC NULLS LAST").Order("tokens.id DESC").Limit(filter.Limit).Offset(int(filter.Offset)) //nolint:gosec,G115
