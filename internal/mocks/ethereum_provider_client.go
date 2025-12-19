@@ -6,7 +6,6 @@ package mocks
 
 import (
 	context "context"
-	big "math/big"
 	reflect "reflect"
 
 	ethereum "github.com/ethereum/go-ethereum"
@@ -37,21 +36,6 @@ func NewMockEthereumProviderClient(ctrl *gomock.Controller) *MockEthereumProvide
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockEthereumProviderClient) EXPECT() *MockEthereumProviderClientMockRecorder {
 	return m.recorder
-}
-
-// BlockByNumber mocks base method.
-func (m *MockEthereumProviderClient) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "BlockByNumber", ctx, number)
-	ret0, _ := ret[0].(*types.Block)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// BlockByNumber indicates an expected call of BlockByNumber.
-func (mr *MockEthereumProviderClientMockRecorder) BlockByNumber(ctx, number interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BlockByNumber", reflect.TypeOf((*MockEthereumProviderClient)(nil).BlockByNumber), ctx, number)
 }
 
 // Close mocks base method.

@@ -30,9 +30,6 @@ type EthereumClient interface {
 	// SubscribeFilterLogs subscribes to filter logs
 	SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error)
 
-	// BlockByNumber returns a block by number
-	BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error)
-
 	// GetLatestBlock returns the latest block number
 	GetLatestBlock(ctx context.Context) (uint64, error)
 
@@ -414,11 +411,6 @@ func isTooManyResultsError(err error) bool {
 		strings.Contains(errStr, "too many results") ||
 		strings.Contains(errStr, "exceeded maximum") ||
 		strings.Contains(errStr, "Too Many Requests")
-}
-
-// BlockByNumber returns a block by number
-func (f *ethereumClient) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
-	return f.client.BlockByNumber(ctx, number)
 }
 
 // GetLatestBlock returns the latest block number using the cached provider
@@ -1004,7 +996,7 @@ func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 		TxHash:          vLog.TxHash.Hex(),
 		BlockNumber:     vLog.BlockNumber,
 		BlockHash:       &blockHash,
-		TxIndex:         uint64(vLog.TxIndex),
+		Timestamp:       time.Unix(int64(vLog.BlockTimestamp), 0), //nolint:gosec,G115
 	}
 
 	// Parse based on event signature
@@ -1116,13 +1108,6 @@ func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 	default:
 		return nil, fmt.Errorf("unknown event signature: %s", vLog.Topics[0].Hex())
 	}
-
-	// Get block to extract timestamp
-	block, err := f.client.BlockByNumber(ctx, new(big.Int).SetUint64(vLog.BlockNumber))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get block: %w", err)
-	}
-	event.Timestamp = f.clock.Unix(int64(block.Time()), 0) //nolint:gosec,G115 // block.Time() returns a uint64 from geth which is safe to cast
 
 	return event, nil
 }
