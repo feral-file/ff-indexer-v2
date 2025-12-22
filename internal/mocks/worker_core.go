@@ -93,17 +93,17 @@ func (mr *MockCoreWorkerMockRecorder) IndexTezosTokenOwner(ctx, address interfac
 }
 
 // IndexToken mocks base method.
-func (m *MockCoreWorker) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, skipExistenceCheck bool) error {
+func (m *MockCoreWorker) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, ownerAddress *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexToken", ctx, tokenCID, skipExistenceCheck)
+	ret := m.ctrl.Call(m, "IndexToken", ctx, tokenCID, ownerAddress)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexToken indicates an expected call of IndexToken.
-func (mr *MockCoreWorkerMockRecorder) IndexToken(ctx, tokenCID, skipExistenceCheck interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexToken(ctx, tokenCID, ownerAddress interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexToken", reflect.TypeOf((*MockCoreWorker)(nil).IndexToken), ctx, tokenCID, skipExistenceCheck)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexToken", reflect.TypeOf((*MockCoreWorker)(nil).IndexToken), ctx, tokenCID, ownerAddress)
 }
 
 // IndexTokenBurn mocks base method.
@@ -219,15 +219,15 @@ func (mr *MockCoreWorkerMockRecorder) IndexTokenTransfer(ctx, event interface{})
 }
 
 // IndexTokens mocks base method.
-func (m *MockCoreWorker) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, skipExistenceCheck bool) error {
+func (m *MockCoreWorker) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokens", ctx, tokenCIDs, skipExistenceCheck)
+	ret := m.ctrl.Call(m, "IndexTokens", ctx, tokenCIDs, ownerAddress)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexTokens indicates an expected call of IndexTokens.
-func (mr *MockCoreWorkerMockRecorder) IndexTokens(ctx, tokenCIDs, skipExistenceCheck interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexTokens(ctx, tokenCIDs, ownerAddress interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokens", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokens), ctx, tokenCIDs, skipExistenceCheck)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokens", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokens), ctx, tokenCIDs, ownerAddress)
 }

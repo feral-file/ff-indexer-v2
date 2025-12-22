@@ -100,16 +100,17 @@ func main() {
 	defer natsPublisher.Close()
 	logger.InfoCtx(ctx, "Connected to NATS JetStream")
 
-	// Create Tezos block head provider with appropriate TTL
-	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient)
-	tzBlockHeadProvider := block.NewBlockHeadProvider(tzBlockFetcher,
+	// Create Tezos block provider with appropriate TTL
+	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient, clockAdapter)
+	tzBlockProvider := block.NewBlockProvider(tzBlockFetcher,
 		block.Config{
-			TTL:         cfg.Tezos.BlockHeadTTL * time.Second,
-			StaleWindow: cfg.Tezos.BlockHeadStaleWindow * time.Second,
+			TTL:               cfg.Tezos.BlockHeadTTL * time.Second,
+			StaleWindow:       cfg.Tezos.BlockHeadStaleWindow * time.Second,
+			BlockTimestampTTL: 0, // Cache block timestamps forever (they are immutable)
 		}, clockAdapter)
 
 	// Initialize TzKT client
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter, tzBlockHeadProvider)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter, tzBlockProvider)
 
 	// Initialize Tezos subscriber
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{

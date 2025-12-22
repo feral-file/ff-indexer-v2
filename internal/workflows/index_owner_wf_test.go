@@ -213,7 +213,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_WithToke
 	// Track IndexTokens child workflow calls to verify chunking
 	var indexTokensCalls [][]domain.TokenCID
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
-		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, skipExistenceCheck bool) error {
+		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
 			indexTokensCalls = append(indexTokensCalls, tokenCIDs)
 			return nil
 		},
@@ -449,7 +449,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_Bot
 	// Track IndexTokens child workflow calls - should be 2 (backward + forward)
 	var indexTokensCalls int
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
-		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, skipExistenceCheck bool) error {
+		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
 			indexTokensCalls++
 			return nil
 		},
@@ -630,7 +630,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 	// Track IndexTokens calls to verify chunking (21 tokens -> 2 chunks)
 	var indexTokensCalls int
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
-		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, skipExistenceCheck bool) error {
+		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
 			indexTokensCalls++
 			return nil
 		},

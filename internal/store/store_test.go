@@ -808,6 +808,458 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 }
 
 // =============================================================================
+// Test: UpsertTokenBalanceForOwner
+// =============================================================================
+
+func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("create new token with owner balance", func(t *testing.T) {
+		// Test upserting a token that doesn't exist yet
+		contractAddress := "0xabc1234567890123456789012345678901234567"
+		tokenNumber := "100"
+		ownerAddress := "0xowner1111111111111111111111111111111111111"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		input := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: ownerAddress,
+			Quantity:     "10",
+			Events: []CreateProvenanceEventInput{
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeMint,
+					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					ToAddress:   &ownerAddress,
+					Quantity:    "10",
+					TxHash:      "0xtx1",
+					BlockNumber: 100,
+					Timestamp:   time.Now(),
+				},
+			},
+		}
+
+		err := store.UpsertTokenBalanceForOwner(ctx, input)
+		require.NoError(t, err)
+
+		// Verify token was created
+		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+		assert.Equal(t, tokenCID.String(), token.TokenCID)
+		assert.Equal(t, domain.ChainEthereumMainnet, token.Chain)
+		assert.Equal(t, domain.StandardERC1155, token.Standard)
+
+		// Verify balance was created
+		balances, total, err := store.GetTokenOwners(ctx, token.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), total)
+		assert.Equal(t, ownerAddress, balances[0].OwnerAddress)
+		assert.Equal(t, "10", balances[0].Quantity)
+
+		// Verify provenance event was created
+		events, eventTotal, err := store.GetTokenProvenanceEvents(ctx, token.ID, 10, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), eventTotal)
+		assert.Equal(t, schema.ProvenanceEventTypeMint, events[0].EventType)
+	})
+
+	t.Run("update existing owner balance without affecting other owners", func(t *testing.T) {
+		// First, create a token with two owners
+		contractAddress := "0xdef4567890123456789012345678901234567890"
+		tokenNumber := "200"
+		owner1 := "0xowner2222222222222222222222222222222222222"
+		owner2 := "0xowner3333333333333333333333333333333333333"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		// Create token with both owners using CreateTokenWithProvenances
+		createInput := CreateTokenWithProvenancesInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			Balances: []CreateBalanceInput{
+				{OwnerAddress: owner1, Quantity: "5"},
+				{OwnerAddress: owner2, Quantity: "8"},
+			},
+			Events: []CreateProvenanceEventInput{},
+		}
+		err := store.CreateTokenWithProvenances(ctx, createInput)
+		require.NoError(t, err)
+
+		// Now update owner1's balance using UpsertTokenBalanceForOwner
+		upsertInput := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: owner1,
+			Quantity:     "15", // Updated quantity
+			Events: []CreateProvenanceEventInput{
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeTransfer,
+					FromAddress: stringPtr("0xother"),
+					ToAddress:   &owner1,
+					Quantity:    "10",
+					TxHash:      "0xtx2",
+					BlockNumber: 200,
+					Timestamp:   time.Now(),
+				},
+			},
+		}
+
+		err = store.UpsertTokenBalanceForOwner(ctx, upsertInput)
+		require.NoError(t, err)
+
+		// Verify owner1's balance was updated
+		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+
+		balances, total, err := store.GetTokenOwners(ctx, token.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), total, "Should still have 2 owners")
+
+		// Find and verify both balances
+		var owner1Balance, owner2Balance *schema.Balance
+		for i := range balances {
+			switch balances[i].OwnerAddress {
+			case owner1:
+				owner1Balance = &balances[i]
+			case owner2:
+				owner2Balance = &balances[i]
+			}
+		}
+
+		require.NotNil(t, owner1Balance, "Owner1 balance should exist")
+		require.NotNil(t, owner2Balance, "Owner2 balance should exist")
+		assert.Equal(t, "15", owner1Balance.Quantity, "Owner1 balance should be updated")
+		assert.Equal(t, "8", owner2Balance.Quantity, "Owner2 balance should be unchanged")
+	})
+
+	t.Run("add new owner to existing token", func(t *testing.T) {
+		// Create a token with one owner
+		contractAddress := "0x1234567890123456789012345678901234567890"
+		tokenNumber := "300"
+		owner1 := "0xowner4444444444444444444444444444444444444"
+		owner2 := "0xowner5555555555555555555555555555555555555"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		// Create token with owner1
+		createInput := CreateTokenWithProvenancesInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			Balances: []CreateBalanceInput{
+				{OwnerAddress: owner1, Quantity: "20"},
+			},
+			Events: []CreateProvenanceEventInput{},
+		}
+		err := store.CreateTokenWithProvenances(ctx, createInput)
+		require.NoError(t, err)
+
+		// Add owner2 using UpsertTokenBalanceForOwner
+		upsertInput := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: owner2,
+			Quantity:     "12",
+			Events: []CreateProvenanceEventInput{
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeTransfer,
+					FromAddress: &owner1,
+					ToAddress:   &owner2,
+					Quantity:    "12",
+					TxHash:      "0xtx3",
+					BlockNumber: 300,
+					Timestamp:   time.Now(),
+				},
+			},
+		}
+
+		err = store.UpsertTokenBalanceForOwner(ctx, upsertInput)
+		require.NoError(t, err)
+
+		// Verify both owners exist
+		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+
+		balances, total, err := store.GetTokenOwners(ctx, token.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), total, "Should have 2 owners now")
+
+		// Verify both balances exist
+		balanceMap := make(map[string]string)
+		for _, b := range balances {
+			balanceMap[b.OwnerAddress] = b.Quantity
+		}
+		assert.Equal(t, "20", balanceMap[owner1], "Owner1 balance should be unchanged")
+		assert.Equal(t, "12", balanceMap[owner2], "Owner2 balance should be added")
+	})
+
+	t.Run("handle zero balance", func(t *testing.T) {
+		// Test upserting with zero balance (owner transferred away all tokens)
+		contractAddress := "0x9876543210987654321098765432109876543210"
+		tokenNumber := "400"
+		ownerAddress := "0xowner6666666666666666666666666666666666666"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		input := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: ownerAddress,
+			Quantity:     "0", // Zero balance
+			Events: []CreateProvenanceEventInput{
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeMint,
+					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					ToAddress:   &ownerAddress,
+					Quantity:    "5",
+					TxHash:      "0xtx4",
+					BlockNumber: 400,
+					Timestamp:   time.Now(),
+				},
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeTransfer,
+					FromAddress: &ownerAddress,
+					ToAddress:   stringPtr("0xother"),
+					Quantity:    "5",
+					TxHash:      "0xtx5",
+					BlockNumber: 401,
+					Timestamp:   time.Now(),
+				},
+			},
+		}
+
+		err := store.UpsertTokenBalanceForOwner(ctx, input)
+		require.NoError(t, err)
+
+		// Verify zero balance was stored
+		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+
+		balances, total, err := store.GetTokenOwners(ctx, token.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), total)
+		assert.Equal(t, "0", balances[0].Quantity)
+
+		// Verify both events were stored
+		events, eventTotal, err := store.GetTokenProvenanceEvents(ctx, token.ID, 10, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), eventTotal)
+		assert.Len(t, events, 2, "Should have 2 events")
+	})
+
+	t.Run("handle duplicate events gracefully", func(t *testing.T) {
+		// Test that duplicate events are ignored (ON CONFLICT DO NOTHING)
+		contractAddress := "0xfedcba0987654321098765432109876543210987"
+		tokenNumber := "500"
+		ownerAddress := "0xowner7777777777777777777777777777777777777"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		// First upsert with an event
+		input1 := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: ownerAddress,
+			Quantity:     "10",
+			Events: []CreateProvenanceEventInput{
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeMint,
+					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					ToAddress:   &ownerAddress,
+					Quantity:    "10",
+					TxHash:      "0xtx6",
+					BlockNumber: 500,
+					Timestamp:   time.Now(),
+				},
+			},
+		}
+
+		err := store.UpsertTokenBalanceForOwner(ctx, input1)
+		require.NoError(t, err)
+
+		// Second upsert with the same event (should be ignored)
+		input2 := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: ownerAddress,
+			Quantity:     "15", // Updated balance
+			Events: []CreateProvenanceEventInput{
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeMint,
+					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					ToAddress:   &ownerAddress,
+					Quantity:    "10",
+					TxHash:      "0xtx6", // Same tx hash
+					BlockNumber: 500,
+					Timestamp:   time.Now(),
+				},
+			},
+		}
+
+		err = store.UpsertTokenBalanceForOwner(ctx, input2)
+		require.NoError(t, err)
+
+		// Verify balance was updated but event wasn't duplicated
+		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+
+		balances, _, err := store.GetTokenOwners(ctx, token.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, "15", balances[0].Quantity, "Balance should be updated")
+
+		events, eventTotal, err := store.GetTokenProvenanceEvents(ctx, token.ID, 10, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), eventTotal, "Should still have only 1 event (duplicate ignored)")
+		assert.Len(t, events, 1, "Should have exactly 1 event")
+	})
+
+	t.Run("upsert without events", func(t *testing.T) {
+		// Test upserting balance without any events (just balance update)
+		contractAddress := "0x0123456789abcdef0123456789abcdef01234567"
+		tokenNumber := "600"
+		ownerAddress := "0xowner8888888888888888888888888888888888888"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		input := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: ownerAddress,
+			Quantity:     "25",
+			Events:       []CreateProvenanceEventInput{}, // No events
+		}
+
+		err := store.UpsertTokenBalanceForOwner(ctx, input)
+		require.NoError(t, err)
+
+		// Verify token and balance were created
+		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+
+		balances, total, err := store.GetTokenOwners(ctx, token.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), total)
+		assert.Equal(t, "25", balances[0].Quantity)
+
+		// Verify no events were created
+		events, eventTotal, err := store.GetTokenProvenanceEvents(ctx, token.ID, 10, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), eventTotal, "Should have no events")
+		assert.Empty(t, events, "Events array should be empty")
+	})
+
+	t.Run("update with multiple new events", func(t *testing.T) {
+		// Test upserting with multiple events
+		contractAddress := "0xabcdef0123456789abcdef0123456789abcdef01"
+		tokenNumber := "700"
+		ownerAddress := "0xowner9999999999999999999999999999999999999"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		input := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: ownerAddress,
+			Quantity:     "30",
+			Events: []CreateProvenanceEventInput{
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeMint,
+					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					ToAddress:   &ownerAddress,
+					Quantity:    "10",
+					TxHash:      "0xtx7",
+					BlockNumber: 700,
+					Timestamp:   time.Now(),
+				},
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeTransfer,
+					FromAddress: stringPtr("0xother1"),
+					ToAddress:   &ownerAddress,
+					Quantity:    "10",
+					TxHash:      "0xtx8",
+					BlockNumber: 701,
+					Timestamp:   time.Now(),
+				},
+				{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   schema.ProvenanceEventTypeTransfer,
+					FromAddress: stringPtr("0xother2"),
+					ToAddress:   &ownerAddress,
+					Quantity:    "10",
+					TxHash:      "0xtx9",
+					BlockNumber: 702,
+					Timestamp:   time.Now(),
+				},
+			},
+		}
+
+		err := store.UpsertTokenBalanceForOwner(ctx, input)
+		require.NoError(t, err)
+
+		// Verify all events were created
+		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+
+		events, eventTotal, err := store.GetTokenProvenanceEvents(ctx, token.ID, 10, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(3), eventTotal, "Should have 3 events")
+		assert.Len(t, events, 3, "Should have exactly 3 events")
+	})
+}
+
+// =============================================================================
 // Test: Token Queries
 // =============================================================================
 
@@ -1364,7 +1816,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			Limit:  10,
 		})
 		require.NoError(t, err)
-		require.Equal(t, int(total), 3, "owner2 owns 3 tokens")
+		require.Equal(t, int(total), 3, "owner2 owns 3 tokens") //nolint:gosec,G115
 		require.Equal(t, len(results), 3, "should return 3 results")
 
 		// Verify sorting: tokens sorted by latest provenance event involving owner2 (DESC)
@@ -3243,6 +3695,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"UpdateTokenTransfer", testUpdateTokenTransfer},
 		{"UpdateTokenBurn", testUpdateTokenBurn},
 		{"CreateTokenWithProvenances", testCreateTokenWithProvenances},
+		{"UpsertTokenBalanceForOwner", testUpsertTokenBalanceForOwner},
 		{"GetTokenByTokenCID", testGetTokenByTokenCID},
 		{"GetTokensByCIDs", testGetTokensByCIDs},
 		{"GetTokensByIDs", testGetTokensByIDs},

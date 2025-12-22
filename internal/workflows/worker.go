@@ -33,10 +33,10 @@ type WorkerCore interface {
 	IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error
 
 	// IndexTokens indexes multiple tokens in parallel
-	IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, skipExistenceCheck bool) error
+	IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error
 
 	// IndexToken indexes a single token (metadata and provenances)
-	IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, skipExistenceCheck bool) error
+	IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, ownerAddress *string) error
 
 	// IndexTokenOwners indexes tokens for multiple addresses
 	IndexTokenOwners(ctx workflow.Context, addresses []string) error

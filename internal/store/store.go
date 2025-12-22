@@ -114,6 +114,15 @@ type CreateTokenWithProvenancesInput struct {
 	Events   []CreateProvenanceEventInput // Provenance events to insert
 }
 
+// UpsertTokenBalanceForOwnerInput represents the input for upserting a token balance for a specific owner
+// This is used for owner-specific indexing where we only update one owner's balance without affecting others
+type UpsertTokenBalanceForOwnerInput struct {
+	Token        CreateTokenInput             // Token to upsert
+	OwnerAddress string                       // Specific owner address
+	Quantity     string                       // Owner's balance
+	Events       []CreateProvenanceEventInput // Owner-related provenance events only
+}
+
 // TokenQueryFilter represents filters for token queries
 type TokenQueryFilter struct {
 	Owners            []string
@@ -187,6 +196,9 @@ type Store interface {
 	UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error
 	// CreateTokenWithProvenances creates or updates a token with all its provenance data (balances and events)
 	CreateTokenWithProvenances(ctx context.Context, input CreateTokenWithProvenancesInput) error
+	// UpsertTokenBalanceForOwner upserts a token balance for a specific owner with owner-related provenance events
+	// This is used for owner-specific indexing and does not delete other owners' balances
+	UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTokenBalanceForOwnerInput) error
 
 	// =============================================================================
 	// Token Metadata Operations

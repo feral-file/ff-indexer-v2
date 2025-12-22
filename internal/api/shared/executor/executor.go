@@ -421,12 +421,11 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 		}
 
 		// Trigger IndexTokens workflow
-		// The skipExistenceCheck is set to false to verify the token existence in the database and on-chain before indexing
 		options := client.StartWorkflowOptions{
 			TaskQueue:                e.orchestratorTaskQueue,
 			WorkflowExecutionTimeout: 30 * time.Minute,
 		}
-		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, tokenCIDs, false)
+		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, tokenCIDs, nil)
 		if err != nil {
 			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing: %v", err))
 		}

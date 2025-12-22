@@ -590,6 +590,20 @@ func (mr *MockStoreMockRecorder) UpsertEnrichmentSource(ctx, input interface{}) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertEnrichmentSource", reflect.TypeOf((*MockStore)(nil).UpsertEnrichmentSource), ctx, input)
 }
 
+// UpsertTokenBalanceForOwner mocks base method.
+func (m *MockStore) UpsertTokenBalanceForOwner(ctx context.Context, input store.UpsertTokenBalanceForOwnerInput) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertTokenBalanceForOwner", ctx, input)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertTokenBalanceForOwner indicates an expected call of UpsertTokenBalanceForOwner.
+func (mr *MockStoreMockRecorder) UpsertTokenBalanceForOwner(ctx, input interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenBalanceForOwner", reflect.TypeOf((*MockStore)(nil).UpsertTokenBalanceForOwner), ctx, input)
+}
+
 // UpsertTokenMetadata mocks base method.
 func (m *MockStore) UpsertTokenMetadata(ctx context.Context, input store.CreateTokenMetadataInput) error {
 	m.ctrl.T.Helper()

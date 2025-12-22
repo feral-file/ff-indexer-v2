@@ -1358,6 +1358,163 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 	})
 }
 
+// UpsertTokenBalanceForOwner upserts a token balance for a specific owner with owner-related provenance events
+// Unlike CreateTokenWithProvenances, this method does NOT delete other owners' balances or events
+// This is used for owner-specific indexing where we only want to update one owner's data
+func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTokenBalanceForOwnerInput) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Upsert the token
+		token := schema.Token{
+			TokenCID:        input.Token.TokenCID,
+			Chain:           input.Token.Chain,
+			Standard:        input.Token.Standard,
+			ContractAddress: input.Token.ContractAddress,
+			TokenNumber:     input.Token.TokenNumber,
+			CurrentOwner:    input.Token.CurrentOwner,
+			Burned:          input.Token.Burned,
+		}
+
+		// Use ON CONFLICT to update if token already exists
+		// For owner-specific indexing, we only update current_owner if it's explicitly set
+		var err error
+		if input.Token.CurrentOwner != nil {
+			// With DoUpdates, we can use Returning to get the ID back
+			err = tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "token_cid"}},
+				DoUpdates: clause.AssignmentColumns([]string{"current_owner"}),
+			}).Clauses(clause.Returning{}).Create(&token).Error
+		} else {
+			// With DoNothing, GORM doesn't return the row, so we need to fetch it separately
+			err = tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "token_cid"}},
+				DoNothing: true,
+			}).Create(&token).Error
+
+			// Fetch the token ID if it wasn't set (conflict case with DoNothing)
+			if err == nil && token.ID == 0 {
+				err = tx.Where("token_cid = ?", input.Token.TokenCID).First(&token).Error
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("failed to upsert token: %w", err)
+		}
+
+		// 2. Upsert the specific owner's balance (DO NOT delete other owners)
+		balance := schema.Balance{
+			TokenID:      token.ID,
+			OwnerAddress: input.OwnerAddress,
+			Quantity:     input.Quantity,
+		}
+
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "token_id"}, {Name: "owner_address"}},
+			DoUpdates: clause.AssignmentColumns([]string{"quantity"}),
+		}).Create(&balance).Error; err != nil {
+			return fmt.Errorf("failed to upsert balance: %w", err)
+		}
+
+		// 3. Insert provenance events (with ON CONFLICT DO NOTHING to avoid duplicates)
+		if len(input.Events) > 0 {
+			provenanceEvents := make([]schema.ProvenanceEvent, 0, len(input.Events))
+			for i := range input.Events {
+				eventInput := input.Events[i]
+
+				provenanceEvents = append(provenanceEvents, schema.ProvenanceEvent{
+					TokenID:     token.ID,
+					Chain:       eventInput.Chain,
+					EventType:   eventInput.EventType,
+					FromAddress: eventInput.FromAddress,
+					ToAddress:   eventInput.ToAddress,
+					Quantity:    &eventInput.Quantity,
+					TxHash:      &eventInput.TxHash,
+					BlockNumber: &eventInput.BlockNumber,
+					BlockHash:   eventInput.BlockHash,
+					Raw:         eventInput.Raw,
+					Timestamp:   eventInput.Timestamp,
+				})
+			}
+
+			// Use ON CONFLICT DO NOTHING to skip duplicates based on comprehensive unique index
+			// (chain, tx_hash, token_id, from_address, to_address, event_type)
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
+				DoNothing: true,
+			}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+				Create(&provenanceEvents).Error; err != nil {
+				return fmt.Errorf("failed to create provenance events: %w", err)
+			}
+
+			// 4. Update ownership periods for newly inserted provenance events
+			for i := range provenanceEvents {
+				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
+				if provenanceEvents[i].ID == 0 {
+					continue
+				}
+
+				if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvents[i], token.Standard); err != nil {
+					return fmt.Errorf("failed to update ownership periods for event %d: %w", i, err)
+				}
+			}
+
+			// 5. Create changes_journal entries for newly inserted events
+			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
+			for _, evt := range provenanceEvents {
+				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
+				if evt.ID == 0 {
+					continue
+				}
+
+				// Skip non-provenance events (metadata updates)
+				if evt.EventType != schema.ProvenanceEventTypeMint &&
+					evt.EventType != schema.ProvenanceEventTypeBurn &&
+					evt.EventType != schema.ProvenanceEventTypeTransfer {
+					continue
+				}
+
+				// Populate meta with provenance information
+				meta := schema.ProvenanceChangeMeta{
+					TokenID:     token.ID,
+					Chain:       token.Chain,
+					Standard:    token.Standard,
+					Contract:    token.ContractAddress,
+					TokenNumber: token.TokenNumber,
+					From:        evt.FromAddress,
+					To:          evt.ToAddress,
+					Quantity:    *evt.Quantity,
+				}
+				if evt.TxHash != nil {
+					meta.TxHash = *evt.TxHash
+				}
+				metaJSON, err := json.Marshal(meta)
+				if err != nil {
+					return fmt.Errorf("failed to marshal change journal meta: %w", err)
+				}
+
+				subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType, token.Standard)
+				changeJournals = append(changeJournals, schema.ChangesJournal{
+					SubjectType: subjectType,
+					SubjectID:   fmt.Sprintf("%d", evt.ID),
+					ChangedAt:   evt.Timestamp,
+					Meta:        metaJSON,
+				})
+			}
+
+			// Use ON CONFLICT DO NOTHING with the unique constraint columns
+			if len(changeJournals) > 0 {
+				if err := tx.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
+					DoNothing: true,
+				}).Clauses(clause.Returning{Columns: []clause.Column{}}).
+					Create(&changeJournals).Error; err != nil {
+					return fmt.Errorf("failed to create changes_journal entries: %w", err)
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
 // GetChanges retrieves changes with optional filters and pagination
 func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, uint64, error) {
 	// Build the base query for changes

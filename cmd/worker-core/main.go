@@ -103,28 +103,30 @@ func main() {
 	}
 	defer adapterEthClient.Close()
 
-	// Create Ethereum block head provider with appropriate TTL
+	// Create Ethereum block provider with appropriate TTL
 	ethBlockFetcher := ethereum.NewEthereumBlockFetcher(adapterEthClient)
-	ethBlockHeadProvider := block.NewBlockHeadProvider(ethBlockFetcher,
+	ethBlockProvider := block.NewBlockProvider(ethBlockFetcher,
 		block.Config{
-			TTL:         cfg.Ethereum.BlockHeadTTL * time.Second,
-			StaleWindow: cfg.Ethereum.BlockHeadStaleWindow * time.Second,
+			TTL:               cfg.Ethereum.BlockHeadTTL * time.Second,
+			StaleWindow:       cfg.Ethereum.BlockHeadStaleWindow * time.Second,
+			BlockTimestampTTL: 0, // Cache block timestamps forever (they are immutable)
 		}, clockAdapter)
 
-	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockHeadProvider)
+	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
 
 	logger.InfoCtx(ctx, "Connected to Ethereum RPC", zap.String("rpc_url", cfg.Ethereum.RPCURL))
 
-	// Create Tezos block head provider with appropriate TTL
-	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient)
-	tzBlockHeadProvider := block.NewBlockHeadProvider(tzBlockFetcher,
+	// Create Tezos block provider with appropriate TTL
+	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient, clockAdapter)
+	tzBlockProvider := block.NewBlockProvider(tzBlockFetcher,
 		block.Config{
-			TTL:         cfg.Tezos.BlockHeadTTL * time.Second,
-			StaleWindow: cfg.Tezos.BlockHeadStaleWindow * time.Second,
+			TTL:               cfg.Tezos.BlockHeadTTL * time.Second,
+			StaleWindow:       cfg.Tezos.BlockHeadStaleWindow * time.Second,
+			BlockTimestampTTL: 0, // Cache block timestamps forever (they are immutable)
 		}, clockAdapter)
 
 	// Initialize Tezos client
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter, tzBlockHeadProvider)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter, tzBlockProvider)
 
 	// Initialize vendors
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)

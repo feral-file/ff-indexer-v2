@@ -90,15 +90,16 @@ func main() {
 	}
 	defer adapterEthClient.Close()
 
-	// Create Ethereum block head provider with appropriate TTL
+	// Create Ethereum block provider with appropriate TTL
 	ethBlockFetcher := ethereum.NewEthereumBlockFetcher(adapterEthClient)
-	ethBlockHeadProvider := block.NewBlockHeadProvider(ethBlockFetcher,
+	ethBlockProvider := block.NewBlockProvider(ethBlockFetcher,
 		block.Config{
-			TTL:         cfg.Ethereum.BlockHeadTTL * time.Second,
-			StaleWindow: cfg.Ethereum.BlockHeadStaleWindow * time.Second,
+			TTL:               cfg.Ethereum.BlockHeadTTL * time.Second,
+			StaleWindow:       cfg.Ethereum.BlockHeadStaleWindow * time.Second,
+			BlockTimestampTTL: 0, // Cache block timestamps forever (they are immutable)
 		}, clockAdapter)
 
-	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockHeadProvider)
+	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(

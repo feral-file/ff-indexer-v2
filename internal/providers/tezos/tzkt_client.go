@@ -163,11 +163,11 @@ type TzKTClient interface {
 
 // tzktClient is the concrete implementation of TzKTClient
 type tzktClient struct {
-	chainID           domain.Chain
-	baseURL           string
-	httpClient        adapter.HTTPClient
-	clock             adapter.Clock
-	blockHeadProvider block.BlockHeadProvider
+	chainID       domain.Chain
+	baseURL       string
+	httpClient    adapter.HTTPClient
+	clock         adapter.Clock
+	blockProvider block.BlockProvider
 }
 
 // NewTzKTClient creates a new TzKT API client with the provided dependencies
@@ -176,14 +176,14 @@ func NewTzKTClient(
 	baseURL string,
 	httpClient adapter.HTTPClient,
 	clock adapter.Clock,
-	blockHeadProvider block.BlockHeadProvider,
+	blockProvider block.BlockProvider,
 ) TzKTClient {
 	return &tzktClient{
-		chainID:           chainID,
-		baseURL:           baseURL,
-		httpClient:        httpClient,
-		clock:             clock,
-		blockHeadProvider: blockHeadProvider,
+		chainID:       chainID,
+		baseURL:       baseURL,
+		httpClient:    httpClient,
+		clock:         clock,
+		blockProvider: blockProvider,
 	}
 }
 
@@ -538,7 +538,7 @@ func (c *tzktClient) getTransactionFromBitmapUpdate(ctx context.Context, updates
 
 // GetLatestBlock retrieves the current latest block level
 func (c *tzktClient) GetLatestBlock(ctx context.Context) (uint64, error) {
-	return c.blockHeadProvider.GetLatestBlock(ctx)
+	return c.blockProvider.GetLatestBlock(ctx)
 }
 
 // TzKTOrigination represents an origination operation from the TzKT API

@@ -52,6 +52,11 @@ type EthereumClient interface {
 	// ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events
 	ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error)
 
+	// GetERC1155BalanceAndEventsForOwner fetches the current balance and transfer events for a specific ERC1155 token and owner
+	// This is optimized for owner-specific indexing by filtering events where owner is sender or receiver
+	// Supports both TransferSingle and TransferBatch events
+	GetERC1155BalanceAndEventsForOwner(ctx context.Context, contractAddress, tokenNumber, ownerAddress string) (balance string, events []domain.BlockchainEvent, err error)
+
 	// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs with block numbers for an owner within a block range
 	// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
 	GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error)
@@ -70,19 +75,19 @@ type EthereumClient interface {
 }
 
 type ethereumClient struct {
-	chainID           domain.Chain
-	client            adapter.EthClient
-	clock             adapter.Clock
-	blockHeadProvider block.BlockHeadProvider
+	chainID       domain.Chain
+	client        adapter.EthClient
+	clock         adapter.Clock
+	blockProvider block.BlockProvider
 }
 
 // NewClient creates a new Ethereum client with the provided dependencies
-func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock, blockHeadProvider block.BlockHeadProvider) EthereumClient {
+func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock, blockProvider block.BlockProvider) EthereumClient {
 	return &ethereumClient{
-		chainID:           chainID,
-		client:            client,
-		clock:             clock,
-		blockHeadProvider: blockHeadProvider,
+		chainID:       chainID,
+		client:        client,
+		clock:         clock,
+		blockProvider: blockProvider,
 	}
 }
 
@@ -415,7 +420,7 @@ func isTooManyResultsError(err error) bool {
 
 // GetLatestBlock returns the latest block number using the cached provider
 func (f *ethereumClient) GetLatestBlock(ctx context.Context) (uint64, error) {
-	return f.blockHeadProvider.GetLatestBlock(ctx)
+	return f.blockProvider.GetLatestBlock(ctx)
 }
 
 // ERC721TokenURI fetches the tokenURI from an ERC721 contract
@@ -780,6 +785,303 @@ func (f *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, t
 	}
 
 	return result, nil
+}
+
+// GetERC1155BalanceAndEventsForOwner fetches the current balance and transfer events for a specific ERC1155 token and owner
+// This is optimized for owner-specific indexing by filtering events where owner is sender or receiver
+// Supports both TransferSingle and TransferBatch events
+func (f *ethereumClient) GetERC1155BalanceAndEventsForOwner(ctx context.Context, contractAddress, tokenNumber, ownerAddress string) (string, []domain.BlockchainEvent, error) {
+	// Parse token number to big.Int
+	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
+	if !ok {
+		return "", nil, fmt.Errorf("invalid token number: %s", tokenNumber)
+	}
+
+	contractAddr := common.HexToAddress(contractAddress)
+	owner := common.HexToAddress(ownerAddress)
+	ownerHash := common.BytesToHash(owner.Bytes())
+
+	// Step 1: Get current balance via contract call (most reliable for current state)
+	balance, err := f.ERC1155BalanceOf(ctx, contractAddress, ownerAddress, tokenNumber)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to get ERC1155 balance: %w", err)
+	}
+
+	// Step 2: Get the latest block number
+	latestBlock, err := f.GetLatestBlock(ctx)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to get latest block: %w", err)
+	}
+
+	// Calculate fromBlock: scan from genesis (we want complete history for this owner)
+	// Note: We could optimize by scanning from contract deployment block if needed
+	fromBlock := uint64(0)
+
+	logger.InfoCtx(ctx, "Fetching ERC1155 events for owner",
+		zap.String("contract", contractAddress),
+		zap.String("tokenNumber", tokenNumber),
+		zap.String("owner", ownerAddress),
+		zap.Uint64("fromBlock", fromBlock),
+		zap.Uint64("toBlock", latestBlock),
+	)
+
+	// Step 3: Define queries to fetch TransferSingle and TransferBatch events involving this owner
+	queries := []ethereum.FilterQuery{
+		// TransferSingle where owner is `from` (topic[2])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(latestBlock),
+			Addresses: []common.Address{contractAddr},
+			Topics: [][]common.Hash{
+				{transferSingleEventSignature},
+				nil,         // any operator
+				{ownerHash}, // from address
+			},
+		},
+		// TransferSingle where owner is `to` (topic[3])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(latestBlock),
+			Addresses: []common.Address{contractAddr},
+			Topics: [][]common.Hash{
+				{transferSingleEventSignature},
+				nil,         // any operator
+				nil,         // any from address
+				{ownerHash}, // to address
+			},
+		},
+		// TransferBatch where owner is `from` (topic[2])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(latestBlock),
+			Addresses: []common.Address{contractAddr},
+			Topics: [][]common.Hash{
+				{transferBatchEventSignature},
+				nil,         // any operator
+				{ownerHash}, // from address
+			},
+		},
+		// TransferBatch where owner is `to` (topic[3])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(latestBlock),
+			Addresses: []common.Address{contractAddr},
+			Topics: [][]common.Hash{
+				{transferBatchEventSignature},
+				nil,         // any operator
+				nil,         // any from address
+				{ownerHash}, // to address
+			},
+		},
+	}
+
+	// Step 4: Execute all queries in parallel
+	type queryResult struct {
+		logs []types.Log
+		err  error
+	}
+
+	resultsCh := make(chan queryResult, len(queries))
+	for _, q := range queries {
+		query := q // capture loop variable
+		go func() {
+			logs, err := f.filterLogsWithPagination(ctx, query)
+			resultsCh <- queryResult{logs: logs, err: err}
+		}()
+	}
+
+	// Collect results
+	var allLogs []types.Log
+	for range queries {
+		result := <-resultsCh
+		if result.err != nil {
+			return "", nil, fmt.Errorf("failed to fetch logs: %w", result.err)
+		}
+		allLogs = append(allLogs, result.logs...)
+	}
+
+	// Step 5: Sort logs by block number and log index for chronological processing
+	sort.Slice(allLogs, func(i, j int) bool {
+		if allLogs[i].BlockNumber != allLogs[j].BlockNumber {
+			return allLogs[i].BlockNumber < allLogs[j].BlockNumber
+		}
+		return allLogs[i].Index < allLogs[j].Index
+	})
+
+	// Step 6: Parse logs and extract events for the specific token
+	events := make([]domain.BlockchainEvent, 0)
+
+	for _, vLog := range allLogs {
+		if len(vLog.Topics) < 1 {
+			continue
+		}
+
+		switch vLog.Topics[0] {
+		case transferSingleEventSignature:
+			// TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
+			if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+				logger.WarnCtx(ctx, "Invalid TransferSingle event",
+					zap.String("txHash", vLog.TxHash.Hex()),
+					zap.Int("topics", len(vLog.Topics)))
+				continue
+			}
+
+			// Parse token ID from data (first 32 bytes)
+			logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
+
+			// Filter by token ID - only include events for the token we care about
+			if logTokenID.Cmp(tokenID) != 0 {
+				continue
+			}
+
+			// Parse the event using existing ParseEventLog
+			event, err := f.ParseEventLog(ctx, vLog)
+			if err != nil {
+				logger.WarnCtx(ctx, "Failed to parse TransferSingle event",
+					zap.Error(err),
+					zap.String("txHash", vLog.TxHash.Hex()))
+				continue
+			}
+
+			if event != nil {
+				events = append(events, *event)
+			}
+
+		case transferBatchEventSignature:
+			// TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
+			if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+				logger.WarnCtx(ctx, "Invalid TransferBatch event",
+					zap.String("txHash", vLog.TxHash.Hex()),
+					zap.Int("topics", len(vLog.Topics)))
+				continue
+			}
+
+			// Parse the batch event and extract only transfers for our token
+			batchEvents, err := f.parseTransferBatchForToken(ctx, vLog, tokenID)
+			if err != nil {
+				logger.WarnCtx(ctx, "Failed to parse TransferBatch event",
+					zap.Error(err),
+					zap.String("txHash", vLog.TxHash.Hex()))
+				continue
+			}
+
+			events = append(events, batchEvents...)
+		}
+	}
+
+	logger.InfoCtx(ctx, "Fetched ERC1155 events for owner",
+		zap.String("contract", contractAddress),
+		zap.String("tokenNumber", tokenNumber),
+		zap.String("owner", ownerAddress),
+		zap.Int("eventCount", len(events)),
+		zap.String("currentBalance", balance),
+	)
+
+	return balance, events, nil
+}
+
+// parseTransferBatchForToken parses a TransferBatch event and extracts transfers for a specific token ID
+func (f *ethereumClient) parseTransferBatchForToken(ctx context.Context, vLog types.Log, tokenID *big.Int) ([]domain.BlockchainEvent, error) {
+	// TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
+	// Data contains ABI-encoded arrays: ids[] and values[]
+
+	if len(vLog.Topics) != 4 {
+		return nil, fmt.Errorf("invalid TransferBatch event: expected 4 topics, got %d", len(vLog.Topics))
+	}
+
+	// Parse addresses from topics
+	fromAddress := common.BytesToAddress(vLog.Topics[2].Bytes()).Hex()
+	toAddress := common.BytesToAddress(vLog.Topics[3].Bytes()).Hex()
+
+	// Decode the dynamic arrays from Data field
+	// The data contains two dynamic arrays: uint256[] ids, uint256[] values
+	// ABI encoding for dynamic arrays:
+	// [0:32]   offset to ids array
+	// [32:64]  offset to values array
+	// [64:96]  length of ids array
+	// [96:...] ids array elements (32 bytes each)
+	// [...:..] length of values array
+	// [...:..] values array elements (32 bytes each)
+
+	if len(vLog.Data) < 128 {
+		return nil, fmt.Errorf("insufficient data for TransferBatch event: got %d bytes", len(vLog.Data))
+	}
+
+	// Parse ids array
+	idsOffset := new(big.Int).SetBytes(vLog.Data[0:32]).Uint64()
+	if idsOffset+32 > uint64(len(vLog.Data)) {
+		return nil, fmt.Errorf("invalid ids offset: %d", idsOffset)
+	}
+
+	idsLength := new(big.Int).SetBytes(vLog.Data[idsOffset : idsOffset+32]).Uint64()
+	if idsOffset+32+idsLength*32 > uint64(len(vLog.Data)) {
+		return nil, fmt.Errorf("invalid ids array length: %d", idsLength)
+	}
+
+	// Parse values array
+	valuesOffset := new(big.Int).SetBytes(vLog.Data[32:64]).Uint64()
+	if valuesOffset+32 > uint64(len(vLog.Data)) {
+		return nil, fmt.Errorf("invalid values offset: %d", valuesOffset)
+	}
+
+	valuesLength := new(big.Int).SetBytes(vLog.Data[valuesOffset : valuesOffset+32]).Uint64()
+	if valuesOffset+32+valuesLength*32 > uint64(len(vLog.Data)) {
+		return nil, fmt.Errorf("invalid values array length: %d", valuesLength)
+	}
+
+	if idsLength != valuesLength {
+		return nil, fmt.Errorf("ids and values array length mismatch: %d != %d", idsLength, valuesLength)
+	}
+
+	// Extract events for matching token IDs
+	events := make([]domain.BlockchainEvent, 0)
+
+	for i := range idsLength {
+		idStart := idsOffset + 32 + i*32
+		idEnd := idStart + 32
+		id := new(big.Int).SetBytes(vLog.Data[idStart:idEnd])
+
+		// Only process if this is the token we're looking for
+		if id.Cmp(tokenID) != 0 {
+			continue
+		}
+
+		valueStart := valuesOffset + 32 + i*32
+		valueEnd := valueStart + 32
+		value := new(big.Int).SetBytes(vLog.Data[valueStart:valueEnd])
+
+		// Get block timestamp
+		blockTimestamp, err := f.blockProvider.GetBlockTimestamp(ctx, vLog.BlockNumber)
+		if err != nil {
+			logger.WarnCtx(ctx, "Failed to get block timestamp, using current time",
+				zap.Error(err),
+				zap.Uint64("blockNumber", vLog.BlockNumber))
+			blockTimestamp = f.clock.Now()
+		}
+
+		blockHash := vLog.BlockHash.Hex()
+
+		// Create event
+		event := domain.BlockchainEvent{
+			Chain:           f.chainID,
+			ContractAddress: vLog.Address.Hex(),
+			Standard:        domain.StandardERC1155,
+			TokenNumber:     id.String(),
+			FromAddress:     &fromAddress,
+			ToAddress:       &toAddress,
+			Quantity:        value.String(),
+			TxHash:          vLog.TxHash.Hex(),
+			BlockNumber:     vLog.BlockNumber,
+			BlockHash:       &blockHash,
+			TxIndex:         uint64(vLog.TxIndex), //nolint:gosec,G115
+			Timestamp:       blockTimestamp,
+		}
+		event.EventType = domain.TransferEventType(event.FromAddress, event.ToAddress)
+
+		events = append(events, event)
+	}
+
+	return events, nil
 }
 
 // GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs with block numbers for an owner within a block range
@@ -1218,7 +1520,7 @@ func (f *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 		// If no recent transfers found, assume token doesn't exist.
 		//
 		// FIXME: This approach has limitations:
-		// 1. May return false negatives for very old/inactive tokens (>10M blocks / ~3-4 years)
+		// 1. May return false negatives for very old/inactive tokens (>10M blocks)
 		// 2. Only checks TransferSingle events (not TransferBatch) for performance
 		// 3. Limited to checking 5 most recent recipients (trade-off between accuracy and RPC calls)
 		// 4. Race condition: token could be transferred between our scan and balanceOf call (unlikely but possible)
@@ -1246,7 +1548,7 @@ func (f *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 			return false, fmt.Errorf("failed to get latest block: %w", err)
 		}
 
-		// Scan backward up to 10M blocks (~3-4 years on Ethereum)
+		// Scan backward up to 10M blocks
 		const maxBlockThreshold = uint64(10_000_000)
 		var fromBlock uint64
 		if latestBlock > maxBlockThreshold {

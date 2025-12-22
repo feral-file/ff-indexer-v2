@@ -705,6 +705,36 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ProvenanceWorkflow
 	s.Equal(1, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
 }
 
+func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ERC1155_WithOwner_SkipsFullProvenance() {
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+	}
+
+	tokenCID := event.TokenCID()
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByBlockchainEvent activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, mock.Anything, event).Return(nil)
+
+	// Mock metadata child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+
+	// There is NO IndexTokenProvenances workflow call for ERC1155
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
 // ====================================================================================
 // IndexTokens Tests
 // ====================================================================================
@@ -722,7 +752,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_Success() {
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs, false)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs, nil)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -742,7 +772,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_OneChildWorkflowFails() {
 	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[2], mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs, false)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs, nil)
 
 	// Verify workflow completed with error (fails when any child workflow fails)
 	s.True(s.env.IsWorkflowCompleted())
@@ -770,7 +800,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Success() {
 	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -784,7 +814,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Blacklisted() {
 	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully (skipped due to blacklist)
 	s.True(s.env.IsWorkflowCompleted())
@@ -801,14 +831,14 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ActivityError() {
 	// Track retry attempts
 	var activityCallCount int
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(
-		func(ctx context.Context, tokenCID domain.TokenCID, skipExistenceCheck bool) error {
+		func(ctx context.Context, tokenCID domain.TokenCID, ownerAddress *string) error {
 			activityCallCount++
 			return expectedError
 		},
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -840,7 +870,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ChildWorkflowStartFailure_N
 	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(testsuite.ErrMockStartChildWorkflowFailed)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully (child workflow failures are non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -872,7 +902,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFail
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, false)
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully (provenance failure is non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -880,4 +910,50 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFail
 
 	// Verify retries
 	s.Equal(1, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_WithOwner_SkipsFullProvenance() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	ownerAddress := "0xowner123"
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, &ownerAddress).Return(nil)
+
+	// Mock metadata child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// DO NOT mock IndexTokenProvenances - it should not be called for ERC1155 with owner
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, &ownerAddress)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_WithoutOwner_RunsFullProvenance() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
+
+	// Mock metadata child workflow
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// Mock provenance child workflow - should be called for ERC1155 without owner
+	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
 }
