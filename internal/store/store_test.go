@@ -759,6 +759,21 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		err := store.CreateTokenWithProvenances(ctx, input)
 		require.NoError(t, err)
 
+		// Get token ID for subsequent queries
+		tokenResult, err := store.GetTokenByTokenCID(ctx, token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, tokenResult)
+
+		// Verify initial state - changes_journal
+		changes, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+			TokenCIDs: []string{token.TokenCID},
+			Limit:     100,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), changeTotal, "should have 1 change journal entry (mint)")
+		assert.Equal(t, 1, len(changes))
+		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType, "mint event for ERC721")
+
 		// Now upsert with new owner
 		owner2 := "0xowner4000000000000000000000000000000000004"
 		input.Token.CurrentOwner = &owner2
@@ -790,20 +805,148 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Verify updated token
-		tokenResult, err := store.GetTokenByTokenCID(ctx, token.TokenCID)
+		tokenResult, err = store.GetTokenByTokenCID(ctx, token.TokenCID)
 		require.NoError(t, err)
 		assert.Equal(t, owner2, *tokenResult.CurrentOwner)
 
-		// Verify only new balance exists
+		// Verify only new balance exists (old balance should be deleted)
 		balances, total, err := store.GetTokenOwners(ctx, tokenResult.ID, 10, 0)
 		require.NoError(t, err)
-		assert.Equal(t, uint64(1), total)
-		assert.Equal(t, owner2, balances[0].OwnerAddress)
+		assert.Equal(t, uint64(1), total, "should have only 1 balance after upsert")
+		assert.Equal(t, owner2, balances[0].OwnerAddress, "balance should be for owner2")
 
 		// Verify both events exist
-		_, eventTotal, err := store.GetTokenProvenanceEvents(ctx, tokenResult.ID, 10, 0, false)
+		provenanceEvents, eventTotal, err := store.GetTokenProvenanceEvents(ctx, tokenResult.ID, 10, 0, false)
 		require.NoError(t, err)
-		assert.Equal(t, uint64(2), eventTotal)
+		assert.Equal(t, uint64(2), eventTotal, "should have 2 events after upsert")
+		assert.Equal(t, schema.ProvenanceEventTypeMint, provenanceEvents[0].EventType)
+		assert.Equal(t, schema.ProvenanceEventTypeTransfer, provenanceEvents[1].EventType)
+
+		// Verify changes_journal was recreated correctly
+		changes, changeTotal, err = store.GetChanges(ctx, ChangesQueryFilter{
+			TokenCIDs: []string{token.TokenCID},
+			Limit:     100,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), changeTotal, "should have 2 change journal entries after upsert (mint + transfer)")
+		assert.Equal(t, 2, len(changes))
+
+		// Verify both journal entries are for provenance events
+		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType, "first change should be token (mint)")
+		assert.Equal(t, schema.SubjectTypeOwner, changes[1].SubjectType, "second change should be owner (transfer)")
+	})
+
+	t.Run("create token with large number of provenance events to test batch insert", func(t *testing.T) {
+		// This test verifies that the batch insert approach with calculateSafeBatchSize works correctly
+		// ProvenanceEvent has 11 fields, with headroom of 1000: batch size = (65535-1000)/11 ≈ 5866
+		// We'll create 10,000 events to exceed one batch and trigger multiple batches
+		numEvents := 10000
+		owner1 := "0xowner5000000000000000000000000000000000005"
+		owner2 := "0xowner6000000000000000000000000000000000006"
+
+		token := buildTestToken(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0x5000000000000000000000000000000000000000",
+			"1",
+		)
+		token.CurrentOwner = nil
+
+		// Create balances
+		balances := []CreateBalanceInput{
+			{OwnerAddress: owner1, Quantity: "500"},
+			{OwnerAddress: owner2, Quantity: "500"},
+		}
+
+		// Generate many provenance events (mint + transfers)
+		events := make([]CreateProvenanceEventInput, 0, numEvents+1)
+		zeroAddr := domain.ETHEREUM_ZERO_ADDRESS
+
+		// Add initial mint event
+		events = append(events, buildTestProvenanceEvent(
+			domain.ChainEthereumMainnet,
+			schema.ProvenanceEventTypeMint,
+			&zeroAddr,
+			&owner1,
+			"1000",
+			"0xmint5000",
+			1000,
+		))
+
+		// Add many transfer events back and forth between owner1 and owner2
+		for i := range numEvents {
+			var from, to *string
+			if i%2 == 0 {
+				from = &owner1
+				to = &owner2
+			} else {
+				from = &owner2
+				to = &owner1
+			}
+
+			events = append(events, buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				from,
+				to,
+				"1",
+				fmt.Sprintf("0xtransfer5000_%d", i),
+				uint64(1001+i), //nolint:gosec,G115
+			))
+		}
+
+		input := CreateTokenWithProvenancesInput{
+			Token:    token,
+			Balances: balances,
+			Events:   events,
+		}
+
+		// Measure time to ensure batching is efficient
+		// Expected batch size: (65535 - 1000) / 11 fields ≈ 5866 records/batch
+		// With 10,001 events, we expect ~2 batches
+		expectedBatchSize := (65535 - 1000) / 11
+		expectedBatches := (len(events) + expectedBatchSize - 1) / expectedBatchSize
+		t.Logf("Inserting %d provenance events (expected ~%d batches of ~%d records each)",
+			len(events), expectedBatches, expectedBatchSize)
+
+		startTime := time.Now()
+		err := store.CreateTokenWithProvenances(ctx, input)
+		duration := time.Since(startTime)
+		require.NoError(t, err)
+
+		t.Logf("Successfully inserted %d provenance events in %v (~%.2f events/sec)",
+			len(events), duration, float64(len(events))/duration.Seconds())
+
+		// Verify token
+		tokenResult, err := store.GetTokenByTokenCID(ctx, token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, tokenResult)
+
+		// Verify all events were inserted
+		provenanceEvents, eventTotal, err := store.GetTokenProvenanceEvents(ctx, tokenResult.ID, 10000, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(numEvents+1), eventTotal, "should have all events (1 mint + %d transfers)", numEvents) //nolint:gosec,G115
+		assert.Equal(t, schema.ProvenanceEventTypeMint, provenanceEvents[0].EventType, "first event should be mint")
+
+		// Verify all events have IDs populated (none should be 0)
+		for i, evt := range provenanceEvents {
+			assert.NotZero(t, evt.ID, "event %d should have a valid ID", i)
+		}
+
+		// Verify changes_journal entries were created for all events
+		changes, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+			TokenCIDs: []string{token.TokenCID},
+			Limit:     numEvents + 10, // Get all changes
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(numEvents+1), changeTotal, "should have change journal entry for each event") //nolint:gosec,G115
+		assert.Equal(t, numEvents+1, len(changes))
+
+		// Verify balances
+		owners, total, err := store.GetTokenOwners(ctx, tokenResult.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), total)
+		assert.Equal(t, 2, len(owners))
 	})
 }
 
@@ -1256,6 +1399,181 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3), eventTotal, "Should have 3 events")
 		assert.Len(t, events, 3, "Should have exactly 3 events")
+	})
+
+	t.Run("upsert with large number of provenance events to test batch insert", func(t *testing.T) {
+		// This test verifies that the batch insert approach works for UpsertTokenBalanceForOwner
+		// ProvenanceEvent has 11 fields, with headroom of 1000: batch size = (65535-1000)/11 ≈ 5866
+		// We'll create 8,000 events to exceed one batch and trigger multiple batches
+		numEvents := 8000
+		ownerAddress := "0xowner7000000000000000000000000000000000007"
+
+		tokenCID := domain.NewTokenCID(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0x7000000000000000000000000000000000000000",
+			"1",
+		)
+
+		token := CreateTokenInput{
+			TokenCID:        tokenCID.String(),
+			Chain:           domain.ChainEthereumMainnet,
+			Standard:        domain.StandardERC1155,
+			ContractAddress: "0x7000000000000000000000000000000000000000",
+			TokenNumber:     "1",
+			CurrentOwner:    nil,
+		}
+
+		// Generate many provenance events
+		events := make([]CreateProvenanceEventInput, 0, numEvents+1)
+		zeroAddr := domain.ETHEREUM_ZERO_ADDRESS
+
+		// Add initial mint event
+		events = append(events, buildTestProvenanceEvent(
+			domain.ChainEthereumMainnet,
+			schema.ProvenanceEventTypeMint,
+			&zeroAddr,
+			&ownerAddress,
+			"1000",
+			"0xmint7000",
+			2000,
+		))
+
+		// Add many transfer events (simulating high-frequency trading or activity)
+		// For ERC1155, we'll just track transfers of small quantities
+		tempOwner := "0xtemp0000000000000000000000000000000000000"
+		for i := range numEvents {
+			var from, to *string
+			if i%2 == 0 {
+				from = &ownerAddress
+				to = &tempOwner
+			} else {
+				from = &tempOwner
+				to = &ownerAddress
+			}
+
+			events = append(events, buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				from,
+				to,
+				"1",
+				fmt.Sprintf("0xtransfer7000_%d", i),
+				uint64(2001+i), //nolint:gosec,G115
+			))
+		}
+
+		input := UpsertTokenBalanceForOwnerInput{
+			Token:        token,
+			OwnerAddress: ownerAddress,
+			Quantity:     "600", // Final balance after all transfers
+			Events:       events,
+		}
+
+		// Measure time to ensure batching is efficient
+		// Expected batch size: (65535 - 1000) / 11 fields ≈ 5866 records/batch
+		// With 8,001 events, we expect ~2 batches
+		expectedBatchSize := (65535 - 1000) / 11
+		expectedBatches := (len(events) + expectedBatchSize - 1) / expectedBatchSize
+		t.Logf("Upserting %d provenance events (expected ~%d batches of ~%d records each)",
+			len(events), expectedBatches, expectedBatchSize)
+
+		startTime := time.Now()
+		err := store.UpsertTokenBalanceForOwner(ctx, input)
+		duration := time.Since(startTime)
+		require.NoError(t, err)
+
+		t.Logf("Successfully upserted %d provenance events in %v (~%.2f events/sec)",
+			len(events), duration, float64(len(events))/duration.Seconds())
+
+		// Verify token was created
+		tokenResult, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+		require.NotNil(t, tokenResult)
+
+		// Verify all events were inserted
+		provenanceEvents, eventTotal, err := store.GetTokenProvenanceEvents(ctx, tokenResult.ID, 10000, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(numEvents+1), eventTotal, "should have all events (1 mint + %d transfers)", numEvents) //nolint:gosec,G115
+		assert.Equal(t, schema.ProvenanceEventTypeMint, provenanceEvents[0].EventType, "first event should be mint")
+
+		// Verify all events have IDs populated (none should be 0)
+		for i, evt := range provenanceEvents {
+			assert.NotZero(t, evt.ID, "event %d should have a valid ID", i)
+		}
+
+		// Verify changes_journal entries were created for all events
+		_, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+			TokenCIDs: []string{tokenCID.String()},
+			Limit:     numEvents + 10, // Get all changes
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(numEvents+1), changeTotal, "should have change journal entry for each event") //nolint:gosec,G115
+
+		// Verify balance was set correctly
+		balances, balanceTotal, err := store.GetTokenOwners(ctx, tokenResult.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Greater(t, balanceTotal, uint64(0), "should have at least one balance")
+		// Find the owner's balance
+		var ownerBalance *schema.Balance
+		for i := range balances {
+			if balances[i].OwnerAddress == ownerAddress {
+				ownerBalance = &balances[i]
+				break
+			}
+		}
+		require.NotNil(t, ownerBalance, "owner should have a balance")
+		assert.Equal(t, "600", ownerBalance.Quantity)
+
+		// Test adding more events to existing token (tests idempotency and ON CONFLICT handling)
+		additionalEvents := []CreateProvenanceEventInput{
+			// Add duplicate event (should be skipped due to ON CONFLICT DO NOTHING)
+			buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeMint,
+				&zeroAddr,
+				&ownerAddress,
+				"1000",
+				"0xmint7000", // Same tx hash as first mint
+				2000,
+			),
+			// Add new event
+			buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				&ownerAddress,
+				&tempOwner,
+				"50",
+				"0xtransfer7000_new",
+				uint64(3000),
+			),
+		}
+
+		input.Events = append(events, additionalEvents...)
+		input.Quantity = "550" // Updated balance
+
+		err = store.UpsertTokenBalanceForOwner(ctx, input)
+		require.NoError(t, err)
+
+		// Verify only the new event was added (duplicate should be skipped)
+		_, eventTotal, err = store.GetTokenProvenanceEvents(ctx, tokenResult.ID, 10000, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(numEvents+2), eventTotal, "should have 1 more event (duplicate skipped)") //nolint:gosec,G115
+
+		// Verify updated balance
+		balances, balanceTotal, err = store.GetTokenOwners(ctx, tokenResult.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Greater(t, balanceTotal, uint64(0), "should have at least one balance")
+		// Find the owner's balance
+		ownerBalance = nil
+		for i := range balances {
+			if balances[i].OwnerAddress == ownerAddress {
+				ownerBalance = &balances[i]
+				break
+			}
+		}
+		require.NotNil(t, ownerBalance, "owner should have a balance")
+		assert.Equal(t, "550", ownerBalance.Quantity)
 	})
 }
 

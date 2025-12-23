@@ -68,6 +68,46 @@ func ConfigureConnectionPool(db *gorm.DB, maxOpenConns, maxIdleConns int, connMa
 	return nil
 }
 
+// calculateSafeBatchSize computes the optimal batch size for bulk inserts to avoid
+// PostgreSQL's "extended protocol limited to 65535 parameters" error.
+//
+// PostgreSQL's extended protocol has a hard limit of 65535 parameters per query.
+// When doing batch inserts with GORM, each record consumes multiple parameters
+// (one per field being inserted), and ON CONFLICT clauses may add additional parameters.
+//
+// Parameters:
+//   - totalRecords: total number of records to insert
+//   - fieldsPerRecord: number of fields/parameters per record
+//
+// Returns the safe batch size that won't exceed the parameter limit.
+//
+// Example with headroom of 1000:
+//   - Balance struct: 3 fields → (65,535 - 1,000) / 3 = 21,511 records/batch
+//   - ProvenanceEvent struct: 11 fields → (65,535 - 1,000) / 11 = 5,866 records/batch
+//   - ChangesJournal struct: 4 fields → (65,535 - 1,000) / 4 = 16,133 records/batch
+//
+// The function uses a total headroom to account for batch-level overhead:
+//   - GORM-added timestamp fields (created_at, updated_at) across all records
+//   - ON CONFLICT clause parameters (can be significant with multi-column conflicts)
+//   - Query metadata and internal GORM bookkeeping
+//
+// Total headroom is more accurate than per-record overhead because some costs
+// are fixed per batch, not scaled per record.
+func calculateSafeBatchSize(totalRecords int, fieldsPerRecord int) int {
+	const maxParams = 65535
+	const totalHeadroom = 1000 // Total parameter headroom for batch-level overhead
+
+	// Reserve headroom from total available parameters
+	availableParams := maxParams - totalHeadroom
+	safeBatchSize := max(availableParams/fieldsPerRecord, 1)
+
+	if safeBatchSize > totalRecords {
+		return totalRecords
+	}
+
+	return safeBatchSize
+}
+
 // GetTokenByID retrieves a token by its internal ID
 func (s *pgStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
 	var token schema.Token
@@ -1248,10 +1288,13 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
+			// Balance has 3 fields: token_id, owner_address, quantity
+			batchSize := calculateSafeBatchSize(len(balances), 3)
+
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "token_id"}, {Name: "owner_address"}},
 				DoUpdates: clause.AssignmentColumns([]string{"quantity"}),
-			}).Create(&balances).Error; err != nil {
+			}).CreateInBatches(balances, batchSize).Error; err != nil {
 				return fmt.Errorf("failed to create balances: %w", err)
 			}
 		}
@@ -1277,13 +1320,16 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
+			// ProvenanceEvent has 11 fields: token_id, chain, event_type, from_address, to_address,
+			// quantity, tx_hash, block_number, block_hash, timestamp, raw
+			batchSize := calculateSafeBatchSize(len(provenanceEvents), 11)
+
 			// Use ON CONFLICT DO NOTHING to skip duplicates based on comprehensive unique index
 			// (chain, tx_hash, token_id, from_address, to_address, event_type)
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
 				DoNothing: true,
-			}).Clauses(clause.Returning{Columns: []clause.Column{}}).
-				Create(&provenanceEvents).Error; err != nil {
+			}).CreateInBatches(provenanceEvents, batchSize).Error; err != nil {
 				return fmt.Errorf("failed to create provenance events: %w", err)
 			}
 
@@ -1343,13 +1389,15 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				})
 			}
 
+			// ChangesJournal has 4 fields: subject_type, subject_id, changed_at, meta
+			batchSize = calculateSafeBatchSize(len(changeJournals), 4)
+
 			// Use ON CONFLICT DO NOTHING with the unique constraint columns
 			// Unique constraint: (subject_type, subject_id, changed_at)
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 				DoNothing: true,
-			}).Clauses(clause.Returning{Columns: []clause.Column{}}).
-				Create(&changeJournals).Error; err != nil {
+			}).CreateInBatches(changeJournals, batchSize).Error; err != nil {
 				return fmt.Errorf("failed to create changes_journal entries: %w", err)
 			}
 		}
@@ -1434,13 +1482,16 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 				})
 			}
 
+			// ProvenanceEvent has 11 fields: token_id, chain, event_type, from_address, to_address,
+			// quantity, tx_hash, block_number, block_hash, timestamp, raw
+			batchSize := calculateSafeBatchSize(len(provenanceEvents), 11)
+
 			// Use ON CONFLICT DO NOTHING to skip duplicates based on comprehensive unique index
 			// (chain, tx_hash, token_id, from_address, to_address, event_type)
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "chain"}, {Name: "tx_hash"}, {Name: "token_id"}, {Name: "from_address"}, {Name: "to_address"}, {Name: "event_type"}},
 				DoNothing: true,
-			}).Clauses(clause.Returning{Columns: []clause.Column{}}).
-				Create(&provenanceEvents).Error; err != nil {
+			}).CreateInBatches(provenanceEvents, batchSize).Error; err != nil {
 				return fmt.Errorf("failed to create provenance events: %w", err)
 			}
 
@@ -1501,11 +1552,13 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 
 			// Use ON CONFLICT DO NOTHING with the unique constraint columns
 			if len(changeJournals) > 0 {
+				// ChangesJournal has 4 fields: subject_type, subject_id, changed_at, meta
+				batchSize := calculateSafeBatchSize(len(changeJournals), 4)
+
 				if err := tx.Clauses(clause.OnConflict{
 					Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
 					DoNothing: true,
-				}).Clauses(clause.Returning{Columns: []clause.Column{}}).
-					Create(&changeJournals).Error; err != nil {
+				}).CreateInBatches(changeJournals, batchSize).Error; err != nil {
 					return fmt.Errorf("failed to create changes_journal entries: %w", err)
 				}
 			}
