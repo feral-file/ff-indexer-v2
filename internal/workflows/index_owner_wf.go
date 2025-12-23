@@ -18,7 +18,7 @@ import (
 const (
 	// TOKEN_INDEXING_CHUNK_SIZE is the number of tokens to process in a single batch
 	// This balances between resumability (smaller chunks) and efficiency (fewer workflow calls)
-	TOKEN_INDEXING_CHUNK_SIZE = 20
+	TOKEN_INDEXING_CHUNK_SIZE = 50
 )
 
 // IndexTokenOwners indexes tokens for multiple addresses sequentially
