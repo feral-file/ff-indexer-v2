@@ -172,8 +172,8 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_WithToke
 	chainID := domain.ChainTezosMainnet
 	latestBlock := uint64(5000)
 
-	// Create test tokens (2 chunks of 20 tokens each for chunk size 20)
-	tokens := make([]domain.TokenWithBlock, 25)
+	// Create test tokens (2 chunks of 50 tokens each for chunk size 50)
+	tokens := make([]domain.TokenWithBlock, 55)
 	for i := range tokens {
 		tokens[i] = domain.TokenWithBlock{
 			TokenCID:    domain.NewTokenCID(chainID, domain.StandardFA2, "KT1Contract", fmt.Sprintf("%d", i)),
@@ -226,9 +226,9 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_WithToke
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 
-	// Verify chunking: 25 tokens -> 2 chunks (20 + 5)
+	// Verify chunking: 55 tokens -> 2 chunks (50 + 5)
 	s.Equal(2, len(indexTokensCalls), "Should have 2 chunks")
-	s.Equal(20, len(indexTokensCalls[0]), "First chunk should have 20 tokens")
+	s.Equal(50, len(indexTokensCalls[0]), "First chunk should have 50 tokens")
 	s.Equal(5, len(indexTokensCalls[1]), "Second chunk should have 5 tokens")
 
 	// Verify block range updates for resumability
@@ -595,8 +595,8 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 	storedMaxBlock := uint64(3000)
 	latestBlock := uint64(5000)
 
-	// Create forward tokens - 21 tokens to test chunking (20 + 1)
-	forwardTokens := make([]domain.TokenWithBlock, 21)
+	// Create forward tokens - 51 tokens to test chunking (50 + 1)
+	forwardTokens := make([]domain.TokenWithBlock, 51)
 	for i := range forwardTokens {
 		forwardTokens[i] = domain.TokenWithBlock{
 			TokenCID:    domain.NewTokenCID(chainID, domain.StandardERC721, "0xContract123456789012345678901234567890", fmt.Sprintf("%d", i)),
@@ -643,8 +643,8 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 
-	// Verify chunking: 21 tokens -> 2 chunks (20 + 1)
-	s.Equal(2, indexTokensCalls, "Should have 2 chunks for 21 tokens")
+	// Verify chunking: 51 tokens -> 2 chunks (50 + 1)
+	s.Equal(2, indexTokensCalls, "Should have 2 chunks for 51 tokens")
 
 	// Verify block range updates - forward sweep updates max_block progressively
 	// Should have: chunk1 update, chunk2 update, final update (at least 3)
