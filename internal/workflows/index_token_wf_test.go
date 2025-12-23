@@ -957,3 +957,21 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_WithoutOwner_RunsFu
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 }
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_WithOwner_TokenNotFoundOnChain_GracefullySkips() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	ownerAddress := "0xowner123"
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity to return "token not found on chain" error
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, &ownerAddress).Return(errors.New("token not found on chain"))
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, &ownerAddress)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}

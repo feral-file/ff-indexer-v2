@@ -2433,6 +2433,289 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155Timeout(t *testing.T)
 	assert.Contains(t, err.Error(), "failed to get ERC1155 balances from Ethereum")
 }
 
+func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "100"
+	ownerAddress := "0xowner123"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	// Mock GetERC1155BalanceAndEventsForOwner - owner-specific call
+	balance := "5"
+	blockHash := "0xblockhash1"
+	events := []domain.BlockchainEvent{
+		{
+			Chain:           domain.ChainEthereumMainnet,
+			Standard:        domain.StandardERC1155,
+			ContractAddress: contractAddress,
+			TokenNumber:     tokenNumber,
+			EventType:       domain.EventTypeMint,
+			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+			ToAddress:       stringPtr(ownerAddress),
+			Quantity:        "5",
+			TxHash:          "0xtx1",
+			BlockNumber:     100,
+			BlockHash:       &blockHash,
+			TxIndex:         0,
+			Timestamp:       time.Now(),
+		},
+	}
+
+	mocks.ethClient.EXPECT().
+		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
+		Return(balance, events, nil)
+
+	// Mock JSON marshal for events
+	rawEventData := []byte(`{"event":"data"}`)
+	mocks.json.EXPECT().
+		Marshal(events[0]).
+		Return(rawEventData, nil)
+
+	// Mock store UpsertTokenBalanceForOwner
+	mocks.store.EXPECT().
+		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.UpsertTokenBalanceForOwnerInput) error {
+			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
+			assert.Equal(t, ownerAddress, input.OwnerAddress)
+			assert.Equal(t, "5", input.Quantity)
+			assert.Len(t, input.Events, 1, "Should have owner-specific event")
+			assert.Equal(t, ownerAddress, *input.Events[0].ToAddress)
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
+
+	assert.NoError(t, err)
+}
+
+func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_MultipleEvents(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "100"
+	ownerAddress := "0xowner123"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	// Mock GetERC1155BalanceAndEventsForOwner with multiple events (including TransferBatch)
+	balance := "10"
+	blockHash := "0xblockhash1"
+	events := []domain.BlockchainEvent{
+		{
+			Chain:           domain.ChainEthereumMainnet,
+			Standard:        domain.StandardERC1155,
+			ContractAddress: contractAddress,
+			TokenNumber:     tokenNumber,
+			EventType:       domain.EventTypeMint,
+			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+			ToAddress:       stringPtr(ownerAddress),
+			Quantity:        "5",
+			TxHash:          "0xtx1",
+			BlockNumber:     100,
+			BlockHash:       &blockHash,
+			TxIndex:         0,
+			Timestamp:       time.Now(),
+		},
+		{
+			Chain:           domain.ChainEthereumMainnet,
+			Standard:        domain.StandardERC1155,
+			ContractAddress: contractAddress,
+			TokenNumber:     tokenNumber,
+			EventType:       domain.EventTypeTransfer,
+			FromAddress:     stringPtr("0xother"),
+			ToAddress:       stringPtr(ownerAddress),
+			Quantity:        "5",
+			TxHash:          "0xtx2",
+			BlockNumber:     150,
+			BlockHash:       &blockHash,
+			TxIndex:         1,
+			Timestamp:       time.Now(),
+		},
+	}
+
+	mocks.ethClient.EXPECT().
+		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
+		Return(balance, events, nil)
+
+	// Mock JSON marshal for events
+	rawEventData := []byte(`{"event":"data"}`)
+	mocks.json.EXPECT().
+		Marshal(events[0]).
+		Return(rawEventData, nil)
+	mocks.json.EXPECT().
+		Marshal(events[1]).
+		Return(rawEventData, nil)
+
+	// Mock store UpsertTokenBalanceForOwner
+	mocks.store.EXPECT().
+		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.UpsertTokenBalanceForOwnerInput) error {
+			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
+			assert.Equal(t, ownerAddress, input.OwnerAddress)
+			assert.Equal(t, "10", input.Quantity)
+			assert.Len(t, input.Events, 2, "Should have 2 owner-specific events")
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
+
+	assert.NoError(t, err)
+}
+
+func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_ZeroBalance(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "100"
+	ownerAddress := "0xowner123"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	// Mock GetERC1155BalanceAndEventsForOwner - owner transferred away all tokens
+	balance := "0"
+	blockHash := "0xblockhash1"
+	events := []domain.BlockchainEvent{
+		{
+			Chain:           domain.ChainEthereumMainnet,
+			Standard:        domain.StandardERC1155,
+			ContractAddress: contractAddress,
+			TokenNumber:     tokenNumber,
+			EventType:       domain.EventTypeMint,
+			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+			ToAddress:       stringPtr(ownerAddress),
+			Quantity:        "5",
+			TxHash:          "0xtx1",
+			BlockNumber:     100,
+			BlockHash:       &blockHash,
+			TxIndex:         0,
+			Timestamp:       time.Now(),
+		},
+		{
+			Chain:           domain.ChainEthereumMainnet,
+			Standard:        domain.StandardERC1155,
+			ContractAddress: contractAddress,
+			TokenNumber:     tokenNumber,
+			EventType:       domain.EventTypeTransfer,
+			FromAddress:     stringPtr(ownerAddress),
+			ToAddress:       stringPtr("0xother"),
+			Quantity:        "5",
+			TxHash:          "0xtx2",
+			BlockNumber:     150,
+			BlockHash:       &blockHash,
+			TxIndex:         1,
+			Timestamp:       time.Now(),
+		},
+	}
+
+	mocks.ethClient.EXPECT().
+		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
+		Return(balance, events, nil)
+
+	// Mock JSON marshal for events
+	rawEventData := []byte(`{"event":"data"}`)
+	mocks.json.EXPECT().
+		Marshal(events[0]).
+		Return(rawEventData, nil)
+	mocks.json.EXPECT().
+		Marshal(events[1]).
+		Return(rawEventData, nil)
+
+	// Mock store UpsertTokenBalanceForOwner - should store zero balance
+	mocks.store.EXPECT().
+		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.UpsertTokenBalanceForOwnerInput) error {
+			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
+			assert.Equal(t, ownerAddress, input.OwnerAddress)
+			assert.Equal(t, "0", input.Quantity, "Should store zero balance")
+			assert.Len(t, input.Events, 2, "Should have all owner-related events")
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
+
+	assert.NoError(t, err)
+}
+
+func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_WithOwner_GetBalanceError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "100"
+	ownerAddress := "0xowner123"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	// Mock GetERC1155BalanceAndEventsForOwner to return error
+	expectedError := errors.New("rpc error")
+	mocks.ethClient.EXPECT().
+		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
+		Return("", nil, expectedError)
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get ERC1155 balance and events for owner")
+}
+
+func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_WithOwner_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "100"
+	ownerAddress := "0xowner123"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	// Mock GetERC1155BalanceAndEventsForOwner
+	balance := "5"
+	events := []domain.BlockchainEvent{}
+
+	mocks.ethClient.EXPECT().
+		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
+		Return(balance, events, nil)
+
+	// Mock store UpsertTokenBalanceForOwner to return error
+	expectedError := errors.New("database error")
+	mocks.store.EXPECT().
+		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
+		Return(expectedError)
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to upsert token balance for owner")
+}
+
+func TestIndexTokenWithMinimalProvenancesByTokenCID_WithOwner_TokenNotFoundOnChain(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	ownerAddress := "0xowner123"
+
+	mocks.ethClient.EXPECT().
+		ERC721OwnerOf(ctx, "0x1234567890123456789012345678901234567890", "1").
+		Return("", errors.New("execution reverted"))
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
+
+	assert.Error(t, err)
+	assert.IsType(t, &temporal.ApplicationError{}, err)
+	var appErr *temporal.ApplicationError
+	errOk := errors.As(err, &appErr)
+	assert.True(t, errOk)
+	assert.True(t, appErr.NonRetryable())
+	assert.Contains(t, err.Error(), "token not found on chain")
+}
+
 // ====================================================================================
 // IndexTokenWithFullProvenancesByTokenCID Tests
 // ====================================================================================
@@ -2815,264 +3098,4 @@ func TestIndexTokenWithFullProvenancesByTokenCID_GetEventsError(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to fetch token events from Ethereum")
-}
-
-func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	contractAddress := "0x1234567890123456789012345678901234567890"
-	tokenNumber := "100"
-	ownerAddress := "0xowner123"
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
-
-	// Mock GetERC1155BalanceAndEventsForOwner - owner-specific call
-	balance := "5"
-	blockHash := "0xblockhash1"
-	events := []domain.BlockchainEvent{
-		{
-			Chain:           domain.ChainEthereumMainnet,
-			Standard:        domain.StandardERC1155,
-			ContractAddress: contractAddress,
-			TokenNumber:     tokenNumber,
-			EventType:       domain.EventTypeMint,
-			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-			ToAddress:       stringPtr(ownerAddress),
-			Quantity:        "5",
-			TxHash:          "0xtx1",
-			BlockNumber:     100,
-			BlockHash:       &blockHash,
-			TxIndex:         0,
-			Timestamp:       time.Now(),
-		},
-	}
-
-	mocks.ethClient.EXPECT().
-		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
-		Return(balance, events, nil)
-
-	// Mock JSON marshal for events
-	rawEventData := []byte(`{"event":"data"}`)
-	mocks.json.EXPECT().
-		Marshal(events[0]).
-		Return(rawEventData, nil)
-
-	// Mock store UpsertTokenBalanceForOwner
-	mocks.store.EXPECT().
-		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
-		DoAndReturn(func(ctx context.Context, input store.UpsertTokenBalanceForOwnerInput) error {
-			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
-			assert.Equal(t, ownerAddress, input.OwnerAddress)
-			assert.Equal(t, "5", input.Quantity)
-			assert.Len(t, input.Events, 1, "Should have owner-specific event")
-			assert.Equal(t, ownerAddress, *input.Events[0].ToAddress)
-			return nil
-		})
-
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
-
-	assert.NoError(t, err)
-}
-
-func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_MultipleEvents(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	contractAddress := "0x1234567890123456789012345678901234567890"
-	tokenNumber := "100"
-	ownerAddress := "0xowner123"
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
-
-	// Mock GetERC1155BalanceAndEventsForOwner with multiple events (including TransferBatch)
-	balance := "10"
-	blockHash := "0xblockhash1"
-	events := []domain.BlockchainEvent{
-		{
-			Chain:           domain.ChainEthereumMainnet,
-			Standard:        domain.StandardERC1155,
-			ContractAddress: contractAddress,
-			TokenNumber:     tokenNumber,
-			EventType:       domain.EventTypeMint,
-			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-			ToAddress:       stringPtr(ownerAddress),
-			Quantity:        "5",
-			TxHash:          "0xtx1",
-			BlockNumber:     100,
-			BlockHash:       &blockHash,
-			TxIndex:         0,
-			Timestamp:       time.Now(),
-		},
-		{
-			Chain:           domain.ChainEthereumMainnet,
-			Standard:        domain.StandardERC1155,
-			ContractAddress: contractAddress,
-			TokenNumber:     tokenNumber,
-			EventType:       domain.EventTypeTransfer,
-			FromAddress:     stringPtr("0xother"),
-			ToAddress:       stringPtr(ownerAddress),
-			Quantity:        "5",
-			TxHash:          "0xtx2",
-			BlockNumber:     150,
-			BlockHash:       &blockHash,
-			TxIndex:         1,
-			Timestamp:       time.Now(),
-		},
-	}
-
-	mocks.ethClient.EXPECT().
-		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
-		Return(balance, events, nil)
-
-	// Mock JSON marshal for events
-	rawEventData := []byte(`{"event":"data"}`)
-	mocks.json.EXPECT().
-		Marshal(events[0]).
-		Return(rawEventData, nil)
-	mocks.json.EXPECT().
-		Marshal(events[1]).
-		Return(rawEventData, nil)
-
-	// Mock store UpsertTokenBalanceForOwner
-	mocks.store.EXPECT().
-		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
-		DoAndReturn(func(ctx context.Context, input store.UpsertTokenBalanceForOwnerInput) error {
-			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
-			assert.Equal(t, ownerAddress, input.OwnerAddress)
-			assert.Equal(t, "10", input.Quantity)
-			assert.Len(t, input.Events, 2, "Should have 2 owner-specific events")
-			return nil
-		})
-
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
-
-	assert.NoError(t, err)
-}
-
-func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_ZeroBalance(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	contractAddress := "0x1234567890123456789012345678901234567890"
-	tokenNumber := "100"
-	ownerAddress := "0xowner123"
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
-
-	// Mock GetERC1155BalanceAndEventsForOwner - owner transferred away all tokens
-	balance := "0"
-	blockHash := "0xblockhash1"
-	events := []domain.BlockchainEvent{
-		{
-			Chain:           domain.ChainEthereumMainnet,
-			Standard:        domain.StandardERC1155,
-			ContractAddress: contractAddress,
-			TokenNumber:     tokenNumber,
-			EventType:       domain.EventTypeMint,
-			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-			ToAddress:       stringPtr(ownerAddress),
-			Quantity:        "5",
-			TxHash:          "0xtx1",
-			BlockNumber:     100,
-			BlockHash:       &blockHash,
-			TxIndex:         0,
-			Timestamp:       time.Now(),
-		},
-		{
-			Chain:           domain.ChainEthereumMainnet,
-			Standard:        domain.StandardERC1155,
-			ContractAddress: contractAddress,
-			TokenNumber:     tokenNumber,
-			EventType:       domain.EventTypeTransfer,
-			FromAddress:     stringPtr(ownerAddress),
-			ToAddress:       stringPtr("0xother"),
-			Quantity:        "5",
-			TxHash:          "0xtx2",
-			BlockNumber:     150,
-			BlockHash:       &blockHash,
-			TxIndex:         1,
-			Timestamp:       time.Now(),
-		},
-	}
-
-	mocks.ethClient.EXPECT().
-		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
-		Return(balance, events, nil)
-
-	// Mock JSON marshal for events
-	rawEventData := []byte(`{"event":"data"}`)
-	mocks.json.EXPECT().
-		Marshal(events[0]).
-		Return(rawEventData, nil)
-	mocks.json.EXPECT().
-		Marshal(events[1]).
-		Return(rawEventData, nil)
-
-	// Mock store UpsertTokenBalanceForOwner - should store zero balance
-	mocks.store.EXPECT().
-		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
-		DoAndReturn(func(ctx context.Context, input store.UpsertTokenBalanceForOwnerInput) error {
-			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
-			assert.Equal(t, ownerAddress, input.OwnerAddress)
-			assert.Equal(t, "0", input.Quantity, "Should store zero balance")
-			assert.Len(t, input.Events, 2, "Should have all owner-related events")
-			return nil
-		})
-
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
-
-	assert.NoError(t, err)
-}
-
-func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_WithOwner_GetBalanceError(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	contractAddress := "0x1234567890123456789012345678901234567890"
-	tokenNumber := "100"
-	ownerAddress := "0xowner123"
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
-
-	// Mock GetERC1155BalanceAndEventsForOwner to return error
-	expectedError := errors.New("rpc error")
-	mocks.ethClient.EXPECT().
-		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
-		Return("", nil, expectedError)
-
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get ERC1155 balance and events for owner")
-}
-
-func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_WithOwner_StoreError(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	contractAddress := "0x1234567890123456789012345678901234567890"
-	tokenNumber := "100"
-	ownerAddress := "0xowner123"
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
-
-	// Mock GetERC1155BalanceAndEventsForOwner
-	balance := "5"
-	events := []domain.BlockchainEvent{}
-
-	mocks.ethClient.EXPECT().
-		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
-		Return(balance, events, nil)
-
-	// Mock store UpsertTokenBalanceForOwner to return error
-	expectedError := errors.New("database error")
-	mocks.store.EXPECT().
-		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
-		Return(expectedError)
-
-	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to upsert token balance for owner")
 }

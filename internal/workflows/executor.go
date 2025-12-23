@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
@@ -764,6 +765,15 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 			// For ERC721, use ownerOf to get the current single owner
 			owner, err := e.ethClient.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
 			if err != nil {
+				if strings.Contains(err.Error(), "execution reverted") {
+					// It's likely that the token is not found on chain, so we return a non-retryable error
+					return temporal.NewNonRetryableApplicationError(
+						"token not found on chain",
+						"TokenNotFoundOnChain",
+						domain.ErrTokenNotFoundOnChain,
+					)
+				}
+
 				return fmt.Errorf("failed to get ERC721 owner: %w", err)
 			} else if owner != "" && owner != domain.ETHEREUM_ZERO_ADDRESS {
 				input.Token.CurrentOwner = &owner
@@ -782,6 +792,15 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 				// Get balance and events for this specific owner
 				balance, events, err := e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, *ownerAddress)
 				if err != nil {
+					if strings.Contains(err.Error(), "execution reverted") {
+						// It's likely that the token is not found on chain, so we return a non-retryable error
+						return temporal.NewNonRetryableApplicationError(
+							"token not found on chain",
+							"TokenNotFoundOnChain",
+							domain.ErrTokenNotFoundOnChain,
+						)
+					}
+
 					return fmt.Errorf("failed to get ERC1155 balance and events for owner: %w", err)
 				}
 
@@ -846,6 +865,16 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 				// This means we may get partial/incomplete balances for high-activity contracts
 				balances, err := e.ethClient.ERC1155Balances(ctx, contractAddress, tokenNumber)
 				if err != nil {
+					// Check if error is due to execution reverted
+					// It's likely that the token is not found on chain, so we return a non-retryable error
+					if strings.Contains(err.Error(), "execution reverted") {
+						return temporal.NewNonRetryableApplicationError(
+							"token not found on chain",
+							"TokenNotFoundOnChain",
+							domain.ErrTokenNotFoundOnChain,
+						)
+					}
+
 					// Check if error is due to timeout
 					if errors.Is(err, context.DeadlineExceeded) {
 						logger.WarnCtx(ctx, "ERC1155 balance fetch timed out",
@@ -854,6 +883,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 							zap.String("tokenNumber", tokenNumber),
 						)
 					}
+
 					return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
 				}
 
