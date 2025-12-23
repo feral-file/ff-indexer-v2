@@ -1216,6 +1216,27 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 				{ownerHash},                    // to address
 			},
 		},
+		// ERC1155 TransferBatch where address is `from` (topic[2])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{transferBatchEventSignature}, // TransferBatch event
+				nil,                           // any operator
+				{ownerHash},                   // from address
+			},
+		},
+		// ERC1155 TransferBatch where address is `to` (topic[3])
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{transferBatchEventSignature}, // TransferBatch event
+				nil,                           // any operator
+				nil,                           // any from address
+				{ownerHash},                   // to address
+			},
+		},
 	}
 
 	type queryResult struct {
@@ -1338,6 +1359,86 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 				(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex) {
 				existing.blockNumber = vLog.BlockNumber
 				existing.logIndex = vLog.Index
+			}
+
+		case transferBatchEventSignature:
+			// ERC1155 TransferBatch (4 topics: signature, operator, from, to; data contains tokenIds and values arrays)
+			if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+				continue
+			}
+
+			fromAddr := common.BytesToAddress(vLog.Topics[2].Bytes())
+			toAddr := common.BytesToAddress(vLog.Topics[3].Bytes())
+
+			// Skip if neither from nor to is the owner
+			if fromAddr != owner && toAddr != owner {
+				continue
+			}
+
+			// Parse arrays from data - ABI encoding of two arrays (ids and values)
+			// Data format: [offset_ids, offset_values, length_ids, ...ids..., length_values, ...values...]
+			if len(vLog.Data) < 128 {
+				continue
+			}
+
+			// Read array lengths and data offsets
+			idsOffset := new(big.Int).SetBytes(vLog.Data[0:32]).Uint64()
+			valuesOffset := new(big.Int).SetBytes(vLog.Data[32:64]).Uint64()
+
+			if idsOffset+32 > uint64(len(vLog.Data)) || valuesOffset+32 > uint64(len(vLog.Data)) {
+				continue
+			}
+
+			idsLength := new(big.Int).SetBytes(vLog.Data[idsOffset : idsOffset+32]).Uint64()
+			valuesLength := new(big.Int).SetBytes(vLog.Data[valuesOffset : valuesOffset+32]).Uint64()
+
+			if idsLength != valuesLength {
+				continue
+			}
+
+			idsStart := idsOffset + 32
+			valuesStart := valuesOffset + 32
+
+			if idsStart+idsLength*32 > uint64(len(vLog.Data)) || valuesStart+valuesLength*32 > uint64(len(vLog.Data)) {
+				continue
+			}
+
+			// Process each token in the batch
+			for i := range idsLength {
+				idStart := idsStart + i*32
+				valueStart := valuesStart + i*32
+
+				tokenID := new(big.Int).SetBytes(vLog.Data[idStart : idStart+32])
+				amount := new(big.Int).SetBytes(vLog.Data[valueStart : valueStart+32])
+
+				tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
+
+				// For ERC1155, track net balance change
+				existing := balanceMap[tokenCID]
+				if existing == nil {
+					existing = &tokenBalance{
+						standard:    domain.StandardERC1155,
+						netBalance:  big.NewInt(0),
+						blockNumber: vLog.BlockNumber,
+						logIndex:    vLog.Index,
+					}
+					balanceMap[tokenCID] = existing
+				}
+
+				// Calculate balance change: +amount if receiving, -amount if sending
+				if toAddr == owner {
+					existing.netBalance.Add(existing.netBalance, amount)
+				}
+				if fromAddr == owner {
+					existing.netBalance.Sub(existing.netBalance, amount)
+				}
+
+				// Update block number to track latest interaction
+				if vLog.BlockNumber > existing.blockNumber ||
+					(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex) {
+					existing.blockNumber = vLog.BlockNumber
+					existing.logIndex = vLog.Index
+				}
 			}
 		}
 	}
