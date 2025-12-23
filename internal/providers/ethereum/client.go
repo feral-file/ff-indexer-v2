@@ -2,6 +2,7 @@ package ethereum
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"sort"
@@ -19,6 +20,12 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
+
+// ErrExecutionReverted is returned when a function call reverts
+var ErrExecutionReverted = errors.New("execution reverted")
+
+// ErrContractNotFound is returned when a contract is not found or self-destructed
+var ErrContractNotFound = errors.New("contract not found")
 
 // EthereumClient defines the interface for Ethereum client operations
 //
@@ -454,6 +461,10 @@ func (f *ethereumClient) ERC721TokenURI(ctx context.Context, contractAddress str
 	if err != nil {
 		return "", fmt.Errorf("failed to call contract: %w", err)
 	}
+	if len(result) == 0 {
+		// This is likely the contract has been self-destructed
+		return "", ErrContractNotFound
+	}
 
 	var uri string
 	if err := tokenURIABI.UnpackIntoInterface(&uri, "tokenURI", result); err != nil {
@@ -488,6 +499,10 @@ func (f *ethereumClient) ERC721OwnerOf(ctx context.Context, contractAddress, tok
 	}, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to call contract: %w", err)
+	}
+	if len(result) == 0 {
+		// This is likely the contract has been self-destructed
+		return "", ErrContractNotFound
 	}
 
 	var owner common.Address
@@ -524,6 +539,10 @@ func (f *ethereumClient) ERC1155URI(ctx context.Context, contractAddress, tokenN
 	if err != nil {
 		return "", fmt.Errorf("failed to call contract: %w", err)
 	}
+	if len(result) == 0 {
+		// This is likely the contract has been self-destructed
+		return "", ErrContractNotFound
+	}
 
 	var uri string
 	if err := uriABI.UnpackIntoInterface(&uri, "uri", result); err != nil {
@@ -559,6 +578,10 @@ func (f *ethereumClient) ERC1155BalanceOf(ctx context.Context, contractAddress, 
 	}, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to call contract: %w", err)
+	}
+	if len(result) == 0 {
+		// This is likely the contract has been self-destructed
+		return "", ErrContractNotFound
 	}
 
 	var balance *big.Int
@@ -622,6 +645,10 @@ func (f *ethereumClient) ERC1155BalanceOfBatch(ctx context.Context, contractAddr
 		}, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to call balanceOfBatch for chunk %d-%d: %w", i, end, err)
+		}
+		if len(callResult) == 0 {
+			// This is likely the contract has been self-destructed
+			return nil, ErrContractNotFound
 		}
 
 		// Unpack the result

@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -2703,7 +2704,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_WithOwner_TokenNotFoundOnCha
 
 	mocks.ethClient.EXPECT().
 		ERC721OwnerOf(ctx, "0x1234567890123456789012345678901234567890", "1").
-		Return("", errors.New("execution reverted"))
+		Return("", ethereum.ErrExecutionReverted)
 
 	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
 

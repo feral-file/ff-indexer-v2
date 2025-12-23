@@ -765,8 +765,10 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 			// For ERC721, use ownerOf to get the current single owner
 			owner, err := e.ethClient.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
 			if err != nil {
-				if strings.Contains(err.Error(), "execution reverted") {
-					// It's likely that the token is not found on chain, so we return a non-retryable error
+				if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
+					strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
+					// It's likely that the token is not found on chain (burned or contract has been self-destructed),
+					// so we return a non-retryable error
 					return temporal.NewNonRetryableApplicationError(
 						"token not found on chain",
 						"TokenNotFoundOnChain",
@@ -792,8 +794,10 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 				// Get balance and events for this specific owner
 				balance, events, err := e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, *ownerAddress)
 				if err != nil {
-					if strings.Contains(err.Error(), "execution reverted") {
-						// It's likely that the token is not found on chain, so we return a non-retryable error
+					if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
+						strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
+						// It's likely that the token is not found on chain (burned or contract has been self-destructed),
+						// so we return a non-retryable error
 						return temporal.NewNonRetryableApplicationError(
 							"token not found on chain",
 							"TokenNotFoundOnChain",
@@ -865,9 +869,10 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 				// This means we may get partial/incomplete balances for high-activity contracts
 				balances, err := e.ethClient.ERC1155Balances(ctx, contractAddress, tokenNumber)
 				if err != nil {
-					// Check if error is due to execution reverted
-					// It's likely that the token is not found on chain, so we return a non-retryable error
-					if strings.Contains(err.Error(), "execution reverted") {
+					// It's likely that the token is not found on chain (burned or contract has been self-destructed),
+					// so we return a non-retryable error
+					if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
+						strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
 						return temporal.NewNonRetryableApplicationError(
 							"token not found on chain",
 							"TokenNotFoundOnChain",
