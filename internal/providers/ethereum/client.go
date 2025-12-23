@@ -1263,6 +1263,29 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		allLogs = append(allLogs, result.logs...)
 	}
 
+	// Deduplicate logs for safer ownership tracking
+	// Use a map with unique key: blockNumber + txHash + logIndex
+	logMap := make(map[string]types.Log)
+	for _, vLog := range allLogs {
+		key := fmt.Sprintf("%d-%s-%d", vLog.BlockNumber, vLog.TxHash.Hex(), vLog.Index)
+		logMap[key] = vLog
+	}
+
+	// Convert back to slice and sort chronologically
+	allLogs = make([]types.Log, 0, len(logMap))
+	for _, vLog := range logMap {
+		allLogs = append(allLogs, vLog)
+	}
+
+	// Sort logs chronologically (by block number, then by log index)
+	// This ensures deterministic processing order for correct ownership tracking
+	sort.Slice(allLogs, func(i, j int) bool {
+		if allLogs[i].BlockNumber != allLogs[j].BlockNumber {
+			return allLogs[i].BlockNumber < allLogs[j].BlockNumber
+		}
+		return allLogs[i].Index < allLogs[j].Index
+	})
+
 	// Track balance changes per token to determine ownership at the end of the block range
 	// For ERC721: map stores the last transfer log (to determine final owner)
 	// For ERC1155: map stores net balance change (incoming - outgoing)
@@ -1449,7 +1472,8 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		switch balance.standard {
 		case domain.StandardERC721:
 			// For ERC721: owner must be the 'to' address in the last transfer
-			if balance.lastLog != nil && len(balance.lastLog.Topics) >= 3 {
+			// ERC721 Transfer must have exactly 4 topics: [signature, from, to, tokenId]
+			if balance.lastLog != nil && len(balance.lastLog.Topics) == 4 {
 				toAddr := common.BytesToAddress(balance.lastLog.Topics[2].Bytes())
 				if toAddr == owner {
 					tokensWithBlocks = append(tokensWithBlocks, domain.TokenWithBlock{
