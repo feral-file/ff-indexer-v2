@@ -911,7 +911,7 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Fetch all events based on chain
-	var allBalances map[string]string
+	allBalances := make(map[string]string)
 	var allEvents []domain.BlockchainEvent
 	var err error
 
@@ -923,7 +923,6 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 			return fmt.Errorf("failed to fetch token balances from TzKT: %w", err)
 		}
 
-		allBalances = make(map[string]string)
 		for _, bal := range tzktBalances {
 			if types.IsPositiveNumeric(bal.Balance) {
 				allBalances[bal.Account.Address] = bal.Balance
@@ -958,24 +957,22 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 			}
 		}
 
-		allBalances = make(map[string]string)
-		for addr := range addressSet {
-			var balance string
-			switch standard {
-			case domain.StandardERC1155:
-				balance, err = e.ethClient.ERC1155BalanceOf(ctx, contractAddress, addr, tokenNumber)
-				if err != nil {
-					logger.WarnCtx(ctx, "Failed to get balance for address", zap.String("address", addr), zap.Error(err))
-					continue
-				}
-			case domain.StandardERC721:
-				// Skip fetching balance here
-				continue
+		switch standard {
+		case domain.StandardERC1155:
+			// Convert addressSet to slice for batch query
+			addresses := make([]string, 0, len(addressSet))
+			for addr := range addressSet {
+				addresses = append(addresses, addr)
 			}
 
-			if types.IsPositiveNumeric(balance) {
-				allBalances[addr] = balance
+			// Use batch balance query for efficiency
+			allBalances, err = e.ethClient.ERC1155BalanceOfBatch(ctx, contractAddress, tokenNumber, addresses)
+			if err != nil {
+				return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
 			}
+		case domain.StandardERC721:
+			// Skip fetching balance for ERC721 tokens
+			// ERC721 ownership is determined from the latest transfer event
 		}
 
 	default:

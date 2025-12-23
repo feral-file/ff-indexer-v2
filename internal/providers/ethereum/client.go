@@ -45,6 +45,11 @@ type EthereumClient interface {
 	// ERC1155BalanceOf fetches the balance of a specific token ID for an owner from an ERC1155 contract
 	ERC1155BalanceOf(ctx context.Context, contractAddress, ownerAddress, tokenNumber string) (string, error)
 
+	// ERC1155BalanceOfBatch fetches balances for multiple addresses for a specific token ID from an ERC1155 contract
+	// Handles chunking internally to respect RPC limits (default 200 addresses per chunk)
+	// Returns a map of address -> balance string
+	ERC1155BalanceOfBatch(ctx context.Context, contractAddress, tokenNumber string, addresses []string) (map[string]string, error)
+
 	// GetTokenEvents fetches all historical events for a specific token
 	// Returns events in ascending order of timestamp
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) ([]domain.BlockchainEvent, error)
@@ -562,6 +567,83 @@ func (f *ethereumClient) ERC1155BalanceOf(ctx context.Context, contractAddress, 
 	}
 
 	return balance.String(), nil
+}
+
+// ERC1155BalanceOfBatch fetches balances for multiple addresses for a specific token ID from an ERC1155 contract
+// It uses the ERC1155 balanceOfBatch function which allows querying multiple address-token pairs in a single RPC call
+// Handles chunking internally to respect RPC limits (200 address-token pairs per chunk by default)
+// Returns a map of address -> balance string (only includes addresses with non-zero balances)
+func (f *ethereumClient) ERC1155BalanceOfBatch(ctx context.Context, contractAddress, tokenNumber string, addresses []string) (map[string]string, error) {
+	// Parse token number to big.Int
+	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid token number: %s", tokenNumber)
+	}
+
+	// ERC1155 balanceOfBatch function signature: balanceOfBatch(address[],uint256[]) returns (uint256[])
+	balanceOfBatchABI, err := abi.JSON(strings.NewReader(`[{"constant":true,"inputs":[{"name":"accounts","type":"address[]"},{"name":"ids","type":"uint256[]"}],"name":"balanceOfBatch","outputs":[{"name":"","type":"uint256[]"}],"payable":false,"stateMutability":"view","type":"function"}]`))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ABI: %w", err)
+	}
+
+	contractAddr := common.HexToAddress(contractAddress)
+	result := make(map[string]string)
+
+	// Process in chunks to avoid hitting RPC limits
+	// Start with 200 pairs per chunk as recommended
+	const chunkSize = 200
+
+	for i := 0; i < len(addresses); i += chunkSize {
+		// Calculate chunk boundaries
+		end := min(i+chunkSize, len(addresses))
+		chunk := addresses[i:end]
+
+		// Build arrays for the batch call
+		// For querying the same token ID for multiple addresses,
+		// we need parallel arrays of addresses and token IDs
+		accountAddresses := make([]common.Address, len(chunk))
+		tokenIDs := make([]*big.Int, len(chunk))
+
+		for j, addr := range chunk {
+			accountAddresses[j] = common.HexToAddress(addr)
+			tokenIDs[j] = tokenID // Same token ID for all addresses
+		}
+
+		// Pack the call data
+		data, err := balanceOfBatchABI.Pack("balanceOfBatch", accountAddresses, tokenIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to pack balanceOfBatch data: %w", err)
+		}
+
+		// Make the contract call
+		callResult, err := f.client.CallContract(ctx, ethereum.CallMsg{
+			To:   &contractAddr,
+			Data: data,
+		}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to call balanceOfBatch for chunk %d-%d: %w", i, end, err)
+		}
+
+		// Unpack the result
+		var balances []*big.Int
+		if err := balanceOfBatchABI.UnpackIntoInterface(&balances, "balanceOfBatch", callResult); err != nil {
+			return nil, fmt.Errorf("failed to unpack balanceOfBatch result: %w", err)
+		}
+
+		// Verify result length matches input length
+		if len(balances) != len(chunk) {
+			return nil, fmt.Errorf("balanceOfBatch returned unexpected number of results: expected %d, got %d", len(chunk), len(balances))
+		}
+
+		// Map addresses to their balances (only store non-zero balances)
+		for j, balance := range balances {
+			if balance.Cmp(big.NewInt(0)) > 0 {
+				result[chunk[j]] = balance.String()
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // GetTokenEvents fetches all historical events for a specific token

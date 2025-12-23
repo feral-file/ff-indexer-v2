@@ -65,6 +65,21 @@ func (mr *MockEthereumProviderClientMockRecorder) ERC1155BalanceOf(ctx, contract
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC1155BalanceOf", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC1155BalanceOf), ctx, contractAddress, ownerAddress, tokenNumber)
 }
 
+// ERC1155BalanceOfBatch mocks base method.
+func (m *MockEthereumProviderClient) ERC1155BalanceOfBatch(ctx context.Context, contractAddress, tokenNumber string, addresses []string) (map[string]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ERC1155BalanceOfBatch", ctx, contractAddress, tokenNumber, addresses)
+	ret0, _ := ret[0].(map[string]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ERC1155BalanceOfBatch indicates an expected call of ERC1155BalanceOfBatch.
+func (mr *MockEthereumProviderClientMockRecorder) ERC1155BalanceOfBatch(ctx, contractAddress, tokenNumber, addresses interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC1155BalanceOfBatch", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC1155BalanceOfBatch), ctx, contractAddress, tokenNumber, addresses)
+}
+
 // ERC1155Balances mocks base method.
 func (m *MockEthereumProviderClient) ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error) {
 	m.ctrl.T.Helper()
