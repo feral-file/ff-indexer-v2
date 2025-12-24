@@ -461,12 +461,15 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 	}
 
 	if hasAddresses {
+		// Normalize addresses
+		normalizedAddresses := domain.NormalizeAddresses(addresses)
+
 		// Trigger IndexTokenOwners workflow
 		options := client.StartWorkflowOptions{
 			TaskQueue:                e.orchestratorTaskQueue,
 			WorkflowExecutionTimeout: time.Hour,
 		}
-		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwners, addresses)
+		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwners, normalizedAddresses)
 		if err != nil {
 			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing: %v", err))
 		}
