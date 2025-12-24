@@ -135,6 +135,18 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		tokenCIDs = normalizedTokenCIDs
 	}
 
+	// Normalize contract addresses
+	if len(contractAddresses) > 0 {
+		normalizedContractAddresses := domain.NormalizeAddresses(contractAddresses)
+		contractAddresses = normalizedContractAddresses
+	}
+
+	// Normalize owners
+	if len(owners) > 0 {
+		normalizedOwners := domain.NormalizeAddresses(owners)
+		owners = normalizedOwners
+	}
+
 	// Build filter
 	filter := store.TokenQueryFilter{
 		Owners:            owners,
@@ -351,6 +363,12 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 			normalizedTokenCIDs[i] = domain.TokenCID(tokenCID).Normalized().String()
 		}
 		tokenCIDs = normalizedTokenCIDs
+	}
+
+	// Normalize addresses
+	if len(addresses) > 0 {
+		normalizedAddresses := domain.NormalizeAddresses(addresses)
+		addresses = normalizedAddresses
 	}
 
 	// Build filter
