@@ -29,6 +29,11 @@ const (
 	ChainTezosGhostnet   Chain = "tezos:ghostnet"
 )
 
+// IsEVM checks if a chain is an EVM chain
+func (c Chain) IsEVM() bool {
+	return c == ChainEthereumMainnet || c == ChainEthereumSepolia
+}
+
 // IsValidChain checks if a chain is valid
 func IsValidChain(chain Chain) bool {
 	return chain == ChainEthereumMainnet ||
@@ -179,6 +184,16 @@ func (t TokenCID) String() string {
 	return string(t)
 }
 
+// Normalized returns the normalized TokenCID
+func (t TokenCID) Normalized() TokenCID {
+	chain, standard, contractAddress, tokenNumber := t.Parse()
+	if chain.IsEVM() {
+		contractAddress = NormalizeAddress(contractAddress)
+	}
+
+	return TokenCID(fmt.Sprintf("%s:%s:%s:%s", chain, standard, contractAddress, tokenNumber))
+}
+
 // Parse parses the TokenCID into chain, standard, contract address, and token number
 func (t TokenCID) Parse() (Chain, ChainStandard, string, string) {
 	parts := strings.Split(string(t), ":")
@@ -231,7 +246,7 @@ func (t TokenCID) Valid() bool {
 
 // NewTokenCID creates a new TokenCID
 func NewTokenCID(chain Chain, standard ChainStandard, contractAddress string, tokenNumber string) TokenCID {
-	return TokenCID(fmt.Sprintf("%s:%s:%s:%s", chain, standard, contractAddress, tokenNumber))
+	return TokenCID(fmt.Sprintf("%s:%s:%s:%s", chain, standard, contractAddress, tokenNumber)).Normalized()
 }
 
 // determineTransferEventType determines the event type based on from/to addresses

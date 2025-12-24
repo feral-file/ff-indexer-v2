@@ -66,8 +66,11 @@ func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, 
 }
 
 func (e *executor) GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+	// Normalize token CID
+	normalizedTokenCID := domain.TokenCID(tokenCID).Normalized().String()
+
 	// Get token with metadata
-	result, err := e.store.GetTokenWithMetadataByTokenCID(ctx, tokenCID)
+	result, err := e.store.GetTokenWithMetadataByTokenCID(ctx, normalizedTokenCID)
 	if err != nil {
 		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token: %v", err))
 	}
@@ -121,6 +124,15 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	if includeBroken == nil {
 		defaultIncludeBroken := false
 		includeBroken = &defaultIncludeBroken
+	}
+
+	// Normalize token CIDs
+	if len(tokenCIDs) > 0 {
+		normalizedTokenCIDs := make([]string, len(tokenCIDs))
+		for i, tokenCID := range tokenCIDs {
+			normalizedTokenCIDs[i] = domain.TokenCID(tokenCID).Normalized().String()
+		}
+		tokenCIDs = normalizedTokenCIDs
 	}
 
 	// Build filter
@@ -332,6 +344,15 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 		offsetValue = *offset
 	}
 
+	// Normalize token CIDs
+	if len(tokenCIDs) > 0 {
+		normalizedTokenCIDs := make([]string, len(tokenCIDs))
+		for i, tokenCID := range tokenCIDs {
+			normalizedTokenCIDs[i] = domain.TokenCID(tokenCID).Normalized().String()
+		}
+		tokenCIDs = normalizedTokenCIDs
+	}
+
 	// Build filter
 	filter := store.ChangesQueryFilter{
 		TokenIDs:     tokenIDs,
@@ -411,9 +432,15 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 	hasAddresses := len(addresses) > 0
 
 	if hasTokenCIDs {
+		// Normalize token CIDs
+		normalizedTokenCIDs := make([]domain.TokenCID, len(tokenCIDs))
+		for i, tokenCID := range tokenCIDs {
+			normalizedTokenCIDs[i] = tokenCID.Normalized()
+		}
+
 		// Check for blacklisted contracts
 		if e.blacklist != nil {
-			for _, tokenCID := range tokenCIDs {
+			for _, tokenCID := range normalizedTokenCIDs {
 				if e.blacklist.IsTokenCIDBlacklisted(tokenCID) {
 					return nil, apierrors.NewValidationError(fmt.Sprintf("contract is blacklisted: %s", tokenCID.String()))
 				}
@@ -425,7 +452,7 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 			TaskQueue:                e.orchestratorTaskQueue,
 			WorkflowExecutionTimeout: 30 * time.Minute,
 		}
-		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, tokenCIDs, nil)
+		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, normalizedTokenCIDs, nil)
 		if err != nil {
 			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing: %v", err))
 		}
@@ -467,7 +494,7 @@ func (e *executor) TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint6
 		// Convert to strings for database query
 		cidStrings := make([]string, len(tokenCIDs))
 		for i, cid := range tokenCIDs {
-			cidStrings[i] = cid.String()
+			cidStrings[i] = cid.Normalized().String()
 		}
 
 		// Batch fetch to validate all CIDs exist

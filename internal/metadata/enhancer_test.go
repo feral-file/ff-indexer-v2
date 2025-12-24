@@ -298,7 +298,7 @@ func TestEnhancer_Enhance_NoPublisher(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
 	// Create normalized metadata without publisher
 	normalizedMeta := &metadata.NormalizedMetadata{
@@ -311,7 +311,7 @@ func TestEnhancer_Enhance_NoPublisher(t *testing.T) {
 	// Now should try OpenSea enrichment for Ethereum tokens without a publisher
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x123", "1").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -324,7 +324,7 @@ func TestEnhancer_Enhance_NoPublisherName(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
 	// Create normalized metadata with publisher but no name
 	normalizedMeta := &metadata.NormalizedMetadata{
@@ -340,7 +340,7 @@ func TestEnhancer_Enhance_NoPublisherName(t *testing.T) {
 	// Now should try OpenSea enrichment for Ethereum tokens without a known publisher name
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x123", "1").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -353,7 +353,7 @@ func TestEnhancer_Enhance_UnsupportedPublisher(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 	publisherName := registry.PublisherName("unsupported")
 
 	// Create normalized metadata with unsupported publisher
@@ -370,7 +370,7 @@ func TestEnhancer_Enhance_UnsupportedPublisher(t *testing.T) {
 	// Now should try OpenSea enrichment for Ethereum tokens with unsupported publishers
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x123", "1").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -1223,7 +1223,7 @@ func TestEnhancer_Enhance_Objkt_NonTezosChain(t *testing.T) {
 	defer tearDownTestEnhancer(mocks)
 
 	// objkt should only work for Tezos, so Ethereum should try OpenSea instead
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 	publisherName := registry.PublisherName("unknown_publisher")
 
 	normalizedMeta := &metadata.NormalizedMetadata{
@@ -1239,7 +1239,7 @@ func TestEnhancer_Enhance_Objkt_NonTezosChain(t *testing.T) {
 	// Should try OpenSea enrichment for Ethereum tokens with unknown publishers
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x123", "1").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -1338,7 +1338,7 @@ func TestEnhancer_Enhance_OpenSea_MinimalFields(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
 	// Create normalized metadata without publisher
 	normalizedMeta := &metadata.NormalizedMetadata{
@@ -1360,7 +1360,7 @@ func TestEnhancer_Enhance_OpenSea_MinimalFields(t *testing.T) {
 
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x123", "1").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nftMetadata, nil)
 
 	// Mock JSON marshal
@@ -1387,7 +1387,7 @@ func TestEnhancer_Enhance_OpenSea_NoAPIKey(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
 	normalizedMeta := &metadata.NormalizedMetadata{
 		Raw: map[string]interface{}{
@@ -1399,7 +1399,7 @@ func TestEnhancer_Enhance_OpenSea_NoAPIKey(t *testing.T) {
 	// Mock OpenSea client to return ErrorNoAPIKey
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x123", "1").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, opensea.ErrNoAPIKey)
 
 	// OpenSea enrichment should return nil gracefully when no API key
@@ -1413,7 +1413,7 @@ func TestEnhancer_Enhance_OpenSea_APIError(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
 	normalizedMeta := &metadata.NormalizedMetadata{
 		Raw: map[string]interface{}{
@@ -1425,7 +1425,7 @@ func TestEnhancer_Enhance_OpenSea_APIError(t *testing.T) {
 	// Mock OpenSea client to return an error
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x123", "1").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nil, assert.AnError)
 
 	// OpenSea enrichment errors should be returned as errors
@@ -1440,7 +1440,7 @@ func TestEnhancer_Enhance_OpenSea_MarshalError(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
 	normalizedMeta := &metadata.NormalizedMetadata{
 		Raw: map[string]interface{}{
@@ -1457,7 +1457,7 @@ func TestEnhancer_Enhance_OpenSea_MarshalError(t *testing.T) {
 
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x123", "1").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nftMetadata, nil)
 
 	// Mock JSON marshal to return an error
@@ -1477,7 +1477,7 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x456", "10")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000456", "10")
 
 	normalizedMeta := &metadata.NormalizedMetadata{
 		Raw: map[string]interface{}{
@@ -1507,7 +1507,7 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 
 	mocks.openseaClient.
 		EXPECT().
-		GetNFT(gomock.Any(), "0x456", "10").
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000456", "10").
 		Return(nftMetadata, nil)
 
 	vendorJSON := []byte(`{"identifier":"10","name":"Artist NFT"}`)

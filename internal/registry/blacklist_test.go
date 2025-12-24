@@ -114,8 +114,8 @@ func TestBlacklistRegistryLoader_Load(t *testing.T) {
 			validateFunc: func(t *testing.T, reg registry.BlacklistRegistry) {
 				// Test case insensitive chain ID
 				assert.True(t, reg.IsBlacklisted(domain.ChainEthereumMainnet, "0x123ABC"))
-				// Test case insensitive address
-				assert.True(t, reg.IsBlacklisted(domain.ChainEthereumMainnet, "0X123ABC"))
+				// Test case insensitive address (mixed case hex digits)
+				assert.True(t, reg.IsBlacklisted(domain.ChainEthereumMainnet, "0x123abc"))
 			},
 		},
 	}
@@ -198,7 +198,7 @@ func TestBlacklistRegistry_IsBlacklisted(t *testing.T) {
 		{
 			name:     "case insensitive lookup",
 			chainID:  domain.ChainEthereumMainnet,
-			address:  "0X123",
+			address:  "0xaBC",
 			expected: true,
 		},
 		{

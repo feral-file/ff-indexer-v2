@@ -87,12 +87,12 @@ func TestResolver_Resolve_ERC721(t *testing.T) {
 	mocks := setupTestResolver(t)
 	defer tearDownTestResolver(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
 	// Mock ERC721 token URI call
 	mocks.ethClient.
 		EXPECT().
-		ERC721TokenURI(gomock.Any(), "0x123", "1").
+		ERC721TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return("https://example.com/metadata.json", nil)
 
 	// Mock URI resolver to return the URI as-is
@@ -139,7 +139,7 @@ func TestResolver_Resolve_ERC721(t *testing.T) {
 	// and doesn't call getContractDeployer, so no need to mock GetMinBlock, GetContractDeployer, or SetKeyValue
 	mocks.registry.
 		EXPECT().
-		LookupPublisherByCollection(domain.ChainEthereumMainnet, "0x123").
+		LookupPublisherByCollection(domain.ChainEthereumMainnet, "0x0000000000000000000000000000000000000123").
 		Return(&registry.PublisherInfo{
 			Name: registry.PublisherNameArtBlocks,
 			URL:  "https://artblocks.io",
@@ -163,12 +163,12 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 	mocks := setupTestResolver(t)
 	defer tearDownTestResolver(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x0000000000000000000000000000000000000123", "1")
 
 	// Mock ERC1155 URI call (with placeholder)
 	mocks.ethClient.
 		EXPECT().
-		ERC1155URI(gomock.Any(), "0x123", "1").
+		ERC1155URI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return("https://example.com/metadata/{id}.json", nil)
 
 	// Mock URI resolver (placeholder is replaced before calling Resolve)
@@ -209,7 +209,7 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 	// Mock registry lookup for publisher resolution (called once in resolvePublisher)
 	mocks.registry.
 		EXPECT().
-		LookupPublisherByCollection(domain.ChainEthereumMainnet, "0x123").
+		LookupPublisherByCollection(domain.ChainEthereumMainnet, "0x0000000000000000000000000000000000000123").
 		Return(nil)
 	mocks.registry.
 		EXPECT().
@@ -219,7 +219,7 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 	// Mock GetContractDeployer for publisher resolution (called once in resolvePublisher)
 	mocks.ethClient.
 		EXPECT().
-		GetContractDeployer(gomock.Any(), "0x123", uint64(0)).
+		GetContractDeployer(gomock.Any(), "0x0000000000000000000000000000000000000123", uint64(0)).
 		Return("", nil)
 
 	// Mock store for caching deployer (called once in getContractDeployer)
@@ -320,7 +320,7 @@ func TestResolver_Resolve_UnsupportedStandard(t *testing.T) {
 	defer tearDownTestResolver(mocks)
 
 	// Create a token CID with unsupported standard
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.ChainStandard("unsupported"), "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.ChainStandard("unsupported"), "0x0000000000000000000000000000000000000123", "1")
 
 	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
 
@@ -333,13 +333,13 @@ func TestResolver_Resolve_DataURI(t *testing.T) {
 	mocks := setupTestResolver(t)
 	defer tearDownTestResolver(mocks)
 
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x123", "1")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
 	// Mock ERC721 token URI call returning data URI
 	dataURI := "data:application/json;base64,eyJuYW1lIjoiVGVzdCBORlQifQ==" // {"name":"Test NFT"} in base64
 	mocks.ethClient.
 		EXPECT().
-		ERC721TokenURI(gomock.Any(), "0x123", "1").
+		ERC721TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(dataURI, nil)
 
 	// Mock base64 decode for parsing data URI
@@ -363,7 +363,7 @@ func TestResolver_Resolve_DataURI(t *testing.T) {
 	// Mock registry lookup for publisher resolution (called once in resolvePublisher)
 	mocks.registry.
 		EXPECT().
-		LookupPublisherByCollection(domain.ChainEthereumMainnet, "0x123").
+		LookupPublisherByCollection(domain.ChainEthereumMainnet, "0x0000000000000000000000000000000000000123").
 		Return(nil)
 	mocks.registry.
 		EXPECT().
@@ -373,7 +373,7 @@ func TestResolver_Resolve_DataURI(t *testing.T) {
 	// Mock GetContractDeployer for publisher resolution (called once in resolvePublisher)
 	mocks.ethClient.
 		EXPECT().
-		GetContractDeployer(gomock.Any(), "0x123", uint64(0)).
+		GetContractDeployer(gomock.Any(), "0x0000000000000000000000000000000000000123", uint64(0)).
 		Return("", nil)
 
 	// Mock store for caching deployer (called once in getContractDeployer)

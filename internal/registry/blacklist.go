@@ -78,7 +78,7 @@ func (l *blacklistRegistryLoader) Load(filePath string) (BlacklistRegistry, erro
 
 		// Index contract addresses
 		for _, addr := range addresses {
-			normalizedAddr := strings.ToLower(addr)
+			normalizedAddr := strings.ToLower(domain.NormalizeAddress(addr))
 			key := fmt.Sprintf("%s:%s", normalizedChainID, normalizedAddr)
 			bl.contracts[key] = true
 		}
@@ -89,7 +89,8 @@ func (l *blacklistRegistryLoader) Load(filePath string) (BlacklistRegistry, erro
 
 // IsBlacklisted checks if a contract address is blacklisted for a given chain
 func (b *blacklistRegistry) IsBlacklisted(chainID domain.Chain, contractAddress string) bool {
-	key := fmt.Sprintf("%s:%s", strings.ToLower(string(chainID)), strings.ToLower(contractAddress))
+	normalizedAddr := strings.ToLower(domain.NormalizeAddress(contractAddress))
+	key := fmt.Sprintf("%s:%s", strings.ToLower(string(chainID)), normalizedAddr)
 	return b.contracts[key]
 }
 

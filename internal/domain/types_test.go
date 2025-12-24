@@ -884,7 +884,9 @@ func TestTokenCID_Valid(t *testing.T) {
 }
 
 func TestNewTokenCID(t *testing.T) {
-	validEthereumAddress := "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
+	validEthereumAddress := "0x99fc8ad516FBCC9bA3123D56e63A35d05AA9eFB8"
+	validEthereumAddressNormalized := "0x99fc8AD516FBCC9bA3123D56e63A35d05AA9EFB8"
+	lowercaseEthereumAddress := "0x99fc8ad516fbcc9ba3123d56e63a35d05aa9efb8"
 	validTezosAddress := "KT1BvXTW1XqhE1GHTRKRvz8w3a7X5f5NqEZr"
 
 	tests := []struct {
@@ -896,28 +898,52 @@ func TestNewTokenCID(t *testing.T) {
 		expected     TokenCID
 	}{
 		{
-			name:         "ERC721 ethereum mainnet",
+			name:         "ERC721 ethereum mainnet - already normalized",
+			chain:        ChainEthereumMainnet,
+			standard:     StandardERC721,
+			contractAddr: validEthereumAddressNormalized,
+			tokenNumber:  "123",
+			expected:     TokenCID("eip155:1:erc721:" + validEthereumAddressNormalized + ":123"),
+		},
+		{
+			name:         "ERC721 ethereum mainnet - normalizes mixed case address",
 			chain:        ChainEthereumMainnet,
 			standard:     StandardERC721,
 			contractAddr: validEthereumAddress,
 			tokenNumber:  "123",
-			expected:     TokenCID("eip155:1:erc721:" + validEthereumAddress + ":123"),
+			expected:     TokenCID("eip155:1:erc721:" + validEthereumAddressNormalized + ":123"),
 		},
 		{
-			name:         "ERC1155 ethereum sepolia",
+			name:         "ERC721 ethereum mainnet - normalizes lowercase address",
+			chain:        ChainEthereumMainnet,
+			standard:     StandardERC721,
+			contractAddr: lowercaseEthereumAddress,
+			tokenNumber:  "123",
+			expected:     TokenCID("eip155:1:erc721:" + validEthereumAddressNormalized + ":123"),
+		},
+		{
+			name:         "ERC1155 ethereum sepolia - normalizes address",
 			chain:        ChainEthereumSepolia,
 			standard:     StandardERC1155,
 			contractAddr: validEthereumAddress,
 			tokenNumber:  "456",
-			expected:     TokenCID("eip155:11155111:erc1155:" + validEthereumAddress + ":456"),
+			expected:     TokenCID("eip155:11155111:erc1155:" + validEthereumAddressNormalized + ":456"),
 		},
 		{
-			name:         "FA2 tezos mainnet",
+			name:         "FA2 tezos mainnet - no normalization",
 			chain:        ChainTezosMainnet,
 			standard:     StandardFA2,
 			contractAddr: validTezosAddress,
 			tokenNumber:  "789",
 			expected:     TokenCID("tezos:mainnet:fa2:" + validTezosAddress + ":789"),
+		},
+		{
+			name:         "FA2 tezos ghostnet - no normalization",
+			chain:        ChainTezosGhostnet,
+			standard:     StandardFA2,
+			contractAddr: validTezosAddress,
+			tokenNumber:  "999",
+			expected:     TokenCID("tezos:ghostnet:fa2:" + validTezosAddress + ":999"),
 		},
 	}
 

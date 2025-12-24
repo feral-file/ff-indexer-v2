@@ -30,13 +30,15 @@ type StoreTestSuite struct {
 
 // buildTestToken creates a test token input
 func buildTestToken(chain domain.Chain, standard domain.ChainStandard, contract, tokenNum string) CreateTokenInput {
-	tokenCID := string(domain.NewTokenCID(chain, standard, contract, tokenNum))
+	tokenCID := domain.NewTokenCID(chain, standard, contract, tokenNum)
 	owner := "0x1234567890123456789012345678901234567890"
+	// Extract normalized contract address from TokenCID to ensure consistency
+	_, _, normalizedContract, _ := tokenCID.Parse()
 	return CreateTokenInput{
-		TokenCID:        tokenCID,
+		TokenCID:        string(tokenCID),
 		Chain:           chain,
 		Standard:        standard,
-		ContractAddress: contract,
+		ContractAddress: normalizedContract,
 		TokenNumber:     tokenNum,
 		CurrentOwner:    &owner,
 		Burned:          false,
@@ -1804,10 +1806,10 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		owner2 := "0xfilter200000000000000000000000000000000002"
 
 		tokens := []CreateTokenMintInput{
-			buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xcontract1", "1", owner1),
-			buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xcontract1", "2", owner2),
-			buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xcontract2", "1", owner1),
-			buildTestTokenMint(domain.ChainEthereumSepolia, domain.StandardERC721, "0xcontract3", "1", owner1),
+			buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000001111", "1", owner1),
+			buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000001111", "2", owner2),
+			buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000002222", "1", owner1),
+			buildTestTokenMint(domain.ChainEthereumSepolia, domain.StandardERC721, "0x0000000000000000000000000000000000003333", "1", owner1),
 		}
 
 		for _, tokenInput := range tokens {
@@ -1855,15 +1857,16 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 	})
 
 	t.Run("filter by contract address", func(t *testing.T) {
+		contract1 := "0x0000000000000000000000000000000000001111"
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses: []string{"0xcontract1"},
+			ContractAddresses: []string{contract1},
 			Limit:             10,
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(2))
 		assert.LessOrEqual(t, len(results), 2)
-		assert.Equal(t, "0xcontract1", results[0].Token.ContractAddress)
-		assert.Equal(t, "0xcontract1", results[1].Token.ContractAddress)
+		assert.Equal(t, contract1, results[0].Token.ContractAddress)
+		assert.Equal(t, contract1, results[1].Token.ContractAddress)
 	})
 
 	t.Run("pagination", func(t *testing.T) {
@@ -1901,13 +1904,18 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 	})
 
 	t.Run("exclude tokens without metadata and enrichment by default", func(t *testing.T) {
+		brokenAddr := "0x0000000000000000000000000000000000010000"
+		metaOnlyAddr := "0x0000000000000000000000000000000000020000"
+		enrichOnlyAddr := "0x0000000000000000000000000000000000030000"
+		withBothAddr := "0x0000000000000000000000000000000000040000"
+
 		// Create a token without metadata or enrichment (broken - has neither)
-		tokenBroken := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xbroken", "1", "0xowner")
+		tokenBroken := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, brokenAddr, "1", "0x0000000000000000000000000000000000001111")
 		err := store.CreateTokenMint(ctx, tokenBroken)
 		require.NoError(t, err)
 
 		// Create a token with metadata only (not broken - has metadata)
-		tokenWithMetaOnly := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xmetaonly", "1", "0xowner")
+		tokenWithMetaOnly := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, metaOnlyAddr, "1", "0x0000000000000000000000000000000000001111")
 		err = store.CreateTokenMint(ctx, tokenWithMetaOnly)
 		require.NoError(t, err)
 
@@ -1927,7 +1935,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Create a token with enrichment only (not broken - has enrichment)
-		tokenWithEnrichmentOnly := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xenrichonly", "1", "0xowner")
+		tokenWithEnrichmentOnly := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, enrichOnlyAddr, "1", "0x0000000000000000000000000000000000001111")
 		err = store.CreateTokenMint(ctx, tokenWithEnrichmentOnly)
 		require.NoError(t, err)
 
@@ -1952,7 +1960,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Create a token with both metadata and enrichment (not broken - has both)
-		tokenWithBoth := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xwithboth", "1", "0xowner")
+		tokenWithBoth := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, withBothAddr, "1", "0x0000000000000000000000000000000000001111")
 		err = store.CreateTokenMint(ctx, tokenWithBoth)
 		require.NoError(t, err)
 
@@ -1988,8 +1996,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		// Default behavior: exclude tokens without both metadata AND enrichment
 		// Should include tokens with metadata only, enrichment only, or both
 		// Should exclude only the token with neither
+
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses: []string{"0xbroken", "0xmetaonly", "0xenrichonly", "0xwithboth"},
+			ContractAddresses: []string{brokenAddr, metaOnlyAddr, enrichOnlyAddr, withBothAddr},
 			Limit:             10,
 		})
 		require.NoError(t, err)
@@ -1998,12 +2007,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 		// Verify the broken token is not in results
 		for _, result := range results {
-			assert.NotEqual(t, "0xbroken", result.Token.ContractAddress)
+			assert.NotEqual(t, brokenAddr, result.Token.ContractAddress)
 		}
 
 		// Include broken: include all tokens including the one with neither metadata nor enrichment
 		resultsWithBroken, totalWithBroken, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses: []string{"0xbroken", "0xmetaonly", "0xenrichonly", "0xwithboth"},
+			ContractAddresses: []string{brokenAddr, metaOnlyAddr, enrichOnlyAddr, withBothAddr},
 			IncludeBroken:     true,
 			Limit:             10,
 		})
@@ -2017,19 +2026,19 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		owner2 := "0xsortowner2000000000000000000000000000002"
 
 		// Create token1: initially minted to owner1
-		token1 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xsortcontract1", "1", owner1)
+		token1 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000050001", "1", owner1)
 		token1.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-10 * time.Hour) // T1: 10 hours ago
 		err := store.CreateTokenMint(ctx, token1)
 		require.NoError(t, err)
 
 		// Create token2: minted directly to owner2
-		token2 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xsortcontract2", "2", owner2)
+		token2 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000050002", "2", owner2)
 		token2.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-5 * time.Hour) // T2: 5 hours ago
 		err = store.CreateTokenMint(ctx, token2)
 		require.NoError(t, err)
 
 		// Create token3: initially minted to owner1
-		token3 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0xsortcontract3", "3", owner1)
+		token3 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000050003", "3", owner1)
 		token3.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-8 * time.Hour) // T3: 8 hours ago
 		err = store.CreateTokenMint(ctx, token3)
 		require.NoError(t, err)
@@ -2229,12 +2238,12 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 	})
 
 	t.Run("update existing metadata", func(t *testing.T) {
-		// Create token and metadata
-		owner := "0xmeta200000000000000000000000000000000000002"
+		// Create token and metadata with unique addresses
+		owner := "0x0000000000000000000000000000000000099999"
 		mintInput := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
 			domain.StandardERC721,
-			"0xmeta200000000000000000000000000000000002",
+			"0x0000000000000000000000000000000000088888",
 			"1",
 			owner,
 		)
