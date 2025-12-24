@@ -775,6 +775,16 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 						domain.ErrTokenNotFoundOnChain,
 					)
 				}
+				if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
+					// It's likely that the contract is unreachable (e.g. contract exists but function is not callable),
+					// so we return a non-retryable error
+					// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
+					return temporal.NewNonRetryableApplicationError(
+						"contract is unreachable",
+						"ContractUnreachable",
+						domain.ErrContractUnreachable,
+					)
+				}
 
 				return fmt.Errorf("failed to get ERC721 owner: %w", err)
 			} else if owner != "" && owner != domain.ETHEREUM_ZERO_ADDRESS {
@@ -802,6 +812,17 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 							"token not found on chain",
 							"TokenNotFoundOnChain",
 							domain.ErrTokenNotFoundOnChain,
+						)
+					}
+
+					if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
+						// It's likely that the contract is unreachable (e.g. contract exists but function is not callable),
+						// so we return a non-retryable error
+						// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
+						return temporal.NewNonRetryableApplicationError(
+							"contract is unreachable",
+							"ContractUnreachable",
+							domain.ErrContractUnreachable,
 						)
 					}
 
@@ -880,12 +901,14 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 						)
 					}
 
-					// Check if error is due to timeout
-					if errors.Is(err, context.DeadlineExceeded) {
-						logger.WarnCtx(ctx, "ERC1155 balance fetch timed out",
-							zap.String("tokenCID", tokenCID.String()),
-							zap.String("contract", contractAddress),
-							zap.String("tokenNumber", tokenNumber),
+					if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
+						// It's likely that the contract is unreachable (e.g. contract exists but function is not callable),
+						// so we return a non-retryable error
+						// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
+						return temporal.NewNonRetryableApplicationError(
+							"contract is unreachable",
+							"ContractUnreachable",
+							domain.ErrContractUnreachable,
 						)
 					}
 

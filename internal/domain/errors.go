@@ -15,6 +15,9 @@ var (
 	// ErrTokenNotFoundOnChain is returned when a token does not exist on the blockchain
 	ErrTokenNotFoundOnChain = errors.New("token not found on chain")
 
+	// ErrContractUnreachable is returned when a contract is unreachable (e.g. contract exists but function is not callable)
+	ErrContractUnreachable = errors.New("contract is unreachable")
+
 	// ErrInvalidTokenCID is returned when a token CID is invalid
 	ErrInvalidTokenCID = errors.New("invalid token CID")
 

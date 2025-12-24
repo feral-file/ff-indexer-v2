@@ -27,6 +27,9 @@ var ErrExecutionReverted = errors.New("execution reverted")
 // ErrContractNotFound is returned when a contract is not found or self-destructed
 var ErrContractNotFound = errors.New("contract not found")
 
+// ErrOutOfGas is returned when a function call runs out of gas
+var ErrOutOfGas = errors.New("out of gas")
+
 // EthereumClient defines the interface for Ethereum client operations
 //
 //go:generate mockgen -source=client.go -destination=../../mocks/ethereum_provider_client.go -package=mocks -mock_names=EthereumClient=MockEthereumProviderClient

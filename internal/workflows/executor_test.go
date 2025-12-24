@@ -2717,6 +2717,29 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_WithOwner_TokenNotFoundOnCha
 	assert.Contains(t, err.Error(), "token not found on chain")
 }
 
+func TestIndexTokenWithMinimalProvenancesByTokenCID_WithOwner_ContractUnreachable(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	ownerAddress := "0xowner123"
+
+	mocks.ethClient.EXPECT().
+		GetERC1155BalanceAndEventsForOwner(ctx, "0x1234567890123456789012345678901234567890", "1", "0xowner123").
+		Return("", nil, ethereum.ErrOutOfGas)
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
+
+	assert.Error(t, err)
+	assert.IsType(t, &temporal.ApplicationError{}, err)
+	var appErr *temporal.ApplicationError
+	errOk := errors.As(err, &appErr)
+	assert.True(t, errOk)
+	assert.True(t, appErr.NonRetryable())
+	assert.Contains(t, err.Error(), "contract is unreachable")
+}
+
 // ====================================================================================
 // IndexTokenWithFullProvenancesByTokenCID Tests
 // ====================================================================================

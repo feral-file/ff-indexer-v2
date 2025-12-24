@@ -399,10 +399,19 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	// Step 1: Index token with minimal provenances (from blockchain query)
 	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID, ownerAddress).Get(ctx, nil)
 	if err != nil {
-		// Check if this is a "token not found on chain" error (execution reverted)
+		// Check if this is a "token not found on chain" error (or execution reverted)
 		// In this case, we want to skip this token and continue the workflow
 		if strings.Contains(err.Error(), "execution reverted") || strings.Contains(err.Error(), domain.ErrTokenNotFoundOnChain.Error()) {
 			logger.ErrorWf(ctx, fmt.Errorf("failed to index token with minimal provenances due to token not found on chain"),
+				zap.String("tokenCID", tokenCID.String()),
+				zap.Error(err),
+			)
+			return nil
+		}
+
+		// Check if this is a "contract is unreachable" error
+		if strings.Contains(err.Error(), domain.ErrContractUnreachable.Error()) {
+			logger.ErrorWf(ctx, fmt.Errorf("failed to index token with minimal provenances due to contract is unreachable"),
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
