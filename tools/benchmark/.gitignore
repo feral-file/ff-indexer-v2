@@ -1,0 +1,25 @@
+# Binary
+temporal-benchmark
+
+# Go build cache
+*.test
+*.out
+
+# Config files (keep example)
+config.json
+.temporal-benchmark.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Markdown files
+*.md
+!README.md

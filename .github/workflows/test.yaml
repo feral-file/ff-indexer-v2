@@ -75,7 +75,7 @@ jobs:
         run: go vet ./...
 
       - name: Run tests with coverage
-        run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|cmd|internal/store/schema")
+        run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|cmd|internal/store/schema|tools")
         env:
           TEST_DB_HOST: localhost
           TEST_DB_PORT: 5432
