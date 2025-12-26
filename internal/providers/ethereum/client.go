@@ -427,10 +427,7 @@ func isTooManyResultsError(err error) bool {
 	errStr := err.Error()
 	// Check for common "too many results" error messages
 	return strings.Contains(errStr, "query returned more than 10000 results") ||
-		strings.Contains(errStr, "query timeout exceeded") ||
-		strings.Contains(errStr, "too many results") ||
-		strings.Contains(errStr, "exceeded maximum") ||
-		strings.Contains(errStr, "Too Many Requests")
+		strings.Contains(errStr, "too many results")
 }
 
 // GetLatestBlock returns the latest block number using the cached provider
