@@ -15,6 +15,9 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
+// ErrNoOriginationFound is returned when no origination is found for a contract
+var ErrNoOriginationFound = errors.New("no origination found for contract")
+
 const MAX_PAGE_SIZE = 10_000
 
 // TzKTTokenBalance represents a token balance from the TzKT API
@@ -569,7 +572,7 @@ func (c *tzktClient) GetContractDeployer(ctx context.Context, contractAddress st
 	}
 
 	if len(originations) == 0 {
-		return "", fmt.Errorf("no origination found for contract %s", contractAddress)
+		return "", ErrNoOriginationFound
 	}
 
 	origination := originations[0]

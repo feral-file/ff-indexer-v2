@@ -12,6 +12,8 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
@@ -420,4 +422,147 @@ func TestResolver_RawHash(t *testing.T) {
 	assert.NotNil(t, raw)
 	assert.Equal(t, 32, len(hash)) // SHA256 hash length
 	assert.Contains(t, string(raw), "Test NFT")
+}
+
+func TestResolver_Resolve_EthereumNoOriginationFound(t *testing.T) {
+	mocks := setupTestResolver(t)
+	defer tearDownTestResolver(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x0000000000000000000000000000000000000123", "1")
+
+	// Mock ERC1155 URI call
+	mocks.ethClient.
+		EXPECT().
+		ERC1155URI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		Return("https://example.com/metadata.json", nil)
+
+	// Mock URI resolver for the metadata URL
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://example.com/metadata.json").
+		Return("https://example.com/metadata.json", nil)
+
+	// Mock HTTP client to fetch metadata from the URI
+	metadata := map[string]interface{}{
+		"name":        "Test NFT",
+		"description": "Test Description",
+		"image":       "https://example.com/image.png",
+	}
+	mocks.httpClient.
+		EXPECT().
+		Get(gomock.Any(), "https://example.com/metadata.json", gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
+			*result.(*map[string]interface{}) = metadata
+			return nil
+		})
+
+	// Mock URI resolver and HTTP client for MIME type detection
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://example.com/image.png").
+		Return("https://example.com/image.png", nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://example.com/image.png").
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), "https://example.com/image.png", gomock.Any()).
+		Return([]byte("fake image data"), nil)
+
+	// Mock registry lookup for publisher resolution
+	mocks.registry.
+		EXPECT().
+		LookupPublisherByCollection(domain.ChainEthereumMainnet, "0x0000000000000000000000000000000000000123").
+		Return(nil)
+	mocks.registry.
+		EXPECT().
+		GetMinBlock(domain.ChainEthereumMainnet).
+		Return(uint64(0), false)
+
+	// Mock GetContractDeployer returning ErrOriginationNotFound (expected error)
+	// This simulates the deployer was not found for the contract
+	mocks.ethClient.
+		EXPECT().
+		GetContractDeployer(gomock.Any(), "0x0000000000000000000000000000000000000123", uint64(0)).
+		Return("", ethereum.ErrOriginationNotFound)
+
+	// Mock store for caching deployer - should still be called even with the error
+	// This is the key assertion: empty deployer should still be cached
+	mocks.store.
+		EXPECT().
+		SetKeyValue(gomock.Any(), "deployer:eip155:1:0x0000000000000000000000000000000000000123", "").
+		Return(nil)
+
+	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "Test NFT", result.Name)
+	assert.Equal(t, "Test Description", result.Description)
+	assert.Equal(t, "https://example.com/image.png", result.Image)
+}
+
+func TestResolver_Resolve_TezosNoOriginationFound(t *testing.T) {
+	mocks := setupTestResolver(t)
+	defer tearDownTestResolver(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1ABC", "1")
+
+	// Mock TzKT GetTokenMetadata call
+	metadata := map[string]interface{}{
+		"name":        "Test FA2",
+		"description": "Test Description",
+		"displayUri":  "ipfs://QmXXX",
+		"artifactUri": "ipfs://QmYYY",
+	}
+	mocks.tzClient.
+		EXPECT().
+		GetTokenMetadata(gomock.Any(), "KT1ABC", "1").
+		Return(metadata, nil)
+
+	// Mock URI resolver and HTTP client for MIME type detection
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmYYY").
+		Return("https://ipfs.io/ipfs/QmYYY", nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://ipfs.io/ipfs/QmYYY").
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), "https://ipfs.io/ipfs/QmYYY", gomock.Any()).
+		Return([]byte("fake artifact data"), nil)
+
+	// Mock registry lookup for publisher resolution
+	mocks.registry.
+		EXPECT().
+		LookupPublisherByCollection(domain.ChainTezosMainnet, "KT1ABC").
+		Return(nil)
+	mocks.registry.
+		EXPECT().
+		GetMinBlock(domain.ChainTezosMainnet).
+		Return(uint64(0), false)
+
+	// Mock GetContractDeployer returning ErrNoOriginationFound (expected error)
+	// This simulates a Tezos contract with no origination found
+	mocks.tzClient.
+		EXPECT().
+		GetContractDeployer(gomock.Any(), "KT1ABC").
+		Return("", tezos.ErrNoOriginationFound)
+
+	// Mock store for caching deployer - should still be called even with the error
+	// This is the key assertion: empty deployer should still be cached
+	mocks.store.
+		EXPECT().
+		SetKeyValue(gomock.Any(), "deployer:tezos:mainnet:kt1abc", "").
+		Return(nil)
+
+	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "Test FA2", result.Name)
+	assert.Equal(t, "Test Description", result.Description)
 }

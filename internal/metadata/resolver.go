@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -418,7 +419,7 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 
 	// Check in-memory cache first (includes both successful and failed lookups)
 	r.deployerCacheLock.RLock()
-	if deployer, ok := r.deployerCache[cacheKey]; ok {
+	if deployer, ok := r.deployerCache[cacheKey]; ok && deployer != "" {
 		r.deployerCacheLock.RUnlock()
 		// Cache hit - return immediately without blockchain lookup
 		return deployer, nil
@@ -447,7 +448,7 @@ func (r *resolver) getContractDeployer(ctx context.Context, chainID domain.Chain
 		return "", fmt.Errorf("unsupported chain: %s", chainID)
 	}
 
-	if err != nil {
+	if err != nil && !errors.Is(err, tezos.ErrNoOriginationFound) && !errors.Is(err, ethereum.ErrOriginationNotFound) {
 		return "", fmt.Errorf("failed to get contract deployer: %w", err)
 	}
 

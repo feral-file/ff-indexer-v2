@@ -3383,6 +3383,16 @@ func testKeyValueStore(t *testing.T, store Store) {
 		assert.Equal(t, value, retrievedValue)
 	})
 
+	t.Run("set empty value", func(t *testing.T) {
+		key := "test:key2"
+		err := store.SetKeyValue(ctx, key, "")
+		require.NoError(t, err)
+
+		retrievedValue, err := store.GetKeyValue(ctx, key)
+		require.NoError(t, err)
+		assert.Equal(t, "", retrievedValue)
+	})
+
 	t.Run("get non-existent key returns empty string", func(t *testing.T) {
 		value, err := store.GetKeyValue(ctx, "nonexistent:key")
 		require.NoError(t, err)

@@ -30,6 +30,9 @@ var ErrContractNotFound = errors.New("contract not found")
 // ErrOutOfGas is returned when a function call runs out of gas
 var ErrOutOfGas = errors.New("out of gas")
 
+// ErrOriginationNotFound is returned when an origination is not found for a contract
+var ErrOriginationNotFound = errors.New("origination not found")
+
 // EthereumClient defines the interface for Ethereum client operations
 //
 //go:generate mockgen -source=client.go -destination=../../mocks/ethereum_provider_client.go -package=mocks -mock_names=EthereumClient=MockEthereumProviderClient
@@ -1690,7 +1693,13 @@ func (f *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 		if searchErr != nil {
 			return "", fmt.Errorf("failed to find contract (encountered errors during search): %w", searchErr)
 		}
-		return "", fmt.Errorf("contract not found: %s (searched blocks %d-%d)", contractAddress, minBlock, latestBlock)
+
+		logger.WarnCtx(ctx, "Deployer not found for contract",
+			zap.String("contract", contractAddress),
+			zap.Uint64("minBlock", minBlock),
+			zap.Uint64("latestBlock", latestBlock),
+		)
+		return "", ErrOriginationNotFound
 	}
 
 	// Get the block where contract was created
@@ -1723,7 +1732,13 @@ func (f *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 		}
 	}
 
-	return "", fmt.Errorf("contract creation transaction not found for %s at block %d", contractAddress, creationBlock)
+	logger.WarnCtx(ctx, "Contract creation transaction not found for deployer contract",
+		zap.String("contract", contractAddress),
+		zap.Uint64("creationBlock", creationBlock),
+		zap.String("blockNumber", block.Number().String()),
+	)
+
+	return "", ErrOriginationNotFound
 }
 
 // TokenExists checks if a token exists on the blockchain
