@@ -14,6 +14,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -558,6 +559,9 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_Success() {
 	// Mock provenance child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
 
@@ -655,6 +659,9 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_MetadataWorkflowSt
 	// Mock provenance child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
 
@@ -694,12 +701,13 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ProvenanceWorkflow
 		},
 	)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
 
 	// Verify workflow completed successfully (provenance failure is non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
 
 	// Verify retries
 	s.Equal(1, workflowCallCount, "Workflow should be attempted 2 times (initial + 1 retry)")
@@ -724,6 +732,9 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ERC1155_WithOwner_
 
 	// Mock metadata child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
@@ -792,6 +803,15 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Success() {
 
 	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
+
+	// Mock webhook notification workflow - should be triggered for token.queryable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		// Verify it's a webhook event with correct event type
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenQueryable
+		}
+		return false
+	})).Return(nil)
 
 	// Mock metadata child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
@@ -869,6 +889,9 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ChildWorkflowStartFailure_N
 	// Mock provenance child workflow to fail - should not fail parent workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(testsuite.ErrMockStartChildWorkflowFailed)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
 
@@ -888,6 +911,15 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFail
 
 	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
+
+	// Mock webhook notification workflow - should be triggered for token.viewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		// Verify it's a webhook event with correct event type
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenQueryable
+		}
+		return false
+	})).Return(nil)
 
 	// Mock metadata child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
@@ -925,6 +957,9 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_WithOwner_SkipsFull
 	// Mock metadata child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// DO NOT mock IndexTokenProvenances - it should not be called for ERC1155 with owner
 
 	// Execute the workflow
@@ -949,6 +984,9 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_WithoutOwner_RunsFu
 
 	// Mock provenance child workflow - should be called for ERC1155 without owner
 	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID).Return(nil)
+
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)

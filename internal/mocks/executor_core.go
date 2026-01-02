@@ -12,6 +12,8 @@ import (
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
+	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
 	workflows "github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -81,6 +83,36 @@ func (mr *MockCoreExecutorMockRecorder) CreateTokenMint(ctx, event interface{}) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenMint", reflect.TypeOf((*MockCoreExecutor)(nil).CreateTokenMint), ctx, event)
 }
 
+// CreateWebhookDeliveryRecord mocks base method.
+func (m *MockCoreExecutor) CreateWebhookDeliveryRecord(ctx context.Context, delivery *schema.WebhookDelivery, event webhook.WebhookEvent) (uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateWebhookDeliveryRecord", ctx, delivery, event)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateWebhookDeliveryRecord indicates an expected call of CreateWebhookDeliveryRecord.
+func (mr *MockCoreExecutorMockRecorder) CreateWebhookDeliveryRecord(ctx, delivery, event interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWebhookDeliveryRecord", reflect.TypeOf((*MockCoreExecutor)(nil).CreateWebhookDeliveryRecord), ctx, delivery, event)
+}
+
+// DeliverWebhookHTTP mocks base method.
+func (m *MockCoreExecutor) DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeliverWebhookHTTP", ctx, client, event, deliveryID)
+	ret0, _ := ret[0].(webhook.DeliveryResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// DeliverWebhookHTTP indicates an expected call of DeliverWebhookHTTP.
+func (mr *MockCoreExecutorMockRecorder) DeliverWebhookHTTP(ctx, client, event, deliveryID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverWebhookHTTP", reflect.TypeOf((*MockCoreExecutor)(nil).DeliverWebhookHTTP), ctx, client, event, deliveryID)
+}
+
 // EnhanceTokenMetadata mocks base method.
 func (m *MockCoreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
 	m.ctrl.T.Helper()
@@ -123,6 +155,21 @@ func (m *MockCoreExecutor) FetchTokenMetadata(ctx context.Context, tokenCID doma
 func (mr *MockCoreExecutorMockRecorder) FetchTokenMetadata(ctx, tokenCID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchTokenMetadata", reflect.TypeOf((*MockCoreExecutor)(nil).FetchTokenMetadata), ctx, tokenCID)
+}
+
+// GetActiveWebhookClientsByEventType mocks base method.
+func (m *MockCoreExecutor) GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetActiveWebhookClientsByEventType", ctx, eventType)
+	ret0, _ := ret[0].([]*schema.WebhookClient)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetActiveWebhookClientsByEventType indicates an expected call of GetActiveWebhookClientsByEventType.
+func (mr *MockCoreExecutorMockRecorder) GetActiveWebhookClientsByEventType(ctx, eventType interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveWebhookClientsByEventType", reflect.TypeOf((*MockCoreExecutor)(nil).GetActiveWebhookClientsByEventType), ctx, eventType)
 }
 
 // GetEthereumTokenCIDsByOwnerWithinBlockRange mocks base method.
@@ -198,6 +245,21 @@ func (m *MockCoreExecutor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx contex
 func (mr *MockCoreExecutorMockRecorder) GetTezosTokenCIDsByAccountWithinBlockRange(ctx, address, fromBlock, toBlock interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTezosTokenCIDsByAccountWithinBlockRange", reflect.TypeOf((*MockCoreExecutor)(nil).GetTezosTokenCIDsByAccountWithinBlockRange), ctx, address, fromBlock, toBlock)
+}
+
+// GetWebhookClientByID mocks base method.
+func (m *MockCoreExecutor) GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetWebhookClientByID", ctx, clientID)
+	ret0, _ := ret[0].(*schema.WebhookClient)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWebhookClientByID indicates an expected call of GetWebhookClientByID.
+func (mr *MockCoreExecutorMockRecorder) GetWebhookClientByID(ctx, clientID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWebhookClientByID", reflect.TypeOf((*MockCoreExecutor)(nil).GetWebhookClientByID), ctx, clientID)
 }
 
 // IndexTokenWithFullProvenancesByTokenCID mocks base method.

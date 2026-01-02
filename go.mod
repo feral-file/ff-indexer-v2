@@ -18,6 +18,7 @@ require (
 	github.com/gowebpki/jcs v1.0.1
 	github.com/joho/godotenv v1.5.1
 	github.com/nats-io/nats.go v1.47.0
+	github.com/oklog/ulid/v2 v2.1.1
 	github.com/philippseith/signalr v0.8.0
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1

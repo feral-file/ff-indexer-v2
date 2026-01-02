@@ -29,6 +29,9 @@ type HTTPClient interface {
 	// Post performs a POST request and returns the response body
 	Post(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error)
 
+	// PostWithHeadersNoRetry performs a POST request with custom headers and returns the response without retry
+	PostWithHeadersNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error)
+
 	// Head performs a HEAD request
 	// The caller is responsible for closing the response body
 	Head(ctx context.Context, url string) (*http.Response, error)
@@ -232,6 +235,21 @@ func (c *RealHTTPClient) Post(ctx context.Context, url string, contentType strin
 	}
 
 	return c.doRequestWithRetry(ctx, req)
+}
+
+// PostWithHeadersNoRetry performs a POST request with custom headers and returns the response without retry
+func (c *RealHTTPClient) PostWithHeadersNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	return c.client.Do(req)
 }
 
 // Head performs a HEAD request

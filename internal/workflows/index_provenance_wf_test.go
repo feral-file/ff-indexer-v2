@@ -13,6 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -46,9 +47,6 @@ func (s *IndexProvenanceWorkflowTestSuite) SetupTest() {
 		TezosTokenSweepStartBlock:    0,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
-
-	// Register activities with the test environment
-	s.env.RegisterActivity(s.executor.IndexTokenWithFullProvenancesByTokenCID)
 }
 
 // TearDownTest is called after each test
@@ -71,6 +69,14 @@ func (s *IndexProvenanceWorkflowTestSuite) TestIndexTokenProvenances_Success() {
 
 	// Mock IndexTokenWithFullProvenancesByTokenCID activity
 	s.env.OnActivity(s.executor.IndexTokenWithFullProvenancesByTokenCID, mock.Anything, tokenCID).Return(nil)
+
+	// Mock webhook notification workflow - should be triggered for token.provenance.complete event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenProvenanceComplete
+		}
+		return false
+	})).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenProvenances, tokenCID)

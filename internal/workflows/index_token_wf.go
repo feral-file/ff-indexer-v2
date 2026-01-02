@@ -13,6 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // IndexTokenMint processes a token mint event
@@ -277,6 +278,9 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
+	// WEBHOOK: Trigger queryable event notification (fire-and-forget)
+	w.triggerWebhookNotification(ctx, event.TokenCID(), webhook.EventTypeTokenQueryable)
+
 	// Step 2: Start child workflow to index token metadata (fire and forget)
 	// FIXME: This should be optional of the token already minted
 	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
@@ -429,6 +433,9 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	logger.InfoWf(ctx, "Token indexed with minimal provenances",
 		zap.String("tokenCID", tokenCID.String()),
 	)
+
+	// WEBHOOK: Trigger queryable event notification (fire-and-forget)
+	w.triggerWebhookNotification(ctx, tokenCID, webhook.EventTypeTokenQueryable)
 
 	// Step 2: Start child workflow to index token metadata (fire and forget)
 	metadataWorkflowOptions := workflow.ChildWorkflowOptions{

@@ -95,6 +95,20 @@ func (mr *MockStoreMockRecorder) CreateTokenWithProvenances(ctx, input interface
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenWithProvenances", reflect.TypeOf((*MockStore)(nil).CreateTokenWithProvenances), ctx, input)
 }
 
+// CreateWebhookDelivery mocks base method.
+func (m *MockStore) CreateWebhookDelivery(ctx context.Context, delivery *schema.WebhookDelivery) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateWebhookDelivery", ctx, delivery)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateWebhookDelivery indicates an expected call of CreateWebhookDelivery.
+func (mr *MockStoreMockRecorder) CreateWebhookDelivery(ctx, delivery interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWebhookDelivery", reflect.TypeOf((*MockStore)(nil).CreateWebhookDelivery), ctx, delivery)
+}
+
 // EnsureWatchedAddressExists mocks base method.
 func (m *MockStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
 	m.ctrl.T.Helper()
@@ -107,6 +121,21 @@ func (m *MockStore) EnsureWatchedAddressExists(ctx context.Context, address stri
 func (mr *MockStoreMockRecorder) EnsureWatchedAddressExists(ctx, address, chain interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockStore)(nil).EnsureWatchedAddressExists), ctx, address, chain)
+}
+
+// GetActiveWebhookClientsByEventType mocks base method.
+func (m *MockStore) GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetActiveWebhookClientsByEventType", ctx, eventType)
+	ret0, _ := ret[0].([]*schema.WebhookClient)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetActiveWebhookClientsByEventType indicates an expected call of GetActiveWebhookClientsByEventType.
+func (mr *MockStoreMockRecorder) GetActiveWebhookClientsByEventType(ctx, eventType interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveWebhookClientsByEventType", reflect.TypeOf((*MockStore)(nil).GetActiveWebhookClientsByEventType), ctx, eventType)
 }
 
 // GetAllKeyValuesByPrefix mocks base method.
@@ -491,6 +520,21 @@ func (mr *MockStoreMockRecorder) GetTokensByIDs(ctx, tokenIDs interface{}) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensByIDs", reflect.TypeOf((*MockStore)(nil).GetTokensByIDs), ctx, tokenIDs)
 }
 
+// GetWebhookClientByID mocks base method.
+func (m *MockStore) GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetWebhookClientByID", ctx, clientID)
+	ret0, _ := ret[0].(*schema.WebhookClient)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWebhookClientByID indicates an expected call of GetWebhookClientByID.
+func (mr *MockStoreMockRecorder) GetWebhookClientByID(ctx, clientID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWebhookClientByID", reflect.TypeOf((*MockStore)(nil).GetWebhookClientByID), ctx, clientID)
+}
+
 // IsAnyAddressWatched mocks base method.
 func (m *MockStore) IsAnyAddressWatched(ctx context.Context, chain domain.Chain, addresses []string) (bool, error) {
 	m.ctrl.T.Helper()
@@ -574,6 +618,20 @@ func (m *MockStore) UpdateTokenTransfer(ctx context.Context, input store.UpdateT
 func (mr *MockStoreMockRecorder) UpdateTokenTransfer(ctx, input interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenTransfer", reflect.TypeOf((*MockStore)(nil).UpdateTokenTransfer), ctx, input)
+}
+
+// UpdateWebhookDeliveryStatus mocks base method.
+func (m *MockStore) UpdateWebhookDeliveryStatus(ctx context.Context, deliveryID uint64, status schema.WebhookDeliveryStatus, attempts int, responseStatus *int, responseBody, errorMessage string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateWebhookDeliveryStatus", ctx, deliveryID, status, attempts, responseStatus, responseBody, errorMessage)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateWebhookDeliveryStatus indicates an expected call of UpdateWebhookDeliveryStatus.
+func (mr *MockStoreMockRecorder) UpdateWebhookDeliveryStatus(ctx, deliveryID, status, attempts, responseStatus, responseBody, errorMessage interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateWebhookDeliveryStatus", reflect.TypeOf((*MockStore)(nil).UpdateWebhookDeliveryStatus), ctx, deliveryID, status, attempts, responseStatus, responseBody, errorMessage)
 }
 
 // UpsertEnrichmentSource mocks base method.
