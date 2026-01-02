@@ -5,6 +5,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // WorkerCore defines the interface for processing blockchain events
@@ -52,6 +53,12 @@ type WorkerCore interface {
 
 	// IndexTokenProvenances indexes all provenances (balances and events) for a token
 	IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID) error
+
+	// NotifyWebhookClients orchestrates webhook notifications to all matching clients
+	NotifyWebhookClients(ctx workflow.Context, event webhook.WebhookEvent) error
+
+	// DeliverWebhook handles webhook delivery to a single client with retry logic
+	DeliverWebhook(ctx workflow.Context, clientID string, event webhook.WebhookEvent) error
 }
 
 type WorkerCoreConfig struct {

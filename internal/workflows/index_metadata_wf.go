@@ -13,6 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // IndexMetadataUpdate processes a metadata update event
@@ -151,6 +152,11 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		if enhancedMetadata.AnimationURL != nil && *enhancedMetadata.AnimationURL != "" {
 			mediaURLs[*enhancedMetadata.AnimationURL] = true
 		}
+	}
+
+	// WEBHOOK: Trigger viewable event after metadata + enrichment complete
+	if normalizedMetadata != nil || enhancedMetadata != nil {
+		w.triggerWebhookNotification(ctx, tokenCID, webhook.EventTypeTokenViewable)
 	}
 
 	// Step 4: Trigger media indexing workflow (fire and forget)

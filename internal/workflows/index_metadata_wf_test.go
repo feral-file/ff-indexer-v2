@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
@@ -52,12 +53,6 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
 	s.workerMedia = workflowsmedia.NewWorker(mocks.NewMockMediaExecutor(s.ctrl))
-
-	// Register activities with the test environment
-	s.env.RegisterActivity(s.executor.CreateMetadataUpdate)
-	s.env.RegisterActivity(s.executor.FetchTokenMetadata)
-	s.env.RegisterActivity(s.executor.UpsertTokenMetadata)
-	s.env.RegisterActivity(s.executor.EnhanceTokenMetadata)
 }
 
 // TearDownTest is called after each test
@@ -188,8 +183,19 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutE
 	// Mock EnhanceTokenMetadata activity - returns nil (no enhancement)
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
+	// Mock webhook notification workflow - should be triggered for token.viewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		// Verify it's a webhook event with correct event type
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenViewable
+		}
+		return false
+	})).Return(nil)
+
 	// Mock media indexing child workflow - match the actual workflow type
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
+		return len(urls) == 1 && urls[0] == "https://example.com/image.jpg"
+	})).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
@@ -220,8 +226,28 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnha
 	// Mock EnhanceTokenMetadata activity - returns enhanced metadata
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(enhancedMetadata, nil)
 
+	// Mock webhook notification workflow - should be triggered for token.viewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenViewable
+		}
+		return false
+	})).Return(nil)
+
 	// Mock media indexing child workflow - match the actual workflow type
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
+		if len(urls) != 2 {
+			return false
+		}
+
+		for _, url := range urls {
+			if url != "https://example.com/image.jpg" && url != "https://example.com/enhanced-image.jpg" {
+				return false
+			}
+		}
+
+		return true
+	})).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
@@ -298,6 +324,9 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_EnhancementError
 	// Mock EnhanceTokenMetadata activity to fail - should not fail workflow
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, enhancementError)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// Mock media indexing child workflow - match the actual workflow type
 	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
 
@@ -326,6 +355,9 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaWorkflowSta
 	// Mock EnhanceTokenMetadata activity
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// Mock media indexing child workflow to fail at start - should not fail parent workflow
 	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(testsuite.ErrMockStartChildWorkflowFailed)
 
@@ -353,6 +385,9 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NoMediaURLs() {
 
 	// Mock EnhanceTokenMetadata activity
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
+
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// No media workflow should be triggered
 

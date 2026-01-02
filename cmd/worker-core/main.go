@@ -93,6 +93,8 @@ func main() {
 	clockAdapter := adapter.NewClock()
 	fs := adapter.NewFileSystem()
 	base64Adapter := adapter.NewBase64()
+	ioAdapter := adapter.NewIO()
+	temporalActivityAdapter := adapter.NewActivity()
 
 	// Initialize ethereum client
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
@@ -185,7 +187,17 @@ func main() {
 	}
 
 	// Initialize executor for activities
-	executor := workflows.NewExecutor(dataStore, metadataResolver, metadataEnhancer, ethereumClient, tzktClient, jsonAdapter, clockAdapter)
+	executor := workflows.NewExecutor(
+		dataStore,
+		metadataResolver,
+		metadataEnhancer,
+		ethereumClient,
+		tzktClient,
+		jsonAdapter,
+		clockAdapter,
+		httpClient,
+		ioAdapter,
+		temporalActivityAdapter)
 
 	// Connect to Temporal with logger integration
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
@@ -240,6 +252,8 @@ func main() {
 	temporalWorker.RegisterWorkflow(workerCore.IndexTezosTokenOwner)
 	temporalWorker.RegisterWorkflow(workerCore.IndexEthereumTokenOwner)
 	temporalWorker.RegisterWorkflow(workerCore.IndexMultipleTokensMetadata)
+	temporalWorker.RegisterWorkflow(workerCore.NotifyWebhookClients)
+	temporalWorker.RegisterWorkflow(workerCore.DeliverWebhook)
 	logger.InfoCtx(ctx, "Registered workflows")
 
 	// Register activities
@@ -262,6 +276,10 @@ func main() {
 	temporalWorker.RegisterActivity(executor.GetIndexingBlockRangeForAddress)
 	temporalWorker.RegisterActivity(executor.UpdateIndexingBlockRangeForAddress)
 	temporalWorker.RegisterActivity(executor.EnsureWatchedAddressExists)
+	temporalWorker.RegisterActivity(executor.GetActiveWebhookClientsByEventType)
+	temporalWorker.RegisterActivity(executor.GetWebhookClientByID)
+	temporalWorker.RegisterActivity(executor.CreateWebhookDeliveryRecord)
+	temporalWorker.RegisterActivity(executor.DeliverWebhookHTTP)
 	logger.InfoCtx(ctx, "Registered activities")
 
 	// Start worker

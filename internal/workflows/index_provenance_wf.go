@@ -10,6 +10,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // IndexTokenProvenances indexes all provenances (balances and events) for a token
@@ -41,6 +42,9 @@ func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain
 	logger.InfoWf(ctx, "Token provenances indexed successfully",
 		zap.String("tokenCID", tokenCID.String()),
 	)
+
+	// WEBHOOK: Trigger provenance complete event
+	w.triggerWebhookNotification(ctx, tokenCID, webhook.EventTypeTokenProvenanceComplete)
 
 	return nil
 }

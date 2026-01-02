@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // Executor defines the interface for executing activities
@@ -83,6 +85,22 @@ type Executor interface {
 
 	// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT
 	GetLatestTezosBlock(ctx context.Context) (uint64, error)
+
+	// =============================================================================
+	// Webhook Activities
+	// =============================================================================
+
+	// GetActiveWebhookClientsByEventType retrieves active webhook clients matching the event type
+	GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error)
+
+	// GetWebhookClientByID retrieves a webhook client by client ID
+	GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error)
+
+	// CreateWebhookDeliveryRecord creates a new webhook delivery record
+	CreateWebhookDeliveryRecord(ctx context.Context, delivery *schema.WebhookDelivery, event webhook.WebhookEvent) (uint64, error)
+
+	// DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with signature
+	DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error)
 }
 
 // BlockRangeResult represents the result of getting an indexing block range
@@ -100,6 +118,9 @@ type executor struct {
 	tzktClient       tezos.TzKTClient
 	json             adapter.JSON
 	clock            adapter.Clock
+	httpClient       adapter.HTTPClient
+	io               adapter.IO
+	temporalActivity adapter.Activity
 }
 
 // NewExecutor creates a new executor instance
@@ -111,6 +132,9 @@ func NewExecutor(
 	tzktClient tezos.TzKTClient,
 	jsonAdapter adapter.JSON,
 	clock adapter.Clock,
+	httpClient adapter.HTTPClient,
+	io adapter.IO,
+	temporalActivity adapter.Activity,
 ) Executor {
 	return &executor{
 		store:            store,
@@ -120,6 +144,9 @@ func NewExecutor(
 		tzktClient:       tzktClient,
 		json:             jsonAdapter,
 		clock:            clock,
+		httpClient:       httpClient,
+		io:               io,
+		temporalActivity: temporalActivity,
 	}
 }
 
@@ -1206,4 +1233,134 @@ func (e *executor) UpdateIndexingBlockRangeForAddress(ctx context.Context, addre
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
 func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
 	return e.store.EnsureWatchedAddressExists(ctx, address, chain)
+}
+
+// =============================================================================
+// Webhook Activities
+// =============================================================================
+
+// GetActiveWebhookClientsByEventType retrieves active webhook clients matching the event type
+func (e *executor) GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error) {
+	return e.store.GetActiveWebhookClientsByEventType(ctx, eventType)
+}
+
+// GetWebhookClientByID retrieves a webhook client by client ID
+func (e *executor) GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error) {
+	return e.store.GetWebhookClientByID(ctx, clientID)
+}
+
+// CreateWebhookDeliveryRecord creates a new webhook delivery record
+func (e *executor) CreateWebhookDeliveryRecord(ctx context.Context, delivery *schema.WebhookDelivery, event webhook.WebhookEvent) (uint64, error) {
+	// Marshal event to JSON for the Payload field
+	eventJSON, err := e.json.Marshal(event)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal webhook event: %w", err)
+	}
+	delivery.Payload = eventJSON
+
+	if err := e.store.CreateWebhookDelivery(ctx, delivery); err != nil {
+		return 0, err
+	}
+	return delivery.ID, nil
+}
+
+// DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with HMAC signature
+// This activity will be automatically retried by Temporal with exponential backoff
+func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error) {
+	// Get attempt number from Temporal activity info
+	attempt := e.temporalActivity.GetInfo(ctx).Attempt
+
+	logger.InfoCtx(ctx, "Attempting webhook delivery",
+		zap.String("clientID", client.ClientID),
+		zap.String("eventID", event.EventID),
+		zap.Int32("attempt", attempt))
+
+	// Generate signed payload with HMAC-SHA256
+	payload, signature, timestamp, err := webhook.GenerateSignedPayload(client.WebhookSecret, event)
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to generate signed payload"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), nil, "", err.Error()); ierr != nil {
+			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+				zap.Error(ierr),
+				zap.String("clientID", client.ClientID))
+		}
+
+		// Return non-retryable error to stop Temporal retry
+		return webhook.DeliveryResult{Success: false, Error: err.Error()}, temporal.NewNonRetryableApplicationError(err.Error(), "failed to generate signed payload", err)
+	}
+
+	// Build headers for webhook delivery
+	headers := map[string]string{
+		"Content-Type":         "application/json",
+		"X-Webhook-Signature":  signature,
+		"X-Webhook-Event-ID":   event.EventID,
+		"X-Webhook-Event-Type": event.EventType,
+		"X-Webhook-Timestamp":  fmt.Sprintf("%d", timestamp),
+		"User-Agent":           "FF-Indexer-Webhook/2.0",
+	}
+
+	// Send HTTP request
+	resp, err := e.httpClient.PostWithHeadersNoRetry(ctx, client.WebhookURL, headers, bytes.NewReader(payload))
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to post webhook HTTP request"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), nil, "", err.Error()); ierr != nil {
+			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+				zap.Error(ierr),
+				zap.String("clientID", client.ClientID))
+		}
+
+		// Return error to trigger Temporal retry
+		return webhook.DeliveryResult{Success: false, Error: err.Error()}, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", client.WebhookURL))
+		}
+	}()
+
+	// Check status code for non-2xx responses
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logger.ErrorCtx(ctx, errors.New("failed to post webhook HTTP request"),
+			zap.Int("statusCode", resp.StatusCode),
+			zap.String("clientID", client.ClientID))
+
+		err := fmt.Errorf("HTTP %d", resp.StatusCode)
+		respBody, _ := e.io.ReadAll(resp.Body)
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), &resp.StatusCode, string(respBody), err.Error()); ierr != nil {
+			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+				zap.Error(ierr),
+				zap.String("clientID", client.ClientID))
+		}
+
+		// Return error to trigger Temporal retry
+		return webhook.DeliveryResult{Success: false, StatusCode: resp.StatusCode, Body: string(respBody)}, err
+	}
+
+	// Read response body
+	respBody, err := e.io.ReadAll(resp.Body)
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to read response body"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), &resp.StatusCode, string(respBody), err.Error()); ierr != nil {
+			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+				zap.Error(ierr),
+				zap.String("clientID", client.ClientID))
+		}
+
+		// Return non-retryable error to stop Temporal retry
+		return webhook.DeliveryResult{Success: false, Error: err.Error()}, temporal.NewNonRetryableApplicationError(err.Error(), "failed to read response body", err)
+	}
+
+	// Update webhook delivery status
+	if err := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusSuccess, int(attempt), &resp.StatusCode, string(respBody), ""); err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+	}
+
+	return webhook.DeliveryResult{Success: true, StatusCode: resp.StatusCode, Body: string(respBody)}, nil
 }

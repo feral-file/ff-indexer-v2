@@ -1,15 +1,19 @@
 package workflows_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -20,6 +24,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -33,6 +38,9 @@ type testExecutorMocks struct {
 	tzktClient       *mocks.MockTzKTClient
 	json             *mocks.MockJSON
 	clock            *mocks.MockClock
+	httpClient       *mocks.MockHTTPClient
+	io               *mocks.MockIO
+	temporalActivity *mocks.MockActivity
 	executor         workflows.Executor
 }
 
@@ -57,6 +65,9 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		tzktClient:       mocks.NewMockTzKTClient(ctrl),
 		json:             mocks.NewMockJSON(ctrl),
 		clock:            mocks.NewMockClock(ctrl),
+		httpClient:       mocks.NewMockHTTPClient(ctrl),
+		io:               mocks.NewMockIO(ctrl),
+		temporalActivity: mocks.NewMockActivity(ctrl),
 	}
 
 	tm.executor = workflows.NewExecutor(
@@ -67,6 +78,9 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		tm.tzktClient,
 		tm.json,
 		tm.clock,
+		tm.httpClient,
+		tm.io,
+		tm.temporalActivity,
 	)
 
 	return tm
@@ -3122,4 +3136,486 @@ func TestIndexTokenWithFullProvenancesByTokenCID_GetEventsError(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to fetch token events from Ethereum")
+}
+
+// ====================================================================================
+// Webhook Activities Tests
+// ====================================================================================
+
+func TestGetActiveWebhookClientsByEventType_Success(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	eventType := "token.queryable"
+	expectedClients := []*schema.WebhookClient{
+		{
+			ID:               1,
+			ClientID:         "client-123",
+			WebhookURL:       "https://example.com/webhook",
+			WebhookSecret:    "secret",
+			EventFilters:     []byte(`["token.queryable"]`),
+			IsActive:         true,
+			RetryMaxAttempts: 5,
+		},
+	}
+
+	mocks.store.EXPECT().
+		GetActiveWebhookClientsByEventType(ctx, eventType).
+		Return(expectedClients, nil)
+
+	result, err := mocks.executor.GetActiveWebhookClientsByEventType(ctx, eventType)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expectedClients, result)
+}
+
+func TestGetActiveWebhookClientsByEventType_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	eventType := "token.queryable"
+	expectedError := errors.New("database error")
+
+	mocks.store.EXPECT().
+		GetActiveWebhookClientsByEventType(ctx, eventType).
+		Return(nil, expectedError)
+
+	result, err := mocks.executor.GetActiveWebhookClientsByEventType(ctx, eventType)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, expectedError, err)
+}
+
+func TestGetWebhookClientByID_Success(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	clientID := "client-123"
+	expectedClient := &schema.WebhookClient{
+		ID:               1,
+		ClientID:         clientID,
+		WebhookURL:       "https://example.com/webhook",
+		WebhookSecret:    "secret",
+		EventFilters:     []byte(`["*"]`),
+		IsActive:         true,
+		RetryMaxAttempts: 5,
+	}
+
+	mocks.store.EXPECT().
+		GetWebhookClientByID(ctx, clientID).
+		Return(expectedClient, nil)
+
+	result, err := mocks.executor.GetWebhookClientByID(ctx, clientID)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expectedClient, result)
+}
+
+func TestGetWebhookClientByID_NotFound(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	clientID := "non-existent"
+
+	mocks.store.EXPECT().
+		GetWebhookClientByID(ctx, clientID).
+		Return(nil, nil)
+
+	result, err := mocks.executor.GetWebhookClientByID(ctx, clientID)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestCreateWebhookDeliveryRecord_Success(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	delivery := &schema.WebhookDelivery{
+		ClientID:       "client-123",
+		EventID:        "event-456",
+		EventType:      "token.queryable",
+		WorkflowID:     "workflow-789",
+		WorkflowRunID:  "run-012",
+		DeliveryStatus: schema.WebhookDeliveryStatusPending,
+		Attempts:       0,
+	}
+	event := webhook.WebhookEvent{
+		EventID:   "event-456",
+		EventType: "token.queryable",
+		Timestamp: time.Now(),
+		Data: webhook.EventData{
+			TokenCID:    "eip155:1:erc721:0xabc:1",
+			Chain:       "eip155:1",
+			Standard:    "erc721",
+			Contract:    "0xabc",
+			TokenNumber: "1",
+		},
+	}
+
+	// Mock JSON marshal for event
+	mocks.json.EXPECT().
+		Marshal(gomock.Any()).
+		Return([]byte(`{"event":"test"}`), nil)
+
+	// Mock create webhook delivery record succeeds
+	mocks.store.EXPECT().
+		CreateWebhookDelivery(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, d *schema.WebhookDelivery) error {
+			// Verify payload was set
+			assert.NotNil(t, d.Payload)
+			// Set ID to simulate database insertion
+			d.ID = 123
+			return nil
+		})
+
+	deliveryID, err := mocks.executor.CreateWebhookDeliveryRecord(ctx, delivery, event)
+
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(123), deliveryID)
+	assert.NotNil(t, delivery.Payload)
+}
+
+func TestCreateWebhookDeliveryRecord_MarshalError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	delivery := &schema.WebhookDelivery{
+		ClientID:  "client-123",
+		EventID:   "event-456",
+		EventType: "token.queryable",
+	}
+	event := webhook.WebhookEvent{
+		EventID:   "event-456",
+		EventType: "token.queryable",
+		Timestamp: time.Now(),
+		Data: webhook.EventData{
+			TokenCID: "eip155:1:erc721:0xabc:1",
+		},
+	}
+	mocks.json.EXPECT().
+		Marshal(gomock.Any()).
+		Return(nil, errors.New("marshal error"))
+
+	deliveryID, err := mocks.executor.CreateWebhookDeliveryRecord(ctx, delivery, event)
+
+	assert.Error(t, err)
+	assert.Equal(t, uint64(0), deliveryID)
+}
+
+func TestCreateWebhookDeliveryRecord_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	delivery := &schema.WebhookDelivery{
+		ClientID:       "client-123",
+		EventID:        "event-456",
+		EventType:      "token.queryable",
+		DeliveryStatus: schema.WebhookDeliveryStatusPending,
+	}
+	event := webhook.WebhookEvent{
+		EventID:   "event-456",
+		EventType: "token.queryable",
+		Timestamp: time.Now(),
+		Data: webhook.EventData{
+			TokenCID: "eip155:1:erc721:0xabc:1",
+		},
+	}
+	expectedError := errors.New("database error")
+
+	// Mock JSON marshal for event
+	mocks.json.EXPECT().
+		Marshal(gomock.Any()).
+		Return([]byte(`{"event":"test"}`), nil)
+
+	// Mock create webhook delivery record fails
+	mocks.store.EXPECT().
+		CreateWebhookDelivery(ctx, gomock.Any()).
+		Return(expectedError)
+
+	deliveryID, err := mocks.executor.CreateWebhookDeliveryRecord(ctx, delivery, event)
+
+	assert.Error(t, err)
+	assert.Equal(t, uint64(0), deliveryID)
+	assert.Equal(t, expectedError, err)
+}
+
+func TestDeliverWebhookHTTP_Success(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	client := &schema.WebhookClient{
+		ClientID:      "client-123",
+		WebhookURL:    "https://example.com/webhook",
+		WebhookSecret: "secret-key",
+	}
+	event := webhook.WebhookEvent{
+		EventID:   "event-456",
+		EventType: "token.queryable",
+		Timestamp: time.Now(),
+		Data: webhook.EventData{
+			TokenCID: "eip155:1:erc721:0xabc:1",
+		},
+	}
+	deliveryID := uint64(789)
+
+	// Mock GetInfo from temporal activity
+	mocks.temporalActivity.EXPECT().
+		GetInfo(ctx).
+		Return(activity.Info{Attempt: 1})
+
+	// Mock successful HTTP response
+	statusCode := 200
+	mockResponse := &http.Response{
+		StatusCode: statusCode,
+		Body:       io.NopCloser(bytes.NewBuffer([]byte(`{"status":"success"}`))),
+	}
+
+	mocks.httpClient.EXPECT().
+		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) (*http.Response, error) {
+			// Verify headers
+			assert.Equal(t, "application/json", headers["Content-Type"])
+			assert.NotEmpty(t, headers["X-Webhook-Signature"])
+			assert.Equal(t, event.EventID, headers["X-Webhook-Event-ID"])
+			assert.Equal(t, event.EventType, headers["X-Webhook-Event-Type"])
+			assert.NotEmpty(t, headers["X-Webhook-Timestamp"])
+			assert.Equal(t, "FF-Indexer-Webhook/2.0", headers["User-Agent"])
+			return mockResponse, nil
+		})
+
+	// Mock read all from io reader succeeds
+	mocks.io.EXPECT().
+		ReadAll(mockResponse.Body).
+		Return([]byte(`{"status":"success"}`), nil)
+
+	// Mock update webhook delivery status succeeds
+	mocks.store.EXPECT().
+		UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusSuccess, 1, &statusCode, `{"status":"success"}`, "").
+		Return(nil)
+
+	result, err := mocks.executor.DeliverWebhookHTTP(ctx, client, event, deliveryID)
+
+	assert.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, statusCode, result.StatusCode)
+	assert.Equal(t, `{"status":"success"}`, result.Body)
+}
+
+func TestDeliverWebhookHTTP_HTTPError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	client := &schema.WebhookClient{
+		ClientID:      "client-123",
+		WebhookURL:    "https://example.com/webhook",
+		WebhookSecret: "secret-key",
+	}
+	event := webhook.WebhookEvent{
+		EventID:   "event-456",
+		EventType: "token.queryable",
+		Timestamp: time.Now(),
+		Data: webhook.EventData{
+			TokenCID: "eip155:1:erc721:0xabc:1",
+		},
+	}
+	deliveryID := uint64(789)
+	expectedError := errors.New("connection refused")
+
+	// Mock GetInfo from temporal activity
+	mocks.temporalActivity.EXPECT().
+		GetInfo(ctx).
+		Return(activity.Info{Attempt: 1})
+
+	// Mock failed HTTP response
+	mocks.httpClient.EXPECT().
+		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		Return(nil, expectedError)
+
+	// Mock update webhook delivery status succeeds
+	mocks.store.EXPECT().
+		UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, gomock.Any(), nil, "", expectedError.Error()).
+		Return(nil)
+
+	result, err := mocks.executor.DeliverWebhookHTTP(ctx, client, event, deliveryID)
+
+	assert.Error(t, err)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, expectedError.Error())
+}
+
+func TestDeliverWebhookHTTP_Non2xxStatusCode(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	client := &schema.WebhookClient{
+		ClientID:      "client-123",
+		WebhookURL:    "https://example.com/webhook",
+		WebhookSecret: "secret-key",
+	}
+	event := webhook.WebhookEvent{
+		EventID:   "event-456",
+		EventType: "token.queryable",
+		Timestamp: time.Now(),
+		Data: webhook.EventData{
+			TokenCID: "eip155:1:erc721:0xabc:1",
+		},
+	}
+	deliveryID := uint64(789)
+
+	// Mock GetInfo from temporal activity
+	mocks.temporalActivity.EXPECT().
+		GetInfo(ctx).
+		Return(activity.Info{Attempt: 1})
+
+	// Mock 500 error response
+	statusCode := 500
+	mockResponse := &http.Response{
+		StatusCode: statusCode,
+		Body:       io.NopCloser(bytes.NewBuffer([]byte(`{"error":"internal server error"}`))),
+	}
+
+	mocks.httpClient.EXPECT().
+		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		Return(mockResponse, nil)
+
+	// Mock read all from io reader succeeds
+	mocks.io.EXPECT().
+		ReadAll(mockResponse.Body).
+		Return([]byte(`{"error":"internal server error"}`), nil)
+
+	// Mock update webhook delivery status fails
+	mocks.store.EXPECT().
+		UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, gomock.Any(), &statusCode, `{"error":"internal server error"}`, gomock.Any()).
+		Return(nil)
+
+	result, err := mocks.executor.DeliverWebhookHTTP(ctx, client, event, deliveryID)
+
+	assert.Error(t, err)
+	assert.False(t, result.Success)
+	assert.Equal(t, statusCode, result.StatusCode)
+	assert.Contains(t, result.Body, "internal server error")
+}
+
+func TestDeliverWebhookHTTP_ReadBodyError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	client := &schema.WebhookClient{
+		ClientID:      "client-123",
+		WebhookURL:    "https://example.com/webhook",
+		WebhookSecret: "secret-key",
+	}
+	event := webhook.WebhookEvent{
+		EventID:   "event-456",
+		EventType: "token.queryable",
+		Timestamp: time.Now(),
+		Data: webhook.EventData{
+			TokenCID: "eip155:1:erc721:0xabc:1",
+		},
+	}
+	deliveryID := uint64(789)
+	readError := errors.New("failed to read body")
+
+	// Mock GetInfo from temporal activity
+	mocks.temporalActivity.EXPECT().
+		GetInfo(ctx).
+		Return(activity.Info{Attempt: 1})
+
+	// Mock successful HTTP response but body read fails
+	mockResponse := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(bytes.NewBuffer([]byte(`{"status":"success"}`))),
+	}
+
+	mocks.httpClient.EXPECT().
+		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) (*http.Response, error) {
+			return mockResponse, nil
+		})
+
+	// Mock read all from io reader fails
+	mocks.io.EXPECT().
+		ReadAll(mockResponse.Body).
+		Return(nil, readError)
+
+	statusCode := 200
+	mocks.store.EXPECT().
+		UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, gomock.Any(), &statusCode, "", readError.Error()).
+		Return(nil)
+
+	result, err := mocks.executor.DeliverWebhookHTTP(ctx, client, event, deliveryID)
+
+	assert.Error(t, err)
+	assert.False(t, result.Success)
+	// Should be a non-retryable error
+	var appErr *temporal.ApplicationError
+	assert.True(t, errors.As(err, &appErr))
+}
+
+func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	client := &schema.WebhookClient{
+		ClientID:      "client-123",
+		WebhookURL:    "https://example.com/webhook",
+		WebhookSecret: "secret-key",
+	}
+	event := webhook.WebhookEvent{
+		EventID:   "event-456",
+		EventType: "token.queryable",
+		Timestamp: time.Now(),
+		Data: webhook.EventData{
+			TokenCID: "eip155:1:erc721:0xabc:1",
+		},
+	}
+	deliveryID := uint64(789)
+	updateError := errors.New("failed to update status")
+
+	// Mock GetInfo from temporal activity
+	mocks.temporalActivity.EXPECT().
+		GetInfo(ctx).
+		Return(activity.Info{Attempt: 1})
+
+	// Mock successful HTTP response
+	mockResponse := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(bytes.NewBuffer([]byte(`{"status":"success"}`))),
+	}
+
+	// Mock successful HTTP response
+	mocks.httpClient.EXPECT().
+		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		Return(mockResponse, nil)
+
+	// Mock read all from io reader succeeds
+	mocks.io.EXPECT().
+		ReadAll(mockResponse.Body).
+		Return([]byte(`{"status":"success"}`), nil)
+
+	// Mock update webhook delivery status fails
+	mocks.store.EXPECT().
+		UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusSuccess, gomock.Any(), gomock.Any(), `{"status":"success"}`, "").
+		Return(updateError)
+
+	// Should still succeed even if status update fails (logged but not returned as error)
+	result, err := mocks.executor.DeliverWebhookHTTP(ctx, client, event, deliveryID)
+
+	assert.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, 200, result.StatusCode)
 }

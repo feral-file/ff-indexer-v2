@@ -4019,6 +4019,204 @@ func testGetEnrichmentSourcesByTokenIDs(t *testing.T, store Store) {
 	})
 }
 
+func testWebhookClients(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("GetActiveWebhookClientsByEventType - wildcard", func(t *testing.T) {
+		// Test data from pg_test_data.sql includes client-all-events-123 with ["*"] filter
+		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.queryable")
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(clients), 1)
+
+		// Should find the wildcard client from test data
+		found := false
+		for _, c := range clients {
+			if c.ClientID == "client-all-events-123" {
+				found = true
+				assert.Equal(t, "https://webhook.example.com/all", c.WebhookURL)
+				assert.True(t, c.IsActive)
+				break
+			}
+		}
+		assert.True(t, found, "Should find wildcard client from test data")
+	})
+
+	t.Run("GetActiveWebhookClientsByEventType - specific events", func(t *testing.T) {
+		// Test data includes client-specific-events-456 with ["token.queryable", "token.viewable"]
+		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.queryable")
+		assert.NoError(t, err)
+
+		// Should find the specific event client
+		found := false
+		for _, c := range clients {
+			if c.ClientID == "client-specific-events-456" {
+				found = true
+				assert.Equal(t, "https://webhook.example.com/specific", c.WebhookURL)
+				break
+			}
+		}
+		assert.True(t, found, "Should find specific event client for token.queryable")
+
+		// Query for matching event type (token.viewable)
+		clients, err = store.GetActiveWebhookClientsByEventType(ctx, "token.viewable")
+		assert.NoError(t, err)
+
+		found = false
+		for _, c := range clients {
+			if c.ClientID == "client-specific-events-456" {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Should find specific event client for token.viewable")
+
+		// Query for non-matching event type
+		clients, err = store.GetActiveWebhookClientsByEventType(ctx, "token.provenance.complete")
+		assert.NoError(t, err)
+		// Should not return client-specific-events-456
+		found = false
+		for _, c := range clients {
+			if c.ClientID == "client-specific-events-456" {
+				found = true
+			}
+		}
+		assert.False(t, found, "client-specific-events-456 should not match token.provenance.complete")
+	})
+
+	t.Run("GetActiveWebhookClientsByEventType - inactive client", func(t *testing.T) {
+		// Test data includes client-inactive-789 which is inactive
+		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.provenance.complete")
+		assert.NoError(t, err)
+
+		// Should not include inactive client
+		for _, c := range clients {
+			assert.NotEqual(t, "client-inactive-789", c.ClientID, "Should not return inactive client")
+		}
+	})
+
+	t.Run("GetWebhookClientByID", func(t *testing.T) {
+		// Get existing client from test data
+		client, err := store.GetWebhookClientByID(ctx, "client-all-events-123")
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
+		assert.Equal(t, "client-all-events-123", client.ClientID)
+		assert.Equal(t, "https://webhook.example.com/all", client.WebhookURL)
+		assert.True(t, client.IsActive)
+		assert.Equal(t, 5, client.RetryMaxAttempts)
+
+		// Get non-existent client
+		client, err = store.GetWebhookClientByID(ctx, "non-existent-client")
+		assert.NoError(t, err)
+		assert.Nil(t, client)
+	})
+}
+
+func testWebhookDeliveries(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("CreateWebhookDelivery", func(t *testing.T) {
+		// Use existing client from test data
+		payload := []byte(`{"event_id":"01JG8XAMPLE_NEW_TEST_123456","event_type":"token.queryable","timestamp":"2024-01-15T10:00:00Z","data":{"token_cid":"eip155:1:erc721:0xABC:1","chain":"eip155:1","standard":"erc721","contract":"0xABC","token_number":"1","changed_at":"2024-01-15T10:00:00Z"}}`)
+		delivery := &schema.WebhookDelivery{
+			ClientID:       "client-all-events-123",
+			EventID:        "01JG8XAMPLE_NEW_TEST_123456",
+			EventType:      "token.queryable",
+			Payload:        payload,
+			WorkflowID:     "workflow-test-123",
+			WorkflowRunID:  "run-test-456",
+			DeliveryStatus: schema.WebhookDeliveryStatusPending,
+			Attempts:       0,
+		}
+		err := store.CreateWebhookDelivery(ctx, delivery)
+		assert.NoError(t, err)
+		assert.NotZero(t, delivery.ID)
+		assert.Equal(t, "client-all-events-123", delivery.ClientID)
+		assert.Equal(t, "01JG8XAMPLE_NEW_TEST_123456", delivery.EventID)
+		assert.Equal(t, "token.queryable", delivery.EventType)
+		assert.Equal(t, string(payload), string(delivery.Payload))
+		assert.Equal(t, "workflow-test-123", delivery.WorkflowID)
+		assert.Equal(t, "run-test-456", delivery.WorkflowRunID)
+		assert.Equal(t, schema.WebhookDeliveryStatusPending, delivery.DeliveryStatus)
+		assert.Equal(t, 0, delivery.Attempts)
+	})
+
+	t.Run("UpdateWebhookDeliveryStatus - success", func(t *testing.T) {
+		// Create delivery using existing client
+		payload := []byte(`{"event_id":"01JG8XAMPLE_SUCCESS_999999","event_type":"token.viewable","timestamp":"2024-01-16T12:00:00Z","data":{"token_cid":"eip155:1:erc721:0xDEF:2"}}`)
+		delivery := &schema.WebhookDelivery{
+			ClientID:       "client-specific-events-456",
+			EventID:        "01JG8XAMPLE_SUCCESS_999999",
+			EventType:      "token.viewable",
+			Payload:        payload,
+			WorkflowID:     "workflow-success-789",
+			WorkflowRunID:  "run-success-012",
+			DeliveryStatus: schema.WebhookDeliveryStatusPending,
+			Attempts:       0,
+		}
+		err := store.CreateWebhookDelivery(ctx, delivery)
+		assert.NoError(t, err)
+
+		// Update to success
+		statusCode := 200
+		err = store.UpdateWebhookDeliveryStatus(
+			ctx,
+			delivery.ID,
+			schema.WebhookDeliveryStatusSuccess,
+			1,
+			&statusCode,
+			`{"status":"received"}`,
+			"",
+		)
+		assert.NoError(t, err)
+	})
+
+	t.Run("UpdateWebhookDeliveryStatus - failed", func(t *testing.T) {
+		// Create delivery using existing client
+		payload := []byte(`{"event_id":"01JG8XAMPLE_FAILED_888888","event_type":"token.provenance.complete","timestamp":"2024-01-17T14:00:00Z","data":{}}`)
+		delivery := &schema.WebhookDelivery{
+			ClientID:       "client-all-events-123",
+			EventID:        "01JG8XAMPLE_FAILED_888888",
+			EventType:      "token.provenance.complete",
+			Payload:        payload,
+			WorkflowID:     "workflow-error",
+			WorkflowRunID:  "run-error",
+			DeliveryStatus: schema.WebhookDeliveryStatusPending,
+			Attempts:       0,
+		}
+		err := store.CreateWebhookDelivery(ctx, delivery)
+		assert.NoError(t, err)
+
+		// Update to failed
+		statusCode := 500
+		err = store.UpdateWebhookDeliveryStatus(
+			ctx,
+			delivery.ID,
+			schema.WebhookDeliveryStatusFailed,
+			3,
+			&statusCode,
+			`{"error":"internal server error"}`,
+			"HTTP 500",
+		)
+		assert.NoError(t, err)
+	})
+
+	t.Run("CreateWebhookDelivery - invalid client_id", func(t *testing.T) {
+		payload := []byte(`{"event_id":"01JG8XAMPLE_INVALID_777777","event_type":"token.queryable","timestamp":"2024-01-18T08:00:00Z","data":{}}`)
+		delivery := &schema.WebhookDelivery{
+			ClientID:       "non-existent-client",
+			EventID:        "01JG8XAMPLE_INVALID_777777",
+			EventType:      "token.queryable",
+			Payload:        payload,
+			WorkflowID:     "workflow-invalid",
+			WorkflowRunID:  "run-invalid",
+			DeliveryStatus: schema.WebhookDeliveryStatusPending,
+			Attempts:       0,
+		}
+		err := store.CreateWebhookDelivery(ctx, delivery)
+		assert.Error(t, err, "Should reject invalid client_id due to foreign key constraint")
+	})
+}
+
 // =============================================================================
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
@@ -4048,6 +4246,8 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokenOwnersBulk", testGetTokenOwnersBulk},
 		{"GetTokenProvenanceEventsBulk", testGetTokenProvenanceEventsBulk},
 		{"GetEnrichmentSourcesByTokenIDs", testGetEnrichmentSourcesByTokenIDs},
+		{"WebhookClients", testWebhookClients},
+		{"WebhookDeliveries", testWebhookDeliveries},
 	}
 
 	for _, tt := range tests {

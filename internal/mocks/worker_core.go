@@ -11,6 +11,7 @@ import (
 	workflow "go.temporal.io/sdk/workflow"
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
+	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // MockCoreWorker is a mock of WorkerCore interface.
@@ -34,6 +35,20 @@ func NewMockCoreWorker(ctrl *gomock.Controller) *MockCoreWorker {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockCoreWorker) EXPECT() *MockCoreWorkerMockRecorder {
 	return m.recorder
+}
+
+// DeliverWebhook mocks base method.
+func (m *MockCoreWorker) DeliverWebhook(ctx workflow.Context, clientID string, event webhook.WebhookEvent) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeliverWebhook", ctx, clientID, event)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeliverWebhook indicates an expected call of DeliverWebhook.
+func (mr *MockCoreWorkerMockRecorder) DeliverWebhook(ctx, clientID, event interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeliverWebhook", reflect.TypeOf((*MockCoreWorker)(nil).DeliverWebhook), ctx, clientID, event)
 }
 
 // IndexEthereumTokenOwner mocks base method.
@@ -230,4 +245,18 @@ func (m *MockCoreWorker) IndexTokens(ctx workflow.Context, tokenCIDs []domain.To
 func (mr *MockCoreWorkerMockRecorder) IndexTokens(ctx, tokenCIDs, ownerAddress interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokens", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokens), ctx, tokenCIDs, ownerAddress)
+}
+
+// NotifyWebhookClients mocks base method.
+func (m *MockCoreWorker) NotifyWebhookClients(ctx workflow.Context, event webhook.WebhookEvent) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NotifyWebhookClients", ctx, event)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// NotifyWebhookClients indicates an expected call of NotifyWebhookClients.
+func (mr *MockCoreWorkerMockRecorder) NotifyWebhookClients(ctx, event interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotifyWebhookClients", reflect.TypeOf((*MockCoreWorker)(nil).NotifyWebhookClients), ctx, event)
 }
