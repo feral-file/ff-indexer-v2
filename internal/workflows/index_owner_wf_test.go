@@ -48,21 +48,6 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 		TezosTokenSweepStartBlock:    1000,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
-
-	// Register activities with the test environment
-	s.env.RegisterActivity(s.executor.EnsureWatchedAddressExists)
-	s.env.RegisterActivity(s.executor.GetIndexingBlockRangeForAddress)
-	s.env.RegisterActivity(s.executor.GetLatestTezosBlock)
-	s.env.RegisterActivity(s.executor.GetLatestEthereumBlock)
-	s.env.RegisterActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange)
-	s.env.RegisterActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange)
-	s.env.RegisterActivity(s.executor.UpdateIndexingBlockRangeForAddress)
-
-	// Register child workflows
-	s.env.RegisterWorkflow(s.workerCore.IndexTokenOwner)
-	s.env.RegisterWorkflow(s.workerCore.IndexTezosTokenOwner)
-	s.env.RegisterWorkflow(s.workerCore.IndexEthereumTokenOwner)
-	s.env.RegisterWorkflow(s.workerCore.IndexTokens)
 }
 
 // TearDownTest is called after each test

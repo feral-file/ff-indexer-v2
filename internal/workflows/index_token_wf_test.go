@@ -48,14 +48,6 @@ func (s *IndexTokenWorkflowTestSuite) SetupTest() {
 		TezosTokenSweepStartBlock:    0,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
-
-	// Register activities with the test environment
-	s.env.RegisterActivity(s.executor.CreateTokenMint)
-	s.env.RegisterActivity(s.executor.CheckTokenExists)
-	s.env.RegisterActivity(s.executor.UpdateTokenTransfer)
-	s.env.RegisterActivity(s.executor.UpdateTokenBurn)
-	s.env.RegisterActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent)
-	s.env.RegisterActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID)
 }
 
 // TearDownTest is called after each test

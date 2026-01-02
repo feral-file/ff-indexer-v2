@@ -51,12 +51,6 @@ func (s *WebhookWorkflowTestSuite) SetupTest() {
 		TezosTokenSweepStartBlock:    0,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
-
-	// Register webhook activities
-	s.env.RegisterActivity(s.executor.GetActiveWebhookClientsByEventType)
-	s.env.RegisterActivity(s.executor.GetWebhookClientByID)
-	s.env.RegisterActivity(s.executor.CreateWebhookDeliveryRecord)
-	s.env.RegisterActivity(s.executor.DeliverWebhookHTTP)
 }
 
 // TearDownTest is called after each test
