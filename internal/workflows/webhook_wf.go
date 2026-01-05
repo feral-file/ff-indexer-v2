@@ -179,10 +179,17 @@ func (w *workerCore) triggerWebhookTokenOwnershipNotification(ctx workflow.Conte
 	chain, standard, contract, tokenNumber := tokenCID.Parse()
 
 	// Create webhook event with ULID for unique, time-sortable event ID
-	ulid := ulid.MustNewDefault(workflow.Now(ctx))
+	var eventID string
+	err := workflow.SideEffect(ctx, func(ctx workflow.Context) interface{} {
+		return ulid.MustNewDefault(time.Now()).String()
+	}).Get(&eventID)
+	if err != nil {
+		logger.ErrorWf(ctx, err, zap.String("tokenCID", tokenCID.String()), zap.String("eventType", eventType))
+		return
+	}
 
 	webhookEvent := webhook.WebhookEvent{
-		EventID:   ulid.String(),
+		EventID:   eventID,
 		EventType: eventType,
 		Timestamp: workflow.Now(ctx),
 		Data: webhook.OwnershipEventData{
@@ -211,9 +218,17 @@ func (w *workerCore) triggerWebhookTokenIndexingNotification(ctx workflow.Contex
 	chain, standard, contract, tokenNumber := tokenCID.Parse()
 
 	// Create webhook event with ULID for unique, time-sortable event ID
-	ulid := ulid.MustNewDefault(workflow.Now(ctx))
+	var eventID string
+	err := workflow.SideEffect(ctx, func(ctx workflow.Context) interface{} {
+		return ulid.MustNewDefault(time.Now()).String()
+	}).Get(&eventID)
+	if err != nil {
+		logger.ErrorWf(ctx, err, zap.String("tokenCID", tokenCID.String()), zap.String("eventType", eventType))
+		return
+	}
+
 	webhookEvent := webhook.WebhookEvent{
-		EventID:   ulid.String(),
+		EventID:   eventID,
 		EventType: eventType,
 		Timestamp: workflow.Now(ctx),
 		Data: webhook.IndexingEventData{
