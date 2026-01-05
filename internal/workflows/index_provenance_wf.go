@@ -10,13 +10,17 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // IndexTokenProvenances indexes all provenances (balances and events) for a token
-func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID) error {
+// address is the address that triggered the indexing operation
+// If nil, the indexing operation was not triggered by a specific address
+func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoWf(ctx, "Starting token provenances indexing",
 		zap.String("tokenCID", tokenCID.String()),
+		zap.String("address", types.SafeString(address)),
 	)
 
 	// Configure activity options with longer timeout for full provenance fetching
@@ -44,7 +48,7 @@ func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain
 	)
 
 	// WEBHOOK: Trigger provenance complete event
-	w.triggerWebhookNotification(ctx, tokenCID, webhook.EventTypeTokenProvenanceComplete)
+	w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingProvenanceCompleted, address)
 
 	return nil
 }

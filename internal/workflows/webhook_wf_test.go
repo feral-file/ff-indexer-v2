@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -31,6 +32,46 @@ type WebhookWorkflowTestSuite struct {
 	executor   *mocks.MockCoreExecutor
 	blacklist  *mocks.MockBlacklistRegistry
 	workerCore workflows.WorkerCore
+}
+
+// webhookEventMatcher returns a function that matches webhook events
+// accounting for the fact that Data can be either a struct or map[string]interface{}
+// after JSON serialization/deserialization
+func webhookEventMatcher(expected webhook.WebhookEvent) func(webhook.WebhookEvent) bool {
+	return func(actual webhook.WebhookEvent) bool {
+		// Compare non-Data fields
+		if actual.EventID != expected.EventID ||
+			actual.EventType != expected.EventType ||
+			!actual.Timestamp.Equal(expected.Timestamp) {
+			return false
+		}
+
+		// Handle Data field - can be struct or map
+		expectedData, expectedOK := expected.Data.(webhook.EventData)
+		if !expectedOK {
+			// If expected is not EventData, do regular comparison
+			return reflect.DeepEqual(actual.Data, expected.Data)
+		}
+
+		// Check if actual.Data is a map (after deserialization)
+		actualMap, isMap := actual.Data.(map[string]interface{})
+		if isMap {
+			// Compare map fields with struct fields
+			return actualMap["token_cid"] == expectedData.TokenCID &&
+				actualMap["chain"] == expectedData.Chain &&
+				actualMap["standard"] == expectedData.Standard &&
+				actualMap["contract"] == expectedData.Contract &&
+				actualMap["token_number"] == expectedData.TokenNumber
+		}
+
+		// Check if actual.Data is EventData struct
+		actualData, isStruct := actual.Data.(webhook.EventData)
+		if isStruct {
+			return actualData == expectedData
+		}
+
+		return false
+	}
 }
 
 // SetupTest is called before each test
@@ -71,7 +112,7 @@ func TestWebhookWorkflowTestSuite(t *testing.T) {
 func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_NoClients() {
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -97,7 +138,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_NoClients() {
 func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_GetClientsError() {
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -123,7 +164,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_GetClientsError() {
 func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_SingleClient() {
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -151,7 +192,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_SingleClient() {
 		Return(clients, nil)
 
 	// Mock DeliverWebhook child workflow
-	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-123", event).Return(nil)
+	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-123", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.NotifyWebhookClients, event)
@@ -164,7 +205,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_SingleClient() {
 func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_MultipleClients() {
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenViewable,
+		EventType: webhook.EventTypeTokenIndexingViewable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -176,7 +217,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_MultipleClients() {
 	}
 
 	eventFilters1, _ := json.Marshal([]string{"*"})
-	eventFilters2, _ := json.Marshal([]string{"token.viewable"})
+	eventFilters2, _ := json.Marshal([]string{"token.indexing.viewable"})
 	clients := []*schema.WebhookClient{
 		{
 			ClientID:         "client-123",
@@ -201,8 +242,8 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_MultipleClients() {
 		Return(clients, nil)
 
 	// Mock DeliverWebhook child workflows for both clients
-	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-123", event).Return(nil)
-	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-456", event).Return(nil)
+	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-123", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
+	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-456", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.NotifyWebhookClients, event)
@@ -220,7 +261,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_Success() {
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -246,11 +287,11 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_Success() {
 		Return(client, nil)
 
 	// Mock CreateWebhookDeliveryRecord activity
-	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), event).
+	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).
 		Return(uint64(1), nil)
 
 	// Mock DeliverWebhookHTTP activity - successful delivery
-	s.env.OnActivity(s.executor.DeliverWebhookHTTP, mock.Anything, client, event, uint64(1)).
+	s.env.OnActivity(s.executor.DeliverWebhookHTTP, mock.Anything, client, mock.MatchedBy(webhookEventMatcher(event)), uint64(1)).
 		Return(webhook.DeliveryResult{Success: true, StatusCode: 200, Body: `{"status":"received"}`}, nil)
 
 	// Execute the workflow
@@ -265,7 +306,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotFound() {
 	clientID := "non-existent-client"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -292,7 +333,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotActive() {
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -329,7 +370,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_GetClientError() {
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -356,7 +397,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_CreateDeliveryRecordError(
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -382,7 +423,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_CreateDeliveryRecordError(
 		Return(client, nil)
 
 	// Mock CreateWebhookDeliveryRecord activity - database error
-	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), event).
+	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).
 		Return(uint64(0), errors.New("database error"))
 
 	// Execute the workflow
@@ -397,7 +438,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
-		EventType: webhook.EventTypeTokenQueryable,
+		EventType: webhook.EventTypeTokenIndexingQueryable,
 		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -424,12 +465,12 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
 		Return(client, nil)
 
 	// Mock CreateWebhookDeliveryRecord activity
-	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), event).
+	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).
 		Return(uint64(1), nil)
 
 	// Mock DeliverWebhookHTTP activity - delivery failed (will retry with Temporal's retry policy)
 	var activityCallCount int
-	s.env.OnActivity(s.executor.DeliverWebhookHTTP, mock.Anything, client, event, uint64(1)).
+	s.env.OnActivity(s.executor.DeliverWebhookHTTP, mock.Anything, client, mock.MatchedBy(webhookEventMatcher(event)), uint64(1)).
 		Return(func(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error) {
 			activityCallCount++
 			return webhook.DeliveryResult{Success: false, StatusCode: 500, Body: `{"error":"internal server error"}`}, errors.New("HTTP 500")

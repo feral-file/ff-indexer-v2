@@ -55,7 +55,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 	// Execute the child workflow without waiting for the result
-	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
+	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID(), nil).GetChildWorkflowExecution()
 	if err := childWorkflowExec.Get(ctx, nil); err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to execute child workflow IndexTokenMetadata"),
@@ -73,7 +73,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 }
 
 // IndexTokenMetadata indexes token metadata
-func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error {
+func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoWf(ctx, "Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
 
 	// Configure activity options with longer timeout for metadata fetching
@@ -156,7 +156,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 
 	// WEBHOOK: Trigger viewable event after metadata + enrichment complete
 	if normalizedMetadata != nil || enhancedMetadata != nil {
-		w.triggerWebhookNotification(ctx, tokenCID, webhook.EventTypeTokenViewable)
+		w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingViewable, address)
 	}
 
 	// Step 4: Trigger media indexing workflow (fire and forget)
@@ -232,7 +232,7 @@ func (w *workerCore) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 		// Start the child workflow without waiting for result (fire and forget)
-		childWorkflowFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, tokenCID)
+		childWorkflowFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, tokenCID, nil)
 		childFutures = append(childFutures, childWorkflowFuture)
 
 	}

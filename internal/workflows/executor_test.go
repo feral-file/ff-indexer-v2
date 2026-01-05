@@ -3147,14 +3147,14 @@ func TestGetActiveWebhookClientsByEventType_Success(t *testing.T) {
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	eventType := "token.queryable"
+	eventType := "token.indexing.queryable"
 	expectedClients := []*schema.WebhookClient{
 		{
 			ID:               1,
 			ClientID:         "client-123",
 			WebhookURL:       "https://example.com/webhook",
 			WebhookSecret:    "secret",
-			EventFilters:     []byte(`["token.queryable"]`),
+			EventFilters:     []byte(`["token.indexing.queryable"]`),
 			IsActive:         true,
 			RetryMaxAttempts: 5,
 		},
@@ -3175,7 +3175,7 @@ func TestGetActiveWebhookClientsByEventType_StoreError(t *testing.T) {
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	eventType := "token.queryable"
+	eventType := "token.indexing.queryable"
 	expectedError := errors.New("database error")
 
 	mocks.store.EXPECT().
@@ -3240,7 +3240,7 @@ func TestCreateWebhookDeliveryRecord_Success(t *testing.T) {
 	delivery := &schema.WebhookDelivery{
 		ClientID:       "client-123",
 		EventID:        "event-456",
-		EventType:      "token.queryable",
+		EventType:      "token.indexing.queryable",
 		WorkflowID:     "workflow-789",
 		WorkflowRunID:  "run-012",
 		DeliveryStatus: schema.WebhookDeliveryStatusPending,
@@ -3248,7 +3248,7 @@ func TestCreateWebhookDeliveryRecord_Success(t *testing.T) {
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 		Timestamp: time.Now(),
 		Data: webhook.EventData{
 			TokenCID:    "eip155:1:erc721:0xabc:1",
@@ -3290,11 +3290,11 @@ func TestCreateWebhookDeliveryRecord_MarshalError(t *testing.T) {
 	delivery := &schema.WebhookDelivery{
 		ClientID:  "client-123",
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 		Timestamp: time.Now(),
 		Data: webhook.EventData{
 			TokenCID: "eip155:1:erc721:0xabc:1",
@@ -3318,12 +3318,12 @@ func TestCreateWebhookDeliveryRecord_StoreError(t *testing.T) {
 	delivery := &schema.WebhookDelivery{
 		ClientID:       "client-123",
 		EventID:        "event-456",
-		EventType:      "token.queryable",
+		EventType:      "token.indexing.queryable",
 		DeliveryStatus: schema.WebhookDeliveryStatusPending,
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 		Timestamp: time.Now(),
 		Data: webhook.EventData{
 			TokenCID: "eip155:1:erc721:0xabc:1",
@@ -3360,7 +3360,7 @@ func TestDeliverWebhookHTTP_Success(t *testing.T) {
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 		Timestamp: time.Now(),
 		Data: webhook.EventData{
 			TokenCID: "eip155:1:erc721:0xabc:1",
@@ -3423,7 +3423,7 @@ func TestDeliverWebhookHTTP_HTTPError(t *testing.T) {
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 		Timestamp: time.Now(),
 		Data: webhook.EventData{
 			TokenCID: "eip155:1:erc721:0xabc:1",
@@ -3466,7 +3466,7 @@ func TestDeliverWebhookHTTP_Non2xxStatusCode(t *testing.T) {
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 		Timestamp: time.Now(),
 		Data: webhook.EventData{
 			TokenCID: "eip155:1:erc721:0xabc:1",
@@ -3520,7 +3520,7 @@ func TestDeliverWebhookHTTP_ReadBodyError(t *testing.T) {
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 		Timestamp: time.Now(),
 		Data: webhook.EventData{
 			TokenCID: "eip155:1:erc721:0xabc:1",
@@ -3577,7 +3577,7 @@ func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
-		EventType: "token.queryable",
+		EventType: "token.indexing.queryable",
 		Timestamp: time.Now(),
 		Data: webhook.EventData{
 			TokenCID: "eip155:1:erc721:0xabc:1",

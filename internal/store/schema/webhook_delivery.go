@@ -26,7 +26,7 @@ type WebhookDelivery struct {
 	ClientID string `gorm:"column:client_id;not null;type:varchar(36)"`
 	// EventID is a unique identifier for this event (ULID for time-sortable uniqueness)
 	EventID string `gorm:"column:event_id;not null;type:varchar(255)"`
-	// EventType is the type of event being delivered (e.g., "token.queryable")
+	// EventType is the type of event being delivered (e.g., "token.indexing.queryable")
 	EventType string `gorm:"column:event_type;not null;type:varchar(50)"`
 	// Payload is the complete webhook event payload as JSON
 	Payload datatypes.JSON `gorm:"column:payload;not null;type:jsonb"`

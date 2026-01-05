@@ -17,7 +17,7 @@ type WebhookClient struct {
 	// WebhookSecret is the secret key used for HMAC-SHA256 signature generation
 	WebhookSecret string `gorm:"column:webhook_secret;not null;type:text"`
 	// EventFilters is a JSON array of event types this client wants to receive
-	// Examples: ["token.queryable", "token.viewable"] or ["*"] for all events
+	// Examples: ["token.indexing.queryable", "token.indexing.viewable"] or ["*"] for all events
 	EventFilters datatypes.JSON `gorm:"column:event_filters;not null;type:jsonb"`
 	// IsActive indicates whether this client should receive webhooks
 	IsActive bool `gorm:"column:is_active;not null;default:true"`

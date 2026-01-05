@@ -20,7 +20,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 		secret := "test-secret-key"
 		event := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1234567890123456",
-			EventType: "token.queryable",
+			EventType: "token.indexing.queryable",
 			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 			Data: webhook.EventData{
 				TokenCID:    "eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:1",
@@ -63,7 +63,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 
 		event1 := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1111111111111111",
-			EventType: "token.queryable",
+			EventType: "token.indexing.queryable",
 			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 			Data: webhook.EventData{
 				TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -76,7 +76,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 
 		event2 := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE2222222222222222",
-			EventType: "token.viewable",
+			EventType: "token.indexing.viewable",
 			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 			Data: webhook.EventData{
 				TokenCID:    "eip155:1:erc721:0xDEF:2",
@@ -100,7 +100,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 	t.Run("different secrets produce different signatures", func(t *testing.T) {
 		event := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1234567890123456",
-			EventType: "token.queryable",
+			EventType: "token.indexing.queryable",
 			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 			Data: webhook.EventData{
 				TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -135,14 +135,14 @@ func TestGenerateSignedPayload(t *testing.T) {
 
 		event1 := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1111111111111111",
-			EventType: "token.queryable",
+			EventType: "token.indexing.queryable",
 			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 			Data:      baseData,
 		}
 
 		event2 := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE2222222222222222",
-			EventType: "token.queryable",
+			EventType: "token.indexing.queryable",
 			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 			Data:      baseData,
 		}
@@ -161,7 +161,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 		secret := ""
 		event := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1234567890123456",
-			EventType: "token.queryable",
+			EventType: "token.indexing.queryable",
 			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 			Data: webhook.EventData{
 				TokenCID:    "eip155:1:erc721:0xABC:1",
@@ -183,7 +183,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 		secret := "test-secret-key"
 		event := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1234567890123456",
-			EventType: "token.queryable",
+			EventType: "token.indexing.queryable",
 			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 			Data: webhook.EventData{
 				TokenCID:    "eip155:1:erc721:0xABC:1",

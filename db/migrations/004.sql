@@ -30,7 +30,7 @@ CREATE TABLE webhook_deliveries (
     id BIGSERIAL PRIMARY KEY,
     client_id VARCHAR(36) NOT NULL REFERENCES webhook_clients(client_id) ON DELETE CASCADE,
     event_id VARCHAR(255) NOT NULL,           -- Unique event ID (ULID for time-sortable)
-    event_type VARCHAR(50) NOT NULL,          -- e.g., "token.queryable", "token.viewable"
+    event_type VARCHAR(50) NOT NULL,          -- e.g., "token.indexing.queryable", "token.indexing.viewable"
     payload JSONB NOT NULL,                   -- Full event payload
     workflow_id VARCHAR(255) NOT NULL,        -- Temporal workflow ID for tracking
     workflow_run_id VARCHAR(255),             -- Temporal run ID
@@ -57,7 +57,7 @@ CREATE INDEX idx_webhook_deliveries_client ON webhook_deliveries(client_id, crea
 COMMENT ON TABLE webhook_clients IS 'Registered webhook clients that receive event notifications';
 COMMENT ON TABLE webhook_deliveries IS 'Audit log of all webhook delivery attempts';
 
-COMMENT ON COLUMN webhook_clients.event_filters IS 'JSONB array of event types to receive, e.g., ["token.queryable", "token.viewable"] or ["*"] for all';
+COMMENT ON COLUMN webhook_clients.event_filters IS 'JSONB array of event types to receive, e.g., ["token.indexing.queryable", "token.indexing.viewable"] or ["*"] for all';
 COMMENT ON COLUMN webhook_clients.webhook_secret IS 'Secret key for HMAC-SHA256 signature verification';
 COMMENT ON COLUMN webhook_deliveries.event_id IS 'ULID-based unique event identifier for deduplication';
 COMMENT ON COLUMN webhook_deliveries.payload IS 'Complete webhook event payload as JSON';

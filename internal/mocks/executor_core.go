@@ -291,17 +291,17 @@ func (mr *MockCoreExecutorMockRecorder) IndexTokenWithMinimalProvenancesByBlockc
 }
 
 // IndexTokenWithMinimalProvenancesByTokenCID mocks base method.
-func (m *MockCoreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, ownerAddress *string) error {
+func (m *MockCoreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokenWithMinimalProvenancesByTokenCID", ctx, tokenCID, ownerAddress)
+	ret := m.ctrl.Call(m, "IndexTokenWithMinimalProvenancesByTokenCID", ctx, tokenCID, address)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexTokenWithMinimalProvenancesByTokenCID indicates an expected call of IndexTokenWithMinimalProvenancesByTokenCID.
-func (mr *MockCoreExecutorMockRecorder) IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, ownerAddress interface{}) *gomock.Call {
+func (mr *MockCoreExecutorMockRecorder) IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, address interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesByTokenCID", reflect.TypeOf((*MockCoreExecutor)(nil).IndexTokenWithMinimalProvenancesByTokenCID), ctx, tokenCID, ownerAddress)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesByTokenCID", reflect.TypeOf((*MockCoreExecutor)(nil).IndexTokenWithMinimalProvenancesByTokenCID), ctx, tokenCID, address)
 }
 
 // UpdateIndexingBlockRangeForAddress mocks base method.

@@ -203,7 +203,7 @@ CREATE TABLE webhook_deliveries (
     id BIGSERIAL PRIMARY KEY,
     client_id VARCHAR(36) NOT NULL REFERENCES webhook_clients(client_id) ON DELETE CASCADE,
     event_id VARCHAR(255) NOT NULL,           -- Unique event ID (ULID for time-sortable)
-    event_type VARCHAR(50) NOT NULL,          -- e.g., "token.queryable", "token.viewable"
+    event_type VARCHAR(50) NOT NULL,          -- e.g., "token.indexing.queryable", "token.indexing.viewable"
     payload JSONB NOT NULL,                   -- Full event payload
     workflow_id VARCHAR(255) NOT NULL,        -- Temporal workflow ID for tracking
     workflow_run_id VARCHAR(255),             -- Temporal run ID

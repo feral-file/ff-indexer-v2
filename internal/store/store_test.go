@@ -4024,7 +4024,7 @@ func testWebhookClients(t *testing.T, store Store) {
 
 	t.Run("GetActiveWebhookClientsByEventType - wildcard", func(t *testing.T) {
 		// Test data from pg_test_data.sql includes client-all-events-123 with ["*"] filter
-		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.queryable")
+		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.indexing.queryable")
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(clients), 1)
 
@@ -4042,8 +4042,8 @@ func testWebhookClients(t *testing.T, store Store) {
 	})
 
 	t.Run("GetActiveWebhookClientsByEventType - specific events", func(t *testing.T) {
-		// Test data includes client-specific-events-456 with ["token.queryable", "token.viewable"]
-		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.queryable")
+		// Test data includes client-specific-events-456 with ["token.indexing.queryable", "token.indexing.viewable"]
+		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.indexing.queryable")
 		assert.NoError(t, err)
 
 		// Should find the specific event client
@@ -4055,10 +4055,10 @@ func testWebhookClients(t *testing.T, store Store) {
 				break
 			}
 		}
-		assert.True(t, found, "Should find specific event client for token.queryable")
+		assert.True(t, found, "Should find specific event client for token.indexing.queryable")
 
-		// Query for matching event type (token.viewable)
-		clients, err = store.GetActiveWebhookClientsByEventType(ctx, "token.viewable")
+		// Query for matching event type (token.indexing.viewable)
+		clients, err = store.GetActiveWebhookClientsByEventType(ctx, "token.indexing.viewable")
 		assert.NoError(t, err)
 
 		found = false
@@ -4068,10 +4068,10 @@ func testWebhookClients(t *testing.T, store Store) {
 				break
 			}
 		}
-		assert.True(t, found, "Should find specific event client for token.viewable")
+		assert.True(t, found, "Should find specific event client for token.indexing.viewable")
 
 		// Query for non-matching event type
-		clients, err = store.GetActiveWebhookClientsByEventType(ctx, "token.provenance.complete")
+		clients, err = store.GetActiveWebhookClientsByEventType(ctx, "token.indexing.provenance_completed")
 		assert.NoError(t, err)
 		// Should not return client-specific-events-456
 		found = false
@@ -4080,12 +4080,12 @@ func testWebhookClients(t *testing.T, store Store) {
 				found = true
 			}
 		}
-		assert.False(t, found, "client-specific-events-456 should not match token.provenance.complete")
+		assert.False(t, found, "client-specific-events-456 should not match token.indexing.provenance_completed")
 	})
 
 	t.Run("GetActiveWebhookClientsByEventType - inactive client", func(t *testing.T) {
 		// Test data includes client-inactive-789 which is inactive
-		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.provenance.complete")
+		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.indexing.provenance_completed")
 		assert.NoError(t, err)
 
 		// Should not include inactive client
@@ -4116,11 +4116,11 @@ func testWebhookDeliveries(t *testing.T, store Store) {
 
 	t.Run("CreateWebhookDelivery", func(t *testing.T) {
 		// Use existing client from test data
-		payload := []byte(`{"event_id":"01JG8XAMPLE_NEW_TEST_123456","event_type":"token.queryable","timestamp":"2024-01-15T10:00:00Z","data":{"token_cid":"eip155:1:erc721:0xABC:1","chain":"eip155:1","standard":"erc721","contract":"0xABC","token_number":"1","changed_at":"2024-01-15T10:00:00Z"}}`)
+		payload := []byte(`{"event_id":"01JG8XAMPLE_NEW_TEST_123456","event_type":"token.indexing.queryable","timestamp":"2024-01-15T10:00:00Z","data":{"token_cid":"eip155:1:erc721:0xABC:1","chain":"eip155:1","standard":"erc721","contract":"0xABC","token_number":"1","changed_at":"2024-01-15T10:00:00Z"}}`)
 		delivery := &schema.WebhookDelivery{
 			ClientID:       "client-all-events-123",
 			EventID:        "01JG8XAMPLE_NEW_TEST_123456",
-			EventType:      "token.queryable",
+			EventType:      "token.indexing.queryable",
 			Payload:        payload,
 			WorkflowID:     "workflow-test-123",
 			WorkflowRunID:  "run-test-456",
@@ -4132,7 +4132,7 @@ func testWebhookDeliveries(t *testing.T, store Store) {
 		assert.NotZero(t, delivery.ID)
 		assert.Equal(t, "client-all-events-123", delivery.ClientID)
 		assert.Equal(t, "01JG8XAMPLE_NEW_TEST_123456", delivery.EventID)
-		assert.Equal(t, "token.queryable", delivery.EventType)
+		assert.Equal(t, "token.indexing.queryable", delivery.EventType)
 		assert.Equal(t, string(payload), string(delivery.Payload))
 		assert.Equal(t, "workflow-test-123", delivery.WorkflowID)
 		assert.Equal(t, "run-test-456", delivery.WorkflowRunID)
@@ -4142,11 +4142,11 @@ func testWebhookDeliveries(t *testing.T, store Store) {
 
 	t.Run("UpdateWebhookDeliveryStatus - success", func(t *testing.T) {
 		// Create delivery using existing client
-		payload := []byte(`{"event_id":"01JG8XAMPLE_SUCCESS_999999","event_type":"token.viewable","timestamp":"2024-01-16T12:00:00Z","data":{"token_cid":"eip155:1:erc721:0xDEF:2"}}`)
+		payload := []byte(`{"event_id":"01JG8XAMPLE_SUCCESS_999999","event_type":"token.indexing.viewable","timestamp":"2024-01-16T12:00:00Z","data":{"token_cid":"eip155:1:erc721:0xDEF:2"}}`)
 		delivery := &schema.WebhookDelivery{
 			ClientID:       "client-specific-events-456",
 			EventID:        "01JG8XAMPLE_SUCCESS_999999",
-			EventType:      "token.viewable",
+			EventType:      "token.indexing.viewable",
 			Payload:        payload,
 			WorkflowID:     "workflow-success-789",
 			WorkflowRunID:  "run-success-012",
@@ -4172,11 +4172,11 @@ func testWebhookDeliveries(t *testing.T, store Store) {
 
 	t.Run("UpdateWebhookDeliveryStatus - failed", func(t *testing.T) {
 		// Create delivery using existing client
-		payload := []byte(`{"event_id":"01JG8XAMPLE_FAILED_888888","event_type":"token.provenance.complete","timestamp":"2024-01-17T14:00:00Z","data":{}}`)
+		payload := []byte(`{"event_id":"01JG8XAMPLE_FAILED_888888","event_type":"token.indexing.provenance_completed","timestamp":"2024-01-17T14:00:00Z","data":{}}`)
 		delivery := &schema.WebhookDelivery{
 			ClientID:       "client-all-events-123",
 			EventID:        "01JG8XAMPLE_FAILED_888888",
-			EventType:      "token.provenance.complete",
+			EventType:      "token.indexing.provenance_completed",
 			Payload:        payload,
 			WorkflowID:     "workflow-error",
 			WorkflowRunID:  "run-error",
@@ -4201,11 +4201,11 @@ func testWebhookDeliveries(t *testing.T, store Store) {
 	})
 
 	t.Run("CreateWebhookDelivery - invalid client_id", func(t *testing.T) {
-		payload := []byte(`{"event_id":"01JG8XAMPLE_INVALID_777777","event_type":"token.queryable","timestamp":"2024-01-18T08:00:00Z","data":{}}`)
+		payload := []byte(`{"event_id":"01JG8XAMPLE_INVALID_777777","event_type":"token.indexing.queryable","timestamp":"2024-01-18T08:00:00Z","data":{}}`)
 		delivery := &schema.WebhookDelivery{
 			ClientID:       "non-existent-client",
 			EventID:        "01JG8XAMPLE_INVALID_777777",
-			EventType:      "token.queryable",
+			EventType:      "token.indexing.queryable",
 			Payload:        payload,
 			WorkflowID:     "workflow-invalid",
 			WorkflowRunID:  "run-invalid",

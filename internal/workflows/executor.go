@@ -60,9 +60,9 @@ type Executor interface {
 	IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error
 
 	// IndexTokenWithMinimalProvenancesByTokenCID indexes token with minimal provenances using tokenCID
-	// If ownerAddress is provided, uses owner-specific indexing for ERC1155 (efficient, partial balance + events)
-	// For ERC721 and FA2, ownerAddress parameter is ignored and full provenance is always indexed
-	IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, ownerAddress *string) error
+	// If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
+	// For ERC721 and FA2, address parameter is ignored and full provenance is always indexed
+	IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error
 
 	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs with block numbers for an owner within a block range
 	// This is used to sweep tokens by block ranges for incremental indexing
@@ -651,19 +651,19 @@ func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context
 }
 
 // addOwnerBalanceAndEvents fetches and adds balance and events for a specific owner to the input
-func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, ownerAddress *string, input *store.CreateTokenWithProvenancesInput) error {
+func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, address *string, input *store.CreateTokenWithProvenancesInput) error {
 	// Skip if address is nil or zero address
-	if types.StringNilOrEmpty(ownerAddress) || *ownerAddress == domain.ETHEREUM_ZERO_ADDRESS {
+	if types.StringNilOrEmpty(address) || *address == domain.ETHEREUM_ZERO_ADDRESS {
 		return nil
 	}
 
 	// Skip from address for ERC721 (sender doesn't have balance after transfer)
-	if event.Standard == domain.StandardERC721 && ownerAddress == event.FromAddress {
+	if event.Standard == domain.StandardERC721 && address == event.FromAddress {
 		return nil
 	}
 
 	// Fetch balance and events based on standard
-	balance, events, err := e.fetchOwnerBalanceAndEvents(ctx, event, *ownerAddress)
+	balance, events, err := e.fetchOwnerBalanceAndEvents(ctx, event, *address)
 	if err != nil {
 		return err
 	}
@@ -671,7 +671,7 @@ func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.B
 	// Add balance if positive
 	if types.IsPositiveNumeric(balance) {
 		input.Balances = append(input.Balances, store.CreateBalanceInput{
-			OwnerAddress: *ownerAddress,
+			OwnerAddress: *address,
 			Quantity:     balance,
 		})
 	}
@@ -701,14 +701,14 @@ func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.B
 }
 
 // fetchOwnerBalanceAndEvents fetches balance and events for an owner based on token standard
-func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, ownerAddress string) (string, []domain.BlockchainEvent, error) {
+func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, address string) (string, []domain.BlockchainEvent, error) {
 	switch event.Standard {
 	case domain.StandardFA2:
-		balance, err := e.tzktClient.GetTokenOwnerBalance(ctx, event.ContractAddress, event.TokenNumber, ownerAddress)
+		balance, err := e.tzktClient.GetTokenOwnerBalance(ctx, event.ContractAddress, event.TokenNumber, address)
 		return balance, nil, err
 
 	case domain.StandardERC1155:
-		return e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, event.ContractAddress, event.TokenNumber, ownerAddress)
+		return e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, event.ContractAddress, event.TokenNumber, address)
 
 	case domain.StandardERC721:
 		// ERC721: to address always has balance of 1
@@ -723,14 +723,14 @@ func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain
 // Minimal provenance data includes balances for all addresses (or specific owner if provided).
 // The provenance events and change journal are not included for full indexing,
 // but ARE included for owner-specific indexing.
-// If ownerAddress is provided, uses owner-specific indexing for ERC1155 (efficient, partial balance + events)
-func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, ownerAddress *string) error {
-	// If ownerAddress is not provided, verify the token exists in the database and on-chain before indexing
-	// Without ownerAddress, the event logs would be huge and the indexing is inefficient for ERC1155 tokens.
+// If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
+func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
+	// If address is not provided, verify the token exists in the database and on-chain before indexing
+	// Without address, the event logs would be huge and the indexing is inefficient for ERC1155 tokens.
 	// Otherwise, we can skip the existence check and index the token with minimal provenances, the indexing with
-	// owner-specific indexing is more efficient for ERC1155 tokens.
-	// We also can assume the workflow will gather tokens belongs to the ownerAddress before calling this activity.
-	if ownerAddress == nil {
+	// address-specific indexing is more efficient for ERC1155 tokens.
+	// We also can assume the workflow will gather tokens belongs to the address before calling this activity.
+	if address == nil {
 		// Check if token exists in database
 		existsInDB, err := e.CheckTokenExists(ctx, tokenCID)
 		if err != nil {
@@ -826,10 +826,10 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 
 		case domain.StandardERC1155:
 			// For ERC1155, choose between full indexing (all owners) or owner-specific indexing
-			if ownerAddress != nil {
+			if address != nil {
 				// OWNER-SPECIFIC PATH: Efficient indexing for one owner only
 				// Get balance and events for this specific owner
-				balance, events, err := e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, *ownerAddress)
+				balance, events, err := e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, *address)
 				if err != nil {
 					if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
 						strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
@@ -858,7 +858,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 
 				logger.InfoCtx(ctx, "Indexing ERC1155 token for specific owner",
 					zap.String("tokenCID", tokenCID.String()),
-					zap.String("owner", *ownerAddress),
+					zap.String("owner", *address),
 					zap.String("balance", balance),
 					zap.Int("eventCount", len(events)),
 				)
@@ -899,7 +899,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 						CurrentOwner:    nil,   // ERC1155 doesn't have single owner
 						Burned:          false, // Can't determine from one owner's perspective
 					},
-					OwnerAddress: *ownerAddress,
+					OwnerAddress: *address,
 					Quantity:     balance,
 					Events:       storeEvents,
 				}

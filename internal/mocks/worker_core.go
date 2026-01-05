@@ -108,17 +108,17 @@ func (mr *MockCoreWorkerMockRecorder) IndexTezosTokenOwner(ctx, address interfac
 }
 
 // IndexToken mocks base method.
-func (m *MockCoreWorker) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, ownerAddress *string) error {
+func (m *MockCoreWorker) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexToken", ctx, tokenCID, ownerAddress)
+	ret := m.ctrl.Call(m, "IndexToken", ctx, tokenCID, address)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexToken indicates an expected call of IndexToken.
-func (mr *MockCoreWorkerMockRecorder) IndexToken(ctx, tokenCID, ownerAddress interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexToken(ctx, tokenCID, address interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexToken", reflect.TypeOf((*MockCoreWorker)(nil).IndexToken), ctx, tokenCID, ownerAddress)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexToken", reflect.TypeOf((*MockCoreWorker)(nil).IndexToken), ctx, tokenCID, address)
 }
 
 // IndexTokenBurn mocks base method.
@@ -150,17 +150,17 @@ func (mr *MockCoreWorkerMockRecorder) IndexTokenFromEvent(ctx, event interface{}
 }
 
 // IndexTokenMetadata mocks base method.
-func (m *MockCoreWorker) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error {
+func (m *MockCoreWorker) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokenMetadata", ctx, tokenCID)
+	ret := m.ctrl.Call(m, "IndexTokenMetadata", ctx, tokenCID, address)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexTokenMetadata indicates an expected call of IndexTokenMetadata.
-func (mr *MockCoreWorkerMockRecorder) IndexTokenMetadata(ctx, tokenCID interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexTokenMetadata(ctx, tokenCID, address interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenMetadata", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokenMetadata), ctx, tokenCID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenMetadata", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokenMetadata), ctx, tokenCID, address)
 }
 
 // IndexTokenMint mocks base method.
@@ -206,17 +206,17 @@ func (mr *MockCoreWorkerMockRecorder) IndexTokenOwners(ctx, addresses interface{
 }
 
 // IndexTokenProvenances mocks base method.
-func (m *MockCoreWorker) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID) error {
+func (m *MockCoreWorker) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokenProvenances", ctx, tokenCID)
+	ret := m.ctrl.Call(m, "IndexTokenProvenances", ctx, tokenCID, address)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexTokenProvenances indicates an expected call of IndexTokenProvenances.
-func (mr *MockCoreWorkerMockRecorder) IndexTokenProvenances(ctx, tokenCID interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexTokenProvenances(ctx, tokenCID, address interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenProvenances", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokenProvenances), ctx, tokenCID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenProvenances", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokenProvenances), ctx, tokenCID, address)
 }
 
 // IndexTokenTransfer mocks base method.
@@ -234,17 +234,17 @@ func (mr *MockCoreWorkerMockRecorder) IndexTokenTransfer(ctx, event interface{})
 }
 
 // IndexTokens mocks base method.
-func (m *MockCoreWorker) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
+func (m *MockCoreWorker) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokens", ctx, tokenCIDs, ownerAddress)
+	ret := m.ctrl.Call(m, "IndexTokens", ctx, tokenCIDs, address)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexTokens indicates an expected call of IndexTokens.
-func (mr *MockCoreWorkerMockRecorder) IndexTokens(ctx, tokenCIDs, ownerAddress interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexTokens(ctx, tokenCIDs, address interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokens", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokens), ctx, tokenCIDs, ownerAddress)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokens", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokens), ctx, tokenCIDs, address)
 }
 
 // NotifyWebhookClients mocks base method.

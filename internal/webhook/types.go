@@ -4,18 +4,31 @@ import "time"
 
 // Event type constants
 const (
-	// EventTypeTokenQueryable is fired when a token becomes queryable
+	// EventTypeTokenIndexingQueryable is fired when a token becomes queryable
 	// (minimal ownership has been indexed, token can be queried by ID)
-	EventTypeTokenQueryable = "token.queryable"
+	EventTypeTokenIndexingQueryable = "token.indexing.queryable" //nolint:gosec,G101
 
-	// EventTypeTokenViewable is fired when a token becomes viewable
+	// EventTypeTokenIndexingViewable is fired when a token becomes viewable
 	// (metadata and enrichment have been completed, full token info available)
-	EventTypeTokenViewable = "token.viewable"
+	EventTypeTokenIndexingViewable = "token.indexing.viewable" //nolint:gosec,G101
 
-	// EventTypeTokenProvenanceComplete is fired when full provenance has been indexed
+	// EventTypeTokenIndexingProvenanceCompleted is fired when full provenance has been indexed
 	// (all historical transfers and events have been indexed)
-	EventTypeTokenProvenanceComplete = "token.provenance.complete"
+	EventTypeTokenIndexingProvenanceCompleted = "token.indexing.provenance_completed" //nolint:gosec,G101
 
+	// EventTypeTokenOwnershipMinted is fired when a token is minted
+	// (token has been minted)
+	EventTypeTokenOwnershipMinted = "token.ownership.minted"
+
+	// EventTypeTokenOwnershipTransferred is fired when a token is transferred
+	// (token has been transferred to a new owner)
+	EventTypeTokenOwnershipTransferred = "token.ownership.transferred"
+
+	// EventTypeTokenOwnershipBurned is fired when a token is burned
+	// (token has been burned)
+	EventTypeTokenOwnershipBurned = "token.ownership.burned"
+
+	// EventTypeTokenIndexingMediaCompleted is fired when media has been indexed
 	// EventTypeWildcard is a special filter that matches all event types
 	EventTypeWildcard = "*"
 )
@@ -24,12 +37,12 @@ const (
 type WebhookEvent struct {
 	// EventID is a unique identifier for this event (ULID for time-sortable uniqueness)
 	EventID string `json:"event_id"`
-	// EventType is the type of event (e.g., "token.queryable")
+	// EventType is the type of event (e.g., "token.indexing.queryable")
 	EventType string `json:"event_type"`
 	// Timestamp is when the event was generated
 	Timestamp time.Time `json:"timestamp"`
 	// Data contains the event-specific payload
-	Data EventData `json:"data"`
+	Data interface{} `json:"data"`
 }
 
 // EventData contains the webhook event payload
@@ -44,6 +57,28 @@ type EventData struct {
 	Contract string `json:"contract"`
 	// TokenNumber is the token ID within the contract
 	TokenNumber string `json:"token_number"`
+}
+
+// IndexingEventData contains the data for an indexing event
+type IndexingEventData struct {
+	// EventData is the common event data
+	EventData
+
+	// Address is the address associated with the event
+	Address *string `json:"address,omitempty"`
+}
+
+// OwnershipEventData contains the data for an ownership event
+type OwnershipEventData struct {
+	// EventData is the common event data
+	EventData
+
+	// FromAddress is the address of the sender
+	FromAddress *string `json:"from_address,omitempty"`
+	// ToAddress is the address of the receiver
+	ToAddress *string `json:"to_address,omitempty"`
+	// Quantity is the number of tokens transferred
+	Quantity string `json:"quantity"`
 }
 
 // DeliveryResult represents the result of a webhook delivery attempt

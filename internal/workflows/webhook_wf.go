@@ -169,9 +169,44 @@ func (w *workerCore) DeliverWebhook(ctx workflow.Context, clientID string, event
 	return nil
 }
 
-// triggerWebhookNotification triggers a webhook notification workflow (fire-and-forget)
-// This helper function is called after successful token indexing operations to notify webhook clients
-func (w *workerCore) triggerWebhookNotification(ctx workflow.Context, tokenCID domain.TokenCID, eventType string) {
+// triggerWebhookTokenOwnershipNotification triggers a webhook notification workflow for a token ownership event
+// eventType is the type of event (e.g., "token.ownership.minted", "token.ownership.transferred", "token.ownership.burned")
+// from is the address of the sender
+// to is the address of the receiver
+// quantity is the number of tokens transferred
+func (w *workerCore) triggerWebhookTokenOwnershipNotification(ctx workflow.Context, tokenCID domain.TokenCID, eventType string, from *string, to *string, quantity string) {
+	// Parse token CID to get components
+	chain, standard, contract, tokenNumber := tokenCID.Parse()
+
+	// Create webhook event with ULID for unique, time-sortable event ID
+	ulid := ulid.MustNewDefault(workflow.Now(ctx))
+
+	webhookEvent := webhook.WebhookEvent{
+		EventID:   ulid.String(),
+		EventType: eventType,
+		Timestamp: workflow.Now(ctx),
+		Data: webhook.OwnershipEventData{
+			EventData: webhook.EventData{
+				TokenCID:    tokenCID.String(),
+				Chain:       string(chain),
+				Standard:    string(standard),
+				Contract:    contract,
+				TokenNumber: tokenNumber,
+			},
+			FromAddress: from,
+			ToAddress:   to,
+			Quantity:    quantity,
+		},
+	}
+
+	w.triggerWebhookNotification(ctx, webhookEvent)
+}
+
+// triggerWebhookTokenIndexingNotification triggers a webhook notification workflow for a token indexing event
+// eventType is the type of event (e.g., "token.indexing.queryable", "token.indexing.viewable", "token.indexing.provenance_completed")
+// address is the address that triggered the indexing operation
+// If nil, the indexing operation was not triggered by a specific address
+func (w *workerCore) triggerWebhookTokenIndexingNotification(ctx workflow.Context, tokenCID domain.TokenCID, eventType string, address *string) {
 	// Parse token CID to get components
 	chain, standard, contract, tokenNumber := tokenCID.Parse()
 
@@ -181,18 +216,26 @@ func (w *workerCore) triggerWebhookNotification(ctx workflow.Context, tokenCID d
 		EventID:   ulid.String(),
 		EventType: eventType,
 		Timestamp: workflow.Now(ctx),
-		Data: webhook.EventData{
-			TokenCID:    tokenCID.String(),
-			Chain:       string(chain),
-			Standard:    string(standard),
-			Contract:    contract,
-			TokenNumber: tokenNumber,
+		Data: webhook.IndexingEventData{
+			EventData: webhook.EventData{
+				TokenCID:    tokenCID.String(),
+				Chain:       string(chain),
+				Standard:    string(standard),
+				Contract:    contract,
+				TokenNumber: tokenNumber,
+			},
+			Address: address,
 		},
 	}
 
+	w.triggerWebhookNotification(ctx, webhookEvent)
+}
+
+// triggerWebhookNotification triggers a webhook notification workflow (fire-and-forget)
+func (w *workerCore) triggerWebhookNotification(ctx workflow.Context, event webhook.WebhookEvent) {
 	// Configure child workflow options (fire-and-forget)
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:            fmt.Sprintf("webhook-notify-%s-%s", eventType, webhookEvent.EventID),
+		WorkflowID:            fmt.Sprintf("webhook-notify-%s-%s", event.EventType, event.EventID),
 		WorkflowRunTimeout:    1 * time.Hour, // Allow time for all client deliveries and retries
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for completion
@@ -200,19 +243,18 @@ func (w *workerCore) triggerWebhookNotification(ctx workflow.Context, tokenCID d
 	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 	// Start notification workflow (don't wait for result)
-	childWorkflow := workflow.ExecuteChildWorkflow(childCtx, w.NotifyWebhookClients, webhookEvent)
+	childWorkflow := workflow.ExecuteChildWorkflow(childCtx, w.NotifyWebhookClients, event)
 
 	// Only verify it started successfully
 	var childExecution workflow.Execution
 	if err := childWorkflow.GetChildWorkflowExecution().Get(ctx, &childExecution); err != nil {
 		logger.WarnWf(ctx, "Failed to start webhook notification workflow",
-			zap.String("eventType", eventType),
-			zap.String("tokenCID", tokenCID.String()),
+			zap.String("eventType", event.EventType),
+			zap.String("eventID", event.EventID),
 			zap.Error(err))
-		return
 	}
 
 	logger.InfoWf(ctx, "Webhook notification workflow started",
-		zap.String("eventType", eventType),
+		zap.String("eventType", event.EventType),
 		zap.String("workflowID", childExecution.ID))
 }
