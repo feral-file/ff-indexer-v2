@@ -3395,7 +3395,7 @@ func TestDeliverWebhookHTTP_Success(t *testing.T) {
 
 	// Mock read all from io reader succeeds
 	mocks.io.EXPECT().
-		ReadAll(mockResponse.Body).
+		ReadAll(io.LimitReader(mockResponse.Body, 4*1024)).
 		Return([]byte(`{"status":"success"}`), nil)
 
 	// Mock update webhook delivery status succeeds
@@ -3492,7 +3492,7 @@ func TestDeliverWebhookHTTP_Non2xxStatusCode(t *testing.T) {
 
 	// Mock read all from io reader succeeds
 	mocks.io.EXPECT().
-		ReadAll(mockResponse.Body).
+		ReadAll(io.LimitReader(mockResponse.Body, 4*1024)).
 		Return([]byte(`{"error":"internal server error"}`), nil)
 
 	// Mock update webhook delivery status fails
@@ -3548,21 +3548,23 @@ func TestDeliverWebhookHTTP_ReadBodyError(t *testing.T) {
 
 	// Mock read all from io reader fails
 	mocks.io.EXPECT().
-		ReadAll(mockResponse.Body).
+		ReadAll(io.LimitReader(mockResponse.Body, 4*1024)).
 		Return(nil, readError)
 
+	// Even though body read fails, delivery should succeed with empty body
+	// The error is logged but doesn't cause the delivery to fail
 	statusCode := 200
 	mocks.store.EXPECT().
-		UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, gomock.Any(), &statusCode, "", readError.Error()).
+		UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusSuccess, gomock.Any(), &statusCode, "", "").
 		Return(nil)
 
 	result, err := mocks.executor.DeliverWebhookHTTP(ctx, client, event, deliveryID)
 
-	assert.Error(t, err)
-	assert.False(t, result.Success)
-	// Should be a non-retryable error
-	var appErr *temporal.ApplicationError
-	assert.True(t, errors.As(err, &appErr))
+	// Delivery should succeed even if we couldn't read the body
+	assert.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, 200, result.StatusCode)
+	assert.Empty(t, result.Body, "Body should be empty when read fails")
 }
 
 func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
@@ -3604,7 +3606,7 @@ func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
 
 	// Mock read all from io reader succeeds
 	mocks.io.EXPECT().
-		ReadAll(mockResponse.Body).
+		ReadAll(io.LimitReader(mockResponse.Body, 4*1024)).
 		Return([]byte(`{"status":"success"}`), nil)
 
 	// Mock update webhook delivery status fails

@@ -2281,19 +2281,13 @@ func (s *pgStore) UpdateWebhookDeliveryStatus(ctx context.Context, deliveryID ui
 	updates := map[string]interface{}{
 		"delivery_status": status,
 		"attempts":        attempts,
+		"response_body":   responseBody,
 		"last_attempt_at": now,
 		"updated_at":      now,
 	}
 
 	if responseStatus != nil {
 		updates["response_status"] = *responseStatus
-	}
-	if responseBody != "" {
-		// Limit response body to prevent database bloat
-		if len(responseBody) > 4096 {
-			responseBody = responseBody[:4096]
-		}
-		updates["response_body"] = responseBody
 	}
 	if errorMessage != "" {
 		// Limit error message

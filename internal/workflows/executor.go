@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"go.temporal.io/sdk/temporal"
@@ -1322,6 +1323,18 @@ func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.Webhoo
 		}
 	}()
 
+	// Read response body with a size limit to prevent memory exhaustion
+	// We use LimitReader to ensure we never read more than 4KB
+	limitedReader := io.LimitReader(resp.Body, 4*1024)
+
+	respBody, err := e.io.ReadAll(limitedReader)
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to read response body for webhook delivery"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+		// Continue with empty body - don't fail the delivery
+		respBody = []byte{}
+	}
+
 	// Check status code for non-2xx responses
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		logger.ErrorCtx(ctx, errors.New("failed to post webhook HTTP request"),
@@ -1329,7 +1342,6 @@ func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.Webhoo
 			zap.String("clientID", client.ClientID))
 
 		err := fmt.Errorf("HTTP %d", resp.StatusCode)
-		respBody, _ := e.io.ReadAll(resp.Body)
 		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), &resp.StatusCode, string(respBody), err.Error()); ierr != nil {
 			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
 				zap.Error(ierr),
@@ -1338,22 +1350,6 @@ func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.Webhoo
 
 		// Return error to trigger Temporal retry
 		return webhook.DeliveryResult{Success: false, StatusCode: resp.StatusCode, Body: string(respBody)}, err
-	}
-
-	// Read response body
-	respBody, err := e.io.ReadAll(resp.Body)
-	if err != nil {
-		logger.ErrorCtx(ctx, errors.New("failed to read response body"),
-			zap.Error(err), zap.String("clientID", client.ClientID))
-
-		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), &resp.StatusCode, string(respBody), err.Error()); ierr != nil {
-			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
-				zap.Error(ierr),
-				zap.String("clientID", client.ClientID))
-		}
-
-		// Return non-retryable error to stop Temporal retry
-		return webhook.DeliveryResult{Success: false, Error: err.Error()}, temporal.NewNonRetryableApplicationError(err.Error(), "failed to read response body", err)
 	}
 
 	// Update webhook delivery status
