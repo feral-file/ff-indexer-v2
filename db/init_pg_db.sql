@@ -194,8 +194,8 @@ CREATE TABLE webhook_clients (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     
-    -- Enforce HTTPS URLs only for security
-    CONSTRAINT webhook_url_https CHECK (webhook_url LIKE 'https://%')
+    -- Enforce HTTP/HTTPS URLs only
+    CONSTRAINT webhook_url_http_https CHECK (webhook_url LIKE 'http://%' OR webhook_url LIKE 'https://%')
 );
 
 -- Webhook Deliveries table - Audit log of webhook delivery attempts

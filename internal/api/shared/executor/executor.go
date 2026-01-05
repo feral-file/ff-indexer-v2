@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
@@ -47,6 +48,9 @@ type Executor interface {
 
 	// GetWorkflowStatus retrieves the status of a Temporal workflow execution
 	GetWorkflowStatus(ctx context.Context, workflowID, runID string) (*dto.WorkflowStatusResponse, error)
+
+	// CreateWebhookClient creates a new webhook client
+	CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts int) (*dto.CreateWebhookClientResponse, error)
 }
 
 type executor struct {
@@ -54,14 +58,18 @@ type executor struct {
 	orchestrator          temporal.TemporalOrchestrator
 	orchestratorTaskQueue string
 	blacklist             registry.BlacklistRegistry
+	json                  adapter.JSON
+	clock                 adapter.Clock
 }
 
-func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, orchestratorTaskQueue string, blacklist registry.BlacklistRegistry) Executor {
+func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, orchestratorTaskQueue string, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock) Executor {
 	return &executor{
 		store:                 store,
 		orchestrator:          orchestrator,
 		orchestratorTaskQueue: orchestratorTaskQueue,
 		blacklist:             blacklist,
+		json:                  json,
+		clock:                 clock,
 	}
 }
 
@@ -901,5 +909,59 @@ func (e *executor) GetWorkflowStatus(ctx context.Context, workflowID, runID stri
 		StartTime:     startTime,
 		CloseTime:     closeTime,
 		ExecutionTime: executionTime,
+	}, nil
+}
+
+// CreateWebhookClient creates a new webhook client
+func (e *executor) CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts int) (*dto.CreateWebhookClientResponse, error) {
+	// Generate client ID (UUID v4)
+	clientID, err := internalTypes.GenerateUUID()
+	if err != nil {
+		return nil, apierrors.NewInternalError(fmt.Sprintf("Failed to generate client ID: %v", err))
+	}
+
+	// Generate webhook secret (secure random 64-character hex string)
+	webhookSecret, err := internalTypes.GenerateSecureToken(constants.DEFAULT_WEBHOOK_CLIENT_SECRET_LENGTH) // 32 bytes = 64 hex characters
+	if err != nil {
+		return nil, apierrors.NewInternalError(fmt.Sprintf("Failed to generate webhook secret: %v", err))
+	}
+
+	// Marshal event filters to JSON
+	eventFiltersJSON, err := e.json.Marshal(eventFilters)
+	if err != nil {
+		return nil, apierrors.NewInternalError(fmt.Sprintf("Failed to marshal event filters: %v", err))
+	}
+
+	// Create webhook client input
+	input := store.CreateWebhookClientInput{
+		ClientID:         clientID,
+		WebhookURL:       webhookURL,
+		WebhookSecret:    webhookSecret,
+		EventFilters:     eventFiltersJSON,
+		IsActive:         true,
+		RetryMaxAttempts: retryMaxAttempts,
+	}
+
+	// Save to database
+	webhookClient, err := e.store.CreateWebhookClient(ctx, input)
+	if err != nil {
+		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to create webhook client: %v", err))
+	}
+
+	logger.Info("Webhook client created",
+		zap.String("client_id", clientID),
+		zap.String("webhook_url", webhookURL),
+		zap.Strings("event_filters", eventFilters),
+	)
+
+	return &dto.CreateWebhookClientResponse{
+		ClientID:         webhookClient.ClientID,
+		WebhookURL:       webhookClient.WebhookURL,
+		WebhookSecret:    webhookClient.WebhookSecret,
+		EventFilters:     eventFilters,
+		IsActive:         webhookClient.IsActive,
+		RetryMaxAttempts: webhookClient.RetryMaxAttempts,
+		CreatedAt:        webhookClient.CreatedAt,
+		UpdatedAt:        webhookClient.UpdatedAt,
 	}, nil
 }

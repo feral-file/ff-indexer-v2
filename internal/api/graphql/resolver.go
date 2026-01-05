@@ -6,12 +6,14 @@ import (
 
 // Resolver is the root resolver that holds executor
 type Resolver struct {
+	debug    bool
 	executor executor.Executor
 }
 
 // NewResolver creates a new root resolver with executor
-func NewResolver(exec executor.Executor) *Resolver {
+func NewResolver(debug bool, exec executor.Executor) *Resolver {
 	return &Resolver{
+		debug:    debug,
 		executor: exec,
 	}
 }

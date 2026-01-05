@@ -1,6 +1,9 @@
 package webhook
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Event type constants
 const (
@@ -32,6 +35,22 @@ const (
 	// EventTypeWildcard is a special filter that matches all event types
 	EventTypeWildcard = "*"
 )
+
+// SupportedEventTypes is a list of all supported event types for webhook subscriptions
+var SupportedEventTypes = []string{
+	EventTypeTokenIndexingQueryable,
+	EventTypeTokenIndexingViewable,
+	EventTypeTokenIndexingProvenanceCompleted,
+	EventTypeTokenOwnershipMinted,
+	EventTypeTokenOwnershipTransferred,
+	EventTypeTokenOwnershipBurned,
+	EventTypeWildcard,
+}
+
+// IsValidEventType checks if an event type is supported
+func IsValidEventType(eventType string) bool {
+	return slices.Contains(SupportedEventTypes, eventType)
+}
 
 // WebhookEvent represents a webhook event to be delivered to clients
 type WebhookEvent struct {

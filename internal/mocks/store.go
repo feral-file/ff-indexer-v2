@@ -95,6 +95,21 @@ func (mr *MockStoreMockRecorder) CreateTokenWithProvenances(ctx, input interface
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenWithProvenances", reflect.TypeOf((*MockStore)(nil).CreateTokenWithProvenances), ctx, input)
 }
 
+// CreateWebhookClient mocks base method.
+func (m *MockStore) CreateWebhookClient(ctx context.Context, input store.CreateWebhookClientInput) (*schema.WebhookClient, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateWebhookClient", ctx, input)
+	ret0, _ := ret[0].(*schema.WebhookClient)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateWebhookClient indicates an expected call of CreateWebhookClient.
+func (mr *MockStoreMockRecorder) CreateWebhookClient(ctx, input interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWebhookClient", reflect.TypeOf((*MockStore)(nil).CreateWebhookClient), ctx, input)
+}
+
 // CreateWebhookDelivery mocks base method.
 func (m *MockStore) CreateWebhookDelivery(ctx context.Context, delivery *schema.WebhookDelivery) error {
 	m.ctrl.T.Helper()

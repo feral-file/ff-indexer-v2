@@ -81,6 +81,7 @@ func main() {
 	// Initialize adapters
 	fs := adapter.NewFileSystem()
 	jsonAdapter := adapter.NewJSON()
+	clockAdapter := adapter.NewClock()
 
 	// Connect to Temporal with logger integration
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
@@ -126,7 +127,7 @@ func main() {
 	}
 
 	// Create and start server
-	srv := server.New(serverConfig, dataStore, temporalClient, blacklistRegistry)
+	srv := server.New(serverConfig, dataStore, temporalClient, blacklistRegistry, jsonAdapter, clockAdapter)
 
 	// Start server in a goroutine
 	errCh := make(chan error, 1)

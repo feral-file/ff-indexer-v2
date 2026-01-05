@@ -2244,6 +2244,27 @@ func (s *pgStore) GetWebhookClientByID(ctx context.Context, clientID string) (*s
 	return &client, nil
 }
 
+// CreateWebhookClient creates a new webhook client
+func (s *pgStore) CreateWebhookClient(ctx context.Context, input CreateWebhookClientInput) (*schema.WebhookClient, error) {
+	now := time.Now()
+	client := &schema.WebhookClient{
+		ClientID:         input.ClientID,
+		WebhookURL:       input.WebhookURL,
+		WebhookSecret:    input.WebhookSecret,
+		EventFilters:     input.EventFilters,
+		IsActive:         input.IsActive,
+		RetryMaxAttempts: input.RetryMaxAttempts,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	err := s.db.WithContext(ctx).Create(client).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to create webhook client: %w", err)
+	}
+	return client, nil
+}
+
 // CreateWebhookDelivery creates a new webhook delivery record
 func (s *pgStore) CreateWebhookDelivery(ctx context.Context, delivery *schema.WebhookDelivery) error {
 	// Payload is already JSON bytes from the executor

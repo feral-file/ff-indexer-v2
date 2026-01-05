@@ -14,8 +14,8 @@ CREATE TABLE webhook_clients (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
-    -- Enforce HTTPS URLs only for security
-    CONSTRAINT webhook_url_https CHECK (webhook_url LIKE 'https://%')
+    -- Enforce HTTP/HTTPS URLs only
+    CONSTRAINT webhook_url_http_https CHECK (webhook_url LIKE 'http://%' OR webhook_url LIKE 'https://%')
 );
 
 -- Index for querying active clients

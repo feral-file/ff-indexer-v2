@@ -32,5 +32,8 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 
 		// Workflow endpoints (public read access)
 		v1.GET("/workflows/:workflow_id/runs/:run_id", handler.GetWorkflowStatus)
+
+		// Webhook endpoints (requires API key authentication only)
+		v1.POST("/webhooks/clients", middleware.APIKeyAuth(authCfg), handler.CreateWebhookClient)
 	}
 }

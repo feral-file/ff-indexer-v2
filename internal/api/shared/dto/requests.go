@@ -7,6 +7,7 @@ import (
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // TriggerTokenIndexingRequest represents the request body for triggering token indexing by CIDs
@@ -90,6 +91,53 @@ func (r *TriggerMetadataIndexingRequest) Validate() error {
 	for _, cid := range r.TokenCIDs {
 		if !domain.TokenCID(cid).Valid() {
 			return apierrors.NewValidationError(fmt.Sprintf("invalid token CID: %s", cid))
+		}
+	}
+
+	return nil
+}
+
+// CreateWebhookClientRequest represents the request body for creating a webhook client
+type CreateWebhookClientRequest struct {
+	WebhookURL       string   `json:"webhook_url"`
+	EventFilters     []string `json:"event_filters"`
+	RetryMaxAttempts *int     `json:"retry_max_attempts,omitempty"`
+}
+
+// Validate validates the request body
+func (r *CreateWebhookClientRequest) Validate(debug bool) error {
+	// Validate: webhook URL must be provided
+	if r.WebhookURL == "" {
+		return apierrors.NewValidationError("webhook_url is required")
+	}
+
+	// Validate: webhook URL must be valid
+	if debug {
+		if !internalTypes.IsValidURL(r.WebhookURL) {
+			return apierrors.NewValidationError("webhook_url must be a valid URL")
+		}
+	} else {
+		if !internalTypes.IsHTTPSURL(r.WebhookURL) {
+			return apierrors.NewValidationError("webhook_url must be a valid HTTPS URL")
+		}
+	}
+
+	// Validate: event filters must be provided
+	if len(r.EventFilters) == 0 {
+		return apierrors.NewValidationError("event_filters is required and must not be empty")
+	}
+
+	// Validate: each event filter must be supported
+	for _, eventType := range r.EventFilters {
+		if !webhook.IsValidEventType(eventType) {
+			return apierrors.NewValidationError(fmt.Sprintf("unsupported event type: %s. Supported types: %v", eventType, webhook.SupportedEventTypes))
+		}
+	}
+
+	// Validate: retry_max_attempts must be valid if provided
+	if r.RetryMaxAttempts != nil {
+		if *r.RetryMaxAttempts < 0 || *r.RetryMaxAttempts > constants.MAX_RETRY_MAX_ATTEMPTS {
+			return apierrors.NewValidationError("retry_max_attempts must be between 0 and 10")
 		}
 	}
 

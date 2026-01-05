@@ -265,5 +265,26 @@ type Mutation {
     token_ids: [Uint64!]
     token_cids: [String!]
   ): TriggerIndexingResult
+
+  # Create a new webhook client (requires API key authentication only, JWT not accepted)
+  # Equivalent to: POST /api/v1/webhooks/clients
+  createWebhookClient(
+    webhook_url: String!
+    event_filters: [String!]!
+    retry_max_attempts: Int
+  ): WebhookClientResult
 }
+
+# Webhook client result
+type WebhookClientResult {
+  client_id: String!
+  webhook_url: String!
+  webhook_secret: String!
+  event_filters: [String!]!
+  is_active: Boolean!
+  retry_max_attempts: Int!
+  created_at: Time!
+  updated_at: Time!
+}
+
 

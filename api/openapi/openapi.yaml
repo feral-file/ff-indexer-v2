@@ -52,6 +52,8 @@ tags:
     description: Change tracking and journal operations
   - name: workflows
     description: Temporal workflow status and tracking operations
+  - name: webhooks
+    description: Webhook client registration and management operations
   - name: health
     description: Health check operations
 
@@ -736,6 +738,98 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/webhooks/clients:
+    post:
+      summary: Create a new webhook client
+      description: |
+        Creates a new webhook client that will receive webhook events.
+        
+        **This endpoint requires API key authentication only** (JWT tokens are not accepted).
+        Use the `Authorization: ApiKey <key>` header.
+        
+        The server will automatically generate:
+        - `client_id` - A unique UUID v4 identifier for the client
+        - `webhook_secret` - A secure 64-character hex string for HMAC-SHA256 signature verification
+        
+        The webhook client will be created in an active state (`is_active: true`) by default.
+        
+        ## Event Filters
+        You can subscribe to specific event types or use `["*"]` to receive all events:
+        - `token.indexing.queryable` - Token becomes queryable (basic ownership indexed)
+        - `token.indexing.viewable` - Token becomes viewable (metadata and enrichment completed)
+        - `token.indexing.provenance_completed` - Full provenance history indexed
+        - `token.ownership.minted` - Token was minted
+        - `token.ownership.transferred` - Token ownership changed
+        - `token.ownership.burned` - Token was burned
+        - `*` - Wildcard to receive all event types
+        
+        ## Retry Configuration
+        The `retry_max_attempts` parameter controls how many times the system will attempt to deliver
+        a webhook before giving up. Default is 5, range is 0-10.
+        
+        ## Response
+        Returns the complete webhook client configuration including the generated `client_id` and
+        `webhook_secret`. **Save the webhook_secret securely** as it will be needed to verify webhook
+        signatures.
+      operationId: createWebhookClient
+      tags:
+        - webhooks
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookClientRequest'
+      responses:
+        '201':
+          description: Webhook client created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookClientResponse'
+        '400':
+          description: Bad request - Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '401':
+          description: Unauthorized - Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '422':
+          description: Validation error - Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          examples:
+            invalidURL:
+              summary: Invalid webhook URL
+              value:
+                code: validation_failed
+                message: webhook_url must be a valid HTTPS URL
+            emptyFilters:
+              summary: Empty event filters
+              value:
+                code: validation_failed
+                message: event_filters is required and must not be empty
+            invalidRetry:
+              summary: Invalid retry attempts
+              value:
+                code: validation_failed
+                message: retry_max_attempts must be between 0 and 10
         '500':
           description: Internal server error
           content:
@@ -1441,6 +1535,94 @@ components:
           format: uint64
           description: Total execution time in milliseconds (only present if workflow is closed)
           example: 300000
+
+    CreateWebhookClientRequest:
+      type: object
+      required:
+        - webhook_url
+        - event_filters
+      properties:
+        webhook_url:
+          type: string
+          format: uri
+          description: HTTPS endpoint where webhooks will be delivered (must be HTTPS)
+          example: "https://example.com/webhooks/handler"
+        event_filters:
+          type: array
+          items:
+            type: string
+          description: |
+            List of event types this client wants to receive.
+            Use `["*"]` to receive all event types.
+            
+            Available event types:
+            - `token.indexing.queryable` - Token becomes queryable
+            - `token.indexing.viewable` - Token becomes viewable
+            - `token.indexing.provenance_completed` - Full provenance indexed
+            - `token.ownership.minted` - Token was minted
+            - `token.ownership.transferred` - Token ownership changed
+            - `token.ownership.burned` - Token was burned
+            - `*` - Wildcard for all events
+          minItems: 1
+          example: ["token.indexing.viewable", "token.ownership.transferred"]
+        retry_max_attempts:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 5
+          description: Maximum number of delivery attempts before giving up (0-10, default 5)
+          example: 5
+
+    WebhookClientResponse:
+      type: object
+      required:
+        - client_id
+        - webhook_url
+        - webhook_secret
+        - event_filters
+        - is_active
+        - retry_max_attempts
+        - created_at
+        - updated_at
+      properties:
+        client_id:
+          type: string
+          format: uuid
+          description: Unique identifier for the webhook client (UUID v4)
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        webhook_url:
+          type: string
+          format: uri
+          description: HTTPS endpoint where webhooks will be delivered
+          example: "https://example.com/webhooks/handler"
+        webhook_secret:
+          type: string
+          description: Secret key for HMAC-SHA256 signature verification (64-character hex string)
+          example: "a1b2c3d4e5f6789012345678901234567890123456789012345678901234567890"
+        event_filters:
+          type: array
+          items:
+            type: string
+          description: List of event types this client will receive
+          example: ["token.indexing.viewable", "token.ownership.transferred"]
+        is_active:
+          type: boolean
+          description: Whether this client is active and should receive webhooks
+          example: true
+        retry_max_attempts:
+          type: integer
+          description: Maximum number of delivery attempts
+          example: 5
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the webhook client was created
+          example: "2024-01-15T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the webhook client was last updated
+          example: "2024-01-15T10:30:00Z"
 
     APIError:
       type: object

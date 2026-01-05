@@ -4022,6 +4022,160 @@ func testGetEnrichmentSourcesByTokenIDs(t *testing.T, store Store) {
 func testWebhookClients(t *testing.T, store Store) {
 	ctx := context.Background()
 
+	t.Run("CreateWebhookClient - success", func(t *testing.T) {
+		eventFilters := []string{"token.indexing.queryable", "token.indexing.viewable"}
+		eventFiltersJSON, err := json.Marshal(eventFilters)
+		require.NoError(t, err)
+
+		input := CreateWebhookClientInput{
+			ClientID:         "test-client-001",
+			WebhookURL:       "https://example.com/webhook",
+			WebhookSecret:    "test-secret-abc123",
+			EventFilters:     datatypes.JSON(eventFiltersJSON),
+			IsActive:         true,
+			RetryMaxAttempts: 3,
+		}
+
+		client, err := store.CreateWebhookClient(ctx, input)
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
+		assert.NotZero(t, client.ID)
+		assert.Equal(t, input.ClientID, client.ClientID)
+		assert.Equal(t, input.WebhookURL, client.WebhookURL)
+		assert.Equal(t, input.WebhookSecret, client.WebhookSecret)
+		assert.Equal(t, input.IsActive, client.IsActive)
+		assert.Equal(t, input.RetryMaxAttempts, client.RetryMaxAttempts)
+		assert.NotZero(t, client.CreatedAt)
+		assert.NotZero(t, client.UpdatedAt)
+
+		// Verify event filters
+		var retrievedFilters []string
+		err = json.Unmarshal(client.EventFilters, &retrievedFilters)
+		assert.NoError(t, err)
+		assert.Equal(t, eventFilters, retrievedFilters)
+	})
+
+	t.Run("CreateWebhookClient - with wildcard filter", func(t *testing.T) {
+		eventFilters := []string{"*"}
+		eventFiltersJSON, err := json.Marshal(eventFilters)
+		require.NoError(t, err)
+
+		input := CreateWebhookClientInput{
+			ClientID:         "test-client-wildcard-002",
+			WebhookURL:       "https://example.com/webhook/all",
+			WebhookSecret:    "wildcard-secret-xyz789",
+			EventFilters:     datatypes.JSON(eventFiltersJSON),
+			IsActive:         true,
+			RetryMaxAttempts: 5,
+		}
+
+		client, err := store.CreateWebhookClient(ctx, input)
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
+		assert.Equal(t, input.ClientID, client.ClientID)
+		assert.Equal(t, input.WebhookURL, client.WebhookURL)
+	})
+
+	t.Run("CreateWebhookClient - with empty event filters", func(t *testing.T) {
+		eventFilters := []string{}
+		eventFiltersJSON, err := json.Marshal(eventFilters)
+		require.NoError(t, err)
+
+		input := CreateWebhookClientInput{
+			ClientID:         "test-client-empty-005",
+			WebhookURL:       "https://example.com/webhook/empty",
+			WebhookSecret:    "empty-secret",
+			EventFilters:     datatypes.JSON(eventFiltersJSON),
+			IsActive:         true,
+			RetryMaxAttempts: 3,
+		}
+
+		client, err := store.CreateWebhookClient(ctx, input)
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
+
+		var retrievedFilters []string
+		err = json.Unmarshal(client.EventFilters, &retrievedFilters)
+		assert.NoError(t, err)
+		assert.Empty(t, retrievedFilters)
+	})
+
+	t.Run("CreateWebhookClient - max retry attempts", func(t *testing.T) {
+		eventFilters := []string{"token.indexing.queryable"}
+		eventFiltersJSON, err := json.Marshal(eventFilters)
+		require.NoError(t, err)
+
+		tests := []struct {
+			name         string
+			maxAttempts  int
+			shouldCreate bool
+		}{
+			{
+				name:         "normal attempts",
+				maxAttempts:  3,
+				shouldCreate: true,
+			},
+			{
+				name:         "high attempts",
+				maxAttempts:  100,
+				shouldCreate: true,
+			},
+		}
+
+		for i, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				input := CreateWebhookClientInput{
+					ClientID:         fmt.Sprintf("test-client-retry-%d", i),
+					WebhookURL:       fmt.Sprintf("https://example.com/webhook/retry-%d", i),
+					WebhookSecret:    fmt.Sprintf("retry-secret-%d", i),
+					EventFilters:     datatypes.JSON(eventFiltersJSON),
+					IsActive:         true,
+					RetryMaxAttempts: tt.maxAttempts,
+				}
+
+				client, err := store.CreateWebhookClient(ctx, input)
+				if tt.shouldCreate {
+					assert.NoError(t, err)
+					assert.NotNil(t, client)
+					assert.Equal(t, tt.maxAttempts, client.RetryMaxAttempts)
+				} else {
+					assert.Error(t, err)
+				}
+			})
+		}
+	})
+
+	t.Run("CreateWebhookClient - then retrieve by ID", func(t *testing.T) {
+		eventFilters := []string{"token.indexing.viewable"}
+		eventFiltersJSON, err := json.Marshal(eventFilters)
+		require.NoError(t, err)
+
+		input := CreateWebhookClientInput{
+			ClientID:         "test-client-retrieve-006",
+			WebhookURL:       "https://example.com/webhook/retrieve",
+			WebhookSecret:    "retrieve-secret",
+			EventFilters:     datatypes.JSON(eventFiltersJSON),
+			IsActive:         true,
+			RetryMaxAttempts: 4,
+		}
+
+		// Create client
+		created, err := store.CreateWebhookClient(ctx, input)
+		assert.NoError(t, err)
+		assert.NotNil(t, created)
+
+		// Retrieve by client_id
+		retrieved, err := store.GetWebhookClientByID(ctx, input.ClientID)
+		assert.NoError(t, err)
+		assert.NotNil(t, retrieved)
+		assert.Equal(t, created.ID, retrieved.ID)
+		assert.Equal(t, created.ClientID, retrieved.ClientID)
+		assert.Equal(t, created.WebhookURL, retrieved.WebhookURL)
+		assert.Equal(t, created.WebhookSecret, retrieved.WebhookSecret)
+		assert.Equal(t, created.IsActive, retrieved.IsActive)
+		assert.Equal(t, created.RetryMaxAttempts, retrieved.RetryMaxAttempts)
+	})
+
 	t.Run("GetActiveWebhookClientsByEventType - wildcard", func(t *testing.T) {
 		// Test data from pg_test_data.sql includes client-all-events-123 with ["*"] filter
 		clients, err := store.GetActiveWebhookClientsByEventType(ctx, "token.indexing.queryable")
