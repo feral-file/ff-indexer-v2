@@ -335,12 +335,6 @@ paths:
           style: form
           explode: false
           example: ["owners", "enrichment_source"]
-          in: query
-          description: Sort order for provenance events by timestamp
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
       responses:
         '200':
           description: Tokens retrieved successfully
@@ -655,34 +649,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
-          examples:
-            tokenIdNotFound:
-              summary: Token ID not found
-              value:
-                code: not_found
-                message: Token with ID 12345 not found
-            tokenCIDNotFound:
-              summary: Token CID not found
-              value:
-                code: not_found
-                message: Token with CID eip155:1:erc721:0xabc123:9999 not found
+              examples:
+                tokenIdNotFound:
+                  summary: Token ID not found
+                  value:
+                    code: not_found
+                    message: Token with ID 12345 not found
+                tokenCIDNotFound:
+                  summary: Token CID not found
+                  value:
+                    code: not_found
+                    message: Token with CID eip155:1:erc721:0xabc123:9999 not found
         '422':
           description: Validation error - Invalid request body
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
-          examples:
-            missingBoth:
-              summary: Missing both token_ids and token_cids
-              value:
-                code: validation_failed
-                message: at least one of token_ids or token_cids is required
-            tooManyTokens:
-              summary: Too many tokens provided
-              value:
-                code: validation_failed
-                message: maximum 20 token IDs allowed
+              examples:
+                missingBoth:
+                  summary: Missing both token_ids and token_cids
+                  value:
+                    code: validation_failed
+                    message: at least one of token_ids or token_cids is required
+                tooManyTokens:
+                  summary: Too many tokens provided
+                  value:
+                    code: validation_failed
+                    message: maximum 20 token IDs allowed
         '500':
           description: Internal server error
           content:
@@ -770,10 +764,6 @@ paths:
         - `token.ownership.burned` - Token was burned
         - `*` - Wildcard to receive all event types
         
-        ## Retry Configuration
-        The `retry_max_attempts` parameter controls how many times the system will attempt to deliver
-        a webhook before giving up. Default is 5, range is 0-10.
-        
         ## Response
         Returns the complete webhook client configuration including the generated `client_id` and
         `webhook_secret`. **Save the webhook_secret securely** as it will be needed to verify webhook
@@ -814,28 +804,229 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
-          examples:
-            invalidURL:
-              summary: Invalid webhook URL
-              value:
-                code: validation_failed
-                message: webhook_url must be a valid HTTPS URL
-            emptyFilters:
-              summary: Empty event filters
-              value:
-                code: validation_failed
-                message: event_filters is required and must not be empty
-            invalidRetry:
-              summary: Invalid retry attempts
-              value:
-                code: validation_failed
-                message: retry_max_attempts must be between 0 and 10
+              examples:
+                invalidURL:
+                  summary: Invalid webhook URL
+                  value:
+                    code: validation_failed
+                    message: webhook_url must be a valid HTTPS URL
+                emptyFilters:
+                  summary: Empty event filters
+                  value:
+                    code: validation_failed
+                    message: event_filters is required and must not be empty
+                invalidRetry:
+                  summary: Invalid retry attempts
+                  value:
+                    code: validation_failed
+                    message: retry_max_attempts must be between 0 and 10
         '500':
           description: Internal server error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
+
+x-webhooks:
+  onTokenEvent:
+    post:
+      summary: Token Event Notification
+      description: |
+        The indexer will POST token events to your registered `webhook_url`.
+        
+        ## Request Headers
+        
+        Every webhook delivery includes these headers:
+        - `Content-Type: application/json`
+        - `X-Webhook-Signature: <signature>` - HMAC-SHA256 signature in format `sha256=<hex>`
+        - `X-Webhook-Event-ID: <event_id>` - Unique event ID (ULID format)
+        - `X-Webhook-Event-Type: <event_type>` - Event type string
+        - `X-Webhook-Timestamp: <timestamp>` - Unix timestamp when signature was generated
+        
+        ## Verifying Signatures
+        
+        Always verify the `X-Webhook-Signature` to ensure the webhook came from the indexer.
+        
+        The signature is computed over: `{timestamp}.{event_id}.{json_body}`
+        
+        ## Response Requirements
+        
+        Your endpoint should:
+        - Return HTTP 2xx status (200, 201, 202, 204) to acknowledge receipt
+        - Respond within 30 seconds
+        - Process webhooks asynchronously if needed
+        
+        Non-2xx responses or timeouts will trigger automatic retries with exponential backoff.
+        
+        ## Event Timing
+        
+        Events are fired at specific points in the indexing workflow:
+        
+        ### Indexing Workflow Timeline
+        ```
+        Token Discovered → Index with minimal provenances
+                          ↓ (immediately after)
+                          [token.indexing.queryable]
+                          ↓
+                          Index metadata & enrichment (parallel)
+                          ↓ (after metadata/enrichment complete)
+                          [token.indexing.viewable]
+                          ↓
+                          Index full provenance history (parallel, background)
+                          ↓ (after all historical events indexed)
+                          [token.indexing.provenance_completed]
+        ```
+        
+        ### Ownership Event Timeline
+        ```
+        Mint Event → Create token & provenance record
+                    ↓ (immediately after DB write)
+                    [token.ownership.minted]
+        
+        Transfer Event → Update ownership & balances
+                        ↓ (immediately after DB write)
+                        [token.ownership.transferred]
+        
+        Burn Event → Mark token as burned
+                    ↓ (immediately after DB write)
+                    [token.ownership.burned]
+        ```
+      tags:
+        - webhooks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookEventPayload'
+            examples:
+              tokenIndexingQueryable:
+                summary: token.indexing.queryable event
+                description: |
+                  Fired when a token becomes queryable (minimal ownership indexed).
+                  After this event, you can query the token by ID and see basic ownership.
+                value:
+                  event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J3"
+                  event_type: "token.indexing.queryable"
+                  timestamp: "2024-01-15T10:30:00Z"
+                  data:
+                    token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+                    chain: "eip155:1"
+                    standard: "erc721"
+                    contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+                    token_number: "1234"
+                    address: null
+              tokenIndexingViewable:
+                summary: token.indexing.viewable event
+                description: |
+                  Fired when a token becomes viewable (metadata and enrichment complete).
+                  After this event, the token has full metadata and is ready for display.
+                value:
+                  event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J4"
+                  event_type: "token.indexing.viewable"
+                  timestamp: "2024-01-15T10:30:15Z"
+                  data:
+                    token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+                    chain: "eip155:1"
+                    standard: "erc721"
+                    contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+                    token_number: "1234"
+                    address: "0xowner123"
+              tokenIndexingProvenanceCompleted:
+                summary: token.indexing.provenance_completed event
+                description: |
+                  Fired when full provenance history is indexed.
+                  After this event, all historical transfers and events are available.
+                value:
+                  event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J5"
+                  event_type: "token.indexing.provenance_completed"
+                  timestamp: "2024-01-15T10:31:30Z"
+                  data:
+                    token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+                    chain: "eip155:1"
+                    standard: "erc721"
+                    contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+                    token_number: "1234"
+                    address: null
+              tokenOwnershipMinted:
+                summary: token.ownership.minted event
+                description: |
+                  Fired when a token is minted. The `from_address` is null (or zero address), `to_address` is the recipient.
+                value:
+                  event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J6"
+                  event_type: "token.ownership.minted"
+                  timestamp: "2024-01-15T10:30:00Z"
+                  data:
+                    token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:5678"
+                    chain: "eip155:1"
+                    standard: "erc721"
+                    contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+                    token_number: "5678"
+                    from_address: null
+                    to_address: "0xnewowner123"
+                    quantity: "1"
+              tokenOwnershipTransferred:
+                summary: token.ownership.transferred event
+                description: |
+                  Fired when a token is transferred. Both `from_address` and `to_address` are populated.
+                value:
+                  event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J7"
+                  event_type: "token.ownership.transferred"
+                  timestamp: "2024-01-15T11:00:00Z"
+                  data:
+                    token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+                    chain: "eip155:1"
+                    standard: "erc721"
+                    contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+                    token_number: "1234"
+                    from_address: "0xoldowner123"
+                    to_address: "0xnewowner456"
+                    quantity: "1"
+              tokenOwnershipBurned:
+                summary: token.ownership.burned event
+                description: |
+                  Fired when a token is burned. The `from_address` is the previous owner, `to_address` is null (or zero address).
+                value:
+                  event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J8"
+                  event_type: "token.ownership.burned"
+                  timestamp: "2024-01-15T12:00:00Z"
+                  data:
+                    token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:9999"
+                    chain: "eip155:1"
+                    standard: "erc721"
+                    contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+                    token_number: "9999"
+                    from_address: "0xburner123"
+                    to_address: null
+                    quantity: "1"
+              erc1155Transfer:
+                summary: ERC1155 transfer event (multiple tokens)
+                description: |
+                  Example of a transfer for ERC1155 tokens where quantity can be > 1.
+                value:
+                  event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J9"
+                  event_type: "token.ownership.transferred"
+                  timestamp: "2024-01-15T13:00:00Z"
+                  data:
+                    token_cid: "eip155:1:erc1155:0xabc123def456:42"
+                    chain: "eip155:1"
+                    standard: "erc1155"
+                    contract: "0xabc123def456"
+                    token_number: "42"
+                    from_address: "0xsender123"
+                    to_address: "0xrecipient456"
+                    quantity: "100"
+      responses:
+        '200':
+          description: |
+            Your endpoint should return 200 (or any 2xx status) to acknowledge receipt.
+            This tells the indexer the webhook was successfully delivered.
+        '401':
+          description: |
+            Return 401 if signature verification fails.
+        '500':
+          description: |
+            Server errors will trigger automatic retries with exponential backoff.
 
 components:
   schemas:
@@ -1556,12 +1747,18 @@ components:
             Use `["*"]` to receive all event types.
             
             Available event types:
-            - `token.indexing.queryable` - Token becomes queryable
-            - `token.indexing.viewable` - Token becomes viewable
-            - `token.indexing.provenance_completed` - Full provenance indexed
-            - `token.ownership.minted` - Token was minted
-            - `token.ownership.transferred` - Token ownership changed
-            - `token.ownership.burned` - Token was burned
+            
+            **Indexing Events** (fired during token indexing workflow):
+            - `token.indexing.queryable` - Token becomes queryable (fired after token and minimal provenances are indexed)
+            - `token.indexing.viewable` - Token becomes viewable (fired after metadata and enrichment are complete)
+            - `token.indexing.provenance_completed` - Full provenance indexed (fired after all historical transfers are indexed)
+            
+            **Ownership Events** (fired during ownership change workflows):
+            - `token.ownership.minted` - Token was minted (fired when mint event is processed)
+            - `token.ownership.transferred` - Token ownership changed (fired when transfer event is processed)
+            - `token.ownership.burned` - Token was burned (fired when burn event is processed)
+            
+            **Wildcard**:
             - `*` - Wildcard for all events
           minItems: 1
           example: ["token.indexing.viewable", "token.ownership.transferred"]
@@ -1623,6 +1820,166 @@ components:
           format: date-time
           description: Timestamp when the webhook client was last updated
           example: "2024-01-15T10:30:00Z"
+    
+    WebhookEventPayload:
+      type: object
+      required:
+        - event_id
+        - event_type
+        - timestamp
+        - data
+      description: |
+        The webhook event payload that will be sent to your webhook endpoint.
+        
+        This is delivered as a POST request to your `webhook_url` with:
+        - **Content-Type**: `application/json`
+        - **X-Webhook-Signature**: HMAC-SHA256 signature in format `sha256=<hex>`, computed over `{timestamp}.{event_id}.{json_body}`
+        - **X-Webhook-Event-ID**: The unique event ID (ULID format)
+        - **X-Webhook-Event-Type**: The event type string
+        - **X-Webhook-Timestamp**: Unix timestamp (used in signature computation)
+      properties:
+        event_id:
+          type: string
+          description: Unique event identifier (ULID format - time-sortable, globally unique)
+          example: "01HQX5VFQM8Z7YW8NZRHT6K9J3"
+        event_type:
+          type: string
+          description: Type of webhook event
+          enum:
+            - token.indexing.queryable
+            - token.indexing.viewable
+            - token.indexing.provenance_completed
+            - token.ownership.minted
+            - token.ownership.transferred
+            - token.ownership.burned
+          example: "token.indexing.viewable"
+        timestamp:
+          type: string
+          format: date-time
+          description: When the event was generated (RFC3339 format)
+          example: "2024-01-15T10:30:00Z"
+        data:
+          description: Event-specific payload data
+          oneOf:
+            - $ref: '#/components/schemas/WebhookIndexingEventData'
+            - $ref: '#/components/schemas/WebhookOwnershipEventData'
+    
+    WebhookIndexingEventData:
+      type: object
+      required:
+        - token_cid
+        - chain
+        - standard
+        - contract
+        - token_number
+      description: |
+        Data payload for indexing events:
+        - `token.indexing.queryable` - Fired after token and minimal provenances are indexed. The token can now be queried by ID, and basic ownership information is available.
+        - `token.indexing.viewable` - Fired after metadata and enrichment are complete. The token now has full metadata, enrichment data, and is ready for display.
+        - `token.indexing.provenance_completed` - Fired after full provenance history is indexed. All historical transfers and events are now available.
+      properties:
+        token_cid:
+          type: string
+          description: Canonical token identifier
+          example: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+        chain:
+          type: string
+          description: Blockchain network identifier (CAIP-2 format)
+          example: "eip155:1"
+        standard:
+          type: string
+          description: Token standard (erc721, erc1155, fa2)
+          enum: [erc721, erc1155, fa2]
+          example: "erc721"
+        contract:
+          type: string
+          description: Smart contract address
+          example: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+        token_number:
+          type: string
+          description: Token number/ID within the contract
+          example: "1234"
+        address:
+          type: string
+          nullable: true
+          description: |
+            Address that triggered the indexing operation (if any).
+            This will be populated when indexing was triggered by a specific address
+            (e.g., via the owner indexing API endpoint).
+          example: "0xowner123"
+      example:
+        token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+        chain: "eip155:1"
+        standard: "erc721"
+        contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+        token_number: "1234"
+        address: null
+    
+    WebhookOwnershipEventData:
+      type: object
+      required:
+        - token_cid
+        - chain
+        - standard
+        - contract
+        - token_number
+        - quantity
+      description: |
+        Data payload for ownership events:
+        - `token.ownership.minted` - Fired when a token is minted. `from_address` will be null, `to_address` is the recipient.
+        - `token.ownership.transferred` - Fired when a token is transferred. Both `from_address` and `to_address` are populated.
+        - `token.ownership.burned` - Fired when a token is burned. `from_address` is the previous owner, `to_address` will be null.
+      properties:
+        token_cid:
+          type: string
+          description: Canonical token identifier
+          example: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+        chain:
+          type: string
+          description: Blockchain network identifier (CAIP-2 format)
+          example: "eip155:1"
+        standard:
+          type: string
+          description: Token standard (erc721, erc1155, fa2)
+          enum: [erc721, erc1155, fa2]
+          example: "erc721"
+        contract:
+          type: string
+          description: Smart contract address
+          example: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+        token_number:
+          type: string
+          description: Token number/ID within the contract
+          example: "1234"
+        from_address:
+          type: string
+          nullable: true
+          description: |
+            Sender address (null for mint events).
+            For transfers: the previous owner.
+            For burns: the owner who burned the token.
+          example: "0xfrom123"
+        to_address:
+          type: string
+          nullable: true
+          description: |
+            Recipient address (null for burn events).
+            For mints: the new owner.
+            For transfers: the new owner.
+          example: "0xto456"
+        quantity:
+          type: string
+          description: Quantity transferred (as string to support large numbers). Usually "1" for ERC721/FA2, can be larger for ERC1155.
+          example: "1"
+      example:
+        token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+        chain: "eip155:1"
+        standard: "erc721"
+        contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+        token_number: "1234"
+        from_address: "0xfrom123"
+        to_address: "0xto456"
+        quantity: "1"
 
     APIError:
       type: object
