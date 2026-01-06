@@ -180,7 +180,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_SingleClient() {
 		{
 			ClientID:         "client-123",
 			WebhookURL:       "https://webhook.example.com/endpoint",
-			WebhookSecret:    "secret123",
+			WebhookSecret:    "736563726574313233",
 			EventFilters:     datatypes.JSON(eventFilters),
 			IsActive:         true,
 			RetryMaxAttempts: 5,
@@ -222,7 +222,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_MultipleClients() {
 		{
 			ClientID:         "client-123",
 			WebhookURL:       "https://webhook1.example.com/endpoint",
-			WebhookSecret:    "secret123",
+			WebhookSecret:    "736563726574313233",
 			EventFilters:     datatypes.JSON(eventFilters1),
 			IsActive:         true,
 			RetryMaxAttempts: 5,
@@ -230,7 +230,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_MultipleClients() {
 		{
 			ClientID:         "client-456",
 			WebhookURL:       "https://webhook2.example.com/endpoint",
-			WebhookSecret:    "secret456",
+			WebhookSecret:    "736563726574343536",
 			EventFilters:     datatypes.JSON(eventFilters2),
 			IsActive:         true,
 			RetryMaxAttempts: 3,
@@ -276,7 +276,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_Success() {
 	client := &schema.WebhookClient{
 		ClientID:         clientID,
 		WebhookURL:       "https://webhook.example.com/endpoint",
-		WebhookSecret:    "secret123",
+		WebhookSecret:    "736563726574313233",
 		EventFilters:     datatypes.JSON(eventFilters),
 		IsActive:         true,
 		RetryMaxAttempts: 5,
@@ -348,7 +348,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotActive() {
 	client := &schema.WebhookClient{
 		ClientID:         clientID,
 		WebhookURL:       "https://webhook.example.com/endpoint",
-		WebhookSecret:    "secret123",
+		WebhookSecret:    "736563726574313233",
 		EventFilters:     datatypes.JSON(eventFilters),
 		IsActive:         false,
 		RetryMaxAttempts: 5,
@@ -412,7 +412,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_CreateDeliveryRecordError(
 	client := &schema.WebhookClient{
 		ClientID:         clientID,
 		WebhookURL:       "https://webhook.example.com/endpoint",
-		WebhookSecret:    "secret123",
+		WebhookSecret:    "736563726574313233",
 		EventFilters:     datatypes.JSON(eventFilters),
 		IsActive:         true,
 		RetryMaxAttempts: 5,
@@ -454,7 +454,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
 	client := &schema.WebhookClient{
 		ClientID:         clientID,
 		WebhookURL:       "https://webhook.example.com/endpoint",
-		WebhookSecret:    "secret123",
+		WebhookSecret:    "736563726574313233",
 		EventFilters:     datatypes.JSON(eventFilters),
 		IsActive:         true,
 		RetryMaxAttempts: maxAttempts,

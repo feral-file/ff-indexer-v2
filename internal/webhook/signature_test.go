@@ -17,7 +17,7 @@ import (
 
 func TestGenerateSignedPayload(t *testing.T) {
 	t.Run("generates valid payload and signature", func(t *testing.T) {
-		secret := "test-secret-key"
+		hexSecret := "746573742d7365637265742d6b6579"
 		event := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1234567890123456",
 			EventType: "token.indexing.queryable",
@@ -31,7 +31,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 			},
 		}
 
-		payload, signature, timestamp, err := webhook.GenerateSignedPayload(secret, event)
+		payload, signature, timestamp, err := webhook.GenerateSignedPayload(hexSecret, event)
 		require.NoError(t, err)
 
 		// Verify payload is valid JSON
@@ -52,14 +52,16 @@ func TestGenerateSignedPayload(t *testing.T) {
 
 		// Verify signature can be validated
 		signaturePayload := fmt.Sprintf("%d.%s.%s", timestamp, event.EventID, string(payload))
-		h := hmac.New(sha256.New, []byte(secret))
+		secretBytes, err := hex.DecodeString(hexSecret)
+		require.NoError(t, err)
+		h := hmac.New(sha256.New, secretBytes)
 		h.Write([]byte(signaturePayload))
 		expectedSignature := "sha256=" + hex.EncodeToString(h.Sum(nil))
 		assert.Equal(t, expectedSignature, signature)
 	})
 
 	t.Run("different events produce different signatures", func(t *testing.T) {
-		secret := "test-secret-key"
+		hexSecret := "746573742d7365637265742d6b6579"
 
 		event1 := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1111111111111111",
@@ -87,10 +89,10 @@ func TestGenerateSignedPayload(t *testing.T) {
 			},
 		}
 
-		_, signature1, _, err := webhook.GenerateSignedPayload(secret, event1)
+		_, signature1, _, err := webhook.GenerateSignedPayload(hexSecret, event1)
 		require.NoError(t, err)
 
-		_, signature2, _, err := webhook.GenerateSignedPayload(secret, event2)
+		_, signature2, _, err := webhook.GenerateSignedPayload(hexSecret, event2)
 		require.NoError(t, err)
 
 		// Signatures should be different
@@ -111,10 +113,11 @@ func TestGenerateSignedPayload(t *testing.T) {
 			},
 		}
 
-		_, signature1, _, err := webhook.GenerateSignedPayload("secret1", event)
+		// Hex-encoded secrets (hex encodings of "secret1" and "secret2")
+		_, signature1, _, err := webhook.GenerateSignedPayload("73656372657431", event) // "secret1" in hex
 		require.NoError(t, err)
 
-		_, signature2, _, err := webhook.GenerateSignedPayload("secret2", event)
+		_, signature2, _, err := webhook.GenerateSignedPayload("73656372657432", event) // "secret2" in hex
 		require.NoError(t, err)
 
 		// Signatures should be different
@@ -122,7 +125,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 	})
 
 	t.Run("signature includes event_id to prevent replay", func(t *testing.T) {
-		secret := "test-secret-key"
+		hexSecret := "746573742d7365637265742d6b6579"
 
 		// Same event data but different event IDs
 		baseData := webhook.EventData{
@@ -147,10 +150,10 @@ func TestGenerateSignedPayload(t *testing.T) {
 			Data:      baseData,
 		}
 
-		_, signature1, _, err := webhook.GenerateSignedPayload(secret, event1)
+		_, signature1, _, err := webhook.GenerateSignedPayload(hexSecret, event1)
 		require.NoError(t, err)
 
-		_, signature2, _, err := webhook.GenerateSignedPayload(secret, event2)
+		_, signature2, _, err := webhook.GenerateSignedPayload(hexSecret, event2)
 		require.NoError(t, err)
 
 		// Signatures should be different because event IDs are different
@@ -158,7 +161,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 	})
 
 	t.Run("empty secret still produces valid signature", func(t *testing.T) {
-		secret := ""
+		hexSecret := ""
 		event := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1234567890123456",
 			EventType: "token.indexing.queryable",
@@ -172,7 +175,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 			},
 		}
 
-		payload, signature, timestamp, err := webhook.GenerateSignedPayload(secret, event)
+		payload, signature, timestamp, err := webhook.GenerateSignedPayload(hexSecret, event)
 		require.NoError(t, err)
 		assert.NotEmpty(t, payload)
 		assert.NotEmpty(t, signature)
@@ -180,7 +183,7 @@ func TestGenerateSignedPayload(t *testing.T) {
 	})
 
 	t.Run("signature can be verified by client", func(t *testing.T) {
-		secret := "test-secret-key"
+		hexSecret := "746573742d7365637265742d6b6579"
 		event := webhook.WebhookEvent{
 			EventID:   "01JG8XAMPLE1234567890123456",
 			EventType: "token.indexing.queryable",
@@ -194,15 +197,37 @@ func TestGenerateSignedPayload(t *testing.T) {
 			},
 		}
 
-		payload, signature, timestamp, err := webhook.GenerateSignedPayload(secret, event)
+		payload, signature, timestamp, err := webhook.GenerateSignedPayload(hexSecret, event)
 		require.NoError(t, err)
 
 		// Client-side verification
 		signaturePayload := fmt.Sprintf("%d.%s.%s", timestamp, event.EventID, string(payload))
-		h := hmac.New(sha256.New, []byte(secret))
+		secretBytes, err := hex.DecodeString(hexSecret)
+		require.NoError(t, err)
+		h := hmac.New(sha256.New, secretBytes)
 		h.Write([]byte(signaturePayload))
 		clientSignature := "sha256=" + hex.EncodeToString(h.Sum(nil))
 
 		assert.Equal(t, signature, clientSignature, "Client should be able to reproduce the signature")
+	})
+
+	t.Run("invalid hex secret returns error", func(t *testing.T) {
+		invalidHexSecret := "not-valid-hex-string" //nolint:gosec,G101
+		event := webhook.WebhookEvent{
+			EventID:   "01JG8XAMPLE1234567890123456",
+			EventType: "token.indexing.queryable",
+			Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+			Data: webhook.EventData{
+				TokenCID:    "eip155:1:erc721:0xABC:1",
+				Chain:       "eip155:1",
+				Standard:    "erc721",
+				Contract:    "0xABC",
+				TokenNumber: "1",
+			},
+		}
+
+		_, _, _, err := webhook.GenerateSignedPayload(invalidHexSecret, event)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode hex secret")
 	})
 }

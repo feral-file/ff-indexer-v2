@@ -11,7 +11,7 @@ import (
 
 // GenerateSignedPayload generates a signed webhook payload with HMAC-SHA256 signature
 // Returns the JSON payload, signature header value, timestamp, and any error
-func GenerateSignedPayload(secret string, event WebhookEvent) (payload []byte, signature string, timestamp int64, err error) {
+func GenerateSignedPayload(hexSecret string, event WebhookEvent) (payload []byte, signature string, timestamp int64, err error) {
 	// Serialize event to JSON
 	payload, err = json.Marshal(event)
 	if err != nil {
@@ -29,7 +29,11 @@ func GenerateSignedPayload(secret string, event WebhookEvent) (payload []byte, s
 	signaturePayload := fmt.Sprintf("%d.%s.%s", timestamp, event.EventID, string(payload))
 
 	// Generate HMAC-SHA256 signature
-	h := hmac.New(sha256.New, []byte(secret))
+	hexSecretBytes, err := hex.DecodeString(hexSecret)
+	if err != nil {
+		return nil, "", 0, fmt.Errorf("failed to decode hex secret: %w", err)
+	}
+	h := hmac.New(sha256.New, hexSecretBytes)
 	h.Write([]byte(signaturePayload))
 	signatureBytes := h.Sum(nil)
 

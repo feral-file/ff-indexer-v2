@@ -3153,7 +3153,7 @@ func TestGetActiveWebhookClientsByEventType_Success(t *testing.T) {
 			ID:               1,
 			ClientID:         "client-123",
 			WebhookURL:       "https://example.com/webhook",
-			WebhookSecret:    "secret",
+			WebhookSecret:    "736563726574",
 			EventFilters:     []byte(`["token.indexing.queryable"]`),
 			IsActive:         true,
 			RetryMaxAttempts: 5,
@@ -3199,7 +3199,7 @@ func TestGetWebhookClientByID_Success(t *testing.T) {
 		ID:               1,
 		ClientID:         clientID,
 		WebhookURL:       "https://example.com/webhook",
-		WebhookSecret:    "secret",
+		WebhookSecret:    "736563726574",
 		EventFilters:     []byte(`["*"]`),
 		IsActive:         true,
 		RetryMaxAttempts: 5,
@@ -3356,7 +3356,7 @@ func TestDeliverWebhookHTTP_Success(t *testing.T) {
 	client := &schema.WebhookClient{
 		ClientID:      "client-123",
 		WebhookURL:    "https://example.com/webhook",
-		WebhookSecret: "secret-key",
+		WebhookSecret: "7365637265742d6b6579",
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
@@ -3419,7 +3419,7 @@ func TestDeliverWebhookHTTP_HTTPError(t *testing.T) {
 	client := &schema.WebhookClient{
 		ClientID:      "client-123",
 		WebhookURL:    "https://example.com/webhook",
-		WebhookSecret: "secret-key",
+		WebhookSecret: "7365637265742d6b6579",
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
@@ -3462,7 +3462,7 @@ func TestDeliverWebhookHTTP_Non2xxStatusCode(t *testing.T) {
 	client := &schema.WebhookClient{
 		ClientID:      "client-123",
 		WebhookURL:    "https://example.com/webhook",
-		WebhookSecret: "secret-key",
+		WebhookSecret: "7365637265742d6b6579",
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
@@ -3516,7 +3516,7 @@ func TestDeliverWebhookHTTP_ReadBodyError(t *testing.T) {
 	client := &schema.WebhookClient{
 		ClientID:      "client-123",
 		WebhookURL:    "https://example.com/webhook",
-		WebhookSecret: "secret-key",
+		WebhookSecret: "7365637265742d6b6579",
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
@@ -3575,7 +3575,7 @@ func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
 	client := &schema.WebhookClient{
 		ClientID:      "client-123",
 		WebhookURL:    "https://example.com/webhook",
-		WebhookSecret: "secret-key",
+		WebhookSecret: "7365637265742d6b6579",
 	}
 	event := webhook.WebhookEvent{
 		EventID:   "event-456",
