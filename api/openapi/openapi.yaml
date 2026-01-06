@@ -1,4 +1,4 @@
-openapi: 3.0.3
+openapi: 3.1.1
 info:
   title: Feral File Indexer API
   description: |
@@ -827,7 +827,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
 
-x-webhooks:
+webhooks:
   onTokenEvent:
     post:
       summary: Token Event Notification
@@ -1147,8 +1147,7 @@ components:
           description: Token number within the contract as a string (supports large numbers, can be used for filtering with token_number parameter)
           example: "1234"
         current_owner:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Current owner address (null for multi-owner tokens like ERC1155/FA2)
           example: "0xowner123"
         burned:
@@ -1166,17 +1165,21 @@ components:
           description: Timestamp when the token was last updated
           example: "2024-01-02T12:00:00Z"
         metadata:
-          $ref: '#/components/schemas/TokenMetadataResponse'
-          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/TokenMetadataResponse'
+            - type: "null"
         owners:
-          $ref: '#/components/schemas/PaginatedOwners'
-          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/PaginatedOwners'
+            - type: "null"
         provenance_events:
-          $ref: '#/components/schemas/PaginatedProvenanceEvents'
-          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/PaginatedProvenanceEvents'
+            - type: "null"
         enrichment_source:
-          $ref: '#/components/schemas/EnrichmentSourceResponse'
-          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/EnrichmentSourceResponse'
+            - type: "null"
 
     TokenMetadataResponse:
       type: object
@@ -1190,46 +1193,38 @@ components:
           description: Reference to the token
           example: 12345
         origin_json:
-          type: object
+          type: [object, "null"]
           description: Original on-chain metadata JSON
-          nullable: true
           example: {"name": "Token #1234", "description": "Original metadata"}
         latest_json:
-          type: object
+          type: [object, "null"]
           description: Latest enriched metadata JSON
-          nullable: true
           example: {"name": "Token #1234", "description": "Enriched metadata", "artist": "Artist Name"}
         latest_hash:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Hash of the latest metadata
           example: "abc123hash"
         enrichment_level:
           $ref: '#/components/schemas/EnrichmentLevel'
         last_refreshed_at:
-          type: string
+          type: [string, "null"]
           format: date-time
-          nullable: true
           description: Timestamp when metadata was last refreshed
           example: "2024-01-02T12:00:00Z"
         image_url:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Primary image URL
           example: "https://example.com/image.png"
         animation_url:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Animation/video URL
           example: "https://example.com/animation.mp4"
         name:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Token name
           example: "Token #1234"
         description:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Token description
           example: "A unique digital artwork"
         artists:
@@ -1238,11 +1233,11 @@ components:
             $ref: '#/components/schemas/ArtistResponse'
           description: List of artists/creators
         publisher:
-          $ref: '#/components/schemas/PublisherResponse'
-          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/PublisherResponse'
+            - type: "null"
         mime_type:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: MIME type of the animation_url or image_url 
           example: "image/png"
         created_at:
@@ -1272,13 +1267,11 @@ components:
       type: object
       properties:
         name:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Publisher name
           example: "Feral File"
         url:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Publisher URL
           example: "https://feralfile.com"
 
@@ -1321,9 +1314,8 @@ components:
             $ref: '#/components/schemas/OwnerResponse'
           description: List of owners
         offset:
-          type: integer
+          type: [integer, "null"]
           format: uint64
-          nullable: true
           description: Current offset for pagination
           example: 0
         total:
@@ -1358,34 +1350,28 @@ components:
         event_type:
           $ref: '#/components/schemas/ProvenanceEventType'
         from_address:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Sender address (null for mint events)
           example: "0xfrom123"
         to_address:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Recipient address (null for burn events)
           example: "0xto456"
         quantity:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Quantity transferred (as string to support large numbers)
           example: "1"
         tx_hash:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Transaction hash
           example: "0xtxhash123"
         block_number:
-          type: integer
+          type: [integer, "null"]
           format: uint64
-          nullable: true
           description: Block number
           example: 12345678
         block_hash:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Block hash
           example: "0xblockhash456"
         timestamp:
@@ -1394,8 +1380,7 @@ components:
           description: Event timestamp
           example: "2024-01-01T00:00:00Z"
         raw:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: Raw event data as JSON
           example: {"log_index": 10, "transaction_index": 5}
         created_at:
@@ -1421,9 +1406,8 @@ components:
             $ref: '#/components/schemas/ProvenanceEventResponse'
           description: List of provenance events
         offset:
-          type: integer
+          type: [integer, "null"]
           format: uint64
-          nullable: true
           description: Current offset for pagination
           example: 0
         total:
@@ -1450,33 +1434,27 @@ components:
           description: Vendor/source name (e.g., "artblocks", "fxhash")
           example: "artblocks"
         vendor_json:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: Raw vendor API response as JSON
           example: {"project_name": "Chromie Squiggle", "series": 0}
         vendor_hash:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Hash of vendor data
           example: "vendor123hash"
         image_url:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Image URL from vendor
           example: "https://vendor.com/image.png"
         animation_url:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Animation URL from vendor
           example: "https://vendor.com/animation.mp4"
         name:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Token name from vendor
           example: "Chromie Squiggle #1234"
         description:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Token description from vendor
           example: "A unique generative artwork"
         artists:
@@ -1485,8 +1463,7 @@ components:
             $ref: '#/components/schemas/ArtistResponse'
           description: Artists from vendor data
         mime_type:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: MIME type of the animation_url or image_url from vendor
           example: "image/png"
         created_at:
@@ -1512,9 +1489,8 @@ components:
             $ref: '#/components/schemas/TokenResponse'
           description: List of tokens
         offset:
-          type: integer
+          type: [integer, "null"]
           format: uint64
-          nullable: true
           description: Current offset for pagination
           example: 0
         total:
@@ -1560,8 +1536,7 @@ components:
           description: Timestamp when the change occurred
           example: "2024-01-02T12:00:00Z"
         meta:
-          type: object
-          nullable: true
+          type: [object, "null"]
           description: Additional context about the change as JSON
           example: {"fields_changed": ["name", "description"]}
         created_at:
@@ -1575,12 +1550,12 @@ components:
           description: Timestamp when change was last updated
           example: "2024-01-02T12:00:00Z"
         subject:
-          nullable: true
           description: Expanded subject data (available when expand=subject)
           oneOf:
             - $ref: '#/components/schemas/TokenResponse'
             - $ref: '#/components/schemas/OwnerResponse'
             - $ref: '#/components/schemas/TokenMetadataResponse'
+            - type: "null"
 
     ChangeListResponse:
       type: object
@@ -1594,9 +1569,8 @@ components:
             $ref: '#/components/schemas/ChangeResponse'
           description: List of changes
         offset:
-          type: integer
+          type: [integer, "null"]
           format: uint64
-          nullable: true
           description: Current offset for pagination
           example: 0
         total:
@@ -1900,8 +1874,7 @@ components:
           description: Token number/ID within the contract
           example: "1234"
         address:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: |
             Address that triggered the indexing operation (if any).
             This will be populated when indexing was triggered by a specific address
@@ -1952,16 +1925,14 @@ components:
           description: Token number/ID within the contract
           example: "1234"
         from_address:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: |
             Sender address (null for mint events).
             For transfers: the previous owner.
             For burns: the owner who burned the token.
           example: "0xfrom123"
         to_address:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: |
             Recipient address (null for burn events).
             For mints: the new owner.
