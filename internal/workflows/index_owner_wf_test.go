@@ -48,21 +48,6 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 		TezosTokenSweepStartBlock:    1000,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
-
-	// Register activities with the test environment
-	s.env.RegisterActivity(s.executor.EnsureWatchedAddressExists)
-	s.env.RegisterActivity(s.executor.GetIndexingBlockRangeForAddress)
-	s.env.RegisterActivity(s.executor.GetLatestTezosBlock)
-	s.env.RegisterActivity(s.executor.GetLatestEthereumBlock)
-	s.env.RegisterActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange)
-	s.env.RegisterActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange)
-	s.env.RegisterActivity(s.executor.UpdateIndexingBlockRangeForAddress)
-
-	// Register child workflows
-	s.env.RegisterWorkflow(s.workerCore.IndexTokenOwner)
-	s.env.RegisterWorkflow(s.workerCore.IndexTezosTokenOwner)
-	s.env.RegisterWorkflow(s.workerCore.IndexEthereumTokenOwner)
-	s.env.RegisterWorkflow(s.workerCore.IndexTokens)
 }
 
 // TearDownTest is called after each test
@@ -213,7 +198,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_WithToke
 	// Track IndexTokens child workflow calls to verify chunking
 	var indexTokensCalls [][]domain.TokenCID
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
-		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
+		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 			indexTokensCalls = append(indexTokensCalls, tokenCIDs)
 			return nil
 		},
@@ -449,7 +434,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_Bot
 	// Track IndexTokens child workflow calls - should be 2 (backward + forward)
 	var indexTokensCalls int
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
-		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
+		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 			indexTokensCalls++
 			return nil
 		},
@@ -630,7 +615,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 	// Track IndexTokens calls to verify chunking (21 tokens -> 2 chunks)
 	var indexTokensCalls int
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
-		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
+		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 			indexTokensCalls++
 			return nil
 		},

@@ -40,6 +40,21 @@ func (m *MockAPIExecutor) EXPECT() *MockAPIExecutorMockRecorder {
 	return m.recorder
 }
 
+// CreateWebhookClient mocks base method.
+func (m *MockAPIExecutor) CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts int) (*dto.CreateWebhookClientResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateWebhookClient", ctx, webhookURL, eventFilters, retryMaxAttempts)
+	ret0, _ := ret[0].(*dto.CreateWebhookClientResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateWebhookClient indicates an expected call of CreateWebhookClient.
+func (mr *MockAPIExecutorMockRecorder) CreateWebhookClient(ctx, webhookURL, eventFilters, retryMaxAttempts interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWebhookClient", reflect.TypeOf((*MockAPIExecutor)(nil).CreateWebhookClient), ctx, webhookURL, eventFilters, retryMaxAttempts)
+}
+
 // GetChanges mocks base method.
 func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	m.ctrl.T.Helper()

@@ -10,6 +10,7 @@ CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare
 CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
 CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
+CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
 
 -- ============================================================================
 -- CORE TABLES
@@ -181,6 +182,41 @@ CREATE TABLE key_value_store (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Webhook Clients table - Registered webhook clients for event notifications
+CREATE TABLE webhook_clients (
+    id BIGSERIAL PRIMARY KEY,
+    client_id VARCHAR(36) NOT NULL UNIQUE,    -- UUID for client identification
+    webhook_url TEXT NOT NULL,                -- Client's webhook endpoint (HTTPS only)
+    webhook_secret TEXT NOT NULL,             -- HMAC signing secret
+    event_filters JSONB NOT NULL,             -- Array of event types or wildcard ["*"]
+    is_active BOOLEAN NOT NULL DEFAULT true,  -- Whether client is active
+    retry_max_attempts INTEGER NOT NULL DEFAULT 5, -- Maximum retry attempts
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    
+    -- Enforce HTTP/HTTPS URLs only
+    CONSTRAINT webhook_url_http_https CHECK (webhook_url LIKE 'http://%' OR webhook_url LIKE 'https://%')
+);
+
+-- Webhook Deliveries table - Audit log of webhook delivery attempts
+CREATE TABLE webhook_deliveries (
+    id BIGSERIAL PRIMARY KEY,
+    client_id VARCHAR(36) NOT NULL REFERENCES webhook_clients(client_id) ON DELETE CASCADE,
+    event_id VARCHAR(255) NOT NULL,           -- Unique event ID (ULID for time-sortable)
+    event_type VARCHAR(50) NOT NULL,          -- e.g., "token.indexing.queryable", "token.indexing.viewable"
+    payload JSONB NOT NULL,                   -- Full event payload
+    workflow_id VARCHAR(255) NOT NULL,        -- Temporal workflow ID for tracking
+    workflow_run_id VARCHAR(255),             -- Temporal run ID
+    delivery_status webhook_delivery_status NOT NULL DEFAULT 'pending', -- pending, success, failed
+    attempts INTEGER NOT NULL DEFAULT 0,      -- Number of delivery attempts
+    last_attempt_at TIMESTAMPTZ,              -- Timestamp of last attempt
+    response_status INTEGER,                  -- HTTP status code from webhook endpoint
+    response_body TEXT,                       -- Response body (limited to 4KB)
+    error_message TEXT,                       -- Error message if delivery failed
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ============================================================================
 -- INDEXES FOR PERFORMANCE
 -- ============================================================================
@@ -248,6 +284,14 @@ CREATE INDEX idx_watched_addresses_last_queried_at ON watched_addresses (last_qu
 
 -- Key-Value Store table indexes
 CREATE INDEX idx_key_value_store_updated_at ON key_value_store (updated_at);
+
+-- Webhook Clients table indexes
+CREATE INDEX idx_webhook_clients_active ON webhook_clients(is_active) WHERE is_active = true;
+
+-- Webhook Deliveries table indexes
+CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(delivery_status);
+CREATE INDEX idx_webhook_deliveries_event_id ON webhook_deliveries(event_id);
+CREATE INDEX idx_webhook_deliveries_client ON webhook_deliveries(client_id, created_at DESC);
 
 -- ============================================================================
 -- JSONB INDEXES FOR COMPLEX QUERIES
@@ -333,6 +377,16 @@ CREATE TRIGGER update_token_ownership_periods_updated_at
     BEFORE UPDATE ON token_ownership_periods 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to webhook_clients
+CREATE TRIGGER update_webhook_clients_updated_at
+    BEFORE UPDATE ON webhook_clients
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply updated_at trigger to webhook_deliveries
+CREATE TRIGGER update_webhook_deliveries_updated_at
+    BEFORE UPDATE ON webhook_deliveries
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ============================================================================
 -- INITIAL DATA
 -- ============================================================================
@@ -360,3 +414,5 @@ COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events
 COMMENT ON TABLE token_ownership_periods IS 'Tracks when addresses owned tokens with quantity > 0. Used for efficiently querying ownership history and metadata changes during ownership. Automatically maintained by application logic on provenance event creation';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';
+COMMENT ON TABLE webhook_clients IS 'Registered webhook clients for event notifications with HTTPS endpoints and event filtering';
+COMMENT ON TABLE webhook_deliveries IS 'Audit log of webhook delivery attempts with status tracking and response details';

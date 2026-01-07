@@ -844,8 +844,8 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 }
 
 // indexTokenChunk indexes a chunk of tokens using the IndexTokens workflow
-// For owner-specific indexing, pass the owner address to enable efficient ERC1155 indexing
-func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
+// For owner-specific indexing, pass the address to enable efficient ERC1155 indexing
+func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 	if len(tokenCIDs) == 0 {
 		return nil
 	}
@@ -855,7 +855,7 @@ func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.To
 	}
 	indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
 
-	err := workflow.ExecuteChildWorkflow(indexTokensCtx, w.IndexTokens, tokenCIDs, ownerAddress).Get(ctx, nil)
+	err := workflow.ExecuteChildWorkflow(indexTokensCtx, w.IndexTokens, tokenCIDs, address).Get(ctx, nil)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to index tokens"),

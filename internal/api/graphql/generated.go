@@ -14,11 +14,10 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
-	gqlparser "github.com/vektah/gqlparser/v2"
-	"github.com/vektah/gqlparser/v2/ast"
-
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
+	gqlparser "github.com/vektah/gqlparser/v2"
+	"github.com/vektah/gqlparser/v2/ast"
 )
 
 // region    ************************** generated!.gotpl **************************
@@ -112,6 +111,7 @@ type ComplexityRoot struct {
 	}
 
 	Mutation struct {
+		CreateWebhookClient     func(childComplexity int, webhookURL string, eventFilters []string, retryMaxAttempts *int) int
 		TriggerMetadataIndexing func(childComplexity int, tokenIds []Uint64, tokenCids []string) int
 		TriggerOwnerIndexing    func(childComplexity int, addresses []string) int
 		TriggerTokenIndexing    func(childComplexity int, tokenCids []string) int
@@ -213,6 +213,17 @@ type ComplexityRoot struct {
 		WorkflowID func(childComplexity int) int
 	}
 
+	WebhookClientResult struct {
+		ClientID         func(childComplexity int) int
+		CreatedAt        func(childComplexity int) int
+		EventFilters     func(childComplexity int) int
+		IsActive         func(childComplexity int) int
+		RetryMaxAttempts func(childComplexity int) int
+		UpdatedAt        func(childComplexity int) int
+		WebhookSecret    func(childComplexity int) int
+		WebhookURL       func(childComplexity int) int
+	}
+
 	WorkflowStatus struct {
 		CloseTime     func(childComplexity int) int
 		ExecutionTime func(childComplexity int) int
@@ -248,6 +259,7 @@ type MutationResolver interface {
 	TriggerTokenIndexing(ctx context.Context, tokenCids []string) (*dto.TriggerIndexingResponse, error)
 	TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error)
 	TriggerMetadataIndexing(ctx context.Context, tokenIds []Uint64, tokenCids []string) (*dto.TriggerIndexingResponse, error)
+	CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts *int) (*dto.CreateWebhookClientResponse, error)
 }
 type PaginatedOwnersResolver interface {
 	Offset(ctx context.Context, obj *dto.PaginatedOwners) (*Uint64, error)
@@ -532,6 +544,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.MediaAsset.VariantURLs(childComplexity), true
 
+	case "Mutation.createWebhookClient":
+		if e.complexity.Mutation.CreateWebhookClient == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createWebhookClient_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.CreateWebhookClient(childComplexity, args["webhook_url"].(string), args["event_filters"].([]string), args["retry_max_attempts"].(*int)), true
 	case "Mutation.triggerMetadataIndexing":
 		if e.complexity.Mutation.TriggerMetadataIndexing == nil {
 			break
@@ -992,6 +1015,55 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.TriggerIndexingResult.WorkflowID(childComplexity), true
 
+	case "WebhookClientResult.client_id":
+		if e.complexity.WebhookClientResult.ClientID == nil {
+			break
+		}
+
+		return e.complexity.WebhookClientResult.ClientID(childComplexity), true
+	case "WebhookClientResult.created_at":
+		if e.complexity.WebhookClientResult.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.WebhookClientResult.CreatedAt(childComplexity), true
+	case "WebhookClientResult.event_filters":
+		if e.complexity.WebhookClientResult.EventFilters == nil {
+			break
+		}
+
+		return e.complexity.WebhookClientResult.EventFilters(childComplexity), true
+	case "WebhookClientResult.is_active":
+		if e.complexity.WebhookClientResult.IsActive == nil {
+			break
+		}
+
+		return e.complexity.WebhookClientResult.IsActive(childComplexity), true
+	case "WebhookClientResult.retry_max_attempts":
+		if e.complexity.WebhookClientResult.RetryMaxAttempts == nil {
+			break
+		}
+
+		return e.complexity.WebhookClientResult.RetryMaxAttempts(childComplexity), true
+	case "WebhookClientResult.updated_at":
+		if e.complexity.WebhookClientResult.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.WebhookClientResult.UpdatedAt(childComplexity), true
+	case "WebhookClientResult.webhook_secret":
+		if e.complexity.WebhookClientResult.WebhookSecret == nil {
+			break
+		}
+
+		return e.complexity.WebhookClientResult.WebhookSecret(childComplexity), true
+	case "WebhookClientResult.webhook_url":
+		if e.complexity.WebhookClientResult.WebhookURL == nil {
+			break
+		}
+
+		return e.complexity.WebhookClientResult.WebhookURL(childComplexity), true
+
 	case "WorkflowStatus.close_time":
 		if e.complexity.WorkflowStatus.CloseTime == nil {
 			break
@@ -1400,7 +1472,28 @@ type Mutation {
     token_ids: [Uint64!]
     token_cids: [String!]
   ): TriggerIndexingResult
+
+  # Create a new webhook client (requires API key authentication only, JWT not accepted)
+  # Equivalent to: POST /api/v1/webhooks/clients
+  createWebhookClient(
+    webhook_url: String!
+    event_filters: [String!]!
+    retry_max_attempts: Int
+  ): WebhookClientResult
 }
+
+# Webhook client result
+type WebhookClientResult {
+  client_id: String!
+  webhook_url: String!
+  webhook_secret: String!
+  event_filters: [String!]!
+  is_active: Boolean!
+  retry_max_attempts: Int!
+  created_at: Time!
+  updated_at: Time!
+}
+
 
 `, BuiltIn: false},
 }
@@ -1409,6 +1502,27 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 // endregion ************************** generated!.gotpl **************************
 
 // region    ***************************** args.gotpl *****************************
+
+func (ec *executionContext) field_Mutation_createWebhookClient_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "webhook_url", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["webhook_url"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "event_filters", ec.unmarshalNString2ᚕstringᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["event_filters"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "retry_max_attempts", ec.unmarshalOInt2ᚖint)
+	if err != nil {
+		return nil, err
+	}
+	args["retry_max_attempts"] = arg2
+	return args, nil
+}
 
 func (ec *executionContext) field_Mutation_triggerMetadataIndexing_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
@@ -2913,6 +3027,65 @@ func (ec *executionContext) fieldContext_Mutation_triggerMetadataIndexing(ctx co
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_triggerMetadataIndexing_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_createWebhookClient(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_createWebhookClient,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().CreateWebhookClient(ctx, fc.Args["webhook_url"].(string), fc.Args["event_filters"].([]string), fc.Args["retry_max_attempts"].(*int))
+		},
+		nil,
+		ec.marshalOWebhookClientResult2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐCreateWebhookClientResponse,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_createWebhookClient(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "client_id":
+				return ec.fieldContext_WebhookClientResult_client_id(ctx, field)
+			case "webhook_url":
+				return ec.fieldContext_WebhookClientResult_webhook_url(ctx, field)
+			case "webhook_secret":
+				return ec.fieldContext_WebhookClientResult_webhook_secret(ctx, field)
+			case "event_filters":
+				return ec.fieldContext_WebhookClientResult_event_filters(ctx, field)
+			case "is_active":
+				return ec.fieldContext_WebhookClientResult_is_active(ctx, field)
+			case "retry_max_attempts":
+				return ec.fieldContext_WebhookClientResult_retry_max_attempts(ctx, field)
+			case "created_at":
+				return ec.fieldContext_WebhookClientResult_created_at(ctx, field)
+			case "updated_at":
+				return ec.fieldContext_WebhookClientResult_updated_at(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type WebhookClientResult", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_createWebhookClient_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -5259,6 +5432,238 @@ func (ec *executionContext) fieldContext_TriggerIndexingResult_run_id(_ context.
 	return fc, nil
 }
 
+func (ec *executionContext) _WebhookClientResult_client_id(ctx context.Context, field graphql.CollectedField, obj *dto.CreateWebhookClientResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookClientResult_client_id,
+		func(ctx context.Context) (any, error) {
+			return obj.ClientID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookClientResult_client_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WebhookClientResult_webhook_url(ctx context.Context, field graphql.CollectedField, obj *dto.CreateWebhookClientResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookClientResult_webhook_url,
+		func(ctx context.Context) (any, error) {
+			return obj.WebhookURL, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookClientResult_webhook_url(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WebhookClientResult_webhook_secret(ctx context.Context, field graphql.CollectedField, obj *dto.CreateWebhookClientResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookClientResult_webhook_secret,
+		func(ctx context.Context) (any, error) {
+			return obj.WebhookSecret, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookClientResult_webhook_secret(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WebhookClientResult_event_filters(ctx context.Context, field graphql.CollectedField, obj *dto.CreateWebhookClientResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookClientResult_event_filters,
+		func(ctx context.Context) (any, error) {
+			return obj.EventFilters, nil
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookClientResult_event_filters(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WebhookClientResult_is_active(ctx context.Context, field graphql.CollectedField, obj *dto.CreateWebhookClientResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookClientResult_is_active,
+		func(ctx context.Context) (any, error) {
+			return obj.IsActive, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookClientResult_is_active(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WebhookClientResult_retry_max_attempts(ctx context.Context, field graphql.CollectedField, obj *dto.CreateWebhookClientResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookClientResult_retry_max_attempts,
+		func(ctx context.Context) (any, error) {
+			return obj.RetryMaxAttempts, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookClientResult_retry_max_attempts(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WebhookClientResult_created_at(ctx context.Context, field graphql.CollectedField, obj *dto.CreateWebhookClientResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookClientResult_created_at,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookClientResult_created_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _WebhookClientResult_updated_at(ctx context.Context, field graphql.CollectedField, obj *dto.CreateWebhookClientResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_WebhookClientResult_updated_at,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_WebhookClientResult_updated_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "WebhookClientResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _WorkflowStatus_workflow_id(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -7561,6 +7966,10 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_triggerMetadataIndexing(ctx, field)
 			})
+		case "createWebhookClient":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_createWebhookClient(ctx, field)
+			})
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -8794,6 +9203,80 @@ func (ec *executionContext) _TriggerIndexingResult(ctx context.Context, sel ast.
 	return out
 }
 
+var webhookClientResultImplementors = []string{"WebhookClientResult"}
+
+func (ec *executionContext) _WebhookClientResult(ctx context.Context, sel ast.SelectionSet, obj *dto.CreateWebhookClientResponse) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, webhookClientResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WebhookClientResult")
+		case "client_id":
+			out.Values[i] = ec._WebhookClientResult_client_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "webhook_url":
+			out.Values[i] = ec._WebhookClientResult_webhook_url(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "webhook_secret":
+			out.Values[i] = ec._WebhookClientResult_webhook_secret(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "event_filters":
+			out.Values[i] = ec._WebhookClientResult_event_filters(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "is_active":
+			out.Values[i] = ec._WebhookClientResult_is_active(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "retry_max_attempts":
+			out.Values[i] = ec._WebhookClientResult_retry_max_attempts(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "created_at":
+			out.Values[i] = ec._WebhookClientResult_created_at(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updated_at":
+			out.Values[i] = ec._WebhookClientResult_updated_at(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var workflowStatusImplementors = []string{"WorkflowStatus"}
 
 func (ec *executionContext) _WorkflowStatus(ctx context.Context, sel ast.SelectionSet, obj *dto.WorkflowStatusResponse) graphql.Marshaler {
@@ -9281,6 +9764,22 @@ func (ec *executionContext) marshalNChange2ᚕgithubᚗcomᚋferalᚑfileᚋff�
 	}
 
 	return ret
+}
+
+func (ec *executionContext) unmarshalNInt2int(ctx context.Context, v any) (int, error) {
+	res, err := graphql.UnmarshalInt(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNInt2int(ctx context.Context, sel ast.SelectionSet, v int) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalInt(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
 }
 
 func (ec *executionContext) unmarshalNInt2int64(ctx context.Context, v any) (int64, error) {
@@ -9879,6 +10378,24 @@ func (ec *executionContext) marshalOEnrichmentSource2ᚖgithubᚗcomᚋferalᚑf
 	return ec._EnrichmentSource(ctx, sel, v)
 }
 
+func (ec *executionContext) unmarshalOInt2ᚖint(ctx context.Context, v any) (*int, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalInt(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOInt2ᚖint(ctx context.Context, sel ast.SelectionSet, v *int) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalInt(*v)
+	return res
+}
+
 func (ec *executionContext) unmarshalOInt2ᚖint64(ctx context.Context, v any) (*int64, error) {
 	if v == nil {
 		return nil, nil
@@ -10166,6 +10683,13 @@ func (ec *executionContext) marshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑ
 		return graphql.Null
 	}
 	return v
+}
+
+func (ec *executionContext) marshalOWebhookClientResult2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐCreateWebhookClientResponse(ctx context.Context, sel ast.SelectionSet, v *dto.CreateWebhookClientResponse) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._WebhookClientResult(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOWorkflowStatus2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐWorkflowStatusResponse(ctx context.Context, sel ast.SelectionSet, v *dto.WorkflowStatusResponse) graphql.Marshaler {

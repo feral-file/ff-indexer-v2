@@ -561,6 +561,149 @@ func TestAddressToBlockchain(t *testing.T) {
 	}
 }
 
+func TestIsHTTPSURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "valid https URL",
+			input:    "https://example.com",
+			expected: true,
+		},
+		{
+			name:     "valid https URL with path",
+			input:    "https://example.com/path/to/resource",
+			expected: true,
+		},
+		{
+			name:     "valid https URL with query",
+			input:    "https://example.com?query=value",
+			expected: true,
+		},
+		{
+			name:     "valid https URL with port",
+			input:    "https://example.com:8443",
+			expected: true,
+		},
+		{
+			name:     "valid https URL with subdomain",
+			input:    "https://api.example.com",
+			expected: true,
+		},
+		{
+			name:     "invalid http URL",
+			input:    "http://example.com",
+			expected: false,
+		},
+		{
+			name:     "invalid no scheme",
+			input:    "example.com",
+			expected: false,
+		},
+		{
+			name:     "invalid no host",
+			input:    "https://",
+			expected: false,
+		},
+		{
+			name:     "invalid empty",
+			input:    "",
+			expected: false,
+		},
+		{
+			name:     "invalid ftp scheme",
+			input:    "ftp://example.com",
+			expected: false,
+		},
+		{
+			name:     "invalid malformed URL",
+			input:    "https:// invalid url",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsHTTPSURL(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGenerateUUID(t *testing.T) {
+	t.Run("generates valid UUID", func(t *testing.T) {
+		id, err := GenerateUUID()
+		assert.NoError(t, err)
+		assert.NotEmpty(t, id)
+		// Check format: 8-4-4-4-12 hex characters
+		assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, id)
+	})
+
+	t.Run("generates multiple unique UUIDs", func(t *testing.T) {
+		ids := make(map[string]bool)
+		count := 1000
+		for range count {
+			id, err := GenerateUUID()
+			assert.NoError(t, err)
+			assert.False(t, ids[id], "UUID should be unique")
+			ids[id] = true
+		}
+		assert.Equal(t, count, len(ids))
+	})
+}
+
+func TestGenerateSecureToken(t *testing.T) {
+	t.Run("generates token with correct length", func(t *testing.T) {
+		length := 32
+		token, err := GenerateSecureToken(length)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, token)
+		// Output should be length*2 hex characters
+		assert.Equal(t, length*2, len(token))
+	})
+
+	t.Run("generates valid hex string", func(t *testing.T) {
+		token, err := GenerateSecureToken(16)
+		assert.NoError(t, err)
+		assert.Regexp(t, `^[0-9a-f]+$`, token)
+	})
+
+	t.Run("generates tokens of different lengths", func(t *testing.T) {
+		tests := []int{8, 16, 32, 64, 128, 256, 512, 1024}
+		for _, length := range tests {
+			token, err := GenerateSecureToken(length)
+			assert.NoError(t, err)
+			assert.Equal(t, length*2, len(token), "Token length should be %d*2=%d", length, length*2)
+		}
+	})
+
+	t.Run("generates multiple unique tokens", func(t *testing.T) {
+		tokens := make(map[string]bool)
+		count := 1000
+		for range count {
+			token, err := GenerateSecureToken(32)
+			assert.NoError(t, err)
+			assert.False(t, tokens[token], "Token should be unique")
+			tokens[token] = true
+		}
+		assert.Equal(t, count, len(tokens))
+	})
+
+	t.Run("handles small lengths", func(t *testing.T) {
+		token, err := GenerateSecureToken(1)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(token))
+	})
+
+	t.Run("handles zero length", func(t *testing.T) {
+		token, err := GenerateSecureToken(0)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, len(token))
+	})
+}
+
 // Helper function for tests
 func stringPtr(s string) *string {
 	return &s

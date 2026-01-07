@@ -13,6 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // IndexTokenMint processes a token mint event
@@ -64,7 +65,7 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 	// Execute the child workflow without waiting for the result
-	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
+	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID(), nil).GetChildWorkflowExecution()
 	if err := childWorkflowExec.Get(ctx, nil); err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to execute child workflow IndexTokenMetadata"),
@@ -73,6 +74,9 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 		)
 		return err
 	}
+
+	// WEBHOOK: Trigger ownership minted event notification (fire-and-forget)
+	w.triggerWebhookTokenOwnershipNotification(ctx, event.TokenCID(), webhook.EventTypeTokenOwnershipMinted, event.FromAddress, event.ToAddress, event.Quantity)
 
 	logger.InfoWf(ctx, "Token mint processed successfully and metadata indexing started",
 		zap.String("tokenCID", event.TokenCID().String()),
@@ -168,6 +172,9 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 		}
 	}
 
+	// WEBHOOK: Trigger ownership transferred event notification (fire-and-forget)
+	w.triggerWebhookTokenOwnershipNotification(ctx, event.TokenCID(), webhook.EventTypeTokenOwnershipTransferred, event.FromAddress, event.ToAddress, event.Quantity)
+
 	logger.InfoWf(ctx, "Token transfer processed successfully",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
@@ -230,6 +237,9 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 		return err
 	}
 
+	// WEBHOOK: Trigger ownership burned event notification (fire-and-forget)
+	w.triggerWebhookTokenOwnershipNotification(ctx, event.TokenCID(), webhook.EventTypeTokenOwnershipBurned, event.FromAddress, event.ToAddress, event.Quantity)
+
 	logger.InfoWf(ctx, "Token burn processed successfully",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
@@ -277,6 +287,9 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
+	// WEBHOOK: Trigger queryable event notification (fire-and-forget)
+	w.triggerWebhookTokenIndexingNotification(ctx, event.TokenCID(), webhook.EventTypeTokenIndexingQueryable, nil)
+
 	// Step 2: Start child workflow to index token metadata (fire and forget)
 	// FIXME: This should be optional of the token already minted
 	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
@@ -288,7 +301,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	metadataCtx := workflow.WithChildOptions(ctx, metadataWorkflowOptions)
 
 	// Execute the metadata workflow without waiting for the result
-	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, event.TokenCID()).GetChildWorkflowExecution()
+	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, event.TokenCID(), nil).GetChildWorkflowExecution()
 	if err := metadataWorkflowExec.Get(ctx, nil); err != nil {
 		logger.WarnWf(ctx, "Failed to start metadata indexing workflow",
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -309,7 +322,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 		provenanceCtx := workflow.WithChildOptions(ctx, provenanceWorkflowOptions)
 
 		// Execute the full provenance workflow without waiting for the result
-		provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, event.TokenCID()).GetChildWorkflowExecution()
+		provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, event.TokenCID(), nil).GetChildWorkflowExecution()
 		if err := provenanceWorkflowExec.Get(ctx, nil); err != nil {
 			logger.WarnWf(ctx, "Failed to start full provenance indexing workflow",
 				zap.String("tokenCID", event.TokenCID().String()),
@@ -327,10 +340,11 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 }
 
 // IndexTokens indexes multiple tokens in chunks
-// If ownerAddress is provided, uses owner-specific indexing for ERC1155 tokens
-func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error {
+// If address is provided, uses address-specific indexing for ERC1155 tokens
+func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 	logger.InfoWf(ctx, "Starting batch token indexing",
 		zap.Int("count", len(tokenCIDs)),
+		zap.String("address", types.SafeString(address)),
 	)
 
 	// Configure child workflow options
@@ -348,7 +362,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
 		// Execute child workflow
-		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID, ownerAddress)
+		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID, address)
 		childFutures = append(childFutures, childFuture)
 
 		logger.InfoWf(ctx, "Triggered token indexing workflow",
@@ -372,10 +386,12 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 }
 
 // IndexToken indexes a single token (metadata and provenances)
-// If ownerAddress is provided, uses owner-specific indexing for ERC1155 tokens
-func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, ownerAddress *string) error {
+// address is the address that triggered the indexing operation
+// If nil, the indexing operation was not triggered by a specific address
+func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoWf(ctx, "Starting token indexing",
 		zap.String("tokenCID", tokenCID.String()),
+		zap.String("address", types.SafeString(address)),
 	)
 
 	// Check if contract is blacklisted
@@ -397,7 +413,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 
 	// Step 1: Index token with minimal provenances (from blockchain query)
-	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID, ownerAddress).Get(ctx, nil)
+	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID, address).Get(ctx, nil)
 	if err != nil {
 		// Check if this is a "token not found on chain" error (or execution reverted)
 		// In this case, we want to skip this token and continue the workflow
@@ -430,6 +446,9 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 		zap.String("tokenCID", tokenCID.String()),
 	)
 
+	// WEBHOOK: Trigger queryable event notification (fire-and-forget)
+	w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingQueryable, address)
+
 	// Step 2: Start child workflow to index token metadata (fire and forget)
 	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + tokenCID.String(),
@@ -439,7 +458,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	}
 	metadataCtx := workflow.WithChildOptions(ctx, metadataWorkflowOptions)
 
-	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, tokenCID).GetChildWorkflowExecution()
+	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, tokenCID, address).GetChildWorkflowExecution()
 	if err := metadataWorkflowExec.Get(ctx, nil); err != nil {
 		logger.WarnWf(ctx, "Failed to start metadata indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
@@ -448,9 +467,9 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	}
 
 	// Step 3: Start child workflow to index full provenance (fire and forget)
-	// If the token is an ERC1155 token and ownerAddress is provided, skip the full provenance indexing workflow
+	// If the token is an ERC1155 token and address is provided, skip the full provenance indexing workflow
 	_, standard, _, _ := tokenCID.Parse()
-	if standard == domain.StandardERC1155 && ownerAddress != nil {
+	if standard == domain.StandardERC1155 && address != nil {
 		logger.InfoWf(ctx, "Skipping full provenance indexing for owner-specific ERC1155 token", zap.String("tokenCID", tokenCID.String()))
 	} else {
 		provenanceWorkflowOptions := workflow.ChildWorkflowOptions{
@@ -461,7 +480,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 		}
 		provenanceCtx := workflow.WithChildOptions(ctx, provenanceWorkflowOptions)
 
-		provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, tokenCID).GetChildWorkflowExecution()
+		provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, tokenCID, address).GetChildWorkflowExecution()
 		if err := provenanceWorkflowExec.Get(ctx, nil); err != nil {
 			logger.WarnWf(ctx, "Failed to start full provenance indexing workflow",
 				zap.String("tokenCID", tokenCID.String()),

@@ -857,3 +857,141 @@ INSERT INTO key_value_store (key, value, created_at, updated_at)
 VALUES ('test:config:version', '1.0.0', now(), now())
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
 
+-- =============================================================================
+-- Webhook Clients
+-- =============================================================================
+
+-- Active webhook client listening to all events
+INSERT INTO webhook_clients (
+    id, client_id, webhook_url, webhook_secret, event_filters, is_active, retry_max_attempts,
+    created_at, updated_at
+)
+VALUES (
+    1,
+    'client-all-events-123',
+    'https://webhook.example.com/all',
+    'secret_all_events_123456789',
+    '["*"]',
+    true,
+    5,
+    now() - interval '10 days',
+    now() - interval '10 days'
+);
+
+-- Active webhook client listening to specific events
+INSERT INTO webhook_clients (
+    id, client_id, webhook_url, webhook_secret, event_filters, is_active, retry_max_attempts,
+    created_at, updated_at
+)
+VALUES (
+    2,
+    'client-specific-events-456',
+    'https://webhook.example.com/specific',
+    'secret_specific_events_987654321',
+    '["token.indexing.queryable", "token.indexing.viewable"]',
+    true,
+    3,
+    now() - interval '5 days',
+    now() - interval '5 days'
+);
+
+-- Inactive webhook client
+INSERT INTO webhook_clients (
+    id, client_id, webhook_url, webhook_secret, event_filters, is_active, retry_max_attempts,
+    created_at, updated_at
+)
+VALUES (
+    3,
+    'client-inactive-789',
+    'https://webhook.example.com/inactive',
+    'secret_inactive_111222333',
+    '["token.indexing.provenance_completed"]',
+    false,
+    5,
+    now() - interval '30 days',
+    now() - interval '15 days'
+);
+
+-- Reset sequence
+SELECT setval('webhook_clients_id_seq', 100, true);
+
+-- =============================================================================
+-- Webhook Deliveries
+-- =============================================================================
+
+-- Successful delivery
+INSERT INTO webhook_deliveries (
+    id, client_id, event_id, event_type, payload, workflow_id, workflow_run_id,
+    delivery_status, attempts, last_attempt_at, response_status, response_body, error_message,
+    created_at, updated_at
+)
+VALUES (
+    1,
+    'client-all-events-123',
+    '01JG8XAMPLE1111111111111111',
+    'token.indexing.queryable',
+    '{"event_id":"01JG8XAMPLE1111111111111111","event_type":"token.indexing.queryable","timestamp":"2024-01-15T10:00:00Z","data":{"token_cid":"eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:1","chain":"eip155:1","standard":"erc721","contract":"0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D","token_number":"1","changed_at":"2024-01-15T10:00:00Z"}}',
+    'webhook-delivery-client-all-events-123-01JG8XAMPLE1111111111111111',
+    'run-id-123',
+    'success',
+    1,
+    now() - interval '3 days',
+    200,
+    '{"status":"received"}',
+    '',
+    now() - interval '3 days',
+    now() - interval '3 days'
+);
+
+-- Failed delivery after retries
+INSERT INTO webhook_deliveries (
+    id, client_id, event_id, event_type, payload, workflow_id, workflow_run_id,
+    delivery_status, attempts, last_attempt_at, response_status, response_body, error_message,
+    created_at, updated_at
+)
+VALUES (
+    2,
+    'client-specific-events-456',
+    '01JG8XAMPLE2222222222222222',
+    'token.indexing.viewable',
+    '{"event_id":"01JG8XAMPLE2222222222222222","event_type":"token.indexing.viewable","timestamp":"2024-01-16T12:00:00Z","data":{"token_cid":"eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:2","chain":"eip155:1","standard":"erc721","contract":"0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D","token_number":"2","changed_at":"2024-01-16T12:00:00Z"}}',
+    'webhook-delivery-client-specific-events-456-01JG8XAMPLE2222222222222222',
+    'run-id-456',
+    'failed',
+    3,
+    now() - interval '2 days',
+    500,
+    '{"error":"internal server error"}',
+    'HTTP 500',
+    now() - interval '2 days',
+    now() - interval '2 days'
+);
+
+-- Pending delivery
+INSERT INTO webhook_deliveries (
+    id, client_id, event_id, event_type, payload, workflow_id, workflow_run_id,
+    delivery_status, attempts, last_attempt_at, response_status, response_body, error_message,
+    created_at, updated_at
+)
+VALUES (
+    3,
+    'client-all-events-123',
+    '01JG8XAMPLE3333333333333333',
+    'token.indexing.provenance_completed',
+    '{"event_id":"01JG8XAMPLE3333333333333333","event_type":"token.indexing.provenance_completed","timestamp":"2024-01-17T14:00:00Z","data":{"token_cid":"eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:1","chain":"eip155:1","standard":"erc721","contract":"0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D","token_number":"1","changed_at":"2024-01-17T14:00:00Z"}}',
+    'webhook-delivery-client-all-events-123-01JG8XAMPLE3333333333333333',
+    'run-id-789',
+    'pending',
+    0,
+    NULL,
+    NULL,
+    '',
+    '',
+    now() - interval '1 day',
+    now() - interval '1 day'
+);
+
+-- Reset sequence
+SELECT setval('webhook_deliveries_id_seq', 100, true);
+
+

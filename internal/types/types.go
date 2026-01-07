@@ -1,11 +1,14 @@
 package types
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/google/uuid"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
@@ -76,4 +79,33 @@ func IsValidURL(s string) bool {
 		return false
 	}
 	return url.Scheme != "" && url.Host != ""
+}
+
+// IsHTTPSURL checks if a string is a valid HTTPS URL
+func IsHTTPSURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "https" && u.Host != ""
+}
+
+// GenerateUUID generates a new UUID v4
+func GenerateUUID() (string, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// GenerateSecureToken generates a cryptographically secure random hex string
+// The length parameter specifies the number of random bytes (output will be length*2 hex characters)
+// For example, length=32 produces a 64-character hex string
+func GenerateSecureToken(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
 }

@@ -34,6 +34,18 @@ func (m *MockAPIHandler) EXPECT() *MockAPIHandlerMockRecorder {
 	return m.recorder
 }
 
+// CreateWebhookClient mocks base method.
+func (m *MockAPIHandler) CreateWebhookClient(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "CreateWebhookClient", c)
+}
+
+// CreateWebhookClient indicates an expected call of CreateWebhookClient.
+func (mr *MockAPIHandlerMockRecorder) CreateWebhookClient(c interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWebhookClient", reflect.TypeOf((*MockAPIHandler)(nil).CreateWebhookClient), c)
+}
+
 // GetChanges mocks base method.
 func (m *MockAPIHandler) GetChanges(c *gin.Context) {
 	m.ctrl.T.Helper()

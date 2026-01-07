@@ -5,6 +5,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // WorkerCore defines the interface for processing blockchain events
@@ -24,7 +25,7 @@ type WorkerCore interface {
 	IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error
 
 	// IndexTokenMetadata index token metadata
-	IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID) error
+	IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error
 
 	// IndexMultipleTokensMetadata indexes metadata for multiple tokens by triggering child workflows
 	IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error
@@ -33,10 +34,10 @@ type WorkerCore interface {
 	IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error
 
 	// IndexTokens indexes multiple tokens in parallel
-	IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, ownerAddress *string) error
+	IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error
 
 	// IndexToken indexes a single token (metadata and provenances)
-	IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, ownerAddress *string) error
+	IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error
 
 	// IndexTokenOwners indexes tokens for multiple addresses
 	IndexTokenOwners(ctx workflow.Context, addresses []string) error
@@ -51,7 +52,13 @@ type WorkerCore interface {
 	IndexEthereumTokenOwner(ctx workflow.Context, address string) error
 
 	// IndexTokenProvenances indexes all provenances (balances and events) for a token
-	IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID) error
+	IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error
+
+	// NotifyWebhookClients orchestrates webhook notifications to all matching clients
+	NotifyWebhookClients(ctx workflow.Context, event webhook.WebhookEvent) error
+
+	// DeliverWebhook handles webhook delivery to a single client with retry logic
+	DeliverWebhook(ctx workflow.Context, clientID string, event webhook.WebhookEvent) error
 }
 
 type WorkerCoreConfig struct {

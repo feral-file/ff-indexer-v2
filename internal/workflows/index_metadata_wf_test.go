@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
@@ -52,12 +53,6 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist)
 	s.workerMedia = workflowsmedia.NewWorker(mocks.NewMockMediaExecutor(s.ctrl))
-
-	// Register activities with the test environment
-	s.env.RegisterActivity(s.executor.CreateMetadataUpdate)
-	s.env.RegisterActivity(s.executor.FetchTokenMetadata)
-	s.env.RegisterActivity(s.executor.UpsertTokenMetadata)
-	s.env.RegisterActivity(s.executor.EnhanceTokenMetadata)
 }
 
 // TearDownTest is called after each test
@@ -91,7 +86,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_Success() {
 	s.env.OnActivity(s.executor.CreateMetadataUpdate, mock.Anything, event).Return(nil)
 
 	// Mock child workflow IndexTokenMetadata
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexMetadataUpdate, event)
@@ -150,8 +145,8 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_ChildWorkflowSt
 	s.env.OnActivity(s.executor.CreateMetadataUpdate, mock.Anything, event).Return(nil)
 
 	// Mock child workflow to fail at start
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(
-		func(ctx workflow.Context, tokenCID domain.TokenCID) error {
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
+		func(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 			childWorkflowCallCount++
 			return testsuite.ErrMockStartChildWorkflowFailed
 		},
@@ -188,11 +183,22 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutE
 	// Mock EnhanceTokenMetadata activity - returns nil (no enhancement)
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
+	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		// Verify it's a webhook event with correct event type
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
+		}
+		return false
+	})).Return(nil)
+
 	// Mock media indexing child workflow - match the actual workflow type
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
+		return len(urls) == 1 && urls[0] == "https://example.com/image.jpg"
+	})).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -220,11 +226,31 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnha
 	// Mock EnhanceTokenMetadata activity - returns enhanced metadata
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(enhancedMetadata, nil)
 
+	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
+		}
+		return false
+	})).Return(nil)
+
 	// Mock media indexing child workflow - match the actual workflow type
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
+		if len(urls) != 2 {
+			return false
+		}
+
+		for _, url := range urls {
+			if url != "https://example.com/image.jpg" && url != "https://example.com/enhanced-image.jpg" {
+				return false
+			}
+		}
+
+		return true
+	})).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -248,7 +274,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataErr
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, mock.Anything).Return(nil, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed without error
 	s.True(s.env.IsWorkflowCompleted())
@@ -273,7 +299,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_UpsertMetadataEr
 	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(expectedError)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -298,11 +324,14 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_EnhancementError
 	// Mock EnhanceTokenMetadata activity to fail - should not fail workflow
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, enhancementError)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// Mock media indexing child workflow - match the actual workflow type
 	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully despite enhancement error (non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -326,11 +355,14 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaWorkflowSta
 	// Mock EnhanceTokenMetadata activity
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// Mock media indexing child workflow to fail at start - should not fail parent workflow
 	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(testsuite.ErrMockStartChildWorkflowFailed)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully despite media workflow start failure (non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -354,10 +386,13 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NoMediaURLs() {
 	// Mock EnhanceTokenMetadata activity
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
+	// Mock webhook notification workflow
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+
 	// No media workflow should be triggered
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -374,7 +409,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NilMetadata() {
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, (*metadata.NormalizedMetadata)(nil)).Return(nil, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID)
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully (gracefully handles nil metadata)
 	s.True(s.env.IsWorkflowCompleted())
@@ -394,7 +429,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_Success
 
 	// Mock child workflows for each token
 	for _, tokenCID := range tokenCIDs {
-		s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+		s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 	}
 
 	// Execute the workflow
@@ -424,9 +459,9 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_ChildWo
 	}
 
 	// Mock child workflows - first one fails to start
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[0]).Return(testsuite.ErrMockStartChildWorkflowFailed)
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[1]).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[2]).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[0], (*string)(nil)).Return(testsuite.ErrMockStartChildWorkflowFailed)
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[1], (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[2], (*string)(nil)).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
@@ -443,7 +478,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_SingleT
 	}
 
 	// Mock child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[0]).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[0], (*string)(nil)).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
@@ -467,7 +502,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_LargeNu
 
 	// Mock child workflows for each token
 	for _, tokenCID := range tokenCIDs {
-		s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID).Return(nil)
+		s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 	}
 
 	// Execute the workflow

@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/api/graphql"
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/rest"
@@ -38,15 +39,19 @@ type Server struct {
 	orchestrator temporal.TemporalOrchestrator
 	blacklist    registry.BlacklistRegistry
 	httpServer   *http.Server
+	json         adapter.JSON
+	clock        adapter.Clock
 }
 
 // New creates a new API server
-func New(cfg Config, store store.Store, orchestrator temporal.TemporalOrchestrator, blacklist registry.BlacklistRegistry) *Server {
+func New(cfg Config, store store.Store, orchestrator temporal.TemporalOrchestrator, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock) *Server {
 	return &Server{
 		config:       cfg,
 		store:        store,
 		orchestrator: orchestrator,
 		blacklist:    blacklist,
+		json:         json,
+		clock:        clock,
 	}
 }
 
@@ -69,17 +74,17 @@ func (s *Server) Start(ctx context.Context) error {
 	router.Use(middleware.SetupCORS())
 
 	// Create shared executor (contains business logic shared between REST and GraphQL)
-	exec := executor.NewExecutor(s.store, s.orchestrator, s.config.OrchestratorTaskQueue, s.blacklist)
+	exec := executor.NewExecutor(s.store, s.orchestrator, s.config.OrchestratorTaskQueue, s.blacklist, s.json, s.clock)
 
 	// Create REST handler
-	restHandler := rest.NewHandler(exec)
+	restHandler := rest.NewHandler(s.config.Debug, exec)
 
 	// Setup REST routes
 	rest.SetupRoutes(router, restHandler, s.config.Auth)
 
 	// Create GraphQL handler with auth config
 	// Authentication is handled internally for mutations only
-	graphqlHandler, err := graphql.NewHandler(exec, s.config.Auth)
+	graphqlHandler, err := graphql.NewHandler(s.config.Debug, exec, s.config.Auth)
 	if err != nil {
 		return fmt.Errorf("failed to create GraphQL handler: %w", err)
 	}

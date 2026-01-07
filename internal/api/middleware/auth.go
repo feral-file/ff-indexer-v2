@@ -42,6 +42,16 @@ type AuthResult struct {
 	Error       error
 }
 
+// SplitAuthHeader splits an Authorization header into type and credentials
+func SplitAuthHeader(authHeader string) []string {
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 {
+		return []string{}
+	}
+	parts[0] = strings.ToLower(parts[0])
+	return parts
+}
+
 // Authenticate validates the Authorization header and returns the authentication result
 // This is a reusable function that can be called from middleware or GraphQL handlers
 func Authenticate(authHeader string, cfg AuthConfig) AuthResult {
@@ -63,13 +73,13 @@ func Authenticate(authHeader string, cfg AuthConfig) AuthResult {
 	}
 
 	// Parse the authorization header
-	parts := strings.SplitN(authHeader, " ", 2)
+	parts := SplitAuthHeader(authHeader)
 	if len(parts) != 2 {
 		result.Error = errors.New("invalid Authorization header format")
 		return result
 	}
 
-	authType := strings.ToLower(parts[0])
+	authType := parts[0]
 	credentials := parts[1]
 
 	switch authType {
@@ -141,6 +151,50 @@ func Auth(cfg AuthConfig) gin.HandlerFunc {
 		if result.AuthSubject != "" {
 			c.Set(AUTH_SUBJECT_KEY, result.AuthSubject)
 		}
+
+		c.Next()
+	}
+}
+
+// APIKeyAuth returns a gin middleware for API key authentication only
+// It only accepts API Key authentication, JWT tokens will be rejected
+func APIKeyAuth(cfg AuthConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+
+		// Use the shared Authenticate function
+		result := Authenticate(authHeader, cfg)
+
+		// Check if authentication failed
+		if !result.Success {
+			logger.WarnCtx(c.Request.Context(), "Authentication failed",
+				zap.Error(result.Error),
+				zap.String("path", c.Request.URL.Path),
+				zap.String("client_ip", c.ClientIP()),
+			)
+			apiErr := apierrors.NewUnauthorizedError("Authentication failed", result.Error.Error())
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apiErr)
+			return
+		}
+
+		// Enforce API key only - reject JWT tokens
+		if result.AuthType != "apikey" {
+			logger.WarnCtx(c.Request.Context(), "Authentication failed: only API key authentication is allowed",
+				zap.String("path", c.Request.URL.Path),
+				zap.String("client_ip", c.ClientIP()),
+				zap.String("auth_type", result.AuthType),
+			)
+			apiErr := apierrors.NewUnauthorizedError("Authentication failed", "only API key authentication is allowed for this endpoint")
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apiErr)
+			return
+		}
+
+		// Store authentication info in context
+		c.Set(AUTH_TYPE_KEY, result.AuthType)
+		logger.DebugCtx(c.Request.Context(), "API Key authentication successful",
+			zap.String("path", c.Request.URL.Path),
+			zap.String("client_ip", c.ClientIP()),
+		)
 
 		c.Next()
 	}

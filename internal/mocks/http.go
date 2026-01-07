@@ -124,3 +124,18 @@ func (mr *MockHTTPClientMockRecorder) Post(ctx, url, contentType, body interface
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Post", reflect.TypeOf((*MockHTTPClient)(nil).Post), ctx, url, contentType, body)
 }
+
+// PostWithHeadersNoRetry mocks base method.
+func (m *MockHTTPClient) PostWithHeadersNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PostWithHeadersNoRetry", ctx, url, headers, body)
+	ret0, _ := ret[0].(*http.Response)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PostWithHeadersNoRetry indicates an expected call of PostWithHeadersNoRetry.
+func (mr *MockHTTPClientMockRecorder) PostWithHeadersNoRetry(ctx, url, headers, body interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PostWithHeadersNoRetry", reflect.TypeOf((*MockHTTPClient)(nil).PostWithHeadersNoRetry), ctx, url, headers, body)
+}

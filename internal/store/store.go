@@ -167,6 +167,16 @@ type CreateMediaAssetInput struct {
 	VariantURLs      datatypes.JSON
 }
 
+// CreateWebhookClientInput represents the input for creating a webhook client
+type CreateWebhookClientInput struct {
+	ClientID         string
+	WebhookURL       string
+	WebhookSecret    string
+	EventFilters     datatypes.JSON // JSONB array of event types
+	IsActive         bool
+	RetryMaxAttempts int
+}
+
 // Store defines the interface for database operations
 //
 //go:generate mockgen -source=store.go -destination=../mocks/store.go -package=mocks -mock_names=Store=MockStore
@@ -294,4 +304,20 @@ type Store interface {
 	GetKeyValue(ctx context.Context, key string) (string, error)
 	// GetAllKeyValuesByPrefix retrieves all key-value pairs with a specific prefix
 	GetAllKeyValuesByPrefix(ctx context.Context, prefix string) (map[string]string, error)
+
+	// =============================================================================
+	// Webhook Operations
+	// =============================================================================
+
+	// GetActiveWebhookClientsByEventType retrieves active webhook clients that match the given event type
+	// Supports wildcard matching: clients with ["*"] in their event_filters will match all event types
+	GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error)
+	// GetWebhookClientByID retrieves a webhook client by client ID
+	GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error)
+	// CreateWebhookClient creates a new webhook client
+	CreateWebhookClient(ctx context.Context, input CreateWebhookClientInput) (*schema.WebhookClient, error)
+	// CreateWebhookDelivery creates a new webhook delivery record
+	CreateWebhookDelivery(ctx context.Context, delivery *schema.WebhookDelivery) error
+	// UpdateWebhookDeliveryStatus updates the status and result of a webhook delivery
+	UpdateWebhookDeliveryStatus(ctx context.Context, deliveryID uint64, status schema.WebhookDeliveryStatus, attempts int, responseStatus *int, responseBody, errorMessage string) error
 }

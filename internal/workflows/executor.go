@@ -1,10 +1,12 @@
 package workflows
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"go.temporal.io/sdk/temporal"
@@ -19,6 +21,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // Executor defines the interface for executing activities
@@ -58,9 +61,9 @@ type Executor interface {
 	IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error
 
 	// IndexTokenWithMinimalProvenancesByTokenCID indexes token with minimal provenances using tokenCID
-	// If ownerAddress is provided, uses owner-specific indexing for ERC1155 (efficient, partial balance + events)
-	// For ERC721 and FA2, ownerAddress parameter is ignored and full provenance is always indexed
-	IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, ownerAddress *string) error
+	// If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
+	// For ERC721 and FA2, address parameter is ignored and full provenance is always indexed
+	IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error
 
 	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs with block numbers for an owner within a block range
 	// This is used to sweep tokens by block ranges for incremental indexing
@@ -83,6 +86,22 @@ type Executor interface {
 
 	// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT
 	GetLatestTezosBlock(ctx context.Context) (uint64, error)
+
+	// =============================================================================
+	// Webhook Activities
+	// =============================================================================
+
+	// GetActiveWebhookClientsByEventType retrieves active webhook clients matching the event type
+	GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error)
+
+	// GetWebhookClientByID retrieves a webhook client by client ID
+	GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error)
+
+	// CreateWebhookDeliveryRecord creates a new webhook delivery record
+	CreateWebhookDeliveryRecord(ctx context.Context, delivery *schema.WebhookDelivery, event webhook.WebhookEvent) (uint64, error)
+
+	// DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with signature
+	DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error)
 }
 
 // BlockRangeResult represents the result of getting an indexing block range
@@ -100,6 +119,9 @@ type executor struct {
 	tzktClient       tezos.TzKTClient
 	json             adapter.JSON
 	clock            adapter.Clock
+	httpClient       adapter.HTTPClient
+	io               adapter.IO
+	temporalActivity adapter.Activity
 }
 
 // NewExecutor creates a new executor instance
@@ -111,6 +133,9 @@ func NewExecutor(
 	tzktClient tezos.TzKTClient,
 	jsonAdapter adapter.JSON,
 	clock adapter.Clock,
+	httpClient adapter.HTTPClient,
+	io adapter.IO,
+	temporalActivity adapter.Activity,
 ) Executor {
 	return &executor{
 		store:            store,
@@ -120,6 +145,9 @@ func NewExecutor(
 		tzktClient:       tzktClient,
 		json:             jsonAdapter,
 		clock:            clock,
+		httpClient:       httpClient,
+		io:               io,
+		temporalActivity: temporalActivity,
 	}
 }
 
@@ -624,19 +652,19 @@ func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context
 }
 
 // addOwnerBalanceAndEvents fetches and adds balance and events for a specific owner to the input
-func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, ownerAddress *string, input *store.CreateTokenWithProvenancesInput) error {
+func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, address *string, input *store.CreateTokenWithProvenancesInput) error {
 	// Skip if address is nil or zero address
-	if types.StringNilOrEmpty(ownerAddress) || *ownerAddress == domain.ETHEREUM_ZERO_ADDRESS {
+	if types.StringNilOrEmpty(address) || *address == domain.ETHEREUM_ZERO_ADDRESS {
 		return nil
 	}
 
 	// Skip from address for ERC721 (sender doesn't have balance after transfer)
-	if event.Standard == domain.StandardERC721 && ownerAddress == event.FromAddress {
+	if event.Standard == domain.StandardERC721 && address == event.FromAddress {
 		return nil
 	}
 
 	// Fetch balance and events based on standard
-	balance, events, err := e.fetchOwnerBalanceAndEvents(ctx, event, *ownerAddress)
+	balance, events, err := e.fetchOwnerBalanceAndEvents(ctx, event, *address)
 	if err != nil {
 		return err
 	}
@@ -644,7 +672,7 @@ func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.B
 	// Add balance if positive
 	if types.IsPositiveNumeric(balance) {
 		input.Balances = append(input.Balances, store.CreateBalanceInput{
-			OwnerAddress: *ownerAddress,
+			OwnerAddress: *address,
 			Quantity:     balance,
 		})
 	}
@@ -674,14 +702,14 @@ func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.B
 }
 
 // fetchOwnerBalanceAndEvents fetches balance and events for an owner based on token standard
-func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, ownerAddress string) (string, []domain.BlockchainEvent, error) {
+func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, address string) (string, []domain.BlockchainEvent, error) {
 	switch event.Standard {
 	case domain.StandardFA2:
-		balance, err := e.tzktClient.GetTokenOwnerBalance(ctx, event.ContractAddress, event.TokenNumber, ownerAddress)
+		balance, err := e.tzktClient.GetTokenOwnerBalance(ctx, event.ContractAddress, event.TokenNumber, address)
 		return balance, nil, err
 
 	case domain.StandardERC1155:
-		return e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, event.ContractAddress, event.TokenNumber, ownerAddress)
+		return e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, event.ContractAddress, event.TokenNumber, address)
 
 	case domain.StandardERC721:
 		// ERC721: to address always has balance of 1
@@ -696,14 +724,14 @@ func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain
 // Minimal provenance data includes balances for all addresses (or specific owner if provided).
 // The provenance events and change journal are not included for full indexing,
 // but ARE included for owner-specific indexing.
-// If ownerAddress is provided, uses owner-specific indexing for ERC1155 (efficient, partial balance + events)
-func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, ownerAddress *string) error {
-	// If ownerAddress is not provided, verify the token exists in the database and on-chain before indexing
-	// Without ownerAddress, the event logs would be huge and the indexing is inefficient for ERC1155 tokens.
+// If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
+func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
+	// If address is not provided, verify the token exists in the database and on-chain before indexing
+	// Without address, the event logs would be huge and the indexing is inefficient for ERC1155 tokens.
 	// Otherwise, we can skip the existence check and index the token with minimal provenances, the indexing with
-	// owner-specific indexing is more efficient for ERC1155 tokens.
-	// We also can assume the workflow will gather tokens belongs to the ownerAddress before calling this activity.
-	if ownerAddress == nil {
+	// address-specific indexing is more efficient for ERC1155 tokens.
+	// We also can assume the workflow will gather tokens belongs to the address before calling this activity.
+	if address == nil {
 		// Check if token exists in database
 		existsInDB, err := e.CheckTokenExists(ctx, tokenCID)
 		if err != nil {
@@ -799,10 +827,10 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 
 		case domain.StandardERC1155:
 			// For ERC1155, choose between full indexing (all owners) or owner-specific indexing
-			if ownerAddress != nil {
+			if address != nil {
 				// OWNER-SPECIFIC PATH: Efficient indexing for one owner only
 				// Get balance and events for this specific owner
-				balance, events, err := e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, *ownerAddress)
+				balance, events, err := e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, *address)
 				if err != nil {
 					if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
 						strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
@@ -831,7 +859,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 
 				logger.InfoCtx(ctx, "Indexing ERC1155 token for specific owner",
 					zap.String("tokenCID", tokenCID.String()),
-					zap.String("owner", *ownerAddress),
+					zap.String("owner", *address),
 					zap.String("balance", balance),
 					zap.Int("eventCount", len(events)),
 				)
@@ -872,7 +900,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 						CurrentOwner:    nil,   // ERC1155 doesn't have single owner
 						Burned:          false, // Can't determine from one owner's perspective
 					},
-					OwnerAddress: *ownerAddress,
+					OwnerAddress: *address,
 					Quantity:     balance,
 					Events:       storeEvents,
 				}
@@ -1206,4 +1234,129 @@ func (e *executor) UpdateIndexingBlockRangeForAddress(ctx context.Context, addre
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
 func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
 	return e.store.EnsureWatchedAddressExists(ctx, address, chain)
+}
+
+// =============================================================================
+// Webhook Activities
+// =============================================================================
+
+// GetActiveWebhookClientsByEventType retrieves active webhook clients matching the event type
+func (e *executor) GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error) {
+	return e.store.GetActiveWebhookClientsByEventType(ctx, eventType)
+}
+
+// GetWebhookClientByID retrieves a webhook client by client ID
+func (e *executor) GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error) {
+	return e.store.GetWebhookClientByID(ctx, clientID)
+}
+
+// CreateWebhookDeliveryRecord creates a new webhook delivery record
+func (e *executor) CreateWebhookDeliveryRecord(ctx context.Context, delivery *schema.WebhookDelivery, event webhook.WebhookEvent) (uint64, error) {
+	// Marshal event to JSON for the Payload field
+	eventJSON, err := e.json.Marshal(event)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal webhook event: %w", err)
+	}
+	delivery.Payload = eventJSON
+
+	if err := e.store.CreateWebhookDelivery(ctx, delivery); err != nil {
+		return 0, err
+	}
+	return delivery.ID, nil
+}
+
+// DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with HMAC signature
+// This activity will be automatically retried by Temporal with exponential backoff
+func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error) {
+	// Get attempt number from Temporal activity info
+	attempt := e.temporalActivity.GetInfo(ctx).Attempt
+
+	logger.InfoCtx(ctx, "Attempting webhook delivery",
+		zap.String("clientID", client.ClientID),
+		zap.String("eventID", event.EventID),
+		zap.Int32("attempt", attempt))
+
+	// Generate signed payload with HMAC-SHA256
+	payload, signature, timestamp, err := webhook.GenerateSignedPayload(client.WebhookSecret, event)
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to generate signed payload"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), nil, "", err.Error()); ierr != nil {
+			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+				zap.Error(ierr),
+				zap.String("clientID", client.ClientID))
+		}
+
+		// Return non-retryable error to stop Temporal retry
+		return webhook.DeliveryResult{Success: false, Error: err.Error()}, temporal.NewNonRetryableApplicationError(err.Error(), "failed to generate signed payload", err)
+	}
+
+	// Build headers for webhook delivery
+	headers := map[string]string{
+		"Content-Type":         "application/json",
+		"X-Webhook-Signature":  signature,
+		"X-Webhook-Event-ID":   event.EventID,
+		"X-Webhook-Event-Type": event.EventType,
+		"X-Webhook-Timestamp":  fmt.Sprintf("%d", timestamp),
+		"User-Agent":           "FF-Indexer-Webhook/2.0",
+	}
+
+	// Send HTTP request
+	resp, err := e.httpClient.PostWithHeadersNoRetry(ctx, client.WebhookURL, headers, bytes.NewReader(payload))
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to post webhook HTTP request"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), nil, "", err.Error()); ierr != nil {
+			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+				zap.Error(ierr),
+				zap.String("clientID", client.ClientID))
+		}
+
+		// Return error to trigger Temporal retry
+		return webhook.DeliveryResult{Success: false, Error: err.Error()}, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", client.WebhookURL))
+		}
+	}()
+
+	// Read response body with a size limit to prevent memory exhaustion
+	// We use LimitReader to ensure we never read more than 4KB
+	limitedReader := io.LimitReader(resp.Body, 4*1024)
+
+	respBody, err := e.io.ReadAll(limitedReader)
+	if err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to read response body for webhook delivery"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+		// Continue with empty body - don't fail the delivery
+		respBody = []byte{}
+	}
+
+	// Check status code for non-2xx responses
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logger.ErrorCtx(ctx, errors.New("failed to post webhook HTTP request"),
+			zap.Int("statusCode", resp.StatusCode),
+			zap.String("clientID", client.ClientID))
+
+		err := fmt.Errorf("HTTP %d", resp.StatusCode)
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), &resp.StatusCode, string(respBody), err.Error()); ierr != nil {
+			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+				zap.Error(ierr),
+				zap.String("clientID", client.ClientID))
+		}
+
+		// Return error to trigger Temporal retry
+		return webhook.DeliveryResult{Success: false, StatusCode: resp.StatusCode, Body: string(respBody)}, err
+	}
+
+	// Update webhook delivery status
+	if err := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusSuccess, int(attempt), &resp.StatusCode, string(respBody), ""); err != nil {
+		logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
+			zap.Error(err), zap.String("clientID", client.ClientID))
+	}
+
+	return webhook.DeliveryResult{Success: true, StatusCode: resp.StatusCode, Body: string(respBody)}, nil
 }

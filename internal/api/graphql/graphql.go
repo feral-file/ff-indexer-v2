@@ -27,14 +27,15 @@ type Handler interface {
 
 // gqlHandler implements the Handler interface using gqlgen
 type gqlHandler struct {
+	debug      bool
 	server     *handler.Server
 	authConfig middleware.AuthConfig
 }
 
 // NewHandler creates a new GraphQL handler with gqlgen
-func NewHandler(exec executor.Executor, authCfg middleware.AuthConfig) (Handler, error) {
+func NewHandler(debug bool, exec executor.Executor, authCfg middleware.AuthConfig) (Handler, error) {
 	// Create resolver with executor
-	resolver := NewResolver(exec)
+	resolver := NewResolver(debug, exec)
 
 	// Create executable schema
 	config := Config{Resolvers: resolver}
@@ -46,6 +47,7 @@ func NewHandler(exec executor.Executor, authCfg middleware.AuthConfig) (Handler,
 	srv.SetRecoverFunc(RecoverFunc)
 
 	h := &gqlHandler{
+		debug:      debug,
 		server:     srv,
 		authConfig: authCfg,
 	}
@@ -57,7 +59,7 @@ func NewHandler(exec executor.Executor, authCfg middleware.AuthConfig) (Handler,
 }
 
 // authMiddleware authenticates GraphQL mutations using the shared authentication logic
-// Only applies authentication to mutations that require it (e.g., triggerOwnerIndexing)
+// Only applies authentication to mutations that require it
 func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
 	opctx := graphql.GetOperationContext(ctx)
 
@@ -65,12 +67,22 @@ func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationH
 	if opctx.Operation != nil && opctx.Operation.Operation == ast.Mutation {
 		// Check if this is a mutation that requires authentication
 		requiresAuth := false
+		requiresAPIKeyOnly := false
+		mutationName := ""
+
 		if opctx.Operation.SelectionSet != nil {
 			for _, selection := range opctx.Operation.SelectionSet {
 				if field, ok := selection.(*ast.Field); ok {
-					// Only triggerOwnerIndexing requires authentication
+					mutationName = field.Name
+					// triggerOwnerIndexing requires authentication (JWT or API key)
 					if field.Name == "triggerOwnerIndexing" {
 						requiresAuth = true
+						break
+					}
+					// createWebhookClient requires API key only
+					if field.Name == "createWebhookClient" {
+						requiresAuth = true
+						requiresAPIKeyOnly = true
 						break
 					}
 				}
@@ -90,10 +102,21 @@ func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationH
 			if !result.Success {
 				logger.WarnCtx(ctx, "GraphQL mutation authentication failed",
 					zap.Error(result.Error),
-					zap.String("operation", opctx.OperationName),
+					zap.String("operation", mutationName),
 				)
 				return func(ctx context.Context) *graphql.Response {
 					return graphql.ErrorResponse(ctx, "Authentication required for this mutation")
+				}
+			}
+
+			// For API key-only mutations, verify it's not JWT
+			if requiresAPIKeyOnly && result.AuthType != "apikey" {
+				logger.WarnCtx(ctx, "GraphQL mutation requires API key authentication only",
+					zap.String("operation", mutationName),
+					zap.String("auth_type", result.AuthType),
+				)
+				return func(ctx context.Context) *graphql.Response {
+					return graphql.ErrorResponse(ctx, "This mutation requires API key authentication only (JWT not accepted)")
 				}
 			}
 
@@ -107,7 +130,7 @@ func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationH
 			}
 
 			logger.DebugCtx(ctx, "GraphQL mutation authentication successful",
-				zap.String("operation", opctx.OperationName),
+				zap.String("operation", mutationName),
 				zap.String("auth_type", result.AuthType),
 			)
 		}

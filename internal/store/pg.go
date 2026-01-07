@@ -2210,3 +2210,101 @@ func (s *pgStore) GetAllKeyValuesByPrefix(ctx context.Context, prefix string) (m
 
 	return result, nil
 }
+
+// GetActiveWebhookClientsByEventType retrieves active webhook clients that match the given event type
+func (s *pgStore) GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error) {
+	var clients []*schema.WebhookClient
+
+	// Query for active clients where event_filters contains the event type or wildcard "*"
+	// Using JSONB containment operator @> to check if the array contains the value
+	err := s.db.WithContext(ctx).
+		Where("is_active").
+		Where("event_filters @> ?::jsonb OR event_filters @> ?::jsonb",
+			fmt.Sprintf(`["%s"]`, eventType),
+			`["*"]`).
+		Find(&clients).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get webhook clients by event type: %w", err)
+	}
+
+	return clients, nil
+}
+
+// GetWebhookClientByID retrieves a webhook client by client ID
+func (s *pgStore) GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error) {
+	var client schema.WebhookClient
+	err := s.db.WithContext(ctx).Where("client_id = ?", clientID).First(&client).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get webhook client: %w", err)
+	}
+	return &client, nil
+}
+
+// CreateWebhookClient creates a new webhook client
+func (s *pgStore) CreateWebhookClient(ctx context.Context, input CreateWebhookClientInput) (*schema.WebhookClient, error) {
+	now := time.Now()
+	client := &schema.WebhookClient{
+		ClientID:         input.ClientID,
+		WebhookURL:       input.WebhookURL,
+		WebhookSecret:    input.WebhookSecret,
+		EventFilters:     input.EventFilters,
+		IsActive:         input.IsActive,
+		RetryMaxAttempts: input.RetryMaxAttempts,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	err := s.db.WithContext(ctx).Create(client).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to create webhook client: %w", err)
+	}
+	return client, nil
+}
+
+// CreateWebhookDelivery creates a new webhook delivery record
+func (s *pgStore) CreateWebhookDelivery(ctx context.Context, delivery *schema.WebhookDelivery) error {
+	// Payload is already JSON bytes from the executor
+	err := s.db.WithContext(ctx).Create(delivery).Error
+	if err != nil {
+		return fmt.Errorf("failed to create webhook delivery: %w", err)
+	}
+	return nil
+}
+
+// UpdateWebhookDeliveryStatus updates the status and result of a webhook delivery
+func (s *pgStore) UpdateWebhookDeliveryStatus(ctx context.Context, deliveryID uint64, status schema.WebhookDeliveryStatus, attempts int, responseStatus *int, responseBody, errorMessage string) error {
+	now := time.Now()
+	updates := map[string]interface{}{
+		"delivery_status": status,
+		"attempts":        attempts,
+		"response_body":   responseBody,
+		"last_attempt_at": now,
+		"updated_at":      now,
+	}
+
+	if responseStatus != nil {
+		updates["response_status"] = *responseStatus
+	}
+	if errorMessage != "" {
+		// Limit error message
+		if len(errorMessage) > 1024 {
+			errorMessage = errorMessage[:1024]
+		}
+		updates["error_message"] = errorMessage
+	}
+
+	err := s.db.WithContext(ctx).
+		Model(&schema.WebhookDelivery{}).
+		Where("id = ?", deliveryID).
+		Updates(updates).Error
+
+	if err != nil {
+		return fmt.Errorf("failed to update webhook delivery status: %w", err)
+	}
+
+	return nil
+}

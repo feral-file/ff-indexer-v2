@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -47,6 +48,10 @@ type Handler interface {
 	// GET /api/v1/workflows/:workflow_id/runs/:run_id
 	GetWorkflowStatus(c *gin.Context)
 
+	// CreateWebhookClient creates a new webhook client (requires authentication via API key)
+	// POST /api/v1/webhooks/clients
+	CreateWebhookClient(c *gin.Context)
+
 	// HealthCheck returns the health status of the API
 	// GET /health
 	HealthCheck(c *gin.Context)
@@ -54,12 +59,14 @@ type Handler interface {
 
 // handler implements the Handler interface
 type handler struct {
+	debug    bool
 	executor executor.Executor
 }
 
 // NewHandler creates a new REST API handler using the shared executor
-func NewHandler(exec executor.Executor) Handler {
+func NewHandler(debug bool, exec executor.Executor) Handler {
 	return &handler{
+		debug:    debug,
 		executor: exec,
 	}
 }
@@ -340,6 +347,43 @@ func (h *handler) GetWorkflowStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, status)
+}
+
+// CreateWebhookClient creates a new webhook client (requires authentication via API key)
+func (h *handler) CreateWebhookClient(c *gin.Context) {
+	var req dto.CreateWebhookClientRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	// Validate request body
+	err := req.Validate(h.debug)
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	// Set default retry_max_attempts if not provided
+	retryMaxAttempts := constants.DEFAULT_RETRY_MAX_ATTEMPTS // Default value
+	if req.RetryMaxAttempts != nil {
+		retryMaxAttempts = *req.RetryMaxAttempts
+	}
+
+	// Call executor's CreateWebhookClient method
+	response, err := h.executor.CreateWebhookClient(
+		c.Request.Context(),
+		req.WebhookURL,
+		req.EventFilters,
+		retryMaxAttempts,
+	)
+
+	if err != nil {
+		respondInternalError(c, err, "Failed to create webhook client")
+		return
+	}
+
+	c.JSON(http.StatusCreated, response)
 }
 
 // HealthCheck returns the health status of the API

@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // ID is the resolver for the id field.
@@ -194,6 +195,53 @@ func (r *mutationResolver) TriggerMetadataIndexing(ctx context.Context, tokenIds
 		return nil, err
 	}
 	return wr, nil
+}
+
+// CreateWebhookClient is the resolver for the createWebhookClient field.
+func (r *mutationResolver) CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts *int) (*dto.CreateWebhookClientResponse, error) {
+	// Validate: webhook URL must be provided
+	if webhookURL == "" {
+		return nil, apierrors.NewValidationError("webhook_url is required")
+	}
+
+	// Validate: webhook URL must be valid
+	if r.debug {
+		if !internalTypes.IsValidURL(webhookURL) {
+			return nil, apierrors.NewValidationError("webhook_url must be a valid URL")
+		}
+	} else {
+		if !internalTypes.IsHTTPSURL(webhookURL) {
+			return nil, apierrors.NewValidationError("webhook_url must be a valid HTTPS URL")
+		}
+	}
+
+	// Validate: event filters must be provided
+	if len(eventFilters) == 0 {
+		return nil, apierrors.NewValidationError("event_filters is required and must not be empty")
+	}
+
+	// Validate: each event filter must be supported
+	for _, eventType := range eventFilters {
+		if !webhook.IsValidEventType(eventType) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported event type: %s. Supported types: %v", eventType, webhook.SupportedEventTypes))
+		}
+	}
+
+	// Set default retry_max_attempts if not provided
+	retryMax := constants.DEFAULT_RETRY_MAX_ATTEMPTS // Default value
+	if retryMaxAttempts != nil {
+		if *retryMaxAttempts < 0 || *retryMaxAttempts > constants.MAX_RETRY_MAX_ATTEMPTS {
+			return nil, apierrors.NewValidationError("retry_max_attempts must be between 0 and 10")
+		}
+		retryMax = *retryMaxAttempts
+	}
+
+	// Create webhook client
+	response, err := r.executor.CreateWebhookClient(ctx, webhookURL, eventFilters, retryMax)
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
 // Offset is the resolver for the offset field.
