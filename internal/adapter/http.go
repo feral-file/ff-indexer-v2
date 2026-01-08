@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"syscall"
 	"time"
 
@@ -67,6 +68,14 @@ func isRetryableError(err error) bool {
 	// Context cancellation and deadline exceeded are not retryable
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+
+	// Check for HTTP/2 GOAWAY errors (graceful connection closure)
+	// The server is requesting the client to stop using the connection and retry on a new one
+	errStr := err.Error()
+	if strings.Contains(errStr, "http2: server sent GOAWAY") ||
+		strings.Contains(errStr, "http2: Transport received Server's graceful shutdown GOAWAY") {
+		return true
 	}
 
 	// Check for url.Error (wraps most HTTP client errors)
