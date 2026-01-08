@@ -35,7 +35,7 @@ func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) 
 		// Configure child workflow options
 		childWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:               fmt.Sprintf("index-token-owner-%s", address),
-			WorkflowExecutionTimeout: 30 * time.Minute,
+			WorkflowExecutionTimeout: time.Hour,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_TERMINATE,
 		}
@@ -77,7 +77,7 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               fmt.Sprintf("index-token-owner-%s-%s", blockchain, address),
-		WorkflowExecutionTimeout: 30 * time.Minute,
+		WorkflowExecutionTimeout: time.Hour,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}

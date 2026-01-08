@@ -349,7 +349,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 
 	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowExecutionTimeout: 30 * time.Minute,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
