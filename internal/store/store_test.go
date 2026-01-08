@@ -1163,66 +1163,6 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 		assert.Equal(t, "12", balanceMap[owner2], "Owner2 balance should be added")
 	})
 
-	t.Run("handle zero balance", func(t *testing.T) {
-		// Test upserting with zero balance (owner transferred away all tokens)
-		contractAddress := "0x9876543210987654321098765432109876543210"
-		tokenNumber := "400"
-		ownerAddress := "0xowner6666666666666666666666666666666666666"
-		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
-
-		input := UpsertTokenBalanceForOwnerInput{
-			Token: CreateTokenInput{
-				TokenCID:        tokenCID.String(),
-				Chain:           domain.ChainEthereumMainnet,
-				Standard:        domain.StandardERC1155,
-				ContractAddress: contractAddress,
-				TokenNumber:     tokenNumber,
-			},
-			OwnerAddress: ownerAddress,
-			Quantity:     "0", // Zero balance
-			Events: []CreateProvenanceEventInput{
-				{
-					Chain:       domain.ChainEthereumMainnet,
-					EventType:   schema.ProvenanceEventTypeMint,
-					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-					ToAddress:   &ownerAddress,
-					Quantity:    "5",
-					TxHash:      "0xtx4",
-					BlockNumber: 400,
-					Timestamp:   time.Now(),
-				},
-				{
-					Chain:       domain.ChainEthereumMainnet,
-					EventType:   schema.ProvenanceEventTypeTransfer,
-					FromAddress: &ownerAddress,
-					ToAddress:   stringPtr("0xother"),
-					Quantity:    "5",
-					TxHash:      "0xtx5",
-					BlockNumber: 401,
-					Timestamp:   time.Now(),
-				},
-			},
-		}
-
-		err := store.UpsertTokenBalanceForOwner(ctx, input)
-		require.NoError(t, err)
-
-		// Verify zero balance was stored
-		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
-		require.NoError(t, err)
-
-		balances, total, err := store.GetTokenOwners(ctx, token.ID, 10, 0)
-		require.NoError(t, err)
-		assert.Equal(t, uint64(1), total)
-		assert.Equal(t, "0", balances[0].Quantity)
-
-		// Verify both events were stored
-		events, eventTotal, err := store.GetTokenProvenanceEvents(ctx, token.ID, 10, 0, false)
-		require.NoError(t, err)
-		assert.Equal(t, uint64(2), eventTotal)
-		assert.Len(t, events, 2, "Should have 2 events")
-	})
-
 	t.Run("handle duplicate events gracefully", func(t *testing.T) {
 		// Test that duplicate events are ignored (ON CONFLICT DO NOTHING)
 		contractAddress := "0xfedcba0987654321098765432109876543210987"
@@ -1576,6 +1516,43 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 		}
 		require.NotNil(t, ownerBalance, "owner should have a balance")
 		assert.Equal(t, "550", ownerBalance.Quantity)
+	})
+
+	t.Run("upsert with non-positive quantity should fail", func(t *testing.T) {
+		contractAddress := "0xinvalidqty000000000000000000000000000001"
+		tokenNumber := "1"
+		ownerAddress := "0xinvalidqty000000000000000000000000000002"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		// Test zero quantity
+		input := UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			OwnerAddress: ownerAddress,
+			Quantity:     "0", // Zero quantity
+			Events:       []CreateProvenanceEventInput{},
+		}
+
+		err := store.UpsertTokenBalanceForOwner(ctx, input)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "quantity is not a positive numeric value")
+
+		// Test negative quantity
+		input.Quantity = "-50"
+		err = store.UpsertTokenBalanceForOwner(ctx, input)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "quantity is not a positive numeric value")
+
+		// Test invalid quantity string
+		input.Quantity = "abc"
+		err = store.UpsertTokenBalanceForOwner(ctx, input)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "quantity is not a positive numeric value")
 	})
 }
 

@@ -857,6 +857,15 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 					return fmt.Errorf("failed to get ERC1155 balance and events for owner: %w", err)
 				}
 
+				// If balance is not a positive numeric value, return a non-retryable error
+				if !types.IsPositiveNumeric(balance) {
+					return temporal.NewNonRetryableApplicationError(
+						"balance is not a positive numeric value",
+						"InvalidBalance",
+						errors.New("balance is not a positive numeric value"),
+					)
+				}
+
 				logger.InfoCtx(ctx, "Indexing ERC1155 token for specific owner",
 					zap.String("tokenCID", tokenCID.String()),
 					zap.String("owner", *address),

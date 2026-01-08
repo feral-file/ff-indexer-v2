@@ -2631,29 +2631,15 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_Ze
 		GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress).
 		Return(balance, events, nil)
 
-	// Mock JSON marshal for events
-	rawEventData := []byte(`{"event":"data"}`)
-	mocks.json.EXPECT().
-		Marshal(events[0]).
-		Return(rawEventData, nil)
-	mocks.json.EXPECT().
-		Marshal(events[1]).
-		Return(rawEventData, nil)
-
-	// Mock store UpsertTokenBalanceForOwner - should store zero balance
-	mocks.store.EXPECT().
-		UpsertTokenBalanceForOwner(ctx, gomock.Any()).
-		DoAndReturn(func(ctx context.Context, input store.UpsertTokenBalanceForOwnerInput) error {
-			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
-			assert.Equal(t, ownerAddress, input.OwnerAddress)
-			assert.Equal(t, "0", input.Quantity, "Should store zero balance")
-			assert.Len(t, input.Events, 2, "Should have all owner-related events")
-			return nil
-		})
-
 	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
 
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.IsType(t, &temporal.ApplicationError{}, err)
+	var appErr *temporal.ApplicationError
+	errOk := errors.As(err, &appErr)
+	assert.True(t, errOk)
+	assert.True(t, appErr.NonRetryable())
+	assert.Contains(t, err.Error(), "balance is not a positive numeric value")
 }
 
 func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_WithOwner_GetBalanceError(t *testing.T) {

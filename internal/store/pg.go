@@ -1448,6 +1448,10 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 		}
 
 		// 2. Upsert the specific owner's balance (DO NOT delete other owners)
+		if !types.IsPositiveNumeric(input.Quantity) {
+			return fmt.Errorf("quantity is not a positive numeric value: %s", input.Quantity)
+		}
+
 		balance := schema.Balance{
 			TokenID:      token.ID,
 			OwnerAddress: input.OwnerAddress,
