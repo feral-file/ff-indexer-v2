@@ -450,14 +450,14 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
 	}
 
 	eventFilters, _ := json.Marshal([]string{"*"})
-	maxAttempts := 3
+	maxRetries := 3
 	client := &schema.WebhookClient{
 		ClientID:         clientID,
 		WebhookURL:       "https://webhook.example.com/endpoint",
 		WebhookSecret:    "736563726574313233",
 		EventFilters:     datatypes.JSON(eventFilters),
 		IsActive:         true,
-		RetryMaxAttempts: maxAttempts,
+		RetryMaxAttempts: maxRetries,
 	}
 
 	// Mock GetWebhookClientByID activity
@@ -482,5 +482,5 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
 	// Verify workflow failed (after retries)
 	s.True(s.env.IsWorkflowCompleted())
 	s.Error(s.env.GetWorkflowError())
-	s.Equal(maxAttempts, activityCallCount, "Activity should be attempted the expected number of times")
+	s.Equal(maxRetries+1, activityCallCount, "Activity should be attempted the expected number of times") // includes the initial attempt
 }

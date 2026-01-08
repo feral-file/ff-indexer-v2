@@ -143,13 +143,13 @@ func (w *workerCore) DeliverWebhook(ctx workflow.Context, clientID string, event
 		zap.Uint64("deliveryID", deliveryID))
 
 	// Configure delivery activity with exponential backoff retry policy
-	// Temporal will automatically retry with exponential backoff: 5s, 10s, 20s, 40s, 80s
+	// Temporal will automatically retry with exponential backoff: 15m, 30m, 1h, 2h, 4h
 	deliveryActivityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    5 * time.Second,                // First retry after 5s
-			BackoffCoefficient: 2.0,                            // Double each time: 5s -> 10s -> 20s -> 40s -> 80s
-			MaximumAttempts:    int32(client.RetryMaxAttempts), //nolint:gosec,G115
+			InitialInterval:    15 * time.Minute,                   // First retry after 15 minutes
+			BackoffCoefficient: 2.0,                                // Double each time: 15m -> 30m -> 1h -> 2h -> 4h
+			MaximumAttempts:    int32(client.RetryMaxAttempts) + 1, //nolint:gosec,G115
 		},
 	}
 	deliveryCtx := workflow.WithActivityOptions(ctx, deliveryActivityOptions)
