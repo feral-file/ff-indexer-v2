@@ -1060,3 +1060,21 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_ContractUnreachable
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 }
+
+func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_BalanceIsNotAPositiveNumericValue_GracefullySkips() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	address := "0xowner123"
+
+	// Mock blacklist check
+	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(false)
+
+	// Mock IndexTokenWithMinimalProvenancesByTokenCID activity to return "balance is not a positive numeric value" error
+	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, &address).Return(domain.ErrBalanceIsNotAPositiveNumericValue)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, &address)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}

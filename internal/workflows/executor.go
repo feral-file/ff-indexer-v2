@@ -862,7 +862,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 					return temporal.NewNonRetryableApplicationError(
 						"balance is not a positive numeric value",
 						"InvalidBalance",
-						errors.New("balance is not a positive numeric value"),
+						domain.ErrBalanceIsNotAPositiveNumericValue,
 					)
 				}
 

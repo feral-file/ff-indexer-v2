@@ -434,6 +434,15 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 			return nil
 		}
 
+		// Check if this is a "balance is not a positive numeric value" error
+		if strings.Contains(err.Error(), domain.ErrBalanceIsNotAPositiveNumericValue.Error()) {
+			logger.ErrorWf(ctx, fmt.Errorf("failed to index token with minimal provenances due to balance is not a positive numeric value, skipping token"),
+				zap.String("tokenCID", tokenCID.String()),
+				zap.Error(err),
+			)
+			return nil
+		}
+
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to index token with minimal provenances"),
 			zap.Error(err),

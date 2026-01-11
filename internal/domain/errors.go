@@ -18,6 +18,9 @@ var (
 	// ErrContractUnreachable is returned when a contract is unreachable (e.g. contract exists but function is not callable)
 	ErrContractUnreachable = errors.New("contract is unreachable")
 
+	// ErrBalanceIsNotAPositiveNumericValue is returned when a balance is not a positive numeric value
+	ErrBalanceIsNotAPositiveNumericValue = errors.New("balance is not a positive numeric value")
+
 	// ErrInvalidTokenCID is returned when a token CID is invalid
 	ErrInvalidTokenCID = errors.New("invalid token CID")
 
