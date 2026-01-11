@@ -96,7 +96,6 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 - Docker and Docker Compose
 - PostgreSQL 15+
 - Access to Ethereum RPC endpoints
-- Cloudflare account (for media processing)
 
 ## License
 
