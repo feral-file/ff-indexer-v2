@@ -3339,6 +3339,176 @@ func testWatchedAddresses(t *testing.T, store Store) {
 		err = store.UpdateIndexingBlockRangeForAddress(ctx, address, chain, 1000, 1500)
 		require.Error(t, err)
 	})
+
+	// Quota management tests
+	t.Run("get quota info - first call initializes quota", func(t *testing.T) {
+		address := "0xquota1000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		// Ensure address exists
+		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Get quota info (should initialize with default quota)
+		quotaInfo, err := store.GetQuotaInfo(ctx, address, chain)
+		require.NoError(t, err)
+		assert.NotNil(t, quotaInfo)
+		assert.Equal(t, 1000, quotaInfo.TotalQuota)
+		assert.Equal(t, 1000, quotaInfo.RemainingQuota)
+		assert.Equal(t, 0, quotaInfo.TokensIndexedToday)
+		assert.False(t, quotaInfo.QuotaExhausted)
+		assert.True(t, quotaInfo.QuotaResetAt.After(time.Now()))
+	})
+
+	t.Run("increment tokens indexed - normal operation", func(t *testing.T) {
+		address := "0xquota2000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		// Ensure address exists and get initial quota
+		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Initialize quota
+		quotaInfo, err := store.GetQuotaInfo(ctx, address, chain)
+		require.NoError(t, err)
+		initialRemaining := quotaInfo.RemainingQuota
+
+		// Increment by 50
+		err = store.IncrementTokensIndexed(ctx, address, chain, 50)
+		require.NoError(t, err)
+
+		// Verify quota was decremented
+		quotaInfo, err = store.GetQuotaInfo(ctx, address, chain)
+		require.NoError(t, err)
+		assert.Equal(t, initialRemaining-50, quotaInfo.RemainingQuota)
+		assert.Equal(t, 50, quotaInfo.TokensIndexedToday)
+		assert.False(t, quotaInfo.QuotaExhausted)
+	})
+
+	t.Run("increment tokens indexed - exhaust quota", func(t *testing.T) {
+		address := "0xquota3000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		// Ensure address exists
+		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Initialize quota
+		quotaInfo, err := store.GetQuotaInfo(ctx, address, chain)
+		require.NoError(t, err)
+		totalQuota := quotaInfo.TotalQuota
+
+		// Exhaust quota completely
+		err = store.IncrementTokensIndexed(ctx, address, chain, totalQuota)
+		require.NoError(t, err)
+
+		// Verify quota is exhausted
+		quotaInfo, err = store.GetQuotaInfo(ctx, address, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 0, quotaInfo.RemainingQuota)
+		assert.Equal(t, totalQuota, quotaInfo.TokensIndexedToday)
+		assert.True(t, quotaInfo.QuotaExhausted)
+	})
+
+	t.Run("increment tokens indexed - multiple increments", func(t *testing.T) {
+		address := "0xquota4000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		// Ensure address exists
+		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Initialize quota
+		_, err = store.GetQuotaInfo(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Increment multiple times
+		err = store.IncrementTokensIndexed(ctx, address, chain, 10)
+		require.NoError(t, err)
+		err = store.IncrementTokensIndexed(ctx, address, chain, 20)
+		require.NoError(t, err)
+		err = store.IncrementTokensIndexed(ctx, address, chain, 30)
+		require.NoError(t, err)
+
+		// Verify cumulative count
+		quotaInfo, err := store.GetQuotaInfo(ctx, address, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 60, quotaInfo.TokensIndexedToday)
+		assert.Equal(t, 1000-60, quotaInfo.RemainingQuota)
+	})
+
+	t.Run("get quota info - address not watched", func(t *testing.T) {
+		address := "0xnonexistent0000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		// Should return error for non-existent address
+		_, err := store.GetQuotaInfo(ctx, address, chain)
+		require.Error(t, err)
+	})
+
+	t.Run("increment tokens indexed - address not watched", func(t *testing.T) {
+		address := "0xnonexistent0000000000000000000000000002"
+		chain := domain.ChainEthereumMainnet
+
+		// Should return error for non-existent address
+		err := store.IncrementTokensIndexed(ctx, address, chain, 10)
+		require.Error(t, err)
+	})
+
+	t.Run("increment with zero count", func(t *testing.T) {
+		address := "0xquota6000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		// Ensure address exists
+		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Increment by 0 (should be no-op or error depending on implementation)
+		err = store.IncrementTokensIndexed(ctx, address, chain, 0)
+		assert.Error(t, err)
+	})
+
+	t.Run("increment with negative count", func(t *testing.T) {
+		address := "0xquota7000000000000000000000000000000001"
+		chain := domain.ChainEthereumMainnet
+
+		// Ensure address exists
+		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		require.NoError(t, err)
+
+		// Attempt to increment with negative count (should error)
+		err = store.IncrementTokensIndexed(ctx, address, chain, -10)
+		require.Error(t, err)
+	})
+
+	t.Run("quota info for different chains", func(t *testing.T) {
+		address := "tz1quota8000000000000000000000000001"
+		chainTezos := domain.ChainTezosMainnet
+		chainEth := domain.ChainEthereumMainnet
+
+		// Ensure address exists on both chains
+		err := store.EnsureWatchedAddressExists(ctx, address, chainTezos)
+		require.NoError(t, err)
+		err = store.EnsureWatchedAddressExists(ctx, address, chainEth)
+		require.NoError(t, err)
+
+		// Consume quota on Tezos
+		_, err = store.GetQuotaInfo(ctx, address, chainTezos)
+		require.NoError(t, err)
+		err = store.IncrementTokensIndexed(ctx, address, chainTezos, 100)
+		require.NoError(t, err)
+
+		// Verify Tezos quota was consumed
+		quotaInfoTezos, err := store.GetQuotaInfo(ctx, address, chainTezos)
+		require.NoError(t, err)
+		assert.Equal(t, 100, quotaInfoTezos.TokensIndexedToday)
+
+		// Verify Ethereum quota is independent
+		quotaInfoEth, err := store.GetQuotaInfo(ctx, address, chainEth)
+		require.NoError(t, err)
+		assert.Equal(t, 0, quotaInfoEth.TokensIndexedToday)
+		assert.Equal(t, quotaInfoEth.TotalQuota, quotaInfoEth.RemainingQuota)
+	})
 }
 
 // =============================================================================

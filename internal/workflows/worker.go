@@ -72,6 +72,10 @@ type WorkerCoreConfig struct {
 	TezosTokenSweepStartBlock uint64
 	// MediaTaskQueue is the task queue for the media worker
 	MediaTaskQueue string
+	// BudgetedIndexingModeEnabled enables quota-based token indexing
+	BudgetedIndexingModeEnabled bool
+	// BudgetedIndexingDefaultDailyQuota is the default daily quota for budgeted indexing mode
+	BudgetedIndexingDefaultDailyQuota int
 }
 
 // workerCore is the concrete implementation of WorkerCore

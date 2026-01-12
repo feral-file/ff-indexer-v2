@@ -493,7 +493,7 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 		// Trigger IndexTokenOwners workflow
 		options := client.StartWorkflowOptions{
 			TaskQueue:                e.orchestratorTaskQueue,
-			WorkflowExecutionTimeout: time.Hour,
+			WorkflowExecutionTimeout: 24*time.Hour + 15*time.Minute, // 24 hours + 15 minutes to cover the child workflow timeout
 		}
 		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwners, normalizedAddresses)
 		if err != nil {

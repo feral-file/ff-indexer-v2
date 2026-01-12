@@ -12,6 +12,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
@@ -35,7 +36,7 @@ func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) 
 		// Configure child workflow options
 		childWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:               fmt.Sprintf("index-token-owner-%s", address),
-			WorkflowExecutionTimeout: time.Hour,
+			WorkflowExecutionTimeout: 24*time.Hour + 15*time.Minute, // 24 hours + 15 minutes to cover the child workflow timeout
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_TERMINATE,
 		}
@@ -77,7 +78,7 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               fmt.Sprintf("index-token-owner-%s-%s", blockchain, address),
-		WorkflowExecutionTimeout: time.Hour,
+		WorkflowExecutionTimeout: 24*time.Hour + 5*time.Minute, // 24 hours + 5 minutes to cover the quota reset time
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
@@ -278,9 +279,19 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 				zap.Uint64("tokenMaxBlock", info.maxBlock),
 			)
 
-			// Index tokens
-			if err := w.indexTokenChunk(ctx, info.tokenCIDs, &address); err != nil {
+			// Process chunk with quota checking
+			shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
+				fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
+			if err != nil {
 				return err
+			}
+			if !shouldContinue {
+				// Quota exhausted - sleep until reset and continue-as-new
+				if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+					return err
+				}
+				// Continue-as-new to reset event history and resume indexing
+				return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address)
 			}
 
 			// Update block range after each successful chunk for resumability
@@ -376,8 +387,19 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				if err := w.indexTokenChunk(ctx, info.tokenCIDs, &address); err != nil {
+				// Process chunk with quota checking
+				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
+					fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
+				if err != nil {
 					return err
+				}
+				if !shouldContinue {
+					// Quota exhausted - sleep until reset and continue-as-new
+					if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+						return err
+					}
+					// Continue-as-new to reset event history and resume indexing
+					return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address)
 				}
 
 				// Update min_block after each successful chunk for resumability
@@ -458,8 +480,19 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				if err := w.indexTokenChunk(ctx, info.tokenCIDs, &address); err != nil {
+				// Process chunk with quota checking
+				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
+					fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
+				if err != nil {
 					return err
+				}
+				if !shouldContinue {
+					// Quota exhausted - sleep until reset and continue-as-new
+					if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+						return err
+					}
+					// Continue-as-new to reset event history and resume indexing
+					return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address)
 				}
 
 				// Update max_block after each successful chunk for resumability
@@ -616,9 +649,19 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 				zap.Uint64("tokenMaxBlock", info.maxBlock),
 			)
 
-			// Index tokens
-			if err := w.indexTokenChunk(ctx, info.tokenCIDs, &address); err != nil {
+			// Process chunk with quota checking
+			shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
+				fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
+			if err != nil {
 				return err
+			}
+			if !shouldContinue {
+				// Quota exhausted - sleep until reset and continue-as-new
+				if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+					return err
+				}
+				// Continue-as-new to reset event history and resume indexing
+				return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address)
 			}
 
 			// Update block range after each successful chunk for resumability
@@ -718,8 +761,19 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				if err := w.indexTokenChunk(ctx, info.tokenCIDs, &address); err != nil {
+				// Process chunk with quota checking
+				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
+					fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
+				if err != nil {
 					return err
+				}
+				if !shouldContinue {
+					// Quota exhausted - sleep until reset and continue-as-new
+					if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+						return err
+					}
+					// Continue-as-new to reset event history and resume indexing
+					return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address)
 				}
 
 				// Update min_block after each successful chunk for resumability
@@ -800,8 +854,19 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 					zap.Uint64("tokenMaxBlock", info.maxBlock),
 				)
 
-				if err := w.indexTokenChunk(ctx, info.tokenCIDs, &address); err != nil {
+				// Process chunk with quota checking
+				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
+					fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
+				if err != nil {
 					return err
+				}
+				if !shouldContinue {
+					// Quota exhausted - sleep until reset and continue-as-new
+					if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+						return err
+					}
+					// Continue-as-new to reset event history and resume indexing
+					return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address)
 				}
 
 				// Update max_block after each successful chunk for resumability
@@ -863,6 +928,133 @@ func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.To
 			zap.Int("tokenCount", len(tokenCIDs)),
 		)
 		return err
+	}
+
+	return nil
+}
+
+// processChunkWithQuota handles quota checking, chunk processing, and usage increment
+// Returns (shouldContinue bool, error) - shouldContinue=false means quota exhausted, need to sleep+continue-as-new
+func (w *workerCore) processChunkWithQuota(
+	ctx workflow.Context,
+	address string,
+	chainID domain.Chain,
+	tokenCIDs []domain.TokenCID,
+	chunkInfo string, // e.g., "forward chunk 1/5" for logging
+) (bool, error) {
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval: 10 * time.Second,
+			MaximumAttempts: 2,
+		},
+	}
+	activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
+
+	requestedCount := len(tokenCIDs)
+	allowedCount := requestedCount
+	if w.config.BudgetedIndexingModeEnabled {
+		// Check quota
+		var quotaStatus *store.QuotaInfo
+		err := workflow.ExecuteActivity(activityCtx, w.executor.GetQuotaInfo, address, chainID).Get(ctx, &quotaStatus)
+		if err != nil {
+			return false, fmt.Errorf("failed to check quota: %w", err)
+		}
+
+		if quotaStatus.QuotaExhausted {
+			logger.InfoWf(ctx, "Quota exhausted, will sleep until reset and continue-as-new",
+				zap.String("address", address),
+				zap.Time("quotaResetAt", quotaStatus.QuotaResetAt),
+				zap.String("chunkInfo", chunkInfo),
+			)
+			return false, nil // Signal to caller: quota exhausted, need to sleep+continue-as-new
+		}
+
+		// Return the minimum of requested and remaining
+		if quotaStatus.RemainingQuota < requestedCount {
+			allowedCount = quotaStatus.RemainingQuota
+		}
+	}
+
+	// Limit chunk to allowed count
+	actualTokenCIDs := tokenCIDs
+	if allowedCount < requestedCount {
+		actualTokenCIDs = tokenCIDs[:allowedCount]
+		logger.InfoWf(ctx, "Limiting chunk to remaining quota",
+			zap.Int("requested", len(tokenCIDs)),
+			zap.Int("allowed", allowedCount),
+			zap.String("chunkInfo", chunkInfo),
+		)
+	}
+
+	// Index tokens
+	if err := w.indexTokenChunk(ctx, actualTokenCIDs, &address); err != nil {
+		return false, err
+	}
+
+	if w.config.BudgetedIndexingModeEnabled {
+		// Increment usage counter after successful indexing
+		count := len(actualTokenCIDs)
+		err := workflow.ExecuteActivity(activityCtx, w.executor.IncrementTokensIndexed, address, chainID, count).Get(ctx, nil)
+		if err != nil {
+			logger.ErrorWf(ctx, fmt.Errorf("failed to increment token usage"),
+				zap.Error(err),
+				zap.String("address", address),
+				zap.Int("count", count),
+			)
+			return false, err
+		}
+
+		logger.InfoWf(ctx, "Incremented token usage for budgeted indexing mode",
+			zap.String("address", address),
+			zap.Int("count", count),
+		)
+	}
+
+	return true, nil // shouldContinue=true, success
+}
+
+// handleQuotaExhausted sleeps until quota reset and returns error to trigger continue-as-new
+// Returns temporal.NewContinueAsNewError to signal the workflow should restart
+func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, chainID domain.Chain) error {
+	if !w.config.BudgetedIndexingModeEnabled {
+		return nil // No quota management if budgeted mode is disabled
+	}
+
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval: 10 * time.Second,
+			MaximumAttempts: 2,
+		},
+	}
+	activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
+
+	// Get current quota status to determine sleep duration
+	var quotaStatus *store.QuotaInfo
+	err := workflow.ExecuteActivity(activityCtx, w.executor.GetQuotaInfo, address, chainID).Get(ctx, &quotaStatus)
+	if err != nil {
+		return fmt.Errorf("failed to get quota info for sleep calculation: %w", err)
+	}
+
+	// Calculate sleep duration until quota reset
+	now := workflow.Now(ctx)
+	sleepDuration := quotaStatus.QuotaResetAt.Sub(now) + time.Minute // Add 1 minute to cover the drift between db and workflow clock
+
+	if sleepDuration > 0 {
+		logger.InfoWf(ctx, "Sleeping until quota reset before continue-as-new",
+			zap.String("address", address),
+			zap.Duration("sleepDuration", sleepDuration),
+			zap.Time("quotaResetAt", quotaStatus.QuotaResetAt),
+		)
+		workflow.Sleep(ctx, sleepDuration)
+		logger.InfoWf(ctx, "Quota reset complete, preparing to continue-as-new",
+			zap.String("address", address),
+		)
+	} else {
+		logger.InfoWf(ctx, "Quota already reset, proceeding to continue-as-new immediately",
+			zap.String("address", address),
+		)
 	}
 
 	return nil

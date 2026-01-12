@@ -230,11 +230,13 @@ func main() {
 	// Create worker core instance
 	workerCore := workflows.NewWorkerCore(executor,
 		workflows.WorkerCoreConfig{
-			EthereumTokenSweepStartBlock: cfg.EthereumTokenSweepStartBlock,
-			TezosTokenSweepStartBlock:    cfg.TezosTokenSweepStartBlock,
-			EthereumChainID:              cfg.Ethereum.ChainID,
-			TezosChainID:                 cfg.Tezos.ChainID,
-			MediaTaskQueue:               cfg.Temporal.MediaTaskQueue,
+			EthereumTokenSweepStartBlock:      cfg.EthereumTokenSweepStartBlock,
+			TezosTokenSweepStartBlock:         cfg.TezosTokenSweepStartBlock,
+			EthereumChainID:                   cfg.Ethereum.ChainID,
+			TezosChainID:                      cfg.Tezos.ChainID,
+			MediaTaskQueue:                    cfg.Temporal.MediaTaskQueue,
+			BudgetedIndexingModeEnabled:       cfg.BudgetedIndexingEnabled,
+			BudgetedIndexingDefaultDailyQuota: cfg.BudgetedIndexingDefaultDailyQuota,
 		}, blacklistRegistry)
 
 	// Register workflows
@@ -280,6 +282,8 @@ func main() {
 	temporalWorker.RegisterActivity(executor.GetWebhookClientByID)
 	temporalWorker.RegisterActivity(executor.CreateWebhookDeliveryRecord)
 	temporalWorker.RegisterActivity(executor.DeliverWebhookHTTP)
+	temporalWorker.RegisterActivity(executor.GetQuotaInfo)
+	temporalWorker.RegisterActivity(executor.IncrementTokensIndexed)
 	logger.InfoCtx(ctx, "Registered activities")
 
 	// Start worker

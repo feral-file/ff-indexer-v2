@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/mock"
@@ -15,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -510,6 +512,206 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_GetLatestBlockErr
 }
 
 // ====================================================================================
+// IndexTezosTokenOwner Tests - Budgeted Indexing Mode
+// ====================================================================================
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_QuotaExhausted() {
+	// Setup worker core with budgeted mode enabled and low quota
+	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+		TezosChainID:                      domain.ChainTezosMainnet,
+		EthereumChainID:                   domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:      1000,
+		TezosTokenSweepStartBlock:         1000,
+		MediaTaskQueue:                    "media-task-queue",
+		BudgetedIndexingModeEnabled:       true, // Enabled
+		BudgetedIndexingDefaultDailyQuota: 50,   // Low quota
+	}, s.blacklist)
+
+	address := "tz1abc123def456"
+	chainID := domain.ChainTezosMainnet
+	latestBlock := uint64(5000)
+
+	// Create 100 tokens that would exceed quota
+	tokens := make([]domain.TokenWithBlock, 100)
+	for i := range 100 {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.TokenCID(fmt.Sprintf("tezos:mainnet:fa2:KT1abc:%d", i)),
+			BlockNumber: uint64(1000 + i),
+		}
+	}
+
+	// Mock activities
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
+		Return(tokens, nil)
+
+	// First quota check - 50 tokens available
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     50,
+		TotalQuota:         50,
+		TokensIndexedToday: 0,
+		QuotaExhausted:     false,
+	}, nil).Once()
+
+	// Mock IndexTokens for first chunk (50 tokens)
+	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+		return len(cids) == 50 // First chunk limited by quota
+	}), mock.Anything).Return(nil).Once()
+
+	// Mock IncrementTokensIndexed for first chunk
+	s.env.OnActivity(s.executor.IncrementTokensIndexed, mock.Anything, address, chainID, 50).Return(nil).Once()
+
+	// Mock UpdateIndexingBlockRangeForAddress - called once on first chunk
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil).Once()
+
+	// Second quota check after processing first chunk - exhausted
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     0,
+		TotalQuota:         50,
+		TokensIndexedToday: 50,
+		QuotaExhausted:     true,
+		QuotaResetAt:       s.env.Now().Add(24 * time.Hour),
+	}, nil).Once()
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(workerCore.IndexTezosTokenOwner, address)
+
+	// Should complete (continue-as-new returns special error)
+	s.True(s.env.IsWorkflowCompleted())
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Normal() {
+	// Setup worker core with budgeted mode enabled and sufficient quota
+	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+		TezosChainID:                      domain.ChainTezosMainnet,
+		EthereumChainID:                   domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:      1000,
+		TezosTokenSweepStartBlock:         1000,
+		MediaTaskQueue:                    "media-task-queue",
+		BudgetedIndexingModeEnabled:       true,
+		BudgetedIndexingDefaultDailyQuota: 1000, // High quota
+	}, s.blacklist)
+
+	address := "tz1xyz789"
+	chainID := domain.ChainTezosMainnet
+	latestBlock := uint64(3000)
+
+	// Create 15 tokens (less than quota)
+	tokens := make([]domain.TokenWithBlock, 15)
+	for i := range 15 {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.TokenCID(fmt.Sprintf("tezos:mainnet:fa2:KT1xyz:%d", i)),
+			BlockNumber: uint64(2000 + i*10),
+		}
+	}
+
+	// Mock activities
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
+		Return(tokens, nil)
+
+	// Quota check - plenty available
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     1000,
+		TotalQuota:         1000,
+		TokensIndexedToday: 0,
+		QuotaExhausted:     false,
+	}, nil)
+
+	// Mock IndexTokens for single chunk (15 tokens)
+	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+		return len(cids) == 15
+	}), mock.Anything).Return(nil)
+
+	// Mock IncrementTokensIndexed
+	s.env.OnActivity(s.executor.IncrementTokensIndexed, mock.Anything, address, chainID, 15).Return(nil)
+
+	// Mock UpdateIndexingBlockRangeForAddress
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(workerCore.IndexTezosTokenOwner, address)
+
+	// Should complete successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_PartialQuota() {
+	// Setup worker core with budgeted mode enabled
+	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+		TezosChainID:                      domain.ChainTezosMainnet,
+		EthereumChainID:                   domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:      1000,
+		TezosTokenSweepStartBlock:         1000,
+		MediaTaskQueue:                    "media-task-queue",
+		BudgetedIndexingModeEnabled:       true,
+		BudgetedIndexingDefaultDailyQuota: 1000,
+	}, s.blacklist)
+
+	address := "tz1partial"
+	chainID := domain.ChainTezosMainnet
+	latestBlock := uint64(3000)
+
+	// Create 60 tokens in one chunk (more than remaining quota)
+	tokens := make([]domain.TokenWithBlock, 60)
+	for i := range 60 {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.TokenCID(fmt.Sprintf("tezos:mainnet:fa2:KT1partial:%d", i)),
+			BlockNumber: uint64(2000 + i*10),
+		}
+	}
+
+	// Mock activities
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
+		Return(tokens, nil)
+
+	// Quota check - only 30 remaining (less than chunk size of 50)
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     30,
+		TotalQuota:         1000,
+		TokensIndexedToday: 970,
+		QuotaExhausted:     false,
+	}, nil).Once()
+
+	// Mock IndexTokens - should only process 30 tokens (limited by remaining quota)
+	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+		return len(cids) == 30 // Limited to remaining quota
+	}), mock.Anything).Return(nil).Once()
+
+	// Mock IncrementTokensIndexed for 30 tokens
+	s.env.OnActivity(s.executor.IncrementTokensIndexed, mock.Anything, address, chainID, 30).Return(nil).Once()
+
+	// Mock UpdateIndexingBlockRangeForAddress
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil).Once()
+
+	// Second quota check - now exhausted
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     0,
+		TotalQuota:         1000,
+		TokensIndexedToday: 1000,
+		QuotaExhausted:     true,
+		QuotaResetAt:       s.env.Now().Add(24 * time.Hour),
+	}, nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(workerCore.IndexTezosTokenOwner, address)
+
+	// Should complete
+	s.True(s.env.IsWorkflowCompleted())
+}
+
+// ====================================================================================
 // IndexEthereumTokenOwner Tests
 // ====================================================================================
 
@@ -730,4 +932,204 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 	// Verify workflow completed successfully (no-op)
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
+}
+
+// ====================================================================================
+// IndexEthereumTokenOwner Tests - Budgeted Indexing Mode
+// ====================================================================================
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_QuotaExhausted() {
+	// Setup worker core with budgeted mode enabled and low quota
+	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+		TezosChainID:                      domain.ChainTezosMainnet,
+		EthereumChainID:                   domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:      1000,
+		TezosTokenSweepStartBlock:         1000,
+		MediaTaskQueue:                    "media-task-queue",
+		BudgetedIndexingModeEnabled:       true,
+		BudgetedIndexingDefaultDailyQuota: 50,
+	}, s.blacklist)
+
+	address := "0x1234567890123456789012345678901234567890"
+	chainID := domain.ChainEthereumMainnet
+	latestBlock := uint64(5000)
+
+	// Create 100 tokens that would exceed quota
+	tokens := make([]domain.TokenWithBlock, 100)
+	for i := range 100 {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.TokenCID(fmt.Sprintf("eip155:1:erc721:0xabc:%d", i)),
+			BlockNumber: uint64(1000 + i),
+		}
+	}
+
+	// Mock activities
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
+		Return(tokens, nil)
+
+	// First quota check - 50 tokens available
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     50,
+		TotalQuota:         50,
+		TokensIndexedToday: 0,
+		QuotaExhausted:     false,
+	}, nil).Once()
+
+	// Mock IndexTokens for first chunk (50 tokens)
+	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+		return len(cids) == 50
+	}), mock.Anything).Return(nil).Once()
+
+	// Mock IncrementTokensIndexed
+	s.env.OnActivity(s.executor.IncrementTokensIndexed, mock.Anything, address, chainID, 50).Return(nil).Once()
+
+	// Mock UpdateIndexingBlockRangeForAddress
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil).Once()
+
+	// Second quota check - exhausted
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     0,
+		TotalQuota:         50,
+		TokensIndexedToday: 50,
+		QuotaExhausted:     true,
+		QuotaResetAt:       s.env.Now().Add(24 * time.Hour),
+	}, nil).Once()
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(workerCore.IndexEthereumTokenOwner, address)
+
+	// Should complete (continue-as-new)
+	s.True(s.env.IsWorkflowCompleted())
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Normal() {
+	// Setup worker core with budgeted mode enabled and sufficient quota
+	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+		TezosChainID:                      domain.ChainTezosMainnet,
+		EthereumChainID:                   domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:      1000,
+		TezosTokenSweepStartBlock:         1000,
+		MediaTaskQueue:                    "media-task-queue",
+		BudgetedIndexingModeEnabled:       true,
+		BudgetedIndexingDefaultDailyQuota: 1000,
+	}, s.blacklist)
+
+	address := "0xabcdef1234567890123456789012345678901234"
+	chainID := domain.ChainEthereumMainnet
+	latestBlock := uint64(3000)
+
+	// Create 15 tokens (less than quota)
+	tokens := make([]domain.TokenWithBlock, 15)
+	for i := range 15 {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.TokenCID(fmt.Sprintf("eip155:1:erc721:0xdef:%d", i)),
+			BlockNumber: uint64(2000 + i*10),
+		}
+	}
+
+	// Mock activities
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
+		Return(tokens, nil)
+
+	// Quota check - plenty available
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     1000,
+		TotalQuota:         1000,
+		TokensIndexedToday: 0,
+		QuotaExhausted:     false,
+	}, nil)
+
+	// Mock IndexTokens
+	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+		return len(cids) == 15
+	}), mock.Anything).Return(nil)
+
+	// Mock IncrementTokensIndexed
+	s.env.OnActivity(s.executor.IncrementTokensIndexed, mock.Anything, address, chainID, 15).Return(nil)
+
+	// Mock UpdateIndexingBlockRangeForAddress
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(workerCore.IndexEthereumTokenOwner, address)
+
+	// Should complete successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_PartialQuota() {
+	// Setup worker core with budgeted mode enabled
+	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+		TezosChainID:                      domain.ChainTezosMainnet,
+		EthereumChainID:                   domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:      1000,
+		TezosTokenSweepStartBlock:         1000,
+		MediaTaskQueue:                    "media-task-queue",
+		BudgetedIndexingModeEnabled:       true,
+		BudgetedIndexingDefaultDailyQuota: 1000,
+	}, s.blacklist)
+
+	address := "0xfedcba9876543210987654321098765432109876"
+	chainID := domain.ChainEthereumMainnet
+	latestBlock := uint64(3000)
+
+	// Create 60 tokens
+	tokens := make([]domain.TokenWithBlock, 60)
+	for i := range 60 {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.TokenCID(fmt.Sprintf("eip155:1:erc721:0xfed:%d", i)),
+			BlockNumber: uint64(2000 + i*10),
+		}
+	}
+
+	// Mock activities
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
+		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
+		Return(tokens, nil)
+
+	// Quota check - only 30 remaining
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     30,
+		TotalQuota:         1000,
+		TokensIndexedToday: 970,
+		QuotaExhausted:     false,
+	}, nil).Once()
+
+	// Mock IndexTokens - should only process 30 tokens
+	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+		return len(cids) == 30
+	}), mock.Anything).Return(nil).Once()
+
+	// Mock IncrementTokensIndexed
+	s.env.OnActivity(s.executor.IncrementTokensIndexed, mock.Anything, address, chainID, 30).Return(nil).Once()
+
+	// Mock UpdateIndexingBlockRangeForAddress
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil).Once()
+
+	// Second quota check - exhausted
+	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
+		RemainingQuota:     0,
+		TotalQuota:         1000,
+		TokensIndexedToday: 1000,
+		QuotaExhausted:     true,
+		QuotaResetAt:       s.env.Now().Add(24 * time.Hour),
+	}, nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(workerCore.IndexEthereumTokenOwner, address)
+
+	// Should complete
+	s.True(s.env.IsWorkflowCompleted())
 }

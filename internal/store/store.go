@@ -177,6 +177,15 @@ type CreateWebhookClientInput struct {
 	RetryMaxAttempts int
 }
 
+// QuotaInfo represents the current quota status for an address
+type QuotaInfo struct {
+	RemainingQuota     int       // Tokens remaining in current quota period
+	TotalQuota         int       // Total quota per 24-hour period
+	TokensIndexedToday int       // Tokens already indexed in current period
+	QuotaResetAt       time.Time // When the current quota period ends
+	QuotaExhausted     bool      // Whether quota is exhausted (remaining == 0)
+}
+
 // Store defines the interface for database operations
 //
 //go:generate mockgen -source=store.go -destination=../mocks/store.go -package=mocks -mock_names=Store=MockStore
@@ -293,6 +302,16 @@ type Store interface {
 	UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error
 	// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
 	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error
+
+	// =============================================================================
+	// Budgeted Indexing Mode Quota Operations
+	// =============================================================================
+
+	// GetQuotaInfo retrieves quota information for an address
+	// Auto-resets quota if the 24-hour window has expired
+	GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*QuotaInfo, error)
+	// IncrementTokensIndexed increments the token counter after successful indexing
+	IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error
 
 	// =============================================================================
 	// Key-Value Store Operations

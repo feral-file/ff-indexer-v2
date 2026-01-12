@@ -12,6 +12,7 @@ import (
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
+	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
 	workflows "github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -232,6 +233,21 @@ func (mr *MockCoreExecutorMockRecorder) GetLatestTezosBlock(ctx interface{}) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestTezosBlock", reflect.TypeOf((*MockCoreExecutor)(nil).GetLatestTezosBlock), ctx)
 }
 
+// GetQuotaInfo mocks base method.
+func (m *MockCoreExecutor) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetQuotaInfo", ctx, address, chain)
+	ret0, _ := ret[0].(*store.QuotaInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetQuotaInfo indicates an expected call of GetQuotaInfo.
+func (mr *MockCoreExecutorMockRecorder) GetQuotaInfo(ctx, address, chain interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaInfo", reflect.TypeOf((*MockCoreExecutor)(nil).GetQuotaInfo), ctx, address, chain)
+}
+
 // GetTezosTokenCIDsByAccountWithinBlockRange mocks base method.
 func (m *MockCoreExecutor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	m.ctrl.T.Helper()
@@ -260,6 +276,20 @@ func (m *MockCoreExecutor) GetWebhookClientByID(ctx context.Context, clientID st
 func (mr *MockCoreExecutorMockRecorder) GetWebhookClientByID(ctx, clientID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWebhookClientByID", reflect.TypeOf((*MockCoreExecutor)(nil).GetWebhookClientByID), ctx, clientID)
+}
+
+// IncrementTokensIndexed mocks base method.
+func (m *MockCoreExecutor) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IncrementTokensIndexed", ctx, address, chain, count)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IncrementTokensIndexed indicates an expected call of IncrementTokensIndexed.
+func (mr *MockCoreExecutorMockRecorder) IncrementTokensIndexed(ctx, address, chain, count interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementTokensIndexed", reflect.TypeOf((*MockCoreExecutor)(nil).IncrementTokensIndexed), ctx, address, chain, count)
 }
 
 // IndexTokenWithFullProvenancesByTokenCID mocks base method.

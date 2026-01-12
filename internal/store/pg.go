@@ -2312,3 +2312,94 @@ func (s *pgStore) UpdateWebhookDeliveryStatus(ctx context.Context, deliveryID ui
 
 	return nil
 }
+
+// =============================================================================
+// Budgeted Indexing Mode Quota Operations
+// =============================================================================
+
+// GetQuotaInfo retrieves quota information for an address
+// Auto-resets quota if the 24-hour window has expired
+func (s *pgStore) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*QuotaInfo, error) {
+	var watched schema.WatchedAddresses
+	err := s.db.WithContext(ctx).
+		Where("chain = ? AND address = ?", chain, address).
+		First(&watched).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get watched address: %w", err)
+	}
+
+	now := time.Now()
+
+	// AUTO-RESET: If quota period expired, reset it
+	if watched.QuotaResetAt != nil && now.After(*watched.QuotaResetAt) {
+		nextReset := now.Add(24 * time.Hour)
+		err = s.db.WithContext(ctx).
+			Model(&schema.WatchedAddresses{}).
+			Where("chain = ? AND address = ?", chain, address).
+			Updates(map[string]interface{}{
+				"tokens_indexed_today": 0,
+				"quota_reset_at":       nextReset,
+			}).Error
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to reset quota: %w", err)
+		}
+
+		// Return fresh quota
+		return &QuotaInfo{
+			RemainingQuota:     watched.DailyTokenQuota,
+			TotalQuota:         watched.DailyTokenQuota,
+			TokensIndexedToday: 0,
+			QuotaResetAt:       nextReset,
+			QuotaExhausted:     false,
+		}, nil
+	}
+
+	// If quota_reset_at is NULL (first time), set it
+	if watched.QuotaResetAt == nil {
+		nextReset := now.Add(24 * time.Hour)
+		err = s.db.WithContext(ctx).
+			Model(&schema.WatchedAddresses{}).
+			Where("chain = ? AND address = ?", chain, address).
+			Update("quota_reset_at", nextReset).Error
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize quota reset time: %w", err)
+		}
+
+		watched.QuotaResetAt = &nextReset
+	}
+
+	remaining := max(watched.DailyTokenQuota-watched.TokensIndexedToday, 0)
+
+	return &QuotaInfo{
+		RemainingQuota:     remaining,
+		TotalQuota:         watched.DailyTokenQuota,
+		TokensIndexedToday: watched.TokensIndexedToday,
+		QuotaResetAt:       *watched.QuotaResetAt,
+		QuotaExhausted:     remaining == 0,
+	}, nil
+}
+
+// IncrementTokensIndexed increments the token counter after successful indexing
+func (s *pgStore) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+	if count <= 0 {
+		return fmt.Errorf("count must be positive")
+	}
+
+	result := s.db.WithContext(ctx).
+		Model(&schema.WatchedAddresses{}).
+		Where("chain = ? AND address = ?", chain, address).
+		Update("tokens_indexed_today", gorm.Expr("tokens_indexed_today + ?", count))
+
+	if result.Error != nil {
+		return fmt.Errorf("failed to increment tokens indexed: %w", result.Error)
+	}
+
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("watched address not found: %s on chain %s", address, chain)
+	}
+
+	return nil
+}

@@ -350,6 +350,21 @@ func (mr *MockStoreMockRecorder) GetProvenanceEventByID(ctx, id interface{}) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetProvenanceEventByID", reflect.TypeOf((*MockStore)(nil).GetProvenanceEventByID), ctx, id)
 }
 
+// GetQuotaInfo mocks base method.
+func (m *MockStore) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetQuotaInfo", ctx, address, chain)
+	ret0, _ := ret[0].(*store.QuotaInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetQuotaInfo indicates an expected call of GetQuotaInfo.
+func (mr *MockStoreMockRecorder) GetQuotaInfo(ctx, address, chain interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaInfo", reflect.TypeOf((*MockStore)(nil).GetQuotaInfo), ctx, address, chain)
+}
+
 // GetTokenByID mocks base method.
 func (m *MockStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
 	m.ctrl.T.Helper()
@@ -548,6 +563,20 @@ func (m *MockStore) GetWebhookClientByID(ctx context.Context, clientID string) (
 func (mr *MockStoreMockRecorder) GetWebhookClientByID(ctx, clientID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWebhookClientByID", reflect.TypeOf((*MockStore)(nil).GetWebhookClientByID), ctx, clientID)
+}
+
+// IncrementTokensIndexed mocks base method.
+func (m *MockStore) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IncrementTokensIndexed", ctx, address, chain, count)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IncrementTokensIndexed indicates an expected call of IncrementTokensIndexed.
+func (mr *MockStoreMockRecorder) IncrementTokensIndexed(ctx, address, chain, count interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementTokensIndexed", reflect.TypeOf((*MockStore)(nil).IncrementTokensIndexed), ctx, address, chain, count)
 }
 
 // IsAnyAddressWatched mocks base method.

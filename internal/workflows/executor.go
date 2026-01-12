@@ -88,6 +88,16 @@ type Executor interface {
 	GetLatestTezosBlock(ctx context.Context) (uint64, error)
 
 	// =============================================================================
+	// Budgeted Indexing Mode Quota Activities
+	// =============================================================================
+
+	// GetQuotaInfo retrieves quota information for an address (auto-resets if expired)
+	GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error)
+
+	// IncrementTokensIndexed increments the token counter after successful indexing
+	IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error
+
+	// =============================================================================
 	// Webhook Activities
 	// =============================================================================
 
@@ -1223,7 +1233,23 @@ func (e *executor) GetLatestTezosBlock(ctx context.Context) (uint64, error) {
 	return latestBlock, nil
 }
 
-// GetIndexingBlockRangeForAddress retrieves the indexing block range for an address and chain
+// =============================================================================
+// Budgeted Indexing Mode Quota Activities
+// =============================================================================
+
+// GetQuotaInfo retrieves quota information for an address (auto-resets if expired)
+func (e *executor) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error) {
+	return e.store.GetQuotaInfo(ctx, address, chain)
+}
+
+// IncrementTokensIndexed increments the token counter after successful indexing
+func (e *executor) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+	return e.store.IncrementTokensIndexed(ctx, address, chain, count)
+}
+
+// =============================================================================
+// Webhook Activities
+// =============================================================================
 func (e *executor) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (*BlockRangeResult, error) {
 	minBlock, maxBlock, err := e.store.GetIndexingBlockRangeForAddress(ctx, address, chainID)
 	if err != nil {

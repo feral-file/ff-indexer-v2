@@ -169,6 +169,12 @@ CREATE TABLE watched_addresses (
     watching       BOOLEAN     NOT NULL DEFAULT TRUE,
     last_queried_at TIMESTAMPTZ,          -- when API last queried this address
     last_successful_indexing_blk_range JSONB, -- {"eip155:1": {"min_block": 123, "max_block": 456}}
+    
+    -- Budgeted Indexing Mode fields
+    daily_token_quota INTEGER NOT NULL DEFAULT 1000,     -- Maximum tokens per 24-hour period
+    quota_reset_at TIMESTAMPTZ,                          -- When current 24-hour quota period ends (rolling window)
+    tokens_indexed_today INTEGER NOT NULL DEFAULT 0,     -- Number of tokens indexed in current quota period
+    
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (chain, address)
