@@ -123,14 +123,15 @@ func (w *workerCore) DeliverWebhook(ctx workflow.Context, clientID string, event
 	}
 
 	// Create delivery record
-	workflowInfo := workflow.GetInfo(ctx)
 	var deliveryID uint64
+	workflowExecutionID := w.temporalWorkflow.GetExecutionID(ctx)
+	workflowRunID := w.temporalWorkflow.GetRunID(ctx)
 	delivery := &schema.WebhookDelivery{
 		ClientID:      client.ClientID,
 		EventID:       event.EventID,
 		EventType:     event.EventType,
-		WorkflowID:    workflowInfo.WorkflowExecution.ID,
-		WorkflowRunID: workflowInfo.WorkflowExecution.RunID,
+		WorkflowID:    workflowExecutionID,
+		WorkflowRunID: workflowRunID,
 		// Payload will be marshaled by the store when creating the record
 	}
 

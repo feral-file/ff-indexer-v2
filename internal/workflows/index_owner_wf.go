@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
@@ -36,7 +38,7 @@ func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) 
 		// Configure child workflow options
 		childWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:               fmt.Sprintf("index-token-owner-%s", address),
-			WorkflowExecutionTimeout: 24*time.Hour + 15*time.Minute, // 24 hours + 15 minutes to cover the child workflow timeout
+			WorkflowExecutionTimeout: 15*24*time.Hour + 15*time.Minute, // 15 days + 15 minutes to cover the child workflow timeout
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_TERMINATE,
 		}
@@ -65,26 +67,91 @@ func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) 
 	return nil
 }
 
+// GetOwnerIndexingWorkflowID returns the workflow ID for the token owner indexing workflow
+func GetOwnerIndexingWorkflowID(blockchain domain.Blockchain, address string) string {
+	return fmt.Sprintf("index-token-owner-%s-%s", string(blockchain), address)
+}
+
 // IndexTokenOwner indexes all tokens held by a single address
 // This is the parent workflow that delegates to blockchain-specific child workflows
+// It manages the job lifecycle (creation, completion, failure, cancellation)
 func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error {
 	logger.InfoWf(ctx, "Starting token owner indexing",
 		zap.String("address", address),
 	)
 
+	// Get workflow ID for job tracking
+	workflowID := w.temporalWorkflow.GetExecutionID(ctx)
+
 	// Determine blockchain from address format
 	blockchain := types.AddressToBlockchain(address)
 
+	// Get chainID based on blockchain type
+	var chainID domain.Chain
+	switch blockchain {
+	case domain.BlockchainTezos:
+		chainID = w.config.TezosChainID
+	case domain.BlockchainEthereum:
+		chainID = w.config.EthereumChainID
+	default:
+		return fmt.Errorf("unsupported blockchain for address: %s", address)
+	}
+
+	// Configure activity options
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 10 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval: 10 * time.Second,
+			MaximumAttempts: 2,
+		},
+	}
+	activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
+
+	// Defer to handle cancellation gracefully
+	defer func() {
+		if w.temporalWorkflow.GetCurrentHistoryLength(ctx) > 0 {
+			// Check if workflow is being canceled
+			if ctx.Err() != nil && errors.Is(ctx.Err(), workflow.ErrCanceled) {
+				logger.InfoWf(ctx, "Workflow canceled, updating job status",
+					zap.String("address", address),
+					zap.String("workflowID", workflowID))
+
+				// Use detached context for cleanup activity
+				detachedCtx, _ := workflow.NewDisconnectedContext(ctx)
+				detachedCtx = workflow.WithActivityOptions(detachedCtx, activityOptions)
+
+				if err := workflow.ExecuteActivity(detachedCtx, w.executor.UpdateIndexingJobStatus,
+					workflowID, schema.IndexingJobStatusCanceled, workflow.Now(ctx)).Get(detachedCtx, nil); err != nil {
+					logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
+				}
+			}
+		}
+	}()
+
+	// Create or update job status to 'running' at start
+	err := workflow.ExecuteActivity(activityCtx, w.executor.CreateIndexingJob,
+		address, chainID, workflowID, nil).Get(ctx, nil)
+	if err != nil {
+		logger.ErrorWf(ctx, fmt.Errorf("failed to create/update job"), zap.Error(err))
+		// Don't fail workflow if job tracking fails
+	}
+
+	// Update job status to 'running'
+	if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
+		workflowID, schema.IndexingJobStatusRunning, workflow.Now(ctx)).Get(ctx, nil); err != nil {
+		logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to running"), zap.Error(err))
+	}
+
 	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:               fmt.Sprintf("index-token-owner-%s-%s", blockchain, address),
+		WorkflowID:               GetOwnerIndexingWorkflowID(blockchain, address),
 		WorkflowExecutionTimeout: 24*time.Hour + 5*time.Minute, // 24 hours + 5 minutes to cover the quota reset time
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
 	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
-	var err error
+	// Execute child workflow based on blockchain
 	switch blockchain {
 	case domain.BlockchainTezos:
 		err = workflow.ExecuteChildWorkflow(childCtx, w.IndexTezosTokenOwner, address).Get(ctx, nil)
@@ -95,12 +162,28 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 	}
 
 	if err != nil {
+		// Check if error is due to cancellation
+		if errors.Is(err, workflow.ErrCanceled) {
+			// Update job status to 'canceled' when child workflow is canceled
+			if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
+				workflowID, schema.IndexingJobStatusCanceled, workflow.Now(ctx)).Get(ctx, nil); err != nil {
+				logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
+			}
+			return workflow.ErrCanceled
+		}
+
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to index tokens for owner"),
 			zap.Error(err),
 			zap.String("address", address),
 			zap.String("blockchain", string(blockchain)),
 		)
+
+		// Update job status to 'failed'
+		if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
+			workflowID, schema.IndexingJobStatusFailed, workflow.Now(ctx)).Get(ctx, nil); err != nil {
+			logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to failed"), zap.Error(err))
+		}
 		return err
 	}
 
@@ -108,6 +191,13 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 		zap.String("address", address),
 		zap.String("blockchain", string(blockchain)),
 	)
+
+	// Update job status to 'completed'
+	if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
+		workflowID, schema.IndexingJobStatusCompleted, workflow.Now(ctx)).Get(ctx, nil); err != nil {
+		logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to completed"), zap.Error(err))
+		// Don't fail workflow
+	}
 
 	return nil
 }
@@ -281,7 +371,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 
 			// Process chunk with quota checking
 			shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-				fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
+				info.minBlock, info.maxBlock, fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
 			if err != nil {
 				return err
 			}
@@ -389,7 +479,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 
 				// Process chunk with quota checking
 				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-					fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
+					info.minBlock, info.maxBlock, fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
 				if err != nil {
 					return err
 				}
@@ -482,7 +572,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 
 				// Process chunk with quota checking
 				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-					fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
+					info.minBlock, info.maxBlock, fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
 				if err != nil {
 					return err
 				}
@@ -531,6 +621,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 	}
 
 	logger.InfoWf(ctx, "Tezos token owner indexing completed", zap.String("address", address))
+
 	return nil
 }
 
@@ -651,7 +742,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 
 			// Process chunk with quota checking
 			shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-				fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
+				info.minBlock, info.maxBlock, fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
 			if err != nil {
 				return err
 			}
@@ -763,7 +854,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 
 				// Process chunk with quota checking
 				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-					fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
+					info.minBlock, info.maxBlock, fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
 				if err != nil {
 					return err
 				}
@@ -856,7 +947,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 
 				// Process chunk with quota checking
 				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-					fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
+					info.minBlock, info.maxBlock, fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
 				if err != nil {
 					return err
 				}
@@ -905,6 +996,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 	}
 
 	logger.InfoWf(ctx, "Ethereum token owner indexing completed", zap.String("address", address))
+
 	return nil
 }
 
@@ -940,8 +1032,11 @@ func (w *workerCore) processChunkWithQuota(
 	address string,
 	chainID domain.Chain,
 	tokenCIDs []domain.TokenCID,
+	minBlock uint64,
+	maxBlock uint64,
 	chunkInfo string, // e.g., "forward chunk 1/5" for logging
 ) (bool, error) {
+	parentWorkflowID := w.temporalWorkflow.GetParentWorkflowID(ctx)
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -1011,6 +1106,18 @@ func (w *workerCore) processChunkWithQuota(
 		)
 	}
 
+	// Update job progress after successful chunk processing
+	if parentWorkflowID != nil {
+		err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobProgress,
+			*parentWorkflowID, len(actualTokenCIDs), minBlock, maxBlock).Get(ctx, nil)
+		if err != nil {
+			logger.ErrorWf(ctx, fmt.Errorf("failed to update job progress"),
+				zap.Error(err),
+				zap.String("workflowID", *parentWorkflowID))
+			// Don't fail workflow if progress tracking fails
+		}
+	}
+
 	return true, nil // shouldContinue=true, success
 }
 
@@ -1021,6 +1128,9 @@ func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, 
 		return nil // No quota management if budgeted mode is disabled
 	}
 
+	// Get parent workflow ID if this is a child workflow
+	parentWorkflowID := w.temporalWorkflow.GetParentWorkflowID(ctx)
+
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -1029,6 +1139,16 @@ func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, 
 		},
 	}
 	activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
+
+	if parentWorkflowID != nil {
+		// Update job status to 'paused' before sleeping
+		err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
+			*parentWorkflowID, schema.IndexingJobStatusPaused, workflow.Now(ctx)).Get(ctx, nil)
+		if err != nil {
+			logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to paused"), zap.Error(err))
+			// Don't fail workflow
+		}
+	}
 
 	// Get current quota status to determine sleep duration
 	var quotaStatus *store.QuotaInfo
@@ -1039,7 +1159,7 @@ func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, 
 
 	// Calculate sleep duration until quota reset
 	now := workflow.Now(ctx)
-	sleepDuration := quotaStatus.QuotaResetAt.Sub(now) + time.Minute // Add 1 minute to cover the drift between db and workflow clock
+	sleepDuration := quotaStatus.QuotaResetAt.Sub(now)
 
 	if sleepDuration > 0 {
 		logger.InfoWf(ctx, "Sleeping until quota reset before continue-as-new",
@@ -1047,7 +1167,9 @@ func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, 
 			zap.Duration("sleepDuration", sleepDuration),
 			zap.Time("quotaResetAt", quotaStatus.QuotaResetAt),
 		)
-		workflow.Sleep(ctx, sleepDuration)
+		if err := workflow.Sleep(ctx, sleepDuration); err != nil {
+			return err
+		}
 		logger.InfoWf(ctx, "Quota reset complete, preparing to continue-as-new",
 			zap.String("address", address),
 		)
@@ -1055,6 +1177,16 @@ func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, 
 		logger.InfoWf(ctx, "Quota already reset, proceeding to continue-as-new immediately",
 			zap.String("address", address),
 		)
+	}
+
+	if parentWorkflowID != nil {
+		// Update the job status to 'running'
+		err = workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
+			*parentWorkflowID, schema.IndexingJobStatusRunning, workflow.Now(ctx)).Get(ctx, nil)
+		if err != nil {
+			logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to running"), zap.Error(err))
+			// Don't fail workflow
+		}
 	}
 
 	return nil

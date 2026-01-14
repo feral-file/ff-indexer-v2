@@ -168,6 +168,8 @@ type APIConfig struct {
 	Temporal      TemporalConfig `mapstructure:"temporal"`
 	Auth          AuthConfig     `mapstructure:"auth"`
 	BlacklistPath string         `mapstructure:"blacklist_path"`
+	Tezos         TezosConfig    `mapstructure:"tezos"`
+	Ethereum      EthereumConfig `mapstructure:"ethereum"`
 }
 
 // CloudflareConfig holds Cloudflare configuration
@@ -355,6 +357,8 @@ func LoadAPIConfig(configFile string, envPath string) (*APIConfig, error) {
 	v.SetDefault("temporal.token_task_queue", "token-indexing")
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
 	v.SetDefault("temporal.worker_activities_per_second", 50)
+	v.SetDefault("tezos.chain_id", "tezos:mainnet")
+	v.SetDefault("ethereum.chain_id", "eip155:1")
 
 	if err := v.ReadInConfig(); err != nil {
 		var error viper.ConfigFileNotFoundError

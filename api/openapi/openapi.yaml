@@ -52,6 +52,8 @@ tags:
     description: Change tracking and journal operations
   - name: workflows
     description: Temporal workflow status and tracking operations
+  - name: indexing
+    description: Address indexing job tracking operations
   - name: webhooks
     description: Webhook client registration and management operations
   - name: health
@@ -562,7 +564,8 @@ paths:
         **This endpoint requires authentication** - use JWT Bearer token or API Key.
         
         ## Response
-        Returns a workflow ID and run ID that can be used to track the indexing progress.
+        Returns an array of jobs with workflow IDs that can be used to track each address's indexing progress.
+        Each address gets its own workflow ID for independent progress tracking.
       operationId: triggerOwnerIndexing
       tags:
         - tokens
@@ -587,7 +590,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TriggerIndexingResponse'
+                $ref: '#/components/schemas/TriggerAddressIndexingResponse'
         '422':
           description: Validation error - Invalid request body
           content:
@@ -728,6 +731,57 @@ paths:
                 $ref: '#/components/schemas/APIError'
         '404':
           description: Workflow execution not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/indexing/jobs/{workflow_id}:
+    get:
+      summary: Get indexing job status by workflow ID
+      description: |
+        Retrieves the status of an address indexing job by its workflow ID.
+        
+        This endpoint returns information about the indexing job, including:
+        - Current status (running, paused, failed, completed, canceled)
+        - Address and chain being indexed
+        - Progress tracking (tokens processed, block ranges)
+        - Timing information (started, paused, completed, failed times)
+        
+        The workflow ID is returned when you trigger owner indexing via the
+        `POST /api/v1/tokens/owners/index` endpoint or the GraphQL `triggerOwnerIndexing` mutation.
+      operationId: getAddressIndexingJob
+      tags:
+        - indexing
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          description: The workflow ID of the indexing job
+          schema:
+            type: string
+          example: "index-token-owner-0x1234567890123456789012345678901234567890"
+      responses:
+        '200':
+          description: Indexing job status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddressIndexingJobResponse'
+        '400':
+          description: Bad request - Missing or invalid workflow ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '404':
+          description: Indexing job not found
           content:
             application/json:
               schema:
@@ -1656,6 +1710,37 @@ components:
           description: Temporal run ID for tracking
           example: "run-456"
 
+    AddressIndexingJobInfo:
+      type: object
+      required:
+        - address
+        - workflow_id
+      properties:
+        address:
+          type: string
+          description: The wallet address being indexed
+          example: "tz1abc123..."
+        workflow_id:
+          type: string
+          description: Temporal workflow ID for tracking this address's indexing job
+          example: "index-token-owner-tz1abc123..."
+
+    TriggerAddressIndexingResponse:
+      type: object
+      required:
+        - jobs
+      properties:
+        jobs:
+          type: array
+          description: List of indexing jobs, one per address
+          items:
+            $ref: '#/components/schemas/AddressIndexingJobInfo'
+          example:
+            - address: "tz1abc123..."
+              workflow_id: "index-token-owner-tz1abc123..."
+            - address: "0x1234..."
+              workflow_id: "index-token-owner-0x1234..."
+
     WorkflowStatusResponse:
       type: object
       required:
@@ -1700,6 +1785,84 @@ components:
           format: uint64
           description: Total execution time in milliseconds (only present if workflow is closed)
           example: 300000
+
+    AddressIndexingJobResponse:
+      type: object
+      required:
+        - workflow_id
+        - address
+        - chain
+        - status
+        - tokens_processed
+        - started_at
+      properties:
+        workflow_id:
+          type: string
+          description: Orchestrator workflow ID for this indexing job
+          example: "index-token-owner-0x1234567890123456789012345678901234567890"
+        address:
+          type: string
+          description: Blockchain address being indexed
+          example: "0x1234567890123456789012345678901234567890"
+        chain:
+          $ref: '#/components/schemas/Chain'
+        status:
+          type: string
+          description: |
+            Current status of the indexing job.
+            
+            Possible values:
+            - running - Job is currently running
+            - paused - Job paused (quota exhausted, will resume after quota reset)
+            - failed - Job failed with an error
+            - completed - Job completed successfully
+            - canceled - Job was canceled
+          enum:
+            - running
+            - paused
+            - failed
+            - completed
+            - canceled
+          example: "running"
+        tokens_processed:
+          type: integer
+          description: Number of tokens processed so far
+          example: 150
+        current_min_block:
+          type: integer
+          format: uint64
+          description: Current minimum block indexed (null if not yet started)
+          example: 12000000
+        current_max_block:
+          type: integer
+          format: uint64
+          description: Current maximum block indexed (null if not yet started)
+          example: 19000000
+        started_at:
+          type: string
+          format: date-time
+          description: When the job started
+          example: "2024-01-15T10:30:00Z"
+        paused_at:
+          type: string
+          format: date-time
+          description: When the job was paused (null if not paused)
+          example: "2024-01-15T10:35:00Z"
+        completed_at:
+          type: string
+          format: date-time
+          description: When the job completed (null if not completed)
+          example: "2024-01-15T10:40:00Z"
+        failed_at:
+          type: string
+          format: date-time
+          description: When the job failed (null if not failed)
+          example: "2024-01-15T10:40:00Z"
+        canceled_at:
+          type: string
+          format: date-time
+          description: When the job was canceled (null if not canceled)
+          example: null
 
     CreateWebhookClientRequest:
       type: object

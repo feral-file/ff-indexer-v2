@@ -310,6 +310,22 @@ models:
       run_id:
         fieldName: RunID
 
+  AddressIndexingJobInfo:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.AddressIndexingJobInfo
+    fields:
+      address:
+        fieldName: Address
+      workflow_id:
+        fieldName: WorkflowID
+
+  TriggerAddressIndexingResult:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.TriggerAddressIndexingResponse
+    fields:
+      jobs:
+        fieldName: Jobs
+
   WorkflowStatus:
     model:
       - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.WorkflowStatusResponse
@@ -347,6 +363,35 @@ models:
         fieldName: CreatedAt
       updated_at:
         fieldName: UpdatedAt
+  
+  IndexingJob:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.AddressIndexingJobResponse
+    fields:
+      workflow_id:
+        fieldName: WorkflowID
+      address:
+        fieldName: Address
+      chain:
+        fieldName: Chain
+      status:
+        fieldName: Status
+      tokens_processed:
+        fieldName: TokensProcessed
+      current_min_block:
+        fieldName: CurrentMinBlock
+      current_max_block:
+        fieldName: CurrentMaxBlock
+      started_at:
+        fieldName: StartedAt
+      paused_at:
+        fieldName: PausedAt
+      completed_at:
+        fieldName: CompletedAt
+      failed_at:
+        fieldName: FailedAt
+      canceled_at:
+        fieldName: CanceledAt
 
 # Skip generating resolver stubs for these fields (we'll implement them manually)
 omit_slice_element_pointers: true

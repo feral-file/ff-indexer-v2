@@ -124,6 +124,8 @@ func main() {
 			JWTPublicKey: cfg.Auth.JWTPublicKey,
 			APIKeys:      cfg.Auth.APIKeys,
 		},
+		TezosChainID:    cfg.Tezos.ChainID,
+		EthereumChainID: cfg.Ethereum.ChainID,
 	}
 
 	// Create and start server

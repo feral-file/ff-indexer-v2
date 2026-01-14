@@ -177,6 +177,15 @@ type CreateWebhookClientInput struct {
 	RetryMaxAttempts int
 }
 
+// CreateAddressIndexingJobInput represents input for creating an address indexing job
+type CreateAddressIndexingJobInput struct {
+	Address       string
+	Chain         domain.Chain
+	Status        schema.IndexingJobStatus
+	WorkflowID    string
+	WorkflowRunID *string // Optional, may be nil initially
+}
+
 // QuotaInfo represents the current quota status for an address
 type QuotaInfo struct {
 	RemainingQuota     int       // Tokens remaining in current quota period
@@ -339,4 +348,18 @@ type Store interface {
 	CreateWebhookDelivery(ctx context.Context, delivery *schema.WebhookDelivery) error
 	// UpdateWebhookDeliveryStatus updates the status and result of a webhook delivery
 	UpdateWebhookDeliveryStatus(ctx context.Context, deliveryID uint64, status schema.WebhookDeliveryStatus, attempts int, responseStatus *int, responseBody, errorMessage string) error
+
+	// =============================================================================
+	// Address Indexing Job Operations
+	// =============================================================================
+
+	// CreateAddressIndexingJob creates a new address indexing job record
+	// This handles conflicts gracefully by doing nothing if the job already exists
+	CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error
+	// GetAddressIndexingJobByWorkflowID retrieves a job by workflow ID
+	GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error)
+	// UpdateAddressIndexingJobStatus updates job status with timestamp
+	UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
+	// UpdateAddressIndexingJobProgress updates job progress metrics
+	UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error
 }

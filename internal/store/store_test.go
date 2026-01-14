@@ -4519,6 +4519,442 @@ func testWebhookDeliveries(t *testing.T, store Store) {
 }
 
 // =============================================================================
+// Test: Address Indexing Jobs
+// =============================================================================
+
+func testAddressIndexingJobs(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("CreateAddressIndexingJob - successful creation", func(t *testing.T) {
+		workflowID := "test-workflow-001"
+		workflowRunID := "test-run-001"
+		input := CreateAddressIndexingJobInput{
+			Address:       "0x1234567890123456789012345678901234567890",
+			Chain:         domain.ChainEthereumMainnet,
+			Status:        schema.IndexingJobStatusRunning,
+			WorkflowID:    workflowID,
+			WorkflowRunID: &workflowRunID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Verify job was created
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		assert.Equal(t, input.Address, job.Address)
+		assert.Equal(t, input.Chain, job.Chain)
+		assert.Equal(t, schema.IndexingJobStatusRunning, job.Status)
+		assert.Equal(t, workflowID, job.WorkflowID)
+		assert.Equal(t, workflowRunID, *job.WorkflowRunID)
+		assert.False(t, job.StartedAt.IsZero())
+		assert.Nil(t, job.PausedAt)
+		assert.Nil(t, job.CompletedAt)
+		assert.Nil(t, job.FailedAt)
+		assert.Nil(t, job.CanceledAt)
+		assert.Equal(t, 0, job.TokensProcessed)
+		assert.Nil(t, job.CurrentMinBlock)
+		assert.Nil(t, job.CurrentMaxBlock)
+	})
+
+	t.Run("CreateAddressIndexingJob - with nil workflow run ID", func(t *testing.T) {
+		workflowID := "test-workflow-002"
+		input := CreateAddressIndexingJobInput{
+			Address:       "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb",
+			Chain:         domain.ChainTezosMainnet,
+			Status:        schema.IndexingJobStatusRunning,
+			WorkflowID:    workflowID,
+			WorkflowRunID: nil,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Nil(t, job.WorkflowRunID)
+	})
+
+	t.Run("CreateAddressIndexingJob - duplicate workflow ID is idempotent", func(t *testing.T) {
+		workflowID := "test-workflow-003"
+		workflowRunID := "test-run-003"
+		input := CreateAddressIndexingJobInput{
+			Address:       "0xabcdef1234567890123456789012345678901234",
+			Chain:         domain.ChainEthereumMainnet,
+			Status:        schema.IndexingJobStatusRunning,
+			WorkflowID:    workflowID,
+			WorkflowRunID: &workflowRunID,
+		}
+
+		// Create first time
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Create again with same workflow ID - should be idempotent (no error)
+		err = store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Verify still only one job exists
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, workflowID, job.WorkflowID)
+	})
+
+	t.Run("CreateAddressIndexingJob - with different initial statuses", func(t *testing.T) {
+		testCases := []struct {
+			name           string
+			status         schema.IndexingJobStatus
+			checkTimestamp func(*testing.T, *schema.AddressIndexingJob)
+		}{
+			{
+				name:   "running status",
+				status: schema.IndexingJobStatusRunning,
+				checkTimestamp: func(t *testing.T, job *schema.AddressIndexingJob) {
+					assert.False(t, job.StartedAt.IsZero())
+					assert.Nil(t, job.CompletedAt)
+					assert.Nil(t, job.FailedAt)
+					assert.Nil(t, job.CanceledAt)
+				},
+			},
+			{
+				name:   "paused status",
+				status: schema.IndexingJobStatusPaused,
+				checkTimestamp: func(t *testing.T, job *schema.AddressIndexingJob) {
+					assert.False(t, job.StartedAt.IsZero())
+					assert.NotNil(t, job.PausedAt)
+				},
+			},
+			{
+				name:   "completed status",
+				status: schema.IndexingJobStatusCompleted,
+				checkTimestamp: func(t *testing.T, job *schema.AddressIndexingJob) {
+					assert.False(t, job.StartedAt.IsZero())
+					assert.NotNil(t, job.CompletedAt)
+				},
+			},
+			{
+				name:   "failed status",
+				status: schema.IndexingJobStatusFailed,
+				checkTimestamp: func(t *testing.T, job *schema.AddressIndexingJob) {
+					assert.False(t, job.StartedAt.IsZero())
+					assert.NotNil(t, job.FailedAt)
+				},
+			},
+			{
+				name:   "canceled status",
+				status: schema.IndexingJobStatusCanceled,
+				checkTimestamp: func(t *testing.T, job *schema.AddressIndexingJob) {
+					assert.False(t, job.StartedAt.IsZero())
+					assert.NotNil(t, job.CanceledAt)
+				},
+			},
+		}
+
+		for i, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				workflowID := fmt.Sprintf("test-workflow-status-%d", i)
+				input := CreateAddressIndexingJobInput{
+					Address:    "0x1111111111111111111111111111111111111111",
+					Chain:      domain.ChainEthereumMainnet,
+					Status:     tc.status,
+					WorkflowID: workflowID,
+				}
+
+				err := store.CreateAddressIndexingJob(ctx, input)
+				require.NoError(t, err)
+
+				job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+				require.NoError(t, err)
+				assert.Equal(t, tc.status, job.Status)
+				tc.checkTimestamp(t, job)
+			})
+		}
+	})
+
+	t.Run("GetAddressIndexingJobByWorkflowID - not found", func(t *testing.T) {
+		_, err := store.GetAddressIndexingJobByWorkflowID(ctx, "non-existent-workflow")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "job not found")
+	})
+
+	t.Run("UpdateAddressIndexingJobStatus - to paused", func(t *testing.T) {
+		workflowID := "test-workflow-update-paused"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0x2222222222222222222222222222222222222222",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Update to paused
+		pausedTime := time.Now().UTC()
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusPaused, pausedTime)
+		require.NoError(t, err)
+
+		// Verify status updated
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusPaused, job.Status)
+		assert.NotNil(t, job.PausedAt)
+		assert.WithinDuration(t, pausedTime, *job.PausedAt, time.Second)
+	})
+
+	t.Run("UpdateAddressIndexingJobStatus - to completed", func(t *testing.T) {
+		workflowID := "test-workflow-update-completed"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0x3333333333333333333333333333333333333333",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Update to completed
+		completedTime := time.Now().UTC()
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusCompleted, completedTime)
+		require.NoError(t, err)
+
+		// Verify status updated
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusCompleted, job.Status)
+		assert.NotNil(t, job.CompletedAt)
+		assert.WithinDuration(t, completedTime, *job.CompletedAt, time.Second)
+	})
+
+	t.Run("UpdateAddressIndexingJobStatus - to failed", func(t *testing.T) {
+		workflowID := "test-workflow-update-failed"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0x4444444444444444444444444444444444444444",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Update to failed
+		failedTime := time.Now().UTC()
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusFailed, failedTime)
+		require.NoError(t, err)
+
+		// Verify status updated
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusFailed, job.Status)
+		assert.NotNil(t, job.FailedAt)
+		assert.WithinDuration(t, failedTime, *job.FailedAt, time.Second)
+	})
+
+	t.Run("UpdateAddressIndexingJobStatus - to canceled", func(t *testing.T) {
+		workflowID := "test-workflow-update-canceled"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0x5555555555555555555555555555555555555555",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Update to canceled
+		canceledTime := time.Now().UTC()
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusCanceled, canceledTime)
+		require.NoError(t, err)
+
+		// Verify status updated
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusCanceled, job.Status)
+		assert.NotNil(t, job.CanceledAt)
+		assert.WithinDuration(t, canceledTime, *job.CanceledAt, time.Second)
+	})
+
+	t.Run("UpdateAddressIndexingJobStatus - multiple status transitions", func(t *testing.T) {
+		workflowID := "test-workflow-transitions"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0x6666666666666666666666666666666666666666",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Transition: running -> paused
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusPaused, time.Now().UTC())
+		require.NoError(t, err)
+
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusPaused, job.Status)
+		assert.NotNil(t, job.PausedAt)
+
+		// Transition: paused -> running
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusRunning, time.Now().UTC())
+		require.NoError(t, err)
+
+		job, err = store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusRunning, job.Status)
+		// PausedAt should still be set from previous transition
+		assert.NotNil(t, job.PausedAt)
+
+		// Transition: running -> completed
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusCompleted, time.Now().UTC())
+		require.NoError(t, err)
+
+		job, err = store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusCompleted, job.Status)
+		assert.NotNil(t, job.CompletedAt)
+	})
+
+	t.Run("UpdateAddressIndexingJobProgress - successful update", func(t *testing.T) {
+		workflowID := "test-workflow-progress-1"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0x7777777777777777777777777777777777777777",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Update progress
+		err = store.UpdateAddressIndexingJobProgress(ctx, workflowID, 50, 1000, 2000)
+		require.NoError(t, err)
+
+		// Verify progress updated
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, 50, job.TokensProcessed)
+		assert.NotNil(t, job.CurrentMinBlock)
+		assert.Equal(t, uint64(1000), *job.CurrentMinBlock)
+		assert.NotNil(t, job.CurrentMaxBlock)
+		assert.Equal(t, uint64(2000), *job.CurrentMaxBlock)
+	})
+
+	t.Run("UpdateAddressIndexingJobProgress - incremental updates", func(t *testing.T) {
+		workflowID := "test-workflow-progress-2"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0x8888888888888888888888888888888888888888",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// First update
+		err = store.UpdateAddressIndexingJobProgress(ctx, workflowID, 25, 1000, 1500)
+		require.NoError(t, err)
+
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, 25, job.TokensProcessed)
+		assert.Equal(t, uint64(1000), *job.CurrentMinBlock)
+		assert.Equal(t, uint64(1500), *job.CurrentMaxBlock)
+
+		// Second update - tokens_processed should accumulate
+		err = store.UpdateAddressIndexingJobProgress(ctx, workflowID, 30, 1501, 2000)
+		require.NoError(t, err)
+
+		job, err = store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, 55, job.TokensProcessed) // 25 + 30
+		assert.Equal(t, uint64(1501), *job.CurrentMinBlock)
+		assert.Equal(t, uint64(2000), *job.CurrentMaxBlock)
+
+		// Third update
+		err = store.UpdateAddressIndexingJobProgress(ctx, workflowID, 45, 2001, 3000)
+		require.NoError(t, err)
+
+		job, err = store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, 100, job.TokensProcessed) // 25 + 30 + 45
+		assert.Equal(t, uint64(2001), *job.CurrentMinBlock)
+		assert.Equal(t, uint64(3000), *job.CurrentMaxBlock)
+	})
+
+	t.Run("UpdateAddressIndexingJobProgress - with zero tokens", func(t *testing.T) {
+		workflowID := "test-workflow-progress-3"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0x9999999999999999999999999999999999999999",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		}
+
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Update with 0 tokens (e.g., processed a chunk but no new tokens)
+		err = store.UpdateAddressIndexingJobProgress(ctx, workflowID, 0, 1000, 2000)
+		require.NoError(t, err)
+
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, job.TokensProcessed)
+		assert.Equal(t, uint64(1000), *job.CurrentMinBlock)
+		assert.Equal(t, uint64(2000), *job.CurrentMaxBlock)
+	})
+
+	t.Run("Combined workflow - create, update progress, update status", func(t *testing.T) {
+		workflowID := "test-workflow-combined"
+		workflowRunID := "test-run-combined"
+		input := CreateAddressIndexingJobInput{
+			Address:       "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb",
+			Chain:         domain.ChainTezosMainnet,
+			Status:        schema.IndexingJobStatusRunning,
+			WorkflowID:    workflowID,
+			WorkflowRunID: &workflowRunID,
+		}
+
+		// Create job
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		// Simulate processing chunks
+		err = store.UpdateAddressIndexingJobProgress(ctx, workflowID, 50, 1000, 5000)
+		require.NoError(t, err)
+
+		err = store.UpdateAddressIndexingJobProgress(ctx, workflowID, 75, 5001, 10000)
+		require.NoError(t, err)
+
+		// Check intermediate state
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusRunning, job.Status)
+		assert.Equal(t, 125, job.TokensProcessed)
+
+		// Complete the job
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusCompleted, time.Now().UTC())
+		require.NoError(t, err)
+
+		// Verify final state
+		job, err = store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.IndexingJobStatusCompleted, job.Status)
+		assert.Equal(t, 125, job.TokensProcessed)
+		assert.NotNil(t, job.CompletedAt)
+		assert.Equal(t, uint64(5001), *job.CurrentMinBlock)
+		assert.Equal(t, uint64(10000), *job.CurrentMaxBlock)
+	})
+}
+
+// =============================================================================
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
 
@@ -4549,6 +4985,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetEnrichmentSourcesByTokenIDs", testGetEnrichmentSourcesByTokenIDs},
 		{"WebhookClients", testWebhookClients},
 		{"WebhookDeliveries", testWebhookDeliveries},
+		{"AddressIndexingJobs", testAddressIndexingJobs},
 	}
 
 	for _, tt := range tests {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
@@ -112,6 +113,19 @@ type Executor interface {
 
 	// DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with signature
 	DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error)
+
+	// =============================================================================
+	// Address Indexing Job Activities
+	// =============================================================================
+
+	// CreateIndexingJob creates a new indexing job record (handles race conditions)
+	CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error
+
+	// UpdateIndexingJobStatus updates the job status with appropriate timestamp
+	UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
+
+	// UpdateIndexingJobProgress updates job progress metrics
+	UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error
 }
 
 // BlockRangeResult represents the result of getting an indexing block range
@@ -1394,4 +1408,31 @@ func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.Webhoo
 	}
 
 	return webhook.DeliveryResult{Success: true, StatusCode: resp.StatusCode, Body: string(respBody)}, nil
+}
+
+// =============================================================================
+// Address Indexing Job Activities
+// =============================================================================
+
+// CreateIndexingJob creates a new indexing job record
+func (e *executor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error {
+	input := store.CreateAddressIndexingJobInput{
+		Address:       address,
+		Chain:         chain,
+		Status:        schema.IndexingJobStatusRunning, // Workflow is starting, set to running
+		WorkflowID:    workflowID,
+		WorkflowRunID: workflowRunID,
+	}
+
+	return e.store.CreateAddressIndexingJob(ctx, input)
+}
+
+// UpdateIndexingJobStatus updates the job status with appropriate timestamp
+func (e *executor) UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+	return e.store.UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp)
+}
+
+// UpdateIndexingJobProgress updates job progress metrics
+func (e *executor) UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+	return e.store.UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock)
 }

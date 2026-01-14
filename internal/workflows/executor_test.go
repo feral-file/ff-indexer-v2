@@ -3607,3 +3607,132 @@ func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
 	assert.True(t, result.Success)
 	assert.Equal(t, 200, result.StatusCode)
 }
+
+// ====================================================================================
+// Address Indexing Job Activities Tests
+// ====================================================================================
+
+func TestCreateIndexingJob_Success(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	address := "0x1234567890123456789012345678901234567890"
+	chain := domain.ChainEthereumMainnet
+	workflowID := "test-workflow-123"
+	workflowRunID := "test-run-456"
+
+	expectedInput := store.CreateAddressIndexingJobInput{
+		Address:       address,
+		Chain:         chain,
+		Status:        schema.IndexingJobStatusRunning,
+		WorkflowID:    workflowID,
+		WorkflowRunID: &workflowRunID,
+	}
+
+	mocks.store.EXPECT().
+		CreateAddressIndexingJob(ctx, expectedInput).
+		Return(nil)
+
+	err := mocks.executor.CreateIndexingJob(ctx, address, chain, workflowID, &workflowRunID)
+
+	assert.NoError(t, err)
+}
+
+func TestCreateIndexingJob_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	address := "0x1234567890123456789012345678901234567890"
+	chain := domain.ChainEthereumMainnet
+	workflowID := "test-workflow-error"
+	storeError := errors.New("database connection failed")
+
+	mocks.store.EXPECT().
+		CreateAddressIndexingJob(ctx, gomock.Any()).
+		Return(storeError)
+
+	err := mocks.executor.CreateIndexingJob(ctx, address, chain, workflowID, nil)
+
+	assert.Error(t, err)
+	assert.Equal(t, storeError, err)
+}
+
+func TestUpdateIndexingJobStatus_ToCompleted(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	workflowID := "test-workflow-123"
+	status := schema.IndexingJobStatusCompleted
+	timestamp := time.Now().UTC()
+
+	mocks.store.EXPECT().
+		UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp).
+		Return(nil)
+
+	err := mocks.executor.UpdateIndexingJobStatus(ctx, workflowID, status, timestamp)
+
+	assert.NoError(t, err)
+}
+
+func TestUpdateIndexingJobStatus_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	workflowID := "test-workflow-error"
+	status := schema.IndexingJobStatusCompleted
+	timestamp := time.Now().UTC()
+	storeError := errors.New("database update failed")
+
+	mocks.store.EXPECT().
+		UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp).
+		Return(storeError)
+
+	err := mocks.executor.UpdateIndexingJobStatus(ctx, workflowID, status, timestamp)
+
+	assert.Error(t, err)
+	assert.Equal(t, storeError, err)
+}
+
+func TestUpdateIndexingJobProgress_Success(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	workflowID := "test-workflow-123"
+	tokensProcessed := 50
+	minBlock := uint64(1000)
+	maxBlock := uint64(2000)
+
+	mocks.store.EXPECT().
+		UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock).
+		Return(nil)
+
+	err := mocks.executor.UpdateIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+
+	assert.NoError(t, err)
+}
+
+func TestUpdateIndexingJobProgress_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	workflowID := "test-workflow-error"
+	tokensProcessed := 100
+	minBlock := uint64(7000)
+	maxBlock := uint64(8000)
+	storeError := errors.New("database update failed")
+
+	mocks.store.EXPECT().
+		UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock).
+		Return(storeError)
+
+	err := mocks.executor.UpdateIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+
+	assert.Error(t, err)
+	assert.Equal(t, storeError, err)
+}

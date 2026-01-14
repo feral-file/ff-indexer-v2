@@ -592,6 +592,10 @@ auth:
     - "key1"
     - "key2"
 blacklist_path: "/path/to/blacklist.json"
+tezos:
+  chain_id: "tezos:mainnet"
+ethereum:
+  chain_id: "eip155:1"
 `,
 			expectError: false,
 			validate: func(t *testing.T, cfg *APIConfig) {
@@ -603,6 +607,8 @@ blacklist_path: "/path/to/blacklist.json"
 				assert.Equal(t, "test-public-key", cfg.Auth.JWTPublicKey)
 				assert.Len(t, cfg.Auth.APIKeys, 2)
 				assert.Equal(t, "/path/to/blacklist.json", cfg.BlacklistPath)
+				assert.Equal(t, "tezos:mainnet", string(cfg.Tezos.ChainID))
+				assert.Equal(t, "eip155:1", string(cfg.Ethereum.ChainID))
 			},
 		},
 		{
@@ -615,6 +621,8 @@ blacklist_path: "/path/to/blacklist.json"
 				assert.False(t, cfg.Debug)                  // default
 				assert.Equal(t, "0.0.0.0", cfg.Server.Host) // default
 				assert.Equal(t, 8080, cfg.Server.Port)      // default
+				assert.Equal(t, "tezos:mainnet", string(cfg.Tezos.ChainID))
+				assert.Equal(t, "eip155:1", string(cfg.Ethereum.ChainID))
 			},
 		},
 		{
@@ -634,6 +642,8 @@ database:
 				assert.Equal(t, 10, cfg.Server.ReadTimeout)  // default
 				assert.Equal(t, 10, cfg.Server.WriteTimeout) // default
 				assert.Equal(t, 120, cfg.Server.IdleTimeout) // default
+				assert.Equal(t, "tezos:mainnet", string(cfg.Tezos.ChainID))
+				assert.Equal(t, "eip155:1", string(cfg.Ethereum.ChainID))
 			},
 		},
 	}

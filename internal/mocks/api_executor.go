@@ -55,6 +55,21 @@ func (mr *MockAPIExecutorMockRecorder) CreateWebhookClient(ctx, webhookURL, even
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWebhookClient", reflect.TypeOf((*MockAPIExecutor)(nil).CreateWebhookClient), ctx, webhookURL, eventFilters, retryMaxAttempts)
 }
 
+// GetAddressIndexingJob mocks base method.
+func (m *MockAPIExecutor) GetAddressIndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAddressIndexingJob", ctx, workflowID)
+	ret0, _ := ret[0].(*dto.AddressIndexingJobResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAddressIndexingJob indicates an expected call of GetAddressIndexingJob.
+func (mr *MockAPIExecutorMockRecorder) GetAddressIndexingJob(ctx, workflowID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIExecutor)(nil).GetAddressIndexingJob), ctx, workflowID)
+}
+
 // GetChanges mocks base method.
 func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error) {
 	m.ctrl.T.Helper()
@@ -130,17 +145,32 @@ func (mr *MockAPIExecutorMockRecorder) TriggerMetadataIndexing(ctx, tokenIDs, to
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerMetadataIndexing", reflect.TypeOf((*MockAPIExecutor)(nil).TriggerMetadataIndexing), ctx, tokenIDs, tokenCIDs)
 }
 
-// TriggerTokenIndexing mocks base method.
-func (m *MockAPIExecutor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error) {
+// TriggerTokenIndexingByAddresses mocks base method.
+func (m *MockAPIExecutor) TriggerTokenIndexingByAddresses(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TriggerTokenIndexing", ctx, tokenCIDs, addresses)
+	ret := m.ctrl.Call(m, "TriggerTokenIndexingByAddresses", ctx, addresses)
+	ret0, _ := ret[0].(*dto.TriggerAddressIndexingResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TriggerTokenIndexingByAddresses indicates an expected call of TriggerTokenIndexingByAddresses.
+func (mr *MockAPIExecutorMockRecorder) TriggerTokenIndexingByAddresses(ctx, addresses interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerTokenIndexingByAddresses", reflect.TypeOf((*MockAPIExecutor)(nil).TriggerTokenIndexingByAddresses), ctx, addresses)
+}
+
+// TriggerTokenIndexingByCIDs mocks base method.
+func (m *MockAPIExecutor) TriggerTokenIndexingByCIDs(ctx context.Context, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TriggerTokenIndexingByCIDs", ctx, tokenCIDs)
 	ret0, _ := ret[0].(*dto.TriggerIndexingResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// TriggerTokenIndexing indicates an expected call of TriggerTokenIndexing.
-func (mr *MockAPIExecutorMockRecorder) TriggerTokenIndexing(ctx, tokenCIDs, addresses interface{}) *gomock.Call {
+// TriggerTokenIndexingByCIDs indicates an expected call of TriggerTokenIndexingByCIDs.
+func (mr *MockAPIExecutorMockRecorder) TriggerTokenIndexingByCIDs(ctx, tokenCIDs interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerTokenIndexing", reflect.TypeOf((*MockAPIExecutor)(nil).TriggerTokenIndexing), ctx, tokenCIDs, addresses)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerTokenIndexingByCIDs", reflect.TypeOf((*MockAPIExecutor)(nil).TriggerTokenIndexingByCIDs), ctx, tokenCIDs)
 }

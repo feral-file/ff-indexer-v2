@@ -44,6 +44,7 @@ type ResolverRoot interface {
 	Change() ChangeResolver
 	ChangeList() ChangeListResolver
 	EnrichmentSource() EnrichmentSourceResolver
+	IndexingJob() IndexingJobResolver
 	MediaAsset() MediaAssetResolver
 	Mutation() MutationResolver
 	PaginatedOwners() PaginatedOwnersResolver
@@ -60,6 +61,11 @@ type DirectiveRoot struct {
 }
 
 type ComplexityRoot struct {
+	AddressIndexingJobInfo struct {
+		Address    func(childComplexity int) int
+		WorkflowID func(childComplexity int) int
+	}
+
 	Artist struct {
 		DID  func(childComplexity int) int
 		Name func(childComplexity int) int
@@ -96,6 +102,21 @@ type ComplexityRoot struct {
 		Vendor       func(childComplexity int) int
 		VendorHash   func(childComplexity int) int
 		VendorJSON   func(childComplexity int) int
+	}
+
+	IndexingJob struct {
+		Address         func(childComplexity int) int
+		CanceledAt      func(childComplexity int) int
+		Chain           func(childComplexity int) int
+		CompletedAt     func(childComplexity int) int
+		CurrentMaxBlock func(childComplexity int) int
+		CurrentMinBlock func(childComplexity int) int
+		FailedAt        func(childComplexity int) int
+		PausedAt        func(childComplexity int) int
+		StartedAt       func(childComplexity int) int
+		Status          func(childComplexity int) int
+		TokensProcessed func(childComplexity int) int
+		WorkflowID      func(childComplexity int) int
 	}
 
 	MediaAsset struct {
@@ -161,6 +182,7 @@ type ComplexityRoot struct {
 
 	Query struct {
 		Changes        func(childComplexity int, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, anchor *Uint64, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) int
+		IndexingJob    func(childComplexity int, workflowID string) int
 		Token          func(childComplexity int, cid string, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
 		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeBroken *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID string) int
@@ -209,6 +231,10 @@ type ComplexityRoot struct {
 		UpdatedAt       func(childComplexity int) int
 	}
 
+	TriggerAddressIndexingResult struct {
+		Jobs func(childComplexity int) int
+	}
+
 	TriggerIndexingResult struct {
 		RunID      func(childComplexity int) int
 		WorkflowID func(childComplexity int) int
@@ -252,13 +278,17 @@ type EnrichmentSourceResolver interface {
 
 	VendorJSON(ctx context.Context, obj *dto.EnrichmentSourceResponse) (JSON, error)
 }
+type IndexingJobResolver interface {
+	CurrentMinBlock(ctx context.Context, obj *dto.AddressIndexingJobResponse) (*Uint64, error)
+	CurrentMaxBlock(ctx context.Context, obj *dto.AddressIndexingJobResponse) (*Uint64, error)
+}
 type MediaAssetResolver interface {
 	ProviderMetadata(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
 	VariantURLs(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
 }
 type MutationResolver interface {
 	TriggerTokenIndexing(ctx context.Context, tokenCids []string) (*dto.TriggerIndexingResponse, error)
-	TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error)
+	TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error)
 	TriggerMetadataIndexing(ctx context.Context, tokenIds []Uint64, tokenCids []string) (*dto.TriggerIndexingResponse, error)
 	CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts *int) (*dto.CreateWebhookClientResponse, error)
 }
@@ -285,6 +315,7 @@ type QueryResolver interface {
 	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeBroken *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 	Changes(ctx context.Context, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, anchor *Uint64, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error)
 	WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error)
+	IndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error)
 }
 type TokenResolver interface {
 	ID(ctx context.Context, obj *dto.TokenResponse) (Uint64, error)
@@ -323,6 +354,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 	ec := executionContext{nil, e, 0, 0, nil}
 	_ = ec
 	switch typeName + "." + field {
+
+	case "AddressIndexingJobInfo.address":
+		if e.complexity.AddressIndexingJobInfo.Address == nil {
+			break
+		}
+
+		return e.complexity.AddressIndexingJobInfo.Address(childComplexity), true
+	case "AddressIndexingJobInfo.workflow_id":
+		if e.complexity.AddressIndexingJobInfo.WorkflowID == nil {
+			break
+		}
+
+		return e.complexity.AddressIndexingJobInfo.WorkflowID(childComplexity), true
 
 	case "Artist.did":
 		if e.complexity.Artist.DID == nil {
@@ -483,6 +527,79 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.EnrichmentSource.VendorJSON(childComplexity), true
+
+	case "IndexingJob.address":
+		if e.complexity.IndexingJob.Address == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.Address(childComplexity), true
+	case "IndexingJob.canceled_at":
+		if e.complexity.IndexingJob.CanceledAt == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.CanceledAt(childComplexity), true
+	case "IndexingJob.chain":
+		if e.complexity.IndexingJob.Chain == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.Chain(childComplexity), true
+	case "IndexingJob.completed_at":
+		if e.complexity.IndexingJob.CompletedAt == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.CompletedAt(childComplexity), true
+	case "IndexingJob.current_max_block":
+		if e.complexity.IndexingJob.CurrentMaxBlock == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.CurrentMaxBlock(childComplexity), true
+	case "IndexingJob.current_min_block":
+		if e.complexity.IndexingJob.CurrentMinBlock == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.CurrentMinBlock(childComplexity), true
+	case "IndexingJob.failed_at":
+		if e.complexity.IndexingJob.FailedAt == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.FailedAt(childComplexity), true
+	case "IndexingJob.paused_at":
+		if e.complexity.IndexingJob.PausedAt == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.PausedAt(childComplexity), true
+	case "IndexingJob.started_at":
+		if e.complexity.IndexingJob.StartedAt == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.StartedAt(childComplexity), true
+	case "IndexingJob.status":
+		if e.complexity.IndexingJob.Status == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.Status(childComplexity), true
+	case "IndexingJob.tokens_processed":
+		if e.complexity.IndexingJob.TokensProcessed == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.TokensProcessed(childComplexity), true
+	case "IndexingJob.workflow_id":
+		if e.complexity.IndexingJob.WorkflowID == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.WorkflowID(childComplexity), true
 
 	case "MediaAsset.created_at":
 		if e.complexity.MediaAsset.CreatedAt == nil {
@@ -762,6 +879,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.Changes(childComplexity, args["token_ids"].([]Uint64), args["token_cids"].([]string), args["addresses"].([]string), args["subject_types"].([]string), args["subject_ids"].([]string), args["anchor"].(*Uint64), args["since"].(*string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["order"].(*types.Order), args["expand"].([]string)), true
+	case "Query.indexingJob":
+		if e.complexity.Query.IndexingJob == nil {
+			break
+		}
+
+		args, err := ec.field_Query_indexingJob_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.IndexingJob(childComplexity, args["workflow_id"].(string)), true
 	case "Query.token":
 		if e.complexity.Query.Token == nil {
 			break
@@ -1002,6 +1130,13 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TokenMetadata.UpdatedAt(childComplexity), true
+
+	case "TriggerAddressIndexingResult.jobs":
+		if e.complexity.TriggerAddressIndexingResult.Jobs == nil {
+			break
+		}
+
+		return e.complexity.TriggerAddressIndexingResult.Jobs(childComplexity), true
 
 	case "TriggerIndexingResult.run_id":
 		if e.complexity.TriggerIndexingResult.RunID == nil {
@@ -1375,6 +1510,17 @@ type TriggerIndexingResult {
   run_id: String!
 }
 
+# Address indexing job information
+type AddressIndexingJobInfo {
+  address: String!
+  workflow_id: String!
+}
+
+# Result of triggering address indexing (returns array of jobs)
+type TriggerAddressIndexingResult {
+  jobs: [AddressIndexingJobInfo!]!
+}
+
 # Workflow status information
 type WorkflowStatus {
   workflow_id: String!
@@ -1450,6 +1596,12 @@ type Query {
     workflow_id: String!
     run_id: String!
   ): WorkflowStatus
+
+  # Get indexing job by workflow ID
+  # Equivalent to: GET /api/v1/indexing/jobs/:workflow_id
+  indexingJob(
+    workflow_id: String!
+  ): IndexingJob
 }
 
 # Root Mutation type
@@ -1462,9 +1614,10 @@ type Mutation {
 
   # Trigger indexing for tokens by owner addresses (requires authentication)
   # Equivalent to: POST /api/v1/tokens/owners/index
+  # Returns an array of jobs with workflow IDs for tracking each address's indexing progress
   triggerOwnerIndexing(
     addresses: [String!]!
-  ): TriggerIndexingResult
+  ): TriggerAddressIndexingResult
 
   # Trigger metadata refresh for tokens by IDs or CIDs (open, no authentication required)
   # Equivalent to: POST /api/v1/tokens/metadata/index
@@ -1495,6 +1648,21 @@ type WebhookClientResult {
   updated_at: Time!
 }
 
+# Address indexing job
+type IndexingJob {
+  workflow_id: String!
+  address: String!
+  chain: String!
+  status: String!
+  tokens_processed: Int!
+  current_min_block: Uint64
+  current_max_block: Uint64
+  started_at: Time!
+  paused_at: Time
+  completed_at: Time
+  failed_at: Time
+  canceled_at: Time
+}
 
 `, BuiltIn: false},
 }
@@ -1632,6 +1800,17 @@ func (ec *executionContext) field_Query_changes_args(ctx context.Context, rawArg
 		return nil, err
 	}
 	args["expand"] = arg10
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_indexingJob_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "workflow_id", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["workflow_id"] = arg0
 	return args, nil
 }
 
@@ -1824,6 +2003,64 @@ func (ec *executionContext) field___Type_fields_args(ctx context.Context, rawArg
 // endregion ************************** directives.gotpl **************************
 
 // region    **************************** field.gotpl *****************************
+
+func (ec *executionContext) _AddressIndexingJobInfo_address(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AddressIndexingJobInfo_address,
+		func(ctx context.Context) (any, error) {
+			return obj.Address, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AddressIndexingJobInfo_address(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AddressIndexingJobInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _AddressIndexingJobInfo_workflow_id(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobInfo) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_AddressIndexingJobInfo_workflow_id,
+		func(ctx context.Context) (any, error) {
+			return obj.WorkflowID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_AddressIndexingJobInfo_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AddressIndexingJobInfo",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
 
 func (ec *executionContext) _Artist_did(ctx context.Context, field graphql.CollectedField, obj *dto.ArtistResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
@@ -2603,6 +2840,354 @@ func (ec *executionContext) fieldContext_EnrichmentSource_updated_at(_ context.C
 	return fc, nil
 }
 
+func (ec *executionContext) _IndexingJob_workflow_id(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_workflow_id,
+		func(ctx context.Context) (any, error) {
+			return obj.WorkflowID, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_address(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_address,
+		func(ctx context.Context) (any, error) {
+			return obj.Address, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_address(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_chain(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_chain,
+		func(ctx context.Context) (any, error) {
+			return obj.Chain, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_chain(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_status(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_status,
+		func(ctx context.Context) (any, error) {
+			return obj.Status, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_tokens_processed(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_tokens_processed,
+		func(ctx context.Context) (any, error) {
+			return obj.TokensProcessed, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_tokens_processed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_current_min_block(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_current_min_block,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.IndexingJob().CurrentMinBlock(ctx, obj)
+		},
+		nil,
+		ec.marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_current_min_block(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Uint64 does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_current_max_block(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_current_max_block,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.IndexingJob().CurrentMaxBlock(ctx, obj)
+		},
+		nil,
+		ec.marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_current_max_block(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Uint64 does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_started_at(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_started_at,
+		func(ctx context.Context) (any, error) {
+			return obj.StartedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_started_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_paused_at(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_paused_at,
+		func(ctx context.Context) (any, error) {
+			return obj.PausedAt, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_paused_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_completed_at(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_completed_at,
+		func(ctx context.Context) (any, error) {
+			return obj.CompletedAt, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_completed_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_failed_at(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_failed_at,
+		func(ctx context.Context) (any, error) {
+			return obj.FailedAt, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_failed_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_canceled_at(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_canceled_at,
+		func(ctx context.Context) (any, error) {
+			return obj.CanceledAt, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_canceled_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _MediaAsset_id(ctx context.Context, field graphql.CollectedField, obj *dto.MediaAssetResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2951,7 +3536,7 @@ func (ec *executionContext) _Mutation_triggerOwnerIndexing(ctx context.Context, 
 			return ec.resolvers.Mutation().TriggerOwnerIndexing(ctx, fc.Args["addresses"].([]string))
 		},
 		nil,
-		ec.marshalOTriggerIndexingResult2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTriggerIndexingResponse,
+		ec.marshalOTriggerAddressIndexingResult2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTriggerAddressIndexingResponse,
 		true,
 		false,
 	)
@@ -2965,12 +3550,10 @@ func (ec *executionContext) fieldContext_Mutation_triggerOwnerIndexing(ctx conte
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			switch field.Name {
-			case "workflow_id":
-				return ec.fieldContext_TriggerIndexingResult_workflow_id(ctx, field)
-			case "run_id":
-				return ec.fieldContext_TriggerIndexingResult_run_id(ctx, field)
+			case "jobs":
+				return ec.fieldContext_TriggerAddressIndexingResult_jobs(ctx, field)
 			}
-			return nil, fmt.Errorf("no field named %q was found under type TriggerIndexingResult", field.Name)
+			return nil, fmt.Errorf("no field named %q was found under type TriggerAddressIndexingResult", field.Name)
 		},
 	}
 	defer func() {
@@ -4111,6 +4694,73 @@ func (ec *executionContext) fieldContext_Query_workflowStatus(ctx context.Contex
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_workflowStatus_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_indexingJob(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_indexingJob,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().IndexingJob(ctx, fc.Args["workflow_id"].(string))
+		},
+		nil,
+		ec.marshalOIndexingJob2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐAddressIndexingJobResponse,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_indexingJob(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "workflow_id":
+				return ec.fieldContext_IndexingJob_workflow_id(ctx, field)
+			case "address":
+				return ec.fieldContext_IndexingJob_address(ctx, field)
+			case "chain":
+				return ec.fieldContext_IndexingJob_chain(ctx, field)
+			case "status":
+				return ec.fieldContext_IndexingJob_status(ctx, field)
+			case "tokens_processed":
+				return ec.fieldContext_IndexingJob_tokens_processed(ctx, field)
+			case "current_min_block":
+				return ec.fieldContext_IndexingJob_current_min_block(ctx, field)
+			case "current_max_block":
+				return ec.fieldContext_IndexingJob_current_max_block(ctx, field)
+			case "started_at":
+				return ec.fieldContext_IndexingJob_started_at(ctx, field)
+			case "paused_at":
+				return ec.fieldContext_IndexingJob_paused_at(ctx, field)
+			case "completed_at":
+				return ec.fieldContext_IndexingJob_completed_at(ctx, field)
+			case "failed_at":
+				return ec.fieldContext_IndexingJob_failed_at(ctx, field)
+			case "canceled_at":
+				return ec.fieldContext_IndexingJob_canceled_at(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type IndexingJob", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_indexingJob_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -5370,6 +6020,41 @@ func (ec *executionContext) fieldContext_TokenMetadata_updated_at(_ context.Cont
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TriggerAddressIndexingResult_jobs(ctx context.Context, field graphql.CollectedField, obj *dto.TriggerAddressIndexingResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TriggerAddressIndexingResult_jobs,
+		func(ctx context.Context) (any, error) {
+			return obj.Jobs, nil
+		},
+		nil,
+		ec.marshalNAddressIndexingJobInfo2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐAddressIndexingJobInfoᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TriggerAddressIndexingResult_jobs(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TriggerAddressIndexingResult",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "address":
+				return ec.fieldContext_AddressIndexingJobInfo_address(ctx, field)
+			case "workflow_id":
+				return ec.fieldContext_AddressIndexingJobInfo_workflow_id(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type AddressIndexingJobInfo", field.Name)
 		},
 	}
 	return fc, nil
@@ -7293,6 +7978,50 @@ func (ec *executionContext) fieldContext___Type_isOneOf(_ context.Context, field
 
 // region    **************************** object.gotpl ****************************
 
+var addressIndexingJobInfoImplementors = []string{"AddressIndexingJobInfo"}
+
+func (ec *executionContext) _AddressIndexingJobInfo(ctx context.Context, sel ast.SelectionSet, obj *dto.AddressIndexingJobInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, addressIndexingJobInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("AddressIndexingJobInfo")
+		case "address":
+			out.Values[i] = ec._AddressIndexingJobInfo_address(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "workflow_id":
+			out.Values[i] = ec._AddressIndexingJobInfo_workflow_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var artistImplementors = []string{"Artist"}
 
 func (ec *executionContext) _Artist(ctx context.Context, sel ast.SelectionSet, obj *dto.ArtistResponse) graphql.Marshaler {
@@ -7779,6 +8508,144 @@ func (ec *executionContext) _EnrichmentSource(ctx context.Context, sel ast.Selec
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var indexingJobImplementors = []string{"IndexingJob"}
+
+func (ec *executionContext) _IndexingJob(ctx context.Context, sel ast.SelectionSet, obj *dto.AddressIndexingJobResponse) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, indexingJobImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("IndexingJob")
+		case "workflow_id":
+			out.Values[i] = ec._IndexingJob_workflow_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "address":
+			out.Values[i] = ec._IndexingJob_address(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "chain":
+			out.Values[i] = ec._IndexingJob_chain(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "status":
+			out.Values[i] = ec._IndexingJob_status(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "tokens_processed":
+			out.Values[i] = ec._IndexingJob_tokens_processed(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "current_min_block":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._IndexingJob_current_min_block(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "current_max_block":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._IndexingJob_current_max_block(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "started_at":
+			out.Values[i] = ec._IndexingJob_started_at(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "paused_at":
+			out.Values[i] = ec._IndexingJob_paused_at(ctx, field, obj)
+		case "completed_at":
+			out.Values[i] = ec._IndexingJob_completed_at(ctx, field, obj)
+		case "failed_at":
+			out.Values[i] = ec._IndexingJob_failed_at(ctx, field, obj)
+		case "canceled_at":
+			out.Values[i] = ec._IndexingJob_canceled_at(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -8666,6 +9533,25 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "indexingJob":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_indexingJob(ctx, field)
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -9136,6 +10022,45 @@ func (ec *executionContext) _TokenMetadata(ctx context.Context, sel ast.Selectio
 			out.Values[i] = ec._TokenMetadata_updated_at(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var triggerAddressIndexingResultImplementors = []string{"TriggerAddressIndexingResult"}
+
+func (ec *executionContext) _TriggerAddressIndexingResult(ctx context.Context, sel ast.SelectionSet, obj *dto.TriggerAddressIndexingResponse) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, triggerAddressIndexingResultImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("TriggerAddressIndexingResult")
+		case "jobs":
+			out.Values[i] = ec._TriggerAddressIndexingResult_jobs(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
 			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
@@ -9698,6 +10623,54 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 // endregion **************************** object.gotpl ****************************
 
 // region    ***************************** type.gotpl *****************************
+
+func (ec *executionContext) marshalNAddressIndexingJobInfo2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐAddressIndexingJobInfo(ctx context.Context, sel ast.SelectionSet, v dto.AddressIndexingJobInfo) graphql.Marshaler {
+	return ec._AddressIndexingJobInfo(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNAddressIndexingJobInfo2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐAddressIndexingJobInfoᚄ(ctx context.Context, sel ast.SelectionSet, v []dto.AddressIndexingJobInfo) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNAddressIndexingJobInfo2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐAddressIndexingJobInfo(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
 
 func (ec *executionContext) marshalNArtist2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐArtistResponse(ctx context.Context, sel ast.SelectionSet, v dto.ArtistResponse) graphql.Marshaler {
 	return ec._Artist(ctx, sel, &v)
@@ -10379,6 +11352,13 @@ func (ec *executionContext) marshalOEnrichmentSource2ᚖgithubᚗcomᚋferalᚑf
 	return ec._EnrichmentSource(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalOIndexingJob2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐAddressIndexingJobResponse(ctx context.Context, sel ast.SelectionSet, v *dto.AddressIndexingJobResponse) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._IndexingJob(ctx, sel, v)
+}
+
 func (ec *executionContext) unmarshalOInt2ᚖint(ctx context.Context, v any) (*int, error) {
 	if v == nil {
 		return nil, nil
@@ -10609,6 +11589,13 @@ func (ec *executionContext) marshalOTokenMetadata2ᚖgithubᚗcomᚋferalᚑfile
 		return graphql.Null
 	}
 	return ec._TokenMetadata(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOTriggerAddressIndexingResult2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTriggerAddressIndexingResponse(ctx context.Context, sel ast.SelectionSet, v *dto.TriggerAddressIndexingResponse) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._TriggerAddressIndexingResult(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOTriggerIndexingResult2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTriggerIndexingResponse(ctx context.Context, sel ast.SelectionSet, v *dto.TriggerIndexingResponse) graphql.Marshaler {

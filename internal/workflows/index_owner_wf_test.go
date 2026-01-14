@@ -17,6 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -25,11 +26,12 @@ type IndexOwnerWorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
-	env        *testsuite.TestWorkflowEnvironment
-	ctrl       *gomock.Controller
-	executor   *mocks.MockCoreExecutor
-	blacklist  *mocks.MockBlacklistRegistry
-	workerCore workflows.WorkerCore
+	env              *testsuite.TestWorkflowEnvironment
+	ctrl             *gomock.Controller
+	executor         *mocks.MockCoreExecutor
+	blacklist        *mocks.MockBlacklistRegistry
+	temporalWorkflow *mocks.MockWorkflow
+	workerCore       workflows.WorkerCore
 }
 
 // SetupTest is called before each test
@@ -43,13 +45,14 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 	s.ctrl = gomock.NewController(s.T())
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
+	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
 	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 1000,
 		TezosTokenSweepStartBlock:    1000,
 		MediaTaskQueue:               "media-task-queue",
-	}, s.blacklist)
+	}, s.blacklist, s.temporalWorkflow)
 }
 
 // TearDownTest is called after each test
@@ -113,6 +116,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwners_OneAddressFails() {
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_EthereumAddress() {
 	address := "0x1234567890123456789012345678901234567890"
 
+	// Mock GetExecutionID activity
+	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
+
+	// Mock GetCurrentHistoryLength activity
+	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
+
+	// Mock job tracking activities
+	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainEthereumMainnet, mock.Anything, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCompleted, mock.Anything).Return(nil).Once()
+
 	// Mock Ethereum child workflow
 	s.env.OnWorkflow(s.workerCore.IndexEthereumTokenOwner, mock.Anything, address).Return(nil)
 
@@ -126,6 +140,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_EthereumAddress() {
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_TezosAddress() {
 	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
+
+	// Mock GetExecutionID activity
+	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
+
+	// Mock GetCurrentHistoryLength activity
+	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
+
+	// Mock job tracking activities
+	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainTezosMainnet, mock.Anything, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCompleted, mock.Anything).Return(nil).Once()
 
 	// Mock Tezos child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTezosTokenOwner, mock.Anything, address).Return(nil)
@@ -141,6 +166,9 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_TezosAddress() {
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_UnknownAddress() {
 	address := "someaddress"
 
+	// Mock GetExecutionID activity
+	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
+
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
 
@@ -148,6 +176,138 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_UnknownAddress() {
 	s.True(s.env.IsWorkflowCompleted())
 	s.Error(s.env.GetWorkflowError())
 	s.Contains(s.env.GetWorkflowError().Error(), "unsupported blockchain for address: someaddress")
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_JobCreationFails_WorkflowContinues() {
+	address := "0x1234567890123456789012345678901234567890"
+
+	// Mock GetExecutionID activity
+	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
+
+	// Mock GetCurrentHistoryLength activity
+	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
+
+	// Mock job tracking activities - CreateIndexingJob fails but workflow should continue
+	// Activity will retry twice due to MaximumAttempts: 2
+	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainEthereumMainnet, mock.Anything, mock.Anything).Return(errors.New("database error")).Twice()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCompleted, mock.Anything).Return(nil).Once()
+
+	// Mock Ethereum child workflow to succeed
+	s.env.OnWorkflow(s.workerCore.IndexEthereumTokenOwner, mock.Anything, address).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+
+	// Verify workflow completed successfully despite job creation failure
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_JobStatusUpdateFails_WorkflowContinues() {
+	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
+
+	// Mock GetExecutionID activity
+	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
+
+	// Mock GetCurrentHistoryLength activity
+	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
+
+	// Mock job tracking activities - status updates fail but workflow should continue
+	// Activities will retry twice due to MaximumAttempts: 2
+	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainTezosMainnet, mock.Anything, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(errors.New("status update error")).Twice()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCompleted, mock.Anything).Return(errors.New("status update error")).Twice()
+
+	// Mock Tezos child workflow to succeed
+	s.env.OnWorkflow(s.workerCore.IndexTezosTokenOwner, mock.Anything, address).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+
+	// Verify workflow completed successfully despite status update failures
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_ChildWorkflowFails_JobMarkedAsFailed() {
+	address := "0x1234567890123456789012345678901234567890"
+	expectedError := errors.New("child workflow failed")
+
+	// Mock GetExecutionID activity
+	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
+
+	// Mock GetCurrentHistoryLength activity
+	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
+
+	// Mock job tracking activities
+	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainEthereumMainnet, mock.Anything, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusFailed, mock.Anything).Return(nil).Once()
+
+	// Mock Ethereum child workflow to fail
+	s.env.OnWorkflow(s.workerCore.IndexEthereumTokenOwner, mock.Anything, address).Return(expectedError)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+
+	// Verify workflow completed with error and job status was updated to failed
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), expectedError.Error())
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_Cancellation_JobMarkedAsCanceled() {
+	address := "0x1234567890123456789012345678901234567890"
+
+	// Mock GetExecutionID activity
+	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
+
+	// Mock GetCurrentHistoryLength activity - return > 0 to enable defer logic
+	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(5).AnyTimes()
+
+	// Mock job tracking activities
+	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainEthereumMainnet, mock.Anything, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCanceled, mock.Anything).Return(nil).Once()
+
+	// Mock Ethereum child workflow to be canceled
+	s.env.OnWorkflow(s.workerCore.IndexEthereumTokenOwner, mock.Anything, address).Return(workflow.ErrCanceled)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+
+	// Verify workflow was canceled
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), "canceled")
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_FailedStatusUpdateAfterChildFailure_WorkflowStillFails() {
+	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
+	childError := errors.New("child workflow failed")
+
+	// Mock GetExecutionID activity
+	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
+
+	// Mock GetCurrentHistoryLength activity
+	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
+
+	// Mock job tracking activities - status update to 'failed' also fails (retries twice)
+	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainTezosMainnet, mock.Anything, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(nil).Once()
+	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusFailed, mock.Anything).Return(errors.New("status update error")).Twice()
+
+	// Mock Tezos child workflow to fail
+	s.env.OnWorkflow(s.workerCore.IndexTezosTokenOwner, mock.Anything, address).Return(childError)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+
+	// Verify workflow completed with child error, even though status update failed
+	s.True(s.env.IsWorkflowCompleted())
+	s.Error(s.env.GetWorkflowError())
+	s.Contains(s.env.GetWorkflowError().Error(), childError.Error())
 }
 
 // ====================================================================================
@@ -169,6 +329,9 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_WithToke
 	}
 
 	startBlock := uint64(1000) // TezosTokenSweepStartBlock from config
+
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
 
 	// Verify EnsureWatchedAddressExists is called with correct params
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
@@ -235,18 +398,110 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_WithToke
 	s.Equal(startBlock, blockRangeUpdates[len(blockRangeUpdates)-1].minBlock, "Final update should set min_block to start block")
 }
 
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_JobProgressTracking() {
+	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
+	chainID := domain.ChainTezosMainnet
+	latestBlock := uint64(10000)
+	startBlock := uint64(1000)
+	parentWorkflowID := "parent-workflow-123"
+
+	// Create 100 tokens to test progress tracking across multiple chunks
+	tokens := make([]domain.TokenWithBlock, 100)
+	for i := range tokens {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.NewTokenCID(chainID, domain.StandardFA2, "KT1Contract", fmt.Sprintf("%d", i)),
+			BlockNumber: uint64(5000 + i*10), //nolint:gosec,G115
+		}
+	}
+
+	// Mock GetParentWorkflowID to return a parent workflow ID
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(&parentWorkflowID).AnyTimes()
+
+	// Other activities succeed
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	// Track progress updates
+	var progressUpdates []int
+	s.env.OnActivity(s.executor.UpdateIndexingJobProgress, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
+		func(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+			progressUpdates = append(progressUpdates, tokensProcessed)
+			return nil
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	// Verify progress tracking: 100 tokens with chunk size 50 = 2 chunks
+	s.Equal(2, len(progressUpdates), "Should have 2 progress updates")
+	s.Equal(50, progressUpdates[0], "First chunk should process 50 tokens")
+	s.Equal(50, progressUpdates[1], "Second chunk should process 50 tokens")
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_JobTrackingGracefulFailure() {
+	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
+	chainID := domain.ChainTezosMainnet
+	latestBlock := uint64(5000)
+	startBlock := uint64(1000)
+	parentWorkflowID := "parent-workflow-123"
+
+	tokens := make([]domain.TokenWithBlock, 10)
+	for i := range tokens {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.NewTokenCID(chainID, domain.StandardFA2, "KT1Contract", fmt.Sprintf("%d", i)),
+			BlockNumber: uint64(2000 + i*10), //nolint:gosec,G115
+		}
+	}
+
+	// Mock GetParentWorkflowID to return a parent workflow ID
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(&parentWorkflowID).AnyTimes()
+
+	// Job tracking fails, but workflow should continue
+	s.env.OnActivity(s.executor.UpdateIndexingJobProgress, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("job tracking error"))
+
+	// Other activities succeed
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address)
+
+	// Verify workflow completed successfully despite job tracking failures
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError(), "Workflow should succeed even if job tracking fails")
+}
+
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_NoTokens() {
 	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
+	chainID := domain.ChainTezosMainnet
 	latestBlock := uint64(5000)
 
-	// Mock activities
-	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, mock.Anything, mock.Anything).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
-	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]domain.TokenWithBlock{}, nil)
+
+	// Mock GetTezosTokenCIDsByAccountWithinBlockRange returns no tokens
+	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).Return([]domain.TokenWithBlock{}, nil)
 
 	// Mock final update
-	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address)
@@ -273,7 +528,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_Bac
 		}
 	}
 
-	// Verify activities called with correct parameters
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: storedMinBlock, MaxBlock: storedMaxBlock}, nil)
 	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
@@ -335,7 +593,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_For
 		}
 	}
 
-	// Verify activities called with correct parameters
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: storedMinBlock, MaxBlock: storedMaxBlock}, nil)
 	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
@@ -407,7 +668,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_Bot
 		}
 	}
 
-	// Verify activities are called with correct parameters
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: storedMinBlock, MaxBlock: storedMaxBlock}, nil)
 	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
@@ -470,6 +734,9 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_EnsureWatchedAddr
 	chainID := domain.ChainTezosMainnet
 	expectedError := errors.New("database error")
 
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
 	// Mock activity to return error
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(expectedError)
 
@@ -486,6 +753,9 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_GetLatestBlockErr
 	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
 	chainID := domain.ChainTezosMainnet
 	expectedError := errors.New("API error")
+
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
 
 	// Mock activities
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
@@ -525,7 +795,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Quot
 		MediaTaskQueue:                    "media-task-queue",
 		BudgetedIndexingModeEnabled:       true, // Enabled
 		BudgetedIndexingDefaultDailyQuota: 50,   // Low quota
-	}, s.blacklist)
+	}, s.blacklist, s.temporalWorkflow)
 
 	address := "tz1abc123def456"
 	chainID := domain.ChainTezosMainnet
@@ -536,11 +806,14 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Quot
 	for i := range 100 {
 		tokens[i] = domain.TokenWithBlock{
 			TokenCID:    domain.TokenCID(fmt.Sprintf("tezos:mainnet:fa2:KT1abc:%d", i)),
-			BlockNumber: uint64(1000 + i),
+			BlockNumber: uint64(1000 + i), //nolint:gosec,G115
 		}
 	}
 
-	// Mock activities
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -593,7 +866,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Norm
 		MediaTaskQueue:                    "media-task-queue",
 		BudgetedIndexingModeEnabled:       true,
 		BudgetedIndexingDefaultDailyQuota: 1000, // High quota
-	}, s.blacklist)
+	}, s.blacklist, s.temporalWorkflow)
 
 	address := "tz1xyz789"
 	chainID := domain.ChainTezosMainnet
@@ -604,11 +877,14 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Norm
 	for i := range 15 {
 		tokens[i] = domain.TokenWithBlock{
 			TokenCID:    domain.TokenCID(fmt.Sprintf("tezos:mainnet:fa2:KT1xyz:%d", i)),
-			BlockNumber: uint64(2000 + i*10),
+			BlockNumber: uint64(2000 + i*10), //nolint:gosec,G115
 		}
 	}
 
-	// Mock activities
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -653,7 +929,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Part
 		MediaTaskQueue:                    "media-task-queue",
 		BudgetedIndexingModeEnabled:       true,
 		BudgetedIndexingDefaultDailyQuota: 1000,
-	}, s.blacklist)
+	}, s.blacklist, s.temporalWorkflow)
 
 	address := "tz1partial"
 	chainID := domain.ChainTezosMainnet
@@ -664,11 +940,14 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Part
 	for i := range 60 {
 		tokens[i] = domain.TokenWithBlock{
 			TokenCID:    domain.TokenCID(fmt.Sprintf("tezos:mainnet:fa2:KT1partial:%d", i)),
-			BlockNumber: uint64(2000 + i*10),
+			BlockNumber: uint64(2000 + i*10), //nolint:gosec,G115
 		}
 	}
 
-	// Mock activities
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -719,6 +998,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_FirstRun_WithT
 	address := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
 	latestBlock := uint64(5000)
+
 	startBlock := uint64(1000) // EthereumTokenSweepStartBlock from config
 
 	// Create test tokens
@@ -730,7 +1010,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_FirstRun_WithT
 		}
 	}
 
-	// Verify activities called with correct parameters
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
@@ -775,10 +1058,97 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_FirstRun_WithT
 	s.Equal(startBlock, blockRangeUpdates[len(blockRangeUpdates)-1].minBlock, "Final update should set min_block to start block")
 }
 
+func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_JobProgressTracking() {
+	address := "0x1234567890123456789012345678901234567890"
+	chainID := domain.ChainEthereumMainnet
+	latestBlock := uint64(10000)
+	startBlock := uint64(1000)
+	parentWorkflowID := "parent-workflow-123"
+
+	// Create 100 tokens to test progress tracking across multiple chunks
+	tokens := make([]domain.TokenWithBlock, 100)
+	for i := range tokens {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.NewTokenCID(chainID, domain.StandardERC721, "0xContractAddress", fmt.Sprintf("%d", i)),
+			BlockNumber: uint64(5000 + i*10), //nolint:gosec,G115
+		}
+	}
+
+	// Mock GetParentWorkflowID to return a parent workflow ID
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(&parentWorkflowID).AnyTimes()
+
+	// Other activities succeed
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	// Track progress updates
+	var progressUpdates []int
+	s.env.OnActivity(s.executor.UpdateIndexingJobProgress, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
+		func(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+			progressUpdates = append(progressUpdates, tokensProcessed)
+			return nil
+		},
+	)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	// Verify progress tracking: 100 tokens with chunk size 50 = 2 chunks
+	s.Equal(2, len(progressUpdates), "Should have 2 progress updates")
+	s.Equal(50, progressUpdates[0], "First chunk should process 50 tokens")
+	s.Equal(50, progressUpdates[1], "Second chunk should process 50 tokens")
+}
+
+func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_JobTrackingGracefulFailure() {
+	address := "0x1234567890123456789012345678901234567890"
+	chainID := domain.ChainEthereumMainnet
+	latestBlock := uint64(5000)
+	startBlock := uint64(1000)
+	parentWorkflowID := "parent-workflow-123"
+
+	tokens := make([]domain.TokenWithBlock, 10)
+	for i := range tokens {
+		tokens[i] = domain.TokenWithBlock{
+			TokenCID:    domain.NewTokenCID(chainID, domain.StandardERC721, "0xContract123456789012345678901234567890", fmt.Sprintf("%d", i)),
+			BlockNumber: uint64(2000 + i*10), //nolint:gosec,G115
+		}
+	}
+
+	// Mock GetParentWorkflowID to return a parent workflow ID
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(&parentWorkflowID).AnyTimes()
+
+	// Job tracking fails, but workflow should continue
+	s.env.OnActivity(s.executor.UpdateIndexingJobProgress, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("job tracking error"))
+
+	// Other activities succeed
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
+	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
+	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
+	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address)
+
+	// Verify workflow completed successfully despite job tracking failures
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError(), "Workflow should succeed even if job tracking fails")
+}
+
 func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_ForwardSweep() {
 	address := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
 	storedMinBlock := uint64(1000) // Already at start block
+
 	storedMaxBlock := uint64(3000)
 	latestBlock := uint64(5000)
 
@@ -791,7 +1161,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 		}
 	}
 
-	// Verify activities called with correct parameters
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: storedMinBlock, MaxBlock: storedMaxBlock}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
@@ -860,7 +1233,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_IndexTokenChun
 		}
 	}
 
-	// Mock activities
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, mock.Anything, mock.Anything).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
@@ -892,7 +1268,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_UpdateBlockRan
 		}
 	}
 
-	// Mock activities
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, mock.Anything, mock.Anything).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
@@ -915,13 +1294,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_UpdateBlockRan
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_AlreadyUpToDate() {
 	address := "0x1234567890123456789012345678901234567890"
+	chainID := domain.ChainEthereumMainnet
 	storedMinBlock := uint64(1000) // Already at start block
 	storedMaxBlock := uint64(5000) // Already at latest block
 	latestBlock := uint64(5000)    // No new blocks
 
-	// Mock activities
-	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, mock.Anything, mock.Anything).Return(&workflows.BlockRangeResult{MinBlock: storedMinBlock, MaxBlock: storedMaxBlock}, nil)
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
+	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID).Return(nil)
+	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: storedMinBlock, MaxBlock: storedMaxBlock}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
 
 	// No fetching or indexing should occur
@@ -948,7 +1331,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Q
 		MediaTaskQueue:                    "media-task-queue",
 		BudgetedIndexingModeEnabled:       true,
 		BudgetedIndexingDefaultDailyQuota: 50,
-	}, s.blacklist)
+	}, s.blacklist, s.temporalWorkflow)
 
 	address := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
@@ -959,11 +1342,14 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Q
 	for i := range 100 {
 		tokens[i] = domain.TokenWithBlock{
 			TokenCID:    domain.TokenCID(fmt.Sprintf("eip155:1:erc721:0xabc:%d", i)),
-			BlockNumber: uint64(1000 + i),
+			BlockNumber: uint64(1000 + i), //nolint:gosec,G115
 		}
 	}
 
-	// Mock activities
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -1016,7 +1402,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_N
 		MediaTaskQueue:                    "media-task-queue",
 		BudgetedIndexingModeEnabled:       true,
 		BudgetedIndexingDefaultDailyQuota: 1000,
-	}, s.blacklist)
+	}, s.blacklist, s.temporalWorkflow)
 
 	address := "0xabcdef1234567890123456789012345678901234"
 	chainID := domain.ChainEthereumMainnet
@@ -1027,11 +1413,14 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_N
 	for i := range 15 {
 		tokens[i] = domain.TokenWithBlock{
 			TokenCID:    domain.TokenCID(fmt.Sprintf("eip155:1:erc721:0xdef:%d", i)),
-			BlockNumber: uint64(2000 + i*10),
+			BlockNumber: uint64(2000 + i*10), //nolint:gosec,G115
 		}
 	}
 
-	// Mock activities
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -1076,7 +1465,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_P
 		MediaTaskQueue:                    "media-task-queue",
 		BudgetedIndexingModeEnabled:       true,
 		BudgetedIndexingDefaultDailyQuota: 1000,
-	}, s.blacklist)
+	}, s.blacklist, s.temporalWorkflow)
 
 	address := "0xfedcba9876543210987654321098765432109876"
 	chainID := domain.ChainEthereumMainnet
@@ -1087,11 +1476,14 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_P
 	for i := range 60 {
 		tokens[i] = domain.TokenWithBlock{
 			TokenCID:    domain.TokenCID(fmt.Sprintf("eip155:1:erc721:0xfed:%d", i)),
-			BlockNumber: uint64(2000 + i*10),
+			BlockNumber: uint64(2000 + i*10), //nolint:gosec,G115
 		}
 	}
 
-	// Mock activities
+	// Mock GetParentWorkflowID to return a nil
+	s.temporalWorkflow.EXPECT().GetParentWorkflowID(gomock.Any()).Return(nil).AnyTimes()
+
+	// Other activities succeed
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)

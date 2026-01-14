@@ -46,6 +46,18 @@ func (mr *MockAPIHandlerMockRecorder) CreateWebhookClient(c interface{}) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWebhookClient", reflect.TypeOf((*MockAPIHandler)(nil).CreateWebhookClient), c)
 }
 
+// GetAddressIndexingJob mocks base method.
+func (m *MockAPIHandler) GetAddressIndexingJob(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "GetAddressIndexingJob", c)
+}
+
+// GetAddressIndexingJob indicates an expected call of GetAddressIndexingJob.
+func (mr *MockAPIHandlerMockRecorder) GetAddressIndexingJob(c interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIHandler)(nil).GetAddressIndexingJob), c)
+}
+
 // GetChanges mocks base method.
 func (m *MockAPIHandler) GetChanges(c *gin.Context) {
 	m.ctrl.T.Helper()

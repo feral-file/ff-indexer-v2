@@ -2403,3 +2403,97 @@ func (s *pgStore) IncrementTokensIndexed(ctx context.Context, address string, ch
 
 	return nil
 }
+
+// =============================================================================
+// Address Indexing Job Operations
+// =============================================================================
+
+// CreateAddressIndexingJob creates a new address indexing job record
+func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error {
+	now := time.Now()
+	job := &schema.AddressIndexingJob{
+		Address:       input.Address,
+		Chain:         input.Chain,
+		Status:        input.Status,
+		WorkflowID:    input.WorkflowID,
+		WorkflowRunID: input.WorkflowRunID,
+		StartedAt:     now, // Always set started_at since we only track running workflows
+	}
+
+	// Set appropriate timestamp field based on status
+	switch input.Status {
+	case schema.IndexingJobStatusRunning:
+		// StartedAt already set above
+	case schema.IndexingJobStatusPaused:
+		job.PausedAt = &now
+	case schema.IndexingJobStatusCompleted:
+		job.CompletedAt = &now
+	case schema.IndexingJobStatusFailed:
+		job.FailedAt = &now
+	case schema.IndexingJobStatusCanceled:
+		job.CanceledAt = &now
+	}
+
+	err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(job).Error
+
+	if err != nil {
+		return fmt.Errorf("failed to create address indexing job: %w", err)
+	}
+
+	return nil
+}
+
+// GetAddressIndexingJobByWorkflowID retrieves a job by workflow ID
+func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error) {
+	var job schema.AddressIndexingJob
+
+	result := s.db.WithContext(ctx).Where("workflow_id = ?", workflowID).First(&job)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("job not found for workflow: %s", workflowID)
+		}
+		return nil, fmt.Errorf("failed to get job: %w", result.Error)
+	}
+
+	return &job, nil
+}
+
+// UpdateAddressIndexingJobStatus updates job status with timestamp
+func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+	updates := make(map[string]interface{})
+	updates["status"] = status
+
+	// Set appropriate timestamp field based on status
+	// Note: started_at is set during creation, not during status updates
+	switch status {
+	case schema.IndexingJobStatusPaused:
+		updates["paused_at"] = timestamp
+	case schema.IndexingJobStatusCompleted:
+		updates["completed_at"] = timestamp
+	case schema.IndexingJobStatusFailed:
+		updates["failed_at"] = timestamp
+	case schema.IndexingJobStatusCanceled:
+		updates["canceled_at"] = timestamp
+	}
+
+	return s.db.WithContext(ctx).
+		Model(&schema.AddressIndexingJob{}).
+		Where("workflow_id = ?", workflowID).
+		Updates(updates).Error
+}
+
+// UpdateAddressIndexingJobProgress updates job progress metrics
+func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+	updates := map[string]interface{}{
+		"tokens_processed":  gorm.Expr("tokens_processed + ?", tokensProcessed),
+		"current_min_block": minBlock,
+		"current_max_block": maxBlock,
+	}
+
+	return s.db.WithContext(ctx).
+		Model(&schema.AddressIndexingJob{}).
+		Where("workflow_id = ?", workflowID).
+		Updates(updates).Error
+}

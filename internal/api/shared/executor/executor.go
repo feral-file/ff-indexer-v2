@@ -40,8 +40,14 @@ type Executor interface {
 	// Deprecated parameter: since, offset, order (use anchor instead for reliable pagination)
 	GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expand []types.Expansion) (*dto.ChangeListResponse, error)
 
-	// TriggerTokenIndexing triggers indexing for one or more tokens and addresses
-	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error)
+	// TriggerTokenIndexingByCIDs triggers indexing for one or more tokens by their CIDs
+	// Returns a workflow ID and run ID for tracking the indexing progress
+	TriggerTokenIndexingByCIDs(ctx context.Context, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error)
+
+	// TriggerTokenIndexingByAddresses triggers indexing for all tokens owned by one or more addresses
+	// Pre-creates jobs with predictable workflow IDs and returns job information for each address
+	// Clients can immediately use the returned workflow IDs to track progress
+	TriggerTokenIndexingByAddresses(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error)
 
 	// TriggerMetadataIndexing triggers metadata refresh for one or more tokens by IDs or CIDs
 	TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint64, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error)
@@ -51,6 +57,9 @@ type Executor interface {
 
 	// CreateWebhookClient creates a new webhook client
 	CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts int) (*dto.CreateWebhookClientResponse, error)
+
+	// GetAddressIndexingJob retrieves an indexing job by workflow ID
+	GetAddressIndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error)
 }
 
 type executor struct {
@@ -60,9 +69,11 @@ type executor struct {
 	blacklist             registry.BlacklistRegistry
 	json                  adapter.JSON
 	clock                 adapter.Clock
+	tezosChainID          domain.Chain
+	ethereumChainID       domain.Chain
 }
 
-func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, orchestratorTaskQueue string, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock) Executor {
+func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, orchestratorTaskQueue string, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock, tezosChainID domain.Chain, ethereumChainID domain.Chain) Executor {
 	return &executor{
 		store:                 store,
 		orchestrator:          orchestrator,
@@ -70,6 +81,8 @@ func NewExecutor(store store.Store, orchestrator temporal.TemporalOrchestrator, 
 		blacklist:             blacklist,
 		json:                  json,
 		clock:                 clock,
+		tezosChainID:          tezosChainID,
+		ethereumChainID:       ethereumChainID,
 	}
 }
 
@@ -449,68 +462,110 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 	}, nil
 }
 
-func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID, addresses []string) (*dto.TriggerIndexingResponse, error) {
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil)
-	var workflowID string
-	var runID string
-
-	hasTokenCIDs := len(tokenCIDs) > 0
-	hasAddresses := len(addresses) > 0
-
-	if hasTokenCIDs {
-		// Normalize token CIDs
-		normalizedTokenCIDs := make([]domain.TokenCID, len(tokenCIDs))
-		for i, tokenCID := range tokenCIDs {
-			normalizedTokenCIDs[i] = tokenCID.Normalized()
-		}
-
-		// Check for blacklisted contracts
-		if e.blacklist != nil {
-			for _, tokenCID := range normalizedTokenCIDs {
-				if e.blacklist.IsTokenCIDBlacklisted(tokenCID) {
-					return nil, apierrors.NewValidationError(fmt.Sprintf("contract is blacklisted: %s", tokenCID.String()))
-				}
-			}
-		}
-
-		// Trigger IndexTokens workflow
-		options := client.StartWorkflowOptions{
-			TaskQueue:                e.orchestratorTaskQueue,
-			WorkflowExecutionTimeout: 30 * time.Minute,
-		}
-		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, normalizedTokenCIDs, nil)
-		if err != nil {
-			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing: %v", err))
-		}
-		workflowID = wfRun.GetID()
-		runID = wfRun.GetRunID()
+func (e *executor) TriggerTokenIndexingByCIDs(ctx context.Context, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error) {
+	if len(tokenCIDs) == 0 {
+		return nil, apierrors.NewValidationError("token_cids is required")
 	}
 
-	if hasAddresses {
-		// Normalize addresses
-		normalizedAddresses := domain.NormalizeAddresses(addresses)
+	// Normalize token CIDs
+	normalizedTokenCIDs := make([]domain.TokenCID, len(tokenCIDs))
+	for i, tokenCID := range tokenCIDs {
+		normalizedTokenCIDs[i] = tokenCID.Normalized()
+	}
 
-		// Trigger IndexTokenOwners workflow
-		options := client.StartWorkflowOptions{
-			TaskQueue:                e.orchestratorTaskQueue,
-			WorkflowExecutionTimeout: 24*time.Hour + 15*time.Minute, // 24 hours + 15 minutes to cover the child workflow timeout
+	// Check for blacklisted contracts
+	if e.blacklist != nil {
+		for _, tokenCID := range normalizedTokenCIDs {
+			if e.blacklist.IsTokenCIDBlacklisted(tokenCID) {
+				return nil, apierrors.NewValidationError(fmt.Sprintf("contract is blacklisted: %s", tokenCID.String()))
+			}
 		}
-		wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwners, normalizedAddresses)
-		if err != nil {
-			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing: %v", err))
-		}
-		workflowID = wfRun.GetID()
-		runID = wfRun.GetRunID()
+	}
+
+	// Trigger IndexTokens workflow
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
+	options := client.StartWorkflowOptions{
+		TaskQueue:                e.orchestratorTaskQueue,
+		WorkflowExecutionTimeout: 30 * time.Minute,
+	}
+	wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, normalizedTokenCIDs, nil)
+	if err != nil {
+		return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing: %v", err))
 	}
 
 	return &dto.TriggerIndexingResponse{
-		WorkflowID: workflowID,
-		RunID:      runID,
+		WorkflowID: wfRun.GetID(),
+		RunID:      wfRun.GetRunID(),
 	}, nil
 }
 
+func (e *executor) TriggerTokenIndexingByAddresses(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error) {
+	if len(addresses) == 0 {
+		return nil, apierrors.NewValidationError("addresses is required")
+	}
+
+	// Normalize addresses
+	normalizedAddresses := domain.NormalizeAddresses(addresses)
+
+	// Pre-create jobs with predictable workflow IDs for each address
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
+	jobs := make([]dto.AddressIndexingJobInfo, len(normalizedAddresses))
+	for i, address := range normalizedAddresses {
+		blockchain := internalTypes.AddressToBlockchain(address)
+		workflowID := workflows.GetOwnerIndexingWorkflowID(blockchain, address)
+		jobs[i] = dto.AddressIndexingJobInfo{
+			Address:    address,
+			WorkflowID: workflowID,
+		}
+
+		// Determine chain from address
+		var chainID domain.Chain
+		switch blockchain {
+		case domain.BlockchainTezos:
+			chainID = e.tezosChainID
+		case domain.BlockchainEthereum:
+			chainID = e.ethereumChainID
+		default:
+			return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported blockchain for address: %s", address))
+		}
+
+		// Pre-create job record with status 'running'
+		// Workflow will check if job exists and update it accordingly
+		err := e.store.CreateAddressIndexingJob(ctx, store.CreateAddressIndexingJobInput{
+			Address:       address,
+			Chain:         chainID,
+			Status:        schema.IndexingJobStatusRunning,
+			WorkflowID:    workflowID,
+			WorkflowRunID: nil, // Will be updated by workflow
+		})
+		if err != nil {
+			logger.Warn(fmt.Sprintf("Failed to pre-create indexing job: %v", err), zap.String("address", address), zap.String("workflowID", workflowID))
+			// Don't fail the request if job creation fails - workflow will handle it
+		}
+	}
+
+	// Start IndexTokenOwner workflow for each address individually
+	// Each workflow will use the pre-defined workflow ID
+	for _, address := range normalizedAddresses {
+		blockchain := internalTypes.AddressToBlockchain(address)
+		workflowID := workflows.GetOwnerIndexingWorkflowID(blockchain, address)
+		options := client.StartWorkflowOptions{
+			ID:                       workflowID,
+			TaskQueue:                e.orchestratorTaskQueue,
+			WorkflowExecutionTimeout: 15*24*time.Hour + 15*time.Minute,
+		}
+		_, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwner, address)
+		if err != nil {
+			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: %v", address, err))
+		}
+	}
+
+	// Return job information for all addresses
+	return &dto.TriggerAddressIndexingResponse{Jobs: jobs}, nil
+}
+
 func (e *executor) TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint64, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error) {
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil)
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
 	var workflowID string
 	var runID string
 
@@ -963,5 +1018,28 @@ func (e *executor) CreateWebhookClient(ctx context.Context, webhookURL string, e
 		RetryMaxAttempts: webhookClient.RetryMaxAttempts,
 		CreatedAt:        webhookClient.CreatedAt,
 		UpdatedAt:        webhookClient.UpdatedAt,
+	}, nil
+}
+
+// GetAddressIndexingJob retrieves an indexing job by workflow ID
+func (e *executor) GetAddressIndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error) {
+	job, err := e.store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
+	if err != nil {
+		return nil, apierrors.NewNotFoundError(fmt.Sprintf("Indexing job not found: %v", err))
+	}
+
+	return &dto.AddressIndexingJobResponse{
+		WorkflowID:      job.WorkflowID,
+		Address:         job.Address,
+		Chain:           string(job.Chain),
+		Status:          string(job.Status),
+		TokensProcessed: job.TokensProcessed,
+		CurrentMinBlock: job.CurrentMinBlock,
+		CurrentMaxBlock: job.CurrentMaxBlock,
+		StartedAt:       job.StartedAt,
+		PausedAt:        job.PausedAt,
+		CompletedAt:     job.CompletedAt,
+		FailedAt:        job.FailedAt,
+		CanceledAt:      job.CanceledAt,
 	}, nil
 }

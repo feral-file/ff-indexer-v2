@@ -52,6 +52,10 @@ type Handler interface {
 	// POST /api/v1/webhooks/clients
 	CreateWebhookClient(c *gin.Context)
 
+	// GetAddressIndexingJob retrieves an indexing job by workflow ID
+	// GET /api/v1/indexing/jobs/:workflow_id
+	GetAddressIndexingJob(c *gin.Context)
+
 	// HealthCheck returns the health status of the API
 	// GET /health
 	HealthCheck(c *gin.Context)
@@ -250,11 +254,10 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 		return
 	}
 
-	// Call executor's TriggerTokenIndexing method with only token CIDs
-	response, err := h.executor.TriggerTokenIndexing(
+	// Call executor's TriggerTokenIndexingByCIDs method
+	response, err := h.executor.TriggerTokenIndexingByCIDs(
 		c.Request.Context(),
 		req.TokenCIDs,
-		nil, // No addresses for this endpoint
 	)
 
 	if err != nil {
@@ -280,10 +283,9 @@ func (h *handler) TriggerOwnerIndexing(c *gin.Context) {
 		return
 	}
 
-	// Call executor's TriggerTokenIndexing method with only addresses
-	response, err := h.executor.TriggerTokenIndexing(
+	// Call executor's TriggerTokenIndexingByAddresses method
+	response, err := h.executor.TriggerTokenIndexingByAddresses(
 		c.Request.Context(),
-		nil, // No token CIDs for this endpoint
 		req.Addresses,
 	)
 
@@ -384,6 +386,24 @@ func (h *handler) CreateWebhookClient(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, response)
+}
+
+// GetAddressIndexingJob retrieves an indexing job by workflow ID
+func (h *handler) GetAddressIndexingJob(c *gin.Context) {
+	workflowID := c.Param("workflow_id")
+	if workflowID == "" {
+		respondBadRequest(c, "workflow_id is required")
+		return
+	}
+
+	// Call executor's GetAddressIndexingJob method
+	job, err := h.executor.GetAddressIndexingJob(c.Request.Context(), workflowID)
+	if err != nil {
+		respondInternalError(c, err, "Failed to get indexing job")
+		return
+	}
+
+	c.JSON(http.StatusOK, job)
 }
 
 // HealthCheck returns the health status of the API

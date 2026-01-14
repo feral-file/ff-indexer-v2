@@ -95,6 +95,7 @@ func main() {
 	base64Adapter := adapter.NewBase64()
 	ioAdapter := adapter.NewIO()
 	temporalActivityAdapter := adapter.NewActivity()
+	temporalWorkflowAdapter := adapter.NewWorkflow()
 
 	// Initialize ethereum client
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
@@ -237,7 +238,7 @@ func main() {
 			MediaTaskQueue:                    cfg.Temporal.MediaTaskQueue,
 			BudgetedIndexingModeEnabled:       cfg.BudgetedIndexingEnabled,
 			BudgetedIndexingDefaultDailyQuota: cfg.BudgetedIndexingDefaultDailyQuota,
-		}, blacklistRegistry)
+		}, blacklistRegistry, temporalWorkflowAdapter)
 
 	// Register workflows
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMint)
@@ -284,6 +285,9 @@ func main() {
 	temporalWorker.RegisterActivity(executor.DeliverWebhookHTTP)
 	temporalWorker.RegisterActivity(executor.GetQuotaInfo)
 	temporalWorker.RegisterActivity(executor.IncrementTokensIndexed)
+	temporalWorker.RegisterActivity(executor.CreateIndexingJob)
+	temporalWorker.RegisterActivity(executor.UpdateIndexingJobStatus)
+	temporalWorker.RegisterActivity(executor.UpdateIndexingJobProgress)
 	logger.InfoCtx(ctx, "Registered activities")
 
 	// Start worker

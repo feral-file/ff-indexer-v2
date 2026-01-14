@@ -3,6 +3,7 @@ package workflows
 import (
 	"go.temporal.io/sdk/workflow"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
@@ -80,16 +81,18 @@ type WorkerCoreConfig struct {
 
 // workerCore is the concrete implementation of WorkerCore
 type workerCore struct {
-	config    WorkerCoreConfig
-	executor  Executor
-	blacklist registry.BlacklistRegistry
+	config           WorkerCoreConfig
+	executor         Executor
+	blacklist        registry.BlacklistRegistry
+	temporalWorkflow adapter.Workflow
 }
 
 // NewWorkerCore creates a new worker core instance
-func NewWorkerCore(executor Executor, config WorkerCoreConfig, blacklist registry.BlacklistRegistry) WorkerCore {
+func NewWorkerCore(executor Executor, config WorkerCoreConfig, blacklist registry.BlacklistRegistry, temporalWorkflow adapter.Workflow) WorkerCore {
 	return &workerCore{
-		executor:  executor,
-		config:    config,
-		blacklist: blacklist,
+		executor:         executor,
+		config:           config,
+		blacklist:        blacklist,
+		temporalWorkflow: temporalWorkflow,
 	}
 }

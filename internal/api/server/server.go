@@ -14,6 +14,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/rest"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -30,6 +31,8 @@ type Config struct {
 	IdleTimeout           time.Duration
 	OrchestratorTaskQueue string
 	Auth                  middleware.AuthConfig
+	TezosChainID          domain.Chain
+	EthereumChainID       domain.Chain
 }
 
 // Server wraps the HTTP server
@@ -74,7 +77,7 @@ func (s *Server) Start(ctx context.Context) error {
 	router.Use(middleware.SetupCORS())
 
 	// Create shared executor (contains business logic shared between REST and GraphQL)
-	exec := executor.NewExecutor(s.store, s.orchestrator, s.config.OrchestratorTaskQueue, s.blacklist, s.json, s.clock)
+	exec := executor.NewExecutor(s.store, s.orchestrator, s.config.OrchestratorTaskQueue, s.blacklist, s.json, s.clock, s.config.TezosChainID, s.config.EthereumChainID)
 
 	// Create REST handler
 	restHandler := rest.NewHandler(s.config.Debug, exec)

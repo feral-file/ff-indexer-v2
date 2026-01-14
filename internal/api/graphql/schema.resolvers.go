@@ -78,6 +78,24 @@ func (r *enrichmentSourceResolver) VendorJSON(ctx context.Context, obj *dto.Enri
 	return JSON(obj.VendorJSON), nil
 }
 
+// CurrentMinBlock is the resolver for the current_min_block field.
+func (r *indexingJobResolver) CurrentMinBlock(ctx context.Context, obj *dto.AddressIndexingJobResponse) (*Uint64, error) {
+	if obj.CurrentMinBlock == nil {
+		return nil, nil
+	}
+	num := Uint64(*obj.CurrentMinBlock)
+	return &num, nil
+}
+
+// CurrentMaxBlock is the resolver for the current_max_block field.
+func (r *indexingJobResolver) CurrentMaxBlock(ctx context.Context, obj *dto.AddressIndexingJobResponse) (*Uint64, error) {
+	if obj.CurrentMaxBlock == nil {
+		return nil, nil
+	}
+	num := Uint64(*obj.CurrentMaxBlock)
+	return &num, nil
+}
+
 // ProviderMetadata is the resolver for the provider_metadata field.
 func (r *mediaAssetResolver) ProviderMetadata(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error) {
 	if obj.ProviderMetadata == nil {
@@ -115,8 +133,8 @@ func (r *mutationResolver) TriggerTokenIndexing(ctx context.Context, tokenCids [
 		}
 	}
 
-	// Trigger indexing with only token CIDs (no addresses)
-	wr, err := r.executor.TriggerTokenIndexing(ctx, tokenCIDs, nil)
+	// Trigger indexing with only token CIDs
+	wr, err := r.executor.TriggerTokenIndexingByCIDs(ctx, tokenCIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +142,7 @@ func (r *mutationResolver) TriggerTokenIndexing(ctx context.Context, tokenCids [
 }
 
 // TriggerOwnerIndexing is the resolver for the triggerOwnerIndexing field.
-func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error) {
+func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error) {
 	// Validate: addresses must be provided
 	if len(addresses) == 0 {
 		return nil, apierrors.NewValidationError("addresses is required")
@@ -142,8 +160,8 @@ func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses [
 		}
 	}
 
-	// Trigger indexing with only addresses (no token CIDs)
-	wr, err := r.executor.TriggerTokenIndexing(ctx, nil, addresses)
+	// Trigger indexing with only addresses
+	wr, err := r.executor.TriggerTokenIndexingByAddresses(ctx, addresses)
 	if err != nil {
 		return nil, err
 	}
@@ -485,6 +503,11 @@ func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, r
 	return r.executor.GetWorkflowStatus(ctx, workflowID, runID)
 }
 
+// IndexingJob is the resolver for the indexingJob field.
+func (r *queryResolver) IndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error) {
+	return r.executor.GetAddressIndexingJob(ctx, workflowID)
+}
+
 // ID is the resolver for the id field.
 func (r *tokenResolver) ID(ctx context.Context, obj *dto.TokenResponse) (Uint64, error) {
 	return Uint64(obj.ID), nil
@@ -549,6 +572,9 @@ func (r *Resolver) ChangeList() ChangeListResolver { return &changeListResolver{
 // EnrichmentSource returns EnrichmentSourceResolver implementation.
 func (r *Resolver) EnrichmentSource() EnrichmentSourceResolver { return &enrichmentSourceResolver{r} }
 
+// IndexingJob returns IndexingJobResolver implementation.
+func (r *Resolver) IndexingJob() IndexingJobResolver { return &indexingJobResolver{r} }
+
 // MediaAsset returns MediaAssetResolver implementation.
 func (r *Resolver) MediaAsset() MediaAssetResolver { return &mediaAssetResolver{r} }
 
@@ -584,6 +610,7 @@ func (r *Resolver) WorkflowStatus() WorkflowStatusResolver { return &workflowSta
 type changeResolver struct{ *Resolver }
 type changeListResolver struct{ *Resolver }
 type enrichmentSourceResolver struct{ *Resolver }
+type indexingJobResolver struct{ *Resolver }
 type mediaAssetResolver struct{ *Resolver }
 type mutationResolver struct{ *Resolver }
 type paginatedOwnersResolver struct{ *Resolver }

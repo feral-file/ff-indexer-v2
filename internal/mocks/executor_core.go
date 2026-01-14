@@ -7,6 +7,7 @@ package mocks
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	gomock "github.com/golang/mock/gomock"
 
@@ -54,6 +55,20 @@ func (m *MockCoreExecutor) CheckTokenExists(ctx context.Context, tokenCID domain
 func (mr *MockCoreExecutorMockRecorder) CheckTokenExists(ctx, tokenCID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckTokenExists", reflect.TypeOf((*MockCoreExecutor)(nil).CheckTokenExists), ctx, tokenCID)
+}
+
+// CreateIndexingJob mocks base method.
+func (m *MockCoreExecutor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateIndexingJob", ctx, address, chain, workflowID, workflowRunID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateIndexingJob indicates an expected call of CreateIndexingJob.
+func (mr *MockCoreExecutorMockRecorder) CreateIndexingJob(ctx, address, chain, workflowID, workflowRunID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIndexingJob", reflect.TypeOf((*MockCoreExecutor)(nil).CreateIndexingJob), ctx, address, chain, workflowID, workflowRunID)
 }
 
 // CreateMetadataUpdate mocks base method.
@@ -346,6 +361,34 @@ func (m *MockCoreExecutor) UpdateIndexingBlockRangeForAddress(ctx context.Contex
 func (mr *MockCoreExecutorMockRecorder) UpdateIndexingBlockRangeForAddress(ctx, address, chainID, minBlock, maxBlock interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingBlockRangeForAddress", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingBlockRangeForAddress), ctx, address, chainID, minBlock, maxBlock)
+}
+
+// UpdateIndexingJobProgress mocks base method.
+func (m *MockCoreExecutor) UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateIndexingJobProgress", ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateIndexingJobProgress indicates an expected call of UpdateIndexingJobProgress.
+func (mr *MockCoreExecutorMockRecorder) UpdateIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingJobProgress", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingJobProgress), ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+}
+
+// UpdateIndexingJobStatus mocks base method.
+func (m *MockCoreExecutor) UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateIndexingJobStatus", ctx, workflowID, status, timestamp)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateIndexingJobStatus indicates an expected call of UpdateIndexingJobStatus.
+func (mr *MockCoreExecutorMockRecorder) UpdateIndexingJobStatus(ctx, workflowID, status, timestamp interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingJobStatus", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingJobStatus), ctx, workflowID, status, timestamp)
 }
 
 // UpdateTokenBurn mocks base method.
