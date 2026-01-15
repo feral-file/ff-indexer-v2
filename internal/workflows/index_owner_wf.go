@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"go.temporal.io/api/enums/v1"
@@ -67,11 +68,6 @@ func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) 
 	return nil
 }
 
-// GetOwnerIndexingWorkflowID returns the workflow ID for the token owner indexing workflow
-func GetOwnerIndexingWorkflowID(blockchain domain.Blockchain, address string) string {
-	return fmt.Sprintf("index-token-owner-%s-%s", string(blockchain), address)
-}
-
 // IndexTokenOwner indexes all tokens held by a single address
 // This is the parent workflow that delegates to blockchain-specific child workflows
 // It manages the job lifecycle (creation, completion, failure, cancellation)
@@ -111,7 +107,7 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 	defer func() {
 		if w.temporalWorkflow.GetCurrentHistoryLength(ctx) > 0 {
 			// Check if workflow is being canceled
-			if ctx.Err() != nil && errors.Is(ctx.Err(), workflow.ErrCanceled) {
+			if ctx.Err() != nil && (errors.Is(ctx.Err(), workflow.ErrCanceled) || strings.Contains(ctx.Err().Error(), "canceled")) {
 				logger.InfoWf(ctx, "Workflow canceled, updating job status",
 					zap.String("address", address),
 					zap.String("workflowID", workflowID))
@@ -144,7 +140,7 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 
 	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:               GetOwnerIndexingWorkflowID(blockchain, address),
+		WorkflowID:               fmt.Sprintf("index-token-owner-%s-%s", string(blockchain), address),
 		WorkflowExecutionTimeout: 24*time.Hour + 5*time.Minute, // 24 hours + 5 minutes to cover the quota reset time
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
@@ -163,13 +159,13 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 
 	if err != nil {
 		// Check if error is due to cancellation
-		if errors.Is(err, workflow.ErrCanceled) {
+		if errors.Is(err, workflow.ErrCanceled) || strings.Contains(err.Error(), "canceled") {
 			// Update job status to 'canceled' when child workflow is canceled
 			if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
 				workflowID, schema.IndexingJobStatusCanceled, workflow.Now(ctx)).Get(ctx, nil); err != nil {
 				logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
 			}
-			return workflow.ErrCanceled
+			return errors.New("workflow canceled")
 		}
 
 		logger.ErrorWf(ctx,
@@ -254,6 +250,60 @@ func extractChunkInfo(tokens []domain.TokenWithBlock) tokenChunkInfo {
 	return info
 }
 
+// findLastCompleteBlockIndex finds the index of the last token that completes a block
+// within the allowed quota count. This ensures we never split tokens from the same block.
+// Returns the index+1 (suitable for slicing). If the first block exceeds quota, returns
+// all tokens from that block to ensure forward progress.
+//
+// This function works correctly regardless of token sort order (ascending or descending)
+// because it uses block number equality checks rather than comparisons.
+//
+// Examples:
+// - tokens=[{block:100}, {block:100}, {block:101}], allowedCount=2 -> returns 2 (include both block 100 tokens)
+// - tokens=[{block:100}, {block:100}, {block:100}], allowedCount=2 -> returns 3 (include all of first block despite exceeding quota)
+// - tokens=[{block:100}, {block:101}, {block:101}], allowedCount=2 -> returns 1 (only complete block 100)
+func findLastCompleteBlockIndex(tokens []domain.TokenWithBlock, allowedCount int) int {
+	if allowedCount <= 0 || len(tokens) == 0 {
+		return 0
+	}
+
+	if allowedCount >= len(tokens) {
+		return len(tokens) // All tokens fit within quota
+	}
+
+	// Find the block number at the quota boundary
+	boundaryBlock := tokens[allowedCount-1].BlockNumber
+
+	// Scan forward to find where this block ends
+	// (in case there are more tokens from the same block after the quota boundary)
+	lastIndex := allowedCount - 1
+	for i := allowedCount; i < len(tokens); i++ {
+		if tokens[i].BlockNumber == boundaryBlock {
+			lastIndex = i
+		} else {
+			break // Different block, we've found the end
+		}
+	}
+
+	// If including all tokens from this block would exceed quota significantly,
+	// we should instead stop at the previous complete block
+	if lastIndex >= allowedCount {
+		// Scan backward to find the end of the previous block
+		for i := allowedCount - 2; i >= 0; i-- {
+			if tokens[i].BlockNumber != boundaryBlock {
+				return i + 1 // End of previous block
+			}
+		}
+		// If we get here, all tokens up to allowedCount are from the same block
+		// We have to choose: index them all or none
+		// Best practice: index the entire first block even if it exceeds quota
+		// to ensure forward progress
+		return lastIndex + 1
+	}
+
+	return lastIndex + 1
+}
+
 // IndexTezosTokenOwner indexes all tokens held by a Tezos address
 // Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
 func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) error {
@@ -274,7 +324,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 	chainID := w.config.TezosChainID
 
 	// Step 1: Ensure watched address record exists
-	err := workflow.ExecuteActivity(ctx, w.executor.EnsureWatchedAddressExists, address, chainID).Get(ctx, nil)
+	err := workflow.ExecuteActivity(ctx, w.executor.EnsureWatchedAddressExists, address, chainID, w.config.BudgetedIndexingDefaultDailyQuota).Get(ctx, nil)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to ensure watched address exists"),
@@ -359,55 +409,60 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 		scannedMaxBlock := latestBlock
 
 		for i, chunk := range chunks {
-			info := extractChunkInfo(chunk)
-
 			logger.InfoWf(ctx, "Processing token chunk",
 				zap.Int("chunkIndex", i+1),
 				zap.Int("totalChunks", len(chunks)),
-				zap.Int("tokenCount", len(info.tokenCIDs)),
-				zap.Uint64("tokenMinBlock", info.minBlock),
-				zap.Uint64("tokenMaxBlock", info.maxBlock),
+				zap.Int("tokenCount", len(chunk)),
 			)
 
 			// Process chunk with quota checking
-			shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-				info.minBlock, info.maxBlock, fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
+			shouldContinue, actualMinBlock, actualMaxBlock, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+				fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
 			if err != nil {
 				return err
 			}
+
+			// Update block range after each successful chunk for resumability
+			// Use ACTUAL block range of indexed tokens, not the scanned range
+			// This ensures we don't skip tokens if quota exhausts mid-chunk
+			if actualMinBlock != nil {
+				if i == 0 {
+					// First chunk - establish the max_block (scanned range end)
+					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+						address, chainID, *actualMinBlock, scannedMaxBlock).Get(ctx, nil)
+					storedMaxBlock = scannedMaxBlock
+				} else {
+					// Subsequent chunks - progressively update min_block toward start
+					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+						address, chainID, *actualMinBlock, storedMaxBlock).Get(ctx, nil)
+				}
+				if err != nil {
+					logger.Error(fmt.Errorf("failed to update block range: %w", err), zap.String("address", address))
+					return err
+				}
+
+				logger.InfoWf(ctx, "Updated block range after chunk",
+					zap.Uint64("actualMinBlock", *actualMinBlock),
+					zap.Uint64("actualMaxBlock", *actualMaxBlock),
+					zap.Uint64("storedMinBlock", *actualMinBlock),
+					zap.Uint64("storedMaxBlock", *actualMaxBlock),
+				)
+			}
+
+			// Check if we should continue after updating block range
 			if !shouldContinue {
-				// Quota exhausted - sleep until reset and continue-as-new
-				if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+				// Quota exhausted after this chunk - block range already updated above with actual indexed range
+				// On continue-as-new, we'll start from actualMinBlock and fetch remaining tokens
+				logger.InfoWf(ctx, "Quota exhausted after processing chunk, will continue-as-new",
+					zap.Int("chunksCompleted", i+1),
+					zap.Int("totalChunks", len(chunks)),
+				)
+				if err := w.handleQuotaExhausted(ctx, address, quotaResetAt); err != nil {
 					return err
 				}
 				// Continue-as-new to reset event history and resume indexing
 				return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address)
 			}
-
-			// Update block range after each successful chunk for resumability
-			// For first run descending: set max on first chunk, then progressively update min
-			if i == 0 {
-				// First chunk - establish the max_block (scanned range end)
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-					address, chainID, info.minBlock, scannedMaxBlock).Get(ctx, nil)
-			} else {
-				// Subsequent chunks - progressively update min_block toward start
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-					address, chainID, info.minBlock, storedMaxBlock).Get(ctx, nil)
-			}
-			if err != nil {
-				logger.Error(fmt.Errorf("failed to update block range: %w", err), zap.String("address", address))
-				return err
-			}
-
-			if i == 0 {
-				storedMaxBlock = scannedMaxBlock
-			}
-
-			logger.InfoWf(ctx, "Updated block range after chunk",
-				zap.Uint64("currentMinBlock", info.minBlock),
-				zap.Uint64("currentMaxBlock", storedMaxBlock),
-			)
 		}
 
 		// Final update to ensure we mark the complete scanned range
@@ -467,45 +522,49 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 			scannedMaxBlock := storedMinBlock - 1
 
 			for i, chunk := range chunks {
-				info := extractChunkInfo(chunk)
-
 				logger.InfoWf(ctx, "Processing backward chunk",
 					zap.Int("chunkIndex", i+1),
 					zap.Int("totalChunks", len(chunks)),
-					zap.Int("tokenCount", len(info.tokenCIDs)),
-					zap.Uint64("tokenMinBlock", info.minBlock),
-					zap.Uint64("tokenMaxBlock", info.maxBlock),
+					zap.Int("tokenCount", len(chunk)),
 				)
 
 				// Process chunk with quota checking
-				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-					info.minBlock, info.maxBlock, fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
+				shouldContinue, actualMinBlock, _, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+					fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
 				if err != nil {
 					return err
 				}
+
+				// Update min_block after each successful chunk for resumability
+				// Use actual min block of indexed tokens
+				if actualMinBlock != nil {
+					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+						address, chainID, *actualMinBlock, storedMaxBlock).Get(ctx, nil)
+					if err != nil {
+						logger.ErrorWf(ctx,
+							fmt.Errorf("failed to update min block"),
+							zap.Error(err),
+							zap.String("address", address),
+						)
+						return err
+					}
+					logger.InfoWf(ctx, "Updated min block after chunk",
+						zap.Uint64("actualMinBlock", *actualMinBlock))
+				}
+
+				// Check if we should continue after updating block range
 				if !shouldContinue {
-					// Quota exhausted - sleep until reset and continue-as-new
-					if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+					// Quota exhausted after this chunk - block range already updated above
+					logger.InfoWf(ctx, "Quota exhausted during backward sweep, will continue-as-new",
+						zap.Int("chunksCompleted", i+1),
+						zap.Int("totalChunks", len(chunks)),
+					)
+					if err := w.handleQuotaExhausted(ctx, address, quotaResetAt); err != nil {
 						return err
 					}
 					// Continue-as-new to reset event history and resume indexing
 					return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address)
 				}
-
-				// Update min_block after each successful chunk for resumability
-				// Progressively update min_block toward start
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-					address, chainID, info.minBlock, storedMaxBlock).Get(ctx, nil)
-				if err != nil {
-					logger.ErrorWf(ctx,
-						fmt.Errorf("failed to update min block"),
-						zap.Error(err),
-						zap.String("address", address),
-					)
-					return err
-				}
-
-				logger.InfoWf(ctx, "Updated min block after chunk", zap.Uint64("currentMinBlock", info.minBlock))
 			}
 
 			// Final update to ensure we mark the complete scanned range
@@ -560,45 +619,50 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string) 
 			scannedMaxBlock := latestBlock
 
 			for i, chunk := range chunks {
-				info := extractChunkInfo(chunk)
-
 				logger.InfoWf(ctx, "Processing forward chunk",
 					zap.Int("chunkIndex", i+1),
 					zap.Int("totalChunks", len(chunks)),
-					zap.Int("tokenCount", len(info.tokenCIDs)),
-					zap.Uint64("tokenMinBlock", info.minBlock),
-					zap.Uint64("tokenMaxBlock", info.maxBlock),
+					zap.Int("tokenCount", len(chunk)),
 				)
 
 				// Process chunk with quota checking
-				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-					info.minBlock, info.maxBlock, fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
+				shouldContinue, _, actualMaxBlock, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+					fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
 				if err != nil {
 					return err
 				}
+
+				// Update max_block after each successful chunk for resumability
+				// Use actual max block of indexed tokens
+				if actualMaxBlock != nil {
+					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+						address, chainID, storedMinBlock, *actualMaxBlock).Get(ctx, nil)
+					if err != nil {
+						logger.ErrorWf(ctx,
+							fmt.Errorf("failed to update max block"),
+							zap.Error(err),
+							zap.String("address", address),
+						)
+						return err
+					}
+
+					logger.InfoWf(ctx, "Updated max block after chunk",
+						zap.Uint64("actualMaxBlock", *actualMaxBlock))
+				}
+
+				// Check if we should continue after updating block range
 				if !shouldContinue {
-					// Quota exhausted - sleep until reset and continue-as-new
-					if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+					// Quota exhausted after this chunk - block range already updated above
+					logger.InfoWf(ctx, "Quota exhausted during forward sweep, will continue-as-new",
+						zap.Int("chunksCompleted", i+1),
+						zap.Int("totalChunks", len(chunks)),
+					)
+					if err := w.handleQuotaExhausted(ctx, address, quotaResetAt); err != nil {
 						return err
 					}
 					// Continue-as-new to reset event history and resume indexing
 					return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address)
 				}
-
-				// Update max_block after each successful chunk for resumability
-				// Progressively update max_block toward latest
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-					address, chainID, storedMinBlock, info.maxBlock).Get(ctx, nil)
-				if err != nil {
-					logger.ErrorWf(ctx,
-						fmt.Errorf("failed to update max block"),
-						zap.Error(err),
-						zap.String("address", address),
-					)
-					return err
-				}
-
-				logger.InfoWf(ctx, "Updated max block after chunk", zap.Uint64("currentMaxBlock", info.maxBlock))
 			}
 
 			// Final update to ensure we mark the complete scanned range
@@ -645,7 +709,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 	chainID := w.config.EthereumChainID
 
 	// Step 1: Ensure watched address record exists
-	err := workflow.ExecuteActivity(ctx, w.executor.EnsureWatchedAddressExists, address, chainID, "workflow", "token_owner_indexing").Get(ctx, nil)
+	err := workflow.ExecuteActivity(ctx, w.executor.EnsureWatchedAddressExists, address, chainID, w.config.BudgetedIndexingDefaultDailyQuota).Get(ctx, nil)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to ensure watched address exists"),
@@ -730,59 +794,60 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 		scannedMaxBlock := latestBlock
 
 		for i, chunk := range chunks {
-			info := extractChunkInfo(chunk)
-
 			logger.InfoWf(ctx, "Processing token chunk",
 				zap.Int("chunkIndex", i+1),
 				zap.Int("totalChunks", len(chunks)),
-				zap.Int("tokenCount", len(info.tokenCIDs)),
-				zap.Uint64("tokenMinBlock", info.minBlock),
-				zap.Uint64("tokenMaxBlock", info.maxBlock),
+				zap.Int("tokenCount", len(chunk)),
 			)
 
 			// Process chunk with quota checking
-			shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-				info.minBlock, info.maxBlock, fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
+			shouldContinue, actualMinBlock, actualMaxBlock, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+				fmt.Sprintf("first run chunk %d/%d", i+1, len(chunks)))
 			if err != nil {
 				return err
 			}
+
+			// Update block range after each successful chunk for resumability
+			// Use ACTUAL block range of indexed tokens, not the scanned range
+			if actualMinBlock != nil {
+				if i == 0 {
+					// First chunk - establish the max_block (scanned range end)
+					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+						address, chainID, *actualMinBlock, scannedMaxBlock).Get(ctx, nil)
+					storedMaxBlock = scannedMaxBlock
+				} else {
+					// Subsequent chunks - progressively update min_block toward start
+					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+						address, chainID, *actualMinBlock, storedMaxBlock).Get(ctx, nil)
+				}
+				if err != nil {
+					logger.ErrorWf(ctx,
+						fmt.Errorf("failed to update block range"),
+						zap.Error(err),
+						zap.String("address", address),
+					)
+					return err
+				}
+
+				logger.InfoWf(ctx, "Updated block range after chunk",
+					zap.Uint64("actualMinBlock", *actualMinBlock),
+					zap.Uint64("actualMaxBlock", *actualMaxBlock),
+				)
+			}
+
+			// Check if we should continue after updating block range
 			if !shouldContinue {
-				// Quota exhausted - sleep until reset and continue-as-new
-				if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+				// Quota exhausted after this chunk - block range already updated above with actual indexed range
+				logger.InfoWf(ctx, "Quota exhausted after processing chunk, will continue-as-new",
+					zap.Int("chunksCompleted", i+1),
+					zap.Int("totalChunks", len(chunks)),
+				)
+				if err := w.handleQuotaExhausted(ctx, address, quotaResetAt); err != nil {
 					return err
 				}
 				// Continue-as-new to reset event history and resume indexing
 				return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address)
 			}
-
-			// Update block range after each successful chunk for resumability
-			// For first run descending: set max on first chunk, then progressively update min
-			if i == 0 {
-				// First chunk - establish the max_block (scanned range end)
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-					address, chainID, info.minBlock, scannedMaxBlock).Get(ctx, nil)
-			} else {
-				// Subsequent chunks - progressively update min_block toward start
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-					address, chainID, info.minBlock, storedMaxBlock).Get(ctx, nil)
-			}
-			if err != nil {
-				logger.ErrorWf(ctx,
-					fmt.Errorf("failed to update block range"),
-					zap.Error(err),
-					zap.String("address", address),
-				)
-				return err
-			}
-
-			if i == 0 {
-				storedMaxBlock = scannedMaxBlock
-			}
-
-			logger.InfoWf(ctx, "Updated block range after chunk",
-				zap.Uint64("currentMinBlock", info.minBlock),
-				zap.Uint64("currentMaxBlock", storedMaxBlock),
-			)
 		}
 
 		// Final update to ensure we mark the complete scanned range
@@ -842,45 +907,50 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			scannedMaxBlock := storedMinBlock - 1
 
 			for i, chunk := range chunks {
-				info := extractChunkInfo(chunk)
-
 				logger.InfoWf(ctx, "Processing backward chunk",
 					zap.Int("chunkIndex", i+1),
 					zap.Int("totalChunks", len(chunks)),
-					zap.Int("tokenCount", len(info.tokenCIDs)),
-					zap.Uint64("tokenMinBlock", info.minBlock),
-					zap.Uint64("tokenMaxBlock", info.maxBlock),
+					zap.Int("tokenCount", len(chunk)),
 				)
 
 				// Process chunk with quota checking
-				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-					info.minBlock, info.maxBlock, fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
+				shouldContinue, actualMinBlock, _, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+					fmt.Sprintf("backward chunk %d/%d", i+1, len(chunks)))
 				if err != nil {
 					return err
 				}
+
+				// Update min_block after each successful chunk for resumability
+				// Use actual min block of indexed tokens
+				if actualMinBlock != nil {
+					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+						address, chainID, *actualMinBlock, storedMaxBlock).Get(ctx, nil)
+					if err != nil {
+						logger.ErrorWf(ctx,
+							fmt.Errorf("failed to update min block"),
+							zap.Error(err),
+							zap.String("address", address),
+						)
+						return err
+					}
+
+					logger.InfoWf(ctx, "Updated min block after chunk",
+						zap.Uint64("actualMinBlock", *actualMinBlock))
+				}
+
+				// Check if we should continue after updating block range
 				if !shouldContinue {
-					// Quota exhausted - sleep until reset and continue-as-new
-					if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+					// Quota exhausted after this chunk - block range already updated above
+					logger.InfoWf(ctx, "Quota exhausted during backward sweep, will continue-as-new",
+						zap.Int("chunksCompleted", i+1),
+						zap.Int("totalChunks", len(chunks)),
+					)
+					if err := w.handleQuotaExhausted(ctx, address, quotaResetAt); err != nil {
 						return err
 					}
 					// Continue-as-new to reset event history and resume indexing
 					return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address)
 				}
-
-				// Update min_block after each successful chunk for resumability
-				// Progressively update min_block toward start
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-					address, chainID, info.minBlock, storedMaxBlock).Get(ctx, nil)
-				if err != nil {
-					logger.ErrorWf(ctx,
-						fmt.Errorf("failed to update min block"),
-						zap.Error(err),
-						zap.String("address", address),
-					)
-					return err
-				}
-
-				logger.InfoWf(ctx, "Updated min block after chunk", zap.Uint64("currentMinBlock", info.minBlock))
 			}
 
 			// Final update to ensure we mark the complete scanned range
@@ -935,45 +1005,50 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			scannedMaxBlock := latestBlock
 
 			for i, chunk := range chunks {
-				info := extractChunkInfo(chunk)
-
 				logger.InfoWf(ctx, "Processing forward chunk",
 					zap.Int("chunkIndex", i+1),
 					zap.Int("totalChunks", len(chunks)),
-					zap.Int("tokenCount", len(info.tokenCIDs)),
-					zap.Uint64("tokenMinBlock", info.minBlock),
-					zap.Uint64("tokenMaxBlock", info.maxBlock),
+					zap.Int("tokenCount", len(chunk)),
 				)
 
 				// Process chunk with quota checking
-				shouldContinue, err := w.processChunkWithQuota(ctx, address, chainID, info.tokenCIDs,
-					info.minBlock, info.maxBlock, fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
+				shouldContinue, _, actualMaxBlock, quotaResetAt, err := w.processChunkWithQuota(ctx, address, chainID, chunk,
+					fmt.Sprintf("forward chunk %d/%d", i+1, len(chunks)))
 				if err != nil {
 					return err
 				}
+
+				// Update max_block after each successful chunk for resumability
+				// Use actual max block of indexed tokens
+				if actualMaxBlock != nil {
+					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
+						address, chainID, storedMinBlock, *actualMaxBlock).Get(ctx, nil)
+					if err != nil {
+						logger.ErrorWf(ctx,
+							fmt.Errorf("failed to update max block"),
+							zap.Error(err),
+							zap.String("address", address),
+						)
+						return err
+					}
+
+					logger.InfoWf(ctx, "Updated max block after chunk",
+						zap.Uint64("actualMaxBlock", *actualMaxBlock))
+				}
+
+				// Check if we should continue after updating block range
 				if !shouldContinue {
-					// Quota exhausted - sleep until reset and continue-as-new
-					if err := w.handleQuotaExhausted(ctx, address, chainID); err != nil {
+					// Quota exhausted after this chunk - block range already updated above
+					logger.InfoWf(ctx, "Quota exhausted during forward sweep, will continue-as-new",
+						zap.Int("chunksCompleted", i+1),
+						zap.Int("totalChunks", len(chunks)),
+					)
+					if err := w.handleQuotaExhausted(ctx, address, quotaResetAt); err != nil {
 						return err
 					}
 					// Continue-as-new to reset event history and resume indexing
 					return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address)
 				}
-
-				// Update max_block after each successful chunk for resumability
-				// Progressively update max_block toward latest
-				err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-					address, chainID, storedMinBlock, info.maxBlock).Get(ctx, nil)
-				if err != nil {
-					logger.ErrorWf(ctx,
-						fmt.Errorf("failed to update max block"),
-						zap.Error(err),
-						zap.String("address", address),
-					)
-					return err
-				}
-
-				logger.InfoWf(ctx, "Updated max block after chunk", zap.Uint64("currentMaxBlock", info.maxBlock))
 			}
 
 			// Final update to ensure we mark the complete scanned range
@@ -1026,16 +1101,17 @@ func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.To
 }
 
 // processChunkWithQuota handles quota checking, chunk processing, and usage increment
-// Returns (shouldContinue bool, error) - shouldContinue=false means quota exhausted, need to sleep+continue-as-new
+// Returns (shouldContinue bool, actualMinBlock uint64, actualMaxBlock uint64, quotaResetAt time.Time, error)
+// - shouldContinue=false means quota exhausted, need to sleep+continue-as-new
+// - actualMinBlock/actualMaxBlock indicate the actual block range of tokens that were indexed, nil means nothing was indexed
+// - quotaResetAt is the time when quota will reset (only valid when shouldContinue=false)
 func (w *workerCore) processChunkWithQuota(
 	ctx workflow.Context,
 	address string,
 	chainID domain.Chain,
-	tokenCIDs []domain.TokenCID,
-	minBlock uint64,
-	maxBlock uint64,
+	tokens []domain.TokenWithBlock,
 	chunkInfo string, // e.g., "forward chunk 1/5" for logging
-) (bool, error) {
+) (bool, *uint64, *uint64, time.Time, error) {
 	parentWorkflowID := w.temporalWorkflow.GetParentWorkflowID(ctx)
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute,
@@ -1046,15 +1122,18 @@ func (w *workerCore) processChunkWithQuota(
 	}
 	activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
 
-	requestedCount := len(tokenCIDs)
+	requestedCount := len(tokens)
 	allowedCount := requestedCount
+	var quotaResetAt time.Time
 	if w.config.BudgetedIndexingModeEnabled {
 		// Check quota
 		var quotaStatus *store.QuotaInfo
 		err := workflow.ExecuteActivity(activityCtx, w.executor.GetQuotaInfo, address, chainID).Get(ctx, &quotaStatus)
 		if err != nil {
-			return false, fmt.Errorf("failed to check quota: %w", err)
+			return false, nil, nil, time.Time{}, fmt.Errorf("failed to check quota: %w", err)
 		}
+
+		quotaResetAt = quotaStatus.QuotaResetAt
 
 		if quotaStatus.QuotaExhausted {
 			logger.InfoWf(ctx, "Quota exhausted, will sleep until reset and continue-as-new",
@@ -1062,7 +1141,7 @@ func (w *workerCore) processChunkWithQuota(
 				zap.Time("quotaResetAt", quotaStatus.QuotaResetAt),
 				zap.String("chunkInfo", chunkInfo),
 			)
-			return false, nil // Signal to caller: quota exhausted, need to sleep+continue-as-new
+			return false, nil, nil, quotaResetAt, nil // Signal to caller: quota exhausted, need to sleep+continue-as-new
 		}
 
 		// Return the minimum of requested and remaining
@@ -1071,25 +1150,52 @@ func (w *workerCore) processChunkWithQuota(
 		}
 	}
 
-	// Limit chunk to allowed count
-	actualTokenCIDs := tokenCIDs
+	// Limit chunk to allowed count ensuring complete blocks
+	actualTokens := tokens
+	wasLimited := false
 	if allowedCount < requestedCount {
-		actualTokenCIDs = tokenCIDs[:allowedCount]
-		logger.InfoWf(ctx, "Limiting chunk to remaining quota",
-			zap.Int("requested", len(tokenCIDs)),
-			zap.Int("allowed", allowedCount),
-			zap.String("chunkInfo", chunkInfo),
-		)
+		// Find the last complete block within quota
+		completeBlockIndex := findLastCompleteBlockIndex(tokens, allowedCount)
+
+		if completeBlockIndex <= 0 {
+			// Edge case: even the first block exceeds quota
+			// We still process it to ensure forward progress, but log a warning
+			logger.WarnWf(ctx, "First block exceeds quota, will process it anyway to ensure forward progress",
+				zap.Int("allowedCount", allowedCount),
+				zap.String("chunkInfo", chunkInfo),
+			)
+			// Find end of first block
+			firstBlockNum := tokens[0].BlockNumber
+			completeBlockIndex = 1
+			for completeBlockIndex < len(tokens) && tokens[completeBlockIndex].BlockNumber == firstBlockNum {
+				completeBlockIndex++
+			}
+		}
+
+		actualTokens = tokens[:completeBlockIndex]
+		wasLimited = completeBlockIndex < len(tokens)
+
+		if wasLimited {
+			logger.InfoWf(ctx, "Limiting chunk to complete blocks within quota",
+				zap.Int("requested", len(tokens)),
+				zap.Int("allowed", allowedCount),
+				zap.Int("actual", len(actualTokens)),
+				zap.String("chunkInfo", chunkInfo),
+			)
+		}
 	}
 
+	// Extract info from actual tokens we'll index (with correct block range)
+	actualInfo := extractChunkInfo(actualTokens)
+
 	// Index tokens
-	if err := w.indexTokenChunk(ctx, actualTokenCIDs, &address); err != nil {
-		return false, err
+	if err := w.indexTokenChunk(ctx, actualInfo.tokenCIDs, &address); err != nil {
+		return false, nil, nil, time.Time{}, err
 	}
 
 	if w.config.BudgetedIndexingModeEnabled {
 		// Increment usage counter after successful indexing
-		count := len(actualTokenCIDs)
+		count := len(actualInfo.tokenCIDs)
 		err := workflow.ExecuteActivity(activityCtx, w.executor.IncrementTokensIndexed, address, chainID, count).Get(ctx, nil)
 		if err != nil {
 			logger.ErrorWf(ctx, fmt.Errorf("failed to increment token usage"),
@@ -1097,7 +1203,7 @@ func (w *workerCore) processChunkWithQuota(
 				zap.String("address", address),
 				zap.Int("count", count),
 			)
-			return false, err
+			return false, nil, nil, time.Time{}, err
 		}
 
 		logger.InfoWf(ctx, "Incremented token usage for budgeted indexing mode",
@@ -1109,7 +1215,7 @@ func (w *workerCore) processChunkWithQuota(
 	// Update job progress after successful chunk processing
 	if parentWorkflowID != nil {
 		err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobProgress,
-			*parentWorkflowID, len(actualTokenCIDs), minBlock, maxBlock).Get(ctx, nil)
+			*parentWorkflowID, len(actualInfo.tokenCIDs), actualInfo.minBlock, actualInfo.maxBlock).Get(ctx, nil)
 		if err != nil {
 			logger.ErrorWf(ctx, fmt.Errorf("failed to update job progress"),
 				zap.Error(err),
@@ -1118,12 +1224,23 @@ func (w *workerCore) processChunkWithQuota(
 		}
 	}
 
-	return true, nil // shouldContinue=true, success
+	// If we had to limit due to quota, return the actual range indexed and signal quota exhaustion
+	if wasLimited {
+		logger.InfoWf(ctx, "Quota exhausted after partial chunk",
+			zap.Int("indexed", len(actualInfo.tokenCIDs)),
+			zap.Int("total", len(tokens)),
+			zap.Uint64("actualMinBlock", actualInfo.minBlock),
+			zap.Uint64("actualMaxBlock", actualInfo.maxBlock),
+		)
+		return false, &actualInfo.minBlock, &actualInfo.maxBlock, quotaResetAt, nil // Quota exhausted, return actual range
+	}
+
+	return true, &actualInfo.minBlock, &actualInfo.maxBlock, time.Time{}, nil // shouldContinue=true, success
 }
 
 // handleQuotaExhausted sleeps until quota reset and returns error to trigger continue-as-new
 // Returns temporal.NewContinueAsNewError to signal the workflow should restart
-func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, chainID domain.Chain) error {
+func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, quotaResetAt time.Time) error {
 	if !w.config.BudgetedIndexingModeEnabled {
 		return nil // No quota management if budgeted mode is disabled
 	}
@@ -1150,22 +1267,15 @@ func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, 
 		}
 	}
 
-	// Get current quota status to determine sleep duration
-	var quotaStatus *store.QuotaInfo
-	err := workflow.ExecuteActivity(activityCtx, w.executor.GetQuotaInfo, address, chainID).Get(ctx, &quotaStatus)
-	if err != nil {
-		return fmt.Errorf("failed to get quota info for sleep calculation: %w", err)
-	}
-
 	// Calculate sleep duration until quota reset
 	now := workflow.Now(ctx)
-	sleepDuration := quotaStatus.QuotaResetAt.Sub(now)
+	sleepDuration := quotaResetAt.Sub(now)
 
 	if sleepDuration > 0 {
 		logger.InfoWf(ctx, "Sleeping until quota reset before continue-as-new",
 			zap.String("address", address),
 			zap.Duration("sleepDuration", sleepDuration),
-			zap.Time("quotaResetAt", quotaStatus.QuotaResetAt),
+			zap.Time("quotaResetAt", quotaResetAt),
 		)
 		if err := workflow.Sleep(ctx, sleepDuration); err != nil {
 			return err
@@ -1181,7 +1291,7 @@ func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, 
 
 	if parentWorkflowID != nil {
 		// Update the job status to 'running'
-		err = workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
+		err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
 			*parentWorkflowID, schema.IndexingJobStatusRunning, workflow.Now(ctx)).Get(ctx, nil)
 		if err != nil {
 			logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to running"), zap.Error(err))

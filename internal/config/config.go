@@ -319,7 +319,7 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("vendors.objkt_url", "https://data.objkt.com/v3/graphql")
 	v.SetDefault("vendors.opensea_url", "https://api.opensea.io/api/v2")
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
-	v.SetDefault("budgeted_indexing_mode_enabled", false)
+	v.SetDefault("budgeted_indexing_enabled", false)
 	v.SetDefault("budgeted_indexing_default_daily_quota", 1000)
 
 	if err := v.ReadInConfig(); err != nil {
@@ -514,7 +514,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"tezos_token_sweep_start_block",
 		"publisher_registry_path",
 		"blacklist_path",
-		"budgeted_indexing_mode_enabled",
+		"budgeted_indexing_enabled",
 		"budgeted_indexing_default_daily_quota",
 		// Media specific
 		"max_static_image_size",

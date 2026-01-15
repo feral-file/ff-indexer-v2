@@ -145,17 +145,17 @@ func (mr *MockCoreExecutorMockRecorder) EnhanceTokenMetadata(ctx, tokenCID, norm
 }
 
 // EnsureWatchedAddressExists mocks base method.
-func (m *MockCoreExecutor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
+func (m *MockCoreExecutor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain)
+	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain, dailyQuota)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // EnsureWatchedAddressExists indicates an expected call of EnsureWatchedAddressExists.
-func (mr *MockCoreExecutorMockRecorder) EnsureWatchedAddressExists(ctx, address, chain interface{}) *gomock.Call {
+func (mr *MockCoreExecutorMockRecorder) EnsureWatchedAddressExists(ctx, address, chain, dailyQuota interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockCoreExecutor)(nil).EnsureWatchedAddressExists), ctx, address, chain)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockCoreExecutor)(nil).EnsureWatchedAddressExists), ctx, address, chain, dailyQuota)
 }
 
 // FetchTokenMetadata mocks base method.

@@ -118,6 +118,18 @@ func (mr *MockAPIHandlerMockRecorder) ListTokens(c interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokens", reflect.TypeOf((*MockAPIHandler)(nil).ListTokens), c)
 }
 
+// TriggerAddressIndexing mocks base method.
+func (m *MockAPIHandler) TriggerAddressIndexing(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "TriggerAddressIndexing", c)
+}
+
+// TriggerAddressIndexing indicates an expected call of TriggerAddressIndexing.
+func (mr *MockAPIHandlerMockRecorder) TriggerAddressIndexing(c interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerAddressIndexing", reflect.TypeOf((*MockAPIHandler)(nil).TriggerAddressIndexing), c)
+}
+
 // TriggerMetadataIndexing mocks base method.
 func (m *MockAPIHandler) TriggerMetadataIndexing(c *gin.Context) {
 	m.ctrl.T.Helper()

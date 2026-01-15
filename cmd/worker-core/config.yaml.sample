@@ -48,6 +48,8 @@ ethereum_token_sweep_start_block: 10000000
 tezos_token_sweep_start_block: 5000000
 publisher_registry_path: tools/registry/publisher.json
 blacklist_path: tools/registry/blacklist.json
+budgeted_indexing_enabled: true
+budgeted_indexing_default_daily_quota: 10
 
 uri:
   ipfs_gateways:

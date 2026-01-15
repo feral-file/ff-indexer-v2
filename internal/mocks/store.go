@@ -140,17 +140,32 @@ func (mr *MockStoreMockRecorder) CreateWebhookDelivery(ctx, delivery interface{}
 }
 
 // EnsureWatchedAddressExists mocks base method.
-func (m *MockStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
+func (m *MockStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain)
+	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain, dailyQuota)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // EnsureWatchedAddressExists indicates an expected call of EnsureWatchedAddressExists.
-func (mr *MockStoreMockRecorder) EnsureWatchedAddressExists(ctx, address, chain interface{}) *gomock.Call {
+func (mr *MockStoreMockRecorder) EnsureWatchedAddressExists(ctx, address, chain, dailyQuota interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockStore)(nil).EnsureWatchedAddressExists), ctx, address, chain)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockStore)(nil).EnsureWatchedAddressExists), ctx, address, chain, dailyQuota)
+}
+
+// GetActiveIndexingJobForAddress mocks base method.
+func (m *MockStore) GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetActiveIndexingJobForAddress", ctx, address, chainID)
+	ret0, _ := ret[0].(*schema.AddressIndexingJob)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetActiveIndexingJobForAddress indicates an expected call of GetActiveIndexingJobForAddress.
+func (mr *MockStoreMockRecorder) GetActiveIndexingJobForAddress(ctx, address, chainID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveIndexingJobForAddress", reflect.TypeOf((*MockStore)(nil).GetActiveIndexingJobForAddress), ctx, address, chainID)
 }
 
 // GetActiveWebhookClientsByEventType mocks base method.

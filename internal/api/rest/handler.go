@@ -40,6 +40,10 @@ type Handler interface {
 	// POST /api/v1/tokens/owners/index
 	TriggerOwnerIndexing(c *gin.Context)
 
+	// TriggerAddressIndexing triggers indexing for tokens by owner addresses with job tracking (requires authentication)
+	// POST /api/v1/tokens/addresses/index
+	TriggerAddressIndexing(c *gin.Context)
+
 	// TriggerMetadataIndexing triggers metadata refresh for tokens by IDs or CIDs (open, no authentication required)
 	// POST /api/v1/tokens/metadata/index
 	TriggerMetadataIndexing(c *gin.Context)
@@ -255,7 +259,7 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 	}
 
 	// Call executor's TriggerTokenIndexingByCIDs method
-	response, err := h.executor.TriggerTokenIndexingByCIDs(
+	response, err := h.executor.TriggerTokenIndexing(
 		c.Request.Context(),
 		req.TokenCIDs,
 	)
@@ -269,6 +273,7 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 }
 
 // TriggerOwnerIndexing triggers indexing for tokens by owner addresses (requires authentication)
+// POST /api/v1/tokens/owners/index
 func (h *handler) TriggerOwnerIndexing(c *gin.Context) {
 	var req dto.TriggerOwnerIndexingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -283,8 +288,38 @@ func (h *handler) TriggerOwnerIndexing(c *gin.Context) {
 		return
 	}
 
-	// Call executor's TriggerTokenIndexingByAddresses method
-	response, err := h.executor.TriggerTokenIndexingByAddresses(
+	// Call executor's TriggerOwnerIndexing method (backward compatible - single workflow)
+	response, err := h.executor.TriggerOwnerIndexing(
+		c.Request.Context(),
+		req.Addresses,
+	)
+
+	if err != nil {
+		respondInternalError(c, err, "Failed to trigger indexing")
+		return
+	}
+
+	c.JSON(http.StatusAccepted, response)
+}
+
+// TriggerAddressIndexing triggers indexing for tokens by owner addresses with job tracking
+// POST /api/v1/tokens/addresses/index
+func (h *handler) TriggerAddressIndexing(c *gin.Context) {
+	var req dto.TriggerOwnerIndexingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	// Validate request body
+	err := req.Validate()
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	// Call executor's TriggerAddressIndexing method (new enhanced version with job tracking)
+	response, err := h.executor.TriggerAddressIndexing(
 		c.Request.Context(),
 		req.Addresses,
 	)

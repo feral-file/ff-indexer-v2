@@ -271,8 +271,16 @@ type Mutation {
 
   # Trigger indexing for tokens by owner addresses (requires authentication)
   # Equivalent to: POST /api/v1/tokens/owners/index
-  # Returns an array of jobs with workflow IDs for tracking each address's indexing progress
+  # Returns a single workflow ID for tracking (backward compatible)
+  # Deprecated: Use triggerAddressIndexing instead
   triggerOwnerIndexing(
+    addresses: [String!]!
+  ): TriggerIndexingResult
+
+  # Trigger indexing for tokens by owner addresses with job tracking (requires authentication)
+  # Equivalent to: POST /api/v1/tokens/addresses/index
+  # Returns an array of jobs with workflow IDs for tracking each address's indexing progress
+  triggerAddressIndexing(
     addresses: [String!]!
   ): TriggerAddressIndexingResult
 

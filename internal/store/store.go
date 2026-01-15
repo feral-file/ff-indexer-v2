@@ -310,7 +310,7 @@ type Store interface {
 	// UpdateIndexingBlockRangeForAddress updates the indexing block range for an address and chain
 	UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error
 	// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error
+	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error
 
 	// =============================================================================
 	// Budgeted Indexing Mode Quota Operations
@@ -358,6 +358,9 @@ type Store interface {
 	CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error
 	// GetAddressIndexingJobByWorkflowID retrieves a job by workflow ID
 	GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error)
+	// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
+	// Returns nil if no active job is found (not an error)
+	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)
 	// UpdateAddressIndexingJobStatus updates job status with timestamp
 	UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
 	// UpdateAddressIndexingJobProgress updates job progress metrics

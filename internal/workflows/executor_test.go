@@ -1893,13 +1893,14 @@ func TestEnsureWatchedAddressExists_Success(t *testing.T) {
 	ctx := context.Background()
 	address := "0xowner123"
 	chain := domain.ChainEthereumMainnet
+	dailyQuota := 1000
 
 	// Mock store EnsureWatchedAddressExists
 	mocks.store.EXPECT().
-		EnsureWatchedAddressExists(ctx, address, chain).
+		EnsureWatchedAddressExists(ctx, address, chain, dailyQuota).
 		Return(nil)
 
-	err := mocks.executor.EnsureWatchedAddressExists(ctx, address, chain)
+	err := mocks.executor.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 
 	assert.NoError(t, err)
 }
@@ -1911,14 +1912,15 @@ func TestEnsureWatchedAddressExists_StoreError(t *testing.T) {
 	ctx := context.Background()
 	address := "0xowner123"
 	chain := domain.ChainEthereumMainnet
+	dailyQuota := 1000
 
 	// Mock store EnsureWatchedAddressExists to return error
 	storeErr := errors.New("database error")
 	mocks.store.EXPECT().
-		EnsureWatchedAddressExists(ctx, address, chain).
+		EnsureWatchedAddressExists(ctx, address, chain, dailyQuota).
 		Return(storeErr)
 
-	err := mocks.executor.EnsureWatchedAddressExists(ctx, address, chain)
+	err := mocks.executor.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 
 	assert.Error(t, err)
 }

@@ -80,7 +80,7 @@ type Executor interface {
 	UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error
 
 	// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error
+	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error
 
 	// GetLatestEthereumBlock retrieves the latest block number from the Ethereum blockchain
 	GetLatestEthereumBlock(ctx context.Context) (uint64, error)
@@ -1281,8 +1281,8 @@ func (e *executor) UpdateIndexingBlockRangeForAddress(ctx context.Context, addre
 }
 
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
-	return e.store.EnsureWatchedAddressExists(ctx, address, chain)
+func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
+	return e.store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 }
 
 // =============================================================================

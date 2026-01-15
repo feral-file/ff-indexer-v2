@@ -1938,11 +1938,12 @@ func (s *pgStore) GetIndexingBlockRangeForAddress(ctx context.Context, address s
 }
 
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-func (s *pgStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
+func (s *pgStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
 	watchedAddr := schema.WatchedAddresses{
-		Chain:    chain,
-		Address:  address,
-		Watching: true,
+		Chain:           chain,
+		Address:         address,
+		Watching:        true,
+		DailyTokenQuota: dailyQuota,
 	}
 
 	// Use ON CONFLICT DO NOTHING to handle concurrent inserts
@@ -2330,10 +2331,10 @@ func (s *pgStore) GetQuotaInfo(ctx context.Context, address string, chain domain
 	}
 
 	now := time.Now()
+	nextReset := now.Add(24 * time.Hour)
 
 	// AUTO-RESET: If quota period expired, reset it
 	if watched.QuotaResetAt != nil && now.After(*watched.QuotaResetAt) {
-		nextReset := now.Add(24 * time.Hour)
 		err = s.db.WithContext(ctx).
 			Model(&schema.WatchedAddresses{}).
 			Where("chain = ? AND address = ?", chain, address).
@@ -2358,7 +2359,6 @@ func (s *pgStore) GetQuotaInfo(ctx context.Context, address string, chain domain
 
 	// If quota_reset_at is NULL (first time), set it
 	if watched.QuotaResetAt == nil {
-		nextReset := now.Add(24 * time.Hour)
 		err = s.db.WithContext(ctx).
 			Model(&schema.WatchedAddresses{}).
 			Where("chain = ? AND address = ?", chain, address).
@@ -2455,6 +2455,32 @@ func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflo
 			return nil, fmt.Errorf("job not found for workflow: %s", workflowID)
 		}
 		return nil, fmt.Errorf("failed to get job: %w", result.Error)
+	}
+
+	return &job, nil
+}
+
+// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
+// Returns nil if no active job is found (not an error)
+func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error) {
+	var job schema.AddressIndexingJob
+
+	result := s.db.WithContext(ctx).
+		Where("address = ? AND chain = ? AND status IN ?",
+			address,
+			chainID,
+			[]schema.IndexingJobStatus{
+				schema.IndexingJobStatusRunning,
+				schema.IndexingJobStatusPaused,
+						}).
+		Order("created_at DESC"). // Get the most recent one if multiple exist
+		First(&job)
+
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, nil // No active job found (not an error)
+		}
+		return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, result.Error)
 	}
 
 	return &job, nil

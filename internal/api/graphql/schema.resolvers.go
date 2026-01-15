@@ -134,7 +134,7 @@ func (r *mutationResolver) TriggerTokenIndexing(ctx context.Context, tokenCids [
 	}
 
 	// Trigger indexing with only token CIDs
-	wr, err := r.executor.TriggerTokenIndexingByCIDs(ctx, tokenCIDs)
+	wr, err := r.executor.TriggerTokenIndexing(ctx, tokenCIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (r *mutationResolver) TriggerTokenIndexing(ctx context.Context, tokenCids [
 }
 
 // TriggerOwnerIndexing is the resolver for the triggerOwnerIndexing field.
-func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error) {
+func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error) {
 	// Validate: addresses must be provided
 	if len(addresses) == 0 {
 		return nil, apierrors.NewValidationError("addresses is required")
@@ -161,7 +161,34 @@ func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses [
 	}
 
 	// Trigger indexing with only addresses
-	wr, err := r.executor.TriggerTokenIndexingByAddresses(ctx, addresses)
+	wr, err := r.executor.TriggerOwnerIndexing(ctx, addresses)
+	if err != nil {
+		return nil, err
+	}
+	return wr, nil
+}
+
+// TriggerAddressIndexing is the resolver for the triggerAddressIndexing field.
+func (r *mutationResolver) TriggerAddressIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error) {
+	// Validate: addresses must be provided
+	if len(addresses) == 0 {
+		return nil, apierrors.NewValidationError("addresses is required")
+	}
+
+	// Validate: maximum number of addresses allowed
+	if len(addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
+	}
+
+	// Validate: addresses must be valid
+	for _, address := range addresses {
+		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+		}
+	}
+
+	// Trigger address indexing with job tracking
+	wr, err := r.executor.TriggerAddressIndexing(ctx, addresses)
 	if err != nil {
 		return nil, err
 	}
@@ -500,11 +527,23 @@ func (r *queryResolver) Changes(ctx context.Context, tokenIds []Uint64, tokenCid
 
 // WorkflowStatus is the resolver for the workflowStatus field.
 func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error) {
+	if workflowID == "" {
+		return nil, apierrors.NewValidationError("workflowID is required")
+	}
+
+	if runID == "" {
+		return nil, apierrors.NewValidationError("runID is required")
+	}
+
 	return r.executor.GetWorkflowStatus(ctx, workflowID, runID)
 }
 
 // IndexingJob is the resolver for the indexingJob field.
 func (r *queryResolver) IndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error) {
+	if workflowID == "" {
+		return nil, apierrors.NewValidationError("workflowID is required")
+	}
+
 	return r.executor.GetAddressIndexingJob(ctx, workflowID)
 }
 

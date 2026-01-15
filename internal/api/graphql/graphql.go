@@ -79,6 +79,10 @@ func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationH
 						requiresAuth = true
 						break
 					}
+					if field.Name == "triggerAddressIndexing" {
+						requiresAuth = true
+						break
+					}
 					// createWebhookClient requires API key only
 					if field.Name == "createWebhookClient" {
 						requiresAuth = true

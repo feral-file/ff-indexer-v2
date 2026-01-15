@@ -328,7 +328,8 @@ CREATE INDEX idx_webhook_deliveries_event_id ON webhook_deliveries(event_id);
 CREATE INDEX idx_webhook_deliveries_client ON webhook_deliveries(client_id, created_at DESC);
 
 -- Address Indexing Jobs table indexes
-CREATE UNIQUE INDEX idx_address_indexing_jobs_workflow_id ON address_indexing_jobs(workflow_id) WHERE status = 'running';
+CREATE UNIQUE INDEX idx_address_indexing_job_workflow_id ON address_indexing_jobs(workflow_id) WHERE status IN ('running', 'paused');
+CREATE UNIQUE INDEX idx_address_indexing_jobs_address_chain_active ON address_indexing_jobs(address, chain) WHERE status IN ('running', 'paused');
 CREATE INDEX idx_address_indexing_jobs_address_chain_created ON address_indexing_jobs(address, chain, created_at DESC);
 CREATE INDEX idx_address_indexing_jobs_status_created ON address_indexing_jobs(status, created_at DESC);
 

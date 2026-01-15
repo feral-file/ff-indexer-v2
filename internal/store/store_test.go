@@ -3231,12 +3231,13 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("ensure watched address exists", func(t *testing.T) {
 		address := "0xwatched1000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Should be idempotent
-		err = store.EnsureWatchedAddressExists(ctx, address, chain)
+		err = store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Verify it's being watched
@@ -3249,9 +3250,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 		address1 := "0xwatched2000000000000000000000000000000001"
 		address2 := "0xwatched2000000000000000000000000000000002"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Add only address1
-		err := store.EnsureWatchedAddressExists(ctx, address1, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address1, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Check if any of the addresses are watched
@@ -3268,9 +3270,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("get and update indexing block range", func(t *testing.T) {
 		address := "0xwatched3000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Get initial range (should be 0,0)
@@ -3309,9 +3312,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("update range with invalid block range which min block is less than current min block", func(t *testing.T) {
 		address := "0xwatched4000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Set up initial range
@@ -3326,9 +3330,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("update range with invalid block range which max block is less than current max block", func(t *testing.T) {
 		address := "0xwatched4000000000000000000000000000000002"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Set up initial range
@@ -3344,9 +3349,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("get quota info - first call initializes quota", func(t *testing.T) {
 		address := "0xquota1000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Get quota info (should initialize with default quota)
@@ -3363,9 +3369,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("increment tokens indexed - normal operation", func(t *testing.T) {
 		address := "0xquota2000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists and get initial quota
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Initialize quota
@@ -3388,9 +3395,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("increment tokens indexed - exhaust quota", func(t *testing.T) {
 		address := "0xquota3000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Initialize quota
@@ -3413,9 +3421,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("increment tokens indexed - multiple increments", func(t *testing.T) {
 		address := "0xquota4000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Initialize quota
@@ -3458,9 +3467,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("increment with zero count", func(t *testing.T) {
 		address := "0xquota6000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Increment by 0 (should be no-op or error depending on implementation)
@@ -3471,9 +3481,10 @@ func testWatchedAddresses(t *testing.T, store Store) {
 	t.Run("increment with negative count", func(t *testing.T) {
 		address := "0xquota7000000000000000000000000000000001"
 		chain := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists
-		err := store.EnsureWatchedAddressExists(ctx, address, chain)
+		err := store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 		require.NoError(t, err)
 
 		// Attempt to increment with negative count (should error)
@@ -3485,11 +3496,12 @@ func testWatchedAddresses(t *testing.T, store Store) {
 		address := "tz1quota8000000000000000000000000001"
 		chainTezos := domain.ChainTezosMainnet
 		chainEth := domain.ChainEthereumMainnet
+		dailyQuota := 1000
 
 		// Ensure address exists on both chains
-		err := store.EnsureWatchedAddressExists(ctx, address, chainTezos)
+		err := store.EnsureWatchedAddressExists(ctx, address, chainTezos, dailyQuota)
 		require.NoError(t, err)
-		err = store.EnsureWatchedAddressExists(ctx, address, chainEth)
+		err = store.EnsureWatchedAddressExists(ctx, address, chainEth, dailyQuota)
 		require.NoError(t, err)
 
 		// Consume quota on Tezos
@@ -4654,8 +4666,9 @@ func testAddressIndexingJobs(t *testing.T, store Store) {
 		for i, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				workflowID := fmt.Sprintf("test-workflow-status-%d", i)
+				address := fmt.Sprintf("0x111111111111111111111111111111111111%04d", i)
 				input := CreateAddressIndexingJobInput{
-					Address:    "0x1111111111111111111111111111111111111111",
+					Address:    address,
 					Chain:      domain.ChainEthereumMainnet,
 					Status:     tc.status,
 					WorkflowID: workflowID,
@@ -4915,7 +4928,7 @@ func testAddressIndexingJobs(t *testing.T, store Store) {
 		workflowID := "test-workflow-combined"
 		workflowRunID := "test-run-combined"
 		input := CreateAddressIndexingJobInput{
-			Address:       "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb",
+			Address:       "tz1CombinedWorkflowTestAddress12345",
 			Chain:         domain.ChainTezosMainnet,
 			Status:        schema.IndexingJobStatusRunning,
 			WorkflowID:    workflowID,
@@ -4951,6 +4964,170 @@ func testAddressIndexingJobs(t *testing.T, store Store) {
 		assert.NotNil(t, job.CompletedAt)
 		assert.Equal(t, uint64(5001), *job.CurrentMinBlock)
 		assert.Equal(t, uint64(10000), *job.CurrentMaxBlock)
+	})
+
+	t.Run("GetActiveIndexingJobForAddress - finds running job", func(t *testing.T) {
+		address := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+		chainID := domain.ChainEthereumMainnet
+		workflowID := "test-workflow-active-1"
+
+		// Create running job
+		err := store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address:    address,
+			Chain:      chainID,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		})
+		require.NoError(t, err)
+
+		// Query for active job
+		job, err := store.GetActiveIndexingJobForAddress(ctx, address, chainID)
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		assert.Equal(t, address, job.Address)
+		assert.Equal(t, chainID, job.Chain)
+		assert.Equal(t, schema.IndexingJobStatusRunning, job.Status)
+		assert.Equal(t, workflowID, job.WorkflowID)
+	})
+
+	t.Run("GetActiveIndexingJobForAddress - finds paused job", func(t *testing.T) {
+		address := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2"
+		chainID := domain.ChainEthereumMainnet
+		workflowID := "test-workflow-active-2"
+
+		// Create running job
+		err := store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address:    address,
+			Chain:      chainID,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		})
+		require.NoError(t, err)
+
+		// Update to paused
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusPaused, time.Now().UTC())
+		require.NoError(t, err)
+
+		// Query for active job - should find paused job
+		job, err := store.GetActiveIndexingJobForAddress(ctx, address, chainID)
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		assert.Equal(t, address, job.Address)
+		assert.Equal(t, schema.IndexingJobStatusPaused, job.Status)
+	})
+
+	t.Run("GetActiveIndexingJobForAddress - returns nil for completed job", func(t *testing.T) {
+		address := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3"
+		chainID := domain.ChainEthereumMainnet
+		workflowID := "test-workflow-active-3"
+
+		// Create and complete job
+		err := store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address:    address,
+			Chain:      chainID,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		})
+		require.NoError(t, err)
+
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusCompleted, time.Now().UTC())
+		require.NoError(t, err)
+
+		// Query for active job - should return nil (not an error)
+		job, err := store.GetActiveIndexingJobForAddress(ctx, address, chainID)
+		require.NoError(t, err)
+		assert.Nil(t, job)
+	})
+
+	t.Run("GetActiveIndexingJobForAddress - returns nil for failed job", func(t *testing.T) {
+		address := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4"
+		chainID := domain.ChainEthereumMainnet
+		workflowID := "test-workflow-active-4"
+
+		// Create and fail job
+		err := store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address:    address,
+			Chain:      chainID,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		})
+		require.NoError(t, err)
+
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusFailed, time.Now().UTC())
+		require.NoError(t, err)
+
+		// Query for active job - should return nil
+		job, err := store.GetActiveIndexingJobForAddress(ctx, address, chainID)
+		require.NoError(t, err)
+		assert.Nil(t, job)
+	})
+
+	t.Run("GetActiveIndexingJobForAddress - returns nil for canceled job", func(t *testing.T) {
+		address := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5"
+		chainID := domain.ChainEthereumMainnet
+		workflowID := "test-workflow-active-5"
+
+		// Create and cancel job
+		err := store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address:    address,
+			Chain:      chainID,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID,
+		})
+		require.NoError(t, err)
+
+		err = store.UpdateAddressIndexingJobStatus(ctx, workflowID, schema.IndexingJobStatusCanceled, time.Now().UTC())
+		require.NoError(t, err)
+
+		// Query for active job - should return nil
+		job, err := store.GetActiveIndexingJobForAddress(ctx, address, chainID)
+		require.NoError(t, err)
+		assert.Nil(t, job)
+	})
+
+	t.Run("GetActiveIndexingJobForAddress - returns nil for non-existent address", func(t *testing.T) {
+		// Query for job that doesn't exist
+		job, err := store.GetActiveIndexingJobForAddress(ctx, "0xnonexistent", domain.ChainEthereumMainnet)
+		require.NoError(t, err)
+		assert.Nil(t, job)
+	})
+
+	t.Run("GetActiveIndexingJobForAddress - different chains are isolated", func(t *testing.T) {
+		address := "tz1ChainIsolationTestAddress123456"
+
+		// Create job on mainnet
+		workflowID1 := "test-workflow-active-7a"
+		err := store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address:    address,
+			Chain:      domain.ChainTezosMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID1,
+		})
+		require.NoError(t, err)
+
+		// Create job on ghostnet (different chain)
+		workflowID2 := "test-workflow-active-7b"
+		err = store.CreateAddressIndexingJob(ctx, CreateAddressIndexingJobInput{
+			Address:    address,
+			Chain:      domain.ChainTezosGhostnet,
+			Status:     schema.IndexingJobStatusRunning,
+			WorkflowID: workflowID2,
+		})
+		require.NoError(t, err)
+
+		// Query mainnet - should only find mainnet job
+		job, err := store.GetActiveIndexingJobForAddress(ctx, address, domain.ChainTezosMainnet)
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		assert.Equal(t, workflowID1, job.WorkflowID)
+		assert.Equal(t, domain.ChainTezosMainnet, job.Chain)
+
+		// Query ghostnet - should only find ghostnet job
+		job, err = store.GetActiveIndexingJobForAddress(ctx, address, domain.ChainTezosGhostnet)
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		assert.Equal(t, workflowID2, job.WorkflowID)
+		assert.Equal(t, domain.ChainTezosGhostnet, job.Chain)
 	})
 }
 
