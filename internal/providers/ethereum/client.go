@@ -153,7 +153,7 @@ func (f *ethereumClient) calculateStepSize(ctx context.Context, query ethereum.F
 		if sig == transferEventSignature || sig == metadataUpdateEventSignature {
 			hasERC721Transfer = true
 		}
-		if sig == transferSingleEventSignature || sig == uriEventSignature {
+		if sig == transferSingleEventSignature || sig == transferBatchEventSignature || sig == uriEventSignature {
 			hasERC1155Transfer = true
 		}
 	}

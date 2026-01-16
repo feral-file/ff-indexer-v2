@@ -160,9 +160,13 @@ func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error
 	if err != nil {
 		// Check if error is due to cancellation
 		if errors.Is(err, workflow.ErrCanceled) || strings.Contains(err.Error(), "canceled") {
+			// Use detached context for cleanup activity
+			detachedCtx, _ := workflow.NewDisconnectedContext(ctx)
+			detachedCtx = workflow.WithActivityOptions(detachedCtx, activityOptions)
+
 			// Update job status to 'canceled' when child workflow is canceled
-			if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
-				workflowID, schema.IndexingJobStatusCanceled, workflow.Now(ctx)).Get(ctx, nil); err != nil {
+			if err := workflow.ExecuteActivity(detachedCtx, w.executor.UpdateIndexingJobStatus,
+				workflowID, schema.IndexingJobStatusCanceled, workflow.Now(detachedCtx)).Get(detachedCtx, nil); err != nil {
 				logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
 			}
 			return errors.New("workflow canceled")
