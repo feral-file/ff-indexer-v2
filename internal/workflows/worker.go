@@ -47,10 +47,12 @@ type WorkerCore interface {
 	IndexTokenOwner(ctx workflow.Context, address string) error
 
 	// IndexTezosTokenOwner indexes all tokens held by a Tezos address
-	IndexTezosTokenOwner(ctx workflow.Context, address string) error
+	// jobID is optional and used for job status tracking during quota pauses
+	IndexTezosTokenOwner(ctx workflow.Context, address string, jobID *string) error
 
 	// IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
-	IndexEthereumTokenOwner(ctx workflow.Context, address string) error
+	// jobID is optional and used for job status tracking during quota pauses
+	IndexEthereumTokenOwner(ctx workflow.Context, address string, jobID *string) error
 
 	// IndexTokenProvenances indexes all provenances (balances and events) for a token
 	IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error

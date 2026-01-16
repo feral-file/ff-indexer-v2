@@ -2511,6 +2511,7 @@ func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID
 }
 
 // UpdateAddressIndexingJobProgress updates job progress metrics
+// Note: This method accumulates tokens_processed by incrementing the existing value
 func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
 	updates := map[string]interface{}{
 		"tokens_processed":  gorm.Expr("tokens_processed + ?", tokensProcessed),
