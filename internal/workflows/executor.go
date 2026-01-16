@@ -438,7 +438,7 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 		LatestJSON:      metadataJSON,
 		LatestHash:      &hashString,
 		EnrichmentLevel: schema.EnrichmentLevelNone,
-		LastRefreshedAt: &now,
+		LastRefreshedAt: now,
 		ImageURL:        &normalizedMetadata.Image,
 		AnimationURL:    &normalizedMetadata.Animation,
 		Name:            &normalizedMetadata.Name,

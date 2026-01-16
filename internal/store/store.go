@@ -55,7 +55,7 @@ type CreateTokenMetadataInput struct {
 	LatestJSON      []byte
 	LatestHash      *string
 	EnrichmentLevel schema.EnrichmentLevel
-	LastRefreshedAt *time.Time
+	LastRefreshedAt time.Time
 	ImageURL        *string
 	AnimationURL    *string
 	Name            *string

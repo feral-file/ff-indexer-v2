@@ -1048,7 +1048,7 @@ func TestUpsertTokenMetadata_Success_NewMetadata(t *testing.T) {
 			assert.Equal(t, metadataJSON, input.LatestJSON)
 			assert.Equal(t, hex.EncodeToString(hash), *input.LatestHash)
 			assert.Equal(t, schema.EnrichmentLevelNone, input.EnrichmentLevel)
-			assert.Equal(t, &now, input.LastRefreshedAt)
+			assert.Equal(t, now, input.LastRefreshedAt)
 			assert.Equal(t, &normalizedMetadata.Image, input.ImageURL)
 			assert.Equal(t, &normalizedMetadata.Animation, input.AnimationURL)
 			assert.Equal(t, &normalizedMetadata.Name, input.Name)

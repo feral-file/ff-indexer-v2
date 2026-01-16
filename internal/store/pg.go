@@ -658,7 +658,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			LatestJSON:      input.LatestJSON,
 			LatestHash:      input.LatestHash,
 			EnrichmentLevel: input.EnrichmentLevel,
-			LastRefreshedAt: input.LastRefreshedAt,
+			LastRefreshedAt: &input.LastRefreshedAt,
 			ImageURL:        input.ImageURL,
 			AnimationURL:    input.AnimationURL,
 			Name:            input.Name,
@@ -710,7 +710,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 		changeJournal := schema.ChangesJournal{
 			SubjectType: schema.SubjectTypeMetadata,
 			SubjectID:   fmt.Sprintf("%d", input.TokenID), // token_metadata.token_id (PK)
-			ChangedAt:   *input.LastRefreshedAt,
+			ChangedAt:   input.LastRefreshedAt,
 			Meta:        metaJSON,
 		}
 

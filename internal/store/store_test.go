@@ -1804,7 +1804,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 				OriginJSON:      datatypes.JSON(`{"name":"test"}`),
 				LatestJSON:      datatypes.JSON(`{"name":"test"}`),
 				EnrichmentLevel: schema.EnrichmentLevelNone,
-				LastRefreshedAt: &now,
+				LastRefreshedAt: now,
 			})
 			require.NoError(t, err)
 		}
@@ -1907,7 +1907,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			OriginJSON:      datatypes.JSON(`{"name":"test metadata only"}`),
 			LatestJSON:      datatypes.JSON(`{"name":"test metadata only"}`),
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &now,
+			LastRefreshedAt: now,
 		})
 		require.NoError(t, err)
 
@@ -1951,7 +1951,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			OriginJSON:      datatypes.JSON(`{"name":"test both"}`),
 			LatestJSON:      datatypes.JSON(`{"name":"test both"}`),
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &now,
+			LastRefreshedAt: now,
 		})
 		require.NoError(t, err)
 
@@ -2032,7 +2032,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 				OriginJSON:      datatypes.JSON(`{"name":"test"}`),
 				LatestJSON:      datatypes.JSON(`{"name":"test"}`),
 				EnrichmentLevel: schema.EnrichmentLevelNone,
-				LastRefreshedAt: &now,
+				LastRefreshedAt: now,
 			})
 			require.NoError(t, err)
 		}
@@ -2176,7 +2176,7 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 			LatestJSON:      latestJSON,
 			LatestHash:      &hash,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &now,
+			LastRefreshedAt: now,
 			ImageURL:        &imageURL,
 			Name:            &name,
 			MimeType:        &mimeType,
@@ -2243,7 +2243,7 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 			LatestJSON:      originJSON,
 			LatestHash:      &hash1,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &now,
+			LastRefreshedAt: now,
 			ImageURL:        &imageURL1,
 			Name:            &name1,
 		}
@@ -2261,7 +2261,7 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 		metadataInput.LatestHash = &hash2
 		metadataInput.ImageURL = &imageURL2
 		metadataInput.Name = &name2
-		metadataInput.LastRefreshedAt = &now2
+		metadataInput.LastRefreshedAt = now2
 
 		err = store.UpsertTokenMetadata(ctx, metadataInput)
 		require.NoError(t, err)
@@ -2351,7 +2351,7 @@ func testEnrichmentSource(t *testing.T, store Store) {
 			OriginJSON:      originJSON,
 			LatestJSON:      originJSON,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &now,
+			LastRefreshedAt: now,
 		}
 		err = store.UpsertTokenMetadata(ctx, metadataInput)
 		require.NoError(t, err)
@@ -2418,7 +2418,7 @@ func testEnrichmentSource(t *testing.T, store Store) {
 			OriginJSON:      originJSON,
 			LatestJSON:      originJSON,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &now,
+			LastRefreshedAt: now,
 		}
 		err = store.UpsertTokenMetadata(ctx, metadataInput)
 		require.NoError(t, err)
@@ -2979,7 +2979,7 @@ func testGetChanges(t *testing.T, store Store) {
 			ImageURL:        &imageURL,
 			Name:            &name,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &metadataTime,
+			LastRefreshedAt: metadataTime,
 		}
 		err = store.UpsertTokenMetadata(ctx, metadataInput)
 		require.NoError(t, err)
@@ -3101,7 +3101,7 @@ func testGetChanges(t *testing.T, store Store) {
 			ImageURL:        &imageURL,
 			Name:            &name,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &metadataTime,
+			LastRefreshedAt: metadataTime,
 		}
 		err = store.UpsertTokenMetadata(ctx, metadataInput)
 		require.NoError(t, err)
@@ -3160,7 +3160,7 @@ func testGetChanges(t *testing.T, store Store) {
 			ImageURL:        &imageURL,
 			Name:            &name,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: &metadataTime,
+			LastRefreshedAt: metadataTime,
 		}
 		err = store.UpsertTokenMetadata(ctx, metadataInput)
 		require.NoError(t, err)
@@ -5180,11 +5180,13 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			// Add metadata
 			metadataJSON := map[string]interface{}{"name": fmt.Sprintf("Token %d", i)}
 			jsonBytes, _ := json.Marshal(metadataJSON)
+			now := time.Now().UTC()
 			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
 				TokenID:         token.ID,
 				OriginJSON:      jsonBytes,
 				LatestJSON:      jsonBytes,
 				EnrichmentLevel: schema.EnrichmentLevelNone,
+				LastRefreshedAt: now,
 			})
 			require.NoError(t, err)
 		}
@@ -5238,11 +5240,13 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		// Add metadata
 		metadataJSON := map[string]interface{}{"name": "Token with both"}
 		jsonBytes, _ := json.Marshal(metadataJSON)
+		now := time.Now().UTC()
 		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
 			TokenID:         token.ID,
 			OriginJSON:      jsonBytes,
 			LatestJSON:      jsonBytes,
 			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			LastRefreshedAt: now,
 		})
 		require.NoError(t, err)
 
@@ -5280,11 +5284,13 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			// Add metadata
 			metadataJSON := map[string]interface{}{"name": fmt.Sprintf("Tezos Token %d", i)}
 			jsonBytes, _ := json.Marshal(metadataJSON)
+			now := time.Now().UTC()
 			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
 				TokenID:         token.ID,
 				OriginJSON:      jsonBytes,
 				LatestJSON:      jsonBytes,
 				EnrichmentLevel: schema.EnrichmentLevelNone,
+				LastRefreshedAt: now,
 			})
 			require.NoError(t, err)
 		}
@@ -5318,11 +5324,13 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			if i == 1 {
 				metadataJSON := map[string]interface{}{"name": "Owner2 Token"}
 				jsonBytes, _ := json.Marshal(metadataJSON)
+				now := time.Now().UTC()
 				err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
 					TokenID:         token.ID,
 					OriginJSON:      jsonBytes,
 					LatestJSON:      jsonBytes,
 					EnrichmentLevel: schema.EnrichmentLevelNone,
+					LastRefreshedAt: now,
 				})
 				require.NoError(t, err)
 			}
@@ -5359,11 +5367,13 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		// Add metadata
 		metadataJSON := map[string]interface{}{"name": "Multi-edition"}
 		jsonBytes, _ := json.Marshal(metadataJSON)
+		now := time.Now().UTC()
 		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
 			TokenID:         token.ID,
 			OriginJSON:      jsonBytes,
 			LatestJSON:      jsonBytes,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: now,
 		})
 		require.NoError(t, err)
 
