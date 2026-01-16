@@ -19,6 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -146,6 +147,7 @@ type executor struct {
 	httpClient       adapter.HTTPClient
 	io               adapter.IO
 	temporalActivity adapter.Activity
+	blacklist        registry.BlacklistRegistry
 }
 
 // NewExecutor creates a new executor instance
@@ -160,6 +162,7 @@ func NewExecutor(
 	httpClient adapter.HTTPClient,
 	io adapter.IO,
 	temporalActivity adapter.Activity,
+	blacklist registry.BlacklistRegistry,
 ) Executor {
 	return &executor{
 		store:            store,
@@ -172,6 +175,7 @@ func NewExecutor(
 		httpClient:       httpClient,
 		io:               io,
 		temporalActivity: temporalActivity,
+		blacklist:        blacklist,
 	}
 }
 
@@ -1015,13 +1019,27 @@ func (e *executor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]d
 
 // GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
 // This is used to sweep tokens by block ranges for incremental indexing
+// Filters out blacklisted tokens before returning
 func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	blockchain := types.AddressToBlockchain(address)
 	if blockchain != domain.BlockchainEthereum {
 		return nil, fmt.Errorf("unsupported blockchain for address: %s", address)
 	}
 
-	return e.ethClient.GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock)
+	tokensWithBlocks, err := e.ethClient.GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter out blacklisted tokens
+	filtered := make([]domain.TokenWithBlock, 0, len(tokensWithBlocks))
+	for _, tokenWithBlock := range tokensWithBlocks {
+		if !e.blacklist.IsTokenCIDBlacklisted(tokenWithBlock.TokenCID) {
+			filtered = append(filtered, tokenWithBlock)
+		}
+	}
+
+	return filtered, nil
 }
 
 // IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID
@@ -1190,6 +1208,7 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 // GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs with block numbers for an account within a block range
 // Handles pagination automatically by fetching all results within the range
 // Returns tokens with their last interaction block number (lastLevel from TzKT)
+// Filters out blacklisted tokens before returning
 func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	var allTokensWithBlocks []domain.TokenWithBlock
 	limit := tezos.MAX_PAGE_SIZE
@@ -1212,10 +1231,14 @@ func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Contex
 				balance.Token.Contract.Address,
 				balance.Token.TokenID,
 			)
-			allTokensWithBlocks = append(allTokensWithBlocks, domain.TokenWithBlock{
-				TokenCID:    tokenCID,
-				BlockNumber: balance.LastLevel,
-			})
+
+			// Filter out blacklisted tokens
+			if !e.blacklist.IsTokenCIDBlacklisted(tokenCID) {
+				allTokensWithBlocks = append(allTokensWithBlocks, domain.TokenWithBlock{
+					TokenCID:    tokenCID,
+					BlockNumber: balance.LastLevel,
+				})
+			}
 		}
 
 		// If we got fewer results than the limit, we've reached the end

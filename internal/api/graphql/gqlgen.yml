@@ -378,6 +378,10 @@ models:
         fieldName: Status
       tokens_processed:
         fieldName: TokensProcessed
+      total_tokens_indexed:
+        fieldName: TotalTokensIndexed
+      total_tokens_viewable:
+        fieldName: TotalTokensViewable
       current_min_block:
         fieldName: CurrentMinBlock
       current_max_block:

@@ -455,6 +455,21 @@ func (mr *MockStoreMockRecorder) GetTokenCIDsByOwner(ctx, ownerAddress interface
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCIDsByOwner", reflect.TypeOf((*MockStore)(nil).GetTokenCIDsByOwner), ctx, ownerAddress)
 }
 
+// GetTokenCountsByAddress mocks base method.
+func (m *MockStore) GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*store.TokenCountsByAddress, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenCountsByAddress", ctx, address, chain)
+	ret0, _ := ret[0].(*store.TokenCountsByAddress)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenCountsByAddress indicates an expected call of GetTokenCountsByAddress.
+func (mr *MockStoreMockRecorder) GetTokenCountsByAddress(ctx, address, chain interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCountsByAddress", reflect.TypeOf((*MockStore)(nil).GetTokenCountsByAddress), ctx, address, chain)
+}
+
 // GetTokenMetadataByTokenCID mocks base method.
 func (m *MockStore) GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error) {
 	m.ctrl.T.Helper()

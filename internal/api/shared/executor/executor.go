@@ -65,7 +65,13 @@ type Executor interface {
 	CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts int) (*dto.CreateWebhookClientResponse, error)
 
 	// GetAddressIndexingJob retrieves an indexing job by workflow ID
-	GetAddressIndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error)
+	GetAddressIndexingJob(ctx context.Context, workflowID string, opts GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error)
+}
+
+// GetAddressIndexingJobOptions configures optional data to include in indexing job response
+type GetAddressIndexingJobOptions struct {
+	IncludeTotalIndexed  bool // Include total tokens owned by address
+	IncludeTotalViewable bool // Include total viewable tokens (with metadata or enrichment)
 }
 
 type executor struct {
@@ -1059,13 +1065,13 @@ func (e *executor) CreateWebhookClient(ctx context.Context, webhookURL string, e
 }
 
 // GetAddressIndexingJob retrieves an indexing job by workflow ID
-func (e *executor) GetAddressIndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error) {
+func (e *executor) GetAddressIndexingJob(ctx context.Context, workflowID string, opts GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error) {
 	job, err := e.store.GetAddressIndexingJobByWorkflowID(ctx, workflowID)
 	if err != nil {
 		return nil, apierrors.NewNotFoundError(fmt.Sprintf("Indexing job not found: %v", err))
 	}
 
-	return &dto.AddressIndexingJobResponse{
+	response := &dto.AddressIndexingJobResponse{
 		WorkflowID:      job.WorkflowID,
 		Address:         job.Address,
 		Chain:           string(job.Chain),
@@ -1078,5 +1084,28 @@ func (e *executor) GetAddressIndexingJob(ctx context.Context, workflowID string)
 		CompletedAt:     job.CompletedAt,
 		FailedAt:        job.FailedAt,
 		CanceledAt:      job.CanceledAt,
-	}, nil
+	}
+
+	// Only query counts if at least one was requested
+	if opts.IncludeTotalIndexed || opts.IncludeTotalViewable {
+		counts, err := e.store.GetTokenCountsByAddress(ctx, job.Address, job.Chain)
+		if err != nil {
+			// Log error but don't fail the request - counts are optional
+			logger.WarnCtx(ctx, "Failed to get token counts",
+				zap.Error(err),
+				zap.String("address", job.Address),
+				zap.String("chain", string(job.Chain)),
+			)
+		} else {
+			// Conditionally populate based on what was requested
+			if opts.IncludeTotalIndexed {
+				response.TotalTokensIndexed = &counts.TotalIndexed
+			}
+			if opts.IncludeTotalViewable {
+				response.TotalTokensViewable = &counts.TotalViewable
+			}
+		}
+	}
+
+	return response, nil
 }

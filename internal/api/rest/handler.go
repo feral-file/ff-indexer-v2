@@ -431,8 +431,14 @@ func (h *handler) GetAddressIndexingJob(c *gin.Context) {
 		return
 	}
 
+	// Parse optional query parameters for including token counts
+	opts := executor.GetAddressIndexingJobOptions{
+		IncludeTotalIndexed:  c.Query("include_total_indexed") == "true",
+		IncludeTotalViewable: c.Query("include_total_viewable") == "true",
+	}
+
 	// Call executor's GetAddressIndexingJob method
-	job, err := h.executor.GetAddressIndexingJob(c.Request.Context(), workflowID)
+	job, err := h.executor.GetAddressIndexingJob(c.Request.Context(), workflowID, opts)
 	if err != nil {
 		respondInternalError(c, err, "Failed to get indexing job")
 		return

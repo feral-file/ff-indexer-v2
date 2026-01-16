@@ -5132,6 +5132,249 @@ func testAddressIndexingJobs(t *testing.T, store Store) {
 }
 
 // =============================================================================
+// Token Counts Tests
+// =============================================================================
+
+func testGetTokenCountsByAddress(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	// Setup: Create test data
+	owner1 := "0x1111111111111111111111111111111111111111"
+	owner2 := "0x2222222222222222222222222222222222222222"
+	chain := domain.ChainEthereumMainnet
+
+	t.Run("returns zero counts for address with no tokens", func(t *testing.T) {
+		counts, err := store.GetTokenCountsByAddress(ctx, "0xnonexistent", chain)
+		require.NoError(t, err)
+		assert.Equal(t, 0, counts.TotalIndexed)
+		assert.Equal(t, 0, counts.TotalViewable)
+	})
+
+	t.Run("counts tokens without metadata or enrichment as indexed only", func(t *testing.T) {
+		// Create 3 tokens owned by owner1, none with metadata/enrichment
+		for i := 1; i <= 3; i++ {
+			tokenNum := fmt.Sprintf("%d", 100+i)
+			mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract1", tokenNum, owner1)
+			err := store.CreateTokenMint(ctx, mint)
+			require.NoError(t, err)
+		}
+
+		counts, err := store.GetTokenCountsByAddress(ctx, owner1, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 3, counts.TotalIndexed, "should count all tokens")
+		assert.Equal(t, 0, counts.TotalViewable, "no tokens have metadata/enrichment")
+	})
+
+	t.Run("counts tokens with metadata as both indexed and viewable", func(t *testing.T) {
+		// Create 2 tokens with metadata
+		for i := 1; i <= 2; i++ {
+			tokenNum := fmt.Sprintf("%d", 200+i)
+			mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract2", tokenNum, owner1)
+			err := store.CreateTokenMint(ctx, mint)
+			require.NoError(t, err)
+
+			// Get the token
+			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+			require.NoError(t, err)
+
+			// Add metadata
+			metadataJSON := map[string]interface{}{"name": fmt.Sprintf("Token %d", i)}
+			jsonBytes, _ := json.Marshal(metadataJSON)
+			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID:         token.ID,
+				OriginJSON:      jsonBytes,
+				LatestJSON:      jsonBytes,
+				EnrichmentLevel: schema.EnrichmentLevelNone,
+			})
+			require.NoError(t, err)
+		}
+
+		counts, err := store.GetTokenCountsByAddress(ctx, owner1, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 5, counts.TotalIndexed, "3 without metadata + 2 with metadata")
+		assert.Equal(t, 2, counts.TotalViewable, "only tokens with metadata")
+	})
+
+	t.Run("counts tokens with enrichment source as viewable", func(t *testing.T) {
+		// Create 2 tokens with enrichment source only (no metadata)
+		for i := 1; i <= 2; i++ {
+			tokenNum := fmt.Sprintf("%d", 300+i)
+			mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract3", tokenNum, owner1)
+			err := store.CreateTokenMint(ctx, mint)
+			require.NoError(t, err)
+
+			// Get the token
+			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+			require.NoError(t, err)
+
+			// Add enrichment source
+			vendorJSON := map[string]interface{}{"vendor_data": fmt.Sprintf("Token %d", i)}
+			jsonBytes, _ := json.Marshal(vendorJSON)
+			err = store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
+				TokenID:    token.ID,
+				Vendor:     schema.VendorArtBlocks,
+				VendorJSON: jsonBytes,
+			})
+			require.NoError(t, err)
+		}
+
+		counts, err := store.GetTokenCountsByAddress(ctx, owner1, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 7, counts.TotalIndexed, "3 plain + 2 with metadata + 2 with enrichment")
+		assert.Equal(t, 4, counts.TotalViewable, "2 with metadata + 2 with enrichment")
+	})
+
+	t.Run("counts tokens with both metadata and enrichment once", func(t *testing.T) {
+		// Create 1 token with both metadata and enrichment
+		tokenNum := "401"
+		mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract4", tokenNum, owner1)
+		err := store.CreateTokenMint(ctx, mint)
+		require.NoError(t, err)
+
+		// Get the token
+		token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add metadata
+		metadataJSON := map[string]interface{}{"name": "Token with both"}
+		jsonBytes, _ := json.Marshal(metadataJSON)
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			OriginJSON:      jsonBytes,
+			LatestJSON:      jsonBytes,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+		})
+		require.NoError(t, err)
+
+		// Add enrichment source
+		vendorJSON := map[string]interface{}{"vendor_data": "Token with both"}
+		vendorBytes, _ := json.Marshal(vendorJSON)
+		err = store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
+			TokenID:    token.ID,
+			Vendor:     schema.VendorArtBlocks,
+			VendorJSON: vendorBytes,
+		})
+		require.NoError(t, err)
+
+		counts, err := store.GetTokenCountsByAddress(ctx, owner1, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 8, counts.TotalIndexed)
+		assert.Equal(t, 5, counts.TotalViewable, "token with both counted once")
+	})
+
+	t.Run("isolates counts by chain", func(t *testing.T) {
+		tezosChain := domain.ChainTezosMainnet
+		tezosOwner := "tz1TestAddress123456789012345678"
+
+		// Create 2 tokens on Tezos with metadata
+		for i := 1; i <= 2; i++ {
+			tokenNum := fmt.Sprintf("%d", 500+i)
+			mint := buildTestTokenMint(tezosChain, domain.StandardFA2, "KT1Contract", tokenNum, tezosOwner)
+			err := store.CreateTokenMint(ctx, mint)
+			require.NoError(t, err)
+
+			// Get the token
+			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+			require.NoError(t, err)
+
+			// Add metadata
+			metadataJSON := map[string]interface{}{"name": fmt.Sprintf("Tezos Token %d", i)}
+			jsonBytes, _ := json.Marshal(metadataJSON)
+			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID:         token.ID,
+				OriginJSON:      jsonBytes,
+				LatestJSON:      jsonBytes,
+				EnrichmentLevel: schema.EnrichmentLevelNone,
+			})
+			require.NoError(t, err)
+		}
+
+		// Query Tezos chain - should only count Tezos tokens
+		counts, err := store.GetTokenCountsByAddress(ctx, tezosOwner, tezosChain)
+		require.NoError(t, err)
+		assert.Equal(t, 2, counts.TotalIndexed)
+		assert.Equal(t, 2, counts.TotalViewable)
+
+		// Query Ethereum chain for same address - should be zero
+		counts, err = store.GetTokenCountsByAddress(ctx, tezosOwner, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 0, counts.TotalIndexed)
+		assert.Equal(t, 0, counts.TotalViewable)
+	})
+
+	t.Run("isolates counts by owner address", func(t *testing.T) {
+		// Create 2 tokens for owner2
+		for i := 1; i <= 2; i++ {
+			tokenNum := fmt.Sprintf("%d", 600+i)
+			mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract6", tokenNum, owner2)
+			err := store.CreateTokenMint(ctx, mint)
+			require.NoError(t, err)
+
+			// Get the token
+			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+			require.NoError(t, err)
+
+			// Add metadata to one
+			if i == 1 {
+				metadataJSON := map[string]interface{}{"name": "Owner2 Token"}
+				jsonBytes, _ := json.Marshal(metadataJSON)
+				err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+					TokenID:         token.ID,
+					OriginJSON:      jsonBytes,
+					LatestJSON:      jsonBytes,
+					EnrichmentLevel: schema.EnrichmentLevelNone,
+				})
+				require.NoError(t, err)
+			}
+		}
+
+		// Query owner2 - should only see their tokens
+		counts, err := store.GetTokenCountsByAddress(ctx, owner2, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 2, counts.TotalIndexed, "owner2 has 2 tokens")
+		assert.Equal(t, 1, counts.TotalViewable, "1 token has metadata")
+
+		// Query owner1 - should still see their original counts
+		counts, err = store.GetTokenCountsByAddress(ctx, owner1, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 8, counts.TotalIndexed, "owner1 unchanged")
+		assert.Equal(t, 5, counts.TotalViewable, "owner1 unchanged")
+	})
+
+	t.Run("counts ERC1155 tokens via balances table", func(t *testing.T) {
+		multiOwner := "0x3333333333333333333333333333333333333333"
+
+		// Create ERC1155 token (uses balances table instead of current_owner)
+		tokenNum := "701"
+		mint := buildTestTokenMint(chain, domain.StandardERC1155, "0xcontract7", tokenNum, multiOwner)
+		mint.Token.CurrentOwner = nil // ERC1155 doesn't use current_owner
+		mint.Balance.Quantity = "100"
+		err := store.CreateTokenMint(ctx, mint)
+		require.NoError(t, err)
+
+		// Get the token
+		token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add metadata
+		metadataJSON := map[string]interface{}{"name": "Multi-edition"}
+		jsonBytes, _ := json.Marshal(metadataJSON)
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			OriginJSON:      jsonBytes,
+			LatestJSON:      jsonBytes,
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+		})
+		require.NoError(t, err)
+
+		counts, err := store.GetTokenCountsByAddress(ctx, multiOwner, chain)
+		require.NoError(t, err)
+		assert.Equal(t, 1, counts.TotalIndexed, "ERC1155 counted via balances")
+		assert.Equal(t, 1, counts.TotalViewable, "ERC1155 with metadata")
+	})
+}
+
+// =============================================================================
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
 
@@ -5163,6 +5406,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"WebhookClients", testWebhookClients},
 		{"WebhookDeliveries", testWebhookDeliveries},
 		{"AddressIndexingJobs", testAddressIndexingJobs},
+		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 	}
 
 	for _, tt := range tests {

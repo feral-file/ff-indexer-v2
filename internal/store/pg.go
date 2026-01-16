@@ -2524,3 +2524,32 @@ func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflow
 		Where("workflow_id = ?", workflowID).
 		Updates(updates).Error
 }
+
+// GetTokenCountsByAddress retrieves total token counts for an address on a specific chain
+// Returns both total tokens indexed and total tokens viewable (with metadata or enrichment)
+func (s *pgStore) GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*TokenCountsByAddress, error) {
+	query := `
+		SELECT 
+			COUNT(*) as total_indexed,
+			COUNT(*) FILTER (
+				WHERE EXISTS (
+					SELECT 1 FROM token_metadata tm WHERE tm.token_id = tokens.id
+				) OR EXISTS (
+					SELECT 1 FROM enrichment_sources es WHERE es.token_id = tokens.id
+				)
+			) as total_viewable
+		FROM tokens
+		LEFT JOIN balances ON balances.token_id = tokens.id
+		WHERE 
+			tokens.chain = $1 
+			AND (balances.owner_address = $2 OR tokens.current_owner = $2)
+	`
+
+	var counts TokenCountsByAddress
+	err := s.db.WithContext(ctx).Raw(query, string(chain), address).Scan(&counts).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token counts for address %s on chain %s: %w", address, chain, err)
+	}
+
+	return &counts, nil
+}

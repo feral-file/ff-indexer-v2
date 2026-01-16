@@ -12,6 +12,7 @@ import (
 	gomock "github.com/golang/mock/gomock"
 
 	dto "github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
+	executor "github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	types "github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -56,18 +57,18 @@ func (mr *MockAPIExecutorMockRecorder) CreateWebhookClient(ctx, webhookURL, even
 }
 
 // GetAddressIndexingJob mocks base method.
-func (m *MockAPIExecutor) GetAddressIndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error) {
+func (m *MockAPIExecutor) GetAddressIndexingJob(ctx context.Context, workflowID string, opts executor.GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAddressIndexingJob", ctx, workflowID)
+	ret := m.ctrl.Call(m, "GetAddressIndexingJob", ctx, workflowID, opts)
 	ret0, _ := ret[0].(*dto.AddressIndexingJobResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetAddressIndexingJob indicates an expected call of GetAddressIndexingJob.
-func (mr *MockAPIExecutorMockRecorder) GetAddressIndexingJob(ctx, workflowID interface{}) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) GetAddressIndexingJob(ctx, workflowID, opts interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIExecutor)(nil).GetAddressIndexingJob), ctx, workflowID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIExecutor)(nil).GetAddressIndexingJob), ctx, workflowID, opts)
 }
 
 // GetChanges mocks base method.

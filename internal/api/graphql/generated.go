@@ -105,18 +105,20 @@ type ComplexityRoot struct {
 	}
 
 	IndexingJob struct {
-		Address         func(childComplexity int) int
-		CanceledAt      func(childComplexity int) int
-		Chain           func(childComplexity int) int
-		CompletedAt     func(childComplexity int) int
-		CurrentMaxBlock func(childComplexity int) int
-		CurrentMinBlock func(childComplexity int) int
-		FailedAt        func(childComplexity int) int
-		PausedAt        func(childComplexity int) int
-		StartedAt       func(childComplexity int) int
-		Status          func(childComplexity int) int
-		TokensProcessed func(childComplexity int) int
-		WorkflowID      func(childComplexity int) int
+		Address             func(childComplexity int) int
+		CanceledAt          func(childComplexity int) int
+		Chain               func(childComplexity int) int
+		CompletedAt         func(childComplexity int) int
+		CurrentMaxBlock     func(childComplexity int) int
+		CurrentMinBlock     func(childComplexity int) int
+		FailedAt            func(childComplexity int) int
+		PausedAt            func(childComplexity int) int
+		StartedAt           func(childComplexity int) int
+		Status              func(childComplexity int) int
+		TokensProcessed     func(childComplexity int) int
+		TotalTokensIndexed  func(childComplexity int) int
+		TotalTokensViewable func(childComplexity int) int
+		WorkflowID          func(childComplexity int) int
 	}
 
 	MediaAsset struct {
@@ -596,6 +598,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.IndexingJob.TokensProcessed(childComplexity), true
+	case "IndexingJob.total_tokens_indexed":
+		if e.complexity.IndexingJob.TotalTokensIndexed == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.TotalTokensIndexed(childComplexity), true
+	case "IndexingJob.total_tokens_viewable":
+		if e.complexity.IndexingJob.TotalTokensViewable == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.TotalTokensViewable(childComplexity), true
 	case "IndexingJob.workflow_id":
 		if e.complexity.IndexingJob.WorkflowID == nil {
 			break
@@ -1676,6 +1690,8 @@ type IndexingJob {
   chain: String!
   status: String!
   tokens_processed: Int!
+  total_tokens_indexed: Int
+  total_tokens_viewable: Int
   current_min_block: Uint64
   current_max_block: Uint64
   started_at: Time!
@@ -3005,6 +3021,64 @@ func (ec *executionContext) _IndexingJob_tokens_processed(ctx context.Context, f
 }
 
 func (ec *executionContext) fieldContext_IndexingJob_tokens_processed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_total_tokens_indexed(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_total_tokens_indexed,
+		func(ctx context.Context) (any, error) {
+			return obj.TotalTokensIndexed, nil
+		},
+		nil,
+		ec.marshalOInt2ᚖint,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_total_tokens_indexed(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "IndexingJob",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _IndexingJob_total_tokens_viewable(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_IndexingJob_total_tokens_viewable,
+		func(ctx context.Context) (any, error) {
+			return obj.TotalTokensViewable, nil
+		},
+		nil,
+		ec.marshalOInt2ᚖint,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_IndexingJob_total_tokens_viewable(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "IndexingJob",
 		Field:      field,
@@ -4814,6 +4888,10 @@ func (ec *executionContext) fieldContext_Query_indexingJob(ctx context.Context, 
 				return ec.fieldContext_IndexingJob_status(ctx, field)
 			case "tokens_processed":
 				return ec.fieldContext_IndexingJob_tokens_processed(ctx, field)
+			case "total_tokens_indexed":
+				return ec.fieldContext_IndexingJob_total_tokens_indexed(ctx, field)
+			case "total_tokens_viewable":
+				return ec.fieldContext_IndexingJob_total_tokens_viewable(ctx, field)
 			case "current_min_block":
 				return ec.fieldContext_IndexingJob_current_min_block(ctx, field)
 			case "current_max_block":
@@ -8646,6 +8724,10 @@ func (ec *executionContext) _IndexingJob(ctx context.Context, sel ast.SelectionS
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "total_tokens_indexed":
+			out.Values[i] = ec._IndexingJob_total_tokens_indexed(ctx, field, obj)
+		case "total_tokens_viewable":
+			out.Values[i] = ec._IndexingJob_total_tokens_viewable(ctx, field, obj)
 		case "current_min_block":
 			field := field
 

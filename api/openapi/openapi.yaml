@@ -821,11 +821,26 @@ paths:
         - Address and chain being indexed
         - Progress tracking (tokens processed, block ranges)
         - Timing information (started, paused, completed, failed times)
+        - Optional: Total token counts (indexed and viewable)
         
         The workflow ID is returned when you trigger address indexing via the
         `POST /api/v1/tokens/addresses/index` endpoint or the GraphQL `triggerAddressIndexing` mutation.
         
         Each address gets its own workflow and job record for tracking progress independently.
+        
+        ## Optional Token Counts
+        
+        By default, this endpoint returns basic job status without computing token counts (for performance).
+        You can optionally request token count statistics using query parameters:
+        
+        - `include_total_indexed=true` - Include only total_tokens_indexed
+        - `include_total_viewable=true` - Include only total_tokens_viewable
+        
+        Token counts:
+        - `total_tokens_indexed` - All tokens owned by the address (present in database)
+        - `total_tokens_viewable` - Tokens with metadata OR enrichment source (ready for display)
+        
+        These counts are computed efficiently with a single optimized database query.
       operationId: getAddressIndexingJob
       tags:
         - indexing
@@ -837,6 +852,20 @@ paths:
           schema:
             type: string
           example: "index-token-owner-0x1234567890123456789012345678901234567890"
+        - name: include_total_indexed
+          in: query
+          description: Include total_tokens_indexed (total tokens owned by address) in the response
+          schema:
+            type: boolean
+            default: false
+          example: false
+        - name: include_total_viewable
+          in: query
+          description: Include total_tokens_viewable (tokens with metadata or enrichment) in the response
+          schema:
+            type: boolean
+            default: false
+          example: false
       responses:
         '200':
           description: Indexing job status retrieved successfully
@@ -1896,8 +1925,22 @@ components:
           example: "running"
         tokens_processed:
           type: integer
-          description: Number of tokens processed so far
+          description: Number of tokens processed so far (tracks progress during indexing)
           example: 150
+        total_tokens_indexed:
+          type: integer
+          description: |
+            Optional: Total tokens owned by the address (present in database).
+            Only included if requested via query parameters (include_totals or include_total_indexed).
+            Represents the complete ownership count for this address.
+          example: 500
+        total_tokens_viewable:
+          type: integer
+          description: |
+            Optional: Total tokens with metadata OR enrichment source (ready for display).
+            Only included if requested via query parameters (include_totals or include_total_viewable).
+            Represents tokens that have visual metadata and can be shown in a UI.
+          example: 450
         current_min_block:
           type: integer
           format: uint64

@@ -52,17 +52,17 @@ func (mr *MockCoreWorkerMockRecorder) DeliverWebhook(ctx, clientID, event interf
 }
 
 // IndexEthereumTokenOwner mocks base method.
-func (m *MockCoreWorker) IndexEthereumTokenOwner(ctx workflow.Context, address string) error {
+func (m *MockCoreWorker) IndexEthereumTokenOwner(ctx workflow.Context, address string, jobID *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexEthereumTokenOwner", ctx, address)
+	ret := m.ctrl.Call(m, "IndexEthereumTokenOwner", ctx, address, jobID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexEthereumTokenOwner indicates an expected call of IndexEthereumTokenOwner.
-func (mr *MockCoreWorkerMockRecorder) IndexEthereumTokenOwner(ctx, address interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexEthereumTokenOwner(ctx, address, jobID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexEthereumTokenOwner", reflect.TypeOf((*MockCoreWorker)(nil).IndexEthereumTokenOwner), ctx, address)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexEthereumTokenOwner", reflect.TypeOf((*MockCoreWorker)(nil).IndexEthereumTokenOwner), ctx, address, jobID)
 }
 
 // IndexMetadataUpdate mocks base method.
@@ -94,17 +94,17 @@ func (mr *MockCoreWorkerMockRecorder) IndexMultipleTokensMetadata(ctx, tokenCIDs
 }
 
 // IndexTezosTokenOwner mocks base method.
-func (m *MockCoreWorker) IndexTezosTokenOwner(ctx workflow.Context, address string) error {
+func (m *MockCoreWorker) IndexTezosTokenOwner(ctx workflow.Context, address string, jobID *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTezosTokenOwner", ctx, address)
+	ret := m.ctrl.Call(m, "IndexTezosTokenOwner", ctx, address, jobID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexTezosTokenOwner indicates an expected call of IndexTezosTokenOwner.
-func (mr *MockCoreWorkerMockRecorder) IndexTezosTokenOwner(ctx, address interface{}) *gomock.Call {
+func (mr *MockCoreWorkerMockRecorder) IndexTezosTokenOwner(ctx, address, jobID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTezosTokenOwner", reflect.TypeOf((*MockCoreWorker)(nil).IndexTezosTokenOwner), ctx, address)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTezosTokenOwner", reflect.TypeOf((*MockCoreWorker)(nil).IndexTezosTokenOwner), ctx, address, jobID)
 }
 
 // IndexToken mocks base method.

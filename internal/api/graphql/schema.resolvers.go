@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
+
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
@@ -544,7 +547,29 @@ func (r *queryResolver) IndexingJob(ctx context.Context, workflowID string) (*dt
 		return nil, apierrors.NewValidationError("workflowID is required")
 	}
 
-	return r.executor.GetAddressIndexingJob(ctx, workflowID)
+	// Auto-detect which optional fields are requested in the GraphQL query
+	opts := detectIndexingJobOptions(ctx)
+
+	return r.executor.GetAddressIndexingJob(ctx, workflowID, opts)
+}
+
+// detectIndexingJobOptions detects which optional fields are requested in the GraphQL query
+func detectIndexingJobOptions(ctx context.Context) executor.GetAddressIndexingJobOptions {
+	opts := executor.GetAddressIndexingJobOptions{}
+
+	// Collect all selected fields from the GraphQL query
+	fields := graphql.CollectFieldsCtx(ctx, nil)
+
+	for _, field := range fields {
+		switch field.Name {
+		case "total_tokens_indexed":
+			opts.IncludeTotalIndexed = true
+		case "total_tokens_viewable":
+			opts.IncludeTotalViewable = true
+		}
+	}
+
+	return opts
 }
 
 // ID is the resolver for the id field.

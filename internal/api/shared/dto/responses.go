@@ -43,16 +43,18 @@ type CreateWebhookClientResponse struct {
 
 // AddressIndexingJobResponse represents an address indexing job
 type AddressIndexingJobResponse struct {
-	WorkflowID      string     `json:"workflow_id"`
-	Address         string     `json:"address"`
-	Chain           string     `json:"chain"`
-	Status          string     `json:"status"`
-	TokensProcessed int        `json:"tokens_processed"`
-	CurrentMinBlock *uint64    `json:"current_min_block,omitempty"`
-	CurrentMaxBlock *uint64    `json:"current_max_block,omitempty"`
-	StartedAt       time.Time  `json:"started_at"`
-	PausedAt        *time.Time `json:"paused_at,omitempty"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	FailedAt        *time.Time `json:"failed_at,omitempty"`
-	CanceledAt      *time.Time `json:"canceled_at,omitempty"`
+	WorkflowID          string     `json:"workflow_id"`
+	Address             string     `json:"address"`
+	Chain               string     `json:"chain"`
+	Status              string     `json:"status"`
+	TokensProcessed     int        `json:"tokens_processed"`
+	TotalTokensIndexed  *int       `json:"total_tokens_indexed,omitempty"`  // Optional: total tokens owned by address (all tokens in DB)
+	TotalTokensViewable *int       `json:"total_tokens_viewable,omitempty"` // Optional: tokens with metadata or enrichment (ready for display)
+	CurrentMinBlock     *uint64    `json:"current_min_block,omitempty"`
+	CurrentMaxBlock     *uint64    `json:"current_max_block,omitempty"`
+	StartedAt           time.Time  `json:"started_at"`
+	PausedAt            *time.Time `json:"paused_at,omitempty"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+	FailedAt            *time.Time `json:"failed_at,omitempty"`
+	CanceledAt          *time.Time `json:"canceled_at,omitempty"`
 }

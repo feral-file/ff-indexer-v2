@@ -320,6 +320,8 @@ type IndexingJob {
   chain: String!
   status: String!
   tokens_processed: Int!
+  total_tokens_indexed: Int
+  total_tokens_viewable: Int
   current_min_block: Uint64
   current_max_block: Uint64
   started_at: Time!

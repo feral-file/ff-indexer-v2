@@ -198,7 +198,8 @@ func main() {
 		clockAdapter,
 		httpClient,
 		ioAdapter,
-		temporalActivityAdapter)
+		temporalActivityAdapter,
+		blacklistRegistry)
 
 	// Connect to Temporal with logger integration
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())

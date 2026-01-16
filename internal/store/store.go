@@ -195,6 +195,12 @@ type QuotaInfo struct {
 	QuotaExhausted     bool      // Whether quota is exhausted (remaining == 0)
 }
 
+// TokenCountsByAddress represents token count statistics for an address
+type TokenCountsByAddress struct {
+	TotalIndexed  int // Total tokens owned by the address (present in database)
+	TotalViewable int // Tokens with metadata OR enrichment source (ready for display)
+}
+
 // Store defines the interface for database operations
 //
 //go:generate mockgen -source=store.go -destination=../mocks/store.go -package=mocks -mock_names=Store=MockStore
@@ -365,4 +371,7 @@ type Store interface {
 	UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
 	// UpdateAddressIndexingJobProgress updates job progress metrics
 	UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error
+	// GetTokenCountsByAddress retrieves total token counts for an address
+	// Returns both total tokens indexed and total tokens viewable (with metadata or enrichment)
+	GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*TokenCountsByAddress, error)
 }
