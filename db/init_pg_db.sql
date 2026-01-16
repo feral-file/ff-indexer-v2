@@ -11,6 +11,7 @@ CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
 CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
+CREATE TYPE indexing_job_status AS ENUM ('running', 'paused', 'failed', 'completed', 'canceled');
 
 -- ============================================================================
 -- CORE TABLES
@@ -169,6 +170,12 @@ CREATE TABLE watched_addresses (
     watching       BOOLEAN     NOT NULL DEFAULT TRUE,
     last_queried_at TIMESTAMPTZ,          -- when API last queried this address
     last_successful_indexing_blk_range JSONB, -- {"eip155:1": {"min_block": 123, "max_block": 456}}
+    
+    -- Budgeted Indexing Mode fields
+    daily_token_quota INTEGER NOT NULL DEFAULT 1000,     -- Maximum tokens per 24-hour period
+    quota_reset_at TIMESTAMPTZ,                          -- When current 24-hour quota period ends (rolling window)
+    tokens_indexed_today INTEGER NOT NULL DEFAULT 0,     -- Number of tokens indexed in current quota period
+    
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (chain, address)
@@ -213,6 +220,33 @@ CREATE TABLE webhook_deliveries (
     response_status INTEGER,                  -- HTTP status code from webhook endpoint
     response_body TEXT,                       -- Response body (limited to 4KB)
     error_message TEXT,                       -- Error message if delivery failed
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Address Indexing Jobs table - Tracks address-level indexing job status
+CREATE TABLE address_indexing_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    address TEXT NOT NULL,
+    chain blockchain_chain NOT NULL,
+    status indexing_job_status NOT NULL,
+    
+    -- Orchestrator workflow references
+    workflow_id TEXT NOT NULL,
+    workflow_run_id TEXT,
+    
+    -- Progress tracking
+    tokens_processed INTEGER DEFAULT 0,
+    current_min_block BIGINT,
+    current_max_block BIGINT,
+    
+    -- Timing information
+    started_at TIMESTAMPTZ NOT NULL,
+    paused_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    failed_at TIMESTAMPTZ,
+    canceled_at TIMESTAMPTZ,
+    
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -292,6 +326,12 @@ CREATE INDEX idx_webhook_clients_active ON webhook_clients(is_active) WHERE is_a
 CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(delivery_status);
 CREATE INDEX idx_webhook_deliveries_event_id ON webhook_deliveries(event_id);
 CREATE INDEX idx_webhook_deliveries_client ON webhook_deliveries(client_id, created_at DESC);
+
+-- Address Indexing Jobs table indexes
+CREATE UNIQUE INDEX idx_address_indexing_job_workflow_id ON address_indexing_jobs(workflow_id) WHERE status IN ('running', 'paused');
+CREATE UNIQUE INDEX idx_address_indexing_jobs_address_chain_active ON address_indexing_jobs(address, chain) WHERE status IN ('running', 'paused');
+CREATE INDEX idx_address_indexing_jobs_address_chain_created ON address_indexing_jobs(address, chain, created_at DESC);
+CREATE INDEX idx_address_indexing_jobs_status_created ON address_indexing_jobs(status, created_at DESC);
 
 -- ============================================================================
 -- JSONB INDEXES FOR COMPLEX QUERIES
@@ -387,6 +427,11 @@ CREATE TRIGGER update_webhook_deliveries_updated_at
     BEFORE UPDATE ON webhook_deliveries
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to address_indexing_jobs
+CREATE TRIGGER update_address_indexing_jobs_updated_at
+    BEFORE UPDATE ON address_indexing_jobs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ============================================================================
 -- INITIAL DATA
 -- ============================================================================
@@ -416,3 +461,4 @@ COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';
 COMMENT ON TABLE webhook_clients IS 'Registered webhook clients for event notifications with HTTPS endpoints and event filtering';
 COMMENT ON TABLE webhook_deliveries IS 'Audit log of webhook delivery attempts with status tracking and response details';
+COMMENT ON TABLE address_indexing_jobs IS 'Tracks address-level indexing job status independent of Temporal workflows. Decouples job status from Temporal for easier querying via REST/GraphQL APIs.';

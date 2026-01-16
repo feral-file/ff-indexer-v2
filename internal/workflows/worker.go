@@ -3,6 +3,7 @@ package workflows
 import (
 	"go.temporal.io/sdk/workflow"
 
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
@@ -46,10 +47,12 @@ type WorkerCore interface {
 	IndexTokenOwner(ctx workflow.Context, address string) error
 
 	// IndexTezosTokenOwner indexes all tokens held by a Tezos address
-	IndexTezosTokenOwner(ctx workflow.Context, address string) error
+	// jobID is optional and used for job status tracking during quota pauses
+	IndexTezosTokenOwner(ctx workflow.Context, address string, jobID *string) error
 
 	// IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
-	IndexEthereumTokenOwner(ctx workflow.Context, address string) error
+	// jobID is optional and used for job status tracking during quota pauses
+	IndexEthereumTokenOwner(ctx workflow.Context, address string, jobID *string) error
 
 	// IndexTokenProvenances indexes all provenances (balances and events) for a token
 	IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error
@@ -72,20 +75,26 @@ type WorkerCoreConfig struct {
 	TezosTokenSweepStartBlock uint64
 	// MediaTaskQueue is the task queue for the media worker
 	MediaTaskQueue string
+	// BudgetedIndexingModeEnabled enables quota-based token indexing
+	BudgetedIndexingModeEnabled bool
+	// BudgetedIndexingDefaultDailyQuota is the default daily quota for budgeted indexing mode
+	BudgetedIndexingDefaultDailyQuota int
 }
 
 // workerCore is the concrete implementation of WorkerCore
 type workerCore struct {
-	config    WorkerCoreConfig
-	executor  Executor
-	blacklist registry.BlacklistRegistry
+	config           WorkerCoreConfig
+	executor         Executor
+	blacklist        registry.BlacklistRegistry
+	temporalWorkflow adapter.Workflow
 }
 
 // NewWorkerCore creates a new worker core instance
-func NewWorkerCore(executor Executor, config WorkerCoreConfig, blacklist registry.BlacklistRegistry) WorkerCore {
+func NewWorkerCore(executor Executor, config WorkerCoreConfig, blacklist registry.BlacklistRegistry, temporalWorkflow adapter.Workflow) WorkerCore {
 	return &workerCore{
-		executor:  executor,
-		config:    config,
-		blacklist: blacklist,
+		executor:         executor,
+		config:           config,
+		blacklist:        blacklist,
+		temporalWorkflow: temporalWorkflow,
 	}
 }

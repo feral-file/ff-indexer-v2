@@ -7,6 +7,7 @@ package mocks
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	gomock "github.com/golang/mock/gomock"
 
@@ -36,6 +37,20 @@ func NewMockStore(ctrl *gomock.Controller) *MockStore {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockStore) EXPECT() *MockStoreMockRecorder {
 	return m.recorder
+}
+
+// CreateAddressIndexingJob mocks base method.
+func (m *MockStore) CreateAddressIndexingJob(ctx context.Context, input store.CreateAddressIndexingJobInput) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateAddressIndexingJob", ctx, input)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateAddressIndexingJob indicates an expected call of CreateAddressIndexingJob.
+func (mr *MockStoreMockRecorder) CreateAddressIndexingJob(ctx, input interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateAddressIndexingJob", reflect.TypeOf((*MockStore)(nil).CreateAddressIndexingJob), ctx, input)
 }
 
 // CreateMediaAsset mocks base method.
@@ -125,17 +140,32 @@ func (mr *MockStoreMockRecorder) CreateWebhookDelivery(ctx, delivery interface{}
 }
 
 // EnsureWatchedAddressExists mocks base method.
-func (m *MockStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
+func (m *MockStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain)
+	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain, dailyQuota)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // EnsureWatchedAddressExists indicates an expected call of EnsureWatchedAddressExists.
-func (mr *MockStoreMockRecorder) EnsureWatchedAddressExists(ctx, address, chain interface{}) *gomock.Call {
+func (mr *MockStoreMockRecorder) EnsureWatchedAddressExists(ctx, address, chain, dailyQuota interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockStore)(nil).EnsureWatchedAddressExists), ctx, address, chain)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockStore)(nil).EnsureWatchedAddressExists), ctx, address, chain, dailyQuota)
+}
+
+// GetActiveIndexingJobForAddress mocks base method.
+func (m *MockStore) GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetActiveIndexingJobForAddress", ctx, address, chainID)
+	ret0, _ := ret[0].(*schema.AddressIndexingJob)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetActiveIndexingJobForAddress indicates an expected call of GetActiveIndexingJobForAddress.
+func (mr *MockStoreMockRecorder) GetActiveIndexingJobForAddress(ctx, address, chainID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveIndexingJobForAddress", reflect.TypeOf((*MockStore)(nil).GetActiveIndexingJobForAddress), ctx, address, chainID)
 }
 
 // GetActiveWebhookClientsByEventType mocks base method.
@@ -151,6 +181,21 @@ func (m *MockStore) GetActiveWebhookClientsByEventType(ctx context.Context, even
 func (mr *MockStoreMockRecorder) GetActiveWebhookClientsByEventType(ctx, eventType interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveWebhookClientsByEventType", reflect.TypeOf((*MockStore)(nil).GetActiveWebhookClientsByEventType), ctx, eventType)
+}
+
+// GetAddressIndexingJobByWorkflowID mocks base method.
+func (m *MockStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAddressIndexingJobByWorkflowID", ctx, workflowID)
+	ret0, _ := ret[0].(*schema.AddressIndexingJob)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAddressIndexingJobByWorkflowID indicates an expected call of GetAddressIndexingJobByWorkflowID.
+func (mr *MockStoreMockRecorder) GetAddressIndexingJobByWorkflowID(ctx, workflowID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJobByWorkflowID", reflect.TypeOf((*MockStore)(nil).GetAddressIndexingJobByWorkflowID), ctx, workflowID)
 }
 
 // GetAllKeyValuesByPrefix mocks base method.
@@ -350,6 +395,21 @@ func (mr *MockStoreMockRecorder) GetProvenanceEventByID(ctx, id interface{}) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetProvenanceEventByID", reflect.TypeOf((*MockStore)(nil).GetProvenanceEventByID), ctx, id)
 }
 
+// GetQuotaInfo mocks base method.
+func (m *MockStore) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetQuotaInfo", ctx, address, chain)
+	ret0, _ := ret[0].(*store.QuotaInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetQuotaInfo indicates an expected call of GetQuotaInfo.
+func (mr *MockStoreMockRecorder) GetQuotaInfo(ctx, address, chain interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaInfo", reflect.TypeOf((*MockStore)(nil).GetQuotaInfo), ctx, address, chain)
+}
+
 // GetTokenByID mocks base method.
 func (m *MockStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
 	m.ctrl.T.Helper()
@@ -393,6 +453,21 @@ func (m *MockStore) GetTokenCIDsByOwner(ctx context.Context, ownerAddress string
 func (mr *MockStoreMockRecorder) GetTokenCIDsByOwner(ctx, ownerAddress interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCIDsByOwner", reflect.TypeOf((*MockStore)(nil).GetTokenCIDsByOwner), ctx, ownerAddress)
+}
+
+// GetTokenCountsByAddress mocks base method.
+func (m *MockStore) GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*store.TokenCountsByAddress, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenCountsByAddress", ctx, address, chain)
+	ret0, _ := ret[0].(*store.TokenCountsByAddress)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenCountsByAddress indicates an expected call of GetTokenCountsByAddress.
+func (mr *MockStoreMockRecorder) GetTokenCountsByAddress(ctx, address, chain interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCountsByAddress", reflect.TypeOf((*MockStore)(nil).GetTokenCountsByAddress), ctx, address, chain)
 }
 
 // GetTokenMetadataByTokenCID mocks base method.
@@ -550,6 +625,20 @@ func (mr *MockStoreMockRecorder) GetWebhookClientByID(ctx, clientID interface{})
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWebhookClientByID", reflect.TypeOf((*MockStore)(nil).GetWebhookClientByID), ctx, clientID)
 }
 
+// IncrementTokensIndexed mocks base method.
+func (m *MockStore) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IncrementTokensIndexed", ctx, address, chain, count)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IncrementTokensIndexed indicates an expected call of IncrementTokensIndexed.
+func (mr *MockStoreMockRecorder) IncrementTokensIndexed(ctx, address, chain, count interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementTokensIndexed", reflect.TypeOf((*MockStore)(nil).IncrementTokensIndexed), ctx, address, chain, count)
+}
+
 // IsAnyAddressWatched mocks base method.
 func (m *MockStore) IsAnyAddressWatched(ctx context.Context, chain domain.Chain, addresses []string) (bool, error) {
 	m.ctrl.T.Helper()
@@ -591,6 +680,34 @@ func (m *MockStore) SetKeyValue(ctx context.Context, key, value string) error {
 func (mr *MockStoreMockRecorder) SetKeyValue(ctx, key, value interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetKeyValue", reflect.TypeOf((*MockStore)(nil).SetKeyValue), ctx, key, value)
+}
+
+// UpdateAddressIndexingJobProgress mocks base method.
+func (m *MockStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateAddressIndexingJobProgress", ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateAddressIndexingJobProgress indicates an expected call of UpdateAddressIndexingJobProgress.
+func (mr *MockStoreMockRecorder) UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAddressIndexingJobProgress", reflect.TypeOf((*MockStore)(nil).UpdateAddressIndexingJobProgress), ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+}
+
+// UpdateAddressIndexingJobStatus mocks base method.
+func (m *MockStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateAddressIndexingJobStatus", ctx, workflowID, status, timestamp)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateAddressIndexingJobStatus indicates an expected call of UpdateAddressIndexingJobStatus.
+func (mr *MockStoreMockRecorder) UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAddressIndexingJobStatus", reflect.TypeOf((*MockStore)(nil).UpdateAddressIndexingJobStatus), ctx, workflowID, status, timestamp)
 }
 
 // UpdateIndexingBlockRangeForAddress mocks base method.

@@ -10,7 +10,87 @@ import (
 
 	gomock "github.com/golang/mock/gomock"
 	activity "go.temporal.io/sdk/activity"
+	workflow "go.temporal.io/sdk/workflow"
 )
+
+// MockWorkflow is a mock of Workflow interface.
+type MockWorkflow struct {
+	ctrl     *gomock.Controller
+	recorder *MockWorkflowMockRecorder
+}
+
+// MockWorkflowMockRecorder is the mock recorder for MockWorkflow.
+type MockWorkflowMockRecorder struct {
+	mock *MockWorkflow
+}
+
+// NewMockWorkflow creates a new mock instance.
+func NewMockWorkflow(ctrl *gomock.Controller) *MockWorkflow {
+	mock := &MockWorkflow{ctrl: ctrl}
+	mock.recorder = &MockWorkflowMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockWorkflow) EXPECT() *MockWorkflowMockRecorder {
+	return m.recorder
+}
+
+// GetCurrentHistoryLength mocks base method.
+func (m *MockWorkflow) GetCurrentHistoryLength(ctx workflow.Context) int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCurrentHistoryLength", ctx)
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+// GetCurrentHistoryLength indicates an expected call of GetCurrentHistoryLength.
+func (mr *MockWorkflowMockRecorder) GetCurrentHistoryLength(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentHistoryLength", reflect.TypeOf((*MockWorkflow)(nil).GetCurrentHistoryLength), ctx)
+}
+
+// GetExecutionID mocks base method.
+func (m *MockWorkflow) GetExecutionID(ctx workflow.Context) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetExecutionID", ctx)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// GetExecutionID indicates an expected call of GetExecutionID.
+func (mr *MockWorkflowMockRecorder) GetExecutionID(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetExecutionID", reflect.TypeOf((*MockWorkflow)(nil).GetExecutionID), ctx)
+}
+
+// GetParentWorkflowID mocks base method.
+func (m *MockWorkflow) GetParentWorkflowID(ctx workflow.Context) *string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetParentWorkflowID", ctx)
+	ret0, _ := ret[0].(*string)
+	return ret0
+}
+
+// GetParentWorkflowID indicates an expected call of GetParentWorkflowID.
+func (mr *MockWorkflowMockRecorder) GetParentWorkflowID(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetParentWorkflowID", reflect.TypeOf((*MockWorkflow)(nil).GetParentWorkflowID), ctx)
+}
+
+// GetRunID mocks base method.
+func (m *MockWorkflow) GetRunID(ctx workflow.Context) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRunID", ctx)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// GetRunID indicates an expected call of GetRunID.
+func (mr *MockWorkflowMockRecorder) GetRunID(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRunID", reflect.TypeOf((*MockWorkflow)(nil).GetRunID), ctx)
+}
 
 // MockActivity is a mock of Activity interface.
 type MockActivity struct {

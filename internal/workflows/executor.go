@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
@@ -18,6 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -79,13 +81,23 @@ type Executor interface {
 	UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error
 
 	// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error
+	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error
 
 	// GetLatestEthereumBlock retrieves the latest block number from the Ethereum blockchain
 	GetLatestEthereumBlock(ctx context.Context) (uint64, error)
 
 	// GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT
 	GetLatestTezosBlock(ctx context.Context) (uint64, error)
+
+	// =============================================================================
+	// Budgeted Indexing Mode Quota Activities
+	// =============================================================================
+
+	// GetQuotaInfo retrieves quota information for an address (auto-resets if expired)
+	GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error)
+
+	// IncrementTokensIndexed increments the token counter after successful indexing
+	IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error
 
 	// =============================================================================
 	// Webhook Activities
@@ -102,6 +114,19 @@ type Executor interface {
 
 	// DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with signature
 	DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error)
+
+	// =============================================================================
+	// Address Indexing Job Activities
+	// =============================================================================
+
+	// CreateIndexingJob creates a new indexing job record (handles race conditions)
+	CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error
+
+	// UpdateIndexingJobStatus updates the job status with appropriate timestamp
+	UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
+
+	// UpdateIndexingJobProgress updates job progress metrics
+	UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error
 }
 
 // BlockRangeResult represents the result of getting an indexing block range
@@ -122,6 +147,7 @@ type executor struct {
 	httpClient       adapter.HTTPClient
 	io               adapter.IO
 	temporalActivity adapter.Activity
+	blacklist        registry.BlacklistRegistry
 }
 
 // NewExecutor creates a new executor instance
@@ -136,6 +162,7 @@ func NewExecutor(
 	httpClient adapter.HTTPClient,
 	io adapter.IO,
 	temporalActivity adapter.Activity,
+	blacklist registry.BlacklistRegistry,
 ) Executor {
 	return &executor{
 		store:            store,
@@ -148,6 +175,7 @@ func NewExecutor(
 		httpClient:       httpClient,
 		io:               io,
 		temporalActivity: temporalActivity,
+		blacklist:        blacklist,
 	}
 }
 
@@ -410,7 +438,7 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 		LatestJSON:      metadataJSON,
 		LatestHash:      &hashString,
 		EnrichmentLevel: schema.EnrichmentLevelNone,
-		LastRefreshedAt: &now,
+		LastRefreshedAt: now,
 		ImageURL:        &normalizedMetadata.Image,
 		AnimationURL:    &normalizedMetadata.Animation,
 		Name:            &normalizedMetadata.Name,
@@ -991,13 +1019,27 @@ func (e *executor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]d
 
 // GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
 // This is used to sweep tokens by block ranges for incremental indexing
+// Filters out blacklisted tokens before returning
 func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	blockchain := types.AddressToBlockchain(address)
 	if blockchain != domain.BlockchainEthereum {
 		return nil, fmt.Errorf("unsupported blockchain for address: %s", address)
 	}
 
-	return e.ethClient.GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock)
+	tokensWithBlocks, err := e.ethClient.GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter out blacklisted tokens
+	filtered := make([]domain.TokenWithBlock, 0, len(tokensWithBlocks))
+	for _, tokenWithBlock := range tokensWithBlocks {
+		if !e.blacklist.IsTokenCIDBlacklisted(tokenWithBlock.TokenCID) {
+			filtered = append(filtered, tokenWithBlock)
+		}
+	}
+
+	return filtered, nil
 }
 
 // IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID
@@ -1166,6 +1208,7 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 // GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs with block numbers for an account within a block range
 // Handles pagination automatically by fetching all results within the range
 // Returns tokens with their last interaction block number (lastLevel from TzKT)
+// Filters out blacklisted tokens before returning
 func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	var allTokensWithBlocks []domain.TokenWithBlock
 	limit := tezos.MAX_PAGE_SIZE
@@ -1188,10 +1231,14 @@ func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Contex
 				balance.Token.Contract.Address,
 				balance.Token.TokenID,
 			)
-			allTokensWithBlocks = append(allTokensWithBlocks, domain.TokenWithBlock{
-				TokenCID:    tokenCID,
-				BlockNumber: balance.LastLevel,
-			})
+
+			// Filter out blacklisted tokens
+			if !e.blacklist.IsTokenCIDBlacklisted(tokenCID) {
+				allTokensWithBlocks = append(allTokensWithBlocks, domain.TokenWithBlock{
+					TokenCID:    tokenCID,
+					BlockNumber: balance.LastLevel,
+				})
+			}
 		}
 
 		// If we got fewer results than the limit, we've reached the end
@@ -1223,7 +1270,23 @@ func (e *executor) GetLatestTezosBlock(ctx context.Context) (uint64, error) {
 	return latestBlock, nil
 }
 
-// GetIndexingBlockRangeForAddress retrieves the indexing block range for an address and chain
+// =============================================================================
+// Budgeted Indexing Mode Quota Activities
+// =============================================================================
+
+// GetQuotaInfo retrieves quota information for an address (auto-resets if expired)
+func (e *executor) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error) {
+	return e.store.GetQuotaInfo(ctx, address, chain)
+}
+
+// IncrementTokensIndexed increments the token counter after successful indexing
+func (e *executor) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+	return e.store.IncrementTokensIndexed(ctx, address, chain, count)
+}
+
+// =============================================================================
+// Webhook Activities
+// =============================================================================
 func (e *executor) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (*BlockRangeResult, error) {
 	minBlock, maxBlock, err := e.store.GetIndexingBlockRangeForAddress(ctx, address, chainID)
 	if err != nil {
@@ -1241,8 +1304,8 @@ func (e *executor) UpdateIndexingBlockRangeForAddress(ctx context.Context, addre
 }
 
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
-	return e.store.EnsureWatchedAddressExists(ctx, address, chain)
+func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
+	return e.store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 }
 
 // =============================================================================
@@ -1368,4 +1431,31 @@ func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.Webhoo
 	}
 
 	return webhook.DeliveryResult{Success: true, StatusCode: resp.StatusCode, Body: string(respBody)}, nil
+}
+
+// =============================================================================
+// Address Indexing Job Activities
+// =============================================================================
+
+// CreateIndexingJob creates a new indexing job record
+func (e *executor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error {
+	input := store.CreateAddressIndexingJobInput{
+		Address:       address,
+		Chain:         chain,
+		Status:        schema.IndexingJobStatusRunning, // Workflow is starting, set to running
+		WorkflowID:    workflowID,
+		WorkflowRunID: workflowRunID,
+	}
+
+	return e.store.CreateAddressIndexingJob(ctx, input)
+}
+
+// UpdateIndexingJobStatus updates the job status with appropriate timestamp
+func (e *executor) UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+	return e.store.UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp)
+}
+
+// UpdateIndexingJobProgress updates job progress metrics
+func (e *executor) UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+	return e.store.UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock)
 }

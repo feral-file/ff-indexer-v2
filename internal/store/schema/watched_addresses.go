@@ -52,6 +52,15 @@ type WatchedAddresses struct {
 	// LastSuccessfulIndexingBlkRange stores the last successful indexing block ranges per chain
 	// Format: {"eip155:1": {"min_block": 123, "max_block": 456}}
 	LastSuccessfulIndexingBlkRange *IndexingBlockRanges `gorm:"column:last_successful_indexing_blk_range;type:jsonb"`
+
+	// Budgeted Indexing Mode fields
+	// DailyTokenQuota is the maximum tokens allowed per 24-hour period
+	DailyTokenQuota int `gorm:"column:daily_token_quota;not null;default:1000"`
+	// QuotaResetAt is when the current 24-hour quota period ends (rolling window)
+	QuotaResetAt *time.Time `gorm:"column:quota_reset_at;type:timestamptz"`
+	// TokensIndexedToday is the number of tokens indexed in current quota period
+	TokensIndexedToday int `gorm:"column:tokens_indexed_today;not null;default:0"`
+
 	// CreatedAt is when this watch entry was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is when this watch entry was last modified

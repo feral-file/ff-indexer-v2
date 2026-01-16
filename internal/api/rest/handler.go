@@ -40,6 +40,10 @@ type Handler interface {
 	// POST /api/v1/tokens/owners/index
 	TriggerOwnerIndexing(c *gin.Context)
 
+	// TriggerAddressIndexing triggers indexing for tokens by owner addresses with job tracking (requires authentication)
+	// POST /api/v1/tokens/addresses/index
+	TriggerAddressIndexing(c *gin.Context)
+
 	// TriggerMetadataIndexing triggers metadata refresh for tokens by IDs or CIDs (open, no authentication required)
 	// POST /api/v1/tokens/metadata/index
 	TriggerMetadataIndexing(c *gin.Context)
@@ -51,6 +55,10 @@ type Handler interface {
 	// CreateWebhookClient creates a new webhook client (requires authentication via API key)
 	// POST /api/v1/webhooks/clients
 	CreateWebhookClient(c *gin.Context)
+
+	// GetAddressIndexingJob retrieves an indexing job by workflow ID
+	// GET /api/v1/indexing/jobs/:workflow_id
+	GetAddressIndexingJob(c *gin.Context)
 
 	// HealthCheck returns the health status of the API
 	// GET /health
@@ -250,11 +258,10 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 		return
 	}
 
-	// Call executor's TriggerTokenIndexing method with only token CIDs
+	// Call executor's TriggerTokenIndexingByCIDs method
 	response, err := h.executor.TriggerTokenIndexing(
 		c.Request.Context(),
 		req.TokenCIDs,
-		nil, // No addresses for this endpoint
 	)
 
 	if err != nil {
@@ -266,6 +273,7 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 }
 
 // TriggerOwnerIndexing triggers indexing for tokens by owner addresses (requires authentication)
+// POST /api/v1/tokens/owners/index
 func (h *handler) TriggerOwnerIndexing(c *gin.Context) {
 	var req dto.TriggerOwnerIndexingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -280,10 +288,39 @@ func (h *handler) TriggerOwnerIndexing(c *gin.Context) {
 		return
 	}
 
-	// Call executor's TriggerTokenIndexing method with only addresses
-	response, err := h.executor.TriggerTokenIndexing(
+	// Call executor's TriggerOwnerIndexing method (backward compatible - single workflow)
+	response, err := h.executor.TriggerOwnerIndexing(
 		c.Request.Context(),
-		nil, // No token CIDs for this endpoint
+		req.Addresses,
+	)
+
+	if err != nil {
+		respondInternalError(c, err, "Failed to trigger indexing")
+		return
+	}
+
+	c.JSON(http.StatusAccepted, response)
+}
+
+// TriggerAddressIndexing triggers indexing for tokens by owner addresses with job tracking
+// POST /api/v1/tokens/addresses/index
+func (h *handler) TriggerAddressIndexing(c *gin.Context) {
+	var req dto.TriggerOwnerIndexingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	// Validate request body
+	err := req.Validate()
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	// Call executor's TriggerAddressIndexing method (new enhanced version with job tracking)
+	response, err := h.executor.TriggerAddressIndexing(
+		c.Request.Context(),
 		req.Addresses,
 	)
 
@@ -384,6 +421,30 @@ func (h *handler) CreateWebhookClient(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, response)
+}
+
+// GetAddressIndexingJob retrieves an indexing job by workflow ID
+func (h *handler) GetAddressIndexingJob(c *gin.Context) {
+	workflowID := c.Param("workflow_id")
+	if workflowID == "" {
+		respondBadRequest(c, "workflow_id is required")
+		return
+	}
+
+	// Parse optional query parameters for including token counts
+	opts := executor.GetAddressIndexingJobOptions{
+		IncludeTotalIndexed:  c.Query("include_total_indexed") == "true",
+		IncludeTotalViewable: c.Query("include_total_viewable") == "true",
+	}
+
+	// Call executor's GetAddressIndexingJob method
+	job, err := h.executor.GetAddressIndexingJob(c.Request.Context(), workflowID, opts)
+	if err != nil {
+		respondInternalError(c, err, "Failed to get indexing job")
+		return
+	}
+
+	c.JSON(http.StatusOK, job)
 }
 
 // HealthCheck returns the health status of the API

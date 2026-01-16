@@ -16,7 +16,7 @@ DOCKER_COMPOSE := env -i \
 DOCKER_COMPOSE_FLAGS := 
 
 # Service names
-INFRA_SERVICES := postgres temporal-postgres temporal nats
+INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui nats
 EMITTER_SERVICES := ethereum-event-emitter tezos-event-emitter
 WORKER_SERVICES := worker-core worker-media
 APP_SERVICES := event-bridge api

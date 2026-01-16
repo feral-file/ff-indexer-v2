@@ -7,11 +7,13 @@ package mocks
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	gomock "github.com/golang/mock/gomock"
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
+	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
 	workflows "github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -53,6 +55,20 @@ func (m *MockCoreExecutor) CheckTokenExists(ctx context.Context, tokenCID domain
 func (mr *MockCoreExecutorMockRecorder) CheckTokenExists(ctx, tokenCID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckTokenExists", reflect.TypeOf((*MockCoreExecutor)(nil).CheckTokenExists), ctx, tokenCID)
+}
+
+// CreateIndexingJob mocks base method.
+func (m *MockCoreExecutor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateIndexingJob", ctx, address, chain, workflowID, workflowRunID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateIndexingJob indicates an expected call of CreateIndexingJob.
+func (mr *MockCoreExecutorMockRecorder) CreateIndexingJob(ctx, address, chain, workflowID, workflowRunID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIndexingJob", reflect.TypeOf((*MockCoreExecutor)(nil).CreateIndexingJob), ctx, address, chain, workflowID, workflowRunID)
 }
 
 // CreateMetadataUpdate mocks base method.
@@ -129,17 +145,17 @@ func (mr *MockCoreExecutorMockRecorder) EnhanceTokenMetadata(ctx, tokenCID, norm
 }
 
 // EnsureWatchedAddressExists mocks base method.
-func (m *MockCoreExecutor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
+func (m *MockCoreExecutor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain)
+	ret := m.ctrl.Call(m, "EnsureWatchedAddressExists", ctx, address, chain, dailyQuota)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // EnsureWatchedAddressExists indicates an expected call of EnsureWatchedAddressExists.
-func (mr *MockCoreExecutorMockRecorder) EnsureWatchedAddressExists(ctx, address, chain interface{}) *gomock.Call {
+func (mr *MockCoreExecutorMockRecorder) EnsureWatchedAddressExists(ctx, address, chain, dailyQuota interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockCoreExecutor)(nil).EnsureWatchedAddressExists), ctx, address, chain)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockCoreExecutor)(nil).EnsureWatchedAddressExists), ctx, address, chain, dailyQuota)
 }
 
 // FetchTokenMetadata mocks base method.
@@ -232,6 +248,21 @@ func (mr *MockCoreExecutorMockRecorder) GetLatestTezosBlock(ctx interface{}) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestTezosBlock", reflect.TypeOf((*MockCoreExecutor)(nil).GetLatestTezosBlock), ctx)
 }
 
+// GetQuotaInfo mocks base method.
+func (m *MockCoreExecutor) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetQuotaInfo", ctx, address, chain)
+	ret0, _ := ret[0].(*store.QuotaInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetQuotaInfo indicates an expected call of GetQuotaInfo.
+func (mr *MockCoreExecutorMockRecorder) GetQuotaInfo(ctx, address, chain interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaInfo", reflect.TypeOf((*MockCoreExecutor)(nil).GetQuotaInfo), ctx, address, chain)
+}
+
 // GetTezosTokenCIDsByAccountWithinBlockRange mocks base method.
 func (m *MockCoreExecutor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	m.ctrl.T.Helper()
@@ -260,6 +291,20 @@ func (m *MockCoreExecutor) GetWebhookClientByID(ctx context.Context, clientID st
 func (mr *MockCoreExecutorMockRecorder) GetWebhookClientByID(ctx, clientID interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWebhookClientByID", reflect.TypeOf((*MockCoreExecutor)(nil).GetWebhookClientByID), ctx, clientID)
+}
+
+// IncrementTokensIndexed mocks base method.
+func (m *MockCoreExecutor) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IncrementTokensIndexed", ctx, address, chain, count)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IncrementTokensIndexed indicates an expected call of IncrementTokensIndexed.
+func (mr *MockCoreExecutorMockRecorder) IncrementTokensIndexed(ctx, address, chain, count interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementTokensIndexed", reflect.TypeOf((*MockCoreExecutor)(nil).IncrementTokensIndexed), ctx, address, chain, count)
 }
 
 // IndexTokenWithFullProvenancesByTokenCID mocks base method.
@@ -316,6 +361,34 @@ func (m *MockCoreExecutor) UpdateIndexingBlockRangeForAddress(ctx context.Contex
 func (mr *MockCoreExecutorMockRecorder) UpdateIndexingBlockRangeForAddress(ctx, address, chainID, minBlock, maxBlock interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingBlockRangeForAddress", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingBlockRangeForAddress), ctx, address, chainID, minBlock, maxBlock)
+}
+
+// UpdateIndexingJobProgress mocks base method.
+func (m *MockCoreExecutor) UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateIndexingJobProgress", ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateIndexingJobProgress indicates an expected call of UpdateIndexingJobProgress.
+func (mr *MockCoreExecutorMockRecorder) UpdateIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingJobProgress", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingJobProgress), ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+}
+
+// UpdateIndexingJobStatus mocks base method.
+func (m *MockCoreExecutor) UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateIndexingJobStatus", ctx, workflowID, status, timestamp)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateIndexingJobStatus indicates an expected call of UpdateIndexingJobStatus.
+func (mr *MockCoreExecutorMockRecorder) UpdateIndexingJobStatus(ctx, workflowID, status, timestamp interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingJobStatus", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingJobStatus), ctx, workflowID, status, timestamp)
 }
 
 // UpdateTokenBurn mocks base method.

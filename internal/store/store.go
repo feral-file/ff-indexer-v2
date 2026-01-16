@@ -55,7 +55,7 @@ type CreateTokenMetadataInput struct {
 	LatestJSON      []byte
 	LatestHash      *string
 	EnrichmentLevel schema.EnrichmentLevel
-	LastRefreshedAt *time.Time
+	LastRefreshedAt time.Time
 	ImageURL        *string
 	AnimationURL    *string
 	Name            *string
@@ -177,6 +177,30 @@ type CreateWebhookClientInput struct {
 	RetryMaxAttempts int
 }
 
+// CreateAddressIndexingJobInput represents input for creating an address indexing job
+type CreateAddressIndexingJobInput struct {
+	Address       string
+	Chain         domain.Chain
+	Status        schema.IndexingJobStatus
+	WorkflowID    string
+	WorkflowRunID *string // Optional, may be nil initially
+}
+
+// QuotaInfo represents the current quota status for an address
+type QuotaInfo struct {
+	RemainingQuota     int       // Tokens remaining in current quota period
+	TotalQuota         int       // Total quota per 24-hour period
+	TokensIndexedToday int       // Tokens already indexed in current period
+	QuotaResetAt       time.Time // When the current quota period ends
+	QuotaExhausted     bool      // Whether quota is exhausted (remaining == 0)
+}
+
+// TokenCountsByAddress represents token count statistics for an address
+type TokenCountsByAddress struct {
+	TotalIndexed  int // Total tokens owned by the address (present in database)
+	TotalViewable int // Tokens with metadata OR enrichment source (ready for display)
+}
+
 // Store defines the interface for database operations
 //
 //go:generate mockgen -source=store.go -destination=../mocks/store.go -package=mocks -mock_names=Store=MockStore
@@ -292,7 +316,17 @@ type Store interface {
 	// UpdateIndexingBlockRangeForAddress updates the indexing block range for an address and chain
 	UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error
 	// EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error
+	EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error
+
+	// =============================================================================
+	// Budgeted Indexing Mode Quota Operations
+	// =============================================================================
+
+	// GetQuotaInfo retrieves quota information for an address
+	// Auto-resets quota if the 24-hour window has expired
+	GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*QuotaInfo, error)
+	// IncrementTokensIndexed increments the token counter after successful indexing
+	IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error
 
 	// =============================================================================
 	// Key-Value Store Operations
@@ -320,4 +354,24 @@ type Store interface {
 	CreateWebhookDelivery(ctx context.Context, delivery *schema.WebhookDelivery) error
 	// UpdateWebhookDeliveryStatus updates the status and result of a webhook delivery
 	UpdateWebhookDeliveryStatus(ctx context.Context, deliveryID uint64, status schema.WebhookDeliveryStatus, attempts int, responseStatus *int, responseBody, errorMessage string) error
+
+	// =============================================================================
+	// Address Indexing Job Operations
+	// =============================================================================
+
+	// CreateAddressIndexingJob creates a new address indexing job record
+	// This handles conflicts gracefully by doing nothing if the job already exists
+	CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error
+	// GetAddressIndexingJobByWorkflowID retrieves a job by workflow ID
+	GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error)
+	// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
+	// Returns nil if no active job is found (not an error)
+	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)
+	// UpdateAddressIndexingJobStatus updates job status with timestamp
+	UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
+	// UpdateAddressIndexingJobProgress updates job progress metrics
+	UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error
+	// GetTokenCountsByAddress retrieves total token counts for an address
+	// Returns both total tokens indexed and total tokens viewable (with metadata or enrichment)
+	GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*TokenCountsByAddress, error)
 }

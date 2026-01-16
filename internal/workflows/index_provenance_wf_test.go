@@ -22,11 +22,12 @@ type IndexProvenanceWorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
-	env        *testsuite.TestWorkflowEnvironment
-	ctrl       *gomock.Controller
-	executor   *mocks.MockCoreExecutor
-	blacklist  *mocks.MockBlacklistRegistry
-	workerCore workflows.WorkerCore
+	env              *testsuite.TestWorkflowEnvironment
+	ctrl             *gomock.Controller
+	executor         *mocks.MockCoreExecutor
+	blacklist        *mocks.MockBlacklistRegistry
+	temporalWorkflow *mocks.MockWorkflow
+	workerCore       workflows.WorkerCore
 }
 
 // SetupTest is called before each test
@@ -46,7 +47,7 @@ func (s *IndexProvenanceWorkflowTestSuite) SetupTest() {
 		EthereumTokenSweepStartBlock: 0,
 		TezosTokenSweepStartBlock:    0,
 		MediaTaskQueue:               "media-task-queue",
-	}, s.blacklist)
+	}, s.blacklist, s.temporalWorkflow)
 }
 
 // TearDownTest is called after each test

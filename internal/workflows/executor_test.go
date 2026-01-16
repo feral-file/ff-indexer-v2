@@ -41,6 +41,7 @@ type testExecutorMocks struct {
 	httpClient       *mocks.MockHTTPClient
 	io               *mocks.MockIO
 	temporalActivity *mocks.MockActivity
+	blacklist        *mocks.MockBlacklistRegistry
 	executor         workflows.Executor
 }
 
@@ -68,6 +69,7 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		httpClient:       mocks.NewMockHTTPClient(ctrl),
 		io:               mocks.NewMockIO(ctrl),
 		temporalActivity: mocks.NewMockActivity(ctrl),
+		blacklist:        mocks.NewMockBlacklistRegistry(ctrl),
 	}
 
 	tm.executor = workflows.NewExecutor(
@@ -81,6 +83,7 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		tm.httpClient,
 		tm.io,
 		tm.temporalActivity,
+		tm.blacklist,
 	)
 
 	return tm
@@ -1045,7 +1048,7 @@ func TestUpsertTokenMetadata_Success_NewMetadata(t *testing.T) {
 			assert.Equal(t, metadataJSON, input.LatestJSON)
 			assert.Equal(t, hex.EncodeToString(hash), *input.LatestHash)
 			assert.Equal(t, schema.EnrichmentLevelNone, input.EnrichmentLevel)
-			assert.Equal(t, &now, input.LastRefreshedAt)
+			assert.Equal(t, now, input.LastRefreshedAt)
 			assert.Equal(t, &normalizedMetadata.Image, input.ImageURL)
 			assert.Equal(t, &normalizedMetadata.Animation, input.AnimationURL)
 			assert.Equal(t, &normalizedMetadata.Name, input.Name)
@@ -1544,6 +1547,13 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_Success(t *testing.T) {
 		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock).
 		Return(expectedTokens, nil)
 
+	// Mock blacklist - none blacklisted
+	for _, token := range expectedTokens {
+		mocks.blacklist.EXPECT().
+			IsTokenCIDBlacklisted(token.TokenCID).
+			Return(false)
+	}
+
 	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock)
 
 	assert.NoError(t, err)
@@ -1586,6 +1596,106 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Equal(t, clientErr, err)
 	assert.Nil(t, result)
+}
+
+func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_BlacklistFiltering(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
+	fromBlock := uint64(100)
+	toBlock := uint64(200)
+
+	// Create tokens where some are blacklisted
+	allTokens := []domain.TokenWithBlock{
+		{
+			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1"),
+			BlockNumber: 150,
+		},
+		{
+			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED111111111111111111111111111", "1"), // Blacklisted
+			BlockNumber: 160,
+		},
+		{
+			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2"),
+			BlockNumber: 175,
+		},
+		{
+			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED222222222222222222222222222", "5"), // Blacklisted
+			BlockNumber: 180,
+		},
+	}
+
+	// Expected result: only non-blacklisted tokens
+	expectedTokens := []domain.TokenWithBlock{
+		allTokens[0], // Not blacklisted
+		allTokens[2], // Not blacklisted
+	}
+
+	// Mock ethClient to return all tokens
+	mocks.ethClient.EXPECT().
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock).
+		Return(allTokens, nil)
+
+	// Mock blacklist checks
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(allTokens[0].TokenCID).
+		Return(false)
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(allTokens[1].TokenCID).
+		Return(true) // Blacklisted
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(allTokens[2].TokenCID).
+		Return(false)
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(allTokens[3].TokenCID).
+		Return(true) // Blacklisted
+
+	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock)
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 2, "Should filter out 2 blacklisted tokens")
+	assert.Equal(t, expectedTokens, result, "Should only return non-blacklisted tokens")
+}
+
+func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_AllBlacklisted(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
+	fromBlock := uint64(100)
+	toBlock := uint64(200)
+
+	// All tokens are blacklisted
+	allTokens := []domain.TokenWithBlock{
+		{
+			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED111111111111111111111111111", "1"),
+			BlockNumber: 150,
+		},
+		{
+			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED222222222222222222222222222", "1"),
+			BlockNumber: 175,
+		},
+	}
+
+	// Mock ethClient to return all tokens
+	mocks.ethClient.EXPECT().
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock).
+		Return(allTokens, nil)
+
+	// Mock blacklist checks - all blacklisted
+	for _, token := range allTokens {
+		mocks.blacklist.EXPECT().
+			IsTokenCIDBlacklisted(token.TokenCID).
+			Return(true)
+	}
+
+	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock)
+
+	assert.NoError(t, err)
+	assert.Empty(t, result, "Should return empty list when all tokens are blacklisted")
 }
 
 // ====================================================================================
@@ -1643,6 +1753,12 @@ func TestGetTezosTokenCIDsByAccountWithinBlockRange_Success(t *testing.T) {
 		Return(domain.ChainTezosMainnet).
 		Times(pageSize)
 
+	// Mock blacklist checks for first page - all not blacklisted
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(gomock.Any()).
+		Return(false).
+		Times(pageSize)
+
 	// Mock second API call with offset = pageSize - returns partial page (< pageSize results)
 	// This triggers end of pagination since len(balances2) < pageSize
 	mocks.tzktClient.EXPECT().
@@ -1653,6 +1769,12 @@ func TestGetTezosTokenCIDsByAccountWithinBlockRange_Success(t *testing.T) {
 	mocks.tzktClient.EXPECT().
 		ChainID().
 		Return(domain.ChainTezosMainnet).
+		Times(len(balances2))
+
+	// Mock blacklist checks for second page - all not blacklisted
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(gomock.Any()).
+		Return(false).
 		Times(len(balances2))
 
 	result, err := mocks.executor.GetTezosTokenCIDsByAccountWithinBlockRange(ctx, address, fromBlock, toBlock)
@@ -1706,6 +1828,155 @@ func TestGetTezosTokenCIDsByAccountWithinBlockRange_ClientError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get token balances from TzKT")
 	assert.Nil(t, result)
+}
+
+func TestGetTezosTokenCIDsByAccountWithinBlockRange_BlacklistFiltering(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	address := "tz1owner123"
+	fromBlock := uint64(100)
+	toBlock := uint64(200)
+
+	// Create balances where some contracts are blacklisted
+	balances := []tezos.TzKTTokenBalance{
+		{
+			Token: tezos.TzKTTokenInfo{
+				Contract: tezos.TzKTContract{
+					Address: "KT1GoodContract1111111111111111111",
+				},
+				TokenID:  "1",
+				Standard: "fa2",
+			},
+			LastLevel: 150,
+		},
+		{
+			Token: tezos.TzKTTokenInfo{
+				Contract: tezos.TzKTContract{
+					Address: "KT1BlacklistedContract1111111111",
+				},
+				TokenID:  "1",
+				Standard: "fa2",
+			},
+			LastLevel: 160,
+		},
+		{
+			Token: tezos.TzKTTokenInfo{
+				Contract: tezos.TzKTContract{
+					Address: "KT1GoodContract1111111111111111111",
+				},
+				TokenID:  "2",
+				Standard: "fa2",
+			},
+			LastLevel: 175,
+		},
+		{
+			Token: tezos.TzKTTokenInfo{
+				Contract: tezos.TzKTContract{
+					Address: "KT1BlacklistedContract2222222222",
+				},
+				TokenID:  "5",
+				Standard: "fa2",
+			},
+			LastLevel: 180,
+		},
+	}
+
+	// Mock TzKT client
+	mocks.tzktClient.EXPECT().
+		GetTokenBalancesByAccountWithinBlockRange(ctx, address, fromBlock, toBlock, gomock.Any(), 0).
+		Return(balances, nil)
+
+	// Mock ChainID calls (one per token)
+	mocks.tzktClient.EXPECT().
+		ChainID().
+		Return(domain.ChainTezosMainnet).
+		Times(len(balances))
+
+	// Mock blacklist checks
+	// First token - not blacklisted
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(domain.NewTokenCID(domain.ChainTezosMainnet, "fa2", "KT1GoodContract1111111111111111111", "1")).
+		Return(false)
+
+	// Second token - blacklisted
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(domain.NewTokenCID(domain.ChainTezosMainnet, "fa2", "KT1BlacklistedContract1111111111", "1")).
+		Return(true)
+
+	// Third token - not blacklisted
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(domain.NewTokenCID(domain.ChainTezosMainnet, "fa2", "KT1GoodContract1111111111111111111", "2")).
+		Return(false)
+
+	// Fourth token - blacklisted
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(domain.NewTokenCID(domain.ChainTezosMainnet, "fa2", "KT1BlacklistedContract2222222222", "5")).
+		Return(true)
+
+	result, err := mocks.executor.GetTezosTokenCIDsByAccountWithinBlockRange(ctx, address, fromBlock, toBlock)
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 2, "Should filter out 2 blacklisted tokens")
+	assert.Equal(t, uint64(150), result[0].BlockNumber, "First non-blacklisted token")
+	assert.Equal(t, uint64(175), result[1].BlockNumber, "Second non-blacklisted token")
+}
+
+func TestGetTezosTokenCIDsByAccountWithinBlockRange_AllBlacklisted(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	address := "tz1owner123"
+	fromBlock := uint64(100)
+	toBlock := uint64(200)
+
+	// All contracts are blacklisted
+	balances := []tezos.TzKTTokenBalance{
+		{
+			Token: tezos.TzKTTokenInfo{
+				Contract: tezos.TzKTContract{
+					Address: "KT1BlacklistedContract1111111111",
+				},
+				TokenID:  "1",
+				Standard: "fa2",
+			},
+			LastLevel: 150,
+		},
+		{
+			Token: tezos.TzKTTokenInfo{
+				Contract: tezos.TzKTContract{
+					Address: "KT1BlacklistedContract2222222222",
+				},
+				TokenID:  "1",
+				Standard: "fa2",
+			},
+			LastLevel: 175,
+		},
+	}
+
+	// Mock TzKT client
+	mocks.tzktClient.EXPECT().
+		GetTokenBalancesByAccountWithinBlockRange(ctx, address, fromBlock, toBlock, gomock.Any(), 0).
+		Return(balances, nil)
+
+	// Mock ChainID calls
+	mocks.tzktClient.EXPECT().
+		ChainID().
+		Return(domain.ChainTezosMainnet).
+		Times(len(balances))
+
+	// Mock blacklist checks - all blacklisted
+	mocks.blacklist.EXPECT().
+		IsTokenCIDBlacklisted(gomock.Any()).
+		Return(true).
+		Times(len(balances))
+
+	result, err := mocks.executor.GetTezosTokenCIDsByAccountWithinBlockRange(ctx, address, fromBlock, toBlock)
+
+	assert.NoError(t, err)
+	assert.Empty(t, result, "Should return empty list when all tokens are blacklisted")
 }
 
 // ====================================================================================
@@ -1893,13 +2164,14 @@ func TestEnsureWatchedAddressExists_Success(t *testing.T) {
 	ctx := context.Background()
 	address := "0xowner123"
 	chain := domain.ChainEthereumMainnet
+	dailyQuota := 1000
 
 	// Mock store EnsureWatchedAddressExists
 	mocks.store.EXPECT().
-		EnsureWatchedAddressExists(ctx, address, chain).
+		EnsureWatchedAddressExists(ctx, address, chain, dailyQuota).
 		Return(nil)
 
-	err := mocks.executor.EnsureWatchedAddressExists(ctx, address, chain)
+	err := mocks.executor.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 
 	assert.NoError(t, err)
 }
@@ -1911,14 +2183,15 @@ func TestEnsureWatchedAddressExists_StoreError(t *testing.T) {
 	ctx := context.Background()
 	address := "0xowner123"
 	chain := domain.ChainEthereumMainnet
+	dailyQuota := 1000
 
 	// Mock store EnsureWatchedAddressExists to return error
 	storeErr := errors.New("database error")
 	mocks.store.EXPECT().
-		EnsureWatchedAddressExists(ctx, address, chain).
+		EnsureWatchedAddressExists(ctx, address, chain, dailyQuota).
 		Return(storeErr)
 
-	err := mocks.executor.EnsureWatchedAddressExists(ctx, address, chain)
+	err := mocks.executor.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 
 	assert.Error(t, err)
 }
@@ -3606,4 +3879,133 @@ func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, result.Success)
 	assert.Equal(t, 200, result.StatusCode)
+}
+
+// ====================================================================================
+// Address Indexing Job Activities Tests
+// ====================================================================================
+
+func TestCreateIndexingJob_Success(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	address := "0x1234567890123456789012345678901234567890"
+	chain := domain.ChainEthereumMainnet
+	workflowID := "test-workflow-123"
+	workflowRunID := "test-run-456"
+
+	expectedInput := store.CreateAddressIndexingJobInput{
+		Address:       address,
+		Chain:         chain,
+		Status:        schema.IndexingJobStatusRunning,
+		WorkflowID:    workflowID,
+		WorkflowRunID: &workflowRunID,
+	}
+
+	mocks.store.EXPECT().
+		CreateAddressIndexingJob(ctx, expectedInput).
+		Return(nil)
+
+	err := mocks.executor.CreateIndexingJob(ctx, address, chain, workflowID, &workflowRunID)
+
+	assert.NoError(t, err)
+}
+
+func TestCreateIndexingJob_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	address := "0x1234567890123456789012345678901234567890"
+	chain := domain.ChainEthereumMainnet
+	workflowID := "test-workflow-error"
+	storeError := errors.New("database connection failed")
+
+	mocks.store.EXPECT().
+		CreateAddressIndexingJob(ctx, gomock.Any()).
+		Return(storeError)
+
+	err := mocks.executor.CreateIndexingJob(ctx, address, chain, workflowID, nil)
+
+	assert.Error(t, err)
+	assert.Equal(t, storeError, err)
+}
+
+func TestUpdateIndexingJobStatus_ToCompleted(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	workflowID := "test-workflow-123"
+	status := schema.IndexingJobStatusCompleted
+	timestamp := time.Now().UTC()
+
+	mocks.store.EXPECT().
+		UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp).
+		Return(nil)
+
+	err := mocks.executor.UpdateIndexingJobStatus(ctx, workflowID, status, timestamp)
+
+	assert.NoError(t, err)
+}
+
+func TestUpdateIndexingJobStatus_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	workflowID := "test-workflow-error"
+	status := schema.IndexingJobStatusCompleted
+	timestamp := time.Now().UTC()
+	storeError := errors.New("database update failed")
+
+	mocks.store.EXPECT().
+		UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp).
+		Return(storeError)
+
+	err := mocks.executor.UpdateIndexingJobStatus(ctx, workflowID, status, timestamp)
+
+	assert.Error(t, err)
+	assert.Equal(t, storeError, err)
+}
+
+func TestUpdateIndexingJobProgress_Success(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	workflowID := "test-workflow-123"
+	tokensProcessed := 50
+	minBlock := uint64(1000)
+	maxBlock := uint64(2000)
+
+	mocks.store.EXPECT().
+		UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock).
+		Return(nil)
+
+	err := mocks.executor.UpdateIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+
+	assert.NoError(t, err)
+}
+
+func TestUpdateIndexingJobProgress_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	workflowID := "test-workflow-error"
+	tokensProcessed := 100
+	minBlock := uint64(7000)
+	maxBlock := uint64(8000)
+	storeError := errors.New("database update failed")
+
+	mocks.store.EXPECT().
+		UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock).
+		Return(storeError)
+
+	err := mocks.executor.UpdateIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+
+	assert.Error(t, err)
+	assert.Equal(t, storeError, err)
 }

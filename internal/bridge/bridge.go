@@ -256,7 +256,7 @@ func (b *bridge) handleMessage(ctx context.Context, msg adapter.Message) {
 // forwardToWorker forwards the event to appropriate worker based on event type
 func (b *bridge) forwardToWorker(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Route to appropriate worker method based on event type
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil)
+	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
 	var workflowFunc interface{}
 	switch event.EventType {
 	case domain.EventTypeMint:

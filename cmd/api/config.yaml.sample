@@ -52,3 +52,8 @@ temporal:
 
 blacklist_path: tools/registry/blacklist.json
 
+tezos:
+  chain_id: tezos:mainnet
+
+ethereum:
+  chain_id: eip155:1

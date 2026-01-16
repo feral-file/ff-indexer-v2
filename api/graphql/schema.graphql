@@ -167,6 +167,17 @@ type TriggerIndexingResult {
   run_id: String!
 }
 
+# Address indexing job information
+type AddressIndexingJobInfo {
+  address: String!
+  workflow_id: String!
+}
+
+# Result of triggering address indexing (returns array of jobs)
+type TriggerAddressIndexingResult {
+  jobs: [AddressIndexingJobInfo!]!
+}
+
 # Workflow status information
 type WorkflowStatus {
   workflow_id: String!
@@ -242,6 +253,12 @@ type Query {
     workflow_id: String!
     run_id: String!
   ): WorkflowStatus
+
+  # Get indexing job by workflow ID
+  # Equivalent to: GET /api/v1/indexing/jobs/:workflow_id
+  indexingJob(
+    workflow_id: String!
+  ): IndexingJob
 }
 
 # Root Mutation type
@@ -254,9 +271,18 @@ type Mutation {
 
   # Trigger indexing for tokens by owner addresses (requires authentication)
   # Equivalent to: POST /api/v1/tokens/owners/index
+  # Returns a single workflow ID for tracking (backward compatible)
+  # Deprecated: Use triggerAddressIndexing instead
   triggerOwnerIndexing(
     addresses: [String!]!
   ): TriggerIndexingResult
+
+  # Trigger indexing for tokens by owner addresses with job tracking (requires authentication)
+  # Equivalent to: POST /api/v1/tokens/addresses/index
+  # Returns an array of jobs with workflow IDs for tracking each address's indexing progress
+  triggerAddressIndexing(
+    addresses: [String!]!
+  ): TriggerAddressIndexingResult
 
   # Trigger metadata refresh for tokens by IDs or CIDs (open, no authentication required)
   # Equivalent to: POST /api/v1/tokens/metadata/index
@@ -287,4 +313,21 @@ type WebhookClientResult {
   updated_at: Time!
 }
 
+# Address indexing job
+type IndexingJob {
+  workflow_id: String!
+  address: String!
+  chain: String!
+  status: String!
+  tokens_processed: Int!
+  total_tokens_indexed: Int
+  total_tokens_viewable: Int
+  current_min_block: Uint64
+  current_max_block: Uint64
+  started_at: Time!
+  paused_at: Time
+  completed_at: Time
+  failed_at: Time
+  canceled_at: Time
+}
 

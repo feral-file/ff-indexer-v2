@@ -278,7 +278,7 @@ services:
       temporal:
         condition: service_healthy
     volumes:
-      - ../../cmd/worker-core/config.yaml.sample:/app/config.yaml:ro
+      - ../../cmd/worker-core/config.yaml:/app/config.yaml:ro
       - ../../tools/registry:/app/tools/registry:ro
     env_file:
       - ../../config/.env

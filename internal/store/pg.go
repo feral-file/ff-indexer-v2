@@ -658,7 +658,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			LatestJSON:      input.LatestJSON,
 			LatestHash:      input.LatestHash,
 			EnrichmentLevel: input.EnrichmentLevel,
-			LastRefreshedAt: input.LastRefreshedAt,
+			LastRefreshedAt: &input.LastRefreshedAt,
 			ImageURL:        input.ImageURL,
 			AnimationURL:    input.AnimationURL,
 			Name:            input.Name,
@@ -710,7 +710,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 		changeJournal := schema.ChangesJournal{
 			SubjectType: schema.SubjectTypeMetadata,
 			SubjectID:   fmt.Sprintf("%d", input.TokenID), // token_metadata.token_id (PK)
-			ChangedAt:   *input.LastRefreshedAt,
+			ChangedAt:   input.LastRefreshedAt,
 			Meta:        metaJSON,
 		}
 
@@ -1938,11 +1938,12 @@ func (s *pgStore) GetIndexingBlockRangeForAddress(ctx context.Context, address s
 }
 
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-func (s *pgStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain) error {
+func (s *pgStore) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
 	watchedAddr := schema.WatchedAddresses{
-		Chain:    chain,
-		Address:  address,
-		Watching: true,
+		Chain:           chain,
+		Address:         address,
+		Watching:        true,
+		DailyTokenQuota: dailyQuota,
 	}
 
 	// Use ON CONFLICT DO NOTHING to handle concurrent inserts
@@ -2311,4 +2312,244 @@ func (s *pgStore) UpdateWebhookDeliveryStatus(ctx context.Context, deliveryID ui
 	}
 
 	return nil
+}
+
+// =============================================================================
+// Budgeted Indexing Mode Quota Operations
+// =============================================================================
+
+// GetQuotaInfo retrieves quota information for an address
+// Auto-resets quota if the 24-hour window has expired
+func (s *pgStore) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*QuotaInfo, error) {
+	var watched schema.WatchedAddresses
+	err := s.db.WithContext(ctx).
+		Where("chain = ? AND address = ?", chain, address).
+		First(&watched).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get watched address: %w", err)
+	}
+
+	now := time.Now()
+	nextReset := now.Add(24 * time.Hour)
+
+	// AUTO-RESET: If quota period expired, reset it
+	if watched.QuotaResetAt != nil && now.After(*watched.QuotaResetAt) {
+		err = s.db.WithContext(ctx).
+			Model(&schema.WatchedAddresses{}).
+			Where("chain = ? AND address = ?", chain, address).
+			Updates(map[string]interface{}{
+				"tokens_indexed_today": 0,
+				"quota_reset_at":       nextReset,
+			}).Error
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to reset quota: %w", err)
+		}
+
+		// Return fresh quota
+		return &QuotaInfo{
+			RemainingQuota:     watched.DailyTokenQuota,
+			TotalQuota:         watched.DailyTokenQuota,
+			TokensIndexedToday: 0,
+			QuotaResetAt:       nextReset,
+			QuotaExhausted:     false,
+		}, nil
+	}
+
+	// If quota_reset_at is NULL (first time), set it
+	if watched.QuotaResetAt == nil {
+		err = s.db.WithContext(ctx).
+			Model(&schema.WatchedAddresses{}).
+			Where("chain = ? AND address = ?", chain, address).
+			Update("quota_reset_at", nextReset).Error
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize quota reset time: %w", err)
+		}
+
+		watched.QuotaResetAt = &nextReset
+	}
+
+	remaining := max(watched.DailyTokenQuota-watched.TokensIndexedToday, 0)
+
+	return &QuotaInfo{
+		RemainingQuota:     remaining,
+		TotalQuota:         watched.DailyTokenQuota,
+		TokensIndexedToday: watched.TokensIndexedToday,
+		QuotaResetAt:       *watched.QuotaResetAt,
+		QuotaExhausted:     remaining == 0,
+	}, nil
+}
+
+// IncrementTokensIndexed increments the token counter after successful indexing
+func (s *pgStore) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+	if count <= 0 {
+		return fmt.Errorf("count must be positive")
+	}
+
+	result := s.db.WithContext(ctx).
+		Model(&schema.WatchedAddresses{}).
+		Where("chain = ? AND address = ?", chain, address).
+		Update("tokens_indexed_today", gorm.Expr("tokens_indexed_today + ?", count))
+
+	if result.Error != nil {
+		return fmt.Errorf("failed to increment tokens indexed: %w", result.Error)
+	}
+
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("watched address not found: %s on chain %s", address, chain)
+	}
+
+	return nil
+}
+
+// =============================================================================
+// Address Indexing Job Operations
+// =============================================================================
+
+// CreateAddressIndexingJob creates a new address indexing job record
+func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error {
+	now := time.Now()
+	job := &schema.AddressIndexingJob{
+		Address:       input.Address,
+		Chain:         input.Chain,
+		Status:        input.Status,
+		WorkflowID:    input.WorkflowID,
+		WorkflowRunID: input.WorkflowRunID,
+		StartedAt:     now, // Always set started_at since we only track running workflows
+	}
+
+	// Set appropriate timestamp field based on status
+	switch input.Status {
+	case schema.IndexingJobStatusRunning:
+		// StartedAt already set above
+	case schema.IndexingJobStatusPaused:
+		job.PausedAt = &now
+	case schema.IndexingJobStatusCompleted:
+		job.CompletedAt = &now
+	case schema.IndexingJobStatusFailed:
+		job.FailedAt = &now
+	case schema.IndexingJobStatusCanceled:
+		job.CanceledAt = &now
+	}
+
+	err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(job).Error
+
+	if err != nil {
+		return fmt.Errorf("failed to create address indexing job: %w", err)
+	}
+
+	return nil
+}
+
+// GetAddressIndexingJobByWorkflowID retrieves a job by workflow ID
+func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error) {
+	var job schema.AddressIndexingJob
+
+	result := s.db.WithContext(ctx).Where("workflow_id = ?", workflowID).First(&job)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("job not found for workflow: %s", workflowID)
+		}
+		return nil, fmt.Errorf("failed to get job: %w", result.Error)
+	}
+
+	return &job, nil
+}
+
+// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
+// Returns nil if no active job is found (not an error)
+func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error) {
+	var job schema.AddressIndexingJob
+
+	result := s.db.WithContext(ctx).
+		Where("address = ? AND chain = ? AND status IN ?",
+			address,
+			chainID,
+			[]schema.IndexingJobStatus{
+				schema.IndexingJobStatusRunning,
+				schema.IndexingJobStatusPaused,
+						}).
+		Order("created_at DESC"). // Get the most recent one if multiple exist
+		First(&job)
+
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, nil // No active job found (not an error)
+		}
+		return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, result.Error)
+	}
+
+	return &job, nil
+}
+
+// UpdateAddressIndexingJobStatus updates job status with timestamp
+func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+	updates := make(map[string]interface{})
+	updates["status"] = status
+
+	// Set appropriate timestamp field based on status
+	// Note: started_at is set during creation, not during status updates
+	switch status {
+	case schema.IndexingJobStatusPaused:
+		updates["paused_at"] = timestamp
+	case schema.IndexingJobStatusCompleted:
+		updates["completed_at"] = timestamp
+	case schema.IndexingJobStatusFailed:
+		updates["failed_at"] = timestamp
+	case schema.IndexingJobStatusCanceled:
+		updates["canceled_at"] = timestamp
+	}
+
+	return s.db.WithContext(ctx).
+		Model(&schema.AddressIndexingJob{}).
+		Where("workflow_id = ?", workflowID).
+		Updates(updates).Error
+}
+
+// UpdateAddressIndexingJobProgress updates job progress metrics
+// Note: This method accumulates tokens_processed by incrementing the existing value
+func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+	updates := map[string]interface{}{
+		"tokens_processed":  gorm.Expr("tokens_processed + ?", tokensProcessed),
+		"current_min_block": minBlock,
+		"current_max_block": maxBlock,
+	}
+
+	return s.db.WithContext(ctx).
+		Model(&schema.AddressIndexingJob{}).
+		Where("workflow_id = ?", workflowID).
+		Updates(updates).Error
+}
+
+// GetTokenCountsByAddress retrieves total token counts for an address on a specific chain
+// Returns both total tokens indexed and total tokens viewable (with metadata or enrichment)
+func (s *pgStore) GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*TokenCountsByAddress, error) {
+	query := `
+		SELECT 
+			COUNT(*) as total_indexed,
+			COUNT(*) FILTER (
+				WHERE EXISTS (
+					SELECT 1 FROM token_metadata tm WHERE tm.token_id = tokens.id
+				) OR EXISTS (
+					SELECT 1 FROM enrichment_sources es WHERE es.token_id = tokens.id
+				)
+			) as total_viewable
+		FROM tokens
+		LEFT JOIN balances ON balances.token_id = tokens.id
+		WHERE 
+			tokens.chain = $1 
+			AND (balances.owner_address = $2 OR tokens.current_owner = $2)
+	`
+
+	var counts TokenCountsByAddress
+	err := s.db.WithContext(ctx).Raw(query, string(chain), address).Scan(&counts).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token counts for address %s on chain %s: %w", address, chain, err)
+	}
+
+	return &counts, nil
 }

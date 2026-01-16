@@ -95,6 +95,7 @@ func main() {
 	base64Adapter := adapter.NewBase64()
 	ioAdapter := adapter.NewIO()
 	temporalActivityAdapter := adapter.NewActivity()
+	temporalWorkflowAdapter := adapter.NewWorkflow()
 
 	// Initialize ethereum client
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
@@ -197,7 +198,8 @@ func main() {
 		clockAdapter,
 		httpClient,
 		ioAdapter,
-		temporalActivityAdapter)
+		temporalActivityAdapter,
+		blacklistRegistry)
 
 	// Connect to Temporal with logger integration
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
@@ -230,12 +232,14 @@ func main() {
 	// Create worker core instance
 	workerCore := workflows.NewWorkerCore(executor,
 		workflows.WorkerCoreConfig{
-			EthereumTokenSweepStartBlock: cfg.EthereumTokenSweepStartBlock,
-			TezosTokenSweepStartBlock:    cfg.TezosTokenSweepStartBlock,
-			EthereumChainID:              cfg.Ethereum.ChainID,
-			TezosChainID:                 cfg.Tezos.ChainID,
-			MediaTaskQueue:               cfg.Temporal.MediaTaskQueue,
-		}, blacklistRegistry)
+			EthereumTokenSweepStartBlock:      cfg.EthereumTokenSweepStartBlock,
+			TezosTokenSweepStartBlock:         cfg.TezosTokenSweepStartBlock,
+			EthereumChainID:                   cfg.Ethereum.ChainID,
+			TezosChainID:                      cfg.Tezos.ChainID,
+			MediaTaskQueue:                    cfg.Temporal.MediaTaskQueue,
+			BudgetedIndexingModeEnabled:       cfg.BudgetedIndexingEnabled,
+			BudgetedIndexingDefaultDailyQuota: cfg.BudgetedIndexingDefaultDailyQuota,
+		}, blacklistRegistry, temporalWorkflowAdapter)
 
 	// Register workflows
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMint)
@@ -280,6 +284,11 @@ func main() {
 	temporalWorker.RegisterActivity(executor.GetWebhookClientByID)
 	temporalWorker.RegisterActivity(executor.CreateWebhookDeliveryRecord)
 	temporalWorker.RegisterActivity(executor.DeliverWebhookHTTP)
+	temporalWorker.RegisterActivity(executor.GetQuotaInfo)
+	temporalWorker.RegisterActivity(executor.IncrementTokensIndexed)
+	temporalWorker.RegisterActivity(executor.CreateIndexingJob)
+	temporalWorker.RegisterActivity(executor.UpdateIndexingJobStatus)
+	temporalWorker.RegisterActivity(executor.UpdateIndexingJobProgress)
 	logger.InfoCtx(ctx, "Registered activities")
 
 	// Start worker

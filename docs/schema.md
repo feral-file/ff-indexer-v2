@@ -24,6 +24,9 @@ The database includes the following main tables:
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `changes_journal` - Change tracking for all entities
 - `watched_addresses` - Addresses being monitored for indexing
+- `address_indexing_jobs` - Address-level indexing job status tracking
+- `webhook_clients` - Registered webhook clients for event notifications
+- `webhook_deliveries` - Audit log of webhook delivery attempts
 - `key_value_store` - Configuration and state management
 
 ### tokens
@@ -231,6 +234,12 @@ Optional audit trail of blockchain events.
 - `idx_provenance_events_tx_hash` on (tx_hash) WHERE tx_hash IS NOT NULL
 - `idx_provenance_events_block_number` on (block_number) WHERE block_number IS NOT NULL
 - `idx_provenance_events_raw` GIN on (raw)
+- `idx_provenance_events_from_address` on (from_address)
+- `idx_provenance_events_to_address` on (to_address)
+- `idx_provenance_events_token_id_from_address_timestamp` on (token_id, from_address, timestamp)
+- `idx_provenance_events_token_id_to_address_timestamp` on (token_id, to_address, timestamp)
+- `idx_provenance_events_id_text` on (CAST(id AS TEXT))
+- `idx_provenance_events_raw_gin` GIN on (raw)
 
 **Unique Constraints**:
 - `(chain, tx_hash, token_id, from_address, to_address, event_type)` - Allows multiple events in the same transaction for different tokens or address pairs
@@ -258,6 +267,9 @@ Audit log for tracking all changes to indexed data.
 - `idx_changes_journal_subject` on (subject_type, subject_id)
 - `idx_changes_journal_changed_at` on (changed_at)
 - `idx_changes_journal_subject_type` on (subject_type)
+- `idx_changes_journal_subject_id` on (subject_id)
+- `idx_changes_journal_subject_type_changed_at_id` on (subject_type, changed_at, id)
+- `idx_changes_journal_changed_at_id` on (changed_at, id)
 - `idx_changes_journal_meta_gin` GIN on (meta)
 
 **Unique Constraints**:
@@ -268,7 +280,7 @@ Audit log for tracking all changes to indexed data.
 
 ### watched_addresses
 
-For owner-based indexing functionality.
+For owner-based indexing functionality with budgeted indexing mode support.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -276,7 +288,10 @@ For owner-based indexing functionality.
 | address | TEXT | Wallet address to watch |
 | watching | BOOLEAN | Whether currently watching |
 | last_queried_at | TIMESTAMPTZ | Last API query timestamp |
-| last_successful_indexing_blk_range | JSONB | Last successful block range per chain |
+| last_successful_indexing_blk_range | JSONB | Last successful block range per chain (format: `{"eip155:1": {"min_block": 123, "max_block": 456}}`) |
+| daily_token_quota | INTEGER | Maximum tokens per 24-hour period (default: 1000) |
+| quota_reset_at | TIMESTAMPTZ | When current 24-hour quota period ends (rolling window) |
+| tokens_indexed_today | INTEGER | Number of tokens indexed in current quota period (default: 0) |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
@@ -287,6 +302,8 @@ For owner-based indexing functionality.
 
 **Primary Key**:
 - `(chain, address)`
+
+**Note**: The budgeted indexing mode fields (`daily_token_quota`, `quota_reset_at`, `tokens_indexed_today`) are used to throttle token indexing to prevent excessive API calls or quota usage.
 
 ### key_value_store
 
@@ -308,6 +325,108 @@ Configuration and state management (cursors, version, etc.).
 - `tezos_mainnet_cursor` - Last processed level for Tezos mainnet
 - `tezos_ghostnet_cursor` - Last processed level for Tezos ghostnet
 - `indexer_version` - Current indexer version
+
+### address_indexing_jobs
+
+Tracks address-level indexing job status independent of Temporal workflows. Decouples job status from Temporal for easier querying via REST/GraphQL APIs.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Primary key |
+| address | TEXT | Blockchain address being indexed |
+| chain | blockchain_chain | Blockchain identifier |
+| status | indexing_job_status | Job status (running, paused, failed, completed, canceled) |
+| workflow_id | TEXT | Temporal workflow ID for correlation |
+| workflow_run_id | TEXT | Temporal run ID (may be null initially) |
+| tokens_processed | INTEGER | Number of tokens processed (default: 0) |
+| current_min_block | BIGINT | Current minimum block indexed |
+| current_max_block | BIGINT | Current maximum block indexed |
+| started_at | TIMESTAMPTZ | When the job started |
+| paused_at | TIMESTAMPTZ | When the job was paused (quota exhausted) |
+| completed_at | TIMESTAMPTZ | When the job completed successfully |
+| failed_at | TIMESTAMPTZ | When the job failed |
+| canceled_at | TIMESTAMPTZ | When the job was canceled |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Indexes**:
+- `idx_address_indexing_jobs_workflow_id` (unique) on (workflow_id) - For querying job by workflow ID
+- `idx_address_indexing_jobs_address_chain_created` on (address, chain, created_at DESC) - For querying jobs by address
+- `idx_address_indexing_jobs_status_created` on (status, created_at DESC) - For querying jobs by status
+
+**Use Cases**:
+- Query job status via REST API (`GET /api/v1/indexing/jobs/{workflow_id}`)
+- Query job status via GraphQL (`indexingJob(workflow_id)`)
+- Track progress of owner-based indexing workflows
+- Monitor paused jobs due to quota exhaustion
+- Identify failed indexing jobs for retry
+
+**Note**: This table is automatically updated by the `IndexTezosTokenOwner` and `IndexEthereumTokenOwner` workflows. Job records are created when the workflow starts (status: `running`) and updated as the workflow progresses.
+
+### webhook_clients
+
+Registered webhook clients for event notifications with HTTPS endpoints and event filtering.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Primary key |
+| client_id | VARCHAR(36) | UUID for client identification (unique) |
+| webhook_url | TEXT | Client's webhook endpoint (HTTPS only) |
+| webhook_secret | TEXT | HMAC signing secret for signature verification |
+| event_filters | JSONB | Array of event types or wildcard `["*"]` |
+| is_active | BOOLEAN | Whether client is active (default: true) |
+| retry_max_attempts | INTEGER | Maximum retry attempts (default: 5) |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Indexes**:
+- `idx_webhook_clients_active` on (is_active) WHERE is_active = true
+
+**Unique Constraints**:
+- `client_id` (unique)
+
+**Constraints**:
+- `webhook_url_http_https` CHECK constraint - Enforces HTTP/HTTPS URLs only
+
+**Use Cases**:
+- Register webhook clients to receive real-time event notifications
+- Filter events by type (indexing events, ownership events, or wildcard)
+- Configure retry behavior for failed deliveries
+
+### webhook_deliveries
+
+Audit log of webhook delivery attempts with status tracking and response details.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Primary key |
+| client_id | VARCHAR(36) | Foreign key to webhook_clients.client_id (CASCADE DELETE) |
+| event_id | VARCHAR(255) | Unique event ID (ULID for time-sortable) |
+| event_type | VARCHAR(50) | Event type (e.g., "token.indexing.queryable") |
+| payload | JSONB | Full event payload |
+| workflow_id | VARCHAR(255) | Temporal workflow ID for tracking |
+| workflow_run_id | VARCHAR(255) | Temporal run ID |
+| delivery_status | webhook_delivery_status | Delivery status (pending, success, failed) |
+| attempts | INTEGER | Number of delivery attempts (default: 0) |
+| last_attempt_at | TIMESTAMPTZ | Timestamp of last attempt |
+| response_status | INTEGER | HTTP status code from webhook endpoint |
+| response_body | TEXT | Response body (limited to 4KB) |
+| error_message | TEXT | Error message if delivery failed |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Indexes**:
+- `idx_webhook_deliveries_status` on (delivery_status)
+- `idx_webhook_deliveries_event_id` on (event_id)
+- `idx_webhook_deliveries_client` on (client_id, created_at DESC)
+
+**Relationships**:
+- Many-to-one with `webhook_clients` (CASCADE DELETE)
+
+**Use Cases**:
+- Audit webhook delivery attempts
+- Track failed deliveries for debugging
+- Monitor webhook client health and reliability
 
 ## ENUM Types
 
@@ -354,6 +473,18 @@ Configuration and state management (cursors, version, etc.).
 - `burn` - Token burn event
 - `metadata_update` - Metadata update event
 
+### indexing_job_status
+- `running` - Workflow is currently running
+- `paused` - Workflow paused (quota exhausted, will resume after quota reset)
+- `failed` - Workflow failed with an error
+- `completed` - Workflow completed successfully
+- `canceled` - Workflow was canceled
+
+### webhook_delivery_status
+- `pending` - Delivery pending or in progress
+- `success` - Successfully delivered to webhook endpoint
+- `failed` - Failed to deliver after all retry attempts
+
 ## Relationships
 
 ```
@@ -361,7 +492,11 @@ tokens (1)
   ├── (1) token_metadata
   ├── (N) balances
   ├── (N) provenance_events
+  ├── (N) token_ownership_periods
   └── (N) enrichment_sources
+
+webhook_clients (1)
+  └── (N) webhook_deliveries
 
 changes_journal (standalone, references other entities via subject_id)
 
@@ -370,6 +505,8 @@ media_assets (standalone)
 watched_addresses (standalone)
 
 key_value_store (standalone)
+
+address_indexing_jobs (standalone, references workflows via workflow_id)
 ```
 
 **Note on changes_journal relationships**: The changes_journal table doesn't have a direct foreign key to tokens. Instead, it uses a polymorphic pattern where the token association is resolved through `subject_id` based on `subject_type`:
@@ -391,6 +528,9 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_watched_addresses_updated_at`
 - `update_key_value_store_updated_at`
 - `update_token_ownership_periods_updated_at`
+- `update_webhook_clients_updated_at`
+- `update_webhook_deliveries_updated_at`
+- `update_address_indexing_jobs_updated_at`
 
 ## Migrations
 

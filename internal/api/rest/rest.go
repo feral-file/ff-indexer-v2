@@ -22,7 +22,11 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 		v1.POST("/tokens/index", handler.TriggerTokenIndexing)
 
 		// Token indexing by owner addresses (requires authentication)
+		// Deprecated: Use /tokens/addresses/index instead
 		v1.POST("/tokens/owners/index", middleware.Auth(authCfg), handler.TriggerOwnerIndexing)
+
+		// Token indexing by owner addresses with job tracking (requires authentication)
+		v1.POST("/tokens/addresses/index", middleware.Auth(authCfg), handler.TriggerAddressIndexing)
 
 		// Token metadata refresh by IDs or CIDs (open, no authentication required)
 		v1.POST("/tokens/metadata/index", handler.TriggerMetadataIndexing)
@@ -32,6 +36,9 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 
 		// Workflow endpoints (public read access)
 		v1.GET("/workflows/:workflow_id/runs/:run_id", handler.GetWorkflowStatus)
+
+		// Indexing job endpoints (public read access)
+		v1.GET("/indexing/jobs/:workflow_id", handler.GetAddressIndexingJob)
 
 		// Webhook endpoints (requires API key authentication only)
 		v1.POST("/webhooks/clients", middleware.APIKeyAuth(authCfg), handler.CreateWebhookClient)
