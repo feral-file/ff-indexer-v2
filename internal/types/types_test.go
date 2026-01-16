@@ -704,6 +704,155 @@ func TestGenerateSecureToken(t *testing.T) {
 	})
 }
 
+func TestIsIPFSGatewayURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectedOK  bool
+		expectedCID string
+	}{
+		{
+			name:        "valid IPFS gateway URL with CIDv0",
+			input:       "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:  true,
+			expectedCID: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+		},
+		{
+			name:        "valid IPFS gateway URL with CIDv0 and path",
+			input:       "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/image.png",
+			expectedOK:  true,
+			expectedCID: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/image.png",
+		},
+		{
+			name:        "valid IPFS gateway URL with CIDv1 bafybei",
+			input:       "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+			expectedOK:  true,
+			expectedCID: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+		},
+		{
+			name:        "valid IPFS gateway URL with CIDv1 bafkrei",
+			input:       "https://dweb.link/ipfs/bafkreih2grj7izfxk5wxgprr34ubv5bbmoq23ikqjsjvdvkfsldgddhgxe",
+			expectedOK:  true,
+			expectedCID: "bafkreih2grj7izfxk5wxgprr34ubv5bbmoq23ikqjsjvdvkfsldgddhgxe",
+		},
+		{
+			name:        "valid HTTP IPFS gateway URL",
+			input:       "http://localhost:8080/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:  true,
+			expectedCID: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+		},
+		{
+			name:        "valid IPFS gateway URL with subdomain",
+			input:       "https://api.example.com/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:  true,
+			expectedCID: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+		},
+		{
+			name:        "valid IPFS gateway URL with port",
+			input:       "https://localhost:8443/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:  true,
+			expectedCID: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+		},
+		{
+			name:       "invalid IPFS URI scheme",
+			input:      "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK: false,
+		},
+		{
+			name:       "invalid URL with /ipfs/ but invalid CID",
+			input:      "https://example.com/ipfs/invalid-cid",
+			expectedOK: false,
+		},
+		{
+			name:       "invalid URL with /ipfs/ but no CID",
+			input:      "https://example.com/ipfs/",
+			expectedOK: false,
+		},
+		{
+			name:       "invalid URL with /ipfs/ in path but not CID path",
+			input:      "https://example.com/my-ipfs-storage/file.txt",
+			expectedOK: false,
+		},
+		{
+			name:       "invalid URL without /ipfs/",
+			input:      "https://example.com/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK: false,
+		},
+		{
+			name:       "invalid empty string",
+			input:      "",
+			expectedOK: false,
+		},
+		{
+			name:       "invalid not a URL",
+			input:      "not-a-url",
+			expectedOK: false,
+		},
+		{
+			name:       "invalid CID too short",
+			input:      "https://ipfs.io/ipfs/Qm123",
+			expectedOK: false,
+		},
+		{
+			name:       "invalid CIDv0 with wrong characters",
+			input:      "https://ipfs.io/ipfs/Qm0OIl123456789012345678901234567890123456",
+			expectedOK: false,
+		},
+		{
+			name:       "URL contains ipfs but in domain name",
+			input:      "https://my-ipfs-gateway.com/files/document.pdf",
+			expectedOK: false,
+		},
+		{
+			name:       "URL with /ipfs/ in query parameter",
+			input:      "https://example.com/file?path=/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK: false,
+		},
+		{
+			name:        "valid CIDv1 longer format",
+			input:       "https://cloudflare-ipfs.com/ipfs/bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va",
+			expectedOK:  true,
+			expectedCID: "bafybeie5gq4jxvzmsym6hjlwxej4rwdoxt7wadqvmmwbqi7r27fclha2va",
+		},
+		{
+			name:        "valid CIDv1 with different prefix (bafkreif)",
+			input:       "https://ipfs.io/ipfs/bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e",
+			expectedOK:  true,
+			expectedCID: "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e",
+		},
+		{
+			name:        "invalid host name",
+			input:       "https://example@com/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:  false,
+			expectedCID: "",
+		},
+		{
+			name:        "invalid URL with whitespace",
+			input:       "https://example .com/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:  false,
+			expectedCID: "",
+		},
+		{
+			name:        "IP address as host name",
+			input:       "https://192.168.1.1/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:  true,
+			expectedCID: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, cid := IsIPFSGatewayURL(tt.input)
+			assert.Equal(t, tt.expectedOK, ok)
+			if tt.expectedOK {
+				assert.Equal(t, tt.expectedCID, cid)
+			} else {
+				assert.Empty(t, cid)
+			}
+		})
+	}
+}
+
 // Helper function for tests
 func stringPtr(s string) *string {
 	return &s

@@ -11,6 +11,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // Config holds configuration for the URI resolver
@@ -64,12 +65,9 @@ func (r *resolver) Resolve(ctx context.Context, uri string) (string, error) {
 	}
 
 	// Handle IPFS gateway URLs (e.g., https://example.com/ipfs/QmXxx)
-	if strings.Contains(uri, "/ipfs/") {
-		// Extract CID from URL
-		parts := strings.Split(uri, "/ipfs/")
-		if len(parts) >= 2 {
-			return r.resolveIPFS(ctx, parts[1])
-		}
+	// Use regex-based validation to ensure the URL contains a valid IPFS CID
+	if ok, cid := types.IsIPFSGatewayURL(uri); ok {
+		return r.resolveIPFS(ctx, cid)
 	}
 
 	// Regular HTTP(S) URL

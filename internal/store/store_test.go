@@ -15,15 +15,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
-// StoreTestSuite provides the interface for running store tests against different implementations
-type StoreTestSuite struct {
-	Store Store
-	// InitDB should be called before each test to initialize the database
-	InitDB func(t *testing.T) Store
-	// CleanupDB should be called after each test to clean up the database
-	CleanupDB func(t *testing.T)
-}
-
 // =============================================================================
 // Test Data Builders
 // =============================================================================
