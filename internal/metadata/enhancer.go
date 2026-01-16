@@ -319,14 +319,26 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 
 	// Set display_uri as image (this is the main display image)
 	if !types.StringNilOrEmpty(token.DisplayURI) {
-		url := domain.UriToGateway(*token.DisplayURI)
-		enhanced.ImageURL = &url
+		resolved, err := e.uriResolver.Resolve(ctx, *token.DisplayURI)
+		if nil != err {
+			logger.WarnCtx(ctx, "failed to resolve display URI, fallback to default gateway", zap.Error(err), zap.String("displayURI", *token.DisplayURI))
+			url := domain.UriToGateway(*token.DisplayURI)
+			enhanced.ImageURL = &url
+		} else {
+			enhanced.ImageURL = &resolved
+		}
 	}
 
 	// Set artifact_uri as animation_url (this is the actual artwork/animation)
 	if !types.StringNilOrEmpty(token.ArtifactURI) {
-		url := domain.UriToGateway(*token.ArtifactURI)
-		enhanced.AnimationURL = &url
+		resolved, err := e.uriResolver.Resolve(ctx, *token.ArtifactURI)
+		if nil != err {
+			logger.WarnCtx(ctx, "failed to resolve artifact URI, fallback to default gateway", zap.Error(err), zap.String("artifactURI", *token.ArtifactURI))
+			url := domain.UriToGateway(*token.ArtifactURI)
+			enhanced.AnimationURL = &url
+		} else {
+			enhanced.AnimationURL = &resolved
+		}
 	}
 
 	// Set mime type (objkt provides this, so no need to detect)

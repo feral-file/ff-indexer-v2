@@ -119,6 +119,16 @@ func TestResolver_Resolve_ERC721(t *testing.T) {
 			return nil
 		})
 
+	// Mock URI resolver for image and animation URLs (called during normalization)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://example.com/image.png").
+		Return("https://example.com/image.png", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://example.com/animation.mp4").
+		Return("https://example.com/animation.mp4", nil)
+
 	// Mock URI resolver and HTTP client for MIME type detection (animation URL only)
 	// When both animation_url and image are present, detectMimeType prioritizes animation_url
 	// and only uses it for MIME type detection, so image URL mocks are not needed
@@ -192,6 +202,12 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 			*result.(*map[string]interface{}) = metadata
 			return nil
 		})
+
+	// Mock URI resolver for image URL (called during normalization)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://example.com/image.png").
+		Return("https://example.com/image.png", nil)
 
 	// Mock URI resolver and HTTP client for MIME type detection (image URL)
 	mocks.uriResolver.
@@ -268,6 +284,16 @@ func TestResolver_Resolve_FA2(t *testing.T) {
 		EXPECT().
 		Unmarshal(gomock.Any(), gomock.Any()).
 		Return(nil)
+
+	// Mock URI resolver for displayUri and artifactUri (called during normalization)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmXXX").
+		Return("https://ipfs.io/ipfs/QmXXX", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmYYY").
+		Return("https://ipfs.io/ipfs/QmYYY", nil)
 
 	// Mock URI resolver and HTTP client for MIME type detection (artifactUri)
 	// Note: uriToGateway converts ipfs://QmYYY to https://ipfs.io/ipfs/QmYYY before detectMimeType is called
@@ -456,6 +482,12 @@ func TestResolver_Resolve_EthereumNoOriginationFound(t *testing.T) {
 			return nil
 		})
 
+	// Mock URI resolver for image URL (called during normalization)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://example.com/image.png").
+		Return("https://example.com/image.png", nil)
+
 	// Mock URI resolver and HTTP client for MIME type detection
 	mocks.uriResolver.
 		EXPECT().
@@ -521,6 +553,16 @@ func TestResolver_Resolve_TezosNoOriginationFound(t *testing.T) {
 		GetTokenMetadata(gomock.Any(), "KT1ABC", "1").
 		Return(metadata, nil)
 
+	// Mock URI resolver for displayUri and artifactUri (called during normalization)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmXXX").
+		Return("https://ipfs.io/ipfs/QmXXX", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmYYY").
+		Return("https://ipfs.io/ipfs/QmYYY", nil)
+
 	// Mock URI resolver and HTTP client for MIME type detection
 	mocks.uriResolver.
 		EXPECT().
@@ -565,4 +607,148 @@ func TestResolver_Resolve_TezosNoOriginationFound(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.Equal(t, "Test FA2", result.Name)
 	assert.Equal(t, "Test Description", result.Description)
+}
+
+func TestResolver_Resolve_URIResolverSuccess(t *testing.T) {
+	mocks := setupTestResolver(t)
+	defer tearDownTestResolver(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1TEST", "1")
+
+	// Mock TzKT GetTokenMetadata call
+	metadata := map[string]interface{}{
+		"name":        "Test Token",
+		"description": "Test Description",
+		"displayUri":  "ipfs://QmDisplay",
+		"artifactUri": "ipfs://QmArtifact",
+	}
+	mocks.tzClient.
+		EXPECT().
+		GetTokenMetadata(gomock.Any(), "KT1TEST", "1").
+		Return(metadata, nil)
+
+	// Mock URI resolver successfully resolving both URIs to working gateways
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmDisplay").
+		Return("https://working-gateway.io/ipfs/QmDisplay", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmArtifact").
+		Return("https://working-gateway.io/ipfs/QmArtifact", nil)
+
+	// Mock URI resolver and HTTP client for MIME type detection
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://working-gateway.io/ipfs/QmArtifact").
+		Return("https://working-gateway.io/ipfs/QmArtifact", nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://working-gateway.io/ipfs/QmArtifact").
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), "https://working-gateway.io/ipfs/QmArtifact", gomock.Any()).
+		Return([]byte("fake artifact data"), nil)
+
+	// Mock registry lookup for publisher resolution
+	mocks.registry.
+		EXPECT().
+		LookupPublisherByCollection(domain.ChainTezosMainnet, "KT1TEST").
+		Return(nil)
+	mocks.registry.
+		EXPECT().
+		GetMinBlock(domain.ChainTezosMainnet).
+		Return(uint64(0), false)
+
+	// Mock GetContractDeployer for Tezos
+	mocks.tzClient.
+		EXPECT().
+		GetContractDeployer(gomock.Any(), "KT1TEST").
+		Return("", nil)
+
+	// Mock store for caching deployer
+	mocks.store.EXPECT().
+		SetKeyValue(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	// Verify that resolved URLs from URI resolver are used
+	assert.Equal(t, "https://working-gateway.io/ipfs/QmDisplay", result.Image)
+	assert.Equal(t, "https://working-gateway.io/ipfs/QmArtifact", result.Animation)
+}
+
+func TestResolver_Resolve_URIResolverFallback(t *testing.T) {
+	mocks := setupTestResolver(t)
+	defer tearDownTestResolver(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1TEST", "1")
+
+	// Mock TzKT GetTokenMetadata call
+	metadata := map[string]interface{}{
+		"name":        "Test Token",
+		"description": "Test Description",
+		"displayUri":  "ipfs://QmDisplay",
+		"artifactUri": "ipfs://QmArtifact",
+	}
+	mocks.tzClient.
+		EXPECT().
+		GetTokenMetadata(gomock.Any(), "KT1TEST", "1").
+		Return(metadata, nil)
+
+	// Mock URI resolver failing to resolve both URIs
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmDisplay").
+		Return("", assert.AnError)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmArtifact").
+		Return("", assert.AnError)
+
+	// Mock URI resolver and HTTP client for MIME type detection (using fallback gateway URL)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmArtifact").
+		Return("https://ipfs.io/ipfs/QmArtifact", nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://ipfs.io/ipfs/QmArtifact").
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), "https://ipfs.io/ipfs/QmArtifact", gomock.Any()).
+		Return([]byte("fake artifact data"), nil)
+
+	// Mock registry lookup for publisher resolution
+	mocks.registry.
+		EXPECT().
+		LookupPublisherByCollection(domain.ChainTezosMainnet, "KT1TEST").
+		Return(nil)
+	mocks.registry.
+		EXPECT().
+		GetMinBlock(domain.ChainTezosMainnet).
+		Return(uint64(0), false)
+
+	// Mock GetContractDeployer for Tezos
+	mocks.tzClient.
+		EXPECT().
+		GetContractDeployer(gomock.Any(), "KT1TEST").
+		Return("", nil)
+
+	// Mock store for caching deployer
+	mocks.store.EXPECT().
+		SetKeyValue(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	// Verify that fallback default gateway URLs are used when URI resolver fails
+	assert.Equal(t, "https://ipfs.io/ipfs/QmDisplay", result.Image)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmArtifact", result.Animation)
 }

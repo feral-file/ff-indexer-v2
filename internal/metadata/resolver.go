@@ -199,10 +199,30 @@ func (r *resolver) normalizeTZIP21Metadata(ctx context.Context, tokenCID domain.
 	// Resolve the publisher from the token CID
 	publisher := r.resolvePublisher(ctx, tokenCID)
 
+	// Resolve the image and animation URLs
+	if displayUri != "" {
+		resolved, err := r.uriResolver.Resolve(ctx, displayUri)
+		if nil != err {
+			logger.WarnCtx(ctx, "failed to resolve display URI, fallback to default gateway", zap.Error(err), zap.String("displayUri", displayUri))
+			displayUri = domain.UriToGateway(displayUri)
+		} else {
+			displayUri = resolved
+		}
+	}
+	if artifactUri != "" {
+		resolved, err := r.uriResolver.Resolve(ctx, artifactUri)
+		if nil != err {
+			logger.WarnCtx(ctx, "failed to resolve artifact URI, fallback to default gateway", zap.Error(err), zap.String("artifactUri", artifactUri))
+			artifactUri = domain.UriToGateway(artifactUri)
+		} else {
+			artifactUri = resolved
+		}
+	}
+
 	normalizedMetadata := &NormalizedMetadata{
 		Raw:         metadata,
-		Image:       domain.UriToGateway(displayUri),
-		Animation:   domain.UriToGateway(artifactUri),
+		Image:       displayUri,
+		Animation:   artifactUri,
 		Name:        name,
 		Description: description,
 		Artists:     artists,
@@ -244,10 +264,30 @@ func (r *resolver) normalizeOpenSeaMetadataStandard(ctx context.Context, tokenCI
 	// Resolve the publisher from the token CID
 	publisher := r.resolvePublisher(ctx, tokenCID)
 
+	// Resolve the image and animation URLs
+	if image != "" {
+		resolved, err := r.uriResolver.Resolve(ctx, image)
+		if nil != err {
+			logger.WarnCtx(ctx, "failed to resolve image URI, fallback to default gateway", zap.Error(err), zap.String("image", image))
+			image = domain.UriToGateway(image)
+		} else {
+			image = resolved
+		}
+	}
+	if animationURL != "" {
+		resolved, err := r.uriResolver.Resolve(ctx, animationURL)
+		if nil != err {
+			logger.WarnCtx(ctx, "failed to resolve animation URL, fallback to default gateway", zap.Error(err), zap.String("animationURL", animationURL))
+			animationURL = domain.UriToGateway(animationURL)
+		} else {
+			animationURL = resolved
+		}
+	}
+
 	normalizedMetadata := &NormalizedMetadata{
 		Raw:         metadata,
-		Image:       domain.UriToGateway(image),
-		Animation:   domain.UriToGateway(animationURL),
+		Image:       image,
+		Animation:   animationURL,
 		Name:        name,
 		Description: description,
 		Artists:     artists,

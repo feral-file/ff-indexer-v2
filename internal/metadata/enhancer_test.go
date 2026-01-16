@@ -832,6 +832,16 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 		Marshal(objktToken).
 		Return(vendorJSON, nil)
 
+	// Mock URI resolver for display and artifact URIs (called during enhancement)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), displayURI).
+		Return("https://ipfs.io/ipfs/QmDisplay123", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), artifactURI).
+		Return("https://ipfs.io/ipfs/QmArtifact456", nil)
+
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
 	assert.NoError(t, err)
@@ -843,9 +853,9 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 	assert.NotNil(t, result.Description)
 	assert.Equal(t, "A generative artwork", *result.Description)
 	assert.NotNil(t, result.ImageURL)
-	assert.Equal(t, domain.UriToGateway(displayURI), *result.ImageURL)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmDisplay123", *result.ImageURL)
 	assert.NotNil(t, result.AnimationURL)
-	assert.Equal(t, domain.UriToGateway(artifactURI), *result.AnimationURL)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmArtifact456", *result.AnimationURL)
 	assert.NotNil(t, result.MimeType)
 	assert.Equal(t, mime, *result.MimeType)
 	assert.Len(t, result.Artists, 1)
@@ -1539,6 +1549,152 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 	assert.Equal(t, "Jane Artist", result.Artists[0].Name)
 	// DID should be empty since OpenSea doesn't provide artist address
 	assert.Empty(t, result.Artists[0].DID)
+}
+
+func TestEnhancer_Enhance_Objkt_URIResolverSuccess(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1TEST", "100")
+	publisherName := registry.PublisherNameFXHash
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Test Token",
+		},
+		Publisher: &metadata.Publisher{
+			Name: &publisherName,
+			URL:  stringPtr("https://fxhash.xyz"),
+		},
+	}
+
+	// Mock objkt client to return token with URIs
+	name := "Test Artwork"
+	displayURI := "ipfs://QmTest123"
+	artifactURI := "ipfs://QmTest456"
+
+	objktToken := &objkt.Token{
+		Name:        &name,
+		DisplayURI:  &displayURI,
+		ArtifactURI: &artifactURI,
+	}
+
+	mocks.objktClient.
+		EXPECT().
+		GetToken(gomock.Any(), "KT1TEST", "100").
+		Return(objktToken, nil)
+
+	// Mock JSON marshal
+	vendorJSON := []byte(`{"name":"Test Artwork"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(objktToken).
+		Return(vendorJSON, nil)
+
+	// Mock URI resolver successfully resolving URIs to working gateways
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), displayURI).
+		Return("https://best-gateway.io/ipfs/QmTest123", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), artifactURI).
+		Return("https://best-gateway.io/ipfs/QmTest456", nil)
+
+	// Mock URI resolver and HTTP client for MIME type detection
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://best-gateway.io/ipfs/QmTest456").
+		Return("https://best-gateway.io/ipfs/QmTest456", nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://best-gateway.io/ipfs/QmTest456").
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), "https://best-gateway.io/ipfs/QmTest456", gomock.Any()).
+		Return([]byte("fake data"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	// Verify that resolved URLs from URI resolver are used
+	assert.Equal(t, "https://best-gateway.io/ipfs/QmTest123", *result.ImageURL)
+	assert.Equal(t, "https://best-gateway.io/ipfs/QmTest456", *result.AnimationURL)
+}
+
+func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1TEST", "100")
+	publisherName := registry.PublisherNameFXHash
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{
+			"name": "Test Token",
+		},
+		Publisher: &metadata.Publisher{
+			Name: &publisherName,
+			URL:  stringPtr("https://fxhash.xyz"),
+		},
+	}
+
+	// Mock objkt client to return token with URIs
+	name := "Test Artwork"
+	displayURI := "ipfs://QmTest123"
+	artifactURI := "ipfs://QmTest456"
+
+	objktToken := &objkt.Token{
+		Name:        &name,
+		DisplayURI:  &displayURI,
+		ArtifactURI: &artifactURI,
+	}
+
+	mocks.objktClient.
+		EXPECT().
+		GetToken(gomock.Any(), "KT1TEST", "100").
+		Return(objktToken, nil)
+
+	// Mock JSON marshal
+	vendorJSON := []byte(`{"name":"Test Artwork"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(objktToken).
+		Return(vendorJSON, nil)
+
+	// Mock URI resolver failing to resolve URIs
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), displayURI).
+		Return("", assert.AnError)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), artifactURI).
+		Return("", assert.AnError)
+
+	// Mock URI resolver and HTTP client for MIME type detection (using fallback gateway)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmTest456").
+		Return("https://ipfs.io/ipfs/QmTest456", nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://ipfs.io/ipfs/QmTest456").
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialContent(gomock.Any(), "https://ipfs.io/ipfs/QmTest456", gomock.Any()).
+		Return([]byte("fake data"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	// Verify that fallback default gateway URLs are used when URI resolver fails
+	assert.Equal(t, "https://ipfs.io/ipfs/QmTest123", *result.ImageURL)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmTest456", *result.AnimationURL)
 }
 
 // Helper function to create string pointers
