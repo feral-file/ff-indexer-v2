@@ -15,6 +15,7 @@ event-bridge
 worker-core
 worker-media
 api
+sweeper
 bin/
 
 # Directories to keep
@@ -24,6 +25,7 @@ bin/
 !worker-core/
 !worker-media/
 !api/
+!sweeper/
 
 # Test binary, built with `go test -c`
 *.test

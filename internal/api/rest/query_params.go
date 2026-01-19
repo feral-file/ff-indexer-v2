@@ -53,13 +53,14 @@ func (p *GetTokenQueryParams) Validate() error {
 // ListTokensQueryParams holds query parameters for GET /tokens
 type ListTokensQueryParams struct {
 	// Filters
-	Owners            []string       `form:"owner"`
-	Chains            []domain.Chain `form:"chain"`
-	ContractAddresses []string       `form:"contract_address"`
-	TokenNumbers      []string       `form:"token_number"`
-	TokenIDs          []uint64       `form:"token_id"`
-	TokenCIDs         []string       `form:"token_cid"`
-	IncludeBroken     bool           `form:"include_broken,default=false"` // Include tokens with broken metadata (no metadata record)
+	Owners                []string       `form:"owner"`
+	Chains                []domain.Chain `form:"chain"`
+	ContractAddresses     []string       `form:"contract_address"`
+	TokenNumbers          []string       `form:"token_number"`
+	TokenIDs              []uint64       `form:"token_id"`
+	TokenCIDs             []string       `form:"token_cid"`
+	IncludeBrokenMetadata bool           `form:"include_broken_metadata,default=false"` // Include tokens with broken metadata (no metadata record)
+	IncludeBrokenMedia    bool           `form:"include_broken_media,default=false"`    // Include tokens with broken media URLs
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`

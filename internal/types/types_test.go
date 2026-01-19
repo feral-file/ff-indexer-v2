@@ -853,6 +853,242 @@ func TestIsIPFSGatewayURL(t *testing.T) {
 	}
 }
 
+func TestIsArweaveGatewayURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		expectedOK   bool
+		expectedTxID string
+	}{
+		{
+			name:         "valid Arweave gateway URL",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "valid Arweave gateway URL with ar-io",
+			input:        "https://ar-io.net/abc123def456ghi789jkl012mno345pqr678stuv012",
+			expectedOK:   true,
+			expectedTxID: "abc123def456ghi789jkl012mno345pqr678stuv012",
+		},
+		{
+			name:         "valid Arweave gateway URL with path",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0/metadata.json",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "valid HTTP Arweave gateway URL",
+			input:        "http://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "valid Arweave gateway URL with port",
+			input:        "https://arweave.net:8080/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "invalid Arweave URI scheme",
+			input:        "ar://sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid tx ID too short (42 chars)",
+			input:        "https://arweave.net/abc123def456ghi789jkl012mno345pqr678stu",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid tx ID too long (44 chars)",
+			input:        "https://arweave.net/abc123def456ghi789jkl012mno345pqr678stu90",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid URL with spaces",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmy JQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid empty string",
+			input:        "",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid URL without tx ID",
+			input:        "https://arweave.net/",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "valid with underscore in tx ID",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "valid with dash in tx ID",
+			input:        "https://arweave.net/abc123def456ghi789-kl012mno345pqr678stuv012",
+			expectedOK:   true,
+			expectedTxID: "abc123def456ghi789-kl012mno345pqr678stuv012",
+		},
+		{
+			name:         "invalid special character in tx ID",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmyJQC$9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "real Arweave tx ID example",
+			input:        "https://arweave.net/B844nmKXjiBE0eMgATBHlVIRU0Wex9Ke3dnd0jC00lQ",
+			expectedOK:   true,
+			expectedTxID: "B844nmKXjiBE0eMgATBHlVIRU0Wex9Ke3dnd0jC00lQ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, txID := IsArweaveGatewayURL(tt.input)
+			assert.Equal(t, tt.expectedOK, ok)
+			if tt.expectedOK {
+				assert.Equal(t, tt.expectedTxID, txID)
+			} else {
+				assert.Empty(t, txID)
+			}
+		})
+	}
+}
+
+func TestIsOnChFSGatewayURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		expectedOK   bool
+		expectedHash string
+	}{
+		{
+			name:         "valid OnChFS URL with fxhash2.xyz",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with fxhash.xyz",
+			input:        "https://gateway.fxhash.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with onchfs in hostname",
+			input:        "https://onchfs.example.com/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with uppercase hex",
+			input:        "https://onchfs.fxhash2.xyz/A1B2C3D4E5F67890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890",
+			expectedOK:   true,
+			expectedHash: "A1B2C3D4E5F67890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with mixed case hex",
+			input:        "https://onchfs.fxhash2.xyz/a1B2c3D4e5F67890AbCdEf1234567890abcdef1234567890ABCDEF1234567890",
+			expectedOK:   true,
+			expectedHash: "a1B2c3D4e5F67890AbCdEf1234567890abcdef1234567890ABCDEF1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with query params",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890?param=value",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with path",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890/metadata.json",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid HTTP OnChFS URL",
+			input:        "http://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with port",
+			input:        "https://onchfs.fxhash2.xyz:8080/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "invalid host without onchfs or fxhash",
+			input:        "https://example.com/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid hash too short (63 chars)",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid hash too long (65 chars)",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef12345678901",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid non-hex character in hash",
+			input:        "https://onchfs.fxhash2.xyz/g1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid IPFS CID instead of hash",
+			input:        "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid empty string",
+			input:        "",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid URL without hash",
+			input:        "https://onchfs.fxhash2.xyz/",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid onchfs URI scheme",
+			input:        "onchfs://a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, hash := IsOnChFSGatewayURL(tt.input)
+			assert.Equal(t, tt.expectedOK, ok)
+			if tt.expectedOK {
+				assert.Equal(t, tt.expectedHash, hash)
+			} else {
+				assert.Empty(t, hash)
+			}
+		})
+	}
+}
+
 // Helper function for tests
 func stringPtr(s string) *string {
 	return &s

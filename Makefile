@@ -1,6 +1,6 @@
-.PHONY: help build build-api build-ethereum-event-emitter build-tezos-event-emitter build-event-bridge build-worker-core build-worker-media \
+.PHONY: help build build-api build-ethereum-event-emitter build-tezos-event-emitter build-event-bridge build-worker-core build-worker-media build-sweeper \
 	up down start stop restart logs ps clean config \
-	up-infra up-emitters up-workers up-api \
+	up-infra up-emitters up-workers up-api up-sweeper \
 	build-all rebuild
 
 # Docker Compose settings
@@ -19,7 +19,7 @@ DOCKER_COMPOSE_FLAGS :=
 INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui nats
 EMITTER_SERVICES := ethereum-event-emitter tezos-event-emitter
 WORKER_SERVICES := worker-core worker-media
-APP_SERVICES := event-bridge api
+APP_SERVICES := event-bridge api sweeper
 ALL_APP_SERVICES := $(EMITTER_SERVICES) $(WORKER_SERVICES) $(APP_SERVICES)
 
 # Colors for output
@@ -46,6 +46,7 @@ build-all: ## Build all application services in sequence
 	@$(MAKE) build-worker-core
 	@$(MAKE) build-worker-media
 	@$(MAKE) build-api
+	@$(MAKE) build-sweeper
 	@echo "$(COLOR_GREEN)✓ All services built successfully$(COLOR_RESET)"
 
 build: build-all ## Alias for build-all
@@ -73,6 +74,10 @@ build-worker-core: ## Build worker-core service
 build-worker-media: ## Build worker-media service
 	@echo "$(COLOR_YELLOW)Building worker-media...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) build worker-media
+
+build-sweeper: ## Build sweeper service
+	@echo "$(COLOR_YELLOW)Building sweeper...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) build sweeper
 
 rebuild: ## Rebuild all services (no cache)
 	@echo "$(COLOR_GREEN)Rebuilding all services (no cache)...$(COLOR_RESET)"
@@ -117,6 +122,12 @@ up-bridge: up-infra up-emitters ## Start event bridge service (requires infrastr
 	@echo "$(COLOR_GREEN)✓ Event bridge service started$(COLOR_RESET)"
 	@$(MAKE) ps
 
+up-sweeper: up-infra ## Start sweeper service (requires infrastructure)
+	@echo "$(COLOR_GREEN)Starting sweeper service...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) up -d sweeper
+	@echo "$(COLOR_GREEN)✓ Sweeper service started$(COLOR_RESET)"
+	@$(MAKE) ps
+
 start: up ## Alias for up
 
 run: build-all up ## Build and start all services
@@ -143,6 +154,10 @@ down-bridge: ## Stop and remove event bridge service
 	@echo "$(COLOR_YELLOW)Stopping event bridge service...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) down event-bridge
 
+down-sweeper: ## Stop and remove sweeper service
+	@echo "$(COLOR_YELLOW)Stopping sweeper service...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) down sweeper
+
 down-infra: ## Stop and remove infrastructure services
 	@echo "$(COLOR_YELLOW)Stopping infrastructure services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) down $(INFRA_SERVICES)
@@ -167,6 +182,10 @@ stop-bridge: ## Stop event bridge service
 	@echo "$(COLOR_YELLOW)Stopping event bridge service...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) stop event-bridge
 
+stop-sweeper: ## Stop sweeper service
+	@echo "$(COLOR_YELLOW)Stopping sweeper service...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) stop sweeper
+
 stop-infra: ## Stop infrastructure services
 	@echo "$(COLOR_YELLOW)Stopping infrastructure services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) stop $(INFRA_SERVICES)
@@ -186,6 +205,9 @@ restart-emitters: ## Restart event emitters
 
 restart-bridge: ## Restart event bridge service
 	@$(DOCKER_COMPOSE) restart event-bridge
+
+restart-sweeper: ## Restart sweeper service
+	@$(DOCKER_COMPOSE) restart sweeper
 
 restart-infra: ## Restart infrastructure services
 	@$(DOCKER_COMPOSE) restart $(INFRA_SERVICES)
@@ -233,6 +255,9 @@ shell-tezos-event-emitter: ## Open shell in tezos-event-emitter container
 shell-event-bridge: ## Open shell in event-bridge container
 	@$(DOCKER_COMPOSE) exec event-bridge sh
 
+shell-sweeper: ## Open shell in sweeper container
+	@$(DOCKER_COMPOSE) exec sweeper sh
+
 config: ## Validate and view docker-compose configuration
 	@$(DOCKER_COMPOSE) config
 
@@ -253,6 +278,9 @@ env-tezos-event-emitter: ## Show environment variables for tezos-event-emitter s
 
 env-event-bridge: ## Show environment variables for event-bridge service
 	@$(DOCKER_COMPOSE) exec event-bridge env | grep FF_INDEXER | sort
+
+env-sweeper: ## Show environment variables for sweeper service
+	@$(DOCKER_COMPOSE) exec sweeper env | grep FF_INDEXER | sort
 
 ##@ Cleanup Commands
 

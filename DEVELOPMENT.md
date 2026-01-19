@@ -62,6 +62,7 @@ cp cmd/worker-media/config.yaml.sample cmd/worker-media/config.yaml
 cp cmd/event-bridge/config.yaml.sample cmd/event-bridge/config.yaml
 cp cmd/ethereum-event-emitter/config.yaml.sample cmd/ethereum-event-emitter/config.yaml
 cp cmd/tezos-event-emitter/config.yaml.sample cmd/tezos-event-emitter/config.yaml
+cp cmd/sweeper/config.yaml.sample cmd/sweeper/config.yaml
 
 # Edit config files with your settings
 ```
@@ -170,6 +171,13 @@ cd cmd/api
 go run main.go
 ```
 API available at: http://localhost:8081
+
+### Sweeper
+```bash
+cd cmd/sweeper
+go run main.go
+```
+Continuously checks media URL health and updates database
 
 ## Database Setup
 

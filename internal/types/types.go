@@ -136,3 +136,46 @@ func IsIPFSGatewayURL(s string) (bool, string) {
 
 	return false, ""
 }
+
+// IsArweaveGatewayURL checks if a string is a valid Arweave gateway URL
+// Returns: (isValid, txID) where txID is the transaction ID
+// Example: https://arweave.net/abc123 -> (true, "abc123")
+func IsArweaveGatewayURL(s string) (bool, string) {
+	// Regex pattern to match Arweave gateway URLs
+	// - Protocol: http:// or https://
+	// - Host: valid hostname
+	// - Path: /{txID} where txID is 43 characters of base64url
+	pattern := `^https?://[a-zA-Z0-9._-]+(?::[0-9]+)?/([A-Za-z0-9_-]{43})(?:/.*)?$`
+	re := regexp.MustCompile(pattern)
+
+	matches := re.FindStringSubmatch(s)
+	if len(matches) >= 2 {
+		return true, matches[1]
+	}
+
+	return false, ""
+}
+
+// IsOnChFSGatewayURL checks if a string is a valid OnChFS gateway URL
+// OnChFS uses Keccak-256 hashes which are 64 hex characters long
+// Returns: (isValid, hash) where hash is the Keccak-256 hash with optional path/query
+// Examples:
+//   - https://onchfs.fxhash2.xyz/0123456789abcdef... (64 hex chars)
+//   - https://gateway.fxhash.xyz/0123456789abcdef...
+func IsOnChFSGatewayURL(s string) (bool, string) {
+	// Match URLs with hosts containing onchfs, fxhash.xyz, or fxhash2.xyz
+	// followed by a Keccak-256 hash (64 hex characters) with optional path/query
+	// Pattern breakdown:
+	// - Protocol: http:// or https://
+	// - Host: must contain "onchfs" OR "fxhash.xyz" OR "fxhash2.xyz"
+	// - Path: /[64 hex chars] followed by optional path or query params
+	pattern := `^https?://[a-zA-Z0-9._-]*(?:onchfs|fxhash2?\.xyz)[a-zA-Z0-9._-]*(?::[0-9]+)?/([0-9a-fA-F]{64})(?:[/?].*)?$`
+	re := regexp.MustCompile(pattern)
+
+	matches := re.FindStringSubmatch(s)
+	if len(matches) >= 2 {
+		return true, matches[1]
+	}
+
+	return false, ""
+}

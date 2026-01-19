@@ -98,6 +98,13 @@ type CreateMetadataUpdateInput struct {
 	ProvenanceEvent CreateProvenanceEventInput
 }
 
+// TokenViewabilityInfo represents a token's viewability status for a specific media URL
+type TokenViewabilityInfo struct {
+	TokenID    uint64 `gorm:"column:token_id"`    // Internal token ID
+	TokenCID   string `gorm:"column:token_cid"`   // Canonical token identifier
+	IsViewable bool   `gorm:"column:is_viewable"` // true if token has at least one healthy media URL
+}
+
 // UpdateTokenTransferInput represents the input for updating a token transfer (assumes token exists)
 type UpdateTokenTransferInput struct {
 	TokenCID              string
@@ -125,15 +132,16 @@ type UpsertTokenBalanceForOwnerInput struct {
 
 // TokenQueryFilter represents filters for token queries
 type TokenQueryFilter struct {
-	Owners            []string
-	Chains            []domain.Chain
-	ContractAddresses []string
-	TokenNumbers      []string
-	TokenIDs          []uint64
-	TokenCIDs         []string
-	IncludeBroken     bool // Include tokens with broken metadata (missing both metadata and enrichment)
-	Limit             int
-	Offset            uint64 // Offset for pagination
+	Owners             []string
+	Chains             []domain.Chain
+	ContractAddresses  []string
+	TokenNumbers       []string
+	TokenIDs           []uint64
+	TokenCIDs          []string
+	IncludeBroken      bool // Include tokens with broken metadata (missing both metadata and enrichment)
+	IncludeBrokenMedia bool // Include tokens with broken media (inaccessible URLs)
+	Limit              int
+	Offset             uint64 // Offset for pagination
 }
 
 // ChangesQueryFilter represents filters for changes queries
@@ -266,6 +274,19 @@ type Store interface {
 	GetEnrichmentSourceByTokenCID(ctx context.Context, tokenCID string) (*schema.EnrichmentSource, error)
 	// UpsertEnrichmentSource creates or updates an enrichment source
 	UpsertEnrichmentSource(ctx context.Context, input CreateEnrichmentSourceInput) error
+
+	// =============================================================================
+	// Token Media Health Operations
+	// =============================================================================
+
+	// GetMediaURLsNeedingCheck returns distinct URLs that need health checking
+	GetMediaURLsNeedingCheck(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error)
+	// GetTokensViewabilityByMediaURL returns all tokens that use a specific URL along with their viewability status
+	GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]TokenViewabilityInfo, error)
+	// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
+	UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error
+	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
+	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error
 
 	// =============================================================================
 	// Token Ownership & Balances

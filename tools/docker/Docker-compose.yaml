@@ -278,7 +278,7 @@ services:
       temporal:
         condition: service_healthy
     volumes:
-      - ../../cmd/worker-core/config.yaml:/app/config.yaml:ro
+      - ../../cmd/worker-core/config.yaml.sample:/app/config.yaml:ro
       - ../../tools/registry:/app/tools/registry:ro
     env_file:
       - ../../config/.env
@@ -373,6 +373,39 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Media Health Sweeper
+  sweeper:
+    build:
+      context: ../..
+      dockerfile: tools/docker/Dockerfile-sweeper
+    image: ff-indexer-sweeper:latest
+    container_name: ff-indexer-sweeper
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../../cmd/sweeper/config.yaml.sample:/app/config.yaml:ro
+    env_file:
+      - ../../config/.env
+      - ../../config/.env.local
+    environment:
+      # Docker-specific overrides
+      - FF_INDEXER_DATABASE_HOST=postgres
+    networks:
+      - ff-indexer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "sweeper"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     logging:
       driver: "json-file"
       options:

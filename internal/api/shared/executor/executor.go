@@ -32,7 +32,7 @@ type Executor interface {
 	GetToken(ctx context.Context, tokenCID string, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeBroken *bool, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeBroken *bool, includeBrokenMedia *bool, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 
 	// GetChanges retrieves changes with optional filters and expansions
 	// Returns changes in ascending order by ID (sequential audit log)
@@ -144,7 +144,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expand []types
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeBroken *bool, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeBroken *bool, includeBrokenMedia *bool, expand []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -157,6 +157,10 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	if includeBroken == nil {
 		defaultIncludeBroken := false
 		includeBroken = &defaultIncludeBroken
+	}
+	if includeBrokenMedia == nil {
+		defaultIncludeBrokenMedia := false
+		includeBrokenMedia = &defaultIncludeBrokenMedia
 	}
 
 	// Normalize token CIDs
@@ -182,15 +186,16 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 
 	// Build filter
 	filter := store.TokenQueryFilter{
-		Owners:            owners,
-		ContractAddresses: contractAddresses,
-		TokenNumbers:      tokenNumbers,
-		TokenIDs:          tokenIDs,
-		Chains:            chains,
-		TokenCIDs:         tokenCIDs,
-		IncludeBroken:     *includeBroken,
-		Limit:             int(*limit),
-		Offset:            *offset,
+		Owners:             owners,
+		ContractAddresses:  contractAddresses,
+		TokenNumbers:       tokenNumbers,
+		TokenIDs:           tokenIDs,
+		Chains:             chains,
+		TokenCIDs:          tokenCIDs,
+		IncludeBroken:      *includeBroken,
+		IncludeBrokenMedia: *includeBrokenMedia,
+		Limit:              int(*limit),
+		Offset:             *offset,
 	}
 
 	// Get tokens

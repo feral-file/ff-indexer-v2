@@ -994,4 +994,150 @@ VALUES (
 -- Reset sequence
 SELECT setval('webhook_deliveries_id_seq', 100, true);
 
+-- =============================================================================
+-- Token Media Health
+-- =============================================================================
+
+-- Media health for Token 1 (image from metadata - healthy)
+INSERT INTO token_media_health (
+    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    created_at, updated_at
+)
+VALUES (
+    1,
+    1,
+    'https://example.com/bayc/1.png',
+    'metadata_image',
+    'healthy',
+    now() - interval '1 day',
+    NULL,
+    now() - interval '30 days',
+    now() - interval '1 day'
+);
+
+-- Media health for Token 1 (image from enrichment - healthy)
+INSERT INTO token_media_health (
+    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    created_at, updated_at
+)
+VALUES (
+    2,
+    1,
+    'https://artblocks.io/images/1.png',
+    'enrichment_image',
+    'healthy',
+    now() - interval '1 day',
+    NULL,
+    now() - interval '29 days',
+    now() - interval '1 day'
+);
+
+-- Media health for Token 2 (image from metadata - healthy)
+INSERT INTO token_media_health (
+    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    created_at, updated_at
+)
+VALUES (
+    3,
+    2,
+    'https://example.com/bayc/2.png',
+    'metadata_image',
+    'healthy',
+    now() - interval '2 days',
+    NULL,
+    now() - interval '25 days',
+    now() - interval '2 days'
+);
+
+-- Media health for Token 2 (image from enrichment - healthy)
+INSERT INTO token_media_health (
+    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    created_at, updated_at
+)
+VALUES (
+    4,
+    2,
+    'https://opensea.io/images/2.png',
+    'enrichment_image',
+    'healthy',
+    now() - interval '2 days',
+    NULL,
+    now() - interval '24 days',
+    now() - interval '2 days'
+);
+
+-- Media health for Token 4 (image from metadata - healthy)
+INSERT INTO token_media_health (
+    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    created_at, updated_at
+)
+VALUES (
+    5,
+    4,
+    'https://example.com/artblock/1.png',
+    'metadata_image',
+    'healthy',
+    now() - interval '1 day',
+    NULL,
+    now() - interval '15 days',
+    now() - interval '1 day'
+);
+
+-- Media health for Token 4 (animation from metadata - healthy)
+INSERT INTO token_media_health (
+    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    created_at, updated_at
+)
+VALUES (
+    6,
+    4,
+    'https://example.com/artblock/1.mp4',
+    'metadata_animation',
+    'healthy',
+    now() - interval '1 day',
+    NULL,
+    now() - interval '15 days',
+    now() - interval '1 day'
+);
+
+-- Media health for Token 4 (image from enrichment - healthy)
+INSERT INTO token_media_health (
+    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    created_at, updated_at
+)
+VALUES (
+    7,
+    4,
+    'https://fxhash.xyz/images/1.png',
+    'enrichment_image',
+    'healthy',
+    now() - interval '1 day',
+    NULL,
+    now() - interval '14 days',
+    now() - interval '1 day'
+);
+
+-- Media health for Token 4 (animation from enrichment - healthy)
+INSERT INTO token_media_health (
+    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    created_at, updated_at
+)
+VALUES (
+    8,
+    4,
+    'https://fxhash.xyz/videos/1.mp4',
+    'enrichment_animation',
+    'healthy',
+    now() - interval '1 day',
+    NULL,
+    now() - interval '14 days',
+    now() - interval '1 day'
+);
+
+-- Token 3 and Token 5 (burned) and Token 6 (FA2) have NO media health records
+-- They will be considered broken when filtered without IncludeBrokenMedia
+
+-- Reset sequence
+SELECT setval('token_media_health_id_seq', 100, true);
+
 

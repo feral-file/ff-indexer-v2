@@ -380,6 +380,21 @@ func (mr *MockStoreMockRecorder) GetMediaAssetsBySourceURLs(ctx, sourceURLs inte
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMediaAssetsBySourceURLs", reflect.TypeOf((*MockStore)(nil).GetMediaAssetsBySourceURLs), ctx, sourceURLs)
 }
 
+// GetMediaURLsNeedingCheck mocks base method.
+func (m *MockStore) GetMediaURLsNeedingCheck(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMediaURLsNeedingCheck", ctx, recheckAfter, limit)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetMediaURLsNeedingCheck indicates an expected call of GetMediaURLsNeedingCheck.
+func (mr *MockStoreMockRecorder) GetMediaURLsNeedingCheck(ctx, recheckAfter, limit interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMediaURLsNeedingCheck", reflect.TypeOf((*MockStore)(nil).GetMediaURLsNeedingCheck), ctx, recheckAfter, limit)
+}
+
 // GetProvenanceEventByID mocks base method.
 func (m *MockStore) GetProvenanceEventByID(ctx context.Context, id uint64) (*schema.ProvenanceEvent, error) {
 	m.ctrl.T.Helper()
@@ -610,6 +625,21 @@ func (mr *MockStoreMockRecorder) GetTokensByIDs(ctx, tokenIDs interface{}) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensByIDs", reflect.TypeOf((*MockStore)(nil).GetTokensByIDs), ctx, tokenIDs)
 }
 
+// GetTokensViewabilityByMediaURL mocks base method.
+func (m *MockStore) GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]store.TokenViewabilityInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokensViewabilityByMediaURL", ctx, url)
+	ret0, _ := ret[0].([]store.TokenViewabilityInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokensViewabilityByMediaURL indicates an expected call of GetTokensViewabilityByMediaURL.
+func (mr *MockStoreMockRecorder) GetTokensViewabilityByMediaURL(ctx, url interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensViewabilityByMediaURL", reflect.TypeOf((*MockStore)(nil).GetTokensViewabilityByMediaURL), ctx, url)
+}
+
 // GetWebhookClientByID mocks base method.
 func (m *MockStore) GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error) {
 	m.ctrl.T.Helper()
@@ -724,6 +754,20 @@ func (mr *MockStoreMockRecorder) UpdateIndexingBlockRangeForAddress(ctx, address
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingBlockRangeForAddress", reflect.TypeOf((*MockStore)(nil).UpdateIndexingBlockRangeForAddress), ctx, address, chainID, minBlock, maxBlock)
 }
 
+// UpdateMediaURLAndPropagate mocks base method.
+func (m *MockStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL, newURL string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateMediaURLAndPropagate", ctx, oldURL, newURL)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateMediaURLAndPropagate indicates an expected call of UpdateMediaURLAndPropagate.
+func (mr *MockStoreMockRecorder) UpdateMediaURLAndPropagate(ctx, oldURL, newURL interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateMediaURLAndPropagate", reflect.TypeOf((*MockStore)(nil).UpdateMediaURLAndPropagate), ctx, oldURL, newURL)
+}
+
 // UpdateTokenBurn mocks base method.
 func (m *MockStore) UpdateTokenBurn(ctx context.Context, input store.CreateTokenBurnInput) error {
 	m.ctrl.T.Helper()
@@ -736,6 +780,20 @@ func (m *MockStore) UpdateTokenBurn(ctx context.Context, input store.CreateToken
 func (mr *MockStoreMockRecorder) UpdateTokenBurn(ctx, input interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenBurn", reflect.TypeOf((*MockStore)(nil).UpdateTokenBurn), ctx, input)
+}
+
+// UpdateTokenMediaHealthByURL mocks base method.
+func (m *MockStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateTokenMediaHealthByURL", ctx, url, status, lastError)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateTokenMediaHealthByURL indicates an expected call of UpdateTokenMediaHealthByURL.
+func (mr *MockStoreMockRecorder) UpdateTokenMediaHealthByURL(ctx, url, status, lastError interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenMediaHealthByURL", reflect.TypeOf((*MockStore)(nil).UpdateTokenMediaHealthByURL), ctx, url, status, lastError)
 }
 
 // UpdateTokenTransfer mocks base method.

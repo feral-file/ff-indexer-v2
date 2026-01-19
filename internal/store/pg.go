@@ -417,6 +417,42 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 			Where("token_metadata.token_id IS NOT NULL OR enrichment_sources.token_id IS NOT NULL")
 	}
 
+	// By default, exclude tokens with broken media URLs
+	// Unless IncludeBrokenMedia is explicitly set to true
+	// A token's media is broken if:
+	//   - All animation URLs (if any exist) are broken, OR
+	//   - No animation URLs exist AND all image URLs (if any exist) are broken
+	//   - Token has no media URLs at all
+	if !filter.IncludeBrokenMedia {
+		query = query.Where(`
+			-- Include token if it has at least one healthy animation URL
+			EXISTS (
+				SELECT 1 FROM token_media_health tmh
+				WHERE tmh.token_id = tokens.id
+					AND tmh.health_status = ?
+					AND tmh.media_source IN ?
+			)
+			OR
+			-- OR if no animation URLs exist AND has at least one healthy image URL
+			(
+				NOT EXISTS (
+					SELECT 1 FROM token_media_health tmh
+					WHERE tmh.token_id = tokens.id AND tmh.media_source IN ?
+				)
+				AND EXISTS (
+					SELECT 1 FROM token_media_health tmh
+					WHERE tmh.token_id = tokens.id
+						AND tmh.health_status = ?
+						AND tmh.media_source IN ?
+				)
+			)
+		`, schema.MediaHealthStatusHealthy,
+			[]schema.MediaHealthSource{schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation},
+			[]schema.MediaHealthSource{schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation},
+			schema.MediaHealthStatusHealthy,
+			[]schema.MediaHealthSource{schema.MediaHealthSourceMetadataImage, schema.MediaHealthSourceEnrichmentImage})
+	}
+
 	// Apply filters
 	if len(filter.Owners) > 0 {
 		// Filter by current owners only (balances or current_owner)
@@ -748,6 +784,22 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
+		// 4. Sync media health records
+		var oldImageURL, oldAnimationURL *string
+		if oldMetadata != nil {
+			oldImageURL = oldMetadata.ImageURL
+			oldAnimationURL = oldMetadata.AnimationURL
+		}
+		// Handle image URL changes
+		if err := s.syncSingleMediaURL(tx, input.TokenID, oldImageURL, input.ImageURL, schema.MediaHealthSourceMetadataImage); err != nil {
+			return fmt.Errorf("failed to sync image URL: %w", err)
+		}
+
+		// Handle animation URL changes
+		if err := s.syncSingleMediaURL(tx, input.TokenID, oldAnimationURL, input.AnimationURL, schema.MediaHealthSourceMetadataAnimation); err != nil {
+			return fmt.Errorf("failed to sync animation URL: %w", err)
+		}
+
 		return nil
 	})
 }
@@ -886,6 +938,23 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 			Clauses(clause.Returning{Columns: []clause.Column{}}).
 			Create(&changeJournal).Error; err != nil {
 			return fmt.Errorf("failed to create change journal: %w", err)
+		}
+
+		// 5. Sync media health records
+		var oldImageURL, oldAnimationURL *string
+		if oldEnrichmentSource != nil {
+			oldImageURL = oldEnrichmentSource.ImageURL
+			oldAnimationURL = oldEnrichmentSource.AnimationURL
+		}
+
+		// Handle image URL changes
+		if err := s.syncSingleMediaURL(tx, input.TokenID, oldImageURL, input.ImageURL, schema.MediaHealthSourceEnrichmentImage); err != nil {
+			return fmt.Errorf("failed to sync image URL: %w", err)
+		}
+
+		// Handle animation URL changes
+		if err := s.syncSingleMediaURL(tx, input.TokenID, oldAnimationURL, input.AnimationURL, schema.MediaHealthSourceEnrichmentAnimation); err != nil {
+			return fmt.Errorf("failed to sync animation URL: %w", err)
 		}
 
 		return nil
@@ -2603,4 +2672,192 @@ func (s *pgStore) GetTokenCountsByAddress(ctx context.Context, address string, c
 	}
 
 	return &counts, nil
+}
+
+// =============================================================================
+// Token Media Health Operations
+// =============================================================================
+
+// syncSingleMediaURL syncs a single media URL health record
+// Only performs DB operations if the URL has changed
+func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL *string, source schema.MediaHealthSource) error {
+	// Check if URL changed
+	oldURLStr := ""
+	if oldURL != nil {
+		oldURLStr = *oldURL
+	}
+	newURLStr := ""
+	if newURL != nil {
+		newURLStr = *newURL
+	}
+
+	// No change - skip
+	if oldURLStr == newURLStr {
+		return nil
+	}
+
+	// URL removed or changed - delete old record
+	if oldURLStr != "" {
+		if err := tx.Where("token_id = ? AND media_url = ? AND media_source = ?", tokenID, oldURLStr, source).
+			Delete(&schema.TokenMediaHealth{}).Error; err != nil {
+			return fmt.Errorf("failed to delete old health record: %w", err)
+		}
+	}
+
+	// URL added or changed - insert new record
+	if newURLStr != "" {
+		health := &schema.TokenMediaHealth{
+			TokenID:       tokenID,
+			MediaURL:      newURLStr,
+			MediaSource:   source,
+			HealthStatus:  schema.MediaHealthStatusUnknown,
+			LastCheckedAt: time.Unix(0, 0), // Force immediate check by sweeper
+		}
+		if err := tx.Create(health).Error; err != nil {
+			return fmt.Errorf("failed to create health record: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// GetMediaURLsNeedingCheck returns distinct URLs that need health checking
+func (s *pgStore) GetMediaURLsNeedingCheck(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error) {
+	var urls []string
+
+	cutoffTime := time.Now().Add(-recheckAfter)
+
+	// Use GROUP BY to get distinct URLs and order by the earliest last_checked_at for each URL
+	err := s.db.WithContext(ctx).
+		Model(&schema.TokenMediaHealth{}).
+		Select("media_url").
+		Where("last_checked_at < ? OR health_status = ?", cutoffTime, schema.MediaHealthStatusUnknown).
+		Group("media_url").
+		Order("MIN(last_checked_at) ASC").
+		Limit(limit).
+		Pluck("media_url", &urls).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get URLs needing check: %w", err)
+	}
+
+	return urls, nil
+}
+
+// GetTokensViewabilityByMediaURL returns all tokens that use a specific URL along with their viewability status
+// A token is viewable if it has at least one healthy animation URL, or if no animation URLs exist, at least one healthy image URL
+func (s *pgStore) GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]TokenViewabilityInfo, error) {
+	query := `
+		SELECT 
+			tokens.id as token_id,
+			tokens.token_cid as token_cid,
+			CASE 
+				-- Token is viewable if it has at least one healthy animation URL
+				WHEN EXISTS (
+					SELECT 1 FROM token_media_health tmh
+					WHERE tmh.token_id = tokens.id
+						AND tmh.health_status = $1
+						AND tmh.media_source IN ($2, $3)
+				) THEN true
+				-- OR if no animation URLs exist AND has at least one healthy image URL
+				WHEN NOT EXISTS (
+					SELECT 1 FROM token_media_health tmh
+					WHERE tmh.token_id = tokens.id 
+						AND tmh.media_source IN ($2, $3)
+				)
+				AND EXISTS (
+					SELECT 1 FROM token_media_health tmh
+					WHERE tmh.token_id = tokens.id
+						AND tmh.health_status = $1
+						AND tmh.media_source IN ($4, $5)
+				) THEN true
+				ELSE false
+			END as is_viewable
+		FROM tokens
+		INNER JOIN token_media_health tmh ON tmh.token_id = tokens.id
+		WHERE tmh.media_url = $6
+		GROUP BY tokens.id, tokens.token_cid
+	`
+
+	var results []TokenViewabilityInfo
+	err := s.db.WithContext(ctx).Raw(query,
+		string(schema.MediaHealthStatusHealthy),
+		string(schema.MediaHealthSourceMetadataAnimation),
+		string(schema.MediaHealthSourceEnrichmentAnimation),
+		string(schema.MediaHealthSourceMetadataImage),
+		string(schema.MediaHealthSourceEnrichmentImage),
+		url,
+	).Scan(&results).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tokens viewability by media URL: %w", err)
+	}
+
+	return results, nil
+}
+
+// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
+func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error {
+	updates := map[string]interface{}{
+		"health_status":   status,
+		"last_checked_at": time.Now(),
+	}
+
+	if lastError != nil {
+		updates["last_error"] = *lastError
+	} else {
+		updates["last_error"] = nil
+	}
+
+	return s.db.WithContext(ctx).
+		Model(&schema.TokenMediaHealth{}).
+		Where("media_url = ?", url).
+		Updates(updates).Error
+}
+
+// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
+func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Update token_media_health
+		if err := tx.Model(&schema.TokenMediaHealth{}).
+			Where("media_url = ?", oldURL).
+			Updates(map[string]interface{}{
+				"media_url":       newURL,
+				"health_status":   schema.MediaHealthStatusHealthy,
+				"last_checked_at": time.Now(),
+				"last_error":      nil,
+			}).Error; err != nil {
+			return fmt.Errorf("failed to update token_media_health: %w", err)
+		}
+
+		// 2. Update token_metadata.image_url
+		if err := tx.Model(&schema.TokenMetadata{}).
+			Where("image_url = ?", oldURL).
+			Update("image_url", newURL).Error; err != nil {
+			return fmt.Errorf("failed to update token_metadata.image_url: %w", err)
+		}
+
+		// 3. Update token_metadata.animation_url
+		if err := tx.Model(&schema.TokenMetadata{}).
+			Where("animation_url = ?", oldURL).
+			Update("animation_url", newURL).Error; err != nil {
+			return fmt.Errorf("failed to update token_metadata.animation_url: %w", err)
+		}
+
+		// 4. Update enrichment_sources.image_url
+		if err := tx.Model(&schema.EnrichmentSource{}).
+			Where("image_url = ?", oldURL).
+			Update("image_url", newURL).Error; err != nil {
+			return fmt.Errorf("failed to update enrichment_sources.image_url: %w", err)
+		}
+
+		// 5. Update enrichment_sources.animation_url
+		if err := tx.Model(&schema.EnrichmentSource{}).
+			Where("animation_url = ?", oldURL).
+			Update("animation_url", newURL).Error; err != nil {
+			return fmt.Errorf("failed to update enrichment_sources.animation_url: %w", err)
+		}
+
+		return nil
+	})
 }

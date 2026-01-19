@@ -12,6 +12,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
@@ -104,10 +105,11 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	}
 
 	// Collect media URLs from the normalized metadata
+	// The key are the URLs and the value is a boolean indicating if the URL is animation
 	mediaURLs := make(map[string]bool)
 	if normalizedMetadata != nil {
 		if normalizedMetadata.Image != "" {
-			mediaURLs[normalizedMetadata.Image] = true
+			mediaURLs[normalizedMetadata.Image] = false
 		}
 		if normalizedMetadata.Animation != "" {
 			mediaURLs[normalizedMetadata.Animation] = true
@@ -115,6 +117,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	}
 
 	// Step 2: Store or update the metadata in the database
+	// FIXME unify this upsert with the fetch token metadata activity
 	if normalizedMetadata != nil {
 		err = workflow.ExecuteActivity(ctx, w.executor.UpsertTokenMetadata, tokenCID, normalizedMetadata).Get(ctx, nil)
 		if err != nil {
@@ -147,19 +150,70 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// Collect media URLs from enhanced metadata
 	if enhancedMetadata != nil {
 		if enhancedMetadata.ImageURL != nil && *enhancedMetadata.ImageURL != "" {
-			mediaURLs[*enhancedMetadata.ImageURL] = true
+			mediaURLs[*enhancedMetadata.ImageURL] = false
 		}
 		if enhancedMetadata.AnimationURL != nil && *enhancedMetadata.AnimationURL != "" {
 			mediaURLs[*enhancedMetadata.AnimationURL] = true
 		}
 	}
 
-	// WEBHOOK: Trigger viewable event after metadata + enrichment complete
-	if normalizedMetadata != nil || enhancedMetadata != nil {
-		w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingViewable, address)
+	// Step 4: Check media health before triggering viewable webhook
+	var isMediaHealthy bool
+	if normalizedMetadata != nil || enhancedMetadata != nil || len(mediaURLs) > 0 {
+		// Convert map to slice
+		var urls []string
+		var hasAnimation bool
+		for url := range mediaURLs {
+			urls = append(urls, url)
+			if mediaURLs[url] {
+				hasAnimation = true
+			}
+		}
+
+		// Check media health
+		var healthStatuses map[string]schema.MediaHealthStatus
+		err = workflow.ExecuteActivity(ctx, w.executor.CheckMediaURLsHealth, urls).Get(ctx, &healthStatuses)
+		if err != nil {
+			// Log the error but don't fail the workflow
+			logger.WarnWf(ctx, "Failed to check media health (non-fatal)",
+				zap.String("tokenCID", tokenCID.String()),
+				zap.Error(err))
+
+			// Default to false if check fails
+			isMediaHealthy = false
+		}
+
+		// Determine if the token media is healthy
+		// 1. If an animation URL is healthy, the token media is healthy
+		// 2. If an image URL is healthy, and there is no other animation URL, the token media is healthy
+		for url, healthStatus := range healthStatuses {
+			// 1.
+			if healthStatus == schema.MediaHealthStatusHealthy && mediaURLs[url] {
+				isMediaHealthy = true
+				break
+			}
+
+			// 2.
+			if healthStatus == schema.MediaHealthStatusHealthy && !hasAnimation {
+				isMediaHealthy = true
+				break
+			}
+		}
+
+		logger.InfoWf(ctx, "Media health check result",
+			zap.String("tokenCID", tokenCID.String()),
+			zap.Bool("isHealthy", isMediaHealthy))
 	}
 
-	// Step 4: Trigger media indexing workflow (fire and forget)
+	// WEBHOOK: Trigger viewable event only if media is healthy
+	if isMediaHealthy {
+		w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingViewable, address)
+	} else {
+		logger.InfoWf(ctx, "Skipping viewable webhook - media not healthy",
+			zap.String("tokenCID", tokenCID.String()))
+	}
+
+	// Step 5: Trigger media indexing workflow (fire and forget)
 	// This should not fail the parent workflow
 	if len(mediaURLs) > 0 {
 		// Convert map to slice

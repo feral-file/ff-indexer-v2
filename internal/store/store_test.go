@@ -1805,8 +1805,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 	t.Run("filter by owner", func(t *testing.T) {
 		owner1 := "0xfilter100000000000000000000000000000000001"
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Owners: []string{owner1},
-			Limit:  10,
+			Owners:             []string{owner1},
+			Limit:              10,
+			IncludeBrokenMedia: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(3))
@@ -1815,8 +1816,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 	t.Run("filter by chain", func(t *testing.T) {
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Chains: []domain.Chain{domain.ChainEthereumSepolia},
-			Limit:  10,
+			Chains:             []domain.Chain{domain.ChainEthereumSepolia},
+			Limit:              10,
+			IncludeBrokenMedia: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(1))
@@ -1827,8 +1829,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 	t.Run("filter by contract address", func(t *testing.T) {
 		contract1 := "0x0000000000000000000000000000000000001111"
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses: []string{contract1},
-			Limit:             10,
+			ContractAddresses:  []string{contract1},
+			Limit:              10,
+			IncludeBrokenMedia: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(2))
@@ -1840,8 +1843,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 	t.Run("pagination", func(t *testing.T) {
 		// Get first page
 		page1, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Limit:  2,
-			Offset: 0,
+			Limit:              2,
+			Offset:             0,
+			IncludeBrokenMedia: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(4))
@@ -1849,8 +1853,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 		// Get second page
 		page2, _, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Limit:  2,
-			Offset: 2,
+			Limit:              2,
+			Offset:             2,
+			IncludeBrokenMedia: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.LessOrEqual(t, len(page2), 2)
@@ -1863,8 +1868,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 	t.Run("filter with no results", func(t *testing.T) {
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			TokenCIDs: []string{"eip155:1:erc721:0xnonexistent:999"},
-			Limit:     10,
+			TokenCIDs:          []string{"eip155:1:erc721:0xnonexistent:999"},
+			Limit:              10,
+			IncludeBrokenMedia: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), total)
@@ -1966,8 +1972,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		// Should exclude only the token with neither
 
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses: []string{brokenAddr, metaOnlyAddr, enrichOnlyAddr, withBothAddr},
-			Limit:             10,
+			ContractAddresses:  []string{brokenAddr, metaOnlyAddr, enrichOnlyAddr, withBothAddr},
+			Limit:              10,
+			IncludeBrokenMedia: true, // These test tokens don't have media health records
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3), total) // Three tokens (metaonly, enrichonly, both) - excludes broken
@@ -1980,9 +1987,10 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 		// Include broken: include all tokens including the one with neither metadata nor enrichment
 		resultsWithBroken, totalWithBroken, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses: []string{brokenAddr, metaOnlyAddr, enrichOnlyAddr, withBothAddr},
-			IncludeBroken:     true,
-			Limit:             10,
+			ContractAddresses:  []string{brokenAddr, metaOnlyAddr, enrichOnlyAddr, withBothAddr},
+			IncludeBroken:      true,
+			IncludeBrokenMedia: true, // These test tokens don't have media health records
+			Limit:              10,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(4), totalWithBroken) // All four tokens
@@ -2107,8 +2115,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 		// Query for owner2 (current owner of all 3 tokens)
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Owners: []string{owner2},
-			Limit:  10,
+			Owners:             []string{owner2},
+			Limit:              10,
+			IncludeBrokenMedia: true, // These test tokens don't have media health records
 		})
 		require.NoError(t, err)
 		require.Equal(t, int(total), 3, "owner2 owns 3 tokens") //nolint:gosec,G115
@@ -2121,6 +2130,194 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.Equal(t, token1Data.ID, results[0].Token.ID, "token1 should be first (T4: most recent owner2 event)")
 		assert.Equal(t, token3Data.ID, results[1].Token.ID, "token3 should be second (T5: middle owner2 event)")
 		assert.Equal(t, token2Data.ID, results[2].Token.ID, "token2 should be third (T2: oldest owner2 event)")
+	})
+
+	t.Run("IncludeBrokenMedia flag filters tokens by media health", func(t *testing.T) {
+		// Create tokens with different media health scenarios
+		healthyAnimAddr := "0x0000000000000000000000000000000000050001"
+		healthyImageAddr := "0x0000000000000000000000000000000000050002"
+		brokenAnimAddr := "0x0000000000000000000000000000000000050003"
+		brokenImageAddr := "0x0000000000000000000000000000000000050004"
+		noMediaAddr := "0x0000000000000000000000000000000000050005"
+		mixedHealthAddr := "0x0000000000000000000000000000000000050006"
+
+		// Token 1: Has healthy animation URL (viewable)
+		token1 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, healthyAnimAddr, "1", "0xowner")
+		err := store.CreateTokenMint(ctx, token1)
+		require.NoError(t, err)
+		token1Data, _ := store.GetTokenByTokenCID(ctx, token1.Token.TokenCID)
+
+		animURL1 := "https://example.com/healthy-anim.mp4"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token1Data.ID,
+			OriginJSON:      json.RawMessage(`{}`),
+			LatestJSON:      json.RawMessage(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			AnimationURL:    &animURL1,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL1, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// Token 2: Has healthy image URL only (viewable)
+		token2 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, healthyImageAddr, "2", "0xowner")
+		err = store.CreateTokenMint(ctx, token2)
+		require.NoError(t, err)
+		token2Data, _ := store.GetTokenByTokenCID(ctx, token2.Token.TokenCID)
+
+		imageURL2 := "https://example.com/healthy-image.jpg"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token2Data.ID,
+			OriginJSON:      json.RawMessage(`{}`),
+			LatestJSON:      json.RawMessage(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imageURL2,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL2, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// Token 3: Has broken animation URL (not viewable)
+		token3 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, brokenAnimAddr, "3", "0xowner")
+		err = store.CreateTokenMint(ctx, token3)
+		require.NoError(t, err)
+		token3Data, _ := store.GetTokenByTokenCID(ctx, token3.Token.TokenCID)
+
+		animURL3 := "https://example.com/broken-anim.mp4"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token3Data.ID,
+			OriginJSON:      json.RawMessage(`{}`),
+			LatestJSON:      json.RawMessage(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			AnimationURL:    &animURL3,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+		errorMsg := "404 Not Found"
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL3, schema.MediaHealthStatusBroken, &errorMsg)
+		require.NoError(t, err)
+
+		// Token 4: Has broken image URL only (not viewable)
+		token4 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, brokenImageAddr, "4", "0xowner")
+		err = store.CreateTokenMint(ctx, token4)
+		require.NoError(t, err)
+		token4Data, _ := store.GetTokenByTokenCID(ctx, token4.Token.TokenCID)
+
+		imageURL4 := "https://example.com/broken-image.jpg"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token4Data.ID,
+			OriginJSON:      json.RawMessage(`{}`),
+			LatestJSON:      json.RawMessage(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imageURL4,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL4, schema.MediaHealthStatusBroken, &errorMsg)
+		require.NoError(t, err)
+
+		// Token 5: Has no media health records (considered broken - no media URLs)
+		token5 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, noMediaAddr, "5", "0xowner")
+		err = store.CreateTokenMint(ctx, token5)
+		require.NoError(t, err)
+		token5Data, _ := store.GetTokenByTokenCID(ctx, token5.Token.TokenCID)
+
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token5Data.ID,
+			OriginJSON:      json.RawMessage(`{}`),
+			LatestJSON:      json.RawMessage(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		// Token 6: Has broken animation but healthy image (not viewable - animation takes priority)
+		token6 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, mixedHealthAddr, "6", "0xowner")
+		err = store.CreateTokenMint(ctx, token6)
+		require.NoError(t, err)
+		token6Data, _ := store.GetTokenByTokenCID(ctx, token6.Token.TokenCID)
+
+		animURL6 := "https://example.com/broken-anim6.mp4"
+		imageURL6 := "https://example.com/healthy-image6.jpg"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token6Data.ID,
+			OriginJSON:      json.RawMessage(`{}`),
+			LatestJSON:      json.RawMessage(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			AnimationURL:    &animURL6,
+			ImageURL:        &imageURL6,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL6, schema.MediaHealthStatusBroken, &errorMsg)
+		require.NoError(t, err)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL6, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// Test 1: Default behavior (IncludeBrokenMedia = false) - should only return viewable tokens
+		resultsHealthyOnly, totalHealthyOnly, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ContractAddresses:  []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
+			IncludeBrokenMedia: false, // Default: exclude broken media
+			Limit:              10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), totalHealthyOnly, "should only return 2 viewable tokens (healthy animation and healthy image)")
+		assert.Len(t, resultsHealthyOnly, 2)
+
+		// Verify only healthy tokens are returned
+		returnedAddrs := make(map[string]bool)
+		for _, result := range resultsHealthyOnly {
+			returnedAddrs[result.Token.ContractAddress] = true
+		}
+		assert.True(t, returnedAddrs[healthyAnimAddr], "token with healthy animation should be included")
+		assert.True(t, returnedAddrs[healthyImageAddr], "token with healthy image should be included")
+		assert.False(t, returnedAddrs[brokenAnimAddr], "token with broken animation should be excluded")
+		assert.False(t, returnedAddrs[brokenImageAddr], "token with broken image should be excluded")
+		assert.False(t, returnedAddrs[noMediaAddr], "token with no media should be excluded")
+		assert.False(t, returnedAddrs[mixedHealthAddr], "token with broken animation (despite healthy image) should be excluded")
+
+		// Test 2: IncludeBrokenMedia = true - should return all tokens
+		resultsAll, totalAll, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ContractAddresses:  []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
+			IncludeBrokenMedia: true, // Include all tokens regardless of media health
+			Limit:              10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(6), totalAll, "should return all 6 tokens when IncludeBrokenMedia is true")
+		assert.Len(t, resultsAll, 6)
+
+		// Verify all tokens are returned
+		returnedAddrsAll := make(map[string]bool)
+		for _, result := range resultsAll {
+			returnedAddrsAll[result.Token.ContractAddress] = true
+		}
+		assert.True(t, returnedAddrsAll[healthyAnimAddr])
+		assert.True(t, returnedAddrsAll[healthyImageAddr])
+		assert.True(t, returnedAddrsAll[brokenAnimAddr])
+		assert.True(t, returnedAddrsAll[brokenImageAddr])
+		assert.True(t, returnedAddrsAll[noMediaAddr])
+		assert.True(t, returnedAddrsAll[mixedHealthAddr])
+
+		// Test 3: Animation priority - token with broken animation but healthy image is not viewable
+		resultsMixed, _, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ContractAddresses:  []string{mixedHealthAddr},
+			IncludeBrokenMedia: false,
+			Limit:              10,
+		})
+		require.NoError(t, err)
+		assert.Len(t, resultsMixed, 0, "token with broken animation should not be viewable even with healthy image")
+
+		// Test 4: Verify animation priority with IncludeBrokenMedia = true
+		resultsMixedInclude, totalMixedInclude, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ContractAddresses:  []string{mixedHealthAddr},
+			IncludeBrokenMedia: true,
+			Limit:              10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), totalMixedInclude)
+		assert.Len(t, resultsMixedInclude, 1)
 	})
 }
 
@@ -5376,6 +5573,216 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 }
 
 // =============================================================================
+// Test: Media Health Operations
+// =============================================================================
+
+func testMediaHealthOperations(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("GetMediaURLsNeedingCheck returns URLs that need checking", func(t *testing.T) {
+		// Create a token with metadata
+		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100003", "3", "0xowner3")
+		err := store.CreateTokenMint(ctx, token)
+		require.NoError(t, err)
+
+		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+		require.NoError(t, err)
+
+		imageURL := "https://example.com/needs-check.jpg"
+		metadata := map[string]interface{}{"image": imageURL}
+		metadataJSON, _ := json.Marshal(metadata)
+
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenData.ID,
+			OriginJSON:      metadataJSON,
+			LatestJSON:      metadataJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imageURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		// Get URLs needing check
+		urls, err := store.GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10)
+		require.NoError(t, err)
+		assert.Contains(t, urls, imageURL)
+
+		// Update health status to healthy
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// URL should no longer be in pending list (recently checked)
+		urls, err = store.GetMediaURLsNeedingCheck(ctx, 1*time.Minute, 10)
+		require.NoError(t, err)
+		assert.NotContains(t, urls, imageURL, "healthy URL should not be in pending list")
+	})
+
+	t.Run("UpdateTokenMediaHealthByURL updates health status", func(t *testing.T) {
+		// Create token with metadata
+		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100004", "4", "0xowner4")
+		err := store.CreateTokenMint(ctx, token)
+		require.NoError(t, err)
+
+		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+		require.NoError(t, err)
+
+		imageURL := "https://example.com/update-status.jpg"
+		metadata := map[string]interface{}{"image": imageURL}
+		metadataJSON, _ := json.Marshal(metadata)
+
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenData.ID,
+			OriginJSON:      metadataJSON,
+			LatestJSON:      metadataJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imageURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		// Update to healthy
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// Check token is viewable
+		results, err := store.GetTokensViewabilityByMediaURL(ctx, imageURL)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		assert.True(t, results[0].IsViewable)
+
+		// Update to broken with error
+		errorMsg := "404 Not Found"
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusBroken, &errorMsg)
+		require.NoError(t, err)
+
+		// Check token is not viewable
+		results, err = store.GetTokensViewabilityByMediaURL(ctx, imageURL)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		assert.False(t, results[0].IsViewable)
+	})
+
+	t.Run("UpdateMediaURLAndPropagate updates URL across tokens", func(t *testing.T) {
+		oldURL := "ipfs://QmOldHash"
+		newURL := "https://example.com/new-resolved.jpg"
+
+		// Create two tokens using the old URL
+		token1 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100005", "5", "0xowner5")
+		err := store.CreateTokenMint(ctx, token1)
+		require.NoError(t, err)
+		token1Data, _ := store.GetTokenByTokenCID(ctx, token1.Token.TokenCID)
+
+		token2 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100006", "6", "0xowner6")
+		err = store.CreateTokenMint(ctx, token2)
+		require.NoError(t, err)
+		token2Data, _ := store.GetTokenByTokenCID(ctx, token2.Token.TokenCID)
+
+		// Add metadata with old URL
+		metadata := map[string]interface{}{"image": oldURL}
+		metadataJSON, _ := json.Marshal(metadata)
+
+		for _, tokenData := range []*schema.Token{token1Data, token2Data} {
+			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+				TokenID:         tokenData.ID,
+				OriginJSON:      metadataJSON,
+				LatestJSON:      metadataJSON,
+				EnrichmentLevel: schema.EnrichmentLevelVendor,
+				ImageURL:        &oldURL,
+				LastRefreshedAt: time.Now().UTC(),
+			})
+			require.NoError(t, err)
+		}
+
+		// Update URL and propagate
+		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL)
+		require.NoError(t, err)
+
+		// Verify both tokens now use the new URL
+		results, err := store.GetTokensViewabilityByMediaURL(ctx, newURL)
+		require.NoError(t, err)
+		assert.Len(t, results, 2, "both tokens should be associated with new URL")
+
+		// Old URL should have no tokens
+		oldResults, err := store.GetTokensViewabilityByMediaURL(ctx, oldURL)
+		require.NoError(t, err)
+		assert.Empty(t, oldResults, "old URL should have no associated tokens")
+	})
+
+	t.Run("GetTokensViewabilityByMediaURL with animation priority", func(t *testing.T) {
+		sharedImageURL := "https://example.com/shared-image.jpg"
+
+		// Token 1: Has only image URL (viewable when healthy)
+		token1 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000200001", "1", "0xowner1")
+		err := store.CreateTokenMint(ctx, token1)
+		require.NoError(t, err)
+		token1Data, _ := store.GetTokenByTokenCID(ctx, token1.Token.TokenCID)
+
+		metadata1 := map[string]interface{}{"image": sharedImageURL}
+		metadataJSON1, _ := json.Marshal(metadata1)
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token1Data.ID,
+			OriginJSON:      metadataJSON1,
+			LatestJSON:      metadataJSON1,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &sharedImageURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		// Token 2: Has image + animation (animation takes priority)
+		token2 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000200002", "2", "0xowner2")
+		err = store.CreateTokenMint(ctx, token2)
+		require.NoError(t, err)
+		token2Data, _ := store.GetTokenByTokenCID(ctx, token2.Token.TokenCID)
+
+		animationURL := "https://example.com/animation.mp4"
+		metadata2 := map[string]interface{}{"image": sharedImageURL, "animation_url": animationURL}
+		metadataJSON2, _ := json.Marshal(metadata2)
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token2Data.ID,
+			OriginJSON:      metadataJSON2,
+			LatestJSON:      metadataJSON2,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &sharedImageURL,
+			AnimationURL:    &animationURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		// Mark image as healthy
+		err = store.UpdateTokenMediaHealthByURL(ctx, sharedImageURL, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// Mark animation as broken
+		err = store.UpdateTokenMediaHealthByURL(ctx, animationURL, schema.MediaHealthStatusBroken, nil)
+		require.NoError(t, err)
+
+		// Query by shared image URL
+		results, err := store.GetTokensViewabilityByMediaURL(ctx, sharedImageURL)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+
+		// Build expected map
+		expected := make(map[uint64]bool)
+		expected[token1Data.ID] = true  // viewable: healthy image, no animation
+		expected[token2Data.ID] = false // not viewable: has broken animation (takes priority over healthy image)
+
+		for _, result := range results {
+			expectedViewability, exists := expected[result.TokenID]
+			require.True(t, exists, "unexpected token ID: %d", result.TokenID)
+			assert.Equal(t, expectedViewability, result.IsViewable,
+				"token %s viewability mismatch", result.TokenCID)
+		}
+	})
+
+	t.Run("GetTokensViewabilityByMediaURL returns empty for nonexistent URL", func(t *testing.T) {
+		results, err := store.GetTokensViewabilityByMediaURL(ctx, "https://example.com/nonexistent.jpg")
+		require.NoError(t, err)
+		assert.Empty(t, results)
+	})
+}
+
+// =============================================================================
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
 
@@ -5408,6 +5815,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"WebhookDeliveries", testWebhookDeliveries},
 		{"AddressIndexingJobs", testAddressIndexingJobs},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
+		{"MediaHealthOperations", testMediaHealthOperations},
 	}
 
 	for _, tt := range tests {

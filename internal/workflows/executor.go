@@ -23,6 +23,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
+	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
@@ -53,6 +54,10 @@ type Executor interface {
 
 	// EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
 	EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error)
+
+	// CheckMediaURLsHealth checks the health of media URLs and updates the database
+	// Returns a map of URLs to their health status
+	CheckMediaURLsHealth(ctx context.Context, urls []string) (map[string]schema.MediaHealthStatus, error)
 
 	// IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
 	// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
@@ -144,6 +149,12 @@ type BlockRangeResult struct {
 	MaxBlock uint64
 }
 
+// MediaURLToCheck represents a media URL that needs health checking
+type MediaURLToCheck struct {
+	URL    string
+	Source schema.MediaHealthSource
+}
+
 // executor is the concrete implementation of Executor
 type executor struct {
 	store            store.Store
@@ -157,6 +168,7 @@ type executor struct {
 	io               adapter.IO
 	temporalActivity adapter.Activity
 	blacklist        registry.BlacklistRegistry
+	urlChecker       uri.URLChecker
 }
 
 // NewExecutor creates a new executor instance
@@ -172,6 +184,7 @@ func NewExecutor(
 	io adapter.IO,
 	temporalActivity adapter.Activity,
 	blacklist registry.BlacklistRegistry,
+	urlChecker uri.URLChecker,
 ) Executor {
 	return &executor{
 		store:            store,
@@ -185,6 +198,7 @@ func NewExecutor(
 		io:               io,
 		temporalActivity: temporalActivity,
 		blacklist:        blacklist,
+		urlChecker:       urlChecker,
 	}
 }
 
@@ -533,6 +547,66 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 		zap.String("vendor", string(enhanced.Vendor)))
 
 	return enhanced, nil
+}
+
+// CheckMediaURLsHealth checks the health of media URLs and updates the database
+// Returns a map of URLs to their health status
+func (e *executor) CheckMediaURLsHealth(ctx context.Context, urls []string) (map[string]schema.MediaHealthStatus, error) {
+	// If no media URLs, consider as unhealthy
+	if len(urls) == 0 {
+		logger.InfoCtx(ctx, "No media URLs to check")
+		return nil, nil
+	}
+
+	// Check all URLs in parallel
+	type checkResult struct {
+		url          string
+		healthStatus schema.MediaHealthStatus
+	}
+
+	resultChan := make(chan checkResult, len(urls))
+
+	logger.InfoCtx(ctx, "Checking media health", zap.Strings("urls", urls), zap.Int("urlCount", len(urls)))
+
+	// Check each URL in parallel
+	for _, url := range urls {
+		go func(url string) {
+			result := e.urlChecker.Check(ctx, url)
+
+			var healthStatus schema.MediaHealthStatus
+			switch result.Status {
+			case uri.HealthStatusHealthy:
+				healthStatus = schema.MediaHealthStatusHealthy
+			case uri.HealthStatusBroken:
+				healthStatus = schema.MediaHealthStatusBroken
+			case uri.HealthStatusTransientError:
+				// Keep as unknown for transient errors to retry later
+				healthStatus = schema.MediaHealthStatusUnknown
+			}
+
+			resultChan <- checkResult{
+				url:          url,
+				healthStatus: healthStatus,
+			}
+		}(url)
+	}
+
+	// Collect results
+	results := make(map[string]schema.MediaHealthStatus, len(urls))
+	for range urls {
+		result := <-resultChan
+		results[result.url] = result.healthStatus
+	}
+	close(resultChan)
+
+	// Update health status in database for all URLs
+	for url, healthStatus := range results {
+		if err := e.store.UpdateTokenMediaHealthByURL(ctx, url, healthStatus, nil); err != nil {
+			return nil, err
+		}
+	}
+
+	return results, nil
 }
 
 // UpdateTokenBurn updates a token and related provenance data for burn event

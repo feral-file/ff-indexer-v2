@@ -42,6 +42,21 @@ func (m *MockCoreExecutor) EXPECT() *MockCoreExecutorMockRecorder {
 	return m.recorder
 }
 
+// CheckMediaURLsHealth mocks base method.
+func (m *MockCoreExecutor) CheckMediaURLsHealth(ctx context.Context, urls []string) (map[string]schema.MediaHealthStatus, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckMediaURLsHealth", ctx, urls)
+	ret0, _ := ret[0].(map[string]schema.MediaHealthStatus)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CheckMediaURLsHealth indicates an expected call of CheckMediaURLsHealth.
+func (mr *MockCoreExecutorMockRecorder) CheckMediaURLsHealth(ctx, urls interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckMediaURLsHealth", reflect.TypeOf((*MockCoreExecutor)(nil).CheckMediaURLsHealth), ctx, urls)
+}
+
 // CheckTokenExists mocks base method.
 func (m *MockCoreExecutor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
 	m.ctrl.T.Helper()

@@ -395,7 +395,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expands []string,
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeBroken *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeBrokenMetadata *bool, includeBrokenMedia *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Auto-detect expansions from GraphQL query fields
 	autoExpansions := autoDetectTokenExpansions(ctx)
 
@@ -475,7 +475,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		}
 	}
 
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeBroken, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeBrokenMetadata, includeBrokenMedia, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
 }
 
 // Changes is the resolver for the changes field.
@@ -547,14 +547,6 @@ func (r *queryResolver) IndexingJob(ctx context.Context, workflowID string) (*dt
 		return nil, apierrors.NewValidationError("workflowID is required")
 	}
 
-	// Auto-detect which optional fields are requested in the GraphQL query
-	opts := detectIndexingJobOptions(ctx)
-
-	return r.executor.GetAddressIndexingJob(ctx, workflowID, opts)
-}
-
-// detectIndexingJobOptions detects which optional fields are requested in the GraphQL query
-func detectIndexingJobOptions(ctx context.Context) executor.GetAddressIndexingJobOptions {
 	opts := executor.GetAddressIndexingJobOptions{}
 
 	// Collect all selected fields from the GraphQL query
@@ -569,7 +561,7 @@ func detectIndexingJobOptions(ctx context.Context) executor.GetAddressIndexingJo
 		}
 	}
 
-	return opts
+	return r.executor.GetAddressIndexingJob(ctx, workflowID, opts)
 }
 
 // ID is the resolver for the id field.

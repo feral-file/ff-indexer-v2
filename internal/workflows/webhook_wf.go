@@ -56,7 +56,7 @@ func (w *workerCore) NotifyWebhookClients(ctx workflow.Context, event webhook.We
 	for _, client := range clients {
 		deliveryWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:            fmt.Sprintf("webhook-delivery-%s-%s", client.ClientID, event.EventID),
-			WorkflowRunTimeout:    1 * time.Hour, // Allow time for all retries
+			WorkflowRunTimeout:    24 * time.Hour, // Allow time for all retries
 			WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait
 		}
@@ -252,7 +252,7 @@ func (w *workerCore) triggerWebhookNotification(ctx workflow.Context, event webh
 	// Configure child workflow options (fire-and-forget)
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:            fmt.Sprintf("webhook-notify-%s-%s", event.EventType, event.EventID),
-		WorkflowRunTimeout:    1 * time.Hour, // Allow time for all client deliveries and retries
+		WorkflowRunTimeout:    30 * time.Minute,
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for completion
 	}
