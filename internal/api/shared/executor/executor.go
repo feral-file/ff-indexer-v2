@@ -159,7 +159,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		includeBroken = &defaultIncludeBroken
 	}
 	if includeBrokenMedia == nil {
-		defaultIncludeBrokenMedia := false
+		defaultIncludeBrokenMedia := true // FIXME: default to true for backward compatibility, remove this after health checking is fully completed
 		includeBrokenMedia = &defaultIncludeBrokenMedia
 	}
 

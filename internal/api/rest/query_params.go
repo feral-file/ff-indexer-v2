@@ -60,7 +60,7 @@ type ListTokensQueryParams struct {
 	TokenIDs              []uint64       `form:"token_id"`
 	TokenCIDs             []string       `form:"token_cid"`
 	IncludeBrokenMetadata bool           `form:"include_broken_metadata,default=false"` // Include tokens with broken metadata (no metadata record)
-	IncludeBrokenMedia    bool           `form:"include_broken_media,default=false"`    // Include tokens with broken media URLs
+	IncludeBrokenMedia    bool           `form:"include_broken_media,default=true"`     // Include tokens with broken media URLs (default to true for backward compatibility)
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`
