@@ -8,7 +8,7 @@ CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:main
 CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
 CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile', 'objkt', 'opensea');
 CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
-CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset');
+CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset', 'token_viewability');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
 CREATE TYPE indexing_job_status AS ENUM ('running', 'paused', 'failed', 'completed', 'canceled');

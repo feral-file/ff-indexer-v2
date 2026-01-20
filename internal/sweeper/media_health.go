@@ -283,12 +283,12 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 		return
 	}
 
-	// Compare viewability and trigger webhooks for changed tokens
-	s.triggerWebhooksForChangedTokens(ctx, tokensBefore, tokensAfter)
+	// Process tokens that changed viewability status
+	s.processChangedTokens(ctx, tokensBefore, tokensAfter)
 }
 
-// triggerWebhooksForChangedTokens compares before/after viewability and triggers webhooks for tokens that changed
-func (s *mediaHealthSweeper) triggerWebhooksForChangedTokens(ctx context.Context, before, after []store.TokenViewabilityInfo) {
+// processChangedTokens processes tokens that changed viewability status
+func (s *mediaHealthSweeper) processChangedTokens(ctx context.Context, before, after []store.TokenViewabilityInfo) {
 	// Create maps for quick lookup
 	beforeMap := make(map[uint64]bool)
 	for _, token := range before {
@@ -309,20 +309,29 @@ func (s *mediaHealthSweeper) triggerWebhooksForChangedTokens(ctx context.Context
 
 		isViewable := afterToken.IsViewable
 
-		// Trigger webhook only if viewability changed
+		// Trigger webhook and create change journal only if viewability changed
 		if wasViewable != isViewable {
 			healthStatus := schema.MediaHealthStatusBroken
 			if isViewable {
 				healthStatus = schema.MediaHealthStatusHealthy
 			}
 
-			logger.InfoCtx(ctx, "Token viewability changed, triggering webhook",
+			logger.InfoCtx(ctx, "Token viewability changed, triggering webhook and change journal",
 				zap.String("token_cid", afterToken.TokenCID),
 				zap.Bool("was_viewable", wasViewable),
 				zap.Bool("is_viewable", isViewable),
 				zap.String("health_status", string(healthStatus)),
 			)
 
+			// Create change journal entry
+			if err := s.store.CreateTokenViewabilityChange(ctx, tokenID, afterToken.TokenCID, isViewable); err != nil {
+				logger.ErrorCtx(ctx, err,
+					zap.Uint64("token_id", tokenID),
+					zap.String("token_cid", afterToken.TokenCID),
+				)
+			}
+
+			// Trigger webhook
 			s.triggerWebhook(ctx, afterToken.TokenCID, healthStatus)
 		} else {
 			logger.DebugCtx(ctx, "Token viewability did not change, skipping webhook",

@@ -24,6 +24,8 @@ const (
 	SubjectTypeEnrichSource SubjectType = "enrich_source"
 	// SubjectTypeMediaAsset indicates a change in media asset data
 	SubjectTypeMediaAsset SubjectType = "media_asset"
+	// SubjectTypeTokenViewability indicates a change in token viewability status
+	SubjectTypeTokenViewability SubjectType = "token_viewability"
 )
 
 // ProvenanceChangeMeta represents the metadata for token, owner, and balance changes
@@ -97,6 +99,14 @@ type MediaAssetFields struct {
 	ProviderMetadata *string `json:"provider_metadata,omitempty"` // Provider-specific metadata as JSON string
 }
 
+// TokenViewabilityChangeMeta represents metadata for token viewability changes
+// Stores only the current viewability state for convenience
+type TokenViewabilityChangeMeta struct {
+	TokenID    uint64 `json:"token_id"`    // Token ID
+	TokenCID   string `json:"token_cid"`   // Token CID for convenience
+	IsViewable bool   `json:"is_viewable"` // Current viewability state
+}
+
 // ChangesJournal represents the changes_journal table - audit log for tracking all changes to indexed data
 type ChangesJournal struct {
 	// ID is an auto-incrementing sequence number for record identification
@@ -116,6 +126,7 @@ type ChangesJournal struct {
 	// - For metadata: MetadataChangeMeta with old and new normalized metadata fields
 	// - For enrich_source: EnrichmentSourceChangeMeta with old and new enrichment source fields
 	// - For media_asset: MediaAssetChangeMeta with old and new media asset fields
+	// - For token_viewability: TokenViewabilityChangeMeta with token_id, token_cid, and is_viewable
 	Meta datatypes.JSON `gorm:"column:meta;type:jsonb"`
 	// CreatedAt is the timestamp when this change was created
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`

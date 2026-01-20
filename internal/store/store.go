@@ -292,6 +292,8 @@ type Store interface {
 	UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error
 	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
 	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error
+	// CreateTokenViewabilityChange creates a changes_journal entry for a token viewability change
+	CreateTokenViewabilityChange(ctx context.Context, tokenID uint64, tokenCID string, isViewable bool) error
 
 	// =============================================================================
 	// Token Ownership & Balances

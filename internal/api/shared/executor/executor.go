@@ -880,6 +880,23 @@ func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJour
 
 		return dto.MapMediaAssetToDTO(mediaAsset), nil
 
+	case schema.SubjectTypeTokenViewability:
+		// For token viewability changes, the subject ID is token_id
+		tokenID, err := strconv.ParseUint(change.SubjectID, 10, 64)
+		if err != nil {
+			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for token viewability: %v", err))
+		}
+
+		token, err := e.store.GetTokenByID(ctx, tokenID)
+		if err != nil {
+			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token: %v", err))
+		}
+		if token == nil {
+			return nil, nil
+		}
+
+		return dto.MapTokenToDTO(token, nil), nil
+
 	default:
 		return nil, nil
 	}

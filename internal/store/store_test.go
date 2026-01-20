@@ -5872,6 +5872,78 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.Empty(t, results)
 	})
+
+	t.Run("CreateTokenViewabilityChange creates change journal entry", func(t *testing.T) {
+		// Create token with metadata
+		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100009", "9", "0xowner9")
+		err := store.CreateTokenMint(ctx, token)
+		require.NoError(t, err)
+
+		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+		require.NoError(t, err)
+
+		imageURL := "https://example.com/viewability-test.jpg"
+		metadata := map[string]interface{}{"image": imageURL}
+		metadataJSON, _ := json.Marshal(metadata)
+
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenData.ID,
+			OriginJSON:      metadataJSON,
+			LatestJSON:      metadataJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imageURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		// Create viewability change: token became viewable
+		err = store.CreateTokenViewabilityChange(ctx, tokenData.ID, token.Token.TokenCID, true)
+		require.NoError(t, err)
+
+		// Query changes journal for this token
+		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+			TokenIDs:     []uint64{tokenData.ID},
+			SubjectTypes: []schema.SubjectType{schema.SubjectTypeTokenViewability},
+			Limit:        10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), total)
+		assert.Len(t, changes, 1)
+
+		// Verify the change journal entry
+		change := changes[0]
+		assert.Equal(t, schema.SubjectTypeTokenViewability, change.SubjectType)
+		assert.Equal(t, fmt.Sprintf("%d", tokenData.ID), change.SubjectID)
+
+		// Unmarshal and verify meta
+		var meta schema.TokenViewabilityChangeMeta
+		err = json.Unmarshal(change.Meta, &meta)
+		require.NoError(t, err)
+		assert.Equal(t, tokenData.ID, meta.TokenID)
+		assert.Equal(t, token.Token.TokenCID, meta.TokenCID)
+		assert.True(t, meta.IsViewable)
+
+		// Create another viewability change: token became not viewable
+		err = store.CreateTokenViewabilityChange(ctx, tokenData.ID, token.Token.TokenCID, false)
+		require.NoError(t, err)
+
+		// Query changes again - should now have 2 entries
+		changes, total, err = store.GetChanges(ctx, ChangesQueryFilter{
+			TokenIDs:     []uint64{tokenData.ID},
+			SubjectTypes: []schema.SubjectType{schema.SubjectTypeTokenViewability},
+			Limit:        10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), total)
+		assert.Len(t, changes, 2)
+
+		// Verify the second entry (changes are in ascending order by ID, so index 1 is most recent)
+		recentChange := changes[1]
+		var recentMeta schema.TokenViewabilityChangeMeta
+		err = json.Unmarshal(recentChange.Meta, &recentMeta)
+		require.NoError(t, err)
+		assert.False(t, recentMeta.IsViewable, "most recent change should show token is not viewable")
+	})
 }
 
 // =============================================================================

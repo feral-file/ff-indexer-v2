@@ -1700,12 +1700,12 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 					SELECT CAST(id AS TEXT) FROM provenance_events WHERE token_id IN ?
 				)
 			) OR (
-				-- Metadata and enrich_source changes: subject_id is token_id
-				subject_type IN (?, ?) AND subject_id::BIGINT IN ?
+				-- Metadata, enrich_source, and token_viewability changes: subject_id is token_id
+				subject_type IN (?, ?, ?) AND subject_id::BIGINT IN ?
 			)
 		`,
 			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance, filter.TokenIDs,
-			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, filter.TokenIDs,
+			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, schema.SubjectTypeTokenViewability, filter.TokenIDs,
 		)
 	}
 
@@ -1736,12 +1736,12 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 					SELECT CAST(id AS TEXT) FROM provenance_events WHERE token_id IN ?
 				)
 			) OR (
-				-- Metadata and enrich_source changes: subject_id is token_id
-				subject_type IN (?, ?) AND subject_id::BIGINT IN ?
+				-- Metadata, enrich_source, and token_viewability changes: subject_id is token_id
+				subject_type IN (?, ?, ?) AND subject_id::BIGINT IN ?
 			)
 		`,
 			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance, tokenIDs,
-			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, tokenIDs,
+			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, schema.SubjectTypeTokenViewability, tokenIDs,
 		)
 	}
 
@@ -2946,4 +2946,37 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		return nil
 	})
+}
+
+// CreateTokenViewabilityChange creates a changes_journal entry for a token viewability change
+func (s *pgStore) CreateTokenViewabilityChange(ctx context.Context, tokenID uint64, tokenCID string, isViewable bool) error {
+	meta := schema.TokenViewabilityChangeMeta{
+		TokenID:    tokenID,
+		TokenCID:   tokenCID,
+		IsViewable: isViewable,
+	}
+
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("failed to marshal viewability change meta: %w", err)
+	}
+
+	changeJournal := schema.ChangesJournal{
+		SubjectType: schema.SubjectTypeTokenViewability,
+		SubjectID:   fmt.Sprintf("%d", tokenID),
+		ChangedAt:   time.Now(),
+		Meta:        metaJSON,
+	}
+
+	// Use ON CONFLICT DO NOTHING to handle rare duplicate cases
+	if err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
+			DoNothing: true,
+		}).
+		Create(&changeJournal).Error; err != nil {
+		return fmt.Errorf("failed to create viewability change journal: %w", err)
+	}
+
+	return nil
 }

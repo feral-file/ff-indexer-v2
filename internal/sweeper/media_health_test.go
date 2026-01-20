@@ -120,6 +120,11 @@ func TestMediaHealthSweeper_CheckURL_Healthy(t *testing.T) {
 		GetTokensViewabilityByIDs(gomock.Any(), []uint64{1}).
 		Return(tokensAfter, nil)
 
+	// Mock: Create viewability change journal entry (viewability changed from false to true)
+	mocks.store.EXPECT().
+		CreateTokenViewabilityChange(gomock.Any(), uint64(1), "token1", true).
+		Return(nil)
+
 	// Mock: Trigger webhook for token (viewability changed from false to true)
 	mocks.orchestrator.EXPECT().
 		ExecuteWorkflow(
@@ -202,6 +207,11 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 		GetTokensViewabilityByIDs(ctx, []uint64{1}).
 		Return(tokensAfter, nil)
 
+	// Mock: Create viewability change journal entry (viewability changed from false to true)
+	mocks.store.EXPECT().
+		CreateTokenViewabilityChange(ctx, uint64(1), "token1", true).
+		Return(nil)
+
 	// Mock: Trigger webhook for token (viewability changed)
 	mocks.orchestrator.EXPECT().
 		ExecuteWorkflow(
@@ -278,6 +288,11 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 	mocks.store.EXPECT().
 		GetTokensViewabilityByIDs(ctx, []uint64{1}).
 		Return(tokensAfter, nil)
+
+	// Mock: Create viewability change journal entry (viewability changed from true to false)
+	mocks.store.EXPECT().
+		CreateTokenViewabilityChange(ctx, uint64(1), "token1", false).
+		Return(nil)
 
 	// Mock: Trigger webhook (viewability changed from true to false)
 	mocks.orchestrator.EXPECT().
@@ -533,6 +548,10 @@ func TestMediaHealthSweeper_MultipleURLs(t *testing.T) {
 			{TokenID: 1, TokenCID: "token1", IsViewable: true},
 		}, nil)
 
+	mocks.store.EXPECT().
+		CreateTokenViewabilityChange(ctx, uint64(1), "token1", true).
+		Return(nil)
+
 	mocks.orchestrator.EXPECT().
 		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(client.WorkflowRun(nil), nil)
@@ -561,6 +580,10 @@ func TestMediaHealthSweeper_MultipleURLs(t *testing.T) {
 		Return([]store.TokenViewabilityInfo{
 			{TokenID: 2, TokenCID: "token2", IsViewable: true},
 		}, nil)
+
+	mocks.store.EXPECT().
+		CreateTokenViewabilityChange(ctx, uint64(2), "token2", true).
+		Return(nil)
 
 	mocks.orchestrator.EXPECT().
 		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
