@@ -9,11 +9,10 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "github.com/golang/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockStore is a mock of Store interface.
@@ -625,6 +624,21 @@ func (mr *MockStoreMockRecorder) GetTokensByIDs(ctx, tokenIDs interface{}) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensByIDs", reflect.TypeOf((*MockStore)(nil).GetTokensByIDs), ctx, tokenIDs)
 }
 
+// GetTokensViewabilityByIDs mocks base method.
+func (m *MockStore) GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint64) ([]store.TokenViewabilityInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokensViewabilityByIDs", ctx, tokenIDs)
+	ret0, _ := ret[0].([]store.TokenViewabilityInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokensViewabilityByIDs indicates an expected call of GetTokensViewabilityByIDs.
+func (mr *MockStoreMockRecorder) GetTokensViewabilityByIDs(ctx, tokenIDs interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensViewabilityByIDs", reflect.TypeOf((*MockStore)(nil).GetTokensViewabilityByIDs), ctx, tokenIDs)
+}
+
 // GetTokensViewabilityByMediaURL mocks base method.
 func (m *MockStore) GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]store.TokenViewabilityInfo, error) {
 	m.ctrl.T.Helper()
@@ -682,6 +696,21 @@ func (m *MockStore) IsAnyAddressWatched(ctx context.Context, chain domain.Chain,
 func (mr *MockStoreMockRecorder) IsAnyAddressWatched(ctx, chain, addresses interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsAnyAddressWatched", reflect.TypeOf((*MockStore)(nil).IsAnyAddressWatched), ctx, chain, addresses)
+}
+
+// MarkMediaURLAsChecking mocks base method.
+func (m *MockStore) MarkMediaURLAsChecking(ctx context.Context, url string, recheckAfter time.Duration) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkMediaURLAsChecking", ctx, url, recheckAfter)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MarkMediaURLAsChecking indicates an expected call of MarkMediaURLAsChecking.
+func (mr *MockStoreMockRecorder) MarkMediaURLAsChecking(ctx, url, recheckAfter interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkMediaURLAsChecking", reflect.TypeOf((*MockStore)(nil).MarkMediaURLAsChecking), ctx, url, recheckAfter)
 }
 
 // SetBlockCursor mocks base method.

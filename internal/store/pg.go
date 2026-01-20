@@ -2728,10 +2728,14 @@ func (s *pgStore) GetMediaURLsNeedingCheck(ctx context.Context, recheckAfter tim
 	cutoffTime := time.Now().Add(-recheckAfter)
 
 	// Use GROUP BY to get distinct URLs and order by the earliest last_checked_at for each URL
+	// Exclude URLs that are currently being checked
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("media_url").
-		Where("last_checked_at < ? OR health_status = ?", cutoffTime, schema.MediaHealthStatusUnknown).
+		Where("(last_checked_at < ? OR health_status = ?) AND health_status != ?",
+			cutoffTime,
+			schema.MediaHealthStatusUnknown,
+			schema.MediaHealthStatusChecking).
 		Group("media_url").
 		Order("MIN(last_checked_at) ASC").
 		Limit(limit).
@@ -2742,6 +2746,32 @@ func (s *pgStore) GetMediaURLsNeedingCheck(ctx context.Context, recheckAfter tim
 	}
 
 	return urls, nil
+}
+
+// MarkMediaURLAsChecking atomically marks all records with a URL as "checking" if they need checking
+// Returns true if the URL was successfully marked, false if it was already being checked by another instance
+func (s *pgStore) MarkMediaURLAsChecking(ctx context.Context, url string, recheckAfter time.Duration) (bool, error) {
+	cutoffTime := time.Now().Add(-recheckAfter)
+
+	// Atomically update records to "checking" status only if they're not already being checked
+	result := s.db.WithContext(ctx).
+		Model(&schema.TokenMediaHealth{}).
+		Where("media_url = ? AND health_status != ? AND (last_checked_at < ? OR health_status = ?)",
+			url,
+			schema.MediaHealthStatusChecking,
+			cutoffTime,
+			schema.MediaHealthStatusUnknown).
+		Updates(map[string]interface{}{
+			"health_status":   schema.MediaHealthStatusChecking,
+			"last_checked_at": time.Now(),
+		})
+
+	if result.Error != nil {
+		return false, fmt.Errorf("failed to mark URL as checking: %w", result.Error)
+	}
+
+	// If no rows were affected, the URL is already being checked
+	return result.RowsAffected > 0, nil
 }
 
 // GetTokensViewabilityByMediaURL returns all tokens that use a specific URL along with their viewability status
@@ -2791,6 +2821,62 @@ func (s *pgStore) GetTokensViewabilityByMediaURL(ctx context.Context, url string
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tokens viewability by media URL: %w", err)
+	}
+
+	return results, nil
+}
+
+// GetTokensViewabilityByIDs returns viewability status for a specific set of token IDs
+func (s *pgStore) GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityInfo, error) {
+	if len(tokenIDs) == 0 {
+		return []TokenViewabilityInfo{}, nil
+	}
+
+	query := `
+		SELECT 
+			tokens.id as token_id,
+			tokens.token_cid as token_cid,
+			CASE 
+				-- Token is viewable if it has at least one healthy animation URL
+				WHEN EXISTS (
+					SELECT 1 FROM token_media_health tmh
+					WHERE tmh.token_id = tokens.id
+						AND tmh.health_status = ?
+						AND tmh.media_source IN (?, ?)
+				) THEN true
+				-- OR if no animation URLs exist AND has at least one healthy image URL
+				WHEN NOT EXISTS (
+					SELECT 1 FROM token_media_health tmh
+					WHERE tmh.token_id = tokens.id 
+						AND tmh.media_source IN (?, ?)
+				)
+				AND EXISTS (
+					SELECT 1 FROM token_media_health tmh
+					WHERE tmh.token_id = tokens.id
+						AND tmh.health_status = ?
+						AND tmh.media_source IN (?, ?)
+				) THEN true
+				ELSE false
+			END as is_viewable
+		FROM tokens
+		WHERE tokens.id IN ?
+	`
+
+	var results []TokenViewabilityInfo
+	err := s.db.WithContext(ctx).Raw(query,
+		string(schema.MediaHealthStatusHealthy),
+		string(schema.MediaHealthSourceMetadataAnimation),
+		string(schema.MediaHealthSourceEnrichmentAnimation),
+		string(schema.MediaHealthSourceMetadataAnimation),
+		string(schema.MediaHealthSourceEnrichmentAnimation),
+		string(schema.MediaHealthStatusHealthy),
+		string(schema.MediaHealthSourceMetadataImage),
+		string(schema.MediaHealthSourceEnrichmentImage),
+		tokenIDs,
+	).Scan(&results).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tokens viewability by IDs: %w", err)
 	}
 
 	return results, nil

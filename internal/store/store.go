@@ -281,8 +281,13 @@ type Store interface {
 
 	// GetMediaURLsNeedingCheck returns distinct URLs that need health checking
 	GetMediaURLsNeedingCheck(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error)
+	// MarkMediaURLAsChecking atomically marks all records with a URL as "checking" if they need checking
+	// Returns true if the URL was successfully marked, false if it was already being checked by another instance
+	MarkMediaURLAsChecking(ctx context.Context, url string, recheckAfter time.Duration) (bool, error)
 	// GetTokensViewabilityByMediaURL returns all tokens that use a specific URL along with their viewability status
 	GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]TokenViewabilityInfo, error)
+	// GetTokensViewabilityByIDs returns viewability status for a specific set of token IDs
+	GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityInfo, error)
 	// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
 	UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error
 	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction

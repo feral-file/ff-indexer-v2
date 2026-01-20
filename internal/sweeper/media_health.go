@@ -188,6 +188,20 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCount, brokenCount, transientErrorCount *atomic.Int32) {
 	logger.InfoCtx(ctx, "Checking URL", zap.String("url", url))
 
+	// Atomically mark this URL as "checking" to prevent other sweeper instances from processing it
+	marked, err := s.store.MarkMediaURLAsChecking(ctx, url, s.config.RecheckAfter)
+	if err != nil {
+		logger.ErrorCtx(ctx, err, zap.String("url", url))
+		return
+	}
+
+	if !marked {
+		// Another instance is already checking this URL, skip it
+		logger.DebugCtx(ctx, "URL is already being checked by another instance, skipping",
+			zap.String("url", url))
+		return
+	}
+
 	// Get all tokens using this URL and their current viewability status BEFORE health check
 	tokensBefore, err := s.store.GetTokensViewabilityByMediaURL(ctx, url)
 	if err != nil {
@@ -246,12 +260,24 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 			zap.String("url", url),
 			zap.Stringp("error", result.Error),
 		)
-		// Don't update status for transient errors - let it retry next cycle
+		// Reset status back to previous state so it can be retried
+		// We don't know the previous status, so we just set it to unknown to allow retry
+		if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusUnknown, result.Error); err != nil {
+			logger.ErrorCtx(ctx, err,
+				zap.String("url", url),
+			)
+		}
 		return
 	}
 
 	// Get all tokens using this URL and their viewability status AFTER health check update
-	tokensAfter, err := s.store.GetTokensViewabilityByMediaURL(ctx, url)
+	// Extract token IDs from tokensBefore to ensure we check the same tokens
+	tokenIDs := make([]uint64, len(tokensBefore))
+	for i, token := range tokensBefore {
+		tokenIDs[i] = token.TokenID
+	}
+
+	tokensAfter, err := s.store.GetTokensViewabilityByIDs(ctx, tokenIDs)
 	if err != nil {
 		logger.ErrorCtx(ctx, err, zap.String("url", url))
 		return
