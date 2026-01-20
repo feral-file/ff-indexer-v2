@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"github.com/golang/mock/gomock"
@@ -1278,6 +1279,7 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	description := "A Bored Ape from OpenSea"
 	imageURL := "https://i.seadn.io/gae/1.png"
 	animationURL := "https://i.seadn.io/gae/1.mp4"
+	resolvedImageURL := fmt.Sprintf("%s?w=3840", imageURL)
 
 	nftMetadata := &opensea.NFTMetadata{
 		Identifier:   "1",
@@ -1336,7 +1338,7 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	assert.NotNil(t, result.Description)
 	assert.Equal(t, "A Bored Ape from OpenSea", *result.Description)
 	assert.NotNil(t, result.ImageURL)
-	assert.Equal(t, imageURL, *result.ImageURL)
+	assert.Equal(t, resolvedImageURL, *result.ImageURL)
 	assert.NotNil(t, result.AnimationURL)
 	assert.Equal(t, animationURL, *result.AnimationURL)
 	assert.Len(t, result.Artists, 1)
@@ -1527,17 +1529,18 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 		Return(vendorJSON, nil)
 
 	// Mock for MIME type detection
+	resolvedImageURL := fmt.Sprintf("%s?w=3840", imageURL)
 	mocks.uriResolver.
 		EXPECT().
-		Resolve(gomock.Any(), imageURL).
-		Return(imageURL, nil)
+		Resolve(gomock.Any(), resolvedImageURL).
+		Return(resolvedImageURL, nil)
 	mocks.httpClient.
 		EXPECT().
 		Head(gomock.Any(), imageURL).
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), imageURL, gomock.Any()).
+		GetPartialContent(gomock.Any(), resolvedImageURL, gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
