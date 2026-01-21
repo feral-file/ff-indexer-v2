@@ -1581,7 +1581,7 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_UnsupportedAddress(t *testi
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported blockchain for address")
-	assert.Nil(t, result)
+	assert.Empty(t, result)
 }
 
 func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
@@ -1605,7 +1605,7 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Equal(t, clientErr, err)
-	assert.Nil(t, result)
+	assert.Empty(t, result)
 }
 
 func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_BlacklistFiltering(t *testing.T) {
