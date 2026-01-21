@@ -47,11 +47,11 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
 	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
-		TezosChainID:                 domain.ChainTezosMainnet,
-		EthereumChainID:              domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock: 1000,
-		TezosTokenSweepStartBlock:    1000,
-		MediaTaskQueue:               "media-task-queue",
+		TezosChainID:                      domain.ChainTezosMainnet,
+		EthereumChainID:                   domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:      1000,
+		TezosTokenSweepStartBlock:         1000,
+		MediaTaskQueue:                    "media-task-queue",
 		BudgetedIndexingDefaultDailyQuota: 1000,
 	}, s.blacklist, s.temporalWorkflow)
 }
