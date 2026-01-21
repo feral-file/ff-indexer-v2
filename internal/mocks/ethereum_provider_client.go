@@ -187,18 +187,18 @@ func (mr *MockEthereumProviderClientMockRecorder) GetLatestBlock(ctx interface{}
 }
 
 // GetTokenCIDsByOwnerAndBlockRange mocks base method.
-func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
+func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, requestedFromBlock, requestedToBlock uint64, limit int, order domain.BlockScanOrder) (domain.TokenWithBlockRangeResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokenCIDsByOwnerAndBlockRange", ctx, ownerAddress, fromBlock, toBlock)
-	ret0, _ := ret[0].([]domain.TokenWithBlock)
+	ret := m.ctrl.Call(m, "GetTokenCIDsByOwnerAndBlockRange", ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order)
+	ret0, _ := ret[0].(domain.TokenWithBlockRangeResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTokenCIDsByOwnerAndBlockRange indicates an expected call of GetTokenCIDsByOwnerAndBlockRange.
-func (mr *MockEthereumProviderClientMockRecorder) GetTokenCIDsByOwnerAndBlockRange(ctx, ownerAddress, fromBlock, toBlock interface{}) *gomock.Call {
+func (mr *MockEthereumProviderClientMockRecorder) GetTokenCIDsByOwnerAndBlockRange(ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCIDsByOwnerAndBlockRange", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetTokenCIDsByOwnerAndBlockRange), ctx, ownerAddress, fromBlock, toBlock)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCIDsByOwnerAndBlockRange", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetTokenCIDsByOwnerAndBlockRange), ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order)
 }
 
 // GetTokenEvents mocks base method.

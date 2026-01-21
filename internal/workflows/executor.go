@@ -67,9 +67,18 @@ type Executor interface {
 	// For ERC721 and FA2, address parameter is ignored and full provenance is always indexed
 	IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error
 
-	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs with block numbers for an owner within a block range
-	// This is used to sweep tokens by block ranges for incremental indexing
-	GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error)
+	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves token CIDs with block numbers for an owner within a block range.
+	// This is used to sweep tokens by block ranges for incremental indexing.
+	// limit is always applied; pass a very large value if you want "no cap". order controls scan direction for limit selection.
+	// Returns effectiveFromBlock/effectiveToBlock for the range actually used after limiting.
+	GetEthereumTokenCIDsByOwnerWithinBlockRange(
+		ctx context.Context,
+		address string,
+		requestedFromBlock uint64,
+		requestedToBlock uint64,
+		limit int,
+		order domain.BlockScanOrder,
+	) (domain.TokenWithBlockRangeResult, error)
 
 	// GetTezosTokenCIDsByAccountWithinBlockRange retrieves token CIDs with block numbers for an account within a block range
 	GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error)
@@ -1020,26 +1029,41 @@ func (e *executor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]d
 // GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
 // This is used to sweep tokens by block ranges for incremental indexing
 // Filters out blacklisted tokens before returning
-func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
+func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(
+	ctx context.Context,
+	address string,
+	requestedFromBlock uint64,
+	requestedToBlock uint64,
+	limit int,
+	order domain.BlockScanOrder,
+) (domain.TokenWithBlockRangeResult, error) {
 	blockchain := types.AddressToBlockchain(address)
 	if blockchain != domain.BlockchainEthereum {
-		return nil, fmt.Errorf("unsupported blockchain for address: %s", address)
+		return domain.TokenWithBlockRangeResult{}, fmt.Errorf("unsupported blockchain for address: %s", address)
 	}
 
-	tokensWithBlocks, err := e.ethClient.GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock)
+	result, err := e.ethClient.GetTokenCIDsByOwnerAndBlockRange(
+		ctx,
+		address,
+		requestedFromBlock,
+		requestedToBlock,
+		limit,
+		order,
+	)
 	if err != nil {
-		return nil, err
+		return domain.TokenWithBlockRangeResult{}, err
 	}
 
 	// Filter out blacklisted tokens
-	filtered := make([]domain.TokenWithBlock, 0, len(tokensWithBlocks))
-	for _, tokenWithBlock := range tokensWithBlocks {
+	filtered := make([]domain.TokenWithBlock, 0, len(result.Tokens))
+	for _, tokenWithBlock := range result.Tokens {
 		if !e.blacklist.IsTokenCIDBlacklisted(tokenWithBlock.TokenCID) {
 			filtered = append(filtered, tokenWithBlock)
 		}
 	}
 
-	return filtered, nil
+	result.Tokens = filtered
+	return result, nil
 }
 
 // IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID

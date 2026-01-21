@@ -51,6 +51,19 @@ const (
 	StandardFA2     ChainStandard = "fa2"
 )
 
+// BlockScanOrder defines block scan direction for range queries.
+type BlockScanOrder uint8
+
+const (
+	BlockScanOrderAsc BlockScanOrder = iota
+	BlockScanOrderDesc
+)
+
+// Desc reports whether the order is descending.
+func (o BlockScanOrder) Desc() bool {
+	return o == BlockScanOrderDesc
+}
+
 // EventType represents the type of blockchain event
 type EventType string
 
@@ -70,6 +83,13 @@ type TokenCID string
 type TokenWithBlock struct {
 	TokenCID    TokenCID `json:"token_cid"`
 	BlockNumber uint64   `json:"block_number"`
+}
+
+// TokenWithBlockRangeResult represents token results and the effective block range used.
+type TokenWithBlockRangeResult struct {
+	Tokens             []TokenWithBlock `json:"tokens"`
+	EffectiveFromBlock uint64           `json:"effective_from_block"`
+	EffectiveToBlock   uint64           `json:"effective_to_block"`
 }
 
 // BlockchainEvent represents a normalized blockchain event

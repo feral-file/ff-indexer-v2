@@ -774,8 +774,14 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 		)
 
 		var allTokens []domain.TokenWithBlock
+		var allTokensResult domain.TokenWithBlockRangeResult
 		err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
-			address, w.config.EthereumTokenSweepStartBlock, latestBlock).Get(ctx, &allTokens)
+			address,
+			w.config.EthereumTokenSweepStartBlock,
+			latestBlock,
+			w.config.BudgetedIndexingDefaultDailyQuota,
+			domain.BlockScanOrderDesc,
+		).Get(ctx, &allTokensResult)
 		if err != nil {
 			logger.ErrorWf(ctx,
 				fmt.Errorf("failed to fetch tokens"),
@@ -784,6 +790,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			)
 			return err
 		}
+		allTokens = allTokensResult.Tokens
 
 		logger.InfoWf(ctx, "Retrieved all tokens for first run",
 			zap.String("address", address),
@@ -795,8 +802,8 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 		chunks := chunkTokensByCount(allTokens, TOKEN_INDEXING_CHUNK_SIZE)
 
 		// Store the actual scanned block range (not token block range)
-		scannedMinBlock := w.config.EthereumTokenSweepStartBlock
-		scannedMaxBlock := latestBlock
+		scannedMinBlock := allTokensResult.EffectiveFromBlock
+		scannedMaxBlock := allTokensResult.EffectiveToBlock
 
 		for i, chunk := range chunks {
 			logger.InfoWf(ctx, "Processing token chunk",
@@ -887,8 +894,14 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			)
 
 			var backwardTokens []domain.TokenWithBlock
+			var backwardTokensResult domain.TokenWithBlockRangeResult
 			err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
-				address, w.config.EthereumTokenSweepStartBlock, storedMinBlock-1).Get(ctx, &backwardTokens)
+				address,
+				w.config.EthereumTokenSweepStartBlock,
+				storedMinBlock-1,
+				w.config.BudgetedIndexingDefaultDailyQuota,
+				domain.BlockScanOrderDesc,
+			).Get(ctx, &backwardTokensResult)
 			if err != nil {
 				logger.ErrorWf(ctx,
 					fmt.Errorf("failed to fetch backward tokens"),
@@ -897,6 +910,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 				)
 				return err
 			}
+			backwardTokens = backwardTokensResult.Tokens
 
 			logger.InfoWf(ctx, "Retrieved backward sweep tokens",
 				zap.String("address", address),
@@ -908,8 +922,8 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			chunks := chunkTokensByCount(backwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
 
 			// Store the actual scanned block range (not token block range)
-			scannedMinBlock := w.config.EthereumTokenSweepStartBlock
-			scannedMaxBlock := storedMinBlock - 1
+			scannedMinBlock := backwardTokensResult.EffectiveFromBlock
+			scannedMaxBlock := backwardTokensResult.EffectiveToBlock
 
 			for i, chunk := range chunks {
 				logger.InfoWf(ctx, "Processing backward chunk",
@@ -985,8 +999,14 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			)
 
 			var forwardTokens []domain.TokenWithBlock
+			var forwardTokensResult domain.TokenWithBlockRangeResult
 			err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
-				address, storedMaxBlock+1, latestBlock).Get(ctx, &forwardTokens)
+				address,
+				storedMaxBlock+1,
+				latestBlock,
+				w.config.BudgetedIndexingDefaultDailyQuota,
+				domain.BlockScanOrderAsc,
+			).Get(ctx, &forwardTokensResult)
 			if err != nil {
 				logger.ErrorWf(ctx,
 					fmt.Errorf("failed to fetch forward tokens"),
@@ -995,6 +1015,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 				)
 				return err
 			}
+			forwardTokens = forwardTokensResult.Tokens
 
 			logger.InfoWf(ctx, "Retrieved forward sweep tokens",
 				zap.String("address", address),
@@ -1006,8 +1027,8 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			chunks := chunkTokensByCount(forwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
 
 			// Store the actual scanned block range (not token block range)
-			scannedMinBlock := storedMaxBlock + 1
-			scannedMaxBlock := latestBlock
+			scannedMinBlock := forwardTokensResult.EffectiveFromBlock
+			scannedMaxBlock := forwardTokensResult.EffectiveToBlock
 
 			for i, chunk := range chunks {
 				logger.InfoWf(ctx, "Processing forward chunk",

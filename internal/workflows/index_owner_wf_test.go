@@ -52,6 +52,7 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 		EthereumTokenSweepStartBlock: 1000,
 		TezosTokenSweepStartBlock:    1000,
 		MediaTaskQueue:               "media-task-queue",
+		BudgetedIndexingDefaultDailyQuota: 1000,
 	}, s.blacklist, s.temporalWorkflow)
 }
 
@@ -983,7 +984,19 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_FirstRun_WithT
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
 
 	// Verify GetEthereumTokenCIDsByOwnerWithinBlockRange called with correct range
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		address,
+		startBlock,
+		latestBlock,
+		mock.Anything,
+		domain.BlockScanOrderDesc,
+	).Return(domain.TokenWithBlockRangeResult{
+		Tokens:             tokens,
+		EffectiveFromBlock: startBlock,
+		EffectiveToBlock:   latestBlock,
+	}, nil)
 
 	// Track block range updates
 	var blockRangeUpdates []struct {
@@ -1042,7 +1055,19 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_JobProgressTra
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		address,
+		startBlock,
+		latestBlock,
+		mock.Anything,
+		domain.BlockScanOrderDesc,
+	).Return(domain.TokenWithBlockRangeResult{
+		Tokens:             tokens,
+		EffectiveFromBlock: startBlock,
+		EffectiveToBlock:   latestBlock,
+	}, nil)
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
@@ -1090,7 +1115,19 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_JobTrackingGra
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		address,
+		startBlock,
+		latestBlock,
+		mock.Anything,
+		domain.BlockScanOrderDesc,
+	).Return(domain.TokenWithBlockRangeResult{
+		Tokens:             tokens,
+		EffectiveFromBlock: startBlock,
+		EffectiveToBlock:   latestBlock,
+	}, nil)
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
@@ -1125,7 +1162,19 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
 
 	// Verify forward sweep: from 3001 (storedMaxBlock + 1) to 5000 (latestBlock)
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, storedMaxBlock+1, latestBlock).Return(forwardTokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		address,
+		storedMaxBlock+1,
+		latestBlock,
+		mock.Anything,
+		domain.BlockScanOrderAsc,
+	).Return(domain.TokenWithBlockRangeResult{
+		Tokens:             forwardTokens,
+		EffectiveFromBlock: storedMaxBlock + 1,
+		EffectiveToBlock:   latestBlock,
+	}, nil)
 
 	// Track block range updates to verify progressive max_block updates
 	var blockRangeUpdates []struct {
@@ -1192,7 +1241,15 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_IndexTokenChun
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, mock.Anything, mock.Anything).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(tokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+	).Return(domain.TokenWithBlockRangeResult{Tokens: tokens}, nil)
 
 	// Mock IndexTokens child workflow to fail
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("indexing failed"))
@@ -1224,7 +1281,15 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_UpdateBlockRan
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, mock.Anything, mock.Anything).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(tokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+	).Return(domain.TokenWithBlockRangeResult{Tokens: tokens}, nil)
 
 	// Mock IndexTokens child workflow
 	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -1297,8 +1362,19 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Q
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
-		Return(tokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		address,
+		uint64(1000),
+		latestBlock,
+		mock.Anything,
+		domain.BlockScanOrderDesc,
+	).Return(domain.TokenWithBlockRangeResult{
+		Tokens:             tokens,
+		EffectiveFromBlock: uint64(1000),
+		EffectiveToBlock:   latestBlock,
+	}, nil)
 
 	// First quota check - 50 tokens available
 	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
@@ -1368,8 +1444,19 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_N
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
-		Return(tokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		address,
+		uint64(1000),
+		latestBlock,
+		mock.Anything,
+		domain.BlockScanOrderDesc,
+	).Return(domain.TokenWithBlockRangeResult{
+		Tokens:             tokens,
+		EffectiveFromBlock: uint64(1000),
+		EffectiveToBlock:   latestBlock,
+	}, nil)
 
 	// Quota check - plenty available
 	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{
@@ -1428,8 +1515,19 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_P
 	s.env.OnActivity(s.executor.GetIndexingBlockRangeForAddress, mock.Anything, address, chainID).
 		Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
 	s.env.OnActivity(s.executor.GetLatestEthereumBlock, mock.Anything).Return(latestBlock, nil)
-	s.env.OnActivity(s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange, mock.Anything, address, uint64(1000), latestBlock).
-		Return(tokens, nil)
+	s.env.OnActivity(
+		s.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
+		mock.Anything,
+		address,
+		uint64(1000),
+		latestBlock,
+		mock.Anything,
+		domain.BlockScanOrderDesc,
+	).Return(domain.TokenWithBlockRangeResult{
+		Tokens:             tokens,
+		EffectiveFromBlock: uint64(1000),
+		EffectiveToBlock:   latestBlock,
+	}, nil)
 
 	// Quota check - only 30 remaining
 	s.env.OnActivity(s.executor.GetQuotaInfo, mock.Anything, address, chainID).Return(&store.QuotaInfo{

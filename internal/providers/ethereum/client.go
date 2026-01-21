@@ -75,9 +75,18 @@ type EthereumClient interface {
 	// Supports both TransferSingle and TransferBatch events
 	GetERC1155BalanceAndEventsForOwner(ctx context.Context, contractAddress, tokenNumber, ownerAddress string) (balance string, events []domain.BlockchainEvent, err error)
 
-	// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs with block numbers for an owner within a block range
-	// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
-	GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error)
+	// GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.
+	// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver.
+	// limit is always applied; pass a very large value if you want "no cap". order controls scan direction for limit selection.
+	// Returns effectiveFromBlock/effectiveToBlock for the range actually used after limiting.
+	GetTokenCIDsByOwnerAndBlockRange(
+		ctx context.Context,
+		ownerAddress string,
+		requestedFromBlock uint64,
+		requestedToBlock uint64,
+		limit int,
+		order domain.BlockScanOrder,
+	) (domain.TokenWithBlockRangeResult, error)
 
 	// GetContractDeployer retrieves the deployer address for a contract
 	// minBlock specifies the earliest block to search (0 = search from genesis)
@@ -1196,10 +1205,19 @@ func (f *ethereumClient) parseTransferBatchForToken(ctx context.Context, vLog ty
 	return events, nil
 }
 
-// GetTokenCIDsByOwnerAndBlockRange retrieves all token CIDs with block numbers for an owner within a block range
-// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver
-// Returns tokens that the owner possesses at the end of the block range with their last interaction block
-func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
+// GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.
+// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver.
+// limit is respected strictly (caller should pass a very large value to mimic no limit).
+// If limit is reached during a block, the scan finishes that block and stops afterward.
+// The result reflects only the scanned portion of the requested range.
+func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
+	ctx context.Context,
+	ownerAddress string,
+	requestedFromBlock uint64,
+	requestedToBlock uint64,
+	limit int,
+	order domain.BlockScanOrder,
+) (domain.TokenWithBlockRangeResult, error) {
 	owner := common.HexToAddress(ownerAddress)
 	ownerHash := common.BytesToHash(owner.Bytes())
 
@@ -1208,8 +1226,8 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 	queries := []ethereum.FilterQuery{
 		// ERC721 Transfer where address is `from` (topic[1])
 		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
+			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
+			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
 			Topics: [][]common.Hash{
 				{transferEventSignature}, // Transfer event
 				{ownerHash},              // from address
@@ -1217,8 +1235,8 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		},
 		// ERC721 Transfer where address is `to` (topic[2])
 		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
+			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
+			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
 			Topics: [][]common.Hash{
 				{transferEventSignature}, // Transfer event
 				nil,                      // any from address
@@ -1227,8 +1245,8 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		},
 		// ERC1155 TransferSingle where address is `from` (topic[2])
 		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
+			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
+			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
 			Topics: [][]common.Hash{
 				{transferSingleEventSignature}, // TransferSingle event
 				nil,                            // any operator
@@ -1237,8 +1255,8 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		},
 		// ERC1155 TransferSingle where address is `to` (topic[3])
 		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
+			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
+			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
 			Topics: [][]common.Hash{
 				{transferSingleEventSignature}, // TransferSingle event
 				nil,                            // any operator
@@ -1248,8 +1266,8 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		},
 		// ERC1155 TransferBatch where address is `from` (topic[2])
 		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
+			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
+			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
 			Topics: [][]common.Hash{
 				{transferBatchEventSignature}, // TransferBatch event
 				nil,                           // any operator
@@ -1258,8 +1276,8 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		},
 		// ERC1155 TransferBatch where address is `to` (topic[3])
 		{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(toBlock),
+			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
+			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
 			Topics: [][]common.Hash{
 				{transferBatchEventSignature}, // TransferBatch event
 				nil,                           // any operator
@@ -1288,7 +1306,7 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 	for range queries {
 		result := <-resultsCh
 		if result.err != nil {
-			return nil, fmt.Errorf("failed to query logs: %w", result.err)
+			return domain.TokenWithBlockRangeResult{}, fmt.Errorf("failed to query logs: %w", result.err)
 		}
 		allLogs = append(allLogs, result.logs...)
 	}
@@ -1307,29 +1325,87 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 		allLogs = append(allLogs, vLog)
 	}
 
-	// Sort logs chronologically (by block number, then by log index)
-	// This ensures deterministic processing order for correct ownership tracking
-	sort.Slice(allLogs, func(i, j int) bool {
-		if allLogs[i].BlockNumber != allLogs[j].BlockNumber {
-			return allLogs[i].BlockNumber < allLogs[j].BlockNumber
-		}
-		return allLogs[i].Index < allLogs[j].Index
-	})
+	// Sort logs by block number and log index based on requested order.
+	// This ensures deterministic processing order for limit selection.
+	if order.Desc() {
+		sort.Slice(allLogs, func(i, j int) bool {
+			if allLogs[i].BlockNumber != allLogs[j].BlockNumber {
+				return allLogs[i].BlockNumber > allLogs[j].BlockNumber
+			}
+			return allLogs[i].Index > allLogs[j].Index
+		})
+	} else {
+		sort.Slice(allLogs, func(i, j int) bool {
+			if allLogs[i].BlockNumber != allLogs[j].BlockNumber {
+				return allLogs[i].BlockNumber < allLogs[j].BlockNumber
+			}
+			return allLogs[i].Index < allLogs[j].Index
+		})
+	}
 
-	// Track balance changes per token to determine ownership at the end of the block range
-	// For ERC721: map stores the last transfer log (to determine final owner)
-	// For ERC1155: map stores net balance change (incoming - outgoing)
+	// Track balance changes per token to determine ownership at the end of the processed range.
+	// For ERC721: map stores the last transfer log (to determine final owner).
+	// For ERC1155: map stores net balance change (incoming - outgoing).
 	type tokenBalance struct {
 		standard    domain.ChainStandard
 		lastLog     *types.Log // For ERC721: last transfer log
 		netBalance  *big.Int   // For ERC1155: net balance change
 		blockNumber uint64     // Block number of last update
 		logIndex    uint       // Log index of last update
+		owned       bool       // True if owner holds token at end of processed range
 	}
-	balanceMap := make(map[domain.TokenCID]*tokenBalance)
 
-	// Process all logs - distinguish between ERC721 and ERC1155 by event signature
+	updateHeldCount := func(prevOwned, newOwned bool, heldCount *int) {
+		if prevOwned == newOwned {
+			return
+		}
+		if newOwned {
+			*heldCount = *heldCount + 1
+		} else {
+			*heldCount = *heldCount - 1
+		}
+	}
+
+	isNewer := func(existing *tokenBalance, vLog types.Log) bool {
+		return existing == nil ||
+			vLog.BlockNumber > existing.blockNumber ||
+			(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex)
+	}
+
+	tokensFromBalance := func(balanceMap map[domain.TokenCID]*tokenBalance) []domain.TokenWithBlock {
+		tokensWithBlocks := make([]domain.TokenWithBlock, 0, len(balanceMap))
+		for tokenCID, balance := range balanceMap {
+			if balance.owned {
+				tokensWithBlocks = append(tokensWithBlocks, domain.TokenWithBlock{
+					TokenCID:    tokenCID,
+					BlockNumber: balance.blockNumber,
+				})
+			}
+		}
+		return tokensWithBlocks
+	}
+
+	balanceMap := make(map[domain.TokenCID]*tokenBalance)
+	heldCount := 0
+	effectiveFromBlock := requestedFromBlock
+	effectiveToBlock := requestedToBlock
+	limitReachedInBlock := false
+	hasBlock := false
+	var currentBlock uint64
+
 	for _, vLog := range allLogs {
+
+		if !hasBlock {
+			currentBlock = vLog.BlockNumber
+			hasBlock = true
+		} else if vLog.BlockNumber != currentBlock {
+			if limitReachedInBlock {
+				break
+			}
+			currentBlock = vLog.BlockNumber
+			limitReachedInBlock = false
+		}
+
 		if len(vLog.Topics) < 1 {
 			continue
 		}
@@ -1353,18 +1429,31 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 			tokenID := new(big.Int).SetBytes(vLog.Topics[3].Bytes())
 			tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC721, vLog.Address.Hex(), tokenID.String())
 
-			// For ERC721, track the last transfer log (chronologically)
 			existing := balanceMap[tokenCID]
-			if existing == nil ||
-				vLog.BlockNumber > existing.blockNumber ||
-				(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex) {
-				logCopy := vLog
-				balanceMap[tokenCID] = &tokenBalance{
-					standard:    domain.StandardERC721,
-					lastLog:     &logCopy,
-					blockNumber: vLog.BlockNumber,
-					logIndex:    vLog.Index,
+			if isNewer(existing, vLog) {
+				prevOwned := false
+				if existing != nil {
+					prevOwned = existing.owned
 				}
+				logCopy := vLog
+				newOwned := toAddr == owner
+
+				if existing == nil {
+					balanceMap[tokenCID] = &tokenBalance{
+						standard:    domain.StandardERC721,
+						lastLog:     &logCopy,
+						blockNumber: vLog.BlockNumber,
+						logIndex:    vLog.Index,
+						owned:       newOwned,
+					}
+				} else {
+					existing.lastLog = &logCopy
+					existing.blockNumber = vLog.BlockNumber
+					existing.logIndex = vLog.Index
+					existing.owned = newOwned
+				}
+
+				updateHeldCount(prevOwned, newOwned, &heldCount)
 			}
 
 		case transferSingleEventSignature:
@@ -1387,29 +1476,27 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 
 			tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
 
-			// For ERC1155, track net balance change
 			existing := balanceMap[tokenCID]
 			if existing == nil {
 				existing = &tokenBalance{
-					standard:    domain.StandardERC1155,
-					netBalance:  big.NewInt(0),
-					blockNumber: vLog.BlockNumber,
-					logIndex:    vLog.Index,
+					standard:   domain.StandardERC1155,
+					netBalance: big.NewInt(0),
 				}
 				balanceMap[tokenCID] = existing
 			}
 
-			// Calculate balance change: +amount if receiving, -amount if sending
+			prevOwned := existing.netBalance.Sign() > 0
 			if toAddr == owner {
 				existing.netBalance.Add(existing.netBalance, amount)
 			}
 			if fromAddr == owner {
 				existing.netBalance.Sub(existing.netBalance, amount)
 			}
+			newOwned := existing.netBalance.Sign() > 0
+			existing.owned = newOwned
+			updateHeldCount(prevOwned, newOwned, &heldCount)
 
-			// Update block number to track latest interaction
-			if vLog.BlockNumber > existing.blockNumber ||
-				(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex) {
+			if isNewer(existing, vLog) {
 				existing.blockNumber = vLog.BlockNumber
 				existing.logIndex = vLog.Index
 			}
@@ -1466,64 +1553,51 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, o
 
 				tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
 
-				// For ERC1155, track net balance change
 				existing := balanceMap[tokenCID]
 				if existing == nil {
 					existing = &tokenBalance{
-						standard:    domain.StandardERC1155,
-						netBalance:  big.NewInt(0),
-						blockNumber: vLog.BlockNumber,
-						logIndex:    vLog.Index,
+						standard:   domain.StandardERC1155,
+						netBalance: big.NewInt(0),
 					}
 					balanceMap[tokenCID] = existing
 				}
 
-				// Calculate balance change: +amount if receiving, -amount if sending
+				prevOwned := existing.netBalance.Sign() > 0
 				if toAddr == owner {
 					existing.netBalance.Add(existing.netBalance, amount)
 				}
 				if fromAddr == owner {
 					existing.netBalance.Sub(existing.netBalance, amount)
 				}
+				newOwned := existing.netBalance.Sign() > 0
+				existing.owned = newOwned
+				updateHeldCount(prevOwned, newOwned, &heldCount)
 
-				// Update block number to track latest interaction
-				if vLog.BlockNumber > existing.blockNumber ||
-					(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex) {
+				if isNewer(existing, vLog) {
 					existing.blockNumber = vLog.BlockNumber
 					existing.logIndex = vLog.Index
 				}
 			}
 		}
-	}
 
-	// Filter tokens based on final ownership status and include block numbers
-	tokensWithBlocks := make([]domain.TokenWithBlock, 0, len(balanceMap))
-	for tokenCID, balance := range balanceMap {
-		switch balance.standard {
-		case domain.StandardERC721:
-			// For ERC721: owner must be the 'to' address in the last transfer
-			// ERC721 Transfer must have exactly 4 topics: [signature, from, to, tokenId]
-			if balance.lastLog != nil && len(balance.lastLog.Topics) == 4 {
-				toAddr := common.BytesToAddress(balance.lastLog.Topics[2].Bytes())
-				if toAddr == owner {
-					tokensWithBlocks = append(tokensWithBlocks, domain.TokenWithBlock{
-						TokenCID:    tokenCID,
-						BlockNumber: balance.blockNumber,
-					})
-				}
-			}
-		case domain.StandardERC1155:
-			// For ERC1155: net balance must be positive
-			if balance.netBalance != nil && balance.netBalance.Cmp(big.NewInt(0)) > 0 {
-				tokensWithBlocks = append(tokensWithBlocks, domain.TokenWithBlock{
-					TokenCID:    tokenCID,
-					BlockNumber: balance.blockNumber,
-				})
-			}
+		if heldCount >= limit {
+			limitReachedInBlock = true
 		}
 	}
 
-	return tokensWithBlocks, nil
+	if limitReachedInBlock {
+		if order.Desc() {
+			effectiveFromBlock = currentBlock
+		} else {
+			effectiveToBlock = currentBlock
+		}
+	}
+
+	return domain.TokenWithBlockRangeResult{
+		Tokens:             tokensFromBalance(balanceMap),
+		EffectiveFromBlock: effectiveFromBlock,
+		EffectiveToBlock:   effectiveToBlock,
+	}, nil
 }
 
 // parseLog parses an Ethereum log into a standardized blockchain event

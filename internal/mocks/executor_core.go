@@ -189,18 +189,18 @@ func (mr *MockCoreExecutorMockRecorder) GetActiveWebhookClientsByEventType(ctx, 
 }
 
 // GetEthereumTokenCIDsByOwnerWithinBlockRange mocks base method.
-func (m *MockCoreExecutor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
+func (m *MockCoreExecutor) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx context.Context, address string, requestedFromBlock, requestedToBlock uint64, limit int, order domain.BlockScanOrder) (domain.TokenWithBlockRangeResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetEthereumTokenCIDsByOwnerWithinBlockRange", ctx, address, fromBlock, toBlock)
-	ret0, _ := ret[0].([]domain.TokenWithBlock)
+	ret := m.ctrl.Call(m, "GetEthereumTokenCIDsByOwnerWithinBlockRange", ctx, address, requestedFromBlock, requestedToBlock, limit, order)
+	ret0, _ := ret[0].(domain.TokenWithBlockRangeResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetEthereumTokenCIDsByOwnerWithinBlockRange indicates an expected call of GetEthereumTokenCIDsByOwnerWithinBlockRange.
-func (mr *MockCoreExecutorMockRecorder) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock interface{}) *gomock.Call {
+func (mr *MockCoreExecutorMockRecorder) GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, requestedFromBlock, requestedToBlock, limit, order interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEthereumTokenCIDsByOwnerWithinBlockRange", reflect.TypeOf((*MockCoreExecutor)(nil).GetEthereumTokenCIDsByOwnerWithinBlockRange), ctx, address, fromBlock, toBlock)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEthereumTokenCIDsByOwnerWithinBlockRange", reflect.TypeOf((*MockCoreExecutor)(nil).GetEthereumTokenCIDsByOwnerWithinBlockRange), ctx, address, requestedFromBlock, requestedToBlock, limit, order)
 }
 
 // GetIndexingBlockRangeForAddress mocks base method.
