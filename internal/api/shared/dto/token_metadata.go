@@ -38,6 +38,18 @@ type TokenMetadataResponse struct {
 	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
+// MediaURLs returns the media URLs from the token metadata
+func (t *TokenMetadataResponse) MediaURLs() []string {
+	var urls []string
+	if t.ImageURL != nil && *t.ImageURL != "" {
+		urls = append(urls, *t.ImageURL)
+	}
+	if t.AnimationURL != nil && *t.AnimationURL != "" {
+		urls = append(urls, *t.AnimationURL)
+	}
+	return urls
+}
+
 // MapTokenMetadataToDTO maps a schema.TokenMetadata to TokenMetadataResponse
 func MapTokenMetadataToDTO(metadata *schema.TokenMetadata) *TokenMetadataResponse {
 	// Convert schema.Artists to ArtistResponse

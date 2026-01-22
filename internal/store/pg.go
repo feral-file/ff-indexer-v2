@@ -406,7 +406,7 @@ func (s *pgStore) GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID s
 }
 
 // GetTokensByFilter retrieves tokens with their metadata based on filters
-func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]*TokensWithMetadataResult, uint64, error) {
+func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, uint64, error) {
 	query := s.db.WithContext(ctx).Model(&schema.Token{}).
 		Select("DISTINCT ON (tokens.id, latest_pe.timestamp) tokens.*")
 
@@ -480,37 +480,7 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		return nil, 0, fmt.Errorf("failed to get tokens: %w", err)
 	}
 
-	// Fetch metadata for all tokens
-	if len(tokens) == 0 {
-		return []*TokensWithMetadataResult{}, uint64(total), nil //nolint:gosec,G115
-	}
-
-	tokenIDs := make([]uint64, len(tokens))
-	for i, token := range tokens {
-		tokenIDs[i] = token.ID
-	}
-
-	var metadataList []schema.TokenMetadata
-	if err := s.db.WithContext(ctx).Where("token_id IN ?", tokenIDs).Find(&metadataList).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to get token metadata: %w", err)
-	}
-
-	// Create a map of metadata by token ID
-	metadataMap := make(map[uint64]*schema.TokenMetadata)
-	for i := range metadataList {
-		metadataMap[metadataList[i].TokenID] = &metadataList[i]
-	}
-
-	// Combine tokens with their metadata
-	results := make([]*TokensWithMetadataResult, len(tokens))
-	for i := range tokens {
-		results[i] = &TokensWithMetadataResult{
-			Token:    &tokens[i],
-			Metadata: metadataMap[tokens[i].ID],
-		}
-	}
-
-	return results, uint64(total), nil //nolint:gosec,G115
+	return tokens, uint64(total), nil //nolint:gosec,G115
 }
 
 // GetTokenOwners retrieves owners (balances) for a token
@@ -658,6 +628,40 @@ func (s *pgStore) GetTokenMetadataByTokenCID(ctx context.Context, tokenCID strin
 		return nil, fmt.Errorf("failed to get token metadata: %w", err)
 	}
 	return &metadata, nil
+}
+
+// GetTokenMetadataByTokenID retrieves token metadata by token ID
+func (s *pgStore) GetTokenMetadataByTokenID(ctx context.Context, tokenID uint64) (*schema.TokenMetadata, error) {
+	var metadata schema.TokenMetadata
+	err := s.db.WithContext(ctx).Where("token_id = ?", tokenID).First(&metadata).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get token metadata: %w", err)
+	}
+	return &metadata, nil
+}
+
+// GetTokenMetadataByTokenIDs retrieves token metadata for multiple tokens
+func (s *pgStore) GetTokenMetadataByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.TokenMetadata, error) {
+	if len(tokenIDs) == 0 {
+		return make(map[uint64]*schema.TokenMetadata), nil
+	}
+
+	var metadataList []schema.TokenMetadata
+	err := s.db.WithContext(ctx).Where("token_id IN ?", tokenIDs).Find(&metadataList).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token metadata bulk: %w", err)
+	}
+
+	// Map by token ID
+	result := make(map[uint64]*schema.TokenMetadata)
+	for i := range metadataList {
+		result[metadataList[i].TokenID] = &metadataList[i]
+	}
+
+	return result, nil
 }
 
 // UpsertTokenMetadata creates or updates token metadata

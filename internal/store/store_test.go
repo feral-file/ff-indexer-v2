@@ -1804,47 +1804,47 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 	t.Run("filter by owner", func(t *testing.T) {
 		owner1 := "0xfilter100000000000000000000000000000000001"
-		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Owners:            []string{owner1},
 			Limit:             10,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(3))
-		assert.GreaterOrEqual(t, len(results), 3)
-		for _, result := range results {
-			if result.Token.CurrentOwner != nil {
-				assert.Equal(t, owner1, *result.Token.CurrentOwner)
+		assert.GreaterOrEqual(t, len(tokens), 3)
+		for _, token := range tokens {
+			if token.CurrentOwner != nil {
+				assert.Equal(t, owner1, *token.CurrentOwner)
 			}
 		}
 	})
 
 	t.Run("filter by chain", func(t *testing.T) {
-		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Chains:            []domain.Chain{domain.ChainEthereumSepolia},
 			Limit:             10,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(1))
-		assert.GreaterOrEqual(t, len(results), 1)
-		for _, result := range results {
-			assert.Equal(t, domain.ChainEthereumSepolia, result.Token.Chain)
+		assert.GreaterOrEqual(t, len(tokens), 1)
+		for _, result := range tokens {
+			assert.Equal(t, domain.ChainEthereumSepolia, result.Chain)
 		}
 	})
 
 	t.Run("filter by contract address", func(t *testing.T) {
 		contract1 := "0x0000000000000000000000000000000000001111"
-		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{contract1},
 			Limit:             10,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(2))
-		assert.LessOrEqual(t, len(results), 2)
-		for _, result := range results {
-			assert.Equal(t, contract1, result.Token.ContractAddress)
+		assert.LessOrEqual(t, len(tokens), 2)
+		for _, token := range tokens {
+			assert.Equal(t, contract1, token.ContractAddress)
 		}
 	})
 
@@ -1870,19 +1870,19 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 		// Ensure pages don't overlap
 		if len(page1) > 0 && len(page2) > 0 {
-			assert.NotEqual(t, page1[0].Token.ID, page2[0].Token.ID)
+			assert.NotEqual(t, page1[0].ID, page2[0].ID)
 		}
 	})
 
 	t.Run("filter with no results", func(t *testing.T) {
-		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			TokenCIDs:         []string{"eip155:1:erc721:0xnonexistent:999"},
 			Limit:             10,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), total)
-		assert.Equal(t, 0, len(results))
+		assert.Equal(t, 0, len(tokens))
 	})
 
 	t.Run("sort by latest provenance event related to filtered owners", func(t *testing.T) {
@@ -1985,22 +1985,22 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Query for owner2 (current owner of all 3 tokens)
-		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Owners:            []string{owner2},
 			Limit:             10,
 			IncludeUnviewable: true, // These test tokens don't have media health records
 		})
 		require.NoError(t, err)
 		require.Equal(t, int(total), 3, "owner2 owns 3 tokens") //nolint:gosec,G115
-		require.Equal(t, len(results), 3, "should return 3 results")
+		require.Equal(t, len(tokens), 3, "should return 3 results")
 
 		// Verify sorting: tokens sorted by latest provenance event involving owner2 (DESC)
 		// token1's latest event with owner2: T4 (1h ago) - most recent
 		// token3's latest event with owner2: T5 (3h ago)
 		// token2's latest event with owner2: T2 (5h ago) - oldest
-		assert.Equal(t, token1Data.ID, results[0].Token.ID, "token1 should be first (T4: most recent owner2 event)")
-		assert.Equal(t, token3Data.ID, results[1].Token.ID, "token3 should be second (T5: middle owner2 event)")
-		assert.Equal(t, token2Data.ID, results[2].Token.ID, "token2 should be third (T2: oldest owner2 event)")
+		assert.Equal(t, token1Data.ID, tokens[0].ID, "token1 should be first (T4: most recent owner2 event)")
+		assert.Equal(t, token3Data.ID, tokens[1].ID, "token3 should be second (T5: middle owner2 event)")
+		assert.Equal(t, token2Data.ID, tokens[2].ID, "token2 should be third (T2: oldest owner2 event)")
 	})
 
 	t.Run("IncludeBrokenMedia flag filters tokens by media health", func(t *testing.T) {
@@ -2133,19 +2133,19 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Test 1: Default behavior (IncludeUnviewable = false) - should only return viewable tokens
-		resultsHealthyOnly, totalHealthyOnly, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokensHealthyOnly, totalHealthyOnly, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
 			IncludeUnviewable: false, // Default: exclude unviewable tokens
 			Limit:             10,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(2), totalHealthyOnly, "should only return 2 viewable tokens (healthy animation and healthy image)")
-		assert.Len(t, resultsHealthyOnly, 2)
+		assert.Len(t, tokensHealthyOnly, 2)
 
 		// Verify only healthy tokens are returned
 		returnedAddrs := make(map[string]bool)
-		for _, result := range resultsHealthyOnly {
-			returnedAddrs[result.Token.ContractAddress] = true
+		for _, token := range tokensHealthyOnly {
+			returnedAddrs[token.ContractAddress] = true
 		}
 		assert.True(t, returnedAddrs[healthyAnimAddr], "token with healthy animation should be included")
 		assert.True(t, returnedAddrs[healthyImageAddr], "token with healthy image should be included")
@@ -2154,20 +2154,20 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.False(t, returnedAddrs[noMediaAddr], "token with no media should be excluded")
 		assert.False(t, returnedAddrs[mixedHealthAddr], "token with broken animation (despite healthy image) should be excluded")
 
-		// Test 2: IncludeUnviewable = true - should return all tokens
-		resultsAll, totalAll, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		// Test 2: IncludeUnviewable = true - should return all tokensAll
+		tokensAll, totalAll, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
 			IncludeUnviewable: true, // Include all tokens regardless of media health
 			Limit:             10,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(6), totalAll, "should return all 6 tokens when IncludeBrokenMedia is true")
-		assert.Len(t, resultsAll, 6)
+		assert.Len(t, tokensAll, 6)
 
 		// Verify all tokens are returned
 		returnedAddrsAll := make(map[string]bool)
-		for _, result := range resultsAll {
-			returnedAddrsAll[result.Token.ContractAddress] = true
+		for _, token := range tokensAll {
+			returnedAddrsAll[token.ContractAddress] = true
 		}
 		assert.True(t, returnedAddrsAll[healthyAnimAddr])
 		assert.True(t, returnedAddrsAll[healthyImageAddr])
@@ -2177,13 +2177,13 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.True(t, returnedAddrsAll[mixedHealthAddr])
 
 		// Test 3: Animation priority - token with broken animation but healthy image is not viewable
-		resultsMixed, _, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokensMixed, _, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{mixedHealthAddr},
 			IncludeUnviewable: false,
 			Limit:             10,
 		})
 		require.NoError(t, err)
-		assert.Len(t, resultsMixed, 0, "token with broken animation should not be viewable even with healthy image")
+		assert.Len(t, tokensMixed, 0, "token with broken animation should not be viewable even with healthy image")
 
 		// Test 4: Verify animation priority with IncludeBrokenMedia = true
 		resultsMixedInclude, totalMixedInclude, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
@@ -2381,6 +2381,175 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 		assert.Equal(t, token.ID, updateChange.TokenID)
 		assert.Equal(t, imageURL1, *updateChange.Old.ImageURL)
 		assert.Equal(t, imageURL2, *updateChange.New.ImageURL)
+	})
+}
+
+func testGetTokenMetadataByTokenID(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("get metadata by token ID", func(t *testing.T) {
+		// Create token first
+		owner := "0xmetaid100000000000000000000000000000000001"
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xmetaid100000000000000000000000000000000001",
+			"1",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Create metadata
+		originJSON := json.RawMessage(`{"name": "Test NFT", "image": "ipfs://test"}`)
+		latestJSON := json.RawMessage(`{"name": "Test NFT", "image": "ipfs://test"}`)
+		hash := "hash123"
+		imageURL := "https://example.com/image.png"
+		name := "Test NFT"
+		now := time.Now().UTC()
+
+		metadataInput := CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			OriginJSON:      originJSON,
+			LatestJSON:      latestJSON,
+			LatestHash:      &hash,
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: now,
+			ImageURL:        &imageURL,
+			Name:            &name,
+		}
+
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		// Get metadata by token ID
+		metadata, err := store.GetTokenMetadataByTokenID(ctx, token.ID)
+		require.NoError(t, err)
+		require.NotNil(t, metadata)
+		assert.Equal(t, token.ID, metadata.TokenID)
+		assert.Equal(t, hash, *metadata.LatestHash)
+		assert.Equal(t, imageURL, *metadata.ImageURL)
+		assert.Equal(t, name, *metadata.Name)
+	})
+
+	t.Run("returns nil for non-existent token", func(t *testing.T) {
+		metadata, err := store.GetTokenMetadataByTokenID(ctx, 999999999)
+		require.NoError(t, err)
+		assert.Nil(t, metadata)
+	})
+}
+
+func testGetTokenMetadataByTokenIDs(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("get metadata for multiple tokens", func(t *testing.T) {
+		// Create 3 tokens
+		token1Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xmetaids1111111111111111111111111111111111111",
+			"1",
+			"0xowner1111111111111111111111111111111111111",
+		)
+		err := store.CreateTokenMint(ctx, token1Input)
+		require.NoError(t, err)
+
+		token1, err := store.GetTokenByTokenCID(ctx, token1Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		token2Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xmetaids2222222222222222222222222222222222222",
+			"2",
+			"0xowner2111111111111111111111111111111111111",
+		)
+		err = store.CreateTokenMint(ctx, token2Input)
+		require.NoError(t, err)
+
+		token2, err := store.GetTokenByTokenCID(ctx, token2Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		token3Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xmetaids3333333333333333333333333333333333333",
+			"3",
+			"0xowner3111111111111111111111111111111111111",
+		)
+		err = store.CreateTokenMint(ctx, token3Input)
+		require.NoError(t, err)
+
+		token3, err := store.GetTokenByTokenCID(ctx, token3Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add metadata to token1 and token2, but not token3
+		now := time.Now().UTC()
+		hash1 := "hash1"
+		name1 := "Token 1"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token1.ID,
+			OriginJSON:      datatypes.JSON(`{"name":"Token 1"}`),
+			LatestJSON:      datatypes.JSON(`{"name":"Token 1"}`),
+			LatestHash:      &hash1,
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: now,
+			Name:            &name1,
+		})
+		require.NoError(t, err)
+
+		hash2 := "hash2"
+		name2 := "Token 2"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token2.ID,
+			OriginJSON:      datatypes.JSON(`{"name":"Token 2"}`),
+			LatestJSON:      datatypes.JSON(`{"name":"Token 2"}`),
+			LatestHash:      &hash2,
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: now,
+			Name:            &name2,
+		})
+		require.NoError(t, err)
+
+		// Get metadata by token IDs
+		metadataMap, err := store.GetTokenMetadataByTokenIDs(ctx, []uint64{token1.ID, token2.ID, token3.ID})
+		require.NoError(t, err)
+		assert.Len(t, metadataMap, 2) // Only token1 and token2 have metadata
+
+		// Verify token1 metadata
+		meta1, ok := metadataMap[token1.ID]
+		require.True(t, ok)
+		require.NotNil(t, meta1)
+		assert.Equal(t, token1.ID, meta1.TokenID)
+		assert.Equal(t, hash1, *meta1.LatestHash)
+		assert.Equal(t, name1, *meta1.Name)
+
+		// Verify token2 metadata
+		meta2, ok := metadataMap[token2.ID]
+		require.True(t, ok)
+		require.NotNil(t, meta2)
+		assert.Equal(t, token2.ID, meta2.TokenID)
+		assert.Equal(t, hash2, *meta2.LatestHash)
+		assert.Equal(t, name2, *meta2.Name)
+
+		// Verify token3 has no metadata
+		_, ok = metadataMap[token3.ID]
+		assert.False(t, ok)
+	})
+
+	t.Run("returns empty map for empty input", func(t *testing.T) {
+		metadataMap, err := store.GetTokenMetadataByTokenIDs(ctx, []uint64{})
+		require.NoError(t, err)
+		assert.Empty(t, metadataMap)
+	})
+
+	t.Run("returns empty map for non-existent tokens", func(t *testing.T) {
+		metadataMap, err := store.GetTokenMetadataByTokenIDs(ctx, []uint64{999999999, 999999998})
+		require.NoError(t, err)
+		assert.Empty(t, metadataMap)
 	})
 }
 
@@ -5787,6 +5956,8 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
 		{"UpsertTokenMetadata", testUpsertTokenMetadata},
+		{"GetTokenMetadataByTokenID", testGetTokenMetadataByTokenID},
+		{"GetTokenMetadataByTokenIDs", testGetTokenMetadataByTokenIDs},
 		{"EnrichmentSource", testEnrichmentSource},
 		{"CreateMediaAssetWithChangeJournal", testCreateMediaAssetWithChangeJournal},
 		{"GetChanges", testGetChanges},

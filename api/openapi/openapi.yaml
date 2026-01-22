@@ -98,9 +98,18 @@ paths:
         
         ## Expansions
         You can expand related data using the `expand` query parameter:
+        - `metadata` - Include token metadata
         - `owners` - Include paginated owner information
         - `provenance_events` - Include paginated provenance events
         - `enrichment_source` - Include vendor enrichment data
+        - `media_asset` - Include all media assets (from metadata and/or enrichment source, depending on what's expanded)
+        - `metadata_media_assets` - (Deprecated) Include media assets for token metadata only
+        - `enrichment_source_media_assets` - (Deprecated) Include media assets for enrichment source only
+        
+        **Note**: The `media_asset` expansion intelligently includes media from both metadata and enrichment sources:
+        - If `metadata` is also expanded, includes metadata media assets
+        - If `enrichment_source` is also expanded, includes enrichment source media assets
+        - If both are expanded, includes media assets from both sources
         
         ## Sub-resource Pagination
         When expanding owners or provenance_events, you can control pagination:
@@ -128,10 +137,10 @@ paths:
             type: array
             items:
               type: string
-              enum: [owners, provenance_events, enrichment_source]
+              enum: [metadata, owners, provenance_events, enrichment_source, media_asset, metadata_media_assets, enrichment_source_media_assets]
           style: form
           explode: false
-          example: ["owners", "provenance_events"]
+          example: ["metadata", "owners", "media_asset"]
         - name: owners.limit
           in: query
           description: Maximum number of owners to return (max 255)
@@ -228,11 +237,18 @@ paths:
         
         ## Expansions
         You can expand related data using the `expand` query parameter:
+        - `metadata` - Include token metadata
         - `owners` - Include owner information (first 20 items per token)
         - `provenance_events` - Include provenance events (first 20 items per token, ordered by timestamp DESC)
         - `enrichment_source` - Include vendor enrichment data
-        - `metadata_media_assets` - Include media assets for token metadata
-        - `enrichment_source_media_assets` - Include media assets for enrichment source
+        - `media_asset` - Include all media assets (intelligently includes from metadata and/or enrichment source based on what's expanded)
+        - `metadata_media_assets` - (Deprecated) Include media assets for token metadata only
+        - `enrichment_source_media_assets` - (Deprecated) Include media assets for enrichment source only
+        
+        **Note**: The `media_asset` expansion intelligently includes media from expanded sources:
+        - If `metadata` is also expanded, includes metadata media assets
+        - If `enrichment_source` is also expanded, includes enrichment source media assets
+        - If both are expanded, includes media assets from both sources
         
         **Important**: When querying multiple tokens, the `owners` and `provenance_events` expansions return a fixed number of items (first 20) per token.
         Pagination parameters (`owners.limit`, `owners.offset`, `provenance_events.limit`, `provenance_events.offset`, `provenance_events.order`) are NOT supported for this endpoint.
@@ -335,10 +351,10 @@ paths:
             type: array
             items:
               type: string
-              enum: [owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets]
+              enum: [metadata, owners, provenance_events, enrichment_source, media_asset, metadata_media_assets, enrichment_source_media_assets]
           style: form
           explode: false
-          example: ["owners", "enrichment_source"]
+          example: ["metadata", "owners", "enrichment_source"]
       responses:
         '200':
           description: Tokens retrieved successfully
@@ -1354,6 +1370,28 @@ components:
           anyOf:
             - $ref: '#/components/schemas/EnrichmentSourceResponse'
             - type: "null"
+          description: Enrichment data from vendor APIs (requires enrichment_source expansion)
+        media_assets:
+          anyOf:
+            - type: array
+              items:
+                $ref: '#/components/schemas/MediaAssetResponse'
+            - type: "null"
+          description: Unified media assets from metadata and/or enrichment source (requires media_asset expansion, includes sources based on metadata/enrichment_source expansions)
+        metadata_media_assets:
+          anyOf:
+            - type: array
+              items:
+                $ref: '#/components/schemas/MediaAssetResponse'
+            - type: "null"
+          description: (Deprecated) Media assets for token metadata only (requires metadata_media_assets expansion)
+        enrichment_source_media_assets:
+          anyOf:
+            - type: array
+              items:
+                $ref: '#/components/schemas/MediaAssetResponse'
+            - type: "null"
+          description: (Deprecated) Media assets for enrichment source only (requires enrichment_source_media_assets expansion)
 
     TokenMetadataResponse:
       type: object
@@ -1649,6 +1687,61 @@ components:
           type: string
           format: date-time
           description: Timestamp when enrichment was last updated
+          example: "2024-01-02T12:00:00Z"
+
+    MediaAssetResponse:
+      type: object
+      required:
+        - id
+        - source_url
+        - provider
+        - variant_urls
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Internal database media asset ID
+          example: 12345
+        source_url:
+          type: string
+          description: Original source URL of the media asset
+          example: "ipfs://QmXyzAbc123/image.png"
+        mime_type:
+          type: [string, "null"]
+          description: MIME type of the media asset
+          example: "image/png"
+        file_size_bytes:
+          type: [integer, "null"]
+          format: int64
+          description: File size in bytes
+          example: 1024000
+        provider:
+          type: string
+          description: Storage provider (e.g., "cloudflare")
+          example: "cloudflare"
+        provider_asset_id:
+          type: [string, "null"]
+          description: Asset ID in the provider's system
+          example: "1234567890"
+        provider_metadata:
+          type: [object, "null"]
+          description: Additional metadata from the provider
+          example: {"account_id": "1234567890"}
+        variant_urls:
+          type: object
+          description: Different variants/sizes of the media asset
+          example: {"x": "https://cdn.example.com/thumb.jpg", "xl": "https://cdn.example.com/medium.jpg"}
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the media asset was created
+          example: "2024-01-01T00:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the media asset was last updated
           example: "2024-01-02T12:00:00Z"
 
     TokenListResponse:

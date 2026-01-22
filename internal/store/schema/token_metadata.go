@@ -114,6 +114,18 @@ type TokenMetadata struct {
 	Token Token `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 }
 
+// MediaURLs returns the media URLs from the token metadata
+func (t *TokenMetadata) MediaURLs() []string {
+	var urls []string
+	if t.ImageURL != nil && *t.ImageURL != "" {
+		urls = append(urls, *t.ImageURL)
+	}
+	if t.AnimationURL != nil && *t.AnimationURL != "" {
+		urls = append(urls, *t.AnimationURL)
+	}
+	return urls
+}
+
 // TableName specifies the table name for the TokenMetadata model
 func (TokenMetadata) TableName() string {
 	return "token_metadata"

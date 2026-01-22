@@ -21,15 +21,17 @@ type TokenResponse struct {
 	CreatedAt       time.Time            `json:"created_at"`
 	UpdatedAt       time.Time            `json:"updated_at"`
 
-	// Metadata (always included when available)
-	Metadata *TokenMetadataResponse `json:"metadata,omitempty"`
-
 	// Expansions
-	Owners                      *PaginatedOwners           `json:"owners,omitempty"`
-	ProvenanceEvents            *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`
-	EnrichmentSource            *EnrichmentSourceResponse  `json:"enrichment_source,omitempty"`
-	MetadataMediaAssets         []MediaAssetResponse       `json:"metadata_media_assets,omitempty"`
-	EnrichmentSourceMediaAssets []MediaAssetResponse       `json:"enrichment_source_media_assets,omitempty"`
+	Metadata         *TokenMetadataResponse     `json:"metadata,omitempty"`
+	Owners           *PaginatedOwners           `json:"owners,omitempty"`
+	ProvenanceEvents *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`
+	EnrichmentSource *EnrichmentSourceResponse  `json:"enrichment_source,omitempty"`
+	// Deprecated: Use MediaAssets instead
+	MetadataMediaAssets []MediaAssetResponse `json:"metadata_media_assets,omitempty"`
+	// Deprecated: Use MediaAssets instead
+	EnrichmentSourceMediaAssets []MediaAssetResponse `json:"enrichment_source_media_assets,omitempty"`
+	// MediaAssets contains all media assets from both metadata and enrichment sources
+	MediaAssets []MediaAssetResponse `json:"media_assets,omitempty"`
 }
 
 // OwnerResponse represents a token owner (balance record)
@@ -55,8 +57,12 @@ type TokenListResponse struct {
 }
 
 // MapTokenToDTO maps a schema.Token to TokenResponse
-func MapTokenToDTO(token *schema.Token, metadata *schema.TokenMetadata) *TokenResponse {
-	dto := &TokenResponse{
+func MapTokenToDTO(token *schema.Token) *TokenResponse {
+	if token == nil {
+		return nil
+	}
+
+	return &TokenResponse{
 		ID:              token.ID,
 		TokenCID:        token.TokenCID,
 		Chain:           token.Chain,
@@ -69,12 +75,6 @@ func MapTokenToDTO(token *schema.Token, metadata *schema.TokenMetadata) *TokenRe
 		CreatedAt:       token.CreatedAt,
 		UpdatedAt:       token.UpdatedAt,
 	}
-
-	if metadata != nil {
-		dto.Metadata = MapTokenMetadataToDTO(metadata)
-	}
-
-	return dto
 }
 
 // MapOwnerToDTO maps a schema.Balance to OwnerResponse

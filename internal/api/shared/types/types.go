@@ -25,10 +25,14 @@ func (o Order) Valid() bool {
 type Expansion string
 
 const (
-	ExpansionOwners                     Expansion = "owners"
-	ExpansionProvenanceEvents           Expansion = "provenance_events"
-	ExpansionEnrichmentSource           Expansion = "enrichment_source"
-	ExpansionMetadataMediaAsset         Expansion = "metadata_media_asset"
+	ExpansionOwners           Expansion = "owners"
+	ExpansionProvenanceEvents Expansion = "provenance_events"
+	ExpansionMetadata         Expansion = "metadata"
+	ExpansionEnrichmentSource Expansion = "enrichment_source"
+	ExpansionMediaAsset       Expansion = "media_asset"
+	// Deprecated: Use ExpansionMediaAsset instead
+	ExpansionMetadataMediaAsset Expansion = "metadata_media_asset"
+	// Deprecated: Use ExpansionMediaAsset instead
 	ExpansionEnrichmentSourceMediaAsset Expansion = "enrichment_source_media_asset"
 	ExpansionSubject                    Expansion = "subject"
 )
@@ -37,7 +41,9 @@ const (
 func (e Expansion) Valid() bool {
 	return e == ExpansionOwners ||
 		e == ExpansionProvenanceEvents ||
+		e == ExpansionMetadata ||
 		e == ExpansionEnrichmentSource ||
+		e == ExpansionMediaAsset ||
 		e == ExpansionMetadataMediaAsset ||
 		e == ExpansionEnrichmentSourceMediaAsset ||
 		e == ExpansionSubject

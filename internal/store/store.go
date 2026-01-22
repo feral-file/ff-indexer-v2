@@ -234,8 +234,8 @@ type Store interface {
 	GetTokensByIDs(ctx context.Context, tokenIDs []uint64) ([]*schema.Token, error)
 	// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID
 	GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*TokensWithMetadataResult, error)
-	// GetTokensByFilter retrieves tokens with their metadata based on filters
-	GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]*TokensWithMetadataResult, uint64, error)
+	// GetTokensByFilter retrieves tokens based on filters
+	GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, uint64, error)
 	// CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
 	// For multi-edition tokens (FA2/ERC1155), this also handles subsequent mints via conflict resolution
 	CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error
@@ -255,6 +255,11 @@ type Store interface {
 
 	// GetTokenMetadataByTokenCID retrieves token metadata by token CID
 	GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error)
+	// GetTokenMetadataByTokenID retrieves token metadata by token ID
+	GetTokenMetadataByTokenID(ctx context.Context, tokenID uint64) (*schema.TokenMetadata, error)
+	// GetTokenMetadataByTokenIDs retrieves token metadata for multiple tokens
+	// Returns a map of tokenID -> metadata
+	GetTokenMetadataByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.TokenMetadata, error)
 	// UpsertTokenMetadata creates or updates token metadata
 	UpsertTokenMetadata(ctx context.Context, input CreateTokenMetadataInput) error
 	// CreateMetadataUpdate creates a provenance event for a metadata update

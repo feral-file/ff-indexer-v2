@@ -200,6 +200,7 @@ type ComplexityRoot struct {
 		EnrichmentSource            func(childComplexity int) int
 		EnrichmentSourceMediaAssets func(childComplexity int) int
 		ID                          func(childComplexity int) int
+		MediaAssets                 func(childComplexity int) int
 		Metadata                    func(childComplexity int) int
 		MetadataMediaAssets         func(childComplexity int) int
 		Owners                      func(childComplexity int) int
@@ -1000,6 +1001,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.ID(childComplexity), true
+	case "Token.media_assets":
+		if e.complexity.Token.MediaAssets == nil {
+			break
+		}
+
+		return e.complexity.Token.MediaAssets(childComplexity), true
 	case "Token.metadata":
 		if e.complexity.Token.Metadata == nil {
 			break
@@ -1508,8 +1515,9 @@ type Token {
   owners: PaginatedOwners
   provenance_events: PaginatedProvenanceEvents
   enrichment_source: EnrichmentSource
-  metadata_media_assets: [MediaAsset!]
-  enrichment_source_media_assets: [MediaAsset!]
+  metadata_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
+  enrichment_source_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
+  media_assets: [MediaAsset!]
 }
 
 # Paginated tokens list
@@ -4690,6 +4698,8 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_metadata_media_assets(ctx, field)
 			case "enrichment_source_media_assets":
 				return ec.fieldContext_Token_enrichment_source_media_assets(ctx, field)
+			case "media_assets":
+				return ec.fieldContext_Token_media_assets(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Token", field.Name)
 		},
@@ -5653,6 +5663,57 @@ func (ec *executionContext) fieldContext_Token_enrichment_source_media_assets(_ 
 	return fc, nil
 }
 
+func (ec *executionContext) _Token_media_assets(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Token_media_assets,
+		func(ctx context.Context) (any, error) {
+			return obj.MediaAssets, nil
+		},
+		nil,
+		ec.marshalOMediaAsset2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐMediaAssetResponseᚄ,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Token_media_assets(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Token",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_MediaAsset_id(ctx, field)
+			case "source_url":
+				return ec.fieldContext_MediaAsset_source_url(ctx, field)
+			case "mime_type":
+				return ec.fieldContext_MediaAsset_mime_type(ctx, field)
+			case "file_size_bytes":
+				return ec.fieldContext_MediaAsset_file_size_bytes(ctx, field)
+			case "provider":
+				return ec.fieldContext_MediaAsset_provider(ctx, field)
+			case "provider_asset_id":
+				return ec.fieldContext_MediaAsset_provider_asset_id(ctx, field)
+			case "provider_metadata":
+				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
+			case "variant_urls":
+				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
+			case "created_at":
+				return ec.fieldContext_MediaAsset_created_at(ctx, field)
+			case "updated_at":
+				return ec.fieldContext_MediaAsset_updated_at(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type MediaAsset", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _TokenList_items(ctx context.Context, field graphql.CollectedField, obj *dto.TokenListResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -5711,6 +5772,8 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_metadata_media_assets(ctx, field)
 			case "enrichment_source_media_assets":
 				return ec.fieldContext_Token_enrichment_source_media_assets(ctx, field)
+			case "media_assets":
+				return ec.fieldContext_Token_media_assets(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Token", field.Name)
 		},
@@ -9957,6 +10020,8 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			out.Values[i] = ec._Token_metadata_media_assets(ctx, field, obj)
 		case "enrichment_source_media_assets":
 			out.Values[i] = ec._Token_enrichment_source_media_assets(ctx, field, obj)
+		case "media_assets":
+			out.Values[i] = ec._Token_media_assets(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}

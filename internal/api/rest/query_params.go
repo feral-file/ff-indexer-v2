@@ -35,9 +35,11 @@ func (p *GetTokenQueryParams) Validate() error {
 	for _, expansion := range p.Expand {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&
-			expansion != types.ExpansionMetadataMediaAsset &&
-			expansion != types.ExpansionEnrichmentSourceMediaAsset {
+			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
@@ -66,16 +68,21 @@ type ListTokensQueryParams struct {
 	Offset uint64 `form:"offset,default=0"`
 
 	// Expansion
-	Expand []types.Expansion `form:"expand"`
+	Expansions []types.Expansion `form:"expand"`
 
 	// Owners expansion parameters
-	OwnerLimit  uint8  `form:"owners.limit,default=10"`
+	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.
+	OwnerLimit uint8 `form:"owners.limit,default=10"`
+	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.
 	OwnerOffset uint64 `form:"owners.offset,default=0"`
 
 	// Provenance events expansion parameters
-	ProvenanceEventLimit  uint8       `form:"provenance_events.limit,default=10"`
-	ProvenanceEventOffset uint64      `form:"provenance_events.offset,default=0"`
-	ProvenanceEventOrder  types.Order `form:"provenance_events.order,default=desc"`
+	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
+	ProvenanceEventLimit uint8 `form:"provenance_events.limit,default=10"`
+	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
+	ProvenanceEventOffset uint64 `form:"provenance_events.offset,default=0"`
+	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
+	ProvenanceEventOrder types.Order `form:"provenance_events.order,default=desc"`
 }
 
 // Validate validates the query parameters for GET /tokens
@@ -118,12 +125,14 @@ func (p *ListTokensQueryParams) Validate() error {
 	// Validate expansions
 	hasOwnersExpansion := false
 	hasProvenanceExpansion := false
-	for _, expansion := range p.Expand {
+	for _, expansion := range p.Expansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&
-			expansion != types.ExpansionMetadataMediaAsset &&
-			expansion != types.ExpansionEnrichmentSourceMediaAsset {
+			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 		if expansion == types.ExpansionOwners {
@@ -212,16 +221,16 @@ type GetChangesQueryParams struct {
 	// Cursor-based pagination
 	Anchor *uint64 `form:"anchor"` // ID-based cursor - show changes after this ID
 
-	// Deprecated: Use anchor instead for reliable pagination
 	// Timestamp filter - only show changes after this time
 	// Note: Different subject types use different timestamp semantics which may cause inconsistent results
+	// Deprecated: Use anchor instead for reliable pagination
 	Since *time.Time `form:"since" time_format:"2006-01-02T15:04:05.999999999Z07:00"`
 
 	// Pagination
 	Limit uint8 `form:"limit,default=20"`
 
-	// Deprecated: Use anchor for cursor-based pagination instead
 	// Offset only applies when using 'since' parameter - not used with 'anchor'
+	// Deprecated: Use anchor for cursor-based pagination instead
 	Offset uint64 `form:"offset,default=0"`
 
 	// Deprecated: Only applies when using 'since' parameter - always ascending with 'anchor' for sequential audit log
