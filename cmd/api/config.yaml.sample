@@ -34,6 +34,10 @@ auth:
 database:
   host: localhost
   port: 5432
+  # Optional read-replica endpoint (e.g., CNPG: <cluster>-ro or <cluster>-r).
+  # When configured, API read queries will prefer the replica by default.
+  read_host: ""
+  read_port: 0
   user: postgres
   password: postgres
   dbname: ff_indexer
