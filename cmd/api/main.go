@@ -67,16 +67,19 @@ func main() {
 		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
 	}
 
+	maxOpenConns, maxIdleConns, connMaxLifetime, connMaxIdleTime :=
+		store.NormalizeConnectionPoolSettings(cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns, cfg.Database.ConnMaxLifetime, cfg.Database.ConnMaxIdleTime)
+
 	if cfg.Database.ReadHost != "" {
 		resolver := dbresolver.Register(dbresolver.Config{
 			Replicas: []gorm.Dialector{
 				postgres.Open(cfg.Database.ReadDSN()),
 			},
 		}).
-			SetMaxOpenConns(cfg.Database.MaxOpenConns).
-			SetMaxIdleConns(cfg.Database.MaxIdleConns).
-			SetConnMaxLifetime(cfg.Database.ConnMaxLifetime).
-			SetConnMaxIdleTime(cfg.Database.ConnMaxIdleTime)
+			SetMaxOpenConns(maxOpenConns).
+			SetMaxIdleConns(maxIdleConns).
+			SetConnMaxLifetime(connMaxLifetime).
+			SetConnMaxIdleTime(connMaxIdleTime)
 
 		if err := db.Use(resolver); err != nil {
 			logger.FatalCtx(ctx, "Failed to configure database read replica", zap.Error(err))
@@ -93,7 +96,7 @@ func main() {
 	}
 
 	// Configure connection pool
-	if err := store.ConfigureConnectionPool(db, cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns, cfg.Database.ConnMaxLifetime, cfg.Database.ConnMaxIdleTime); err != nil {
+	if err := store.ConfigureConnectionPool(db, maxOpenConns, maxIdleConns, connMaxLifetime, connMaxIdleTime); err != nil {
 		logger.FatalCtx(ctx, "Failed to configure connection pool", zap.Error(err))
 	}
 	logger.InfoCtx(ctx, "Connected to database",

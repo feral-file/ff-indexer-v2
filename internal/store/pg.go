@@ -42,6 +42,29 @@ func ConfigureConnectionPool(db *gorm.DB, maxOpenConns, maxIdleConns int, connMa
 		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
 	}
 
+	maxOpenConns, maxIdleConns, connMaxLifetime, connMaxIdleTime =
+		NormalizeConnectionPoolSettings(maxOpenConns, maxIdleConns, connMaxLifetime, connMaxIdleTime)
+
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetMaxIdleConns(maxIdleConns)
+	sqlDB.SetConnMaxLifetime(connMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(connMaxIdleTime)
+
+	return nil
+}
+
+// NormalizeConnectionPoolSettings applies defaults and clamps pool settings into safe values.
+//
+// Defaults (when zero):
+//   - MaxOpenConns: 20
+//   - MaxIdleConns: 5
+//   - ConnMaxLifetime: 5 minutes
+//   - ConnMaxIdleTime: 10 minutes
+//
+// Notes:
+//   - database/sql treats MaxOpenConns=0 as "unlimited"
+//   - database/sql treats MaxIdleConns=0 as "no idle connections"
+func NormalizeConnectionPoolSettings(maxOpenConns, maxIdleConns int, connMaxLifetime, connMaxIdleTime time.Duration) (int, int, time.Duration, time.Duration) {
 	// Set defaults if not provided
 	if maxOpenConns == 0 {
 		maxOpenConns = 20
@@ -61,12 +84,7 @@ func ConfigureConnectionPool(db *gorm.DB, maxOpenConns, maxIdleConns int, connMa
 		maxIdleConns = maxOpenConns
 	}
 
-	sqlDB.SetMaxOpenConns(maxOpenConns)
-	sqlDB.SetMaxIdleConns(maxIdleConns)
-	sqlDB.SetConnMaxLifetime(connMaxLifetime)
-	sqlDB.SetConnMaxIdleTime(connMaxIdleTime)
-
-	return nil
+	return maxOpenConns, maxIdleConns, connMaxLifetime, connMaxIdleTime
 }
 
 // calculateSafeBatchSize computes the optimal batch size for bulk inserts to avoid
