@@ -3,6 +3,7 @@ package workflows
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -764,6 +765,11 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 		zap.Uint64("latestBlock", latestBlock),
 	)
 
+	limit := w.config.BudgetedIndexingDefaultDailyQuota
+	if !w.config.BudgetedIndexingModeEnabled {
+		limit = math.MaxInt
+	}
+
 	// Step 4: Determine sweeping strategy
 	if storedMinBlock == 0 && storedMaxBlock == 0 {
 		// First run: No previous indexing exists
@@ -779,7 +785,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 			address,
 			w.config.EthereumTokenSweepStartBlock,
 			latestBlock,
-			w.config.BudgetedIndexingDefaultDailyQuota,
+			limit,
 			domain.BlockScanOrderDesc,
 		).Get(ctx, &allTokensResult)
 		if err != nil {
@@ -899,7 +905,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 				address,
 				w.config.EthereumTokenSweepStartBlock,
 				storedMinBlock-1,
-				w.config.BudgetedIndexingDefaultDailyQuota,
+				limit,
 				domain.BlockScanOrderDesc,
 			).Get(ctx, &backwardTokensResult)
 			if err != nil {
@@ -1004,7 +1010,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 				address,
 				storedMaxBlock+1,
 				latestBlock,
-				w.config.BudgetedIndexingDefaultDailyQuota,
+				limit,
 				domain.BlockScanOrderAsc,
 			).Get(ctx, &forwardTokensResult)
 			if err != nil {
