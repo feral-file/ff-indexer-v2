@@ -24,6 +24,10 @@ type pgStore struct {
 	db *gorm.DB
 }
 
+func hasDBResolver(db *gorm.DB) bool {
+	return db != nil && db.Callback().Query().Get("gorm:db_resolver") != nil
+}
+
 // NewPGStore creates a new PostgreSQL store instance
 func NewPGStore(db *gorm.DB) Store {
 	return &pgStore{db: db}
@@ -2475,6 +2479,9 @@ func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflo
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("failed to get job: %w", err)
 	}
+	if !hasDBResolver(s.db) {
+		return nil, fmt.Errorf("job not found for workflow: %s", workflowID)
+	}
 
 	// Replica can lag behind primary; retry on primary before returning not found.
 	err = s.db.WithContext(ctx).
@@ -2514,6 +2521,9 @@ func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address st
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, err)
+	}
+	if !hasDBResolver(s.db) {
+		return nil, nil // No active job found (not an error)
 	}
 
 	// Replica can lag behind primary; retry on primary before returning nil.
