@@ -1530,6 +1530,8 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_Success(t *testing.T) {
 	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
 	fromBlock := uint64(100)
 	toBlock := uint64(200)
+	limit := 1000
+	order := domain.BlockScanOrderAsc
 
 	expectedTokens := []domain.TokenWithBlock{
 		{
@@ -1544,8 +1546,12 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_Success(t *testing.T) {
 
 	// Mock ethClient
 	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock).
-		Return(expectedTokens, nil)
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
+		Return(domain.TokenWithBlockRangeResult{
+			Tokens:             expectedTokens,
+			EffectiveFromBlock: fromBlock,
+			EffectiveToBlock:   toBlock,
+		}, nil)
 
 	// Mock blacklist - none blacklisted
 	for _, token := range expectedTokens {
@@ -1554,10 +1560,10 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_Success(t *testing.T) {
 			Return(false)
 	}
 
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock)
+	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
 
 	assert.NoError(t, err)
-	assert.Equal(t, expectedTokens, result)
+	assert.Equal(t, expectedTokens, result.Tokens)
 }
 
 func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_UnsupportedAddress(t *testing.T) {
@@ -1568,12 +1574,14 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_UnsupportedAddress(t *testi
 	address := "tz1fPKAtsYydh4f1wfWNfeNxWYu72TmM48fu" // Tezos address
 	fromBlock := uint64(100)
 	toBlock := uint64(200)
+	limit := 1000
+	order := domain.BlockScanOrderAsc
 
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock)
+	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported blockchain for address")
-	assert.Nil(t, result)
+	assert.Empty(t, result)
 }
 
 func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
@@ -1584,18 +1592,20 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
 	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
 	fromBlock := uint64(100)
 	toBlock := uint64(200)
+	limit := 1000
+	order := domain.BlockScanOrderAsc
 
 	// Mock ethClient to return error
 	clientErr := errors.New("client error")
 	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock).
-		Return(nil, clientErr)
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
+		Return(domain.TokenWithBlockRangeResult{}, clientErr)
 
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock)
+	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
 
 	assert.Error(t, err)
 	assert.Equal(t, clientErr, err)
-	assert.Nil(t, result)
+	assert.Empty(t, result)
 }
 
 func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_BlacklistFiltering(t *testing.T) {
@@ -1606,6 +1616,8 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_BlacklistFiltering(t *testi
 	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
 	fromBlock := uint64(100)
 	toBlock := uint64(200)
+	limit := 1000
+	order := domain.BlockScanOrderAsc
 
 	// Create tokens where some are blacklisted
 	allTokens := []domain.TokenWithBlock{
@@ -1635,8 +1647,12 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_BlacklistFiltering(t *testi
 
 	// Mock ethClient to return all tokens
 	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock).
-		Return(allTokens, nil)
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
+		Return(domain.TokenWithBlockRangeResult{
+			Tokens:             allTokens,
+			EffectiveFromBlock: fromBlock,
+			EffectiveToBlock:   toBlock,
+		}, nil)
 
 	// Mock blacklist checks
 	mocks.blacklist.EXPECT().
@@ -1652,11 +1668,11 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_BlacklistFiltering(t *testi
 		IsTokenCIDBlacklisted(allTokens[3].TokenCID).
 		Return(true) // Blacklisted
 
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock)
+	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
 
 	assert.NoError(t, err)
-	assert.Len(t, result, 2, "Should filter out 2 blacklisted tokens")
-	assert.Equal(t, expectedTokens, result, "Should only return non-blacklisted tokens")
+	assert.Len(t, result.Tokens, 2, "Should filter out 2 blacklisted tokens")
+	assert.Equal(t, expectedTokens, result.Tokens, "Should only return non-blacklisted tokens")
 }
 
 func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_AllBlacklisted(t *testing.T) {
@@ -1667,6 +1683,8 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_AllBlacklisted(t *testing.T
 	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
 	fromBlock := uint64(100)
 	toBlock := uint64(200)
+	limit := 1000
+	order := domain.BlockScanOrderAsc
 
 	// All tokens are blacklisted
 	allTokens := []domain.TokenWithBlock{
@@ -1682,8 +1700,12 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_AllBlacklisted(t *testing.T
 
 	// Mock ethClient to return all tokens
 	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock).
-		Return(allTokens, nil)
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
+		Return(domain.TokenWithBlockRangeResult{
+			Tokens:             allTokens,
+			EffectiveFromBlock: fromBlock,
+			EffectiveToBlock:   toBlock,
+		}, nil)
 
 	// Mock blacklist checks - all blacklisted
 	for _, token := range allTokens {
@@ -1692,10 +1714,10 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_AllBlacklisted(t *testing.T
 			Return(true)
 	}
 
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock)
+	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
 
 	assert.NoError(t, err)
-	assert.Empty(t, result, "Should return empty list when all tokens are blacklisted")
+	assert.Empty(t, result.Tokens, "Should return empty list when all tokens are blacklisted")
 }
 
 // ====================================================================================
