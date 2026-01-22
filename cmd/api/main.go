@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
@@ -64,6 +65,31 @@ func main() {
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {
 		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
+	}
+
+	if cfg.Database.ReadHost != "" {
+		resolver := dbresolver.Register(dbresolver.Config{
+			Replicas: []gorm.Dialector{
+				postgres.Open(cfg.Database.ReadDSN()),
+			},
+		}).
+			SetMaxOpenConns(cfg.Database.MaxOpenConns).
+			SetMaxIdleConns(cfg.Database.MaxIdleConns).
+			SetConnMaxLifetime(cfg.Database.ConnMaxLifetime).
+			SetConnMaxIdleTime(cfg.Database.ConnMaxIdleTime)
+
+		if err := db.Use(resolver); err != nil {
+			logger.FatalCtx(ctx, "Failed to configure database read replica", zap.Error(err))
+		}
+
+		readPort := cfg.Database.ReadPort
+		if readPort == 0 {
+			readPort = cfg.Database.Port
+		}
+		logger.InfoCtx(ctx, "Configured database read replica",
+			zap.String("read_host", cfg.Database.ReadHost),
+			zap.Int("read_port", readPort),
+		)
 	}
 
 	// Configure connection pool

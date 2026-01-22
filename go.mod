@@ -33,6 +33,7 @@ require (
 	gorm.io/datatypes v1.2.7
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.0
+	gorm.io/plugin/dbresolver v1.6.2
 )
 
 require (

@@ -31,6 +31,8 @@ type URIConfig struct {
 type DatabaseConfig struct {
 	Host            string        `mapstructure:"host"`
 	Port            int           `mapstructure:"port"`
+	ReadHost        string        `mapstructure:"read_host"`
+	ReadPort        int           `mapstructure:"read_port"`
 	User            string        `mapstructure:"user"`
 	Password        string        `mapstructure:"password"`
 	DBName          string        `mapstructure:"dbname"`
@@ -448,6 +450,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		// Database
 		"database.host",
 		"database.port",
+		"database.read_host",
+		"database.read_port",
 		"database.user",
 		"database.password",
 		"database.dbname",
@@ -567,4 +571,16 @@ func ChdirRepoRoot() {
 func (c *DatabaseConfig) DSN() string {
 	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode)
+}
+
+// ReadDSN returns the read-replica database connection string.
+// If ReadPort is not configured, it falls back to Port.
+func (c *DatabaseConfig) ReadDSN() string {
+	port := c.ReadPort
+	if port == 0 {
+		port = c.Port
+	}
+
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		c.ReadHost, port, c.User, c.Password, c.DBName, c.SSLMode)
 }

@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 
@@ -2449,15 +2450,26 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error) {
 	var job schema.AddressIndexingJob
 
-	result := s.db.WithContext(ctx).Where("workflow_id = ?", workflowID).First(&job)
-	if result.Error != nil {
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("job not found for workflow: %s", workflowID)
-		}
-		return nil, fmt.Errorf("failed to get job: %w", result.Error)
+	err := s.db.WithContext(ctx).Where("workflow_id = ?", workflowID).First(&job).Error
+	if err == nil {
+		return &job, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to get job: %w", err)
 	}
 
-	return &job, nil
+	// Replica can lag behind primary; retry on primary before returning not found.
+	err = s.db.WithContext(ctx).
+		Clauses(dbresolver.Write).
+		Where("workflow_id = ?", workflowID).
+		First(&job).Error
+	if err == nil {
+		return &job, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("job not found for workflow: %s", workflowID)
+	}
+	return nil, fmt.Errorf("failed to get job: %w", err)
 }
 
 // GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
@@ -2465,25 +2477,36 @@ func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflo
 func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error) {
 	var job schema.AddressIndexingJob
 
-	result := s.db.WithContext(ctx).
-		Where("address = ? AND chain = ? AND status IN ?",
-			address,
-			chainID,
-			[]schema.IndexingJobStatus{
-				schema.IndexingJobStatusRunning,
-				schema.IndexingJobStatusPaused,
-						}).
-		Order("created_at DESC"). // Get the most recent one if multiple exist
-		First(&job)
-
-	if result.Error != nil {
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return nil, nil // No active job found (not an error)
-		}
-		return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, result.Error)
+	whereClause := "address = ? AND chain = ? AND status IN ?"
+	activeStatuses := []schema.IndexingJobStatus{
+		schema.IndexingJobStatusRunning,
+		schema.IndexingJobStatusPaused,
 	}
 
-	return &job, nil
+	query := func(db *gorm.DB) error {
+		return db.WithContext(ctx).
+			Where(whereClause, address, chainID, activeStatuses).
+			Order("created_at DESC"). // Get the most recent one if multiple exist
+			First(&job).Error
+	}
+
+	err := query(s.db)
+	if err == nil {
+		return &job, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, err)
+	}
+
+	// Replica can lag behind primary; retry on primary before returning nil.
+	err = query(s.db.Clauses(dbresolver.Write))
+	if err == nil {
+		return &job, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil // No active job found (not an error)
+	}
+	return nil, fmt.Errorf("failed to get active job for address %s on chain %s: %w", address, chainID, err)
 }
 
 // UpdateAddressIndexingJobStatus updates job status with timestamp
