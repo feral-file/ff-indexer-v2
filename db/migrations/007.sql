@@ -56,7 +56,7 @@ SELECT
     token_id, 
     image_url as media_url, 
     'metadata_image' as media_source,
-    'unknown' as health_status,
+    'healthy' as health_status,
     '1970-01-01 00:00:00+00' as last_checked_at
 FROM token_metadata 
 WHERE image_url IS NOT NULL AND image_url != ''
@@ -68,7 +68,7 @@ SELECT
     token_id, 
     animation_url as media_url, 
     'metadata_animation' as media_source,
-    'unknown' as health_status,
+    'healthy' as health_status,
     '1970-01-01 00:00:00+00' as last_checked_at
 FROM token_metadata 
 WHERE animation_url IS NOT NULL AND animation_url != ''
@@ -80,7 +80,7 @@ SELECT
     token_id, 
     image_url as media_url, 
     'enrichment_image' as media_source,
-    'unknown' as health_status,
+    'healthy' as health_status,
     '1970-01-01 00:00:00+00' as last_checked_at
 FROM enrichment_sources 
 WHERE image_url IS NOT NULL AND image_url != ''
@@ -92,7 +92,7 @@ SELECT
     token_id, 
     animation_url as media_url, 
     'enrichment_animation' as media_source,
-    'unknown' as health_status,
+    'healthy' as health_status,
     '1970-01-01 00:00:00+00' as last_checked_at
 FROM enrichment_sources 
 WHERE animation_url IS NOT NULL AND animation_url != ''
