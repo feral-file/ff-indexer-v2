@@ -13,6 +13,7 @@ import (
 	gomock "github.com/golang/mock/gomock"
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
+	registry "github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // MockEthereumProviderClient is a mock of EthereumClient interface.
@@ -187,18 +188,18 @@ func (mr *MockEthereumProviderClientMockRecorder) GetLatestBlock(ctx interface{}
 }
 
 // GetTokenCIDsByOwnerAndBlockRange mocks base method.
-func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, requestedFromBlock, requestedToBlock uint64, limit int, order domain.BlockScanOrder) (domain.TokenWithBlockRangeResult, error) {
+func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, requestedFromBlock, requestedToBlock uint64, limit int, order domain.BlockScanOrder, blacklist registry.BlacklistRegistry) (domain.TokenWithBlockRangeResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokenCIDsByOwnerAndBlockRange", ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order)
+	ret := m.ctrl.Call(m, "GetTokenCIDsByOwnerAndBlockRange", ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order, blacklist)
 	ret0, _ := ret[0].(domain.TokenWithBlockRangeResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTokenCIDsByOwnerAndBlockRange indicates an expected call of GetTokenCIDsByOwnerAndBlockRange.
-func (mr *MockEthereumProviderClientMockRecorder) GetTokenCIDsByOwnerAndBlockRange(ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order interface{}) *gomock.Call {
+func (mr *MockEthereumProviderClientMockRecorder) GetTokenCIDsByOwnerAndBlockRange(ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order, blacklist interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCIDsByOwnerAndBlockRange", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetTokenCIDsByOwnerAndBlockRange), ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCIDsByOwnerAndBlockRange", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetTokenCIDsByOwnerAndBlockRange), ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order, blacklist)
 }
 
 // GetTokenEvents mocks base method.

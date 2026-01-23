@@ -1550,19 +1550,12 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_Success(t *testing.T) {
 
 	// Mock ethClient
 	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order, mocks.blacklist).
 		Return(domain.TokenWithBlockRangeResult{
 			Tokens:             expectedTokens,
 			EffectiveFromBlock: fromBlock,
 			EffectiveToBlock:   toBlock,
 		}, nil)
-
-	// Mock blacklist - none blacklisted
-	for _, token := range expectedTokens {
-		mocks.blacklist.EXPECT().
-			IsTokenCIDBlacklisted(token.TokenCID).
-			Return(false)
-	}
 
 	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
 
@@ -1602,7 +1595,7 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
 	// Mock ethClient to return error
 	clientErr := errors.New("client error")
 	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order, mocks.blacklist).
 		Return(domain.TokenWithBlockRangeResult{}, clientErr)
 
 	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
@@ -1610,118 +1603,6 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Equal(t, clientErr, err)
 	assert.Empty(t, result)
-}
-
-func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_BlacklistFiltering(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
-	fromBlock := uint64(100)
-	toBlock := uint64(200)
-	limit := 1000
-	order := domain.BlockScanOrderAsc
-
-	// Create tokens where some are blacklisted
-	allTokens := []domain.TokenWithBlock{
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1"),
-			BlockNumber: 150,
-		},
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED111111111111111111111111111", "1"), // Blacklisted
-			BlockNumber: 160,
-		},
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2"),
-			BlockNumber: 175,
-		},
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED222222222222222222222222222", "5"), // Blacklisted
-			BlockNumber: 180,
-		},
-	}
-
-	// Expected result: only non-blacklisted tokens
-	expectedTokens := []domain.TokenWithBlock{
-		allTokens[0], // Not blacklisted
-		allTokens[2], // Not blacklisted
-	}
-
-	// Mock ethClient to return all tokens
-	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
-		Return(domain.TokenWithBlockRangeResult{
-			Tokens:             allTokens,
-			EffectiveFromBlock: fromBlock,
-			EffectiveToBlock:   toBlock,
-		}, nil)
-
-	// Mock blacklist checks
-	mocks.blacklist.EXPECT().
-		IsTokenCIDBlacklisted(allTokens[0].TokenCID).
-		Return(false)
-	mocks.blacklist.EXPECT().
-		IsTokenCIDBlacklisted(allTokens[1].TokenCID).
-		Return(true) // Blacklisted
-	mocks.blacklist.EXPECT().
-		IsTokenCIDBlacklisted(allTokens[2].TokenCID).
-		Return(false)
-	mocks.blacklist.EXPECT().
-		IsTokenCIDBlacklisted(allTokens[3].TokenCID).
-		Return(true) // Blacklisted
-
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
-
-	assert.NoError(t, err)
-	assert.Len(t, result.Tokens, 2, "Should filter out 2 blacklisted tokens")
-	assert.Equal(t, expectedTokens, result.Tokens, "Should only return non-blacklisted tokens")
-}
-
-func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_AllBlacklisted(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
-	fromBlock := uint64(100)
-	toBlock := uint64(200)
-	limit := 1000
-	order := domain.BlockScanOrderAsc
-
-	// All tokens are blacklisted
-	allTokens := []domain.TokenWithBlock{
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED111111111111111111111111111", "1"),
-			BlockNumber: 150,
-		},
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED222222222222222222222222222", "1"),
-			BlockNumber: 175,
-		},
-	}
-
-	// Mock ethClient to return all tokens
-	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
-		Return(domain.TokenWithBlockRangeResult{
-			Tokens:             allTokens,
-			EffectiveFromBlock: fromBlock,
-			EffectiveToBlock:   toBlock,
-		}, nil)
-
-	// Mock blacklist checks - all blacklisted
-	for _, token := range allTokens {
-		mocks.blacklist.EXPECT().
-			IsTokenCIDBlacklisted(token.TokenCID).
-			Return(true)
-	}
-
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
-
-	assert.NoError(t, err)
-	assert.Empty(t, result.Tokens, "Should return empty list when all tokens are blacklisted")
 }
 
 // ====================================================================================

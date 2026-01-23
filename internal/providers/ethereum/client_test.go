@@ -112,6 +112,7 @@ func TestGetTokenCIDsByOwnerAndBlockRange_Integration(t *testing.T) {
 				tc.toBlock,
 				tc.limit,
 				domain.BlockScanOrderAsc,
+				nil,
 			)
 			got := result.Tokens
 			require.NoError(t, err)

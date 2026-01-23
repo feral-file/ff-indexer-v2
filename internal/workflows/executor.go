@@ -1116,28 +1116,15 @@ func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(
 		return domain.TokenWithBlockRangeResult{}, fmt.Errorf("unsupported blockchain for address: %s", address)
 	}
 
-	result, err := e.ethClient.GetTokenCIDsByOwnerAndBlockRange(
+	return e.ethClient.GetTokenCIDsByOwnerAndBlockRange(
 		ctx,
 		address,
 		requestedFromBlock,
 		requestedToBlock,
 		limit,
 		order,
+		e.blacklist,
 	)
-	if err != nil {
-		return domain.TokenWithBlockRangeResult{}, err
-	}
-
-	// Filter out blacklisted tokens
-	filtered := make([]domain.TokenWithBlock, 0, len(result.Tokens))
-	for _, tokenWithBlock := range result.Tokens {
-		if !e.blacklist.IsTokenCIDBlacklisted(tokenWithBlock.TokenCID) {
-			filtered = append(filtered, tokenWithBlock)
-		}
-	}
-
-	result.Tokens = filtered
-	return result, nil
 }
 
 // IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID

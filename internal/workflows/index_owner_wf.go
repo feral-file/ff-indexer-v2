@@ -765,7 +765,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 		zap.Uint64("latestBlock", latestBlock),
 	)
 
-	limit := w.config.BudgetedIndexingDefaultDailyQuota
+	limit := w.config.BudgetedIndexingDefaultDailyQuota + 1 // always get one more token to check if there are more tokens to index if quota is exhausted
 	if !w.config.BudgetedIndexingModeEnabled {
 		limit = math.MaxInt
 	}
@@ -1187,6 +1187,7 @@ func (w *workerCore) processChunkWithQuota(
 	wasLimited := false
 	if allowedCount < requestedCount {
 		// Find the last complete block within quota
+		// TODO: Keep this for tezos for now, as we don't support truncating the tezos tokens yet
 		completeBlockIndex := findLastCompleteBlockIndex(tokens, allowedCount)
 
 		if completeBlockIndex <= 0 {
