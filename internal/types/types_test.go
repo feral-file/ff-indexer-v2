@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -849,6 +850,483 @@ func TestIsIPFSGatewayURL(t *testing.T) {
 			} else {
 				assert.Empty(t, cid)
 			}
+		})
+	}
+}
+
+func TestIsArweaveGatewayURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		expectedOK   bool
+		expectedTxID string
+	}{
+		{
+			name:         "valid Arweave gateway URL",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "valid Arweave gateway URL with ar-io",
+			input:        "https://ar-io.net/abc123def456ghi789jkl012mno345pqr678stuv012",
+			expectedOK:   true,
+			expectedTxID: "abc123def456ghi789jkl012mno345pqr678stuv012",
+		},
+		{
+			name:         "valid Arweave gateway URL with path",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0/metadata.json",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "valid HTTP Arweave gateway URL",
+			input:        "http://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "valid Arweave gateway URL with port",
+			input:        "https://arweave.net:8080/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "invalid Arweave URI scheme",
+			input:        "ar://sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid tx ID too short (42 chars)",
+			input:        "https://arweave.net/abc123def456ghi789jkl012mno345pqr678stu",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid tx ID too long (44 chars)",
+			input:        "https://arweave.net/abc123def456ghi789jkl012mno345pqr678stu90",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid URL with spaces",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmy JQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid empty string",
+			input:        "",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "invalid URL without tx ID",
+			input:        "https://arweave.net/",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "valid with underscore in tx ID",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   true,
+			expectedTxID: "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+		},
+		{
+			name:         "valid with dash in tx ID",
+			input:        "https://arweave.net/abc123def456ghi789-kl012mno345pqr678stuv012",
+			expectedOK:   true,
+			expectedTxID: "abc123def456ghi789-kl012mno345pqr678stuv012",
+		},
+		{
+			name:         "invalid special character in tx ID",
+			input:        "https://arweave.net/sKqjvP7jFwM5HLZmyJQC$9l5hN7TVIYhT6MvSHDqwo0",
+			expectedOK:   false,
+			expectedTxID: "",
+		},
+		{
+			name:         "real Arweave tx ID example",
+			input:        "https://arweave.net/B844nmKXjiBE0eMgATBHlVIRU0Wex9Ke3dnd0jC00lQ",
+			expectedOK:   true,
+			expectedTxID: "B844nmKXjiBE0eMgATBHlVIRU0Wex9Ke3dnd0jC00lQ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, txID := IsArweaveGatewayURL(tt.input)
+			assert.Equal(t, tt.expectedOK, ok)
+			if tt.expectedOK {
+				assert.Equal(t, tt.expectedTxID, txID)
+			} else {
+				assert.Empty(t, txID)
+			}
+		})
+	}
+}
+
+func TestIsOnChFSGatewayURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		expectedOK   bool
+		expectedHash string
+	}{
+		{
+			name:         "valid OnChFS URL with fxhash2.xyz",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with fxhash.xyz",
+			input:        "https://gateway.fxhash.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with onchfs in hostname",
+			input:        "https://onchfs.example.com/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with uppercase hex",
+			input:        "https://onchfs.fxhash2.xyz/A1B2C3D4E5F67890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890",
+			expectedOK:   true,
+			expectedHash: "A1B2C3D4E5F67890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with mixed case hex",
+			input:        "https://onchfs.fxhash2.xyz/a1B2c3D4e5F67890AbCdEf1234567890abcdef1234567890ABCDEF1234567890",
+			expectedOK:   true,
+			expectedHash: "a1B2c3D4e5F67890AbCdEf1234567890abcdef1234567890ABCDEF1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with query params",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890?param=value",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with path",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890/metadata.json",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid HTTP OnChFS URL",
+			input:        "http://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "valid OnChFS URL with port",
+			input:        "https://onchfs.fxhash2.xyz:8080/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   true,
+			expectedHash: "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+		},
+		{
+			name:         "invalid host without onchfs or fxhash",
+			input:        "https://example.com/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid hash too short (63 chars)",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid hash too long (65 chars)",
+			input:        "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef12345678901",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid non-hex character in hash",
+			input:        "https://onchfs.fxhash2.xyz/g1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid IPFS CID instead of hash",
+			input:        "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid empty string",
+			input:        "",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid URL without hash",
+			input:        "https://onchfs.fxhash2.xyz/",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+		{
+			name:         "invalid onchfs URI scheme",
+			input:        "onchfs://a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			expectedOK:   false,
+			expectedHash: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, hash := IsOnChFSGatewayURL(tt.input)
+			assert.Equal(t, tt.expectedOK, ok)
+			if tt.expectedOK {
+				assert.Equal(t, tt.expectedHash, hash)
+			} else {
+				assert.Empty(t, hash)
+			}
+		})
+	}
+}
+
+func TestParseDataURI(t *testing.T) {
+	tests := []struct {
+		name             string
+		uri              string
+		expectError      bool
+		expectedMimeType string
+		expectedIsBase64 bool
+		expectedData     string
+		expectedParams   map[string]string
+	}{
+		{
+			name:             "valid PNG with base64",
+			uri:              "data:image/png;base64,iVBORw0KGgo=",
+			expectError:      false,
+			expectedMimeType: "image/png",
+			expectedIsBase64: true,
+			expectedData:     string([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}),
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "valid JSON with base64",
+			uri:              "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(`{"test":"data"}`)),
+			expectError:      false,
+			expectedMimeType: "application/json",
+			expectedIsBase64: true,
+			expectedData:     `{"test":"data"}`,
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "valid JSON without base64",
+			uri:              `data:application/json,{"test":"data"}`,
+			expectError:      false,
+			expectedMimeType: "application/json",
+			expectedIsBase64: false,
+			expectedData:     `{"test":"data"}`,
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "with charset parameter",
+			uri:              "data:text/html;charset=utf-8;base64," + base64.StdEncoding.EncodeToString([]byte("<html></html>")),
+			expectError:      false,
+			expectedMimeType: "text/html",
+			expectedIsBase64: true,
+			expectedData:     "<html></html>",
+			expectedParams:   map[string]string{"charset": "utf-8"},
+		},
+		{
+			name:             "multiple parameters",
+			uri:              "data:image/svg+xml;charset=utf-8;version=1.1;base64," + base64.StdEncoding.EncodeToString([]byte("<svg></svg>")),
+			expectError:      false,
+			expectedMimeType: "image/svg+xml",
+			expectedIsBase64: true,
+			expectedData:     "<svg></svg>",
+			expectedParams:   map[string]string{"charset": "utf-8", "version": "1.1"},
+		},
+		{
+			name:             "default mime type (text/plain)",
+			uri:              "data:;base64," + base64.StdEncoding.EncodeToString([]byte("hello")),
+			expectError:      false,
+			expectedMimeType: "text/plain",
+			expectedIsBase64: true,
+			expectedData:     "hello",
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "no metadata",
+			uri:              "data:,hello",
+			expectError:      false,
+			expectedMimeType: "text/plain",
+			expectedIsBase64: false,
+			expectedData:     "hello",
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:        "missing data: prefix",
+			uri:         "image/png;base64,abc123",
+			expectError: true,
+		},
+		{
+			name:        "missing comma separator",
+			uri:         "data:image/png;base64abc123",
+			expectError: true,
+		},
+		{
+			name:        "invalid base64",
+			uri:         "data:image/png;base64,!!!invalid!!!",
+			expectError: true,
+		},
+		{
+			name:             "empty base64 data after comma",
+			uri:              "data:image/png;base64,",
+			expectError:      false,
+			expectedMimeType: "image/png",
+			expectedIsBase64: true,
+			expectedData:     "",
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "mime type with spaces",
+			uri:              "data: image/png ;base64," + base64.StdEncoding.EncodeToString([]byte("test")),
+			expectError:      false,
+			expectedMimeType: "image/png",
+			expectedIsBase64: true,
+			expectedData:     "test",
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "case sensitive mime type",
+			uri:              "data:IMAGE/PNG;base64," + base64.StdEncoding.EncodeToString([]byte("test")),
+			expectError:      false,
+			expectedMimeType: "IMAGE/PNG",
+			expectedIsBase64: true,
+			expectedData:     "test",
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "URL-encoded text with spaces",
+			uri:              "data:text/plain,Hello%20World",
+			expectError:      false,
+			expectedMimeType: "text/plain",
+			expectedIsBase64: false,
+			expectedData:     "Hello World",
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "URL-encoded JSON",
+			uri:              `data:application/json,%7B%22name%22%3A%22Test%22%7D`, // {"name":"Test"}
+			expectError:      false,
+			expectedMimeType: "application/json",
+			expectedIsBase64: false,
+			expectedData:     `{"name":"Test"}`,
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "URL-encoded SVG",
+			uri:              "data:image/svg+xml,%3Csvg%3E%3C%2Fsvg%3E", // <svg></svg>
+			expectError:      false,
+			expectedMimeType: "image/svg+xml",
+			expectedIsBase64: false,
+			expectedData:     "<svg></svg>",
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "URL-encoded with special characters",
+			uri:              "data:text/plain,Hello%2C%20World%21%20%26%20Test", // Hello, World! & Test
+			expectError:      false,
+			expectedMimeType: "text/plain",
+			expectedIsBase64: false,
+			expectedData:     "Hello, World! & Test",
+			expectedParams:   map[string]string{},
+		},
+		{
+			name:             "plain text without encoding (no special chars)",
+			uri:              "data:text/plain,HelloWorld",
+			expectError:      false,
+			expectedMimeType: "text/plain",
+			expectedIsBase64: false,
+			expectedData:     "HelloWorld",
+			expectedParams:   map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseDataURI(tt.uri)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, result)
+			assert.Equal(t, tt.expectedMimeType, result.MimeType)
+			assert.Equal(t, tt.expectedIsBase64, result.IsBase64)
+			assert.Equal(t, tt.expectedData, string(result.DecodedData))
+
+			// Check parameters
+			assert.Equal(t, len(tt.expectedParams), len(result.Parameters))
+			for k, v := range tt.expectedParams {
+				assert.Equal(t, v, result.Parameters[k])
+			}
+		})
+	}
+}
+
+func TestParseDataURI_RawData(t *testing.T) {
+	uri := "data:image/png;base64,iVBORw0KGgo="
+	result, err := ParseDataURI(uri)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "iVBORw0KGgo=", result.RawData)
+}
+
+func TestIsDataURI(t *testing.T) {
+	tests := []struct {
+		name     string
+		uri      string
+		expected bool
+	}{
+		{
+			name:     "valid data URI",
+			uri:      "data:image/png;base64,abc123",
+			expected: true,
+		},
+		{
+			name:     "valid data URI without mime type",
+			uri:      "data:,hello",
+			expected: true,
+		},
+		{
+			name:     "not a data URI - HTTP URL",
+			uri:      "https://example.com/image.png",
+			expected: false,
+		},
+		{
+			name:     "not a data URI - no prefix",
+			uri:      "image/png;base64,abc123",
+			expected: false,
+		},
+		{
+			name:     "not a data URI - no comma",
+			uri:      "data:image/png;base64",
+			expected: false,
+		},
+		{
+			name:     "empty string",
+			uri:      "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsDataURI(tt.uri)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

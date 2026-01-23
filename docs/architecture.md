@@ -21,6 +21,7 @@ FF-Indexer v2 is a distributed system that indexes NFT data from multiple blockc
 3. **Worker Core** - Executes Temporal workflows for token indexing
 4. **Worker Media** - Processes and uploads media files
 5. **API Server** - Provides REST and GraphQL APIs
+6. **Sweeper** - Continuously monitors media URL health (can be extended for multiple purposes)
 
 ## Component Details
 
@@ -156,6 +157,17 @@ query {
 - `enrichment_source_media_assets` → `ExpansionEnrichmentSourceMediaAsset`
 - `subject` (in changes) → `ExpansionSubject`
 
+### Sweeper
+
+**Purpose**: Continuously monitors the health of media URLs associated with tokens. It is designed to be extensible for multiple purposes.
+
+**Responsibilities**:
+- Query `token_media_health` table for URLs needing health checks
+- Perform concurrent health checks using goroutine pool
+- Try alternative gateways for IPFS/Arweave/OnChFS URLs
+- Update health status in database (`healthy`, `broken`, `checking`, `unknown`)
+- Propagate working URLs back to `token_metadata` and `enrichment_sources`
+
 ## Data Flow
 
 ### Event-Driven Indexing Flow
@@ -216,6 +228,27 @@ IndexMediaFile Activity
 PostgreSQL (media_assets table)
 ```
 
+### Media Health Check Flow
+
+```
+token_media_health table (URLs needing check)
+    ↓
+Sweeper (continuous polling)
+    ↓
+URL Health Check (concurrent workers)
+    ├─→ HTTPS URLs (HEAD → Range GET → Full GET)
+    ├─→ IPFS URLs (try multiple gateways)
+    ├─→ Arweave URLs (try multiple gateways)
+    └─→ OnChFS URLs (try multiple gateways)
+    ↓
+Update health status
+    ├─→ token_media_health (health_status, last_checked_at)
+    ├─→ token_metadata (media_url if better gateway found)
+    └─→ enrichment_sources (media_url if better gateway found)
+    ↓
+PostgreSQL (updated health status)
+```
+
 ## Component Communication
 
 ### Event Streaming (NATS JetStream)
@@ -255,6 +288,7 @@ PostgreSQL (media_assets table)
 - `token_metadata` - Metadata JSON and normalized fields
 - `enrichment_sources` - Vendor API responses
 - `media_assets` - Media file references
+- `token_media_health` - Media URL health status
 - `provenance_events` - Blockchain event history
 - `balances` - Multi-token ownership (ERC1155, FA2)
 - `changes_journal` - Audit log
@@ -324,6 +358,8 @@ tokens (1) ────┬── (1) token_metadata
                │
                ├── (N) enrichment_sources
                │
+               ├── (N) token_media_health
+               │
                └── (N) changes_journal
 
 media_assets (standalone table)
@@ -342,6 +378,7 @@ key_value_store (standalone table)
 - **Worker Core**: Can run multiple instances (Temporal task queue)
 - **Worker Media**: Can run multiple instances (Temporal task queue)
 - **API Server**: Can run multiple instances (stateless)
+- **Sweeper**: Should run single instance
 
 ### Vertical Scaling
 

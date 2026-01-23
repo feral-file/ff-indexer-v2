@@ -34,6 +34,20 @@ func (m *MockIO) EXPECT() *MockIOMockRecorder {
 	return m.recorder
 }
 
+// Discard mocks base method.
+func (m *MockIO) Discard(r io.Reader) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Discard", r)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Discard indicates an expected call of Discard.
+func (mr *MockIOMockRecorder) Discard(r interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Discard", reflect.TypeOf((*MockIO)(nil).Discard), r)
+}
+
 // ReadAll mocks base method.
 func (m *MockIO) ReadAll(r io.Reader) ([]byte, error) {
 	m.ctrl.T.Helper()

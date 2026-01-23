@@ -70,6 +70,7 @@ cd cmd/event-bridge && go run main.go
 cd cmd/worker-core && go run main.go
 cd cmd/worker-media && go run main.go
 cd cmd/api && go run main.go
+cd cmd/sweeper && go run main.go
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
@@ -89,6 +90,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 - **Worker Core** (`worker-core`) - Executes Temporal workflows for token indexing, metadata resolution, and enrichment
 - **Worker Media** (`worker-media`) - Processes and uploads media files to Cloudflare
 - **API Server** (`api`) - Provides REST and GraphQL APIs for querying indexed data
+- **Sweeper** (`sweeper`) - Continuously monitors media URL health and updates status
 
 ## Requirements
 

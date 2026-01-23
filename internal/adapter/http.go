@@ -47,6 +47,10 @@ type HTTPClient interface {
 
 	// GetWithHeaders performs a GET request with custom headers and returns the response body
 	GetWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, error)
+
+	// GetWithResponseAndHeaders performs a GET request with custom headers and returns the full HTTP response
+	// The caller is responsible for checking status code and closing the response body
+	GetWithResponseAndHeaders(ctx context.Context, url string, headers map[string]string) (*http.Response, error)
 }
 
 // RealHTTPClient implements HTTPClient using the standard http package
@@ -63,8 +67,8 @@ func NewHTTPClient(timeout time.Duration) HTTPClient {
 	}
 }
 
-// isRetryableError determines if an error should trigger a retry
-func isRetryableError(err error) bool {
+// IsHTTPRetryableError determines if an error is retryable for HTTP requests
+func IsHTTPRetryableError(err error) bool {
 	// Context cancellation and deadline exceeded are not retryable
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
@@ -143,7 +147,7 @@ func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req 
 		resp, err := c.client.Do(req)
 		if err != nil {
 			// Check if the error is retryable
-			if isRetryableError(err) {
+			if IsHTTPRetryableError(err) {
 				logger.WarnCtx(ctx, "retryable error encountered", zap.Error(err), zap.String("url", req.URL.String()))
 				return fmt.Errorf("retryable error: %w", err)
 			}
@@ -331,4 +335,20 @@ func (c *RealHTTPClient) GetWithHeaders(ctx context.Context, url string, headers
 	}
 
 	return c.doRequestWithRetry(ctx, req)
+}
+
+// GetWithResponseAndHeaders performs a GET request with custom headers and returns the full HTTP response
+// The caller is responsible for checking status code and closing the response body
+func (c *RealHTTPClient) GetWithResponseAndHeaders(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	return c.doRequestWithRetryAndResponse(ctx, req)
 }

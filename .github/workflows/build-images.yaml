@@ -32,6 +32,7 @@ jobs:
           - event-bridge
           - worker-core
           - worker-media
+          - sweeper
 
     permissions:
       contents: read
@@ -143,6 +144,7 @@ jobs:
           echo "| Event Bridge | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:event-bridge-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Worker Core | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:worker-core-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Worker Media | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:worker-media-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Sweeper | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:sweeper-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Helm Values" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -176,4 +178,8 @@ jobs:
           echo "workerMedia:" >> $GITHUB_STEP_SUMMARY
           echo "  image:" >> $GITHUB_STEP_SUMMARY
           echo "    tag: worker-media-${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "sweeper:" >> $GITHUB_STEP_SUMMARY
+          echo "  image:" >> $GITHUB_STEP_SUMMARY
+          echo "    tag: sweeper-${TAG}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

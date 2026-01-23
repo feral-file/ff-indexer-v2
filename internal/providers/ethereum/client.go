@@ -19,6 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // ErrExecutionReverted is returned when a function call reverts
@@ -86,6 +87,7 @@ type EthereumClient interface {
 		requestedToBlock uint64,
 		limit int,
 		order domain.BlockScanOrder,
+		blacklist registry.BlacklistRegistry,
 	) (domain.TokenWithBlockRangeResult, error)
 
 	// GetContractDeployer retrieves the deployer address for a contract
@@ -1217,6 +1219,7 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	requestedToBlock uint64,
 	limit int,
 	order domain.BlockScanOrder,
+	blacklist registry.BlacklistRegistry,
 ) (domain.TokenWithBlockRangeResult, error) {
 	if limit <= 0 {
 		return domain.TokenWithBlockRangeResult{}, fmt.Errorf("limit must be > 0")
@@ -1429,6 +1432,11 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 				tokenID := new(big.Int).SetBytes(vLog.Topics[3].Bytes())
 				tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC721, vLog.Address.Hex(), tokenID.String())
 
+				// Skip if token is blacklisted
+				if blacklist != nil && blacklist.IsTokenCIDBlacklisted(tokenCID) {
+					continue
+				}
+
 				existing := balanceMap[tokenCID]
 				if isNewer(existing, vLog) {
 					prevOwned := false
@@ -1475,6 +1483,11 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 				amount := new(big.Int).SetBytes(vLog.Data[32:64])
 
 				tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
+
+				// Skip if token is blacklisted
+				if blacklist != nil && blacklist.IsTokenCIDBlacklisted(tokenCID) {
+					continue
+				}
 
 				existing := balanceMap[tokenCID]
 				if existing == nil {
@@ -1552,6 +1565,11 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 					amount := new(big.Int).SetBytes(vLog.Data[valueStart : valueStart+32])
 
 					tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
+
+					// Skip if token is blacklisted
+					if blacklist != nil && blacklist.IsTokenCIDBlacklisted(tokenCID) {
+						continue
+					}
 
 					existing := balanceMap[tokenCID]
 					if existing == nil {

@@ -8,10 +8,11 @@ CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:main
 CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
 CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile', 'objkt', 'opensea');
 CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
-CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset');
+CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset', 'token_viewability');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
 CREATE TYPE indexing_job_status AS ENUM ('running', 'paused', 'failed', 'completed', 'canceled');
+CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken');
 
 -- ============================================================================
 -- CORE TABLES
@@ -102,6 +103,22 @@ CREATE TABLE media_assets (
     -- Unique constraints: one entry per provider per asset, one entry per source URL per provider
     UNIQUE (provider, provider_asset_id),
     UNIQUE (source_url, provider)
+);
+
+-- Token Media Health table - Tracks health check status for media URLs
+CREATE TABLE token_media_health (
+    id BIGSERIAL PRIMARY KEY,
+    token_id BIGINT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+    media_url TEXT NOT NULL,
+    media_source TEXT NOT NULL,  -- 'metadata_image', 'metadata_animation', 'enrichment_image', 'enrichment_animation'
+    health_status media_health_status NOT NULL DEFAULT 'unknown',
+    last_checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    
+    -- One health record per token per URL per source
+    UNIQUE(token_id, media_url, media_source)
 );
 
 -- Changes Journal table - Audit log for tracking all changes to indexed data
@@ -271,17 +288,27 @@ CREATE INDEX idx_token_metadata_enrichment_level ON token_metadata (enrichment_l
 CREATE INDEX idx_token_metadata_last_refreshed_at ON token_metadata (last_refreshed_at);
 CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WHERE artists IS NOT NULL AND jsonb_array_length(artists) > 0;
 CREATE INDEX idx_token_metadata_publisher ON token_metadata USING GIN (publisher) WHERE publisher IS NOT NULL AND jsonb_typeof(publisher) = 'object';
+CREATE INDEX idx_token_metadata_image_url ON token_metadata (image_url) WHERE image_url IS NOT NULL;
+CREATE INDEX idx_token_metadata_animation_url ON token_metadata (animation_url) WHERE animation_url IS NOT NULL;
 
 -- Enrichment Sources table indexes
 CREATE INDEX idx_enrichment_sources_vendor ON enrichment_sources (vendor);
 CREATE INDEX idx_enrichment_sources_vendor_hash ON enrichment_sources (vendor_hash) WHERE vendor_hash IS NOT NULL;
 CREATE INDEX idx_enrichment_sources_artists ON enrichment_sources USING GIN (artists) WHERE artists IS NOT NULL;
+CREATE INDEX idx_enrichment_sources_image_url ON enrichment_sources (image_url) WHERE image_url IS NOT NULL;
+CREATE INDEX idx_enrichment_sources_animation_url ON enrichment_sources (animation_url) WHERE animation_url IS NOT NULL;
 
 -- Media Assets table indexes
 CREATE INDEX idx_media_assets_source_url ON media_assets (source_url);
 CREATE INDEX idx_media_assets_provider ON media_assets (provider);
 CREATE INDEX idx_media_assets_provider_asset_id ON media_assets (provider, provider_asset_id);
 CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
+
+-- Token Media Health table indexes
+CREATE INDEX idx_token_media_health_token_id ON token_media_health (token_id);
+CREATE INDEX idx_token_media_health_url ON token_media_health (media_url);
+CREATE INDEX idx_token_media_health_last_checked ON token_media_health (last_checked_at);
+CREATE INDEX idx_token_media_health_token_status_source ON token_media_health (token_id, health_status, media_source);
 
 -- Changes Journal table indexes
 CREATE INDEX idx_changes_journal_subject ON changes_journal (subject_type, subject_id);
@@ -392,6 +419,11 @@ CREATE TRIGGER update_media_assets_updated_at
     BEFORE UPDATE ON media_assets
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to token_media_health
+CREATE TRIGGER update_token_media_health_updated_at
+    BEFORE UPDATE ON token_media_health
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Apply updated_at trigger to changes_journal
 CREATE TRIGGER update_changes_journal_updated_at
     BEFORE UPDATE ON changes_journal
@@ -454,6 +486,7 @@ COMMENT ON TABLE balances IS 'Tracks ownership quantities for multi-edition toke
 COMMENT ON TABLE token_metadata IS 'Stores original and enriched metadata for tokens';
 COMMENT ON TABLE enrichment_sources IS 'Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File) with both raw and normalized data';
 COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
+COMMENT ON TABLE token_media_health IS 'Tracks health check status for media URLs associated with tokens. Includes source information to distinguish between metadata/enrichment and image/animation URLs. Automatically synchronized when token_metadata or enrichment_sources are updated.';
 COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. subject_id is polymorphic: provenance_event_id (token/owner/balance), token_id (metadata/enrich_source), media_asset_id (media_asset). Token association is resolved through subject_id based on subject_type';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
 COMMENT ON TABLE token_ownership_periods IS 'Tracks when addresses owned tokens with quantity > 0. Used for efficiently querying ownership history and metadata changes during ownership. Automatically maintained by application logic on provenance event creation';

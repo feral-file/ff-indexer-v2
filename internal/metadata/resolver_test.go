@@ -370,12 +370,6 @@ func TestResolver_Resolve_DataURI(t *testing.T) {
 		ERC721TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(dataURI, nil)
 
-	// Mock base64 decode for parsing data URI
-	mocks.base64.
-		EXPECT().
-		Decode("eyJuYW1lIjoiVGVzdCBORlQifQ==").
-		Return([]byte(`{"name":"Test NFT"}`), nil)
-
 	// Mock JSON unmarshal for parsing data URI
 	metadata := map[string]interface{}{
 		"name": "Test NFT",

@@ -31,6 +31,10 @@ const (
 	// (token has been burned)
 	EventTypeTokenOwnershipBurned = "token.ownership.burned"
 
+	// EventTypeTokenViewabilityChanged is fired when a token media health has changed
+	// (image or animation URL health has changed)
+	EventTypeTokenViewabilityChanged = "token.viewability.changed"
+
 	// EventTypeTokenIndexingMediaCompleted is fired when media has been indexed
 	// EventTypeWildcard is a special filter that matches all event types
 	EventTypeWildcard = "*"
@@ -44,6 +48,7 @@ var SupportedEventTypes = []string{
 	EventTypeTokenOwnershipMinted,
 	EventTypeTokenOwnershipTransferred,
 	EventTypeTokenOwnershipBurned,
+	EventTypeTokenViewabilityChanged,
 	EventTypeWildcard,
 }
 
@@ -98,6 +103,15 @@ type OwnershipEventData struct {
 	ToAddress *string `json:"to_address,omitempty"`
 	// Quantity is the number of tokens transferred
 	Quantity string `json:"quantity"`
+}
+
+// TokenViewabilityChanged contains the data for a token viewability changed event
+type TokenViewabilityChanged struct {
+	// EventData is the common event data
+	EventData
+
+	// IsViewable is true if token is viewable
+	IsViewable bool `json:"is_viewable"` // true if token is viewable
 }
 
 // DeliveryResult represents the result of a webhook delivery attempt

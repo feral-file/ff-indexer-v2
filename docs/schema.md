@@ -22,6 +22,7 @@ The database includes the following main tables:
 - `token_ownership_periods` - Historical ownership periods for efficient address-based queries
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
+- `token_media_health` - Health status of token media URLs
 - `changes_journal` - Change tracking for all entities
 - `watched_addresses` - Addresses being monitored for indexing
 - `address_indexing_jobs` - Address-level indexing job status tracking
@@ -204,6 +205,41 @@ Reference mapping between original URLs and provider-hosted URLs with variants.
 **Unique Constraints**:
 - `(provider, provider_asset_id)` (unique)
 - `(source_url, provider)` (unique)
+
+### token_media_health
+
+Tracks health check status for media URLs associated with tokens. The sweeper service continuously monitors these URLs and updates their status.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Primary key |
+| token_id | BIGINT | Foreign key to tokens.id |
+| media_url | TEXT | URL being checked for health |
+| media_source | TEXT | Source of URL (metadata_image, metadata_animation, enrichment_image, enrichment_animation) |
+| health_status | media_health_status | Health status (unknown, healthy, broken, checking) |
+| last_checked_at | TIMESTAMPTZ | Last health check timestamp |
+| last_error | TEXT | Error message from last failed check (NULL if healthy) |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Indexes**:
+- `idx_token_media_health_token_id` on (token_id)
+- `idx_token_media_health_url` on (media_url)
+- `idx_token_media_health_last_checked` on (last_checked_at)
+- `idx_token_media_health_token_status` on (token_id, health_status)
+- `idx_token_media_health_source` on (media_source)
+
+**Unique Constraints**:
+- `(token_id, media_url, media_source)` (unique)
+
+**Relationships**:
+- Many-to-one with `tokens`
+
+**Purpose**:
+- Enables API clients to filter out tokens with broken media URLs
+- Tracks health of both metadata and enrichment source URLs
+- Supports alternative gateway discovery for IPFS/Arweave/OnChFS
+- Animation URLs have precedence over image URLs for filtering
 
 ### provenance_events
 
@@ -445,6 +481,12 @@ Audit log of webhook delivery attempts with status tracking and response details
 - `none` - No enrichment applied
 - `vendor` - Enriched from vendor API
 
+### media_health_status
+- `unknown` - Not yet checked
+- `checking` - Check in progress
+- `healthy` - URL is accessible
+- `broken` - URL is not accessible
+
 ### vendor_type
 - `artblocks` - Art Blocks
 - `fxhash` - fxhash
@@ -493,7 +535,8 @@ tokens (1)
   ├── (N) balances
   ├── (N) provenance_events
   ├── (N) token_ownership_periods
-  └── (N) enrichment_sources
+  ├── (N) enrichment_sources
+  └── (N) token_media_health
 
 webhook_clients (1)
   └── (N) webhook_deliveries
@@ -531,6 +574,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_webhook_clients_updated_at`
 - `update_webhook_deliveries_updated_at`
 - `update_address_indexing_jobs_updated_at`
+- `update_token_media_health_updated_at`
 
 ## Migrations
 

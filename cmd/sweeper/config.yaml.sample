@@ -1,0 +1,51 @@
+# Feral File Indexer Sweeper Configuration
+# The sweeper continuously checks the health of media URLs and updates their status
+
+debug: true
+sentry_dsn: ""
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  dbname: ff_indexer
+  sslmode: disable
+  max_open_conns: 5         # Lower than workers since sweeper is less DB-intensive
+  max_idle_conns: 2
+  conn_max_lifetime: 1h
+  conn_max_idle_time: 10m
+
+media_health_sweeper:
+  # HTTP client timeout for health checks
+  http_timeout: 30s
+
+  # Number of URLs to check per batch
+  batch_size: 1000
+
+  # Number of concurrent workers
+  worker:
+    pool_size: 50
+    queue_size: 100
+
+  # Only check URLs that haven't been checked in this duration
+  # Default: 1 day (24h)
+  recheck_after: 24h
+  
+  # Gateway configurations for decentralized storage
+  uri:
+    ipfs_gateways:
+      - https://ipfs.io
+      - https://cloudflare-ipfs.com
+      - https://ipfs.feralfile.com
+      - https://dweb.link
+      - https://ipfs.filebase.io
+    arweave_gateways:
+      - https://arweave.net
+    onchfs_gateways:
+      - https://onchfs.fxhash2.xyz
+
+temporal:
+  host_port: localhost:7233
+  namespace: default
+  token_task_queue: token-indexing

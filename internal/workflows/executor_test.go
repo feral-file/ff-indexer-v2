@@ -24,6 +24,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
@@ -42,6 +43,7 @@ type testExecutorMocks struct {
 	io               *mocks.MockIO
 	temporalActivity *mocks.MockActivity
 	blacklist        *mocks.MockBlacklistRegistry
+	urlChecker       *mocks.MockURLChecker
 	executor         workflows.Executor
 }
 
@@ -70,6 +72,7 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		io:               mocks.NewMockIO(ctrl),
 		temporalActivity: mocks.NewMockActivity(ctrl),
 		blacklist:        mocks.NewMockBlacklistRegistry(ctrl),
+		urlChecker:       mocks.NewMockURLChecker(ctrl),
 	}
 
 	tm.executor = workflows.NewExecutor(
@@ -84,6 +87,7 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		tm.io,
 		tm.temporalActivity,
 		tm.blacklist,
+		tm.urlChecker,
 	)
 
 	return tm
@@ -1546,19 +1550,12 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_Success(t *testing.T) {
 
 	// Mock ethClient
 	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order, mocks.blacklist).
 		Return(domain.TokenWithBlockRangeResult{
 			Tokens:             expectedTokens,
 			EffectiveFromBlock: fromBlock,
 			EffectiveToBlock:   toBlock,
 		}, nil)
-
-	// Mock blacklist - none blacklisted
-	for _, token := range expectedTokens {
-		mocks.blacklist.EXPECT().
-			IsTokenCIDBlacklisted(token.TokenCID).
-			Return(false)
-	}
 
 	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
 
@@ -1598,7 +1595,7 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
 	// Mock ethClient to return error
 	clientErr := errors.New("client error")
 	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
+		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order, mocks.blacklist).
 		Return(domain.TokenWithBlockRangeResult{}, clientErr)
 
 	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
@@ -1606,118 +1603,6 @@ func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_ClientError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Equal(t, clientErr, err)
 	assert.Empty(t, result)
-}
-
-func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_BlacklistFiltering(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
-	fromBlock := uint64(100)
-	toBlock := uint64(200)
-	limit := 1000
-	order := domain.BlockScanOrderAsc
-
-	// Create tokens where some are blacklisted
-	allTokens := []domain.TokenWithBlock{
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1"),
-			BlockNumber: 150,
-		},
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED111111111111111111111111111", "1"), // Blacklisted
-			BlockNumber: 160,
-		},
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2"),
-			BlockNumber: 175,
-		},
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED222222222222222222222222222", "5"), // Blacklisted
-			BlockNumber: 180,
-		},
-	}
-
-	// Expected result: only non-blacklisted tokens
-	expectedTokens := []domain.TokenWithBlock{
-		allTokens[0], // Not blacklisted
-		allTokens[2], // Not blacklisted
-	}
-
-	// Mock ethClient to return all tokens
-	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
-		Return(domain.TokenWithBlockRangeResult{
-			Tokens:             allTokens,
-			EffectiveFromBlock: fromBlock,
-			EffectiveToBlock:   toBlock,
-		}, nil)
-
-	// Mock blacklist checks
-	mocks.blacklist.EXPECT().
-		IsTokenCIDBlacklisted(allTokens[0].TokenCID).
-		Return(false)
-	mocks.blacklist.EXPECT().
-		IsTokenCIDBlacklisted(allTokens[1].TokenCID).
-		Return(true) // Blacklisted
-	mocks.blacklist.EXPECT().
-		IsTokenCIDBlacklisted(allTokens[2].TokenCID).
-		Return(false)
-	mocks.blacklist.EXPECT().
-		IsTokenCIDBlacklisted(allTokens[3].TokenCID).
-		Return(true) // Blacklisted
-
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
-
-	assert.NoError(t, err)
-	assert.Len(t, result.Tokens, 2, "Should filter out 2 blacklisted tokens")
-	assert.Equal(t, expectedTokens, result.Tokens, "Should only return non-blacklisted tokens")
-}
-
-func TestGetEthereumTokenCIDsByOwnerWithinBlockRange_AllBlacklisted(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	address := "0xdadB0d80178819F2319190D340ce9A924f783711"
-	fromBlock := uint64(100)
-	toBlock := uint64(200)
-	limit := 1000
-	order := domain.BlockScanOrderAsc
-
-	// All tokens are blacklisted
-	allTokens := []domain.TokenWithBlock{
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED111111111111111111111111111", "1"),
-			BlockNumber: 150,
-		},
-		{
-			TokenCID:    domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBLACKLISTED222222222222222222222222222", "1"),
-			BlockNumber: 175,
-		},
-	}
-
-	// Mock ethClient to return all tokens
-	mocks.ethClient.EXPECT().
-		GetTokenCIDsByOwnerAndBlockRange(ctx, address, fromBlock, toBlock, limit, order).
-		Return(domain.TokenWithBlockRangeResult{
-			Tokens:             allTokens,
-			EffectiveFromBlock: fromBlock,
-			EffectiveToBlock:   toBlock,
-		}, nil)
-
-	// Mock blacklist checks - all blacklisted
-	for _, token := range allTokens {
-		mocks.blacklist.EXPECT().
-			IsTokenCIDBlacklisted(token.TokenCID).
-			Return(true)
-	}
-
-	result, err := mocks.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, fromBlock, toBlock, limit, order)
-
-	assert.NoError(t, err)
-	assert.Empty(t, result.Tokens, "Should return empty list when all tokens are blacklisted")
 }
 
 // ====================================================================================
@@ -4030,4 +3915,250 @@ func TestUpdateIndexingJobProgress_StoreError(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Equal(t, storeError, err)
+}
+
+// =============================================================================
+// Test: CheckMediaURLsHealth
+// =============================================================================
+
+func TestCheckMediaURLsHealth_NoURLs(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	urls := []string{}
+
+	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+
+	assert.NoError(t, err)
+	assert.Nil(t, results)
+}
+
+func TestCheckMediaURLsHealth_SingleHealthyURL(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	url := "https://example.com/image.png"
+	urls := []string{url}
+
+	// Mock URL checker to return healthy status
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock store to update health status
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, results)
+	assert.Len(t, results, 1)
+	assert.Equal(t, schema.MediaHealthStatusHealthy, results[url])
+}
+
+func TestCheckMediaURLsHealth_SingleBrokenURL(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	url := "https://example.com/broken.png"
+	urls := []string{url}
+
+	// Mock URL checker to return broken status
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusBroken,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock store to update health status
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url, schema.MediaHealthStatusBroken, nil).
+		Return(nil)
+
+	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, results)
+	assert.Len(t, results, 1)
+	assert.Equal(t, schema.MediaHealthStatusBroken, results[url])
+}
+
+func TestCheckMediaURLsHealth_TransientError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	url := "https://example.com/timeout.png"
+	urls := []string{url}
+
+	// Mock URL checker to return transient error status
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusTransientError,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock store to update health status as unknown (for retry)
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url, schema.MediaHealthStatusUnknown, nil).
+		Return(nil)
+
+	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, results)
+	assert.Len(t, results, 1)
+	assert.Equal(t, schema.MediaHealthStatusUnknown, results[url])
+}
+
+func TestCheckMediaURLsHealth_MultipleURLs(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	url1 := "https://example.com/image1.png"
+	url2 := "https://example.com/image2.png"
+	url3 := "https://example.com/video.mp4"
+	urls := []string{url1, url2, url3}
+
+	// Mock URL checker for url1 (healthy)
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url1).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock URL checker for url2 (broken)
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url2).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusBroken,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock URL checker for url3 (transient error)
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url3).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusTransientError,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock store updates (order doesn't matter as they run in parallel)
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url1, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url2, schema.MediaHealthStatusBroken, nil).
+		Return(nil)
+
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url3, schema.MediaHealthStatusUnknown, nil).
+		Return(nil)
+
+	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, results)
+	assert.Len(t, results, 3)
+	assert.Equal(t, schema.MediaHealthStatusHealthy, results[url1])
+	assert.Equal(t, schema.MediaHealthStatusBroken, results[url2])
+	assert.Equal(t, schema.MediaHealthStatusUnknown, results[url3])
+}
+
+func TestCheckMediaURLsHealth_StoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	url := "https://example.com/image.png"
+	urls := []string{url}
+	storeError := errors.New("database error")
+
+	// Mock URL checker to return healthy status
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock store to return error
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url, schema.MediaHealthStatusHealthy, nil).
+		Return(storeError)
+
+	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+
+	assert.Error(t, err)
+	assert.Equal(t, storeError, err)
+	assert.Nil(t, results)
+}
+
+func TestCheckMediaURLsHealth_MultipleURLs_OneStoreError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	url1 := "https://example.com/image1.png"
+	url2 := "https://example.com/image2.png"
+	urls := []string{url1, url2}
+	storeError := errors.New("database error for url2")
+
+	// Mock URL checker for url1 (healthy)
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url1).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock URL checker for url2 (healthy)
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), url2).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: nil,
+			Error:      nil,
+		})
+
+	// Mock store updates - the order is non-deterministic (map iteration)
+	// url1 might succeed or not be called at all, depending on iteration order
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url1, schema.MediaHealthStatusHealthy, nil).
+		Return(nil).
+		MaxTimes(1)
+
+	// url2 will fail when called
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url2, schema.MediaHealthStatusHealthy, nil).
+		Return(storeError).
+		MaxTimes(1)
+
+	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+
+	// The function should return error when any store update fails
+	assert.Error(t, err)
+	assert.Equal(t, storeError, err)
+	assert.Nil(t, results)
 }

@@ -7,6 +7,7 @@ import "io"
 //go:generate mockgen -source=io.go -destination=../mocks/io.go -package=mocks -mock_names=IO=MockIO
 type IO interface {
 	ReadAll(r io.Reader) ([]byte, error)
+	Discard(r io.Reader) error
 }
 
 // RealIO implements IO using the standard io package
@@ -19,4 +20,9 @@ func NewIO() IO {
 
 func (i *RealIO) ReadAll(r io.Reader) ([]byte, error) {
 	return io.ReadAll(r)
+}
+
+func (i *RealIO) Discard(r io.Reader) error {
+	_, err := io.Copy(io.Discard, r)
+	return err
 }

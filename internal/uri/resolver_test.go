@@ -95,29 +95,6 @@ func TestResolver_Resolve(t *testing.T) {
 				IPFSGateways: []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
 			},
 			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				// Mock both gateways since resolver tries them in parallel
-				// First gateway succeeds - this ensures deterministic behavior
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil)
-
-				// Second gateway fails to ensure deterministic behavior
-				// (only first gateway succeeds, so it will always be returned)
-				// Use AnyTimes() since the resolver may return early when first gateway succeeds
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp2, nil).
-					AnyTimes()
 			},
 			expected:    "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
 			expectedErr: "",
@@ -303,7 +280,7 @@ func TestResolver_Resolve(t *testing.T) {
 					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp, nil)
 			},
-			expectedErr: "no working OnChFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedErr: "no working OnChFS gateway found for hash: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
 		},
 		{
 			name: "OnChFS URI - network error",
@@ -317,7 +294,7 @@ func TestResolver_Resolve(t *testing.T) {
 					Head(gomock.Any(), gomock.Any()).
 					Return(nil, assert.AnError)
 			},
-			expectedErr: "no working OnChFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedErr: "no working OnChFS gateway found for hash: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
 		},
 	}
 

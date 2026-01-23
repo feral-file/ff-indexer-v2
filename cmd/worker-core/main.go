@@ -176,6 +176,16 @@ func main() {
 		OnChFSGateways:  cfg.URI.OnchfsGateways,
 	})
 
+	// Initialize URI config for URL checker
+	uriConfig := &uri.Config{
+		IPFSGateways:    cfg.URI.IPFSGateways,
+		ArweaveGateways: cfg.URI.ArweaveGateways,
+		OnChFSGateways:  cfg.URI.OnchfsGateways,
+	}
+
+	// Initialize URL checker for media health checks
+	urlChecker := uri.NewURLChecker(httpClient, ioAdapter, uriConfig)
+
 	// Initialize metadata enhancer and resolver
 	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, objktClient, openseaClient, jsonAdapter, jcsAdapter)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, jcsAdapter, base64Adapter, dataStore, publisherRegistry)
@@ -199,7 +209,8 @@ func main() {
 		httpClient,
 		ioAdapter,
 		temporalActivityAdapter,
-		blacklistRegistry)
+		blacklistRegistry,
+		urlChecker)
 
 	// Connect to Temporal with logger integration
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())

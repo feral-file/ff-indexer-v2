@@ -201,6 +201,23 @@ type WorkerMediaConfig struct {
 	MaxVideoSize         int64            `mapstructure:"max_video_size"`
 }
 
+// MediaHealthSweeperConfig holds configuration for the media health sweeper
+type MediaHealthSweeperConfig struct {
+	URI          URIConfig     `mapstructure:"uri"`
+	HTTPTimeout  time.Duration `mapstructure:"http_timeout"`
+	BatchSize    int           `mapstructure:"batch_size"`
+	RecheckAfter time.Duration `mapstructure:"recheck_after"`
+	Worker       WorkerConfig  `mapstructure:"worker"`
+}
+
+// SweeperConfig holds configuration for the sweeper program
+type SweeperConfig struct {
+	BaseConfig         `mapstructure:",squash"`
+	Database           DatabaseConfig           `mapstructure:"database"`
+	Temporal           TemporalConfig           `mapstructure:"temporal"`
+	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
+}
+
 // LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter
 func LoadEthereumEmitterConfig(configFile string, envPath string) (*EthereumEmitterConfig, error) {
 	v := configureViper("ethereum-event-emitter", configFile, envPath)
@@ -415,6 +432,46 @@ func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfi
 	return &config, nil
 }
 
+// LoadSweeperConfig loads configuration for the sweeper program
+func LoadSweeperConfig(configFile string, envPath string) (*SweeperConfig, error) {
+	v := configureViper("sweeper", configFile, envPath)
+
+	// Set defaults
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.sslmode", "disable")
+	v.SetDefault("database.max_open_conns", 5)
+	v.SetDefault("database.max_idle_conns", 2)
+	v.SetDefault("database.conn_max_lifetime", "1h")
+	v.SetDefault("database.conn_max_idle_time", "10m")
+	v.SetDefault("media_health_sweeper.http_timeout", "30s")
+	v.SetDefault("media_health_sweeper.batch_size", 100)
+	v.SetDefault("media_health_sweeper.worker.pool_size", 50)
+	v.SetDefault("media_health_sweeper.worker.queue_size", 100)
+	v.SetDefault("media_health_sweeper.recheck_after", "24h") // 1 day
+	v.SetDefault("temporal.host_port", "localhost:7233")
+	v.SetDefault("temporal.namespace", "default")
+	v.SetDefault("temporal.token_task_queue", "token-indexer-task-queue")
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var cfg SweeperConfig
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Validate required fields
+	if cfg.Database.Host == "" {
+		return nil, errors.New("database.host is required")
+	}
+	if cfg.Database.DBName == "" {
+		return nil, errors.New("database.dbname is required")
+	}
+
+	return &cfg, nil
+}
+
 // configureViper returns a viper instance with the config file and environment variables set
 func configureViper(service string, configFile string, envPath string) *viper.Viper {
 	v := viper.New()
@@ -426,7 +483,14 @@ func configureViper(service string, configFile string, envPath string) *viper.Vi
 	if configFile != "" {
 		v.SetConfigFile(configFile)
 	} else {
+		v.SetConfigName("config")
 		v.SetConfigType("yaml")
+		// Search for config.yaml in multiple locations:
+		// 1. Current directory
+		v.AddConfigPath(".")
+		// 2. Service-specific directory (e.g., cmd/sweeper/, cmd/api/)
+		v.AddConfigPath(fmt.Sprintf("cmd/%s/", service))
+		// 3. Config directory
 		v.AddConfigPath("config/")
 	}
 
@@ -528,6 +592,15 @@ func bindAllEnvVars(v *viper.Viper) {
 		// Internal Worker config
 		"worker.pool_size",
 		"worker.queue_size",
+		// Media Health Sweeper config
+		"media_health_sweeper.http_timeout",
+		"media_health_sweeper.batch_size",
+		"media_health_sweeper.recheck_after",
+		"media_health_sweeper.worker.pool_size",
+		"media_health_sweeper.worker.queue_size",
+		"media_health_sweeper.uri.ipfs_gateways",
+		"media_health_sweeper.uri.arweave_gateways",
+		"media_health_sweeper.uri.onchfs_gateways",
 	}
 
 	for _, key := range commonKeys {

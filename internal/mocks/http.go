@@ -95,6 +95,21 @@ func (mr *MockHTTPClientMockRecorder) GetWithResponse(ctx, url interface{}) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWithResponse", reflect.TypeOf((*MockHTTPClient)(nil).GetWithResponse), ctx, url)
 }
 
+// GetWithResponseAndHeaders mocks base method.
+func (m *MockHTTPClient) GetWithResponseAndHeaders(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetWithResponseAndHeaders", ctx, url, headers)
+	ret0, _ := ret[0].(*http.Response)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWithResponseAndHeaders indicates an expected call of GetWithResponseAndHeaders.
+func (mr *MockHTTPClientMockRecorder) GetWithResponseAndHeaders(ctx, url, headers interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWithResponseAndHeaders", reflect.TypeOf((*MockHTTPClient)(nil).GetWithResponseAndHeaders), ctx, url, headers)
+}
+
 // Head mocks base method.
 func (m *MockHTTPClient) Head(ctx context.Context, url string) (*http.Response, error) {
 	m.ctrl.T.Helper()

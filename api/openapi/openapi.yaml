@@ -303,9 +303,16 @@ paths:
           style: form
           explode: true
           example: ["eip155:1:erc721:0xabc123:1234"]
-        - name: include_broken
+        - name: include_broken_metadata
           in: query
           description: Include tokens with broken metadata (no metadata and enrichment records). Default is false - only tokens with metadata and enrichment are returned.
+          schema:
+            type: boolean
+            default: false
+          example: false
+        - name: include_broken_media
+          in: query
+          description: Include tokens with broken media URLs (inaccessible media files). Default is false - only tokens with accessible media are returned.
           schema:
             type: boolean
             default: false
@@ -915,6 +922,7 @@ paths:
         - `token.ownership.minted` - Token was minted
         - `token.ownership.transferred` - Token ownership changed
         - `token.ownership.burned` - Token was burned
+        - `token.viewability.changed` - Token viewability changed
         - `*` - Wildcard to receive all event types
         
         ## Response
@@ -1152,23 +1160,21 @@ webhooks:
                     from_address: "0xburner123"
                     to_address: null
                     quantity: "1"
-              erc1155Transfer:
-                summary: ERC1155 transfer event (multiple tokens)
+              tokenViewabilityChanged:
+                summary: token.viewability.changed event
                 description: |
-                  Example of a transfer for ERC1155 tokens where quantity can be > 1.
+                  Fired when a token viewability changed.
                 value:
                   event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J9"
-                  event_type: "token.ownership.transferred"
+                  event_type: "token.viewability.changed"
                   timestamp: "2024-01-15T13:00:00Z"
                   data:
-                    token_cid: "eip155:1:erc1155:0xabc123def456:42"
+                    token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
                     chain: "eip155:1"
-                    standard: "erc1155"
-                    contract: "0xabc123def456"
-                    token_number: "42"
-                    from_address: "0xsender123"
-                    to_address: "0xrecipient456"
-                    quantity: "100"
+                    standard: "erc721"
+                    contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+                    token_number: "1234"
+                    is_viewable: true
       responses:
         '200':
           description: |
@@ -2102,6 +2108,7 @@ components:
             - token.ownership.minted
             - token.ownership.transferred
             - token.ownership.burned
+            - token.viewability.changed
           example: "token.indexing.viewable"
         timestamp:
           type: string
@@ -2113,6 +2120,7 @@ components:
           oneOf:
             - $ref: '#/components/schemas/WebhookIndexingEventData'
             - $ref: '#/components/schemas/WebhookOwnershipEventData'
+            - $ref: '#/components/schemas/WebhookViewabilityChangedEventData'
     
     WebhookIndexingEventData:
       type: object
@@ -2227,6 +2235,48 @@ components:
         from_address: "0xfrom123"
         to_address: "0xto456"
         quantity: "1"
+    WebhookViewabilityChangedEventData:
+      type: object
+      required:
+        - token_cid
+        - chain
+        - standard
+        - contract
+        - token_number
+        - is_viewable
+      properties:
+        token_cid:
+          type: string
+          description: Canonical token identifier
+          example: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+        chain:
+          type: string
+          description: Blockchain network identifier (CAIP-2 format)
+          example: "eip155:1"
+        standard:
+          type: string
+          description: Token standard (erc721, erc1155, fa2)
+          enum: [erc721, erc1155, fa2]
+          example: "erc721"
+        contract:
+          type: string
+          description: Smart contract address
+          example: "0xa7d8d8ce8992df33d8b8cf4aebabd5bd270"
+        token_number:
+          type: string
+          description: Token number/ID within the contract
+          example: "1234"
+        is_viewable:
+          type: string
+          description: Whether the token is viewable
+          example: true
+      example:
+        token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
+        chain: "eip155:1"
+        standard: "erc721"
+        contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+        token_number: "1234"
+        is_viewable: true
 
     APIError:
       type: object
