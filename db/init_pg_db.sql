@@ -12,7 +12,7 @@ CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enri
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
 CREATE TYPE indexing_job_status AS ENUM ('running', 'paused', 'failed', 'completed', 'canceled');
-CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken', 'checking');
+CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken');
 
 -- ============================================================================
 -- CORE TABLES
@@ -308,8 +308,7 @@ CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
 CREATE INDEX idx_token_media_health_token_id ON token_media_health (token_id);
 CREATE INDEX idx_token_media_health_url ON token_media_health (media_url);
 CREATE INDEX idx_token_media_health_last_checked ON token_media_health (last_checked_at);
-CREATE INDEX idx_token_media_health_token_status ON token_media_health (token_id, health_status);
-CREATE INDEX idx_token_media_health_source ON token_media_health (media_source);
+CREATE INDEX idx_token_media_health_token_status_source ON token_media_health (token_id, health_status, media_source);
 
 -- Changes Journal table indexes
 CREATE INDEX idx_changes_journal_subject ON changes_journal (subject_type, subject_id);

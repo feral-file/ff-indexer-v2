@@ -1760,7 +1760,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 			) OR (
 				-- Include metadata/enrich_source changes that occurred during ownership periods
 				-- Use the pre-computed ownership periods table for fast lookups
-				subject_type IN (?, ?) AND EXISTS (
+				subject_type IN (?, ?, ?) AND EXISTS (
 					SELECT 1 FROM token_ownership_periods op
 					WHERE op.token_id::text = changes_journal.subject_id
 					AND op.owner_address IN ?
@@ -1771,7 +1771,8 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 		`,
 			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance,
 			filter.Addresses, filter.Addresses,
-			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, filter.Addresses,
+			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, schema.SubjectTypeTokenViewability,
+			filter.Addresses,
 		)
 	}
 
@@ -2706,11 +2707,16 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 
 	// URL added or changed - insert new record
 	if newURLStr != "" {
+		healthStatus := schema.MediaHealthStatusUnknown
+		if oldURL == nil {
+			// If the URL is new, set it to healthy by default and let the sweeper check it
+			healthStatus = schema.MediaHealthStatusHealthy
+		}
 		health := &schema.TokenMediaHealth{
 			TokenID:       tokenID,
 			MediaURL:      newURLStr,
 			MediaSource:   source,
-			HealthStatus:  schema.MediaHealthStatusUnknown,
+			HealthStatus:  healthStatus,
 			LastCheckedAt: time.Unix(0, 0), // Force immediate check by sweeper
 		}
 		if err := tx.Create(health).Error; err != nil {
@@ -2721,57 +2727,28 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 	return nil
 }
 
-// GetMediaURLsNeedingCheck returns distinct URLs that need health checking
-func (s *pgStore) GetMediaURLsNeedingCheck(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error) {
-	var urls []string
-
+// GetURLsForChecking returns distinct URLs that need health checking
+// Returns URLs ordered by oldest check time first
+func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error) {
 	cutoffTime := time.Now().Add(-recheckAfter)
 
-	// Use GROUP BY to get distinct URLs and order by the earliest last_checked_at for each URL
-	// Exclude URLs that are currently being checked
+	var urls []string
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("media_url").
-		Where("(last_checked_at < ? OR health_status = ?) AND health_status != ?",
+		Where("last_checked_at < ? OR health_status = ?",
 			cutoffTime,
-			schema.MediaHealthStatusUnknown,
-			schema.MediaHealthStatusChecking).
+			schema.MediaHealthStatusUnknown).
 		Group("media_url").
 		Order("MIN(last_checked_at) ASC").
 		Limit(limit).
 		Pluck("media_url", &urls).Error
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get URLs needing check: %w", err)
+		return nil, fmt.Errorf("failed to get URLs for checking: %w", err)
 	}
 
 	return urls, nil
-}
-
-// MarkMediaURLAsChecking atomically marks all records with a URL as "checking" if they need checking
-// Returns true if the URL was successfully marked, false if it was already being checked by another instance
-func (s *pgStore) MarkMediaURLAsChecking(ctx context.Context, url string, recheckAfter time.Duration) (bool, error) {
-	cutoffTime := time.Now().Add(-recheckAfter)
-
-	// Atomically update records to "checking" status only if they're not already being checked
-	result := s.db.WithContext(ctx).
-		Model(&schema.TokenMediaHealth{}).
-		Where("media_url = ? AND health_status != ? AND (last_checked_at < ? OR health_status = ?)",
-			url,
-			schema.MediaHealthStatusChecking,
-			cutoffTime,
-			schema.MediaHealthStatusUnknown).
-		Updates(map[string]interface{}{
-			"health_status":   schema.MediaHealthStatusChecking,
-			"last_checked_at": time.Now(),
-		})
-
-	if result.Error != nil {
-		return false, fmt.Errorf("failed to mark URL as checking: %w", result.Error)
-	}
-
-	// If no rows were affected, the URL is already being checked
-	return result.RowsAffected > 0, nil
 }
 
 // GetTokensViewabilityByMediaURL returns all tokens that use a specific URL along with their viewability status

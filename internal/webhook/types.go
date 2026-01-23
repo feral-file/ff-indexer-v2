@@ -3,8 +3,6 @@ package webhook
 import (
 	"slices"
 	"time"
-
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // Event type constants
@@ -33,9 +31,9 @@ const (
 	// (token has been burned)
 	EventTypeTokenOwnershipBurned = "token.ownership.burned"
 
-	// EventTypeTokenMediaHealthChanged is fired when a token media health has changed
+	// EventTypeTokenViewabilityChanged is fired when a token media health has changed
 	// (image or animation URL health has changed)
-	EventTypeTokenMediaHealthChanged = "token.media.health_changed"
+	EventTypeTokenViewabilityChanged = "token.viewability.changed"
 
 	// EventTypeTokenIndexingMediaCompleted is fired when media has been indexed
 	// EventTypeWildcard is a special filter that matches all event types
@@ -50,7 +48,7 @@ var SupportedEventTypes = []string{
 	EventTypeTokenOwnershipMinted,
 	EventTypeTokenOwnershipTransferred,
 	EventTypeTokenOwnershipBurned,
-	EventTypeTokenMediaHealthChanged,
+	EventTypeTokenViewabilityChanged,
 	EventTypeWildcard,
 }
 
@@ -107,13 +105,13 @@ type OwnershipEventData struct {
 	Quantity string `json:"quantity"`
 }
 
-// TokenMediaHealthChanged contains the data for a token media health changed event
-type TokenMediaHealthChanged struct {
+// TokenViewabilityChanged contains the data for a token viewability changed event
+type TokenViewabilityChanged struct {
 	// EventData is the common event data
 	EventData
 
-	// MediaURL is the URL of the media
-	HealthStatus schema.MediaHealthStatus `json:"health_status"`
+	// IsViewable is true if token is viewable
+	IsViewable bool `json:"is_viewable"` // true if token is viewable
 }
 
 // DeliveryResult represents the result of a webhook delivery attempt

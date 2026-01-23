@@ -2,7 +2,9 @@ package types
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -178,4 +180,115 @@ func IsOnChFSGatewayURL(s string) (bool, string) {
 	}
 
 	return false, ""
+}
+
+// DataURI represents a parsed data URI according to RFC 2397
+type DataURI struct {
+	// MimeType is the media type (e.g., "image/png", "application/json")
+	// Defaults to "text/plain" if not specified
+	MimeType string
+	// Parameters contains additional parameters from the metadata (e.g., charset=utf-8)
+	Parameters map[string]string
+	// IsBase64 indicates whether the data is base64-encoded
+	IsBase64 bool
+	// RawData is the raw data string before any decoding
+	RawData string
+	// DecodedData is the decoded data (base64 decoded if IsBase64 is true)
+	DecodedData []byte
+}
+
+// ParseDataURI parses a data URI according to RFC 2397
+// Format: data:[<mediatype>][;parameter=value][;base64],<data>
+// Example: data:image/png;base64,iVBORw0KG...
+// Example: data:application/json;charset=utf-8,{"key":"value"}
+func ParseDataURI(uri string) (*DataURI, error) {
+	// 1. Check if it starts with "data:"
+	if !strings.HasPrefix(uri, "data:") {
+		return nil, fmt.Errorf("invalid data URI: must start with 'data:'")
+	}
+
+	// 2. Remove "data:" prefix
+	uriContent := uri[5:]
+
+	// 3. Split by comma to separate metadata from data
+	parts := strings.SplitN(uriContent, ",", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid data URI format: missing comma separator")
+	}
+
+	metadata := parts[0]
+	rawData := parts[1]
+
+	// 4. Parse metadata to extract mime type, parameters, and encoding
+	mimeType, parameters, isBase64 := parseDataURIMetadata(metadata)
+
+	// 5. Decode the data if base64-encoded
+	var decodedData []byte
+	var err error
+	if isBase64 {
+		decodedData, err = base64.StdEncoding.DecodeString(rawData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode base64: %w", err)
+		}
+	} else {
+		// For non-base64 data, URL-decode according to RFC 2397
+		// The data part should be percent-encoded (e.g., %20 for space)
+		decoded, err := url.QueryUnescape(rawData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to URL-decode data: %w", err)
+		}
+		decodedData = []byte(decoded)
+	}
+
+	return &DataURI{
+		MimeType:    mimeType,
+		Parameters:  parameters,
+		IsBase64:    isBase64,
+		RawData:     rawData,
+		DecodedData: decodedData,
+	}, nil
+}
+
+// parseDataURIMetadata parses the metadata part of a data URI
+// Returns: (mimeType, parameters, isBase64)
+func parseDataURIMetadata(metadata string) (string, map[string]string, bool) {
+	// Default mime type is text/plain according to RFC 2397
+	mimeType := "text/plain"
+	parameters := make(map[string]string)
+	isBase64 := false
+
+	if metadata == "" {
+		return mimeType, parameters, isBase64
+	}
+
+	// Split by semicolon to get mime type and parameters
+	parts := strings.Split(metadata, ";")
+
+	// First part is the mime type (if not empty)
+	if parts[0] != "" {
+		mimeType = strings.TrimSpace(parts[0])
+	}
+
+	// Parse remaining parameters
+	for i := 1; i < len(parts); i++ {
+		param := strings.TrimSpace(parts[i])
+		if param == "base64" {
+			isBase64 = true
+		} else if strings.Contains(param, "=") {
+			// Parse key=value parameters
+			kv := strings.SplitN(param, "=", 2)
+			if len(kv) == 2 {
+				key := strings.TrimSpace(kv[0])
+				value := strings.TrimSpace(kv[1])
+				parameters[key] = value
+			}
+		}
+	}
+
+	return mimeType, parameters, isBase64
+}
+
+// IsDataURI checks if a string is a valid data URI
+func IsDataURI(s string) bool {
+	return strings.HasPrefix(s, "data:") && strings.Contains(s, ",")
 }

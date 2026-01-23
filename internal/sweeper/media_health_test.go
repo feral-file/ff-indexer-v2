@@ -21,12 +21,13 @@ import (
 
 // testSweeperMocks contains all the mocks needed for testing the sweeper
 type testSweeperMocks struct {
-	ctrl         *gomock.Controller
-	store        *mocks.MockStore
-	checker      *mocks.MockURLChecker
-	clock        *mocks.MockClock
-	orchestrator *mocks.MockTemporalOrchestrator
-	sweeper      sweeper.Sweeper
+	ctrl           *gomock.Controller
+	store          *mocks.MockStore
+	urlChecker     *mocks.MockURLChecker
+	dataURIChecker *mocks.MockDataURIChecker
+	clock          *mocks.MockClock
+	orchestrator   *mocks.MockTemporalOrchestrator
+	sweeper        sweeper.Sweeper
 }
 
 // setupTestSweeper creates all the mocks and sweeper for testing
@@ -42,11 +43,12 @@ func setupTestSweeper(t *testing.T) *testSweeperMocks {
 	ctrl := gomock.NewController(t)
 
 	tm := &testSweeperMocks{
-		ctrl:         ctrl,
-		store:        mocks.NewMockStore(ctrl),
-		checker:      mocks.NewMockURLChecker(ctrl),
-		clock:        mocks.NewMockClock(ctrl),
-		orchestrator: mocks.NewMockTemporalOrchestrator(ctrl),
+		ctrl:           ctrl,
+		store:          mocks.NewMockStore(ctrl),
+		urlChecker:     mocks.NewMockURLChecker(ctrl),
+		dataURIChecker: mocks.NewMockDataURIChecker(ctrl),
+		clock:          mocks.NewMockClock(ctrl),
+		orchestrator:   mocks.NewMockTemporalOrchestrator(ctrl),
 	}
 
 	config := &sweeper.MediaHealthSweeperConfig{
@@ -58,7 +60,8 @@ func setupTestSweeper(t *testing.T) *testSweeperMocks {
 	tm.sweeper = sweeper.NewMediaHealthSweeper(
 		config,
 		tm.store,
-		tm.checker,
+		tm.urlChecker,
+		tm.dataURIChecker,
 		tm.clock,
 		tm.orchestrator,
 		"test-task-queue",
@@ -91,17 +94,12 @@ func TestMediaHealthSweeper_CheckURL_Healthy(t *testing.T) {
 		{TokenID: 1, TokenCID: "token1", IsViewable: false},
 	}
 
-	// Mock: Mark URL as checking (allow this instance to process it)
-	mocks.store.EXPECT().
-		MarkMediaURLAsChecking(gomock.Any(), testURL, 24*time.Hour).
-		Return(true, nil)
-
 	mocks.store.EXPECT().
 		GetTokensViewabilityByMediaURL(gomock.Any(), testURL).
 		Return(tokensBefore, nil)
 
 	// Mock: URL check returns healthy
-	mocks.checker.EXPECT().
+	mocks.urlChecker.EXPECT().
 		Check(gomock.Any(), testURL).
 		Return(uri.HealthCheckResult{
 			Status: uri.HealthStatusHealthy,
@@ -142,14 +140,14 @@ func TestMediaHealthSweeper_CheckURL_Healthy(t *testing.T) {
 	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
 	mocks.clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
 
-	// Mock: GetMediaURLsNeedingCheck - use InOrder to ensure first call returns URL, then empty
+	// Mock: GetURLsForChecking - use InOrder to ensure first call returns URL, then empty
 	gomock.InOrder(
 		mocks.store.EXPECT().
-			GetMediaURLsNeedingCheck(gomock.Any(), 24*time.Hour, 10).
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
 			Return([]string{testURL}, nil).
 			Times(1),
 		mocks.store.EXPECT().
-			GetMediaURLsNeedingCheck(gomock.Any(), 24*time.Hour, 10).
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
 			Return([]string{}, nil).
 			MinTimes(1),
 	)
@@ -177,17 +175,12 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 		{TokenID: 1, TokenCID: "token1", IsViewable: false},
 	}
 
-	// Mock: Mark URL as checking
-	mocks.store.EXPECT().
-		MarkMediaURLAsChecking(ctx, originalURL, 24*time.Hour).
-		Return(true, nil)
-
 	mocks.store.EXPECT().
 		GetTokensViewabilityByMediaURL(ctx, originalURL).
 		Return(tokensBefore, nil)
 
 	// Mock: URL check returns healthy with alternative URL
-	mocks.checker.EXPECT().
+	mocks.urlChecker.EXPECT().
 		Check(ctx, originalURL).
 		Return(uri.HealthCheckResult{
 			Status:     uri.HealthStatusHealthy,
@@ -229,12 +222,12 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 	mocks.clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
 
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{originalURL}, nil).
 		Times(1)
 
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{}, nil).
 		AnyTimes()
 
@@ -255,11 +248,6 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 	testURL := "https://example.com/broken.jpg"
 	errorMsg := "404 Not Found"
 
-	// Mock: Mark URL as checking
-	mocks.store.EXPECT().
-		MarkMediaURLAsChecking(ctx, testURL, 24*time.Hour).
-		Return(true, nil)
-
 	// Mock: Get tokens before check
 	tokensBefore := []store.TokenViewabilityInfo{
 		{TokenID: 1, TokenCID: "token1", IsViewable: true},
@@ -269,7 +257,7 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 		Return(tokensBefore, nil)
 
 	// Mock: URL check returns broken
-	mocks.checker.EXPECT().
+	mocks.urlChecker.EXPECT().
 		Check(ctx, testURL).
 		Return(uri.HealthCheckResult{
 			Status: uri.HealthStatusBroken,
@@ -311,12 +299,12 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 	mocks.clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
 
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{testURL}, nil).
 		Times(1)
 
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{}, nil).
 		AnyTimes()
 
@@ -336,11 +324,6 @@ func TestMediaHealthSweeper_CheckURL_NoViewabilityChange(t *testing.T) {
 	ctx := context.Background()
 	testURL := "https://example.com/image.jpg"
 
-	// Mock: Mark URL as checking
-	mocks.store.EXPECT().
-		MarkMediaURLAsChecking(ctx, testURL, 24*time.Hour).
-		Return(true, nil)
-
 	// Mock: Get tokens before check
 	tokensBefore := []store.TokenViewabilityInfo{
 		{TokenID: 1, TokenCID: "token1", IsViewable: true},
@@ -350,7 +333,7 @@ func TestMediaHealthSweeper_CheckURL_NoViewabilityChange(t *testing.T) {
 		Return(tokensBefore, nil)
 
 	// Mock: URL check returns healthy
-	mocks.checker.EXPECT().
+	mocks.urlChecker.EXPECT().
 		Check(ctx, testURL).
 		Return(uri.HealthCheckResult{
 			Status: uri.HealthStatusHealthy,
@@ -378,12 +361,12 @@ func TestMediaHealthSweeper_CheckURL_NoViewabilityChange(t *testing.T) {
 	mocks.clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
 
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{testURL}, nil).
 		Times(1)
 
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{}, nil).
 		AnyTimes()
 
@@ -404,13 +387,13 @@ func TestMediaHealthSweeper_NoURLsToCheck(t *testing.T) {
 
 	// Mock: No URLs need checking
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{}, nil).
 		AnyTimes()
 
 	// Mock: Sleep when no URLs found
 	mocks.clock.EXPECT().
-		Sleep(10 * time.Second).
+		Sleep(15 * time.Second).
 		MinTimes(1)
 
 	// Mock clock
@@ -434,7 +417,7 @@ func TestMediaHealthSweeper_StoreError_GetURLs(t *testing.T) {
 
 	// Mock: Store error when getting URLs
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return(nil, errors.New("database connection failed")).
 		AnyTimes()
 
@@ -459,18 +442,13 @@ func TestMediaHealthSweeper_StoreError_UpdateHealth(t *testing.T) {
 	ctx := context.Background()
 	testURL := "https://example.com/image.jpg"
 
-	// Mock: Mark URL as checking
-	mocks.store.EXPECT().
-		MarkMediaURLAsChecking(gomock.Any(), testURL, 24*time.Hour).
-		Return(true, nil)
-
 	// Mock: Get tokens before check
 	mocks.store.EXPECT().
 		GetTokensViewabilityByMediaURL(gomock.Any(), testURL).
 		Return([]store.TokenViewabilityInfo{}, nil)
 
 	// Mock: URL check returns healthy
-	mocks.checker.EXPECT().
+	mocks.urlChecker.EXPECT().
 		Check(gomock.Any(), testURL).
 		Return(uri.HealthCheckResult{
 			Status: uri.HealthStatusHealthy,
@@ -497,11 +475,11 @@ func TestMediaHealthSweeper_StoreError_UpdateHealth(t *testing.T) {
 
 	gomock.InOrder(
 		mocks.store.EXPECT().
-			GetMediaURLsNeedingCheck(gomock.Any(), 24*time.Hour, 10).
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
 			Return([]string{testURL}, nil).
 			Times(1),
 		mocks.store.EXPECT().
-			GetMediaURLsNeedingCheck(gomock.Any(), 24*time.Hour, 10).
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
 			Return([]string{}, nil).
 			MinTimes(1),
 	)
@@ -523,18 +501,13 @@ func TestMediaHealthSweeper_MultipleURLs(t *testing.T) {
 	url1 := "https://example.com/image1.jpg"
 	url2 := "https://example.com/image2.jpg"
 
-	// Mock for URL1
-	mocks.store.EXPECT().
-		MarkMediaURLAsChecking(ctx, url1, 24*time.Hour).
-		Return(true, nil)
-
 	mocks.store.EXPECT().
 		GetTokensViewabilityByMediaURL(ctx, url1).
 		Return([]store.TokenViewabilityInfo{
 			{TokenID: 1, TokenCID: "token1", IsViewable: false},
 		}, nil)
 
-	mocks.checker.EXPECT().
+	mocks.urlChecker.EXPECT().
 		Check(ctx, url1).
 		Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy})
 
@@ -556,18 +529,13 @@ func TestMediaHealthSweeper_MultipleURLs(t *testing.T) {
 		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(client.WorkflowRun(nil), nil)
 
-	// Mock for URL2
-	mocks.store.EXPECT().
-		MarkMediaURLAsChecking(ctx, url2, 24*time.Hour).
-		Return(true, nil)
-
 	mocks.store.EXPECT().
 		GetTokensViewabilityByMediaURL(ctx, url2).
 		Return([]store.TokenViewabilityInfo{
 			{TokenID: 2, TokenCID: "token2", IsViewable: false},
 		}, nil)
 
-	mocks.checker.EXPECT().
+	mocks.urlChecker.EXPECT().
 		Check(ctx, url2).
 		Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy})
 
@@ -596,12 +564,12 @@ func TestMediaHealthSweeper_MultipleURLs(t *testing.T) {
 	mocks.clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
 
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{url1, url2}, nil).
 		Times(1)
 
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{}, nil).
 		AnyTimes()
 
@@ -633,7 +601,7 @@ func TestMediaHealthSweeper_DoubleStart(t *testing.T) {
 
 	// Mock for first start
 	mocks.store.EXPECT().
-		GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10).
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
 		Return([]string{}, nil).
 		AnyTimes()
 
@@ -659,19 +627,121 @@ func TestMediaHealthSweeper_DoubleStart(t *testing.T) {
 	<-errChan
 }
 
-func TestMediaHealthSweeper_URLAlreadyBeingChecked(t *testing.T) {
+func TestMediaHealthSweeper_GetURLsError_HandledGracefully(t *testing.T) {
 	mocks := setupTestSweeper(t)
 	defer tearDownTestSweeper(mocks)
 
 	ctx := context.Background()
 	testURL := "https://example.com/image.jpg"
 
-	// Mock: Mark URL as checking fails (another instance is checking it)
-	mocks.store.EXPECT().
-		MarkMediaURLAsChecking(gomock.Any(), testURL, 24*time.Hour).
-		Return(false, nil)
+	// First call returns a URL successfully
+	// Second call returns an error (simulating transient database issue)
+	// Third call returns empty (sweeper continues running)
+	gomock.InOrder(
+		mocks.store.EXPECT().
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
+			Return([]string{testURL}, nil).
+			Times(1),
+		mocks.store.EXPECT().
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
+			Return(nil, errors.New("database connection timeout")).
+			Times(1),
+		mocks.store.EXPECT().
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
+			Return([]string{}, nil).
+			MinTimes(1),
+	)
 
-	// No other store calls should happen (URL is skipped)
+	// Mock URL check for the first successful call
+	mocks.store.EXPECT().
+		GetTokensViewabilityByMediaURL(gomock.Any(), testURL).
+		Return([]store.TokenViewabilityInfo{
+			{TokenID: 1, TokenCID: "token1", IsViewable: false},
+		}, nil)
+
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), testURL).
+		Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy})
+
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(gomock.Any(), []uint64{1}).
+		Return([]store.TokenViewabilityInfo{
+			{TokenID: 1, TokenCID: "token1", IsViewable: true},
+		}, nil)
+
+	mocks.store.EXPECT().
+		CreateTokenViewabilityChange(gomock.Any(), uint64(1), "token1", true).
+		Return(nil)
+
+	mocks.orchestrator.EXPECT().
+		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(client.WorkflowRun(nil), nil)
+
+	// Mock clock
+	now := time.Now()
+	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
+	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	mocks.clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = mocks.sweeper.Stop(ctx)
+	}()
+
+	err := mocks.sweeper.Start(ctx)
+	require.NoError(t, err) // Sweeper continues despite GetURLs errors
+}
+
+// Data URI Tests
+
+func TestMediaHealthSweeper_CheckDataURI_Valid(t *testing.T) {
+	mocks := setupTestSweeper(t)
+	defer tearDownTestSweeper(mocks)
+
+	ctx := context.Background()
+	testDataURI := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+	// Mock: Get tokens before check
+	tokensBefore := []store.TokenViewabilityInfo{
+		{TokenID: 1, TokenCID: "token1", IsViewable: false},
+	}
+	mocks.store.EXPECT().
+		GetTokensViewabilityByMediaURL(ctx, testDataURI).
+		Return(tokensBefore, nil)
+
+	// Mock: Data URI check returns valid
+	mocks.dataURIChecker.EXPECT().
+		Check(testDataURI).
+		Return(uri.DataURICheckResult{
+			Valid: true,
+		})
+
+	// Mock: Update health status to healthy
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, testDataURI, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	// Mock: Get tokens after check by IDs
+	tokensAfter := []store.TokenViewabilityInfo{
+		{TokenID: 1, TokenCID: "token1", IsViewable: true},
+	}
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{1}).
+		Return(tokensAfter, nil)
+
+	// Mock: Create viewability change journal entry
+	mocks.store.EXPECT().
+		CreateTokenViewabilityChange(ctx, uint64(1), "token1", true).
+		Return(nil)
+
+	// Mock: Trigger webhook
+	mocks.orchestrator.EXPECT().
+		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(client.WorkflowRun(nil), nil)
 
 	// Mock clock and sweep
 	now := time.Now()
@@ -681,11 +751,84 @@ func TestMediaHealthSweeper_URLAlreadyBeingChecked(t *testing.T) {
 
 	gomock.InOrder(
 		mocks.store.EXPECT().
-			GetMediaURLsNeedingCheck(gomock.Any(), 24*time.Hour, 10).
-			Return([]string{testURL}, nil).
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
+			Return([]string{testDataURI}, nil).
 			Times(1),
 		mocks.store.EXPECT().
-			GetMediaURLsNeedingCheck(gomock.Any(), 24*time.Hour, 10).
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
+			Return([]string{}, nil).
+			MinTimes(1),
+	)
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = mocks.sweeper.Stop(ctx)
+	}()
+
+	err := mocks.sweeper.Start(ctx)
+	require.NoError(t, err)
+}
+
+func TestMediaHealthSweeper_CheckDataURI_Invalid(t *testing.T) {
+	mocks := setupTestSweeper(t)
+	defer tearDownTestSweeper(mocks)
+
+	ctx := context.Background()
+	testDataURI := "data:image/png;base64,invalid-base64-data"
+	errorMsg := "failed to decode base64: illegal base64 data at input byte 7"
+
+	// Mock: Get tokens before check
+	tokensBefore := []store.TokenViewabilityInfo{
+		{TokenID: 1, TokenCID: "token1", IsViewable: true},
+	}
+	mocks.store.EXPECT().
+		GetTokensViewabilityByMediaURL(ctx, testDataURI).
+		Return(tokensBefore, nil)
+
+	// Mock: Data URI check returns invalid
+	mocks.dataURIChecker.EXPECT().
+		Check(testDataURI).
+		Return(uri.DataURICheckResult{
+			Valid: false,
+			Error: &errorMsg,
+		})
+
+	// Mock: Update health status to broken
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, testDataURI, schema.MediaHealthStatusBroken, &errorMsg).
+		Return(nil)
+
+	// Mock: Get tokens after check by IDs
+	tokensAfter := []store.TokenViewabilityInfo{
+		{TokenID: 1, TokenCID: "token1", IsViewable: false},
+	}
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{1}).
+		Return(tokensAfter, nil)
+
+	// Mock: Create viewability change journal entry
+	mocks.store.EXPECT().
+		CreateTokenViewabilityChange(ctx, uint64(1), "token1", false).
+		Return(nil)
+
+	// Mock: Trigger webhook
+	mocks.orchestrator.EXPECT().
+		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(client.WorkflowRun(nil), nil)
+
+	// Mock clock and sweep
+	now := time.Now()
+	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
+	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	mocks.clock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+
+	gomock.InOrder(
+		mocks.store.EXPECT().
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
+			Return([]string{testDataURI}, nil).
+			Times(1),
+		mocks.store.EXPECT().
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
 			Return([]string{}, nil).
 			MinTimes(1),
 	)

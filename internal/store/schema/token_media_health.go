@@ -10,8 +10,6 @@ type MediaHealthStatus string
 const (
 	// MediaHealthStatusUnknown indicates the media has not been checked yet
 	MediaHealthStatusUnknown MediaHealthStatus = "unknown"
-	// MediaHealthStatusChecking indicates a health check is in progress
-	MediaHealthStatusChecking MediaHealthStatus = "checking"
 	// MediaHealthStatusHealthy indicates the media is accessible
 	MediaHealthStatusHealthy MediaHealthStatus = "healthy"
 	// MediaHealthStatusBroken indicates the media is not accessible

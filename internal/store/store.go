@@ -279,11 +279,8 @@ type Store interface {
 	// Token Media Health Operations
 	// =============================================================================
 
-	// GetMediaURLsNeedingCheck returns distinct URLs that need health checking
-	GetMediaURLsNeedingCheck(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error)
-	// MarkMediaURLAsChecking atomically marks all records with a URL as "checking" if they need checking
-	// Returns true if the URL was successfully marked, false if it was already being checked by another instance
-	MarkMediaURLAsChecking(ctx context.Context, url string, recheckAfter time.Duration) (bool, error)
+	// GetURLsForChecking returns URLs that need health checking based on last check time
+	GetURLsForChecking(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error)
 	// GetTokensViewabilityByMediaURL returns all tokens that use a specific URL along with their viewability status
 	GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]TokenViewabilityInfo, error)
 	// GetTokensViewabilityByIDs returns viewability status for a specific set of token IDs

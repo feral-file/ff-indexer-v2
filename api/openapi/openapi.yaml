@@ -922,7 +922,7 @@ paths:
         - `token.ownership.minted` - Token was minted
         - `token.ownership.transferred` - Token ownership changed
         - `token.ownership.burned` - Token was burned
-        - `token.media.health_changed` - Token media health changed
+        - `token.viewability.changed` - Token viewability changed
         - `*` - Wildcard to receive all event types
         
         ## Response
@@ -1160,13 +1160,13 @@ webhooks:
                     from_address: "0xburner123"
                     to_address: null
                     quantity: "1"
-              tokenMediaHealthChanged:
-                summary: token.media.health_changed event
+              tokenViewabilityChanged:
+                summary: token.viewability.changed event
                 description: |
-                  Fired when a token media health changed.
+                  Fired when a token viewability changed.
                 value:
                   event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J9"
-                  event_type: "token.media.health_changed"
+                  event_type: "token.viewability.changed"
                   timestamp: "2024-01-15T13:00:00Z"
                   data:
                     token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
@@ -1174,7 +1174,7 @@ webhooks:
                     standard: "erc721"
                     contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
                     token_number: "1234"
-                    health_status: "healthy"
+                    is_viewable: true
       responses:
         '200':
           description: |
@@ -2108,7 +2108,7 @@ components:
             - token.ownership.minted
             - token.ownership.transferred
             - token.ownership.burned
-            - token.media.health_changed
+            - token.viewability.changed
           example: "token.indexing.viewable"
         timestamp:
           type: string
@@ -2120,7 +2120,7 @@ components:
           oneOf:
             - $ref: '#/components/schemas/WebhookIndexingEventData'
             - $ref: '#/components/schemas/WebhookOwnershipEventData'
-            - $ref: '#/components/schemas/WebhookMediaHealthChangedEventData'
+            - $ref: '#/components/schemas/WebhookViewabilityChangedEventData'
     
     WebhookIndexingEventData:
       type: object
@@ -2235,7 +2235,7 @@ components:
         from_address: "0xfrom123"
         to_address: "0xto456"
         quantity: "1"
-    WebhookMediaHealthChangedEventData:
+    WebhookViewabilityChangedEventData:
       type: object
       required:
         - token_cid
@@ -2243,7 +2243,7 @@ components:
         - standard
         - contract
         - token_number
-        - health_status
+        - is_viewable
       properties:
         token_cid:
           type: string
@@ -2266,17 +2266,17 @@ components:
           type: string
           description: Token number/ID within the contract
           example: "1234"
-        health_status:
+        is_viewable:
           type: string
-          description: Health status
-          example: "healthy"
+          description: Whether the token is viewable
+          example: true
       example:
         token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:1234"
         chain: "eip155:1"
         standard: "erc721"
         contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
         token_number: "1234"
-        health_status: "broken"
+        is_viewable: true
 
     APIError:
       type: object

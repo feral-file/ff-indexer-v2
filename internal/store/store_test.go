@@ -5579,7 +5579,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 func testMediaHealthOperations(t *testing.T, store Store) {
 	ctx := context.Background()
 
-	t.Run("GetMediaURLsNeedingCheck returns URLs that need checking", func(t *testing.T) {
+	t.Run("GetURLsForChecking returns URLs that need checking", func(t *testing.T) {
 		// Create a token with metadata
 		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100003", "3", "0xowner3")
 		err := store.CreateTokenMint(ctx, token)
@@ -5603,7 +5603,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Get URLs needing check
-		urls, err := store.GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10)
+		urls, err := store.GetURLsForChecking(ctx, 24*time.Hour, 10)
 		require.NoError(t, err)
 		assert.Contains(t, urls, imageURL)
 
@@ -5611,102 +5611,10 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
 		require.NoError(t, err)
 
-		// URL should no longer be in pending list (recently checked)
-		urls, err = store.GetMediaURLsNeedingCheck(ctx, 1*time.Minute, 10)
+		// URL should no longer be in list (recently checked)
+		urls, err = store.GetURLsForChecking(ctx, 1*time.Minute, 10)
 		require.NoError(t, err)
-		assert.NotContains(t, urls, imageURL, "healthy URL should not be in pending list")
-	})
-
-	t.Run("MarkMediaURLAsChecking prevents concurrent checking", func(t *testing.T) {
-		// Create a token with metadata
-		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100007", "7", "0xowner7")
-		err := store.CreateTokenMint(ctx, token)
-		require.NoError(t, err)
-
-		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
-		require.NoError(t, err)
-
-		imageURL := "https://example.com/concurrent-check.jpg"
-		metadata := map[string]interface{}{"image": imageURL}
-		metadataJSON, _ := json.Marshal(metadata)
-
-		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
-			TokenID:         tokenData.ID,
-			OriginJSON:      metadataJSON,
-			LatestJSON:      metadataJSON,
-			EnrichmentLevel: schema.EnrichmentLevelVendor,
-			ImageURL:        &imageURL,
-			LastRefreshedAt: time.Now().UTC(),
-		})
-		require.NoError(t, err)
-
-		// First instance marks URL as checking
-		marked1, err := store.MarkMediaURLAsChecking(ctx, imageURL, 24*time.Hour)
-		require.NoError(t, err)
-		assert.True(t, marked1, "first instance should successfully mark URL as checking")
-
-		// Second instance tries to mark the same URL - should fail
-		marked2, err := store.MarkMediaURLAsChecking(ctx, imageURL, 24*time.Hour)
-		require.NoError(t, err)
-		assert.False(t, marked2, "second instance should not be able to mark URL as checking")
-
-		// URL should not be in pending list (it's being checked)
-		urls, err := store.GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10)
-		require.NoError(t, err)
-		assert.NotContains(t, urls, imageURL, "URL being checked should not be in pending list")
-
-		// Update to healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
-		require.NoError(t, err)
-
-		// Now another instance should NOT be able to mark it immediately (last_checked_at was just updated)
-		marked3, err := store.MarkMediaURLAsChecking(ctx, imageURL, 24*time.Hour)
-		require.NoError(t, err)
-		assert.False(t, marked3, "should not be able to mark immediately after health check (within recheck window)")
-
-		// But should be able to mark it if recheck time is 0 (always recheck)
-		marked4, err := store.MarkMediaURLAsChecking(ctx, imageURL, 0)
-		require.NoError(t, err)
-		assert.True(t, marked4, "should be able to mark with 0 recheck time")
-	})
-
-	t.Run("GetMediaURLsNeedingCheck excludes checking status", func(t *testing.T) {
-		// Create a token with metadata
-		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100008", "8", "0xowner8")
-		err := store.CreateTokenMint(ctx, token)
-		require.NoError(t, err)
-
-		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
-		require.NoError(t, err)
-
-		imageURL := "https://example.com/exclude-checking.jpg"
-		metadata := map[string]interface{}{"image": imageURL}
-		metadataJSON, _ := json.Marshal(metadata)
-
-		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
-			TokenID:         tokenData.ID,
-			OriginJSON:      metadataJSON,
-			LatestJSON:      metadataJSON,
-			EnrichmentLevel: schema.EnrichmentLevelVendor,
-			ImageURL:        &imageURL,
-			LastRefreshedAt: time.Now().UTC(),
-		})
-		require.NoError(t, err)
-
-		// URL should be in pending list initially
-		urls, err := store.GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10)
-		require.NoError(t, err)
-		assert.Contains(t, urls, imageURL, "unknown status URL should be in pending list")
-
-		// Mark as checking
-		marked, err := store.MarkMediaURLAsChecking(ctx, imageURL, 24*time.Hour)
-		require.NoError(t, err)
-		assert.True(t, marked)
-
-		// URL should NOT be in pending list while checking
-		urls, err = store.GetMediaURLsNeedingCheck(ctx, 24*time.Hour, 10)
-		require.NoError(t, err)
-		assert.NotContains(t, urls, imageURL, "checking status URL should not be in pending list")
+		assert.NotContains(t, urls, imageURL, "recently checked URL should not be in list")
 	})
 
 	t.Run("UpdateTokenMediaHealthByURL updates health status", func(t *testing.T) {

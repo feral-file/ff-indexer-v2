@@ -18,6 +18,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
@@ -368,9 +369,14 @@ func resolveArtistName(metadata map[string]interface{}) string {
 // fetchMetadataFromURI fetches metadata from a given URI, handling different protocols
 func (r *resolver) fetchMetadataFromURI(ctx context.Context, uri string) (map[string]interface{}, error) {
 	switch {
-	case strings.HasPrefix(uri, "data:"):
+	case types.IsDataURI(uri):
 		return r.parseDataURI(uri)
-	case strings.HasPrefix(uri, "ipfs://"), strings.HasPrefix(uri, "ar://"), strings.HasPrefix(uri, "http://"), strings.HasPrefix(uri, "https://"):
+	case strings.HasPrefix(uri, "ipfs://"),
+		strings.HasPrefix(uri, "ar://"),
+		strings.HasPrefix(uri, "onchfs://"),
+		strings.HasPrefix(uri, "http://"),
+		strings.HasPrefix(uri, "https://"):
+
 		// Use URI resolver to find a working gateway
 		resolvedURL, err := r.uriResolver.Resolve(ctx, uri)
 		if err != nil {
@@ -387,33 +393,18 @@ func (r *resolver) fetchMetadataFromURI(ctx context.Context, uri string) (map[st
 func (r *resolver) parseDataURI(uri string) (map[string]interface{}, error) {
 	// data:application/json;base64,<encoded data>
 	// or data:application/json,<json data>
-	if !strings.HasPrefix(uri, "data:") {
-		return nil, fmt.Errorf("invalid data URI")
+	parsed, err := types.ParseDataURI(uri)
+	if err != nil {
+		return nil, fmt.Errorf("invalid data URI: %w", err)
 	}
 
-	parts := strings.SplitN(uri[5:], ",", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid data URI format")
-	}
-
-	dataType := parts[0]
-	data := parts[1]
-
-	if strings.Contains(dataType, "base64") {
-		// Decode base64
-		decoded, err := r.base64.Decode(data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode base64: %w", err)
-		}
-		data = string(decoded)
-	}
-
-	var metadata map[string]interface{}
-	if err := r.json.Unmarshal([]byte(data), &metadata); err != nil {
+	// Parse the decoded data as JSON
+	var data map[string]interface{}
+	if err := r.json.Unmarshal(parsed.DecodedData, &data); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 
-	return metadata, nil
+	return data, nil
 }
 
 // fetchFromHTTP fetches metadata from an HTTP(S) URL

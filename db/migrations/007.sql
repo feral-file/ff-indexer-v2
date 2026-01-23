@@ -3,7 +3,7 @@
 -- Automatically synchronized when token_metadata or enrichment_sources are updated.
 
 -- Create enum for health status
-CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken', 'checking');
+CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken');
 
 -- Create token_media_health table
 CREATE TABLE token_media_health (
@@ -25,8 +25,7 @@ CREATE TABLE token_media_health (
 CREATE INDEX idx_token_media_health_token_id ON token_media_health(token_id);
 CREATE INDEX idx_token_media_health_url ON token_media_health(media_url);
 CREATE INDEX idx_token_media_health_last_checked ON token_media_health(last_checked_at);
-CREATE INDEX idx_token_media_health_token_status ON token_media_health(token_id, health_status);
-CREATE INDEX idx_token_media_health_source ON token_media_health(media_source);
+CREATE INDEX idx_token_media_health_token_status_source ON token_media_health (token_id, health_status, media_source);
 
 -- Add trigger for updated_at
 CREATE TRIGGER update_token_media_health_updated_at
@@ -35,7 +34,7 @@ CREATE TRIGGER update_token_media_health_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 COMMENT ON TABLE token_media_health IS 'Tracks health check status for media URLs associated with tokens. Includes source information to distinguish between metadata/enrichment and image/animation URLs.';
-COMMENT ON COLUMN token_media_health.health_status IS 'Current health status: unknown (not checked), checking (in progress), healthy (accessible), broken (not accessible)';
+COMMENT ON COLUMN token_media_health.health_status IS 'Current health status: unknown (not checked), healthy (accessible), broken (not accessible)';
 COMMENT ON COLUMN token_media_health.media_source IS 'Source of the URL: metadata_image, metadata_animation, enrichment_image, enrichment_animation';
 COMMENT ON COLUMN token_media_health.last_error IS 'Error message from last failed check. NULL if healthy.';
 

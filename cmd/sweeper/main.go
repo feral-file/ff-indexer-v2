@@ -95,6 +95,9 @@ func main() {
 	// Initialize health checker
 	urlHealthChecker := uri.NewURLChecker(httpClient, ioAdapter, uriResolverConfig)
 
+	// Initialize data URI checker
+	dataURIChecker := uri.NewDataURIChecker()
+
 	// Connect to Temporal for webhook notifications
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
 	temporalClient, err := client.Dial(client.Options{
@@ -114,7 +117,7 @@ func main() {
 		WorkerPoolSize: cfg.MediaHealthSweeper.Worker.WorkerPoolSize,
 		RecheckAfter:   cfg.MediaHealthSweeper.RecheckAfter,
 	}
-	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, clock, temporalClient, cfg.Temporal.TokenTaskQueue)
+	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, temporalClient, cfg.Temporal.TokenTaskQueue)
 
 	logger.InfoCtx(ctx, "Initialized media health sweeper (continuous mode)",
 		zap.Int("batch_size", cfg.MediaHealthSweeper.BatchSize),

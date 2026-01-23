@@ -19,6 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -35,7 +36,8 @@ type MediaHealthSweeperConfig struct {
 type mediaHealthSweeper struct {
 	config                *MediaHealthSweeperConfig
 	store                 store.Store
-	checker               uri.URLChecker
+	urlChecker            uri.URLChecker
+	dataURIChecker        uri.DataURIChecker
 	pool                  pond.Pool
 	clock                 adapter.Clock
 	orchestrator          temporal.TemporalOrchestrator
@@ -50,6 +52,7 @@ func NewMediaHealthSweeper(
 	config *MediaHealthSweeperConfig,
 	st store.Store,
 	checker uri.URLChecker,
+	dataURIChecker uri.DataURIChecker,
 	clock adapter.Clock,
 	orchestrator temporal.TemporalOrchestrator,
 	orchestratorTaskQueue string,
@@ -57,7 +60,8 @@ func NewMediaHealthSweeper(
 	return &mediaHealthSweeper{
 		config:                config,
 		store:                 st,
-		checker:               checker,
+		urlChecker:            checker,
+		dataURIChecker:        dataURIChecker,
 		clock:                 clock,
 		orchestrator:          orchestrator,
 		orchestratorTaskQueue: orchestratorTaskQueue,
@@ -137,16 +141,16 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 	startTime := s.clock.Now()
 	logger.InfoCtx(ctx, "Starting sweep cycle")
 
-	// Get URLs that need checking
-	urls, err := s.store.GetMediaURLsNeedingCheck(ctx, s.config.RecheckAfter, s.config.BatchSize)
+	// Get URLs that need checking (no locking, workers may get same URLs)
+	urls, err := s.store.GetURLsForChecking(ctx, s.config.RecheckAfter, s.config.BatchSize)
 	if err != nil {
-		return fmt.Errorf("failed to get URLs needing check: %w", err)
+		return fmt.Errorf("failed to get URLs for checking: %w", err)
 	}
 
 	if len(urls) == 0 {
 		logger.InfoCtx(ctx, "No URLs need checking, waiting for new URLs...")
 		// Sleep briefly to avoid tight loop when no URLs need checking
-		s.clock.Sleep(10 * time.Second)
+		s.clock.Sleep(15 * time.Second)
 		return nil
 	}
 
@@ -188,20 +192,6 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCount, brokenCount, transientErrorCount *atomic.Int32) {
 	logger.InfoCtx(ctx, "Checking URL", zap.String("url", url))
 
-	// Atomically mark this URL as "checking" to prevent other sweeper instances from processing it
-	marked, err := s.store.MarkMediaURLAsChecking(ctx, url, s.config.RecheckAfter)
-	if err != nil {
-		logger.ErrorCtx(ctx, err, zap.String("url", url))
-		return
-	}
-
-	if !marked {
-		// Another instance is already checking this URL, skip it
-		logger.DebugCtx(ctx, "URL is already being checked by another instance, skipping",
-			zap.String("url", url))
-		return
-	}
-
 	// Get all tokens using this URL and their current viewability status BEFORE health check
 	tokensBefore, err := s.store.GetTokensViewabilityByMediaURL(ctx, url)
 	if err != nil {
@@ -209,65 +199,86 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 		return
 	}
 
-	// Perform URL health check
-	result := s.checker.Check(ctx, url)
-
-	switch result.Status {
-	case uri.HealthStatusHealthy:
-		healthyCount.Add(1)
-		if result.WorkingURL != nil && *result.WorkingURL != url {
-			// Found alternative working URL - update everything
-			logger.InfoCtx(ctx, "Found working alternative URL",
-				zap.String("original_url", url),
-				zap.String("working_url", *result.WorkingURL),
-			)
-
-			if err := s.store.UpdateMediaURLAndPropagate(ctx, url, *result.WorkingURL); err != nil {
-				logger.ErrorCtx(ctx, err,
-					zap.String("url", url),
-				)
-			} else {
-				logger.InfoCtx(ctx, "Successfully updated URL across all tables",
-					zap.String("old_url", url),
-					zap.String("new_url", *result.WorkingURL),
-				)
-			}
-		} else {
-			// Original URL works
+	if types.IsDataURI(url) {
+		//Perform data URI health check
+		result := s.dataURIChecker.Check(url)
+		switch result.Valid {
+		case true:
+			logger.InfoCtx(ctx, "Data URI is valid", zap.String("url", url))
+			healthyCount.Add(1)
 			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusHealthy, nil); err != nil {
+				logger.ErrorCtx(ctx, err, zap.String("url", url))
+			}
+		case false:
+			logger.WarnCtx(ctx, "Data URI is invalid",
+				zap.String("url", url),
+				zap.Stringp("error", result.Error),
+			)
+			brokenCount.Add(1)
+			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusBroken, result.Error); err != nil {
+				logger.ErrorCtx(ctx, err, zap.String("url", url))
+			}
+		}
+	} else {
+		// Perform URL health check
+		result := s.urlChecker.Check(ctx, url)
+		switch result.Status {
+		case uri.HealthStatusHealthy:
+			healthyCount.Add(1)
+			if result.WorkingURL != nil && *result.WorkingURL != url {
+				// Found alternative working URL - update everything
+				logger.InfoCtx(ctx, "Found working alternative URL",
+					zap.String("original_url", url),
+					zap.String("working_url", *result.WorkingURL),
+				)
+
+				if err := s.store.UpdateMediaURLAndPropagate(ctx, url, *result.WorkingURL); err != nil {
+					logger.ErrorCtx(ctx, err,
+						zap.String("url", url),
+					)
+				} else {
+					logger.InfoCtx(ctx, "Successfully updated URL across all tables",
+						zap.String("old_url", url),
+						zap.String("new_url", *result.WorkingURL),
+					)
+				}
+			} else {
+				// Original URL works
+				if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusHealthy, nil); err != nil {
+					logger.ErrorCtx(ctx, err,
+						zap.String("url", url),
+					)
+				}
+			}
+
+		case uri.HealthStatusBroken:
+			brokenCount.Add(1)
+			logger.WarnCtx(ctx, "URL is broken",
+				zap.String("url", url),
+				zap.Stringp("error", result.Error),
+			)
+
+			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusBroken, result.Error); err != nil {
 				logger.ErrorCtx(ctx, err,
 					zap.String("url", url),
 				)
 			}
-		}
 
-	case uri.HealthStatusBroken:
-		brokenCount.Add(1)
-		logger.WarnCtx(ctx, "URL is broken",
-			zap.String("url", url),
-			zap.Stringp("error", result.Error),
-		)
-
-		if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusBroken, result.Error); err != nil {
-			logger.ErrorCtx(ctx, err,
+		case uri.HealthStatusTransientError:
+			transientErrorCount.Add(1)
+			logger.WarnCtx(ctx, "Transient error checking URL, will retry later",
 				zap.String("url", url),
+				zap.Stringp("error", result.Error),
 			)
+			// Reset status back to previous state so it can be retried
+			// We don't know the previous status, so we just set it to unknown to allow retry
+			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusUnknown, result.Error); err != nil {
+				logger.ErrorCtx(ctx, err,
+					zap.String("url", url),
+				)
+			}
+			return
 		}
-
-	case uri.HealthStatusTransientError:
-		transientErrorCount.Add(1)
-		logger.WarnCtx(ctx, "Transient error checking URL, will retry later",
-			zap.String("url", url),
-			zap.Stringp("error", result.Error),
-		)
-		// Reset status back to previous state so it can be retried
-		// We don't know the previous status, so we just set it to unknown to allow retry
-		if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusUnknown, result.Error); err != nil {
-			logger.ErrorCtx(ctx, err,
-				zap.String("url", url),
-			)
-		}
-		return
 	}
 
 	// Get all tokens using this URL and their viewability status AFTER health check update
@@ -311,16 +322,10 @@ func (s *mediaHealthSweeper) processChangedTokens(ctx context.Context, before, a
 
 		// Trigger webhook and create change journal only if viewability changed
 		if wasViewable != isViewable {
-			healthStatus := schema.MediaHealthStatusBroken
-			if isViewable {
-				healthStatus = schema.MediaHealthStatusHealthy
-			}
-
 			logger.InfoCtx(ctx, "Token viewability changed, triggering webhook and change journal",
 				zap.String("token_cid", afterToken.TokenCID),
 				zap.Bool("was_viewable", wasViewable),
 				zap.Bool("is_viewable", isViewable),
-				zap.String("health_status", string(healthStatus)),
 			)
 
 			// Create change journal entry
@@ -332,7 +337,7 @@ func (s *mediaHealthSweeper) processChangedTokens(ctx context.Context, before, a
 			}
 
 			// Trigger webhook
-			s.triggerWebhook(ctx, afterToken.TokenCID, healthStatus)
+			s.triggerWebhook(ctx, afterToken.TokenCID, isViewable)
 		} else {
 			logger.DebugCtx(ctx, "Token viewability did not change, skipping webhook",
 				zap.String("token_cid", afterToken.TokenCID),
@@ -344,7 +349,7 @@ func (s *mediaHealthSweeper) processChangedTokens(ctx context.Context, before, a
 }
 
 // triggerWebhook triggers a webhook notification for a token media health change
-func (s *mediaHealthSweeper) triggerWebhook(ctx context.Context, tokenCID string, healthStatus schema.MediaHealthStatus) {
+func (s *mediaHealthSweeper) triggerWebhook(ctx context.Context, tokenCID string, isViewable bool) {
 	// Parse token CID to get components
 	parsedTokenCID := domain.TokenCID(tokenCID)
 	chain, standard, contract, tokenNumber := parsedTokenCID.Parse()
@@ -354,9 +359,9 @@ func (s *mediaHealthSweeper) triggerWebhook(ctx context.Context, tokenCID string
 
 	webhookEvent := webhook.WebhookEvent{
 		EventID:   eventID,
-		EventType: webhook.EventTypeTokenMediaHealthChanged,
+		EventType: webhook.EventTypeTokenViewabilityChanged,
 		Timestamp: s.clock.Now(),
-		Data: webhook.TokenMediaHealthChanged{
+		Data: webhook.TokenViewabilityChanged{
 			EventData: webhook.EventData{
 				TokenCID:    tokenCID,
 				Chain:       string(chain),
@@ -364,7 +369,7 @@ func (s *mediaHealthSweeper) triggerWebhook(ctx context.Context, tokenCID string
 				Contract:    contract,
 				TokenNumber: tokenNumber,
 			},
-			HealthStatus: healthStatus,
+			IsViewable: isViewable,
 		},
 	}
 
