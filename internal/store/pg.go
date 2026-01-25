@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/plugin/dbresolver"
+
+	"github.com/lib/pq"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 
@@ -407,50 +410,10 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 	query := s.db.WithContext(ctx).Model(&schema.Token{}).
 		Select("DISTINCT ON (tokens.id, latest_pe.timestamp) tokens.*")
 
-	// By default, exclude tokens without metadata AND enrichment (broken metadata)
-	// A token is broken only if it has NEITHER metadata NOR enrichment
-	// Unless IncludeBroken is explicitly set to true
-	if !filter.IncludeBroken {
-		query = query.
-			Joins("LEFT JOIN token_metadata ON tokens.id = token_metadata.token_id").
-			Joins("LEFT JOIN enrichment_sources ON tokens.id = enrichment_sources.token_id").
-			Where("token_metadata.token_id IS NOT NULL OR enrichment_sources.token_id IS NOT NULL")
-	}
-
-	// By default, exclude tokens with broken media URLs
-	// Unless IncludeBrokenMedia is explicitly set to true
-	// A token's media is broken if:
-	//   - All animation URLs (if any exist) are broken, OR
-	//   - No animation URLs exist AND all image URLs (if any exist) are broken
-	//   - Token has no media URLs at all
-	if !filter.IncludeBrokenMedia {
-		query = query.Where(`
-			-- Include token if it has at least one healthy animation URL
-			EXISTS (
-				SELECT 1 FROM token_media_health tmh
-				WHERE tmh.token_id = tokens.id
-					AND tmh.health_status = ?
-					AND tmh.media_source IN ?
-			)
-			OR
-			-- OR if no animation URLs exist AND has at least one healthy image URL
-			(
-				NOT EXISTS (
-					SELECT 1 FROM token_media_health tmh
-					WHERE tmh.token_id = tokens.id AND tmh.media_source IN ?
-				)
-				AND EXISTS (
-					SELECT 1 FROM token_media_health tmh
-					WHERE tmh.token_id = tokens.id
-						AND tmh.health_status = ?
-						AND tmh.media_source IN ?
-				)
-			)
-		`, schema.MediaHealthStatusHealthy,
-			[]schema.MediaHealthSource{schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation},
-			[]schema.MediaHealthSource{schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation},
-			schema.MediaHealthStatusHealthy,
-			[]schema.MediaHealthSource{schema.MediaHealthSourceMetadataImage, schema.MediaHealthSourceEnrichmentImage})
+	// By default, only return viewable tokens (is_viewable = true)
+	// Unless IncludeUnviewable is explicitly set to true
+	if !filter.IncludeUnviewable {
+		query = query.Where("tokens.is_viewable = ?", true)
 	}
 
 	// Apply filters
@@ -1970,19 +1933,6 @@ func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *go
 	return nil
 }
 
-// GetBalanceByID retrieves a balance by ID
-func (s *pgStore) GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error) {
-	var balance schema.Balance
-	err := s.db.WithContext(ctx).Where("id = ?", id).First(&balance).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get balance: %w", err)
-	}
-	return &balance, nil
-}
-
 // GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
 func (s *pgStore) GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) ([]domain.TokenCID, error) {
 	var tokenCIDs []domain.TokenCID
@@ -2625,10 +2575,15 @@ func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID
 		updates["canceled_at"] = timestamp
 	}
 
-	return s.db.WithContext(ctx).
+	err := s.db.WithContext(ctx).
 		Model(&schema.AddressIndexingJob{}).
 		Where("workflow_id = ?", workflowID).
 		Updates(updates).Error
+	if err != nil {
+		return fmt.Errorf("failed to update address indexing job status: %w", err)
+	}
+
+	return nil
 }
 
 // UpdateAddressIndexingJobProgress updates job progress metrics
@@ -2640,25 +2595,24 @@ func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflow
 		"current_max_block": maxBlock,
 	}
 
-	return s.db.WithContext(ctx).
+	err := s.db.WithContext(ctx).
 		Model(&schema.AddressIndexingJob{}).
 		Where("workflow_id = ?", workflowID).
 		Updates(updates).Error
+	if err != nil {
+		return fmt.Errorf("failed to update address indexing job progress: %w", err)
+	}
+
+	return nil
 }
 
 // GetTokenCountsByAddress retrieves total token counts for an address on a specific chain
-// Returns both total tokens indexed and total tokens viewable (with metadata or enrichment)
+// Returns both total tokens indexed and total tokens viewable
 func (s *pgStore) GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*TokenCountsByAddress, error) {
 	query := `
 		SELECT 
 			COUNT(*) as total_indexed,
-			COUNT(*) FILTER (
-				WHERE EXISTS (
-					SELECT 1 FROM token_metadata tm WHERE tm.token_id = tokens.id
-				) OR EXISTS (
-					SELECT 1 FROM enrichment_sources es WHERE es.token_id = tokens.id
-				)
-			) as total_viewable
+			COUNT(*) FILTER (WHERE tokens.is_viewable = true) as total_viewable
 		FROM tokens
 		LEFT JOIN balances ON balances.token_id = tokens.id
 		WHERE 
@@ -2707,17 +2661,12 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 
 	// URL added or changed - insert new record
 	if newURLStr != "" {
-		healthStatus := schema.MediaHealthStatusUnknown
-		if oldURL == nil {
-			// If the URL is new, set it to healthy by default and let the sweeper check it
-			healthStatus = schema.MediaHealthStatusHealthy
-		}
 		health := &schema.TokenMediaHealth{
 			TokenID:       tokenID,
 			MediaURL:      newURLStr,
 			MediaSource:   source,
-			HealthStatus:  healthStatus,
-			LastCheckedAt: time.Unix(0, 0), // Force immediate check by sweeper
+			HealthStatus:  schema.MediaHealthStatusUnknown,
+			LastCheckedAt: time.Now(),
 		}
 		if err := tx.Create(health).Error; err != nil {
 			return fmt.Errorf("failed to create health record: %w", err)
@@ -2751,56 +2700,21 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 	return urls, nil
 }
 
-// GetTokensViewabilityByMediaURL returns all tokens that use a specific URL along with their viewability status
-// A token is viewable if it has at least one healthy animation URL, or if no animation URLs exist, at least one healthy image URL
-func (s *pgStore) GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]TokenViewabilityInfo, error) {
-	query := `
-		SELECT 
-			tokens.id as token_id,
-			tokens.token_cid as token_cid,
-			CASE 
-				-- Token is viewable if it has at least one healthy animation URL
-				WHEN EXISTS (
-					SELECT 1 FROM token_media_health tmh
-					WHERE tmh.token_id = tokens.id
-						AND tmh.health_status = $1
-						AND tmh.media_source IN ($2, $3)
-				) THEN true
-				-- OR if no animation URLs exist AND has at least one healthy image URL
-				WHEN NOT EXISTS (
-					SELECT 1 FROM token_media_health tmh
-					WHERE tmh.token_id = tokens.id 
-						AND tmh.media_source IN ($2, $3)
-				)
-				AND EXISTS (
-					SELECT 1 FROM token_media_health tmh
-					WHERE tmh.token_id = tokens.id
-						AND tmh.health_status = $1
-						AND tmh.media_source IN ($4, $5)
-				) THEN true
-				ELSE false
-			END as is_viewable
-		FROM tokens
-		INNER JOIN token_media_health tmh ON tmh.token_id = tokens.id
-		WHERE tmh.media_url = $6
-		GROUP BY tokens.id, tokens.token_cid
-	`
-
-	var results []TokenViewabilityInfo
-	err := s.db.WithContext(ctx).Raw(query,
-		string(schema.MediaHealthStatusHealthy),
-		string(schema.MediaHealthSourceMetadataAnimation),
-		string(schema.MediaHealthSourceEnrichmentAnimation),
-		string(schema.MediaHealthSourceMetadataImage),
-		string(schema.MediaHealthSourceEnrichmentImage),
-		url,
-	).Scan(&results).Error
+// GetTokenIDsByMediaURL returns all token IDs that use a specific URL
+func (s *pgStore) GetTokenIDsByMediaURL(ctx context.Context, url string) ([]uint64, error) {
+	var tokenIDs []uint64
+	err := s.db.WithContext(ctx).
+		Model(&schema.TokenMediaHealth{}).
+		Select("token_id").
+		Distinct("token_id").
+		Where("media_url = ?", url).
+		Pluck("token_id", &tokenIDs).Error
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get tokens viewability by media URL: %w", err)
+		return nil, fmt.Errorf("failed to get token IDs by media URL: %w", err)
 	}
 
-	return results, nil
+	return tokenIDs, nil
 }
 
 // GetTokensViewabilityByIDs returns viewability status for a specific set of token IDs
@@ -2809,54 +2723,17 @@ func (s *pgStore) GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint
 		return []TokenViewabilityInfo{}, nil
 	}
 
-	query := `
-		SELECT 
-			tokens.id as token_id,
-			tokens.token_cid as token_cid,
-			CASE 
-				-- Token is viewable if it has at least one healthy animation URL
-				WHEN EXISTS (
-					SELECT 1 FROM token_media_health tmh
-					WHERE tmh.token_id = tokens.id
-						AND tmh.health_status = ?
-						AND tmh.media_source IN (?, ?)
-				) THEN true
-				-- OR if no animation URLs exist AND has at least one healthy image URL
-				WHEN NOT EXISTS (
-					SELECT 1 FROM token_media_health tmh
-					WHERE tmh.token_id = tokens.id 
-						AND tmh.media_source IN (?, ?)
-				)
-				AND EXISTS (
-					SELECT 1 FROM token_media_health tmh
-					WHERE tmh.token_id = tokens.id
-						AND tmh.health_status = ?
-						AND tmh.media_source IN (?, ?)
-				) THEN true
-				ELSE false
-			END as is_viewable
-		FROM tokens
-		WHERE tokens.id IN ?
-	`
-
-	var results []TokenViewabilityInfo
-	err := s.db.WithContext(ctx).Raw(query,
-		string(schema.MediaHealthStatusHealthy),
-		string(schema.MediaHealthSourceMetadataAnimation),
-		string(schema.MediaHealthSourceEnrichmentAnimation),
-		string(schema.MediaHealthSourceMetadataAnimation),
-		string(schema.MediaHealthSourceEnrichmentAnimation),
-		string(schema.MediaHealthStatusHealthy),
-		string(schema.MediaHealthSourceMetadataImage),
-		string(schema.MediaHealthSourceEnrichmentImage),
-		tokenIDs,
-	).Scan(&results).Error
-
+	var tokens []TokenViewabilityInfo
+	err := s.db.WithContext(ctx).
+		Model(&schema.Token{}).
+		Select("id, token_cid, is_viewable").
+		Where("id IN ?", tokenIDs).
+		Find(&tokens).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tokens viewability by IDs: %w", err)
 	}
 
-	return results, nil
+	return tokens, nil
 }
 
 // UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
@@ -2925,35 +2802,129 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 	})
 }
 
-// CreateTokenViewabilityChange creates a changes_journal entry for a token viewability change
-func (s *pgStore) CreateTokenViewabilityChange(ctx context.Context, tokenID uint64, tokenCID string, isViewable bool) error {
-	meta := schema.TokenViewabilityChangeMeta{
-		TokenID:    tokenID,
-		TokenCID:   tokenCID,
-		IsViewable: isViewable,
+// BatchUpdateTokensViewability computes and updates is_viewable for multiple tokens
+// Returns a list of tokens whose viewability actually changed
+// Creates change journal entries for all changes within the same transaction
+func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityChange, error) {
+	if len(tokenIDs) == 0 {
+		return nil, nil
 	}
 
-	metaJSON, err := json.Marshal(meta)
+	// Sort tokenIDs to ensure consistent order and avoid deadlocks
+	slices.Sort(tokenIDs)
+
+	var changes []TokenViewabilityChange
+
+	// Use GORM's Transaction helper for proper transaction management
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Step 1: Update viewability and get changes
+		updateQuery := `
+			WITH old_state AS (
+				-- Capture current viewability
+				SELECT id, token_cid, is_viewable as old_viewable
+				FROM tokens
+				WHERE id = ANY($1)
+			),
+			new_viewability AS (
+				-- Compute new viewability for each token
+				SELECT 
+					t.id,
+					CASE 
+						-- Has at least one healthy animation URL
+						WHEN EXISTS (
+							SELECT 1 FROM token_media_health tmh
+							WHERE tmh.token_id = t.id
+								AND tmh.health_status = $2
+								AND tmh.media_source IN ($3, $4)
+						) THEN true
+						-- OR no animation URLs exist AND has at least one healthy image URL
+						WHEN NOT EXISTS (
+							SELECT 1 FROM token_media_health tmh
+							WHERE tmh.token_id = t.id 
+								AND tmh.media_source IN ($3, $4)
+						)
+						AND EXISTS (
+							SELECT 1 FROM token_media_health tmh
+							WHERE tmh.token_id = t.id
+								AND tmh.health_status = $2
+								AND tmh.media_source IN ($5, $6)
+						) THEN true
+						-- Otherwise false (no URLs or all broken)
+						ELSE false
+					END as new_viewable
+				FROM tokens t
+				WHERE t.id = ANY($1)
+			),
+			updated AS (
+				-- Update tokens with new viewability
+				UPDATE tokens
+				SET is_viewable = nv.new_viewable
+				FROM new_viewability nv
+				WHERE tokens.id = nv.id
+				AND tokens.is_viewable != nv.new_viewable
+				RETURNING tokens.id
+			)
+			-- Return only tokens that actually changed
+			SELECT 
+				os.id as token_id,
+				os.token_cid,
+				os.old_viewable,
+				nv.new_viewable
+			FROM old_state os
+			JOIN new_viewability nv ON os.id = nv.id
+			WHERE os.old_viewable != nv.new_viewable
+		`
+
+		if err := tx.Raw(updateQuery,
+			pq.Array(tokenIDs),
+			string(schema.MediaHealthStatusHealthy),
+			string(schema.MediaHealthSourceMetadataAnimation),
+			string(schema.MediaHealthSourceEnrichmentAnimation),
+			string(schema.MediaHealthSourceMetadataImage),
+			string(schema.MediaHealthSourceEnrichmentImage),
+		).Scan(&changes).Error; err != nil {
+			return fmt.Errorf("failed to update tokens viewability: %w", err)
+		}
+
+		// Step 2: Bulk insert change journal entries for all changed tokens
+		if len(changes) > 0 {
+			journalEntries := make([]schema.ChangesJournal, len(changes))
+
+			for i, change := range changes {
+				meta := schema.TokenViewabilityChangeMeta{
+					TokenID:    change.TokenID,
+					TokenCID:   change.TokenCID,
+					IsViewable: change.NewViewable,
+				}
+
+				metaJSON, err := json.Marshal(meta)
+				if err != nil {
+					return fmt.Errorf("failed to marshal viewability change meta: %w", err)
+				}
+
+				journalEntries[i] = schema.ChangesJournal{
+					SubjectType: schema.SubjectTypeTokenViewability,
+					SubjectID:   fmt.Sprintf("%d", change.TokenID),
+					ChangedAt:   time.Now(),
+					Meta:        metaJSON,
+				}
+			}
+
+			// Bulk insert all change journal entries
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
+				DoNothing: true,
+			}).Create(&journalEntries).Error; err != nil {
+				return fmt.Errorf("failed to create change journal entries: %w", err)
+			}
+		}
+
+		return nil
+	})
+
 	if err != nil {
-		return fmt.Errorf("failed to marshal viewability change meta: %w", err)
+		return nil, err
 	}
 
-	changeJournal := schema.ChangesJournal{
-		SubjectType: schema.SubjectTypeTokenViewability,
-		SubjectID:   fmt.Sprintf("%d", tokenID),
-		ChangedAt:   time.Now(),
-		Meta:        metaJSON,
-	}
-
-	// Use ON CONFLICT DO NOTHING to handle rare duplicate cases
-	if err := s.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-			DoNothing: true,
-		}).
-		Create(&changeJournal).Error; err != nil {
-		return fmt.Errorf("failed to create viewability change journal: %w", err)
-	}
-
-	return nil
+	return changes, nil
 }

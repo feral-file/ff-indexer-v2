@@ -124,6 +124,7 @@ type Token {
   token_number: String!
   current_owner: String
   burned: Boolean!
+  viewable: Boolean!
   created_at: Time!
   updated_at: Time!
   metadata: TokenMetadata
@@ -218,8 +219,7 @@ type Query {
     token_cids: [String!]
     limit: Uint8 = 20
     offset: Uint64 = 0
-    include_broken_metadata: Boolean = false
-    include_broken_media: Boolean = false
+    include_unviewable: Boolean = false
     expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
     owners_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")

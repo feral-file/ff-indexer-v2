@@ -12,8 +12,12 @@ const (
 	EventTypeTokenIndexingQueryable = "token.indexing.queryable" //nolint:gosec,G101
 
 	// EventTypeTokenIndexingViewable is fired when a token becomes viewable
-	// (metadata and enrichment have been completed, full token info available)
+	// (metadata and enrichment have been completed, media URLs are healthy)
 	EventTypeTokenIndexingViewable = "token.indexing.viewable" //nolint:gosec,G101
+
+	// EventTypeTokenIndexingUnviewable is fired when a token becomes unviewable
+	// (metadata and enrichment could be invalid or media URLs are not healthy)
+	EventTypeTokenIndexingUnviewable = "token.indexing.unviewable" //nolint:gosec,G101
 
 	// EventTypeTokenIndexingProvenanceCompleted is fired when full provenance has been indexed
 	// (all historical transfers and events have been indexed)
@@ -31,8 +35,7 @@ const (
 	// (token has been burned)
 	EventTypeTokenOwnershipBurned = "token.ownership.burned"
 
-	// EventTypeTokenViewabilityChanged is fired when a token media health has changed
-	// (image or animation URL health has changed)
+	// EventTypeTokenViewabilityChanged is fired when a token viewability has changed
 	EventTypeTokenViewabilityChanged = "token.viewability.changed"
 
 	// EventTypeTokenIndexingMediaCompleted is fired when media has been indexed
@@ -44,6 +47,7 @@ const (
 var SupportedEventTypes = []string{
 	EventTypeTokenIndexingQueryable,
 	EventTypeTokenIndexingViewable,
+	EventTypeTokenIndexingUnviewable,
 	EventTypeTokenIndexingProvenanceCompleted,
 	EventTypeTokenOwnershipMinted,
 	EventTypeTokenOwnershipTransferred,
@@ -111,7 +115,7 @@ type TokenViewabilityChanged struct {
 	EventData
 
 	// IsViewable is true if token is viewable
-	IsViewable bool `json:"is_viewable"` // true if token is viewable
+	IsViewable bool `json:"is_viewable"`
 }
 
 // DeliveryResult represents the result of a webhook delivery attempt

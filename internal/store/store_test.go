@@ -1805,47 +1805,55 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 	t.Run("filter by owner", func(t *testing.T) {
 		owner1 := "0xfilter100000000000000000000000000000000001"
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Owners:             []string{owner1},
-			Limit:              10,
-			IncludeBrokenMedia: true, // Test tokens don't have media URLs
+			Owners:            []string{owner1},
+			Limit:             10,
+			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(3))
-		assert.LessOrEqual(t, len(results), 3)
+		assert.GreaterOrEqual(t, len(results), 3)
+		for _, result := range results {
+			if result.Token.CurrentOwner != nil {
+				assert.Equal(t, owner1, *result.Token.CurrentOwner)
+			}
+		}
 	})
 
 	t.Run("filter by chain", func(t *testing.T) {
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Chains:             []domain.Chain{domain.ChainEthereumSepolia},
-			Limit:              10,
-			IncludeBrokenMedia: true, // Test tokens don't have media URLs
+			Chains:            []domain.Chain{domain.ChainEthereumSepolia},
+			Limit:             10,
+			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(1))
 		assert.GreaterOrEqual(t, len(results), 1)
-		assert.Equal(t, domain.ChainEthereumSepolia, results[0].Token.Chain)
+		for _, result := range results {
+			assert.Equal(t, domain.ChainEthereumSepolia, result.Token.Chain)
+		}
 	})
 
 	t.Run("filter by contract address", func(t *testing.T) {
 		contract1 := "0x0000000000000000000000000000000000001111"
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses:  []string{contract1},
-			Limit:              10,
-			IncludeBrokenMedia: true, // Test tokens don't have media URLs
+			ContractAddresses: []string{contract1},
+			Limit:             10,
+			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(2))
 		assert.LessOrEqual(t, len(results), 2)
-		assert.Equal(t, contract1, results[0].Token.ContractAddress)
-		assert.Equal(t, contract1, results[1].Token.ContractAddress)
+		for _, result := range results {
+			assert.Equal(t, contract1, result.Token.ContractAddress)
+		}
 	})
 
 	t.Run("pagination", func(t *testing.T) {
 		// Get first page
 		page1, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Limit:              2,
-			Offset:             0,
-			IncludeBrokenMedia: true, // Test tokens don't have media URLs
+			Limit:             2,
+			Offset:            0,
+			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, total, uint64(4))
@@ -1853,9 +1861,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 		// Get second page
 		page2, _, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Limit:              2,
-			Offset:             2,
-			IncludeBrokenMedia: true, // Test tokens don't have media URLs
+			Limit:             2,
+			Offset:            2,
+			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.LessOrEqual(t, len(page2), 2)
@@ -1868,133 +1876,13 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 	t.Run("filter with no results", func(t *testing.T) {
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			TokenCIDs:          []string{"eip155:1:erc721:0xnonexistent:999"},
-			Limit:              10,
-			IncludeBrokenMedia: true, // Test tokens don't have media URLs
+			TokenCIDs:         []string{"eip155:1:erc721:0xnonexistent:999"},
+			Limit:             10,
+			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(0), total)
 		assert.Equal(t, 0, len(results))
-	})
-
-	t.Run("exclude tokens without metadata and enrichment by default", func(t *testing.T) {
-		brokenAddr := "0x0000000000000000000000000000000000010000"
-		metaOnlyAddr := "0x0000000000000000000000000000000000020000"
-		enrichOnlyAddr := "0x0000000000000000000000000000000000030000"
-		withBothAddr := "0x0000000000000000000000000000000000040000"
-
-		// Create a token without metadata or enrichment (broken - has neither)
-		tokenBroken := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, brokenAddr, "1", "0x0000000000000000000000000000000000001111")
-		err := store.CreateTokenMint(ctx, tokenBroken)
-		require.NoError(t, err)
-
-		// Create a token with metadata only (not broken - has metadata)
-		tokenWithMetaOnly := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, metaOnlyAddr, "1", "0x0000000000000000000000000000000000001111")
-		err = store.CreateTokenMint(ctx, tokenWithMetaOnly)
-		require.NoError(t, err)
-
-		// Add metadata to the second token (but no enrichment)
-		tokenMetaOnly, err := store.GetTokenByTokenCID(ctx, tokenWithMetaOnly.Token.TokenCID)
-		require.NoError(t, err)
-		require.NotNil(t, tokenMetaOnly)
-
-		now := time.Now().UTC()
-		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
-			TokenID:         tokenMetaOnly.ID,
-			OriginJSON:      datatypes.JSON(`{"name":"test metadata only"}`),
-			LatestJSON:      datatypes.JSON(`{"name":"test metadata only"}`),
-			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: now,
-		})
-		require.NoError(t, err)
-
-		// Create a token with enrichment only (not broken - has enrichment)
-		tokenWithEnrichmentOnly := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, enrichOnlyAddr, "1", "0x0000000000000000000000000000000000001111")
-		err = store.CreateTokenMint(ctx, tokenWithEnrichmentOnly)
-		require.NoError(t, err)
-
-		// Add enrichment to the third token (but no metadata)
-		tokenEnrichOnly, err := store.GetTokenByTokenCID(ctx, tokenWithEnrichmentOnly.Token.TokenCID)
-		require.NoError(t, err)
-		require.NotNil(t, tokenEnrichOnly)
-
-		vendorJSON := json.RawMessage(`{"platform": "artblocks", "project": "Test"}`)
-		vendorHash := "vendorhash123"
-		imageURL := "https://artblocks.io/image.png"
-		name := "Art Blocks #1"
-
-		err = store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
-			TokenID:    tokenEnrichOnly.ID,
-			Vendor:     schema.VendorArtBlocks,
-			VendorJSON: vendorJSON,
-			VendorHash: &vendorHash,
-			ImageURL:   &imageURL,
-			Name:       &name,
-		})
-		require.NoError(t, err)
-
-		// Create a token with both metadata and enrichment (not broken - has both)
-		tokenWithBoth := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, withBothAddr, "1", "0x0000000000000000000000000000000000001111")
-		err = store.CreateTokenMint(ctx, tokenWithBoth)
-		require.NoError(t, err)
-
-		// Add metadata to the fourth token
-		tokenBoth, err := store.GetTokenByTokenCID(ctx, tokenWithBoth.Token.TokenCID)
-		require.NoError(t, err)
-		require.NotNil(t, tokenBoth)
-
-		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
-			TokenID:         tokenBoth.ID,
-			OriginJSON:      datatypes.JSON(`{"name":"test both"}`),
-			LatestJSON:      datatypes.JSON(`{"name":"test both"}`),
-			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: now,
-		})
-		require.NoError(t, err)
-
-		// Add enrichment to the fourth token
-		vendorHash2 := "vendorhash456"
-		imageURL2 := "https://artblocks.io/image2.png"
-		name2 := "Art Blocks #2"
-
-		err = store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
-			TokenID:    tokenBoth.ID,
-			Vendor:     schema.VendorArtBlocks,
-			VendorJSON: vendorJSON,
-			VendorHash: &vendorHash2,
-			ImageURL:   &imageURL2,
-			Name:       &name2,
-		})
-		require.NoError(t, err)
-
-		// Default behavior: exclude tokens without both metadata AND enrichment
-		// Should include tokens with metadata only, enrichment only, or both
-		// Should exclude only the token with neither
-
-		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses:  []string{brokenAddr, metaOnlyAddr, enrichOnlyAddr, withBothAddr},
-			Limit:              10,
-			IncludeBrokenMedia: true, // These test tokens don't have media health records
-		})
-		require.NoError(t, err)
-		assert.Equal(t, uint64(3), total) // Three tokens (metaonly, enrichonly, both) - excludes broken
-		assert.Equal(t, 3, len(results))
-
-		// Verify the broken token is not in results
-		for _, result := range results {
-			assert.NotEqual(t, brokenAddr, result.Token.ContractAddress)
-		}
-
-		// Include broken: include all tokens including the one with neither metadata nor enrichment
-		resultsWithBroken, totalWithBroken, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses:  []string{brokenAddr, metaOnlyAddr, enrichOnlyAddr, withBothAddr},
-			IncludeBroken:      true,
-			IncludeBrokenMedia: true, // These test tokens don't have media health records
-			Limit:              10,
-		})
-		require.NoError(t, err)
-		assert.Equal(t, uint64(4), totalWithBroken) // All four tokens
-		assert.Equal(t, 4, len(resultsWithBroken))
 	})
 
 	t.Run("sort by latest provenance event related to filtered owners", func(t *testing.T) {
@@ -2018,23 +1906,6 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		token3.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-8 * time.Hour) // T3: 8 hours ago
 		err = store.CreateTokenMint(ctx, token3)
 		require.NoError(t, err)
-
-		// Add metadata to all tokens so they appear in queries
-		for _, tokenInput := range []CreateTokenMintInput{token1, token2, token3} {
-			token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
-			require.NoError(t, err)
-			require.NotNil(t, token)
-
-			now := time.Now().UTC()
-			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
-				TokenID:         token.ID,
-				OriginJSON:      datatypes.JSON(`{"name":"test"}`),
-				LatestJSON:      datatypes.JSON(`{"name":"test"}`),
-				EnrichmentLevel: schema.EnrichmentLevelNone,
-				LastRefreshedAt: now,
-			})
-			require.NoError(t, err)
-		}
 
 		// Transfer token1 from owner1 to owner2 at T4 (most recent)
 		transferTime1 := time.Now().UTC().Add(-1 * time.Hour) // T4: 1 hour ago
@@ -2115,9 +1986,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 		// Query for owner2 (current owner of all 3 tokens)
 		results, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			Owners:             []string{owner2},
-			Limit:              10,
-			IncludeBrokenMedia: true, // These test tokens don't have media health records
+			Owners:            []string{owner2},
+			Limit:             10,
+			IncludeUnviewable: true, // These test tokens don't have media health records
 		})
 		require.NoError(t, err)
 		require.Equal(t, int(total), 3, "owner2 owns 3 tokens") //nolint:gosec,G115
@@ -2256,11 +2127,16 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL6, schema.MediaHealthStatusHealthy, nil)
 		require.NoError(t, err)
 
-		// Test 1: Default behavior (IncludeBrokenMedia = false) - should only return viewable tokens
+		// Batch update viewability for all tokens after setting media health
+		allTokenIDs := []uint64{token1Data.ID, token2Data.ID, token3Data.ID, token4Data.ID, token5Data.ID, token6Data.ID}
+		_, err = store.BatchUpdateTokensViewability(ctx, allTokenIDs)
+		require.NoError(t, err)
+
+		// Test 1: Default behavior (IncludeUnviewable = false) - should only return viewable tokens
 		resultsHealthyOnly, totalHealthyOnly, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses:  []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
-			IncludeBrokenMedia: false, // Default: exclude broken media
-			Limit:              10,
+			ContractAddresses: []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
+			IncludeUnviewable: false, // Default: exclude unviewable tokens
+			Limit:             10,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(2), totalHealthyOnly, "should only return 2 viewable tokens (healthy animation and healthy image)")
@@ -2278,11 +2154,11 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.False(t, returnedAddrs[noMediaAddr], "token with no media should be excluded")
 		assert.False(t, returnedAddrs[mixedHealthAddr], "token with broken animation (despite healthy image) should be excluded")
 
-		// Test 2: IncludeBrokenMedia = true - should return all tokens
+		// Test 2: IncludeUnviewable = true - should return all tokens
 		resultsAll, totalAll, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses:  []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
-			IncludeBrokenMedia: true, // Include all tokens regardless of media health
-			Limit:              10,
+			ContractAddresses: []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
+			IncludeUnviewable: true, // Include all tokens regardless of media health
+			Limit:             10,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(6), totalAll, "should return all 6 tokens when IncludeBrokenMedia is true")
@@ -2302,18 +2178,18 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 		// Test 3: Animation priority - token with broken animation but healthy image is not viewable
 		resultsMixed, _, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses:  []string{mixedHealthAddr},
-			IncludeBrokenMedia: false,
-			Limit:              10,
+			ContractAddresses: []string{mixedHealthAddr},
+			IncludeUnviewable: false,
+			Limit:             10,
 		})
 		require.NoError(t, err)
 		assert.Len(t, resultsMixed, 0, "token with broken animation should not be viewable even with healthy image")
 
 		// Test 4: Verify animation priority with IncludeBrokenMedia = true
 		resultsMixedInclude, totalMixedInclude, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
-			ContractAddresses:  []string{mixedHealthAddr},
-			IncludeBrokenMedia: true,
-			Limit:              10,
+			ContractAddresses: []string{mixedHealthAddr},
+			IncludeUnviewable: true,
+			Limit:             10,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(1), totalMixedInclude)
@@ -2693,159 +2569,153 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		assert.Equal(t, imageURL, *latestMeta.Old.ImageURL)
 		assert.Equal(t, imageURL2, *latestMeta.New.ImageURL)
 	})
-}
 
-func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
-	ctx := context.Background()
-
-	t.Run("always creates change journal entry", func(t *testing.T) {
-		// Create a token first
-		owner := "0xmedia10000000000000000000000000000000001"
-		mintInput := buildTestTokenMint(
+	t.Run("returns enrichment sources for multiple tokens", func(t *testing.T) {
+		// Create 3 tokens
+		token1Input := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
 			domain.StandardERC721,
-			"0xmedia10000000000000000000000000000000001",
+			"0xenrich1111111111111111111111111111111111111",
 			"1",
-			owner,
+			"0xowner1111111111111111111111111111111111111",
 		)
-		err := store.CreateTokenMint(ctx, mintInput)
+		err := store.CreateTokenMint(ctx, token1Input)
 		require.NoError(t, err)
 
-		// Create media asset - should create change journal entry
-		sourceURL := "https://example.com/media1.png"
-		mimeType := "image/png"
-		fileSize := int64(1024)
-		providerAssetID := "asset123"
-		variantURLs := datatypes.JSON([]byte(`{"thumbnail":"https://cdn.example.com/thumb1.png"}`))
+		token1, err := store.GetTokenByTokenCID(ctx, token1Input.Token.TokenCID)
+		require.NoError(t, err)
 
-		input := CreateMediaAssetInput{
-			SourceURL:       sourceURL,
-			MimeType:        &mimeType,
-			FileSizeBytes:   &fileSize,
-			Provider:        schema.StorageProviderCloudflare,
-			ProviderAssetID: &providerAssetID,
-			VariantURLs:     variantURLs,
+		token2Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xenrich2222222222222222222222222222222222222",
+			"2",
+			"0xowner2111111111111111111111111111111111111",
+		)
+		err = store.CreateTokenMint(ctx, token2Input)
+		require.NoError(t, err)
+
+		token2, err := store.GetTokenByTokenCID(ctx, token2Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		token3Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xenrich3333333333333333333333333333333333333",
+			"3",
+			"0xowner3111111111111111111111111111111111111",
+		)
+		err = store.CreateTokenMint(ctx, token3Input)
+		require.NoError(t, err)
+
+		token3, err := store.GetTokenByTokenCID(ctx, token3Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add enrichment sources for token1 and token2 only
+		imageURL1 := "https://artblocks.io/image1.png"
+		name1 := "Art #1"
+		desc1 := "First art piece"
+		enrichment1 := CreateEnrichmentSourceInput{
+			TokenID:      token1.ID,
+			Vendor:       schema.VendorArtBlocks,
+			VendorJSON:   []byte(`{"project":"test1"}`),
+			ImageURL:     &imageURL1,
+			Name:         &name1,
+			Description:  &desc1,
+			AnimationURL: nil,
+			Artists:      schema.Artists{},
+			MimeType:     nil,
 		}
-
-		asset, err := store.CreateMediaAsset(ctx, input)
-		require.NoError(t, err)
-		require.NotNil(t, asset)
-
-		// Verify change journal entry was created
-		// Note: media_asset changes are not linked to tokens, so we fetch all changes and filter
-		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
-			SubjectTypes: []schema.SubjectType{schema.SubjectTypeMediaAsset},
-			SubjectIDs:   []string{fmt.Sprintf("%d", asset.ID)},
-			Limit:        100,
-		})
+		err = store.UpsertEnrichmentSource(ctx, enrichment1)
 		require.NoError(t, err)
 
-		// Should have at least one change journal entry for media asset
-		var mediaAssetChanges []*schema.ChangesJournal
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMediaAsset &&
-				change.SubjectID == fmt.Sprintf("%d", asset.ID) {
-				mediaAssetChanges = append(mediaAssetChanges, change)
-			}
+		imageURL2 := "https://fxhash.xyz/image2.png"
+		name2 := "Art #2"
+		enrichment2 := CreateEnrichmentSourceInput{
+			TokenID:      token2.ID,
+			Vendor:       schema.VendorFXHash,
+			VendorJSON:   []byte(`{"iteration":"999"}`),
+			ImageURL:     &imageURL2,
+			Name:         &name2,
+			Description:  nil,
+			AnimationURL: nil,
+			Artists:      schema.Artists{},
+			MimeType:     nil,
 		}
-		require.Greater(t, len(mediaAssetChanges), 0, "Expected at least one media_asset change journal entry")
-
-		// Verify the change journal entry has correct data
-		mediaChange := mediaAssetChanges[0]
-		assert.Equal(t, schema.SubjectTypeMediaAsset, mediaChange.SubjectType)
-		assert.Equal(t, fmt.Sprintf("%d", asset.ID), mediaChange.SubjectID)
-
-		// Unmarshal and verify meta
-		var meta schema.MediaAssetChangeMeta
-		err = json.Unmarshal(mediaChange.Meta, &meta)
+		err = store.UpsertEnrichmentSource(ctx, enrichment2)
 		require.NoError(t, err)
-		assert.Equal(t, sourceURL, meta.New.SourceURL)
-		assert.Equal(t, string(schema.StorageProviderCloudflare), meta.New.Provider)
-		assert.Equal(t, mimeType, *meta.New.MimeType)
+
+		// Test bulk query
+		tokenIDs := []uint64{token1.ID, token2.ID, token3.ID}
+		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, tokenIDs)
+		require.NoError(t, err)
+
+		// Verify results
+		assert.Len(t, bulkEnrichments, 2) // Only token1 and token2 have enrichments
+
+		// Verify token1 enrichment
+		assert.NotNil(t, bulkEnrichments[token1.ID])
+		assert.Equal(t, schema.VendorArtBlocks, bulkEnrichments[token1.ID].Vendor)
+		assert.Equal(t, imageURL1, *bulkEnrichments[token1.ID].ImageURL)
+		assert.Equal(t, name1, *bulkEnrichments[token1.ID].Name)
+		assert.Equal(t, desc1, *bulkEnrichments[token1.ID].Description)
+
+		// Verify token2 enrichment
+		assert.NotNil(t, bulkEnrichments[token2.ID])
+		assert.Equal(t, schema.VendorFXHash, bulkEnrichments[token2.ID].Vendor)
+		assert.Equal(t, imageURL2, *bulkEnrichments[token2.ID].ImageURL)
+		assert.Equal(t, name2, *bulkEnrichments[token2.ID].Name)
+
+		// Verify token3 has no enrichment
+		assert.NotContains(t, bulkEnrichments, token3.ID)
 	})
 
-	t.Run("tracks changes on update", func(t *testing.T) {
-		// Create a token first
-		owner := "0xmedia10000000000000000000000000000000002"
-		mintInput := buildTestTokenMint(
+	t.Run("returns empty map for empty token IDs", func(t *testing.T) {
+		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{})
+		require.NoError(t, err)
+		assert.Empty(t, bulkEnrichments)
+	})
+
+	t.Run("handles non-existent token IDs", func(t *testing.T) {
+		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{999998, 999999})
+		require.NoError(t, err)
+		assert.Empty(t, bulkEnrichments)
+	})
+
+	t.Run("handles mix of existing and non-existing tokens", func(t *testing.T) {
+		// Create a token with enrichment
+		tokenInput := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
 			domain.StandardERC721,
-			"0xmedia10000000000000000000000000000000002",
-			"2",
-			owner,
+			"0xenrich4444444444444444444444444444444444444",
+			"4",
+			"0xowner4111111111111111111111111111111111111",
 		)
-		err := store.CreateTokenMint(ctx, mintInput)
+		err := store.CreateTokenMint(ctx, tokenInput)
 		require.NoError(t, err)
 
-		// Create initial media asset
-		sourceURL := "https://example.com/media3.png"
-		mimeType1 := "image/png"
-		fileSize1 := int64(1024)
-		providerAssetID1 := "asset789"
-		variantURLs1 := datatypes.JSON([]byte(`{"thumbnail":"https://cdn.example.com/thumb3.png"}`))
+		token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+		require.NoError(t, err)
 
-		input1 := CreateMediaAssetInput{
-			SourceURL:       sourceURL,
-			MimeType:        &mimeType1,
-			FileSizeBytes:   &fileSize1,
-			Provider:        schema.StorageProviderCloudflare,
-			ProviderAssetID: &providerAssetID1,
-			VariantURLs:     variantURLs1,
+		imageURL := "https://example.com/image4.png"
+		enrichment := CreateEnrichmentSourceInput{
+			TokenID:    token.ID,
+			Vendor:     schema.VendorFeralFile,
+			VendorJSON: []byte(`{"test":"data"}`),
+			ImageURL:   &imageURL,
 		}
-
-		asset1, err := store.CreateMediaAsset(ctx, input1)
+		err = store.UpsertEnrichmentSource(ctx, enrichment)
 		require.NoError(t, err)
 
-		// Update media asset (same source_url and provider)
-		mimeType2 := "image/jpeg"
-		fileSize2 := int64(2048)
-		providerAssetID2 := "asset789-updated"
-		variantURLs2 := datatypes.JSON([]byte(`{"thumbnail":"https://cdn.example.com/thumb3-v2.png"}`))
-
-		// Sleep to ensure different timestamp
-		time.Sleep(10 * time.Millisecond)
-
-		input2 := CreateMediaAssetInput{
-			SourceURL:       sourceURL,
-			MimeType:        &mimeType2,
-			FileSizeBytes:   &fileSize2,
-			Provider:        schema.StorageProviderCloudflare,
-			ProviderAssetID: &providerAssetID2,
-			VariantURLs:     variantURLs2,
-		}
-
-		asset2, err := store.CreateMediaAsset(ctx, input2)
+		// Query with mix of existing and non-existing IDs
+		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{token.ID, 999997})
 		require.NoError(t, err)
 
-		// Should have same ID (updated, not new)
-		assert.Equal(t, asset1.ID, asset2.ID)
-
-		// Verify we have two change journal entries
-		// Note: media_asset changes are not linked to tokens, so we fetch all changes and filter
-		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
-			SubjectTypes: []schema.SubjectType{schema.SubjectTypeMediaAsset},
-			SubjectIDs:   []string{fmt.Sprintf("%d", asset1.ID)},
-			Limit:        100,
-		})
-		require.NoError(t, err)
-
-		mediaAssetChanges := []*schema.ChangesJournal{}
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMediaAsset &&
-				change.SubjectID == fmt.Sprintf("%d", asset1.ID) {
-				mediaAssetChanges = append(mediaAssetChanges, change)
-			}
-		}
-		require.GreaterOrEqual(t, len(mediaAssetChanges), 2, "Expected at least two media_asset change journal entries")
-
-		// Verify the latest change has both old and new values
-		var latestMeta schema.MediaAssetChangeMeta
-		err = json.Unmarshal(mediaAssetChanges[len(mediaAssetChanges)-1].Meta, &latestMeta)
-		require.NoError(t, err)
-		assert.Equal(t, mimeType1, *latestMeta.Old.MimeType)
-		assert.Equal(t, mimeType2, *latestMeta.New.MimeType)
-		assert.Equal(t, providerAssetID1, *latestMeta.Old.ProviderAssetID)
-		assert.Equal(t, providerAssetID2, *latestMeta.New.ProviderAssetID)
+		// Should only have enrichment for the real token
+		assert.Len(t, bulkEnrichments, 1)
+		assert.NotNil(t, bulkEnrichments[token.ID])
+		assert.Equal(t, schema.VendorFeralFile, bulkEnrichments[token.ID].Vendor)
+		assert.NotContains(t, bulkEnrichments, uint64(999997))
 	})
 }
 
@@ -3792,6 +3662,160 @@ func testKeyValueStore(t *testing.T, store Store) {
 // Test: Media Assets
 // =============================================================================
 
+func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("always creates change journal entry", func(t *testing.T) {
+		// Create a token first
+		owner := "0xmedia10000000000000000000000000000000001"
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xmedia10000000000000000000000000000000001",
+			"1",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		// Create media asset - should create change journal entry
+		sourceURL := "https://example.com/media1.png"
+		mimeType := "image/png"
+		fileSize := int64(1024)
+		providerAssetID := "asset123"
+		variantURLs := datatypes.JSON([]byte(`{"thumbnail":"https://cdn.example.com/thumb1.png"}`))
+
+		input := CreateMediaAssetInput{
+			SourceURL:       sourceURL,
+			MimeType:        &mimeType,
+			FileSizeBytes:   &fileSize,
+			Provider:        schema.StorageProviderCloudflare,
+			ProviderAssetID: &providerAssetID,
+			VariantURLs:     variantURLs,
+		}
+
+		asset, err := store.CreateMediaAsset(ctx, input)
+		require.NoError(t, err)
+		require.NotNil(t, asset)
+
+		// Verify change journal entry was created
+		// Note: media_asset changes are not linked to tokens, so we fetch all changes and filter
+		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+			SubjectTypes: []schema.SubjectType{schema.SubjectTypeMediaAsset},
+			SubjectIDs:   []string{fmt.Sprintf("%d", asset.ID)},
+			Limit:        100,
+		})
+		require.NoError(t, err)
+
+		// Should have at least one change journal entry for media asset
+		var mediaAssetChanges []*schema.ChangesJournal
+		for _, change := range changes {
+			if change.SubjectType == schema.SubjectTypeMediaAsset &&
+				change.SubjectID == fmt.Sprintf("%d", asset.ID) {
+				mediaAssetChanges = append(mediaAssetChanges, change)
+			}
+		}
+		require.Greater(t, len(mediaAssetChanges), 0, "Expected at least one media_asset change journal entry")
+
+		// Verify the change journal entry has correct data
+		mediaChange := mediaAssetChanges[0]
+		assert.Equal(t, schema.SubjectTypeMediaAsset, mediaChange.SubjectType)
+		assert.Equal(t, fmt.Sprintf("%d", asset.ID), mediaChange.SubjectID)
+
+		// Unmarshal and verify meta
+		var meta schema.MediaAssetChangeMeta
+		err = json.Unmarshal(mediaChange.Meta, &meta)
+		require.NoError(t, err)
+		assert.Equal(t, sourceURL, meta.New.SourceURL)
+		assert.Equal(t, string(schema.StorageProviderCloudflare), meta.New.Provider)
+		assert.Equal(t, mimeType, *meta.New.MimeType)
+	})
+
+	t.Run("tracks changes on update", func(t *testing.T) {
+		// Create a token first
+		owner := "0xmedia10000000000000000000000000000000002"
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xmedia10000000000000000000000000000000002",
+			"2",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		// Create initial media asset
+		sourceURL := "https://example.com/media3.png"
+		mimeType1 := "image/png"
+		fileSize1 := int64(1024)
+		providerAssetID1 := "asset789"
+		variantURLs1 := datatypes.JSON([]byte(`{"thumbnail":"https://cdn.example.com/thumb3.png"}`))
+
+		input1 := CreateMediaAssetInput{
+			SourceURL:       sourceURL,
+			MimeType:        &mimeType1,
+			FileSizeBytes:   &fileSize1,
+			Provider:        schema.StorageProviderCloudflare,
+			ProviderAssetID: &providerAssetID1,
+			VariantURLs:     variantURLs1,
+		}
+
+		asset1, err := store.CreateMediaAsset(ctx, input1)
+		require.NoError(t, err)
+
+		// Update media asset (same source_url and provider)
+		mimeType2 := "image/jpeg"
+		fileSize2 := int64(2048)
+		providerAssetID2 := "asset789-updated"
+		variantURLs2 := datatypes.JSON([]byte(`{"thumbnail":"https://cdn.example.com/thumb3-v2.png"}`))
+
+		// Sleep to ensure different timestamp
+		time.Sleep(10 * time.Millisecond)
+
+		input2 := CreateMediaAssetInput{
+			SourceURL:       sourceURL,
+			MimeType:        &mimeType2,
+			FileSizeBytes:   &fileSize2,
+			Provider:        schema.StorageProviderCloudflare,
+			ProviderAssetID: &providerAssetID2,
+			VariantURLs:     variantURLs2,
+		}
+
+		asset2, err := store.CreateMediaAsset(ctx, input2)
+		require.NoError(t, err)
+
+		// Should have same ID (updated, not new)
+		assert.Equal(t, asset1.ID, asset2.ID)
+
+		// Verify we have two change journal entries
+		// Note: media_asset changes are not linked to tokens, so we fetch all changes and filter
+		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+			SubjectTypes: []schema.SubjectType{schema.SubjectTypeMediaAsset},
+			SubjectIDs:   []string{fmt.Sprintf("%d", asset1.ID)},
+			Limit:        100,
+		})
+		require.NoError(t, err)
+
+		mediaAssetChanges := []*schema.ChangesJournal{}
+		for _, change := range changes {
+			if change.SubjectType == schema.SubjectTypeMediaAsset &&
+				change.SubjectID == fmt.Sprintf("%d", asset1.ID) {
+				mediaAssetChanges = append(mediaAssetChanges, change)
+			}
+		}
+		require.GreaterOrEqual(t, len(mediaAssetChanges), 2, "Expected at least two media_asset change journal entries")
+
+		// Verify the latest change has both old and new values
+		var latestMeta schema.MediaAssetChangeMeta
+		err = json.Unmarshal(mediaAssetChanges[len(mediaAssetChanges)-1].Meta, &latestMeta)
+		require.NoError(t, err)
+		assert.Equal(t, mimeType1, *latestMeta.Old.MimeType)
+		assert.Equal(t, mimeType2, *latestMeta.New.MimeType)
+		assert.Equal(t, providerAssetID1, *latestMeta.Old.ProviderAssetID)
+		assert.Equal(t, providerAssetID2, *latestMeta.New.ProviderAssetID)
+	})
+}
+
 func testMediaAssets(t *testing.T, store Store) {
 	ctx := context.Background()
 
@@ -4214,157 +4238,9 @@ func testGetTokenProvenanceEventsBulk(t *testing.T, store Store) {
 	})
 }
 
-func testGetEnrichmentSourcesByTokenIDs(t *testing.T, store Store) {
-	ctx := context.Background()
-
-	t.Run("returns enrichment sources for multiple tokens", func(t *testing.T) {
-		// Create 3 tokens
-		token1Input := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xenrich1111111111111111111111111111111111111",
-			"1",
-			"0xowner1111111111111111111111111111111111111",
-		)
-		err := store.CreateTokenMint(ctx, token1Input)
-		require.NoError(t, err)
-
-		token1, err := store.GetTokenByTokenCID(ctx, token1Input.Token.TokenCID)
-		require.NoError(t, err)
-
-		token2Input := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xenrich2222222222222222222222222222222222222",
-			"2",
-			"0xowner2111111111111111111111111111111111111",
-		)
-		err = store.CreateTokenMint(ctx, token2Input)
-		require.NoError(t, err)
-
-		token2, err := store.GetTokenByTokenCID(ctx, token2Input.Token.TokenCID)
-		require.NoError(t, err)
-
-		token3Input := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xenrich3333333333333333333333333333333333333",
-			"3",
-			"0xowner3111111111111111111111111111111111111",
-		)
-		err = store.CreateTokenMint(ctx, token3Input)
-		require.NoError(t, err)
-
-		token3, err := store.GetTokenByTokenCID(ctx, token3Input.Token.TokenCID)
-		require.NoError(t, err)
-
-		// Add enrichment sources for token1 and token2 only
-		imageURL1 := "https://artblocks.io/image1.png"
-		name1 := "Art #1"
-		desc1 := "First art piece"
-		enrichment1 := CreateEnrichmentSourceInput{
-			TokenID:      token1.ID,
-			Vendor:       schema.VendorArtBlocks,
-			VendorJSON:   []byte(`{"project":"test1"}`),
-			ImageURL:     &imageURL1,
-			Name:         &name1,
-			Description:  &desc1,
-			AnimationURL: nil,
-			Artists:      schema.Artists{},
-			MimeType:     nil,
-		}
-		err = store.UpsertEnrichmentSource(ctx, enrichment1)
-		require.NoError(t, err)
-
-		imageURL2 := "https://fxhash.xyz/image2.png"
-		name2 := "Art #2"
-		enrichment2 := CreateEnrichmentSourceInput{
-			TokenID:      token2.ID,
-			Vendor:       schema.VendorFXHash,
-			VendorJSON:   []byte(`{"iteration":"999"}`),
-			ImageURL:     &imageURL2,
-			Name:         &name2,
-			Description:  nil,
-			AnimationURL: nil,
-			Artists:      schema.Artists{},
-			MimeType:     nil,
-		}
-		err = store.UpsertEnrichmentSource(ctx, enrichment2)
-		require.NoError(t, err)
-
-		// Test bulk query
-		tokenIDs := []uint64{token1.ID, token2.ID, token3.ID}
-		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, tokenIDs)
-		require.NoError(t, err)
-
-		// Verify results
-		assert.Len(t, bulkEnrichments, 2) // Only token1 and token2 have enrichments
-
-		// Verify token1 enrichment
-		assert.NotNil(t, bulkEnrichments[token1.ID])
-		assert.Equal(t, schema.VendorArtBlocks, bulkEnrichments[token1.ID].Vendor)
-		assert.Equal(t, imageURL1, *bulkEnrichments[token1.ID].ImageURL)
-		assert.Equal(t, name1, *bulkEnrichments[token1.ID].Name)
-		assert.Equal(t, desc1, *bulkEnrichments[token1.ID].Description)
-
-		// Verify token2 enrichment
-		assert.NotNil(t, bulkEnrichments[token2.ID])
-		assert.Equal(t, schema.VendorFXHash, bulkEnrichments[token2.ID].Vendor)
-		assert.Equal(t, imageURL2, *bulkEnrichments[token2.ID].ImageURL)
-		assert.Equal(t, name2, *bulkEnrichments[token2.ID].Name)
-
-		// Verify token3 has no enrichment
-		assert.NotContains(t, bulkEnrichments, token3.ID)
-	})
-
-	t.Run("returns empty map for empty token IDs", func(t *testing.T) {
-		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{})
-		require.NoError(t, err)
-		assert.Empty(t, bulkEnrichments)
-	})
-
-	t.Run("handles non-existent token IDs", func(t *testing.T) {
-		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{999998, 999999})
-		require.NoError(t, err)
-		assert.Empty(t, bulkEnrichments)
-	})
-
-	t.Run("handles mix of existing and non-existing tokens", func(t *testing.T) {
-		// Create a token with enrichment
-		tokenInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xenrich4444444444444444444444444444444444444",
-			"4",
-			"0xowner4111111111111111111111111111111111111",
-		)
-		err := store.CreateTokenMint(ctx, tokenInput)
-		require.NoError(t, err)
-
-		token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
-		require.NoError(t, err)
-
-		imageURL := "https://example.com/image4.png"
-		enrichment := CreateEnrichmentSourceInput{
-			TokenID:    token.ID,
-			Vendor:     schema.VendorFeralFile,
-			VendorJSON: []byte(`{"test":"data"}`),
-			ImageURL:   &imageURL,
-		}
-		err = store.UpsertEnrichmentSource(ctx, enrichment)
-		require.NoError(t, err)
-
-		// Query with mix of existing and non-existing IDs
-		bulkEnrichments, err := store.GetEnrichmentSourcesByTokenIDs(ctx, []uint64{token.ID, 999997})
-		require.NoError(t, err)
-
-		// Should only have enrichment for the real token
-		assert.Len(t, bulkEnrichments, 1)
-		assert.NotNil(t, bulkEnrichments[token.ID])
-		assert.Equal(t, schema.VendorFeralFile, bulkEnrichments[token.ID].Vendor)
-		assert.NotContains(t, bulkEnrichments, uint64(999997))
-	})
-}
+// =============================================================================
+// Test: Webhook Clients
+// =============================================================================
 
 func testWebhookClients(t *testing.T, store Store) {
 	ctx := context.Background()
@@ -5353,8 +5229,9 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		assert.Equal(t, 0, counts.TotalViewable, "no tokens have metadata/enrichment")
 	})
 
-	t.Run("counts tokens with metadata as both indexed and viewable", func(t *testing.T) {
-		// Create 2 tokens with metadata
+	t.Run("counts tokens which metadata as viewable", func(t *testing.T) {
+		// Create 2 tokens with metadata and healthy media
+		var tokenIDs []uint64
 		for i := 1; i <= 2; i++ {
 			tokenNum := fmt.Sprintf("%d", 200+i)
 			mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract2", tokenNum, owner1)
@@ -5364,9 +5241,11 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			// Get the token
 			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
 			require.NoError(t, err)
+			tokenIDs = append(tokenIDs, token.ID)
 
-			// Add metadata
-			metadataJSON := map[string]interface{}{"name": fmt.Sprintf("Token %d", i)}
+			// Add metadata with media URL
+			imageURL := fmt.Sprintf("https://example.com/token%d.jpg", i)
+			metadataJSON := map[string]interface{}{"name": fmt.Sprintf("Token %d", i), "image": imageURL}
 			jsonBytes, _ := json.Marshal(metadataJSON)
 			now := time.Now().UTC()
 			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
@@ -5374,19 +5253,29 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 				OriginJSON:      jsonBytes,
 				LatestJSON:      jsonBytes,
 				EnrichmentLevel: schema.EnrichmentLevelNone,
+				ImageURL:        &imageURL,
 				LastRefreshedAt: now,
 			})
 			require.NoError(t, err)
+
+			// Mark media as healthy
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			require.NoError(t, err)
 		}
+
+		// Update viewability
+		_, err := store.BatchUpdateTokensViewability(ctx, tokenIDs)
+		require.NoError(t, err)
 
 		counts, err := store.GetTokenCountsByAddress(ctx, owner1, chain)
 		require.NoError(t, err)
-		assert.Equal(t, 5, counts.TotalIndexed, "3 without metadata + 2 with metadata")
-		assert.Equal(t, 2, counts.TotalViewable, "only tokens with metadata")
+		assert.Equal(t, 5, counts.TotalIndexed, "3 without metadata + 2 with metadata and healthy media")
+		assert.Equal(t, 2, counts.TotalViewable, "only tokens with healthy media")
 	})
 
 	t.Run("counts tokens with enrichment source as viewable", func(t *testing.T) {
-		// Create 2 tokens with enrichment source only (no metadata)
+		// Create 2 tokens with enrichment source only (no metadata) and healthy media
+		var tokenIDs []uint64
 		for i := 1; i <= 2; i++ {
 			tokenNum := fmt.Sprintf("%d", 300+i)
 			mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract3", tokenNum, owner1)
@@ -5396,26 +5285,37 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			// Get the token
 			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
 			require.NoError(t, err)
+			tokenIDs = append(tokenIDs, token.ID)
 
-			// Add enrichment source
+			// Add enrichment source with media URL
+			imageURL := fmt.Sprintf("https://example.com/enriched%d.jpg", i)
 			vendorJSON := map[string]interface{}{"vendor_data": fmt.Sprintf("Token %d", i)}
 			jsonBytes, _ := json.Marshal(vendorJSON)
 			err = store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
 				TokenID:    token.ID,
 				Vendor:     schema.VendorArtBlocks,
 				VendorJSON: jsonBytes,
+				ImageURL:   &imageURL,
 			})
 			require.NoError(t, err)
+
+			// Mark media as healthy
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			require.NoError(t, err)
 		}
+
+		// Update viewability
+		_, err := store.BatchUpdateTokensViewability(ctx, tokenIDs)
+		require.NoError(t, err)
 
 		counts, err := store.GetTokenCountsByAddress(ctx, owner1, chain)
 		require.NoError(t, err)
 		assert.Equal(t, 7, counts.TotalIndexed, "3 plain + 2 with metadata + 2 with enrichment")
-		assert.Equal(t, 4, counts.TotalViewable, "2 with metadata + 2 with enrichment")
+		assert.Equal(t, 4, counts.TotalViewable, "2 with healthy metadata + 2 with healthy enrichment")
 	})
 
 	t.Run("counts tokens with both metadata and enrichment once", func(t *testing.T) {
-		// Create 1 token with both metadata and enrichment
+		// Create 1 token with both metadata and enrichment and healthy media
 		tokenNum := "401"
 		mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract4", tokenNum, owner1)
 		err := store.CreateTokenMint(ctx, mint)
@@ -5425,8 +5325,9 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
 		require.NoError(t, err)
 
-		// Add metadata
-		metadataJSON := map[string]interface{}{"name": "Token with both"}
+		// Add metadata with media URL
+		imageURL := "https://example.com/token-both.jpg"
+		metadataJSON := map[string]interface{}{"name": "Token with both", "image": imageURL}
 		jsonBytes, _ := json.Marshal(metadataJSON)
 		now := time.Now().UTC()
 		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
@@ -5434,6 +5335,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			OriginJSON:      jsonBytes,
 			LatestJSON:      jsonBytes,
 			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imageURL,
 			LastRefreshedAt: now,
 		})
 		require.NoError(t, err)
@@ -5445,20 +5347,30 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			TokenID:    token.ID,
 			Vendor:     schema.VendorArtBlocks,
 			VendorJSON: vendorBytes,
+			ImageURL:   &imageURL,
 		})
+		require.NoError(t, err)
+
+		// Mark media as healthy
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// Update viewability
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{token.ID})
 		require.NoError(t, err)
 
 		counts, err := store.GetTokenCountsByAddress(ctx, owner1, chain)
 		require.NoError(t, err)
 		assert.Equal(t, 8, counts.TotalIndexed)
-		assert.Equal(t, 5, counts.TotalViewable, "token with both counted once")
+		assert.Equal(t, 5, counts.TotalViewable, "token with both counted once (healthy media)")
 	})
 
 	t.Run("isolates counts by chain", func(t *testing.T) {
 		tezosChain := domain.ChainTezosMainnet
 		tezosOwner := "tz1TestAddress123456789012345678"
 
-		// Create 2 tokens on Tezos with metadata
+		// Create 2 tokens on Tezos with metadata and healthy media
+		var tokenIDs []uint64
 		for i := 1; i <= 2; i++ {
 			tokenNum := fmt.Sprintf("%d", 500+i)
 			mint := buildTestTokenMint(tezosChain, domain.StandardFA2, "KT1Contract", tokenNum, tezosOwner)
@@ -5468,9 +5380,11 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			// Get the token
 			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
 			require.NoError(t, err)
+			tokenIDs = append(tokenIDs, token.ID)
 
-			// Add metadata
-			metadataJSON := map[string]interface{}{"name": fmt.Sprintf("Tezos Token %d", i)}
+			// Add metadata with media URL
+			imageURL := fmt.Sprintf("https://example.com/tezos%d.jpg", i)
+			metadataJSON := map[string]interface{}{"name": fmt.Sprintf("Tezos Token %d", i), "image": imageURL}
 			jsonBytes, _ := json.Marshal(metadataJSON)
 			now := time.Now().UTC()
 			err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
@@ -5478,16 +5392,25 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 				OriginJSON:      jsonBytes,
 				LatestJSON:      jsonBytes,
 				EnrichmentLevel: schema.EnrichmentLevelNone,
+				ImageURL:        &imageURL,
 				LastRefreshedAt: now,
 			})
 			require.NoError(t, err)
+
+			// Mark media as healthy
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			require.NoError(t, err)
 		}
+
+		// Update viewability
+		_, err := store.BatchUpdateTokensViewability(ctx, tokenIDs)
+		require.NoError(t, err)
 
 		// Query Tezos chain - should only count Tezos tokens
 		counts, err := store.GetTokenCountsByAddress(ctx, tezosOwner, tezosChain)
 		require.NoError(t, err)
 		assert.Equal(t, 2, counts.TotalIndexed)
-		assert.Equal(t, 2, counts.TotalViewable)
+		assert.Equal(t, 2, counts.TotalViewable, "both Tezos tokens have healthy media")
 
 		// Query Ethereum chain for same address - should be zero
 		counts, err = store.GetTokenCountsByAddress(ctx, tezosOwner, chain)
@@ -5498,6 +5421,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 
 	t.Run("isolates counts by owner address", func(t *testing.T) {
 		// Create 2 tokens for owner2
+		var tokenIDWithMedia uint64
 		for i := 1; i <= 2; i++ {
 			tokenNum := fmt.Sprintf("%d", 600+i)
 			mint := buildTestTokenMint(chain, domain.StandardERC721, "0xcontract6", tokenNum, owner2)
@@ -5508,9 +5432,10 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
 			require.NoError(t, err)
 
-			// Add metadata to one
+			// Add metadata to one with healthy media
 			if i == 1 {
-				metadataJSON := map[string]interface{}{"name": "Owner2 Token"}
+				imageURL := "https://example.com/owner2-token1.jpg"
+				metadataJSON := map[string]interface{}{"name": "Owner2 Token", "image": imageURL}
 				jsonBytes, _ := json.Marshal(metadataJSON)
 				now := time.Now().UTC()
 				err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
@@ -5518,17 +5443,28 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 					OriginJSON:      jsonBytes,
 					LatestJSON:      jsonBytes,
 					EnrichmentLevel: schema.EnrichmentLevelNone,
+					ImageURL:        &imageURL,
 					LastRefreshedAt: now,
 				})
 				require.NoError(t, err)
+
+				// Mark media as healthy
+				err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+				require.NoError(t, err)
+
+				tokenIDWithMedia = token.ID
 			}
 		}
+
+		// Update viewability
+		_, err := store.BatchUpdateTokensViewability(ctx, []uint64{tokenIDWithMedia})
+		require.NoError(t, err)
 
 		// Query owner2 - should only see their tokens
 		counts, err := store.GetTokenCountsByAddress(ctx, owner2, chain)
 		require.NoError(t, err)
 		assert.Equal(t, 2, counts.TotalIndexed, "owner2 has 2 tokens")
-		assert.Equal(t, 1, counts.TotalViewable, "1 token has metadata")
+		assert.Equal(t, 1, counts.TotalViewable, "1 token has healthy media")
 
 		// Query owner1 - should still see their original counts
 		counts, err = store.GetTokenCountsByAddress(ctx, owner1, chain)
@@ -5552,8 +5488,9 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		token, err := store.GetTokenByTokenCID(ctx, mint.Token.TokenCID)
 		require.NoError(t, err)
 
-		// Add metadata
-		metadataJSON := map[string]interface{}{"name": "Multi-edition"}
+		// Add metadata with healthy media
+		imageURL := "https://example.com/erc1155.jpg"
+		metadataJSON := map[string]interface{}{"name": "Multi-edition", "image": imageURL}
 		jsonBytes, _ := json.Marshal(metadataJSON)
 		now := time.Now().UTC()
 		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
@@ -5561,14 +5498,23 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			OriginJSON:      jsonBytes,
 			LatestJSON:      jsonBytes,
 			EnrichmentLevel: schema.EnrichmentLevelNone,
+			ImageURL:        &imageURL,
 			LastRefreshedAt: now,
 		})
+		require.NoError(t, err)
+
+		// Mark media as healthy
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// Update viewability
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{token.ID})
 		require.NoError(t, err)
 
 		counts, err := store.GetTokenCountsByAddress(ctx, multiOwner, chain)
 		require.NoError(t, err)
 		assert.Equal(t, 1, counts.TotalIndexed, "ERC1155 counted via balances")
-		assert.Equal(t, 1, counts.TotalViewable, "ERC1155 with metadata")
+		assert.Equal(t, 1, counts.TotalViewable, "ERC1155 with healthy media")
 	})
 }
 
@@ -5617,7 +5563,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		assert.NotContains(t, urls, imageURL, "recently checked URL should not be in list")
 	})
 
-	t.Run("UpdateTokenMediaHealthByURL updates health status", func(t *testing.T) {
+	t.Run("BatchUpdateTokensViewability with media health changes", func(t *testing.T) {
 		// Create token with metadata
 		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100004", "4", "0xowner4")
 		err := store.CreateTokenMint(ctx, token)
@@ -5644,25 +5590,34 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
 		require.NoError(t, err)
 
-		// Check token is viewable
-		results, err := store.GetTokensViewabilityByMediaURL(ctx, imageURL)
+		// Batch update viewability and verify token became viewable
+		changes, err := store.BatchUpdateTokensViewability(ctx, []uint64{tokenData.ID})
 		require.NoError(t, err)
-		require.Len(t, results, 1)
-		assert.True(t, results[0].IsViewable)
+		require.Len(t, changes, 1, "should have 1 change (false -> true)")
+		assert.Equal(t, tokenData.ID, changes[0].TokenID)
+		assert.False(t, changes[0].OldViewable)
+		assert.True(t, changes[0].NewViewable)
 
 		// Update to broken with error
 		errorMsg := "404 Not Found"
 		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusBroken, &errorMsg)
 		require.NoError(t, err)
 
-		// Check token is not viewable
-		results, err = store.GetTokensViewabilityByMediaURL(ctx, imageURL)
+		// Batch update viewability and verify token became not viewable
+		changes, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenData.ID})
 		require.NoError(t, err)
-		require.Len(t, results, 1)
-		assert.False(t, results[0].IsViewable)
+		require.Len(t, changes, 1, "should have 1 change (true -> false)")
+		assert.Equal(t, tokenData.ID, changes[0].TokenID)
+		assert.True(t, changes[0].OldViewable)
+		assert.False(t, changes[0].NewViewable)
+
+		// Run again with no changes - should return empty
+		changes, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenData.ID})
+		require.NoError(t, err)
+		assert.Empty(t, changes, "should have no changes when viewability doesn't change")
 	})
 
-	t.Run("UpdateMediaURLAndPropagate updates URL across tokens", func(t *testing.T) {
+	t.Run("UpdateMediaURLAndPropagate updates URL health status and metadata URLs", func(t *testing.T) {
 		oldURL := "ipfs://QmOldHash"
 		newURL := "https://example.com/new-resolved.jpg"
 
@@ -5693,22 +5648,44 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 			require.NoError(t, err)
 		}
 
-		// Update URL and propagate
+		// Update URL and propagate (this also propagates health status)
 		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL)
 		require.NoError(t, err)
 
-		// Verify both tokens now use the new URL
-		results, err := store.GetTokensViewabilityByMediaURL(ctx, newURL)
+		// Mark new URL as healthy (after propagation)
+		err = store.UpdateTokenMediaHealthByURL(ctx, newURL, schema.MediaHealthStatusHealthy, nil)
 		require.NoError(t, err)
-		assert.Len(t, results, 2, "both tokens should be associated with new URL")
+
+		// Update viewability
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{token1Data.ID, token2Data.ID})
+		require.NoError(t, err)
+
+		// Verify both tokens now use the new URL
+		tokenIDs, err := store.GetTokenIDsByMediaURL(ctx, newURL)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []uint64{token1Data.ID, token2Data.ID}, tokenIDs, "both tokens should be associated with new URL")
 
 		// Old URL should have no tokens
-		oldResults, err := store.GetTokensViewabilityByMediaURL(ctx, oldURL)
+		oldTokenIDs, err := store.GetTokenIDsByMediaURL(ctx, oldURL)
 		require.NoError(t, err)
-		assert.Empty(t, oldResults, "old URL should have no associated tokens")
+		assert.Empty(t, oldTokenIDs, "old URL should have no associated tokens")
+
+		// Verify both tokens are viewable (after health check and batch update)
+		tokenViewability, err := store.GetTokensViewabilityByIDs(ctx, []uint64{token1Data.ID, token2Data.ID})
+		require.NoError(t, err)
+		assert.True(t, tokenViewability[0].IsViewable)
+		assert.True(t, tokenViewability[1].IsViewable)
+
+		// Verify both tokens metadata URLs are updated
+		tokenMetadata1, err := store.GetTokenMetadataByTokenCID(ctx, token1Data.TokenCID)
+		require.NoError(t, err)
+		assert.Equal(t, newURL, *tokenMetadata1.ImageURL)
+		tokenMetadata2, err := store.GetTokenMetadataByTokenCID(ctx, token2Data.TokenCID)
+		require.NoError(t, err)
+		assert.Equal(t, newURL, *tokenMetadata2.ImageURL)
 	})
 
-	t.Run("GetTokensViewabilityByMediaURL with animation priority", func(t *testing.T) {
+	t.Run("BatchUpdateTokensViewability respects animation URL priority", func(t *testing.T) {
 		sharedImageURL := "https://example.com/shared-image.jpg"
 
 		// Token 1: Has only image URL (viewable when healthy)
@@ -5757,100 +5734,37 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		err = store.UpdateTokenMediaHealthByURL(ctx, animationURL, schema.MediaHealthStatusBroken, nil)
 		require.NoError(t, err)
 
-		// Query by shared image URL
-		results, err := store.GetTokensViewabilityByMediaURL(ctx, sharedImageURL)
+		// Batch update both tokens
+		changes, err := store.BatchUpdateTokensViewability(ctx, []uint64{token1Data.ID, token2Data.ID})
 		require.NoError(t, err)
-		require.Len(t, results, 2)
+		// Only token1 should change (false -> true), token2 stays false (broken animation)
+		require.Len(t, changes, 1, "only token1 should change (token2 stays not viewable)")
 
-		// Build expected map
+		// Verify token1 changed to viewable
+		assert.Equal(t, token1Data.ID, changes[0].TokenID)
+		assert.False(t, changes[0].OldViewable)
+		assert.True(t, changes[0].NewViewable, "token1 should be viewable: healthy image, no animation")
+
+		// Verify the actual viewability by querying again
+		finalStates, err := store.GetTokensViewabilityByIDs(ctx, []uint64{token1Data.ID, token2Data.ID})
+		require.NoError(t, err)
+		require.Len(t, finalStates, 2)
+
 		expected := make(map[uint64]bool)
 		expected[token1Data.ID] = true  // viewable: healthy image, no animation
 		expected[token2Data.ID] = false // not viewable: has broken animation (takes priority over healthy image)
 
-		for _, result := range results {
-			expectedViewability, exists := expected[result.TokenID]
-			require.True(t, exists, "unexpected token ID: %d", result.TokenID)
-			assert.Equal(t, expectedViewability, result.IsViewable,
-				"token %s viewability mismatch", result.TokenCID)
+		for _, state := range finalStates {
+			expectedViewability := expected[state.TokenID]
+			assert.Equal(t, expectedViewability, state.IsViewable,
+				"token %d viewability mismatch", state.TokenID)
 		}
 	})
 
-	t.Run("GetTokensViewabilityByMediaURL returns empty for nonexistent URL", func(t *testing.T) {
-		results, err := store.GetTokensViewabilityByMediaURL(ctx, "https://example.com/nonexistent.jpg")
+	t.Run("GetTokenIDsByMediaURL returns empty for nonexistent URL", func(t *testing.T) {
+		tokenIDs, err := store.GetTokenIDsByMediaURL(ctx, "https://example.com/nonexistent.jpg")
 		require.NoError(t, err)
-		assert.Empty(t, results)
-	})
-
-	t.Run("CreateTokenViewabilityChange creates change journal entry", func(t *testing.T) {
-		// Create token with metadata
-		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100009", "9", "0xowner9")
-		err := store.CreateTokenMint(ctx, token)
-		require.NoError(t, err)
-
-		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
-		require.NoError(t, err)
-
-		imageURL := "https://example.com/viewability-test.jpg"
-		metadata := map[string]interface{}{"image": imageURL}
-		metadataJSON, _ := json.Marshal(metadata)
-
-		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
-			TokenID:         tokenData.ID,
-			OriginJSON:      metadataJSON,
-			LatestJSON:      metadataJSON,
-			EnrichmentLevel: schema.EnrichmentLevelVendor,
-			ImageURL:        &imageURL,
-			LastRefreshedAt: time.Now().UTC(),
-		})
-		require.NoError(t, err)
-
-		// Create viewability change: token became viewable
-		err = store.CreateTokenViewabilityChange(ctx, tokenData.ID, token.Token.TokenCID, true)
-		require.NoError(t, err)
-
-		// Query changes journal for this token
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenIDs:     []uint64{tokenData.ID},
-			SubjectTypes: []schema.SubjectType{schema.SubjectTypeTokenViewability},
-			Limit:        10,
-		})
-		require.NoError(t, err)
-		assert.Equal(t, uint64(1), total)
-		assert.Len(t, changes, 1)
-
-		// Verify the change journal entry
-		change := changes[0]
-		assert.Equal(t, schema.SubjectTypeTokenViewability, change.SubjectType)
-		assert.Equal(t, fmt.Sprintf("%d", tokenData.ID), change.SubjectID)
-
-		// Unmarshal and verify meta
-		var meta schema.TokenViewabilityChangeMeta
-		err = json.Unmarshal(change.Meta, &meta)
-		require.NoError(t, err)
-		assert.Equal(t, tokenData.ID, meta.TokenID)
-		assert.Equal(t, token.Token.TokenCID, meta.TokenCID)
-		assert.True(t, meta.IsViewable)
-
-		// Create another viewability change: token became not viewable
-		err = store.CreateTokenViewabilityChange(ctx, tokenData.ID, token.Token.TokenCID, false)
-		require.NoError(t, err)
-
-		// Query changes again - should now have 2 entries
-		changes, total, err = store.GetChanges(ctx, ChangesQueryFilter{
-			TokenIDs:     []uint64{tokenData.ID},
-			SubjectTypes: []schema.SubjectType{schema.SubjectTypeTokenViewability},
-			Limit:        10,
-		})
-		require.NoError(t, err)
-		assert.Equal(t, uint64(2), total)
-		assert.Len(t, changes, 2)
-
-		// Verify the second entry (changes are in ascending order by ID, so index 1 is most recent)
-		recentChange := changes[1]
-		var recentMeta schema.TokenViewabilityChangeMeta
-		err = json.Unmarshal(recentChange.Meta, &recentMeta)
-		require.NoError(t, err)
-		assert.False(t, recentMeta.IsViewable, "most recent change should show token is not viewable")
+		assert.Empty(t, tokenIDs)
 	})
 }
 
@@ -5882,7 +5796,6 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"MediaAssets", testMediaAssets},
 		{"GetTokenOwnersBulk", testGetTokenOwnersBulk},
 		{"GetTokenProvenanceEventsBulk", testGetTokenProvenanceEventsBulk},
-		{"GetEnrichmentSourcesByTokenIDs", testGetEnrichmentSourcesByTokenIDs},
 		{"WebhookClients", testWebhookClients},
 		{"WebhookDeliveries", testWebhookDeliveries},
 		{"AddressIndexingJobs", testAddressIndexingJobs},

@@ -98,11 +98,19 @@ type CreateMetadataUpdateInput struct {
 	ProvenanceEvent CreateProvenanceEventInput
 }
 
-// TokenViewabilityInfo represents a token's viewability status for a specific media URL
+// TokenViewabilityInfo represents a token's viewability status
 type TokenViewabilityInfo struct {
-	TokenID    uint64 `gorm:"column:token_id"`    // Internal token ID
-	TokenCID   string `gorm:"column:token_cid"`   // Canonical token identifier
-	IsViewable bool   `gorm:"column:is_viewable"` // true if token has at least one healthy media URL
+	TokenID    uint64 `gorm:"column:id"`
+	TokenCID   string `gorm:"column:token_cid"`
+	IsViewable bool   `gorm:"column:is_viewable"`
+}
+
+// TokenViewabilityChange represents a change in token viewability
+type TokenViewabilityChange struct {
+	TokenID     uint64
+	TokenCID    string
+	OldViewable bool
+	NewViewable bool
 }
 
 // UpdateTokenTransferInput represents the input for updating a token transfer (assumes token exists)
@@ -132,16 +140,15 @@ type UpsertTokenBalanceForOwnerInput struct {
 
 // TokenQueryFilter represents filters for token queries
 type TokenQueryFilter struct {
-	Owners             []string
-	Chains             []domain.Chain
-	ContractAddresses  []string
-	TokenNumbers       []string
-	TokenIDs           []uint64
-	TokenCIDs          []string
-	IncludeBroken      bool // Include tokens with broken metadata (missing both metadata and enrichment)
-	IncludeBrokenMedia bool // Include tokens with broken media (inaccessible URLs)
-	Limit              int
-	Offset             uint64 // Offset for pagination
+	Owners            []string
+	Chains            []domain.Chain
+	ContractAddresses []string
+	TokenNumbers      []string
+	TokenIDs          []uint64
+	TokenCIDs         []string
+	IncludeUnviewable bool // If false (default), only return tokens with is_viewable=true
+	Limit             int
+	Offset            uint64 // Offset for pagination
 }
 
 // ChangesQueryFilter represents filters for changes queries
@@ -281,16 +288,22 @@ type Store interface {
 
 	// GetURLsForChecking returns URLs that need health checking based on last check time
 	GetURLsForChecking(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error)
-	// GetTokensViewabilityByMediaURL returns all tokens that use a specific URL along with their viewability status
-	GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]TokenViewabilityInfo, error)
+	// GetTokenIDsByMediaURL returns all token IDs that use a specific URL
+	GetTokenIDsByMediaURL(ctx context.Context, url string) ([]uint64, error)
 	// GetTokensViewabilityByIDs returns viewability status for a specific set of token IDs
 	GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityInfo, error)
 	// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
 	UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error
 	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
 	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error
-	// CreateTokenViewabilityChange creates a changes_journal entry for a token viewability change
-	CreateTokenViewabilityChange(ctx context.Context, tokenID uint64, tokenCID string, isViewable bool) error
+
+	// =============================================================================
+	// Token Viewability Operations
+	// =============================================================================
+
+	// BatchUpdateTokensViewability computes and updates is_viewable for multiple tokens in one query
+	// Returns a list of tokens whose viewability actually changed
+	BatchUpdateTokensViewability(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityChange, error)
 
 	// =============================================================================
 	// Token Ownership & Balances
@@ -301,8 +314,6 @@ type Store interface {
 	// GetTokenOwnersBulk retrieves owners (balances) for multiple tokens
 	// Returns a map of tokenID -> balances and a map of tokenID -> total count. Limit is applied per token.
 	GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.Balance, map[uint64]uint64, error)
-	// GetBalanceByID retrieves a balance by ID
-	GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error)
 	// GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
 	GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) ([]domain.TokenCID, error)
 

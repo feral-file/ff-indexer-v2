@@ -16,7 +16,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
@@ -177,20 +176,19 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutE
 		Image:       "https://example.com/image.jpg",
 	}
 
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
 
 	// Mock EnhanceTokenMetadata activity - returns nil (no enhancement)
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
-	// Mock CheckMediaURLsHealth activity - return healthy status
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-	})).Return(map[string]schema.MediaHealthStatus{
-		normalizedMetadata.Image: schema.MediaHealthStatusHealthy,
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - return viewable status
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{normalizedMetadata.Image},
 	}, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
@@ -228,21 +226,19 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnha
 		ImageURL: &enhancedImageURL,
 	}
 
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
 
 	// Mock EnhanceTokenMetadata activity - returns enhanced metadata
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(enhancedMetadata, nil)
 
-	// Mock CheckMediaURLsHealth activity - return healthy status for both URLs
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 2
-	})).Return(map[string]schema.MediaHealthStatus{
-		normalizedMetadata.Image: schema.MediaHealthStatusHealthy,
-		enhancedImageURL:         schema.MediaHealthStatusHealthy,
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - return viewable status for both URLs
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 2
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{metadataImageURL, enhancedImageURL},
 	}, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
@@ -282,7 +278,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataErr
 
 	// Track retry attempts - MaximumAttempts: 2 (1 retry)
 	var activityCallCount int
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(
 		func(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
 			activityCallCount++
 			return nil, expectedError
@@ -291,6 +287,23 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataErr
 
 	// Mock enhancement activity - returns nil (no enhancement)
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, mock.Anything).Return(nil, nil)
+
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - no URLs (since metadata failed), return not viewable
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 0
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  false,
+		HealthyURLs: nil,
+	}, nil)
+
+	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
+		}
+		return false
+	})).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
@@ -303,28 +316,6 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataErr
 	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_UpsertMetadataError() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-	}
-	expectedError := errors.New("database error")
-
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity to fail
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(expectedError)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed with error
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
-}
-
 func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_EnhancementError_NonFatal() {
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
 	normalizedMetadata := &metadata.NormalizedMetadata{
@@ -334,20 +325,19 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_EnhancementError
 	}
 	enhancementError := errors.New("enhancement failed")
 
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
 
 	// Mock EnhanceTokenMetadata activity to fail - should not fail workflow
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, enhancementError)
 
-	// Mock CheckMediaURLsHealth activity - return healthy status for the image from normalized metadata
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-	})).Return(map[string]schema.MediaHealthStatus{
-		normalizedMetadata.Image: schema.MediaHealthStatusHealthy,
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - return viewable status
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{normalizedMetadata.Image},
 	}, nil)
 
 	// Mock webhook notification workflow
@@ -372,20 +362,19 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaWorkflowSta
 		Image:       "https://example.com/image.jpg",
 	}
 
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
 
 	// Mock EnhanceTokenMetadata activity
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
-	// Mock CheckMediaURLsHealth activity - return healthy status
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-	})).Return(map[string]schema.MediaHealthStatus{
-		normalizedMetadata.Image: schema.MediaHealthStatusHealthy,
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - return viewable status
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{normalizedMetadata.Image},
 	}, nil)
 
 	// Mock webhook notification workflow
@@ -402,96 +391,11 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaWorkflowSta
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsUnhealthy_NoWebhook() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       "https://example.com/broken-image.jpg",
-	}
-
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
-
-	// Mock EnhanceTokenMetadata activity - returns nil (no enhancement)
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealth activity - return broken status for the image
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-	})).Return(map[string]schema.MediaHealthStatus{
-		normalizedMetadata.Image: schema.MediaHealthStatusBroken,
-	}, nil)
-
-	// No webhook should be triggered because media is not healthy
-
-	// Mock media indexing child workflow - should still be triggered even if URL is broken
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-	})).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
 // ====================================================================================
-// Media File Type Priority Tests (Animation vs Image)
+// Media URL Health Tests
 // ====================================================================================
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_AnimationHealthy_TriggersWebhook() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	animationURL := "https://example.com/animation.mp4"
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Animation:   animationURL,
-	}
-
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
-
-	// Mock EnhanceTokenMetadata activity
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealth activity - animation is healthy
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == animationURL
-	})).Return(map[string]schema.MediaHealthStatus{
-		animationURL: schema.MediaHealthStatusHealthy,
-	}, nil)
-
-	// Mock webhook notification workflow - should be triggered because animation is healthy
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
-		}
-		return false
-	})).Return(nil)
-
-	// Mock media indexing child workflow
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == animationURL
-	})).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_AnimationBroken_ImageHealthy_NoWebhook() {
+func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsHealthy_TriggersWebhook() {
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
 	imageURL := "https://example.com/image.jpg"
 	animationURL := "https://example.com/animation.mp4"
@@ -502,65 +406,19 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_AnimationBroken_
 		Animation:   animationURL,
 	}
 
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
 
 	// Mock EnhanceTokenMetadata activity
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
-	// Mock CheckMediaURLsHealth activity - animation is broken but image is healthy
-	// Per the logic: if animation URL exists, only animation health matters
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 2
-	})).Return(map[string]schema.MediaHealthStatus{
-		animationURL: schema.MediaHealthStatusBroken,
-		imageURL:     schema.MediaHealthStatusHealthy,
-	}, nil)
-
-	// No webhook should be triggered because animation takes priority and it's broken
-
-	// Mock media indexing child workflow - should still be triggered
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 2
-	})).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully but no webhook triggered
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_BothAnimationAndImageHealthy_TriggersWebhook() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	imageURL := "https://example.com/image.jpg"
-	animationURL := "https://example.com/animation.mp4"
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       imageURL,
-		Animation:   animationURL,
-	}
-
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
-
-	// Mock EnhanceTokenMetadata activity
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealth activity - both are healthy
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 2
-	})).Return(map[string]schema.MediaHealthStatus{
-		animationURL: schema.MediaHealthStatusHealthy,
-		imageURL:     schema.MediaHealthStatusHealthy,
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - both are healthy, return viewable
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 2
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{imageURL, animationURL},
 	}, nil)
 
 	// Mock webhook notification workflow - should be triggered because animation is healthy
@@ -584,54 +442,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_BothAnimationAnd
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_ImageHealthy_NoAnimation_TriggersWebhook() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	imageURL := "https://example.com/image.jpg"
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       imageURL,
-		// No animation URL
-	}
-
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
-
-	// Mock EnhanceTokenMetadata activity
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealth activity - image is healthy
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == imageURL
-	})).Return(map[string]schema.MediaHealthStatus{
-		imageURL: schema.MediaHealthStatusHealthy,
-	}, nil)
-
-	// Mock webhook notification workflow - should be triggered because image is healthy and no animation exists
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
-		}
-		return false
-	})).Return(nil)
-
-	// Mock media indexing child workflow
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == imageURL
-	})).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_BothBroken_NoWebhook() {
+func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsBroken_TriggersUnviewableWebhook() {
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
 	imageURL := "https://example.com/broken-image.jpg"
 	animationURL := "https://example.com/broken-animation.mp4"
@@ -642,34 +453,35 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_BothBroken_NoWeb
 		Animation:   animationURL,
 	}
 
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
 
 	// Mock EnhanceTokenMetadata activity
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
-	// Mock CheckMediaURLsHealth activity - both are broken
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 2
-	})).Return(map[string]schema.MediaHealthStatus{
-		animationURL: schema.MediaHealthStatusBroken,
-		imageURL:     schema.MediaHealthStatusBroken,
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - both are broken, return not viewable
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 2
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  false,
+		HealthyURLs: nil, // No healthy URLs
 	}, nil)
 
-	// No webhook should be triggered because both URLs are broken
-
-	// Mock media indexing child workflow - should still be triggered
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 2
+	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
+		}
+		return false
 	})).Return(nil)
+
+	// No media indexing workflow should be triggered since there are no healthy URLs
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
-	// Verify workflow completed successfully but no webhook triggered
+	// Verify workflow completed successfully with unviewable webhook triggered
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 }
@@ -682,22 +494,25 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NoMediaURLs() {
 		// No Image or Animation URLs
 	}
 
-	// Mock FetchTokenMetadata activity
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock UpsertTokenMetadata activity
-	s.env.OnActivity(s.executor.UpsertTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil)
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
 
 	// Mock EnhanceTokenMetadata activity
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
 
-	// Mock CheckMediaURLsHealth activity - return empty map since no URLs
-	s.env.OnActivity(s.executor.CheckMediaURLsHealth, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 0
-	})).Return(map[string]schema.MediaHealthStatus{}, nil)
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - no URLs, return not viewable
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 0
+		})).Return(false, nil)
 
-	// No webhook should be triggered since media is not healthy (no URLs)
-	// No media indexing workflow should be triggered
+	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
+		}
+		return false
+	})).Return(nil)
 
 	// No media workflow should be triggered
 
@@ -712,11 +527,25 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NoMediaURLs() {
 func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NilMetadata() {
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
 
-	// Mock FetchTokenMetadata activity to return nil metadata
-	s.env.OnActivity(s.executor.FetchTokenMetadata, mock.Anything, tokenCID).Return(nil, nil)
+	// Mock ResolveTokenMetadata activity to return nil metadata
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(nil, nil)
 
 	// Mock EnhanceTokenMetadata activity - should still be called even with nil metadata
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, (*metadata.NormalizedMetadata)(nil)).Return(nil, nil)
+
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - no URLs, return not viewable
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 0
+		})).Return(false, nil)
+
+	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
+		}
+		return false
+	})).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
@@ -724,6 +553,55 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NilMetadata() {
 	// Verify workflow completed successfully (gracefully handles nil metadata)
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_UnviewableEvent_WhenMediaBecomesUnhealthy() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	imageURL := "https://example.com/broken-image.jpg"
+	normalizedMetadata := &metadata.NormalizedMetadata{
+		Name:        "Test Token",
+		Description: "Test Description",
+		Image:       imageURL,
+	}
+
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
+
+	// Mock EnhanceTokenMetadata activity
+	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
+
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - returns false (not viewable)
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 1 && urls[0] == imageURL
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  false,
+		HealthyURLs: nil, // No healthy URLs
+	}, nil)
+
+	// Mock webhook notification workflow - should be triggered with token.indexing.unviewable event
+	var webhookTriggered bool
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			if webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable {
+				webhookTriggered = true
+				return true
+			}
+		}
+		return false
+	})).Return(nil)
+
+	// No media indexing workflow should be triggered since there are no healthy URLs
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	// Verify that the unviewable webhook was triggered
+	s.True(webhookTriggered, "Expected token.indexing.unviewable webhook to be triggered")
 }
 
 // ====================================================================================

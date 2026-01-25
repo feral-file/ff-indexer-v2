@@ -187,7 +187,7 @@ type ComplexityRoot struct {
 		Changes        func(childComplexity int, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, anchor *Uint64, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) int
 		IndexingJob    func(childComplexity int, workflowID string) int
 		Token          func(childComplexity int, cid string, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
-		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeBrokenMetadata *bool, includeBrokenMedia *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID string) int
 	}
 
@@ -208,6 +208,7 @@ type ComplexityRoot struct {
 		TokenCID                    func(childComplexity int) int
 		TokenNumber                 func(childComplexity int) int
 		UpdatedAt                   func(childComplexity int) int
+		Viewable                    func(childComplexity int) int
 	}
 
 	TokenList struct {
@@ -316,7 +317,7 @@ type ProvenanceEventResolver interface {
 }
 type QueryResolver interface {
 	Token(ctx context.Context, cid string, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
-	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeBrokenMetadata *bool, includeBrokenMedia *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
+	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 	Changes(ctx context.Context, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, anchor *Uint64, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error)
 	WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error)
 	IndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error)
@@ -938,7 +939,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_broken_metadata"].(*bool), args["include_broken_media"].(*bool), args["expands"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["expands"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
 	case "Query.workflowStatus":
 		if e.complexity.Query.WorkflowStatus == nil {
 			break
@@ -1047,6 +1048,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.UpdatedAt(childComplexity), true
+	case "Token.viewable":
+		if e.complexity.Token.Viewable == nil {
+			break
+		}
+
+		return e.complexity.Token.Viewable(childComplexity), true
 
 	case "TokenList.offset":
 		if e.complexity.TokenList.Offset == nil {
@@ -1494,6 +1501,7 @@ type Token {
   token_number: String!
   current_owner: String
   burned: Boolean!
+  viewable: Boolean!
   created_at: Time!
   updated_at: Time!
   metadata: TokenMetadata
@@ -1588,8 +1596,7 @@ type Query {
     token_cids: [String!]
     limit: Uint8 = 20
     offset: Uint64 = 0
-    include_broken_metadata: Boolean = false
-    include_broken_media: Boolean = false
+    include_unviewable: Boolean = false
     expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
     owners_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
@@ -1947,46 +1954,41 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["offset"] = arg7
-	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "include_broken_metadata", ec.unmarshalOBoolean2ᚖbool)
+	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "include_unviewable", ec.unmarshalOBoolean2ᚖbool)
 	if err != nil {
 		return nil, err
 	}
-	args["include_broken_metadata"] = arg8
-	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "include_broken_media", ec.unmarshalOBoolean2ᚖbool)
+	args["include_unviewable"] = arg8
+	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "expands", ec.unmarshalOString2ᚕstringᚄ)
 	if err != nil {
 		return nil, err
 	}
-	args["include_broken_media"] = arg9
-	arg10, err := graphql.ProcessArgField(ctx, rawArgs, "expands", ec.unmarshalOString2ᚕstringᚄ)
+	args["expands"] = arg9
+	arg10, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["expands"] = arg10
-	arg11, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["owners_limit"] = arg10
+	arg11, err := graphql.ProcessArgField(ctx, rawArgs, "owners_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
 	if err != nil {
 		return nil, err
 	}
-	args["owners_limit"] = arg11
-	arg12, err := graphql.ProcessArgField(ctx, rawArgs, "owners_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["owners_offset"] = arg11
+	arg12, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["owners_offset"] = arg12
-	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["provenance_events_limit"] = arg12
+	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
 	if err != nil {
 		return nil, err
 	}
-	args["provenance_events_limit"] = arg13
-	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["provenance_events_offset"] = arg13
+	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
 	if err != nil {
 		return nil, err
 	}
-	args["provenance_events_offset"] = arg14
-	arg15, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_order"] = arg15
+	args["provenance_events_order"] = arg14
 	return args, nil
 }
 
@@ -4670,6 +4672,8 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_current_owner(ctx, field)
 			case "burned":
 				return ec.fieldContext_Token_burned(ctx, field)
+			case "viewable":
+				return ec.fieldContext_Token_viewable(ctx, field)
 			case "created_at":
 				return ec.fieldContext_Token_created_at(ctx, field)
 			case "updated_at":
@@ -4712,7 +4716,7 @@ func (ec *executionContext) _Query_tokens(ctx context.Context, field graphql.Col
 		ec.fieldContext_Query_tokens,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_broken_metadata"].(*bool), fc.Args["include_broken_media"].(*bool), fc.Args["expands"].([]string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["expands"].([]string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,
@@ -5270,6 +5274,35 @@ func (ec *executionContext) fieldContext_Token_burned(_ context.Context, field g
 	return fc, nil
 }
 
+func (ec *executionContext) _Token_viewable(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Token_viewable,
+		func(ctx context.Context) (any, error) {
+			return obj.Viewable, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Token_viewable(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Token",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Token_created_at(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -5660,6 +5693,8 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_current_owner(ctx, field)
 			case "burned":
 				return ec.fieldContext_Token_burned(ctx, field)
+			case "viewable":
+				return ec.fieldContext_Token_viewable(ctx, field)
 			case "created_at":
 				return ec.fieldContext_Token_created_at(ctx, field)
 			case "updated_at":
@@ -9892,6 +9927,11 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			out.Values[i] = ec._Token_current_owner(ctx, field, obj)
 		case "burned":
 			out.Values[i] = ec._Token_burned(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "viewable":
+			out.Values[i] = ec._Token_viewable(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}

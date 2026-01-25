@@ -24,6 +24,9 @@ type Token struct {
 	CurrentOwner *string `gorm:"column:current_owner;type:text"`
 	// Burned indicates whether the token has been permanently destroyed
 	Burned bool `gorm:"column:burned;not null;default:false"`
+	// IsViewable indicates if this token has healthy media URLs and can be displayed to users
+	// Logic: Has at least one healthy animation URL, OR (no animations AND has healthy image URL)
+	IsViewable bool `gorm:"column:is_viewable;not null;default:false"`
 	// CreatedAt is the timestamp when this record was first indexed
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this record was last updated

@@ -303,16 +303,9 @@ paths:
           style: form
           explode: true
           example: ["eip155:1:erc721:0xabc123:1234"]
-        - name: include_broken_metadata
+        - name: include_unviewable
           in: query
-          description: Include tokens with broken metadata (no metadata and enrichment records). Default is false - only tokens with metadata and enrichment are returned.
-          schema:
-            type: boolean
-            default: false
-          example: false
-        - name: include_broken_media
-          in: query
-          description: Include tokens with broken media URLs (inaccessible media files). Default is false - only tokens with accessible media are returned.
+          description: Include tokens with unviewable media (no accessible media URLs). Default is false - only tokens with accessible media are returned.
           schema:
             type: boolean
             default: false
@@ -917,7 +910,8 @@ paths:
         ## Event Filters
         You can subscribe to specific event types or use `["*"]` to receive all events:
         - `token.indexing.queryable` - Token becomes queryable (basic ownership indexed)
-        - `token.indexing.viewable` - Token becomes viewable (metadata and enrichment completed)
+        - `token.indexing.viewable` - Token becomes viewable (metadata and enrichment completed, media URLs healthy)
+        - `token.indexing.unviewable` - Token becomes unviewable (metadata/enrichment failed or media URLs unhealthy)
         - `token.indexing.provenance_completed` - Full provenance history indexed
         - `token.ownership.minted` - Token was minted
         - `token.ownership.transferred` - Token ownership changed
@@ -1080,7 +1074,7 @@ webhooks:
               tokenIndexingViewable:
                 summary: token.indexing.viewable event
                 description: |
-                  Fired when a token becomes viewable (metadata and enrichment complete).
+                  Fired when a token becomes viewable (metadata and enrichment complete, media URLs healthy).
                   After this event, the token has full metadata and is ready for display.
                 value:
                   event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J4"
@@ -1093,6 +1087,22 @@ webhooks:
                     contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
                     token_number: "1234"
                     address: "0xowner123"
+              tokenIndexingUnviewable:
+                summary: token.indexing.unviewable event
+                description: |
+                  Fired when a token becomes unviewable (metadata/enrichment failed or media URLs are unhealthy).
+                  This indicates the token cannot be properly displayed due to broken or missing media assets.
+                value:
+                  event_id: "01HQX5VFQM8Z7YW8NZRHT6K9J4B"
+                  event_type: "token.indexing.unviewable"
+                  timestamp: "2024-01-15T10:30:20Z"
+                  data:
+                    token_cid: "eip155:1:erc721:0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270:5678"
+                    chain: "eip155:1"
+                    standard: "erc721"
+                    contract: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270"
+                    token_number: "5678"
+                    address: "0xowner456"
               tokenIndexingProvenanceCompleted:
                 summary: token.indexing.provenance_completed event
                 description: |
@@ -1281,6 +1291,7 @@ components:
         - contract_address
         - token_number
         - burned
+        - viewable
         - created_at
         - updated_at
       properties:
@@ -1313,6 +1324,10 @@ components:
           type: boolean
           description: Whether the token has been burned
           example: false
+        viewable:
+          type: boolean
+          description: Whether the token has accessible media URLs
+          example: true
         created_at:
           type: string
           format: date-time
@@ -2006,7 +2021,8 @@ components:
             
             **Indexing Events** (fired during token indexing workflow):
             - `token.indexing.queryable` - Token becomes queryable (fired after token and minimal provenances are indexed)
-            - `token.indexing.viewable` - Token becomes viewable (fired after metadata and enrichment are complete)
+            - `token.indexing.viewable` - Token becomes viewable (fired after metadata and enrichment are complete, media URLs are healthy)
+            - `token.indexing.unviewable` - Token becomes unviewable (fired when metadata/enrichment fails or media URLs are unhealthy)
             - `token.indexing.provenance_completed` - Full provenance indexed (fired after all historical transfers are indexed)
             
             **Ownership Events** (fired during ownership change workflows):
@@ -2104,6 +2120,7 @@ components:
           enum:
             - token.indexing.queryable
             - token.indexing.viewable
+            - token.indexing.unviewable
             - token.indexing.provenance_completed
             - token.ownership.minted
             - token.ownership.transferred
@@ -2133,7 +2150,8 @@ components:
       description: |
         Data payload for indexing events:
         - `token.indexing.queryable` - Fired after token and minimal provenances are indexed. The token can now be queried by ID, and basic ownership information is available.
-        - `token.indexing.viewable` - Fired after metadata and enrichment are complete. The token now has full metadata, enrichment data, and is ready for display.
+        - `token.indexing.viewable` - Fired after metadata and enrichment are complete, and media URLs are healthy. The token now has full metadata, enrichment data, and is ready for display.
+        - `token.indexing.unviewable` - Fired when metadata/enrichment fails or media URLs are unhealthy. The token cannot be properly displayed due to broken or missing media assets.
         - `token.indexing.provenance_completed` - Fired after full provenance history is indexed. All historical transfers and events are now available.
       properties:
         token_cid:
