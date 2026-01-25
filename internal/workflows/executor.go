@@ -54,8 +54,8 @@ type Executor interface {
 	EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error)
 
 	// CheckMediaURLsHealthAndUpdateViewability checks media URLs in parallel and updates token viewability
-	// Returns true if the token is viewable (has at least one healthy media URL, preferably an animation URL, fallback to image URL)
-	CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (bool, error)
+	// Returns a result struct containing viewability status and list of healthy URLs
+	CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (*MediaHealthCheckResult, error)
 
 	// IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
 	// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
@@ -151,6 +151,12 @@ type BlockRangeResult struct {
 type MediaURLToCheck struct {
 	URL    string
 	Source schema.MediaHealthSource
+}
+
+// MediaHealthCheckResult wraps the result of media health check and viewability update
+type MediaHealthCheckResult struct {
+	IsViewable  bool     `json:"is_viewable"`
+	HealthyURLs []string `json:"healthy_urls"`
 }
 
 // executor is the concrete implementation of Executor
@@ -549,7 +555,8 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 
 // CheckMediaURLsHealthAndUpdateViewability checks media URLs in parallel and updates token viewability
 // This combines URL health checking with viewability computation and DB update
-func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (bool, error) {
+// Returns a result struct containing viewability status and list of healthy URLs
+func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (*MediaHealthCheckResult, error) {
 	logger.InfoCtx(ctx, "Checking media health and updating viewability",
 		zap.String("token_cid", tokenCID),
 		zap.Strings("urls", mediaURLs),
@@ -558,7 +565,10 @@ func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context,
 
 	// If no URLs to check, return false
 	if len(mediaURLs) == 0 {
-		return false, nil
+		return &MediaHealthCheckResult{
+			IsViewable:  false,
+			HealthyURLs: nil,
+		}, nil
 	}
 
 	// Use goroutines to check URLs in parallel
@@ -613,10 +623,17 @@ func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context,
 	wg.Wait()
 	close(resultsChan)
 
-	// Collect results
+	// Collect results and filter healthy URLs
 	healthStatuses := make(map[string]schema.MediaHealthStatus)
+	healthyURLs := make([]string, 0, len(mediaURLs))
+
 	for result := range resultsChan {
 		healthStatuses[result.url] = result.healthStatus
+
+		// Collect healthy URLs
+		if result.healthStatus == schema.MediaHealthStatusHealthy {
+			healthyURLs = append(healthyURLs, result.url)
+		}
 
 		// Update media health in database
 		if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, result.healthStatus, result.lastError); err != nil {
@@ -627,36 +644,42 @@ func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context,
 	// Get token to update viewability
 	token, err := e.store.GetTokenByTokenCID(ctx, tokenCID)
 	if err != nil {
-		return false, fmt.Errorf("failed to get token: %w", err)
+		return nil, fmt.Errorf("failed to get token: %w", err)
 	}
 
 	if token == nil {
-		return false, domain.ErrTokenNotFound
+		return nil, domain.ErrTokenNotFound
 	}
 
 	// Update viewability
 	changes, err := e.store.BatchUpdateTokensViewability(ctx, []uint64{token.ID})
 	if err != nil {
-		return false, fmt.Errorf("failed to update token viewability: %w", err)
+		return nil, fmt.Errorf("failed to update token viewability: %w", err)
 	}
 
 	// If there are changes, return the new viewability status
 	if len(changes) > 0 {
-		return changes[0].NewViewable, nil
+		return &MediaHealthCheckResult{
+			IsViewable:  changes[0].NewViewable,
+			HealthyURLs: healthyURLs,
+		}, nil
 	}
 
 	// If no changes, the viewability status didn't change
 	// We need to query the current status to return the correct value
 	viewabilityInfo, err := e.store.GetTokensViewabilityByIDs(ctx, []uint64{token.ID})
 	if err != nil {
-		return false, fmt.Errorf("failed to get token viewability: %w", err)
+		return nil, fmt.Errorf("failed to get token viewability: %w", err)
 	}
 
 	if len(viewabilityInfo) == 0 {
-		return false, fmt.Errorf("token viewability info not found")
+		return nil, fmt.Errorf("token viewability info not found")
 	}
 
-	return viewabilityInfo[0].IsViewable, nil
+	return &MediaHealthCheckResult{
+		IsViewable:  viewabilityInfo[0].IsViewable,
+		HealthyURLs: healthyURLs,
+	}, nil
 }
 
 // UpdateTokenBurn updates a token and related provenance data for burn event

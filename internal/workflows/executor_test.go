@@ -4146,10 +4146,13 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleHealthyURL(t *te
 		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
 		Return(changes, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.True(t, isViewable)
+	assert.NotNil(t, result)
+	assert.True(t, result.IsViewable)
+	assert.Equal(t, 1, len(result.HealthyURLs))
+	assert.Equal(t, imageURL, result.HealthyURLs[0])
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleBrokenURL(t *testing.T) {
@@ -4200,10 +4203,12 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleBrokenURL(t *tes
 			},
 		}, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.False(t, isViewable)
+	assert.NotNil(t, result)
+	assert.False(t, result.IsViewable)
+	assert.Equal(t, 0, len(result.HealthyURLs)) // No healthy URLs
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_Success_AlreadyViewableNoChange(t *testing.T) {
@@ -4253,10 +4258,13 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_AlreadyViewableNoChang
 			},
 		}, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.True(t, isViewable) // Should return true even though there were no changes
+	assert.NotNil(t, result)
+	assert.True(t, result.IsViewable) // Should return true even though there were no changes
+	assert.Equal(t, 1, len(result.HealthyURLs))
+	assert.Equal(t, imageURL, result.HealthyURLs[0])
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_Success_MultipleURLs(t *testing.T) {
@@ -4315,10 +4323,12 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_MultipleURLs(t *testin
 		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
 		Return(changes, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.True(t, isViewable)
+	assert.NotNil(t, result)
+	assert.True(t, result.IsViewable)
+	assert.Equal(t, 2, len(result.HealthyURLs))
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Healthy(t *testing.T) {
@@ -4365,10 +4375,12 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Healthy(t *tes
 		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
 		Return(changes, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.True(t, isViewable)
+	assert.NotNil(t, result)
+	assert.True(t, result.IsViewable)
+	assert.Equal(t, 1, len(result.HealthyURLs))
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Invalid(t *testing.T) {
@@ -4420,10 +4432,12 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Invalid(t *tes
 			},
 		}, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.False(t, isViewable)
+	assert.NotNil(t, result)
+	assert.False(t, result.IsViewable)
+	assert.Equal(t, 0, len(result.HealthyURLs))
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_Success_MixedURLsAndDataURI(t *testing.T) {
@@ -4483,10 +4497,12 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_MixedURLsAndDataURI(t 
 		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
 		Return(changes, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.True(t, isViewable)
+	assert.NotNil(t, result)
+	assert.True(t, result.IsViewable)
+	assert.Equal(t, 2, len(result.HealthyURLs)) // Both URLs are healthy (image + dataURI)
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testing.T) {
@@ -4537,10 +4553,12 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testi
 			},
 		}, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.False(t, isViewable)
+	assert.NotNil(t, result)
+	assert.False(t, result.IsViewable)
+	assert.Equal(t, 0, len(result.HealthyURLs))
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList(t *testing.T) {
@@ -4553,10 +4571,12 @@ func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList(t *testing.T) {
 
 	// No URLs to check, should return false
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.False(t, isViewable)
+	assert.NotNil(t, result)
+	assert.False(t, result.IsViewable)
+	assert.Equal(t, 0, len(result.HealthyURLs))
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_TokenNotFound(t *testing.T) {
@@ -4586,11 +4606,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_TokenNotFound(t *testing.T) {
 		GetTokenByTokenCID(ctx, tokenCID).
 		Return(nil, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.Error(t, err)
+	assert.Nil(t, result)
 	assert.Equal(t, domain.ErrTokenNotFound, err)
-	assert.False(t, isViewable)
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_GetTokenError(t *testing.T) {
@@ -4621,11 +4641,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_GetTokenError(t *testing.T) {
 		GetTokenByTokenCID(ctx, tokenCID).
 		Return(nil, dbError)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.Error(t, err)
+	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to get token")
-	assert.False(t, isViewable)
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_BatchUpdateViewabilityError(t *testing.T) {
@@ -4665,11 +4685,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_BatchUpdateViewabilityError(t 
 		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
 		Return(nil, dbError)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.Error(t, err)
+	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to update token viewability")
-	assert.False(t, isViewable)
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_UpdateMediaHealthError_NonFatal(t *testing.T) {
@@ -4718,10 +4738,12 @@ func TestCheckMediaURLsHealthAndUpdateViewability_UpdateMediaHealthError_NonFata
 		Return(changes, nil)
 
 	// Should succeed despite media health update error
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.True(t, isViewable)
+	assert.NotNil(t, result)
+	assert.True(t, result.IsViewable)
+	assert.Equal(t, 1, len(result.HealthyURLs))
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_GetViewabilityError(t *testing.T) {
@@ -4766,11 +4788,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_GetViewabilityError(t *testing
 		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
 		Return(nil, dbError)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.Error(t, err)
+	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to get token viewability")
-	assert.False(t, isViewable)
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_ViewabilityInfoNotFound(t *testing.T) {
@@ -4814,9 +4836,9 @@ func TestCheckMediaURLsHealthAndUpdateViewability_ViewabilityInfoNotFound(t *tes
 		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
 		Return([]store.TokenViewabilityInfo{}, nil)
 
-	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.Error(t, err)
+	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "token viewability info not found")
-	assert.False(t, isViewable)
 }

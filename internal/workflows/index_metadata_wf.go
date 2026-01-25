@@ -150,41 +150,45 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 
 	// Step 3: Check media health and update viewability, then fire the webhook
 	// This activity checks all URLs in parallel and updates the is_viewable column
-	var isViewable bool
+	// It returns the viewability status and list of healthy URLs
+	var result *MediaHealthCheckResult
 	err = workflow.ExecuteActivity(ctx, w.executor.CheckMediaURLsHealthAndUpdateViewability,
-		tokenCID.String(), uniqueURLs).Get(ctx, &isViewable)
+		tokenCID.String(), uniqueURLs).Get(ctx, &result)
 	if err != nil {
 		logger.WarnWf(ctx, "Failed to check media health and update viewability (non-fatal)",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
-		isViewable = false // Default to false on error
+		result = &MediaHealthCheckResult{
+			IsViewable:  false,
+			HealthyURLs: nil,
+		}
 	}
 
 	logger.InfoWf(ctx, "Token viewability updated",
 		zap.String("tokenCID", tokenCID.String()),
-		zap.Bool("is_viewable", isViewable),
+		zap.Bool("is_viewable", result.IsViewable),
+		zap.Int("healthy_urls_count", len(result.HealthyURLs)),
 	)
 
-	// WEBHOOK: Trigger viewable event only if token is viewable
-	if isViewable {
+	// WEBHOOK: Trigger viewability changed event
+	if result.IsViewable {
 		w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingViewable, address)
 	} else {
-		logger.InfoWf(ctx, "Skipping viewable webhook - token not viewable",
-			zap.String("tokenCID", tokenCID.String()))
+		w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingUnviewable, address)
 	}
 
-	// Step 4: Trigger media indexing workflow (fire and forget)
+	// Step 4: Trigger media indexing workflow (fire and forget) - only for healthy URLs
 	// This should not fail the parent workflow
-	if len(mediaURLs) > 0 {
+	if len(result.HealthyURLs) > 0 {
 		logger.InfoWf(ctx, "Triggering media indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
-			zap.Int("mediaCount", len(uniqueURLs)),
+			zap.Int("mediaCount", len(result.HealthyURLs)),
 		)
 
-		// Only index valid URLs
-		validURLs := make([]string, 0, len(uniqueURLs))
-		for _, url := range uniqueURLs {
+		// Only index valid URLs from the healthy URLs list
+		validURLs := make([]string, 0, len(result.HealthyURLs))
+		for _, url := range result.HealthyURLs {
 			if types.IsValidURL(url) {
 				validURLs = append(validURLs, url)
 			}

@@ -15,6 +15,10 @@ const (
 	// (metadata and enrichment have been completed, media URLs are healthy)
 	EventTypeTokenIndexingViewable = "token.indexing.viewable" //nolint:gosec,G101
 
+	// EventTypeTokenIndexingUnviewable is fired when a token becomes unviewable
+	// (metadata and enrichment could be invalid or media URLs are not healthy)
+	EventTypeTokenIndexingUnviewable = "token.indexing.unviewable" //nolint:gosec,G101
+
 	// EventTypeTokenIndexingProvenanceCompleted is fired when full provenance has been indexed
 	// (all historical transfers and events have been indexed)
 	EventTypeTokenIndexingProvenanceCompleted = "token.indexing.provenance_completed" //nolint:gosec,G101
@@ -43,6 +47,7 @@ const (
 var SupportedEventTypes = []string{
 	EventTypeTokenIndexingQueryable,
 	EventTypeTokenIndexingViewable,
+	EventTypeTokenIndexingUnviewable,
 	EventTypeTokenIndexingProvenanceCompleted,
 	EventTypeTokenOwnershipMinted,
 	EventTypeTokenOwnershipTransferred,

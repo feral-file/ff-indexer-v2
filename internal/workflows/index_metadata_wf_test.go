@@ -186,7 +186,10 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutE
 	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
 		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
 			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-		})).Return(true, nil)
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{normalizedMetadata.Image},
+	}, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
 	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
@@ -233,7 +236,10 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnha
 	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
 		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
 			return len(urls) == 2
-		})).Return(true, nil)
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{metadataImageURL, enhancedImageURL},
+	}, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
 	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
@@ -282,6 +288,23 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataErr
 	// Mock enhancement activity - returns nil (no enhancement)
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, mock.Anything).Return(nil, nil)
 
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - no URLs (since metadata failed), return not viewable
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 0
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  false,
+		HealthyURLs: nil,
+	}, nil)
+
+	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
+		}
+		return false
+	})).Return(nil)
+
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
@@ -312,7 +335,10 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_EnhancementError
 	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
 		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
 			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-		})).Return(true, nil)
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{normalizedMetadata.Image},
+	}, nil)
 
 	// Mock webhook notification workflow
 	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
@@ -346,7 +372,10 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaWorkflowSta
 	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
 		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
 			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-		})).Return(true, nil)
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{normalizedMetadata.Image},
+	}, nil)
 
 	// Mock webhook notification workflow
 	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
@@ -387,7 +416,10 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsHealthy
 	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
 		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
 			return len(urls) == 2
-		})).Return(true, nil)
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{imageURL, animationURL},
+	}, nil)
 
 	// Mock webhook notification workflow - should be triggered because animation is healthy
 	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
@@ -410,7 +442,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsHealthy
 	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsBroken_NoWebhook() {
+func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsBroken_TriggersUnviewableWebhook() {
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
 	imageURL := "https://example.com/broken-image.jpg"
 	animationURL := "https://example.com/broken-animation.mp4"
@@ -431,19 +463,25 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsBroken_
 	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
 		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
 			return len(urls) == 2
-		})).Return(false, nil)
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  false,
+		HealthyURLs: nil, // No healthy URLs
+	}, nil)
 
-	// No webhook should be triggered because both URLs are broken
-
-	// Mock media indexing child workflow - should still be triggered
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 2
+	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
+		}
+		return false
 	})).Return(nil)
+
+	// No media indexing workflow should be triggered since there are no healthy URLs
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
-	// Verify workflow completed successfully but no webhook triggered
+	// Verify workflow completed successfully with unviewable webhook triggered
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 }
@@ -468,8 +506,13 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NoMediaURLs() {
 			return len(urls) == 0
 		})).Return(false, nil)
 
-	// No webhook should be triggered since media is not healthy (no URLs)
-	// No media indexing workflow should be triggered
+	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
+		}
+		return false
+	})).Return(nil)
 
 	// No media workflow should be triggered
 
@@ -490,12 +533,75 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NilMetadata() {
 	// Mock EnhanceTokenMetadata activity - should still be called even with nil metadata
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, (*metadata.NormalizedMetadata)(nil)).Return(nil, nil)
 
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - no URLs, return not viewable
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 0
+		})).Return(false, nil)
+
+	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
+		}
+		return false
+	})).Return(nil)
+
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully (gracefully handles nil metadata)
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_UnviewableEvent_WhenMediaBecomesUnhealthy() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	imageURL := "https://example.com/broken-image.jpg"
+	normalizedMetadata := &metadata.NormalizedMetadata{
+		Name:        "Test Token",
+		Description: "Test Description",
+		Image:       imageURL,
+	}
+
+	// Mock ResolveTokenMetadata activity
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
+
+	// Mock EnhanceTokenMetadata activity
+	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
+
+	// Mock CheckMediaURLsHealthAndUpdateViewability activity - returns false (not viewable)
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 1 && urls[0] == imageURL
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  false,
+		HealthyURLs: nil, // No healthy URLs
+	}, nil)
+
+	// Mock webhook notification workflow - should be triggered with token.indexing.unviewable event
+	var webhookTriggered bool
+	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			if webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable {
+				webhookTriggered = true
+				return true
+			}
+		}
+		return false
+	})).Return(nil)
+
+	// No media indexing workflow should be triggered since there are no healthy URLs
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	// Verify that the unviewable webhook was triggered
+	s.True(webhookTriggered, "Expected token.indexing.unviewable webhook to be triggered")
 }
 
 // ====================================================================================

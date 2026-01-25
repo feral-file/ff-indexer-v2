@@ -43,10 +43,10 @@ func (m *MockCoreExecutor) EXPECT() *MockCoreExecutorMockRecorder {
 }
 
 // CheckMediaURLsHealthAndUpdateViewability mocks base method.
-func (m *MockCoreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (bool, error) {
+func (m *MockCoreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (*workflows.MediaHealthCheckResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CheckMediaURLsHealthAndUpdateViewability", ctx, tokenCID, mediaURLs)
-	ret0, _ := ret[0].(bool)
+	ret0, _ := ret[0].(*workflows.MediaHealthCheckResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
