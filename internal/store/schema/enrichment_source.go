@@ -57,6 +57,18 @@ type EnrichmentSource struct {
 	Token Token `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
 }
 
+// MediaURLs returns the media URLs from the enrichment source
+func (e *EnrichmentSource) MediaURLs() []string {
+	var urls []string
+	if e.ImageURL != nil && *e.ImageURL != "" {
+		urls = append(urls, *e.ImageURL)
+	}
+	if e.AnimationURL != nil && *e.AnimationURL != "" {
+		urls = append(urls, *e.AnimationURL)
+	}
+	return urls
+}
+
 // TableName specifies the table name for the EnrichmentSource model
 func (EnrichmentSource) TableName() string {
 	return "enrichment_sources"

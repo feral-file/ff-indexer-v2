@@ -367,8 +367,9 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expands []string,
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
 			expansion != types.ExpansionEnrichmentSource &&
-			expansion != types.ExpansionMetadataMediaAsset &&
-			expansion != types.ExpansionEnrichmentSourceMediaAsset {
+			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
@@ -443,8 +444,9 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
 			expansion != types.ExpansionEnrichmentSource &&
-			expansion != types.ExpansionMetadataMediaAsset &&
-			expansion != types.ExpansionEnrichmentSourceMediaAsset {
+			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}

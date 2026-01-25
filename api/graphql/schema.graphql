@@ -131,8 +131,9 @@ type Token {
   owners: PaginatedOwners
   provenance_events: PaginatedProvenanceEvents
   enrichment_source: EnrichmentSource
-  metadata_media_assets: [MediaAsset!]
-  enrichment_source_media_assets: [MediaAsset!]
+  metadata_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
+  enrichment_source_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
+  media_assets: [MediaAsset!]
 }
 
 # Paginated tokens list

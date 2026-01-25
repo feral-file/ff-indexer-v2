@@ -161,7 +161,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 	// Convert query parameters to executor parameters
 	limit := &queryParams.Limit
 	offset := &queryParams.Offset
-	expansions := queryParams.Expand
+	expansions := queryParams.Expansions
 	ownersLimit := &queryParams.OwnerLimit
 	ownersOffset := &queryParams.OwnerOffset
 	provenanceEventsLimit := &queryParams.ProvenanceEventLimit

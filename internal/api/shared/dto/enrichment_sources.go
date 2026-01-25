@@ -23,6 +23,18 @@ type EnrichmentSourceResponse struct {
 	UpdatedAt    time.Time        `json:"updated_at"`
 }
 
+// MediaURLs returns the media URLs from the enrichment source
+func (e *EnrichmentSourceResponse) MediaURLs() []string {
+	var urls []string
+	if e.ImageURL != nil && *e.ImageURL != "" {
+		urls = append(urls, *e.ImageURL)
+	}
+	if e.AnimationURL != nil && *e.AnimationURL != "" {
+		urls = append(urls, *e.AnimationURL)
+	}
+	return urls
+}
+
 // MapEnrichmentSourceToDTO maps a schema.EnrichmentSource to EnrichmentSourceResponse
 func MapEnrichmentSourceToDTO(enrichment *schema.EnrichmentSource) *EnrichmentSourceResponse {
 	var artists []ArtistResponse

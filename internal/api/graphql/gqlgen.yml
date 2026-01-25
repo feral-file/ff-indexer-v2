@@ -84,6 +84,8 @@ models:
         fieldName: MetadataMediaAssets
       enrichment_source_media_assets:
         fieldName: EnrichmentSourceMediaAssets
+      media_assets:
+        fieldName: MediaAssets
 
   TokenMetadata:
     model:

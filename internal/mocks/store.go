@@ -500,6 +500,36 @@ func (mr *MockStoreMockRecorder) GetTokenMetadataByTokenCID(ctx, tokenCID interf
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadataByTokenCID", reflect.TypeOf((*MockStore)(nil).GetTokenMetadataByTokenCID), ctx, tokenCID)
 }
 
+// GetTokenMetadataByTokenID mocks base method.
+func (m *MockStore) GetTokenMetadataByTokenID(ctx context.Context, tokenID uint64) (*schema.TokenMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenMetadataByTokenID", ctx, tokenID)
+	ret0, _ := ret[0].(*schema.TokenMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenMetadataByTokenID indicates an expected call of GetTokenMetadataByTokenID.
+func (mr *MockStoreMockRecorder) GetTokenMetadataByTokenID(ctx, tokenID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadataByTokenID", reflect.TypeOf((*MockStore)(nil).GetTokenMetadataByTokenID), ctx, tokenID)
+}
+
+// GetTokenMetadataByTokenIDs mocks base method.
+func (m *MockStore) GetTokenMetadataByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.TokenMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenMetadataByTokenIDs", ctx, tokenIDs)
+	ret0, _ := ret[0].(map[uint64]*schema.TokenMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenMetadataByTokenIDs indicates an expected call of GetTokenMetadataByTokenIDs.
+func (mr *MockStoreMockRecorder) GetTokenMetadataByTokenIDs(ctx, tokenIDs interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadataByTokenIDs", reflect.TypeOf((*MockStore)(nil).GetTokenMetadataByTokenIDs), ctx, tokenIDs)
+}
+
 // GetTokenOwners mocks base method.
 func (m *MockStore) GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset uint64) ([]schema.Balance, uint64, error) {
 	m.ctrl.T.Helper()
@@ -595,10 +625,10 @@ func (mr *MockStoreMockRecorder) GetTokensByCIDs(ctx, tokenCIDs interface{}) *go
 }
 
 // GetTokensByFilter mocks base method.
-func (m *MockStore) GetTokensByFilter(ctx context.Context, filter store.TokenQueryFilter) ([]*store.TokensWithMetadataResult, uint64, error) {
+func (m *MockStore) GetTokensByFilter(ctx context.Context, filter store.TokenQueryFilter) ([]schema.Token, uint64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTokensByFilter", ctx, filter)
-	ret0, _ := ret[0].([]*store.TokensWithMetadataResult)
+	ret0, _ := ret[0].([]schema.Token)
 	ret1, _ := ret[1].(uint64)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2

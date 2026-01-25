@@ -48,12 +48,18 @@ func processTokenFields(reqCtx *graphql.OperationContext, fields []graphql.Colle
 			expansion = types.ExpansionOwners
 		case "provenance_events":
 			expansion = types.ExpansionProvenanceEvents
+		case "metadata":
+			expansion = types.ExpansionMetadata
 		case "enrichment_source":
 			expansion = types.ExpansionEnrichmentSource
+		case "media_assets":
+			expansion = types.ExpansionMediaAsset
 		case "metadata_media_assets":
-			expansion = types.ExpansionMetadataMediaAsset
+			// Deprecated: maintained for backward compatibility
+			expansion = types.ExpansionMetadataMediaAsset //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 		case "enrichment_source_media_assets":
-			expansion = types.ExpansionEnrichmentSourceMediaAsset
+			// Deprecated: maintained for backward compatibility
+			expansion = types.ExpansionEnrichmentSourceMediaAsset //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 		}
 
 		// Add to set if we found an expansion
