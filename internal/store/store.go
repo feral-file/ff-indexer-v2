@@ -314,8 +314,6 @@ type Store interface {
 	// GetTokenOwnersBulk retrieves owners (balances) for multiple tokens
 	// Returns a map of tokenID -> balances and a map of tokenID -> total count. Limit is applied per token.
 	GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.Balance, map[uint64]uint64, error)
-	// GetBalanceByID retrieves a balance by ID
-	GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error)
 	// GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
 	GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) ([]domain.TokenCID, error)
 

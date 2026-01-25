@@ -1933,19 +1933,6 @@ func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *go
 	return nil
 }
 
-// GetBalanceByID retrieves a balance by ID
-func (s *pgStore) GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error) {
-	var balance schema.Balance
-	err := s.db.WithContext(ctx).Where("id = ?", id).First(&balance).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get balance: %w", err)
-	}
-	return &balance, nil
-}
-
 // GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
 func (s *pgStore) GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) ([]domain.TokenCID, error) {
 	var tokenCIDs []domain.TokenCID

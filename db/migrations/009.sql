@@ -4,6 +4,11 @@
 
 BEGIN;
 
+-- Add unique constraint on token_cid
+-- This ensures each canonical token ID is stored only once
+ALTER TABLE tokens 
+  ADD CONSTRAINT tokens_token_cid_unique UNIQUE (token_cid);
+
 -- Add the is_viewable column with default FALSE
 ALTER TABLE tokens 
   ADD COLUMN is_viewable BOOLEAN NOT NULL DEFAULT false;
@@ -22,18 +27,14 @@ WHERE EXISTS (
 COMMENT ON COLUMN tokens.is_viewable IS 
   'Viewability status based purely on media health. TRUE = has at least one healthy media URL (animation preferred, fallback to image). FALSE = no URLs or all broken. Updated by: 1) IndexTokenMetadata workflow after checking URLs, 2) Media health sweeper after rechecking URLs.';
 
--- Create partial index for fast filtering of viewable tokens (expected to be majority case)
-CREATE INDEX idx_tokens_viewable 
-  ON tokens(is_viewable) 
-  WHERE is_viewable = true;
+-- Create index for fast filtering of viewable tokens (expected to be majority case)
+CREATE INDEX idx_tokens_viewable ON tokens(is_viewable);
 
--- Create compound index for querying by chain + viewability
-CREATE INDEX idx_tokens_chain_is_viewable 
-  ON tokens(chain, is_viewable);
-
--- Create compound index for querying by owner + viewability  
-CREATE INDEX idx_tokens_current_owner_is_viewable 
-  ON tokens(current_owner, is_viewable) 
+-- Create compound index for querying by chain + owner + viewability
+CREATE INDEX idx_tokens_chain_owner_viewable ON tokens (chain, current_owner, is_viewable) 
   WHERE current_owner IS NOT NULL;
+
+-- Create compound index for querying by token CID + viewability
+CREATE INDEX idx_tokens_token_cid_viewable ON tokens (token_cid, is_viewable);
 
 COMMIT;

@@ -228,21 +228,6 @@ func (mr *MockStoreMockRecorder) GetAllKeyValuesByPrefix(ctx, prefix interface{}
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllKeyValuesByPrefix", reflect.TypeOf((*MockStore)(nil).GetAllKeyValuesByPrefix), ctx, prefix)
 }
 
-// GetBalanceByID mocks base method.
-func (m *MockStore) GetBalanceByID(ctx context.Context, id uint64) (*schema.Balance, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetBalanceByID", ctx, id)
-	ret0, _ := ret[0].(*schema.Balance)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetBalanceByID indicates an expected call of GetBalanceByID.
-func (mr *MockStoreMockRecorder) GetBalanceByID(ctx, id interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBalanceByID", reflect.TypeOf((*MockStore)(nil).GetBalanceByID), ctx, id)
-}
-
 // GetBlockCursor mocks base method.
 func (m *MockStore) GetBlockCursor(ctx context.Context, chain string) (uint64, error) {
 	m.ctrl.T.Helper()
