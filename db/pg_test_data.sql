@@ -6,8 +6,8 @@
 -- Sample Tokens
 -- =============================================================================
 
--- ERC721 Token 1 (Ethereum Mainnet) - Single owner, with full metadata
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, created_at, updated_at)
+-- ERC721 Token 1 (Ethereum Mainnet) - Single owner, with full metadata and healthy media
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
 VALUES (
     1,
     'eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:1',
@@ -17,12 +17,13 @@ VALUES (
     '1',
     '0x1234567890123456789012345678901234567890',
     false,
+    true, -- Has healthy image URLs
     now() - interval '30 days',
     now() - interval '30 days'
 );
 
--- ERC721 Token 2 (Ethereum Mainnet) - Different owner
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, created_at, updated_at)
+-- ERC721 Token 2 (Ethereum Mainnet) - Different owner, with metadata and healthy media
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
 VALUES (
     2,
     'eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:2',
@@ -32,12 +33,13 @@ VALUES (
     '2',
     '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
     false,
+    true, -- Has healthy image URLs
     now() - interval '25 days',
     now() - interval '25 days'
 );
 
--- ERC721 Token 3 (Ethereum Sepolia) - Test network
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, created_at, updated_at)
+-- ERC721 Token 3 (Ethereum Sepolia) - Test network, no media health
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
 VALUES (
     3,
     'eip155:11155111:erc721:0x1111111111111111111111111111111111111111:1',
@@ -47,12 +49,13 @@ VALUES (
     '1',
     '0x2222222222222222222222222222222222222222',
     false,
+    false, -- No media health records
     now() - interval '20 days',
     now() - interval '20 days'
 );
 
--- ERC1155 Token 1 (Ethereum Mainnet) - Multi-owner token
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, created_at, updated_at)
+-- ERC1155 Token 1 (Ethereum Mainnet) - Multi-owner token with healthy animation
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
 VALUES (
     4,
     'eip155:1:erc1155:0xd07dc4262BCDbf85190C01c996b4C06a461d2430:1',
@@ -62,12 +65,13 @@ VALUES (
     '1',
     NULL,
     false,
+    true, -- Has healthy animation URLs (takes priority)
     now() - interval '15 days',
     now() - interval '15 days'
 );
 
--- ERC721 Token 4 (Burned token)
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, created_at, updated_at)
+-- ERC721 Token 4 (Burned token) - no media health
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
 VALUES (
     5,
     'eip155:1:erc721:0x3333333333333333333333333333333333333333:999',
@@ -77,12 +81,13 @@ VALUES (
     '999',
     NULL,
     true,
+    false, -- Burned token, no media
     now() - interval '10 days',
     now() - interval '5 days'
 );
 
--- FA2 Token 1 (Tezos Mainnet)
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, created_at, updated_at)
+-- FA2 Token 1 (Tezos Mainnet) - no media health
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
 VALUES (
     6,
     'tezos:mainnet:fa2:KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton:0',
@@ -92,6 +97,7 @@ VALUES (
     '0',
     NULL,
     false,
+    false, -- No media health records
     now() - interval '8 days',
     now() - interval '8 days'
 );
@@ -1134,8 +1140,8 @@ VALUES (
     now() - interval '1 day'
 );
 
--- Token 3 and Token 5 (burned) and Token 6 (FA2) have NO media health records
--- They will be considered broken when filtered without IncludeBrokenMedia
+-- Token 3 (no media health), Token 5 (burned), and Token 6 (FA2, no media health)
+-- have is_viewable = false due to lack of healthy media URLs
 
 -- Reset sequence
 SELECT setval('token_media_health_id_seq', 100, true);

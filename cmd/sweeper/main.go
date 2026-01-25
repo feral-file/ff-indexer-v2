@@ -148,12 +148,10 @@ func main() {
 	cancel()
 
 	// Give the sweeper time to shut down gracefully
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
-	if err := mediaSweeper.Stop(shutdownCtx); err != nil {
-		logger.ErrorCtx(shutdownCtx, err)
-	}
+	_ = mediaSweeper.Stop(shutdownCtx)
 
 	logger.InfoCtx(shutdownCtx, "Sweeper stopped")
 }

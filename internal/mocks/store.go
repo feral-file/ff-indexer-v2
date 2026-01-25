@@ -39,6 +39,21 @@ func (m *MockStore) EXPECT() *MockStoreMockRecorder {
 	return m.recorder
 }
 
+// BatchUpdateTokensViewability mocks base method.
+func (m *MockStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []uint64) ([]store.TokenViewabilityChange, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BatchUpdateTokensViewability", ctx, tokenIDs)
+	ret0, _ := ret[0].([]store.TokenViewabilityChange)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// BatchUpdateTokensViewability indicates an expected call of BatchUpdateTokensViewability.
+func (mr *MockStoreMockRecorder) BatchUpdateTokensViewability(ctx, tokenIDs interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BatchUpdateTokensViewability", reflect.TypeOf((*MockStore)(nil).BatchUpdateTokensViewability), ctx, tokenIDs)
+}
+
 // CreateAddressIndexingJob mocks base method.
 func (m *MockStore) CreateAddressIndexingJob(ctx context.Context, input store.CreateAddressIndexingJobInput) error {
 	m.ctrl.T.Helper()
@@ -94,20 +109,6 @@ func (m *MockStore) CreateTokenMint(ctx context.Context, input store.CreateToken
 func (mr *MockStoreMockRecorder) CreateTokenMint(ctx, input interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenMint", reflect.TypeOf((*MockStore)(nil).CreateTokenMint), ctx, input)
-}
-
-// CreateTokenViewabilityChange mocks base method.
-func (m *MockStore) CreateTokenViewabilityChange(ctx context.Context, tokenID uint64, tokenCID string, isViewable bool) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateTokenViewabilityChange", ctx, tokenID, tokenCID, isViewable)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// CreateTokenViewabilityChange indicates an expected call of CreateTokenViewabilityChange.
-func (mr *MockStoreMockRecorder) CreateTokenViewabilityChange(ctx, tokenID, tokenCID, isViewable interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTokenViewabilityChange", reflect.TypeOf((*MockStore)(nil).CreateTokenViewabilityChange), ctx, tokenID, tokenCID, isViewable)
 }
 
 // CreateTokenWithProvenances mocks base method.
@@ -484,6 +485,21 @@ func (mr *MockStoreMockRecorder) GetTokenCountsByAddress(ctx, address, chain int
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCountsByAddress", reflect.TypeOf((*MockStore)(nil).GetTokenCountsByAddress), ctx, address, chain)
 }
 
+// GetTokenIDsByMediaURL mocks base method.
+func (m *MockStore) GetTokenIDsByMediaURL(ctx context.Context, url string) ([]uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenIDsByMediaURL", ctx, url)
+	ret0, _ := ret[0].([]uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenIDsByMediaURL indicates an expected call of GetTokenIDsByMediaURL.
+func (mr *MockStoreMockRecorder) GetTokenIDsByMediaURL(ctx, url interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenIDsByMediaURL", reflect.TypeOf((*MockStore)(nil).GetTokenIDsByMediaURL), ctx, url)
+}
+
 // GetTokenMetadataByTokenCID mocks base method.
 func (m *MockStore) GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error) {
 	m.ctrl.T.Helper()
@@ -637,21 +653,6 @@ func (m *MockStore) GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []ui
 func (mr *MockStoreMockRecorder) GetTokensViewabilityByIDs(ctx, tokenIDs interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensViewabilityByIDs", reflect.TypeOf((*MockStore)(nil).GetTokensViewabilityByIDs), ctx, tokenIDs)
-}
-
-// GetTokensViewabilityByMediaURL mocks base method.
-func (m *MockStore) GetTokensViewabilityByMediaURL(ctx context.Context, url string) ([]store.TokenViewabilityInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokensViewabilityByMediaURL", ctx, url)
-	ret0, _ := ret[0].([]store.TokenViewabilityInfo)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetTokensViewabilityByMediaURL indicates an expected call of GetTokensViewabilityByMediaURL.
-func (mr *MockStoreMockRecorder) GetTokensViewabilityByMediaURL(ctx, url interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensViewabilityByMediaURL", reflect.TypeOf((*MockStore)(nil).GetTokensViewabilityByMediaURL), ctx, url)
 }
 
 // GetURLsForChecking mocks base method.

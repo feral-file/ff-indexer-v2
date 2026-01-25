@@ -1,6 +1,8 @@
 package adapter
 
-import "time"
+import (
+	"time"
+)
 
 // Clock defines an interface for time operations to enable mocking
 //

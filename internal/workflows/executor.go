@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -46,18 +47,15 @@ type Executor interface {
 	// CreateMetadataUpdate creates a metadata update provenance event
 	CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error
 
-	// FetchTokenMetadata fetches token metadata from blockchain
-	FetchTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error)
-
-	// UpsertTokenMetadata stores or updates token metadata in the database
-	UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) error
+	// ResolveTokenMetadata resolves token metadata from blockchain and store metadata in the database
+	ResolveTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error)
 
 	// EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
 	EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error)
 
-	// CheckMediaURLsHealth checks the health of media URLs and updates the database
-	// Returns a map of URLs to their health status
-	CheckMediaURLsHealth(ctx context.Context, urls []string) (map[string]schema.MediaHealthStatus, error)
+	// CheckMediaURLsHealthAndUpdateViewability checks media URLs in parallel and updates token viewability
+	// Returns true if the token is viewable (has at least one healthy media URL, preferably an animation URL, fallback to image URL)
+	CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (bool, error)
 
 	// IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
 	// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
@@ -169,6 +167,7 @@ type executor struct {
 	temporalActivity adapter.Activity
 	blacklist        registry.BlacklistRegistry
 	urlChecker       uri.URLChecker
+	dataURIChecker   uri.DataURIChecker
 }
 
 // NewExecutor creates a new executor instance
@@ -185,6 +184,7 @@ func NewExecutor(
 	temporalActivity adapter.Activity,
 	blacklist registry.BlacklistRegistry,
 	urlChecker uri.URLChecker,
+	dataURIChecker uri.DataURIChecker,
 ) Executor {
 	return &executor{
 		store:            store,
@@ -199,6 +199,7 @@ func NewExecutor(
 		temporalActivity: temporalActivity,
 		blacklist:        blacklist,
 		urlChecker:       urlChecker,
+		dataURIChecker:   dataURIChecker,
 	}
 }
 
@@ -391,46 +392,40 @@ func (e *executor) UpdateTokenTransfer(ctx context.Context, event *domain.Blockc
 	return nil
 }
 
-// FetchTokenMetadata fetches token metadata from blockchain
-func (e *executor) FetchTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
+// ResolveTokenMetadata resolves token metadata from blockchain and store metadata in the database
+func (e *executor) ResolveTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
 	// Validate token CID
 	if !tokenCID.Valid() {
 		return nil, domain.ErrInvalidTokenCID
 	}
 
-	return e.metadataResolver.Resolve(ctx, tokenCID)
-}
-
-// UpsertTokenMetadata stores or updates token metadata in the database
-func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) error {
-	// Validate token CID
-	if !tokenCID.Valid() {
-		return domain.ErrInvalidTokenCID
-	}
-
-	// Get token with metadata
-	result, err := e.store.GetTokenWithMetadataByTokenCID(ctx, tokenCID.String())
+	// Resolve the token metadata from blockchain
+	normalizedMetadata, err := e.metadataResolver.Resolve(ctx, tokenCID)
 	if err != nil {
-		return fmt.Errorf("failed to get token with metadata: %w", err)
+		return nil, fmt.Errorf("failed to resolve token metadata: %w", err)
 	}
 
-	if result == nil {
-		return domain.ErrTokenNotFound
+	// Get current token with metadata from database
+	tokenWithMetadata, err := e.store.GetTokenWithMetadataByTokenCID(ctx, tokenCID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token with metadata: %w", err)
 	}
 
-	currentMetadata := result.Metadata
+	if tokenWithMetadata == nil {
+		return nil, domain.ErrTokenNotFound
+	}
 
 	// Hash the new metadata
 	hash, metadataJSON, err := e.metadataResolver.RawHash(normalizedMetadata)
 	if err != nil {
-		return fmt.Errorf("failed to get raw hash: %w", err)
+		return nil, fmt.Errorf("failed to get raw hash: %w", err)
 	}
 	hashString := hex.EncodeToString(hash)
 
 	// Preserve the origin JSON if it exists
 	var originJSON []byte
-	if currentMetadata != nil {
-		originJSON = currentMetadata.OriginJSON
+	if tokenWithMetadata.Metadata != nil {
+		originJSON = tokenWithMetadata.Metadata.OriginJSON
 	} else {
 		originJSON = metadataJSON
 	}
@@ -456,7 +451,7 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 	now := e.clock.Now()
 	// Transform metadata to store input
 	input := store.CreateTokenMetadataInput{
-		TokenID:         result.Token.ID,
+		TokenID:         tokenWithMetadata.Token.ID,
 		OriginJSON:      originJSON,
 		LatestJSON:      metadataJSON,
 		LatestHash:      &hashString,
@@ -473,10 +468,13 @@ func (e *executor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.Toke
 
 	// Upsert the metadata
 	if err := e.store.UpsertTokenMetadata(ctx, input); err != nil {
-		return fmt.Errorf("failed to upsert token metadata: %w", err)
+		return nil, fmt.Errorf("failed to upsert token metadata: %w", err)
 	}
 
-	return nil
+	logger.InfoCtx(ctx, "Successfully resolved token metadata",
+		zap.String("tokenCID", tokenCID.String()))
+
+	return normalizedMetadata, nil
 }
 
 // EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
@@ -549,64 +547,98 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 	return enhanced, nil
 }
 
-// CheckMediaURLsHealth checks the health of media URLs and updates the database
-// Returns a map of URLs to their health status
-func (e *executor) CheckMediaURLsHealth(ctx context.Context, urls []string) (map[string]schema.MediaHealthStatus, error) {
-	// If no media URLs, consider as unhealthy
-	if len(urls) == 0 {
-		logger.InfoCtx(ctx, "No media URLs to check")
-		return nil, nil
-	}
+// CheckMediaURLsHealthAndUpdateViewability checks media URLs in parallel and updates token viewability
+// This combines URL health checking with viewability computation and DB update
+func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (bool, error) {
+	logger.InfoCtx(ctx, "Checking media health and updating viewability",
+		zap.String("token_cid", tokenCID),
+		zap.Strings("urls", mediaURLs),
+		zap.Int("url_count", len(mediaURLs)),
+	)
 
-	// Check all URLs in parallel
-	type checkResult struct {
+	// Use goroutines to check URLs in parallel
+	type urlResult struct {
 		url          string
 		healthStatus schema.MediaHealthStatus
+		lastError    *string
 	}
 
-	resultChan := make(chan checkResult, len(urls))
+	resultsChan := make(chan urlResult, len(mediaURLs))
+	var wg sync.WaitGroup
 
-	logger.InfoCtx(ctx, "Checking media health", zap.Strings("urls", urls), zap.Int("urlCount", len(urls)))
+	// Launch goroutine for each URL
+	for _, url := range mediaURLs {
+		wg.Add(1)
+		go func(u string) {
+			defer wg.Done()
 
-	// Check each URL in parallel
-	for _, url := range urls {
-		go func(url string) {
-			result := e.urlChecker.Check(ctx, url)
+			var status schema.MediaHealthStatus
+			var errMsg *string
 
-			var healthStatus schema.MediaHealthStatus
-			switch result.Status {
-			case uri.HealthStatusHealthy:
-				healthStatus = schema.MediaHealthStatusHealthy
-			case uri.HealthStatusBroken:
-				healthStatus = schema.MediaHealthStatusBroken
-			case uri.HealthStatusTransientError:
-				// Keep as unknown for transient errors to retry later
-				healthStatus = schema.MediaHealthStatusUnknown
+			if types.IsDataURI(u) {
+				result := e.dataURIChecker.Check(u)
+				if result.Valid {
+					status = schema.MediaHealthStatusHealthy
+				} else {
+					status = schema.MediaHealthStatusBroken
+					errMsg = result.Error
+				}
+			} else {
+				result := e.urlChecker.Check(ctx, u)
+				switch result.Status {
+				case uri.HealthStatusHealthy:
+					status = schema.MediaHealthStatusHealthy
+				case uri.HealthStatusBroken:
+					status = schema.MediaHealthStatusBroken
+				default:
+					status = schema.MediaHealthStatusUnknown
+				}
+				errMsg = result.Error
 			}
 
-			resultChan <- checkResult{
-				url:          url,
-				healthStatus: healthStatus,
+			resultsChan <- urlResult{
+				url:          u,
+				healthStatus: status,
+				lastError:    errMsg,
 			}
 		}(url)
 	}
 
-	// Collect results
-	results := make(map[string]schema.MediaHealthStatus, len(urls))
-	for range urls {
-		result := <-resultChan
-		results[result.url] = result.healthStatus
-	}
-	close(resultChan)
+	// Wait for all checks to complete
+	wg.Wait()
+	close(resultsChan)
 
-	// Update health status in database for all URLs
-	for url, healthStatus := range results {
-		if err := e.store.UpdateTokenMediaHealthByURL(ctx, url, healthStatus, nil); err != nil {
-			return nil, err
+	// Collect results
+	healthStatuses := make(map[string]schema.MediaHealthStatus)
+	for result := range resultsChan {
+		healthStatuses[result.url] = result.healthStatus
+
+		// Update media health in database
+		if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, result.healthStatus, result.lastError); err != nil {
+			logger.ErrorCtx(ctx, err, zap.String("url", result.url))
 		}
 	}
 
-	return results, nil
+	// Get token to update viewability
+	token, err := e.store.GetTokenByTokenCID(ctx, tokenCID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get token: %w", err)
+	}
+
+	if token == nil {
+		return false, domain.ErrTokenNotFound
+	}
+
+	// Update viewability
+	changes, err := e.store.BatchUpdateTokensViewability(ctx, []uint64{token.ID})
+	if err != nil {
+		return false, fmt.Errorf("failed to update token viewability: %w", err)
+	}
+	if len(changes) == 0 {
+		return false, nil
+	}
+
+	return changes[0].NewViewable, nil
 }
 
 // UpdateTokenBurn updates a token and related provenance data for burn event

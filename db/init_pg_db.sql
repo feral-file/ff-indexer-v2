@@ -28,6 +28,7 @@ CREATE TABLE tokens (
     token_number TEXT NOT NULL,
     current_owner TEXT,
     burned BOOLEAN NOT NULL DEFAULT FALSE,
+    is_viewable BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (chain, contract_address, token_number)
@@ -277,6 +278,9 @@ CREATE INDEX idx_tokens_chain_contract_number ON tokens (chain, contract_address
 CREATE INDEX idx_tokens_current_owner ON tokens (current_owner) WHERE current_owner IS NOT NULL;
 CREATE INDEX idx_tokens_burned ON tokens (burned) WHERE burned;
 CREATE INDEX idx_tokens_created_at ON tokens (created_at);
+CREATE INDEX idx_tokens_viewable ON tokens (is_viewable) WHERE is_viewable = true;
+CREATE INDEX idx_tokens_chain_is_viewable ON tokens (chain, is_viewable);
+CREATE INDEX idx_tokens_current_owner_is_viewable ON tokens (current_owner, is_viewable) WHERE current_owner IS NOT NULL;
 
 -- Balances table indexes
 CREATE INDEX idx_balances_token_owner ON balances (token_id, owner_address);

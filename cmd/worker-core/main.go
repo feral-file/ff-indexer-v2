@@ -185,6 +185,7 @@ func main() {
 
 	// Initialize URL checker for media health checks
 	urlChecker := uri.NewURLChecker(httpClient, ioAdapter, uriConfig)
+	dataURIChecker := uri.NewDataURIChecker()
 
 	// Initialize metadata enhancer and resolver
 	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, objktClient, openseaClient, jsonAdapter, jcsAdapter)
@@ -210,7 +211,8 @@ func main() {
 		ioAdapter,
 		temporalActivityAdapter,
 		blacklistRegistry,
-		urlChecker)
+		urlChecker,
+		dataURIChecker)
 
 	// Connect to Temporal with logger integration
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
@@ -274,8 +276,7 @@ func main() {
 	// Register activities
 	// Activities will be called by workflows
 	temporalWorker.RegisterActivity(executor.CreateTokenMint)
-	temporalWorker.RegisterActivity(executor.FetchTokenMetadata)
-	temporalWorker.RegisterActivity(executor.UpsertTokenMetadata)
+	temporalWorker.RegisterActivity(executor.ResolveTokenMetadata)
 	temporalWorker.RegisterActivity(executor.EnhanceTokenMetadata)
 	temporalWorker.RegisterActivity(executor.UpdateTokenTransfer)
 	temporalWorker.RegisterActivity(executor.UpdateTokenBurn)
@@ -300,6 +301,7 @@ func main() {
 	temporalWorker.RegisterActivity(executor.CreateIndexingJob)
 	temporalWorker.RegisterActivity(executor.UpdateIndexingJobStatus)
 	temporalWorker.RegisterActivity(executor.UpdateIndexingJobProgress)
+	temporalWorker.RegisterActivity(executor.CheckMediaURLsHealthAndUpdateViewability)
 	logger.InfoCtx(ctx, "Registered activities")
 
 	// Start worker

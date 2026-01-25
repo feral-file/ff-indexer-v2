@@ -303,16 +303,9 @@ paths:
           style: form
           explode: true
           example: ["eip155:1:erc721:0xabc123:1234"]
-        - name: include_broken_metadata
+        - name: include_unviewable
           in: query
-          description: Include tokens with broken metadata (no metadata and enrichment records). Default is false - only tokens with metadata and enrichment are returned.
-          schema:
-            type: boolean
-            default: false
-          example: false
-        - name: include_broken_media
-          in: query
-          description: Include tokens with broken media URLs (inaccessible media files). Default is false - only tokens with accessible media are returned.
+          description: Include tokens with unviewable media (no accessible media URLs). Default is false - only tokens with accessible media are returned.
           schema:
             type: boolean
             default: false
@@ -1281,6 +1274,7 @@ components:
         - contract_address
         - token_number
         - burned
+        - viewable
         - created_at
         - updated_at
       properties:
@@ -1313,6 +1307,10 @@ components:
           type: boolean
           description: Whether the token has been burned
           example: false
+        viewable:
+          type: boolean
+          description: Whether the token has accessible media URLs
+          example: true
         created_at:
           type: string
           format: date-time

@@ -12,7 +12,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
@@ -49,7 +48,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	// Step 2: Start child workflow to index token metadata
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
-		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowExecutionTimeout: 30 * time.Minute,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 	}
@@ -93,8 +92,9 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// - ERC1155: Call uri() contract method
 	// - FA2: Use TzKT API to get normalizedMetadata
 	// It also processes the URI (IPFS, Arweave, HTTP, data URIs)
+	// and stores the metadata in the database
 	var normalizedMetadata *metadata.NormalizedMetadata
-	err := workflow.ExecuteActivity(ctx, w.executor.FetchTokenMetadata, tokenCID).Get(ctx, &normalizedMetadata)
+	err := workflow.ExecuteActivity(ctx, w.executor.ResolveTokenMetadata, tokenCID).Get(ctx, &normalizedMetadata)
 	if err != nil {
 		logger.ErrorWf(ctx,
 			fmt.Errorf("failed to fetch token metadata"),
@@ -105,32 +105,17 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	}
 
 	// Collect media URLs from the normalized metadata
-	// The key are the URLs and the value is a boolean indicating if the URL is animation
-	mediaURLs := make(map[string]bool)
+	mediaURLs := make(map[string]interface{})
 	if normalizedMetadata != nil {
 		if normalizedMetadata.Image != "" {
-			mediaURLs[normalizedMetadata.Image] = false
+			mediaURLs[normalizedMetadata.Image] = struct{}{}
 		}
 		if normalizedMetadata.Animation != "" {
-			mediaURLs[normalizedMetadata.Animation] = true
+			mediaURLs[normalizedMetadata.Animation] = struct{}{}
 		}
 	}
 
-	// Step 2: Store or update the metadata in the database
-	// FIXME unify this upsert with the fetch token metadata activity
-	if normalizedMetadata != nil {
-		err = workflow.ExecuteActivity(ctx, w.executor.UpsertTokenMetadata, tokenCID, normalizedMetadata).Get(ctx, nil)
-		if err != nil {
-			logger.ErrorWf(ctx,
-				fmt.Errorf("failed to upsert token metadata"),
-				zap.Error(err),
-				zap.String("tokenCID", tokenCID.String()),
-			)
-			return err
-		}
-	}
-
-	// Step 3: Enhance metadata from vendor APIs (ArtBlocks, fxhash, OpenSea, etc.)
+	// Step 2: Enhance metadata from vendor APIs (ArtBlocks, fxhash, OpenSea, etc.)
 	// This activity will:
 	// - Detect if the token is from a known vendor (ArtBlocks, fxhash, etc.)
 	// - Fetch additional metadata from vendor APIs
@@ -150,84 +135,60 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// Collect media URLs from enhanced metadata
 	if enhancedMetadata != nil {
 		if enhancedMetadata.ImageURL != nil && *enhancedMetadata.ImageURL != "" {
-			mediaURLs[*enhancedMetadata.ImageURL] = false
+			mediaURLs[*enhancedMetadata.ImageURL] = struct{}{}
 		}
 		if enhancedMetadata.AnimationURL != nil && *enhancedMetadata.AnimationURL != "" {
-			mediaURLs[*enhancedMetadata.AnimationURL] = true
+			mediaURLs[*enhancedMetadata.AnimationURL] = struct{}{}
 		}
 	}
 
-	// Step 4: Check media health before triggering viewable webhook
-	var isMediaHealthy bool
-	if normalizedMetadata != nil || enhancedMetadata != nil || len(mediaURLs) > 0 {
-		// Convert map to slice
-		var urls []string
-		var hasAnimation bool
-		for url := range mediaURLs {
-			urls = append(urls, url)
-			if mediaURLs[url] {
-				hasAnimation = true
-			}
-		}
+	// Convert map to slice of unique URLs
+	var uniqueURLs []string
+	for url := range mediaURLs {
+		uniqueURLs = append(uniqueURLs, url)
+	}
 
-		// Check media health
-		var healthStatuses map[string]schema.MediaHealthStatus
-		err = workflow.ExecuteActivity(ctx, w.executor.CheckMediaURLsHealth, urls).Get(ctx, &healthStatuses)
-		if err != nil {
-			// Log the error but don't fail the workflow
-			logger.WarnWf(ctx, "Failed to check media health (non-fatal)",
-				zap.String("tokenCID", tokenCID.String()),
-				zap.Error(err))
-
-			// Default to false if check fails
-			isMediaHealthy = false
-		}
-
-		// Determine if the token media is healthy
-		// 1. If an animation URL is healthy, the token media is healthy
-		// 2. If an image URL is healthy, and there is no other animation URL, the token media is healthy
-		for url, healthStatus := range healthStatuses {
-			// 1.
-			if healthStatus == schema.MediaHealthStatusHealthy && mediaURLs[url] {
-				isMediaHealthy = true
-				break
-			}
-
-			// 2.
-			if healthStatus == schema.MediaHealthStatusHealthy && !hasAnimation {
-				isMediaHealthy = true
-				break
-			}
-		}
-
-		logger.InfoWf(ctx, "Media health check result",
+	// Step 3: Check media health and update viewability, then fire the webhook
+	// This activity checks all URLs in parallel and updates the is_viewable column
+	var isViewable bool
+	err = workflow.ExecuteActivity(ctx, w.executor.CheckMediaURLsHealthAndUpdateViewability,
+		tokenCID.String(), uniqueURLs).Get(ctx, &isViewable)
+	if err != nil {
+		logger.WarnWf(ctx, "Failed to check media health and update viewability (non-fatal)",
 			zap.String("tokenCID", tokenCID.String()),
-			zap.Bool("isHealthy", isMediaHealthy))
+			zap.Error(err),
+		)
+		isViewable = false // Default to false on error
 	}
 
-	// WEBHOOK: Trigger viewable event only if media is healthy
-	if isMediaHealthy {
+	logger.InfoWf(ctx, "Token viewability updated",
+		zap.String("tokenCID", tokenCID.String()),
+		zap.Bool("is_viewable", isViewable),
+	)
+
+	// WEBHOOK: Trigger viewable event only if token is viewable
+	if isViewable {
 		w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingViewable, address)
 	} else {
-		logger.InfoWf(ctx, "Skipping viewable webhook - media not healthy",
+		logger.InfoWf(ctx, "Skipping viewable webhook - token not viewable",
 			zap.String("tokenCID", tokenCID.String()))
 	}
 
-	// Step 5: Trigger media indexing workflow (fire and forget)
+	// Step 4: Trigger media indexing workflow (fire and forget)
 	// This should not fail the parent workflow
 	if len(mediaURLs) > 0 {
-		// Convert map to slice
-		var urls []string
-		for url := range mediaURLs {
-			if types.IsValidURL(url) {
-				urls = append(urls, url)
-			}
-		}
-
 		logger.InfoWf(ctx, "Triggering media indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
-			zap.Int("mediaCount", len(urls)),
+			zap.Int("mediaCount", len(uniqueURLs)),
 		)
+
+		// Only index valid URLs
+		validURLs := make([]string, 0, len(uniqueURLs))
+		for _, url := range uniqueURLs {
+			if types.IsValidURL(url) {
+				validURLs = append(validURLs, url)
+			}
+		}
 
 		// Configure child workflow options for fire-and-forget
 		childWorkflowOptions := workflow.ChildWorkflowOptions{
@@ -241,7 +202,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 
 		// Start the child workflow without waiting for result
 		// Use workflow name directly to avoid dependency on media package
-		childWorkflow := workflow.ExecuteChildWorkflow(childCtx, "IndexMultipleMediaWorkflow", urls)
+		childWorkflow := workflow.ExecuteChildWorkflow(childCtx, "IndexMultipleMediaWorkflow", validURLs)
 
 		// Only check if workflow started successfully, don't wait for completion
 		var childExecution workflow.Execution
@@ -279,7 +240,7 @@ func (w *workerCore) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs
 	for _, tokenCID := range tokenCIDs {
 		childWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:               fmt.Sprintf("index-metadata-%s", tokenCID.String()),
-			WorkflowExecutionTimeout: 15 * time.Minute,
+			WorkflowExecutionTimeout: 30 * time.Minute,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for children to complete
 		}

@@ -167,8 +167,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 	provenanceEventsLimit := &queryParams.ProvenanceEventLimit
 	provenanceEventsOffset := &queryParams.ProvenanceEventOffset
 	provenanceEventsOrder := &queryParams.ProvenanceEventOrder
-	includeBroken := &queryParams.IncludeBrokenMetadata
-	includeBrokenMedia := &queryParams.IncludeBrokenMedia
+	includeUnviewable := &queryParams.IncludeUnviewable
 
 	// Call executor's GetTokens method
 	response, err := h.executor.GetTokens(
@@ -181,8 +180,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 		queryParams.TokenCIDs,
 		limit,
 		offset,
-		includeBroken,
-		includeBrokenMedia,
+		includeUnviewable,
 		expansions,
 		ownersLimit,
 		ownersOffset,

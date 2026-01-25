@@ -42,19 +42,19 @@ func (m *MockCoreExecutor) EXPECT() *MockCoreExecutorMockRecorder {
 	return m.recorder
 }
 
-// CheckMediaURLsHealth mocks base method.
-func (m *MockCoreExecutor) CheckMediaURLsHealth(ctx context.Context, urls []string) (map[string]schema.MediaHealthStatus, error) {
+// CheckMediaURLsHealthAndUpdateViewability mocks base method.
+func (m *MockCoreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckMediaURLsHealth", ctx, urls)
-	ret0, _ := ret[0].(map[string]schema.MediaHealthStatus)
+	ret := m.ctrl.Call(m, "CheckMediaURLsHealthAndUpdateViewability", ctx, tokenCID, mediaURLs)
+	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// CheckMediaURLsHealth indicates an expected call of CheckMediaURLsHealth.
-func (mr *MockCoreExecutorMockRecorder) CheckMediaURLsHealth(ctx, urls interface{}) *gomock.Call {
+// CheckMediaURLsHealthAndUpdateViewability indicates an expected call of CheckMediaURLsHealthAndUpdateViewability.
+func (mr *MockCoreExecutorMockRecorder) CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckMediaURLsHealth", reflect.TypeOf((*MockCoreExecutor)(nil).CheckMediaURLsHealth), ctx, urls)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckMediaURLsHealthAndUpdateViewability", reflect.TypeOf((*MockCoreExecutor)(nil).CheckMediaURLsHealthAndUpdateViewability), ctx, tokenCID, mediaURLs)
 }
 
 // CheckTokenExists mocks base method.
@@ -171,21 +171,6 @@ func (m *MockCoreExecutor) EnsureWatchedAddressExists(ctx context.Context, addre
 func (mr *MockCoreExecutorMockRecorder) EnsureWatchedAddressExists(ctx, address, chain, dailyQuota interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureWatchedAddressExists", reflect.TypeOf((*MockCoreExecutor)(nil).EnsureWatchedAddressExists), ctx, address, chain, dailyQuota)
-}
-
-// FetchTokenMetadata mocks base method.
-func (m *MockCoreExecutor) FetchTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchTokenMetadata", ctx, tokenCID)
-	ret0, _ := ret[0].(*metadata.NormalizedMetadata)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FetchTokenMetadata indicates an expected call of FetchTokenMetadata.
-func (mr *MockCoreExecutorMockRecorder) FetchTokenMetadata(ctx, tokenCID interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchTokenMetadata", reflect.TypeOf((*MockCoreExecutor)(nil).FetchTokenMetadata), ctx, tokenCID)
 }
 
 // GetActiveWebhookClientsByEventType mocks base method.
@@ -364,6 +349,21 @@ func (mr *MockCoreExecutorMockRecorder) IndexTokenWithMinimalProvenancesByTokenC
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenWithMinimalProvenancesByTokenCID", reflect.TypeOf((*MockCoreExecutor)(nil).IndexTokenWithMinimalProvenancesByTokenCID), ctx, tokenCID, address)
 }
 
+// ResolveTokenMetadata mocks base method.
+func (m *MockCoreExecutor) ResolveTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveTokenMetadata", ctx, tokenCID)
+	ret0, _ := ret[0].(*metadata.NormalizedMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveTokenMetadata indicates an expected call of ResolveTokenMetadata.
+func (mr *MockCoreExecutorMockRecorder) ResolveTokenMetadata(ctx, tokenCID interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveTokenMetadata", reflect.TypeOf((*MockCoreExecutor)(nil).ResolveTokenMetadata), ctx, tokenCID)
+}
+
 // UpdateIndexingBlockRangeForAddress mocks base method.
 func (m *MockCoreExecutor) UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock, maxBlock uint64) error {
 	m.ctrl.T.Helper()
@@ -432,18 +432,4 @@ func (m *MockCoreExecutor) UpdateTokenTransfer(ctx context.Context, event *domai
 func (mr *MockCoreExecutorMockRecorder) UpdateTokenTransfer(ctx, event interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenTransfer", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateTokenTransfer), ctx, event)
-}
-
-// UpsertTokenMetadata mocks base method.
-func (m *MockCoreExecutor) UpsertTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpsertTokenMetadata", ctx, tokenCID, normalizedMetadata)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpsertTokenMetadata indicates an expected call of UpsertTokenMetadata.
-func (mr *MockCoreExecutorMockRecorder) UpsertTokenMetadata(ctx, tokenCID, normalizedMetadata interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenMetadata", reflect.TypeOf((*MockCoreExecutor)(nil).UpsertTokenMetadata), ctx, tokenCID, normalizedMetadata)
 }

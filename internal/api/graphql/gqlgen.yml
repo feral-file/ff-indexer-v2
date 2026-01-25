@@ -64,6 +64,10 @@ models:
         fieldName: TokenNumber
       current_owner:
         fieldName: CurrentOwner
+      burned:
+        fieldName: Burned
+      viewable:
+        fieldName: Viewable
       created_at:
         fieldName: CreatedAt
       updated_at:

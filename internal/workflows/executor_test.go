@@ -22,6 +22,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -44,6 +45,7 @@ type testExecutorMocks struct {
 	temporalActivity *mocks.MockActivity
 	blacklist        *mocks.MockBlacklistRegistry
 	urlChecker       *mocks.MockURLChecker
+	dataURIChecker   *mocks.MockDataURIChecker
 	executor         workflows.Executor
 }
 
@@ -73,6 +75,7 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		temporalActivity: mocks.NewMockActivity(ctrl),
 		blacklist:        mocks.NewMockBlacklistRegistry(ctrl),
 		urlChecker:       mocks.NewMockURLChecker(ctrl),
+		dataURIChecker:   mocks.NewMockDataURIChecker(ctrl),
 	}
 
 	tm.executor = workflows.NewExecutor(
@@ -88,6 +91,7 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		tm.temporalActivity,
 		tm.blacklist,
 		tm.urlChecker,
+		tm.dataURIChecker,
 	)
 
 	return tm
@@ -933,49 +937,121 @@ func TestCreateMetadataUpdate_StoreError(t *testing.T) {
 }
 
 // ====================================================================================
-// FetchTokenMetadata Tests
+// ResolveTokenMetadata Tests
 // ====================================================================================
 
-func TestFetchTokenMetadata_Success(t *testing.T) {
+func TestResolveTokenMetadata_Success(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
 
+	mimeType := "image/png"
+	animationURL := "https://example.com/animation.mp4"
+	publisherName := "Test Publisher"
+	publisherURL := "https://publisher.com"
+
 	expectedMetadata := &metadata.NormalizedMetadata{
 		Name:        "Test NFT",
 		Description: "Test Description",
 		Image:       "https://example.com/image.png",
-		Raw:         map[string]interface{}{"name": "Test NFT"},
+		Animation:   animationURL,
+		Artists: []metadata.Artist{
+			{DID: "did:example:artist1", Name: "Artist 1"},
+			{DID: "did:example:artist2", Name: "Artist 2"},
+		},
+		Publisher: &metadata.Publisher{
+			Name: (*registry.PublisherName)(&publisherName),
+			URL:  &publisherURL,
+		},
+		MimeType: &mimeType,
+		Raw:      map[string]interface{}{"name": "Test NFT"},
 	}
+
+	tokenID := uint64(123)
+	existingOriginJSON := []byte(`{"original":"metadata"}`)
+	tokenWithMetadata := &store.TokensWithMetadataResult{
+		Token: &schema.Token{
+			ID:       tokenID,
+			TokenCID: tokenCID.String(),
+		},
+		Metadata: &schema.TokenMetadata{
+			TokenID:    tokenID,
+			OriginJSON: existingOriginJSON,
+		},
+	}
+
+	metadataJSON := []byte(`{"name":"Test NFT","image":"https://example.com/image.png"}`)
+	hash := []byte("testhash123")
+
+	now := time.Now()
 
 	// Mock metadata resolver
 	mocks.metadataResolver.EXPECT().
 		Resolve(ctx, tokenCID).
 		Return(expectedMetadata, nil)
 
-	result, err := mocks.executor.FetchTokenMetadata(ctx, tokenCID)
+	// Mock store to return token with existing metadata
+	mocks.store.EXPECT().
+		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
+		Return(tokenWithMetadata, nil)
+
+	// Mock RawHash
+	mocks.metadataResolver.EXPECT().
+		RawHash(expectedMetadata).
+		Return(hash, metadataJSON, nil)
+
+	// Mock clock
+	mocks.clock.EXPECT().
+		Now().
+		Return(now)
+
+	// Mock store UpsertTokenMetadata
+	mocks.store.EXPECT().
+		UpsertTokenMetadata(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenMetadataInput) error {
+			assert.Equal(t, tokenID, input.TokenID)
+			assert.Equal(t, existingOriginJSON, input.OriginJSON) // Should preserve existing origin
+			assert.Equal(t, metadataJSON, input.LatestJSON)
+			assert.Equal(t, hex.EncodeToString(hash), *input.LatestHash)
+			assert.Equal(t, schema.EnrichmentLevelNone, input.EnrichmentLevel)
+			assert.Equal(t, now, input.LastRefreshedAt)
+			assert.Equal(t, &expectedMetadata.Image, input.ImageURL)
+			assert.Equal(t, &animationURL, input.AnimationURL)
+			assert.Equal(t, &expectedMetadata.Name, input.Name)
+			assert.Equal(t, &expectedMetadata.Description, input.Description)
+			assert.Equal(t, &mimeType, input.MimeType)
+			assert.Len(t, input.Artists, 2)
+			assert.Equal(t, "did:example:artist1", string(input.Artists[0].DID))
+			assert.Equal(t, "Artist 1", input.Artists[0].Name)
+			assert.NotNil(t, input.Publisher)
+			assert.Equal(t, publisherName, *input.Publisher.Name)
+			assert.Equal(t, &publisherURL, input.Publisher.URL)
+			return nil
+		})
+
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
 
 	assert.NoError(t, err)
 	assert.Equal(t, expectedMetadata, result)
 }
 
-func TestFetchTokenMetadata_InvalidTokenCID(t *testing.T) {
+func TestResolveTokenMetadata_InvalidTokenCID(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
 	invalidTokenCID := domain.TokenCID("")
 
-	result, err := mocks.executor.FetchTokenMetadata(ctx, invalidTokenCID)
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, invalidTokenCID)
 
 	assert.Error(t, err)
 	assert.Equal(t, domain.ErrInvalidTokenCID, err)
 	assert.Nil(t, result)
 }
 
-func TestFetchTokenMetadata_ResolverError(t *testing.T) {
+func TestResolveTokenMetadata_ResolverError(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
@@ -988,253 +1064,154 @@ func TestFetchTokenMetadata_ResolverError(t *testing.T) {
 		Resolve(ctx, tokenCID).
 		Return(nil, resolverErr)
 
-	result, err := mocks.executor.FetchTokenMetadata(ctx, tokenCID)
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
 
 	assert.Error(t, err)
-	assert.Equal(t, resolverErr, err)
+	assert.Contains(t, err.Error(), "failed to resolve token metadata")
 	assert.Nil(t, result)
 }
 
-// ====================================================================================
-// UpsertTokenMetadata Tests
-// ====================================================================================
-
-func TestUpsertTokenMetadata_Success_NewMetadata(t *testing.T) {
+func TestResolveTokenMetadata_GetTokenWithMetadataError(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	now := time.Now()
 
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test NFT",
-		Description: "Test Description",
-		Image:       "https://example.com/image.png",
-		Animation:   "https://example.com/animation.mp4",
-		Artists: []metadata.Artist{
-			{DID: "did:example:artist1", Name: "Artist 1"},
-		},
-		Raw: map[string]interface{}{"name": "Test NFT"},
+	expectedMetadata := &metadata.NormalizedMetadata{
+		Name:  "Test NFT",
+		Image: "https://example.com/image.png",
 	}
 
-	token := &schema.Token{
-		ID:       1,
-		TokenCID: tokenCID.String(),
-	}
+	// Mock metadata resolver
+	mocks.metadataResolver.EXPECT().
+		Resolve(ctx, tokenCID).
+		Return(expectedMetadata, nil)
 
-	// Mock store to return token with no existing metadata
+	// Mock store to return error
+	storeErr := errors.New("database error")
 	mocks.store.EXPECT().
 		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
-		Return(&store.TokensWithMetadataResult{
-			Token:    token,
-			Metadata: nil,
-		}, nil)
+		Return(nil, storeErr)
 
-	// Mock metadata resolver RawHash
-	metadataJSON := []byte(`{"name":"Test NFT"}`)
-	hash := []byte("hash123")
-	mocks.metadataResolver.EXPECT().
-		RawHash(normalizedMetadata).
-		Return(hash, metadataJSON, nil)
-
-	// Mock clock
-	mocks.clock.EXPECT().
-		Now().
-		Return(now)
-
-	// Mock store UpsertTokenMetadata
-	mocks.store.EXPECT().
-		UpsertTokenMetadata(ctx, gomock.Any()).
-		DoAndReturn(func(ctx context.Context, input store.CreateTokenMetadataInput) error {
-			assert.Equal(t, token.ID, input.TokenID)
-			assert.Equal(t, metadataJSON, input.OriginJSON)
-			assert.Equal(t, metadataJSON, input.LatestJSON)
-			assert.Equal(t, hex.EncodeToString(hash), *input.LatestHash)
-			assert.Equal(t, schema.EnrichmentLevelNone, input.EnrichmentLevel)
-			assert.Equal(t, now, input.LastRefreshedAt)
-			assert.Equal(t, &normalizedMetadata.Image, input.ImageURL)
-			assert.Equal(t, &normalizedMetadata.Animation, input.AnimationURL)
-			assert.Equal(t, &normalizedMetadata.Name, input.Name)
-			assert.Equal(t, &normalizedMetadata.Description, input.Description)
-			assert.Nil(t, input.MimeType)
-			assert.Len(t, input.Artists, 1)
-			return nil
-		})
-
-	err := mocks.executor.UpsertTokenMetadata(ctx, tokenCID, normalizedMetadata)
-
-	assert.NoError(t, err)
-}
-
-func TestUpsertTokenMetadata_Success_UpdateExisting(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	now := time.Now()
-
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Updated NFT",
-		Description: "Updated Description",
-		Image:       "https://example.com/image-new.png",
-		Raw:         map[string]interface{}{"name": "Updated NFT"},
-	}
-
-	token := &schema.Token{
-		ID:       1,
-		TokenCID: tokenCID.String(),
-	}
-
-	existingOriginJSON := []byte(`{"name":"Original NFT"}`)
-	existingMetadata := &schema.TokenMetadata{
-		TokenID:    1,
-		OriginJSON: existingOriginJSON,
-	}
-
-	// Mock store to return token with existing metadata
-	mocks.store.EXPECT().
-		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
-		Return(&store.TokensWithMetadataResult{
-			Token:    token,
-			Metadata: existingMetadata,
-		}, nil)
-
-	// Mock metadata resolver RawHash
-	metadataJSON := []byte(`{"name":"Updated NFT"}`)
-	hash := []byte("newhash123")
-	mocks.metadataResolver.EXPECT().
-		RawHash(normalizedMetadata).
-		Return(hash, metadataJSON, nil)
-
-	// Mock clock
-	mocks.clock.EXPECT().
-		Now().
-		Return(now)
-
-	// Mock store UpsertTokenMetadata
-	mocks.store.EXPECT().
-		UpsertTokenMetadata(ctx, gomock.Any()).
-		DoAndReturn(func(ctx context.Context, input store.CreateTokenMetadataInput) error {
-			// Should preserve original origin JSON
-			assert.Equal(t, existingOriginJSON, input.OriginJSON)
-			// But update latest JSON
-			assert.Equal(t, metadataJSON, input.LatestJSON)
-			return nil
-		})
-
-	err := mocks.executor.UpsertTokenMetadata(ctx, tokenCID, normalizedMetadata)
-
-	assert.NoError(t, err)
-}
-
-func TestUpsertTokenMetadata_InvalidTokenCID(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	invalidTokenCID := domain.TokenCID("")
-
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name: "Test NFT",
-	}
-
-	err := mocks.executor.UpsertTokenMetadata(ctx, invalidTokenCID, normalizedMetadata)
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
 
 	assert.Error(t, err)
-	assert.Equal(t, domain.ErrInvalidTokenCID, err)
+	assert.Contains(t, err.Error(), "failed to get token with metadata")
+	assert.Nil(t, result)
 }
 
-func TestUpsertTokenMetadata_TokenNotFound(t *testing.T) {
+func TestResolveTokenMetadata_TokenNotFound(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
 
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name: "Test NFT",
+	expectedMetadata := &metadata.NormalizedMetadata{
+		Name:  "Test NFT",
+		Image: "https://example.com/image.png",
 	}
+
+	// Mock metadata resolver
+	mocks.metadataResolver.EXPECT().
+		Resolve(ctx, tokenCID).
+		Return(expectedMetadata, nil)
 
 	// Mock store to return nil (token not found)
 	mocks.store.EXPECT().
 		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
 		Return(nil, nil)
 
-	err := mocks.executor.UpsertTokenMetadata(ctx, tokenCID, normalizedMetadata)
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
 
 	assert.Error(t, err)
 	assert.Equal(t, domain.ErrTokenNotFound, err)
+	assert.Nil(t, result)
 }
 
-func TestUpsertTokenMetadata_RawHashError(t *testing.T) {
+func TestResolveTokenMetadata_RawHashError(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
 
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name: "Test NFT",
+	expectedMetadata := &metadata.NormalizedMetadata{
+		Name:  "Test NFT",
+		Image: "https://example.com/image.png",
 	}
 
-	token := &schema.Token{
-		ID:       1,
-		TokenCID: tokenCID.String(),
+	tokenID := uint64(123)
+	tokenWithMetadata := &store.TokensWithMetadataResult{
+		Token: &schema.Token{
+			ID:       tokenID,
+			TokenCID: tokenCID.String(),
+		},
+		Metadata: nil, // No existing metadata
 	}
+
+	// Mock metadata resolver
+	mocks.metadataResolver.EXPECT().
+		Resolve(ctx, tokenCID).
+		Return(expectedMetadata, nil)
 
 	// Mock store to return token
 	mocks.store.EXPECT().
 		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
-		Return(&store.TokensWithMetadataResult{
-			Token:    token,
-			Metadata: nil,
-		}, nil)
+		Return(tokenWithMetadata, nil)
 
-	// Mock metadata resolver RawHash to return error
+	// Mock RawHash to return error
 	hashErr := errors.New("hash error")
 	mocks.metadataResolver.EXPECT().
-		RawHash(normalizedMetadata).
+		RawHash(expectedMetadata).
 		Return(nil, nil, hashErr)
 
-	err := mocks.executor.UpsertTokenMetadata(ctx, tokenCID, normalizedMetadata)
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get raw hash")
+	assert.Nil(t, result)
 }
 
-func TestUpsertTokenMetadata_StoreError(t *testing.T) {
+func TestResolveTokenMetadata_UpsertMetadataError(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	expectedMetadata := &metadata.NormalizedMetadata{
+		Name:  "Test NFT",
+		Image: "https://example.com/image.png",
+	}
+
+	tokenID := uint64(123)
+	tokenWithMetadata := &store.TokensWithMetadataResult{
+		Token: &schema.Token{
+			ID:       tokenID,
+			TokenCID: tokenCID.String(),
+		},
+		Metadata: nil,
+	}
+
+	metadataJSON := []byte(`{"name":"Test NFT"}`)
+	hash := []byte("testhash123")
 	now := time.Now()
 
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name: "Test NFT",
-		Raw:  map[string]interface{}{"name": "Test NFT"},
-	}
-
-	token := &schema.Token{
-		ID:       1,
-		TokenCID: tokenCID.String(),
-	}
+	// Mock metadata resolver
+	mocks.metadataResolver.EXPECT().
+		Resolve(ctx, tokenCID).
+		Return(expectedMetadata, nil)
 
 	// Mock store to return token
 	mocks.store.EXPECT().
 		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
-		Return(&store.TokensWithMetadataResult{
-			Token:    token,
-			Metadata: nil,
-		}, nil)
+		Return(tokenWithMetadata, nil)
 
-	// Mock metadata resolver RawHash
-	metadataJSON := []byte(`{"name":"Test NFT"}`)
-	hash := []byte("hash123")
+	// Mock RawHash
 	mocks.metadataResolver.EXPECT().
-		RawHash(normalizedMetadata).
+		RawHash(expectedMetadata).
 		Return(hash, metadataJSON, nil)
 
 	// Mock clock
@@ -1243,15 +1220,219 @@ func TestUpsertTokenMetadata_StoreError(t *testing.T) {
 		Return(now)
 
 	// Mock store UpsertTokenMetadata to return error
-	storeErr := errors.New("database error")
+	upsertErr := errors.New("upsert error")
 	mocks.store.EXPECT().
 		UpsertTokenMetadata(ctx, gomock.Any()).
-		Return(storeErr)
+		Return(upsertErr)
 
-	err := mocks.executor.UpsertTokenMetadata(ctx, tokenCID, normalizedMetadata)
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to upsert token metadata")
+	assert.Nil(t, result)
+}
+
+func TestResolveTokenMetadata_NoExistingMetadata_UsesMetadataJSONAsOrigin(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	expectedMetadata := &metadata.NormalizedMetadata{
+		Name:        "Test NFT",
+		Description: "Description",
+		Image:       "https://example.com/image.png",
+	}
+
+	tokenID := uint64(123)
+	tokenWithMetadata := &store.TokensWithMetadataResult{
+		Token: &schema.Token{
+			ID:       tokenID,
+			TokenCID: tokenCID.String(),
+		},
+		Metadata: nil, // No existing metadata
+	}
+
+	metadataJSON := []byte(`{"name":"Test NFT","image":"https://example.com/image.png"}`)
+	hash := []byte("testhash123")
+	now := time.Now()
+
+	// Mock metadata resolver
+	mocks.metadataResolver.EXPECT().
+		Resolve(ctx, tokenCID).
+		Return(expectedMetadata, nil)
+
+	// Mock store to return token without metadata
+	mocks.store.EXPECT().
+		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
+		Return(tokenWithMetadata, nil)
+
+	// Mock RawHash
+	mocks.metadataResolver.EXPECT().
+		RawHash(expectedMetadata).
+		Return(hash, metadataJSON, nil)
+
+	// Mock clock
+	mocks.clock.EXPECT().
+		Now().
+		Return(now)
+
+	// Mock store UpsertTokenMetadata - verify origin JSON is same as metadata JSON
+	mocks.store.EXPECT().
+		UpsertTokenMetadata(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenMetadataInput) error {
+			assert.Equal(t, tokenID, input.TokenID)
+			assert.Equal(t, metadataJSON, input.OriginJSON) // Should use metadata JSON as origin
+			assert.Equal(t, metadataJSON, input.LatestJSON)
+			return nil
+		})
+
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expectedMetadata, result)
+}
+
+func TestResolveTokenMetadata_WithArtistsNoPublisher(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	expectedMetadata := &metadata.NormalizedMetadata{
+		Name:        "Test NFT",
+		Description: "Test Description",
+		Image:       "https://example.com/image.png",
+		Artists: []metadata.Artist{
+			{DID: "did:example:artist1", Name: "Artist 1"},
+		},
+		Publisher: nil, // No publisher
+	}
+
+	tokenID := uint64(123)
+	tokenWithMetadata := &store.TokensWithMetadataResult{
+		Token: &schema.Token{
+			ID:       tokenID,
+			TokenCID: tokenCID.String(),
+		},
+		Metadata: &schema.TokenMetadata{
+			TokenID:    tokenID,
+			OriginJSON: []byte(`{"original":"metadata"}`),
+		},
+	}
+
+	metadataJSON := []byte(`{"name":"Test NFT"}`)
+	hash := []byte("testhash123")
+	now := time.Now()
+
+	// Mock metadata resolver
+	mocks.metadataResolver.EXPECT().
+		Resolve(ctx, tokenCID).
+		Return(expectedMetadata, nil)
+
+	// Mock store
+	mocks.store.EXPECT().
+		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
+		Return(tokenWithMetadata, nil)
+
+	// Mock RawHash
+	mocks.metadataResolver.EXPECT().
+		RawHash(expectedMetadata).
+		Return(hash, metadataJSON, nil)
+
+	// Mock clock
+	mocks.clock.EXPECT().
+		Now().
+		Return(now)
+
+	// Mock store UpsertTokenMetadata
+	mocks.store.EXPECT().
+		UpsertTokenMetadata(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenMetadataInput) error {
+			assert.Len(t, input.Artists, 1)
+			assert.Equal(t, "did:example:artist1", string(input.Artists[0].DID))
+			assert.Nil(t, input.Publisher)
+			return nil
+		})
+
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expectedMetadata, result)
+}
+
+func TestResolveTokenMetadata_WithPublisherNoArtists(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	publisherName := "Test Publisher"
+	publisherURL := "https://publisher.com"
+	expectedMetadata := &metadata.NormalizedMetadata{
+		Name:        "Test NFT",
+		Description: "Test Description",
+		Image:       "https://example.com/image.png",
+		Artists:     []metadata.Artist{}, // Empty artists
+		Publisher: &metadata.Publisher{
+			Name: (*registry.PublisherName)(&publisherName),
+			URL:  &publisherURL,
+		},
+	}
+
+	tokenID := uint64(123)
+	tokenWithMetadata := &store.TokensWithMetadataResult{
+		Token: &schema.Token{
+			ID:       tokenID,
+			TokenCID: tokenCID.String(),
+		},
+		Metadata: &schema.TokenMetadata{
+			TokenID:    tokenID,
+			OriginJSON: []byte(`{"original":"metadata"}`),
+		},
+	}
+
+	metadataJSON := []byte(`{"name":"Test NFT"}`)
+	hash := []byte("testhash123")
+	now := time.Now()
+
+	// Mock metadata resolver
+	mocks.metadataResolver.EXPECT().
+		Resolve(ctx, tokenCID).
+		Return(expectedMetadata, nil)
+
+	// Mock store
+	mocks.store.EXPECT().
+		GetTokenWithMetadataByTokenCID(ctx, tokenCID.String()).
+		Return(tokenWithMetadata, nil)
+
+	// Mock RawHash
+	mocks.metadataResolver.EXPECT().
+		RawHash(expectedMetadata).
+		Return(hash, metadataJSON, nil)
+
+	// Mock clock
+	mocks.clock.EXPECT().
+		Now().
+		Return(now)
+
+	// Mock store UpsertTokenMetadata
+	mocks.store.EXPECT().
+		UpsertTokenMetadata(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenMetadataInput) error {
+			assert.Empty(t, input.Artists)
+			assert.NotNil(t, input.Publisher)
+			assert.Equal(t, publisherName, *input.Publisher.Name)
+			return nil
+		})
+
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expectedMetadata, result)
 }
 
 // ====================================================================================
@@ -3917,248 +4098,554 @@ func TestUpdateIndexingJobProgress_StoreError(t *testing.T) {
 	assert.Equal(t, storeError, err)
 }
 
-// =============================================================================
-// Test: CheckMediaURLsHealth
-// =============================================================================
+// ====================================================================================
+// CheckMediaURLsHealthAndUpdateViewability Tests
+// ====================================================================================
 
-func TestCheckMediaURLsHealth_NoURLs(t *testing.T) {
+func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleHealthyURL(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	urls := []string{}
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
 
-	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+	// Mock URL health check - healthy
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
+		})
+
+	// Mock database update for media health
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - token becomes viewable
+	changes := []store.TokenViewabilityChange{
+		{
+			TokenID:     token.ID,
+			TokenCID:    tokenCID,
+			OldViewable: false,
+			NewViewable: true,
+		},
+	}
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return(changes, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.Nil(t, results)
+	assert.True(t, isViewable)
 }
 
-func TestCheckMediaURLsHealth_SingleHealthyURL(t *testing.T) {
+func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleBrokenURL(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	url := "https://example.com/image.png"
-	urls := []string{url}
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/broken-image.jpg"
+	mediaURLs := []string{imageURL}
+	errorMsg := "404 Not Found"
 
-	// Mock URL checker to return healthy status
+	// Mock URL health check - broken
 	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url).
+		Check(ctx, imageURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: nil,
-			Error:      nil,
+			Status: uri.HealthStatusBroken,
+			Error:  &errorMsg,
 		})
 
-	// Mock store to update health status
+	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusBroken, &errorMsg).
 		Return(nil)
 
-	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - no changes (still not viewable)
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{}, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, results)
-	assert.Len(t, results, 1)
-	assert.Equal(t, schema.MediaHealthStatusHealthy, results[url])
+	assert.False(t, isViewable)
 }
 
-func TestCheckMediaURLsHealth_SingleBrokenURL(t *testing.T) {
+func TestCheckMediaURLsHealthAndUpdateViewability_Success_MultipleURLs(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	url := "https://example.com/broken.png"
-	urls := []string{url}
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	animationURL := "https://example.com/animation.mp4"
+	mediaURLs := []string{imageURL, animationURL}
 
-	// Mock URL checker to return broken status
+	// Mock URL health checks - both healthy
 	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url).
+		Check(ctx, imageURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusBroken,
-			WorkingURL: nil,
-			Error:      nil,
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
 		})
 
-	// Mock store to update health status
+	mocks.urlChecker.EXPECT().
+		Check(ctx, animationURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
+		})
+
+	// Mock database updates for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, schema.MediaHealthStatusBroken, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
 		Return(nil)
 
-	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, animationURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - token becomes viewable
+	changes := []store.TokenViewabilityChange{
+		{
+			TokenID:     token.ID,
+			TokenCID:    tokenCID,
+			OldViewable: false,
+			NewViewable: true,
+		},
+	}
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return(changes, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, results)
-	assert.Len(t, results, 1)
-	assert.Equal(t, schema.MediaHealthStatusBroken, results[url])
+	assert.True(t, isViewable)
 }
 
-func TestCheckMediaURLsHealth_TransientError(t *testing.T) {
+func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Healthy(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	url := "https://example.com/timeout.png"
-	urls := []string{url}
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	dataURI := "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCI+PC9zdmc+"
+	mediaURLs := []string{dataURI}
 
-	// Mock URL checker to return transient error status
-	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url).
-		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusTransientError,
-			WorkingURL: nil,
-			Error:      nil,
+	// Mock data URI health check - healthy
+	mocks.dataURIChecker.EXPECT().
+		Check(dataURI).
+		Return(uri.DataURICheckResult{
+			Valid: true,
+			Error: nil,
 		})
 
-	// Mock store to update health status as unknown (for retry)
+	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, schema.MediaHealthStatusUnknown, nil).
+		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusHealthy, nil).
 		Return(nil)
 
-	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - token becomes viewable
+	changes := []store.TokenViewabilityChange{
+		{
+			TokenID:     token.ID,
+			TokenCID:    tokenCID,
+			OldViewable: false,
+			NewViewable: true,
+		},
+	}
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return(changes, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, results)
-	assert.Len(t, results, 1)
-	assert.Equal(t, schema.MediaHealthStatusUnknown, results[url])
+	assert.True(t, isViewable)
 }
 
-func TestCheckMediaURLsHealth_MultipleURLs(t *testing.T) {
+func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Invalid(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	url1 := "https://example.com/image1.png"
-	url2 := "https://example.com/image2.png"
-	url3 := "https://example.com/video.mp4"
-	urls := []string{url1, url2, url3}
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	// Use a valid data URI format (has comma) but with invalid base64 content
+	dataURI := "data:image/svg+xml;base64,invalid!!content"
+	mediaURLs := []string{dataURI}
+	errorMsg := "invalid data URI format"
 
-	// Mock URL checker for url1 (healthy)
-	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url1).
-		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: nil,
-			Error:      nil,
+	// Mock data URI health check - invalid
+	mocks.dataURIChecker.EXPECT().
+		Check(dataURI).
+		Return(uri.DataURICheckResult{
+			Valid: false,
+			Error: &errorMsg,
 		})
 
-	// Mock URL checker for url2 (broken)
-	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url2).
-		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusBroken,
-			WorkingURL: nil,
-			Error:      nil,
-		})
-
-	// Mock URL checker for url3 (transient error)
-	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url3).
-		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusTransientError,
-			WorkingURL: nil,
-			Error:      nil,
-		})
-
-	// Mock store updates (order doesn't matter as they run in parallel)
+	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url1, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusBroken, &errorMsg).
 		Return(nil)
 
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url2, schema.MediaHealthStatusBroken, nil).
-		Return(nil)
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
 
+	// Mock viewability update - no changes
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url3, schema.MediaHealthStatusUnknown, nil).
-		Return(nil)
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{}, nil)
 
-	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, results)
-	assert.Len(t, results, 3)
-	assert.Equal(t, schema.MediaHealthStatusHealthy, results[url1])
-	assert.Equal(t, schema.MediaHealthStatusBroken, results[url2])
-	assert.Equal(t, schema.MediaHealthStatusUnknown, results[url3])
+	assert.False(t, isViewable)
 }
 
-func TestCheckMediaURLsHealth_StoreError(t *testing.T) {
+func TestCheckMediaURLsHealthAndUpdateViewability_Success_MixedURLsAndDataURI(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	url := "https://example.com/image.png"
-	urls := []string{url}
-	storeError := errors.New("database error")
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	dataURI := "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCI+PC9zdmc+"
+	mediaURLs := []string{imageURL, dataURI}
 
-	// Mock URL checker to return healthy status
+	// Mock URL health check
 	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url).
+		Check(ctx, imageURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: nil,
-			Error:      nil,
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
 		})
 
-	// Mock store to return error
-	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, schema.MediaHealthStatusHealthy, nil).
-		Return(storeError)
+	// Mock data URI health check
+	mocks.dataURIChecker.EXPECT().
+		Check(dataURI).
+		Return(uri.DataURICheckResult{
+			Valid: true,
+			Error: nil,
+		})
 
-	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+	// Mock database updates
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update
+	changes := []store.TokenViewabilityChange{
+		{
+			TokenID:     token.ID,
+			TokenCID:    tokenCID,
+			OldViewable: false,
+			NewViewable: true,
+		},
+	}
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return(changes, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+
+	assert.NoError(t, err)
+	assert.True(t, isViewable)
+}
+
+func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
+	errorMsg := "temporary network error"
+
+	// Mock URL health check - transient error (unknown)
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusTransientError,
+			Error:  &errorMsg,
+		})
+
+	// Mock database update for media health
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusUnknown, &errorMsg).
+		Return(nil)
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - no changes
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{}, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+
+	assert.NoError(t, err)
+	assert.False(t, isViewable)
+}
+
+func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	mediaURLs := []string{}
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - no changes
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{}, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+
+	assert.NoError(t, err)
+	assert.False(t, isViewable)
+}
+
+func TestCheckMediaURLsHealthAndUpdateViewability_TokenNotFound(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
+
+	// Mock URL health check
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
+		})
+
+	// Mock database update for media health
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	// Mock token retrieval - not found
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(nil, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.Error(t, err)
-	assert.Equal(t, storeError, err)
-	assert.Nil(t, results)
+	assert.Equal(t, domain.ErrTokenNotFound, err)
+	assert.False(t, isViewable)
 }
 
-func TestCheckMediaURLsHealth_MultipleURLs_OneStoreError(t *testing.T) {
+func TestCheckMediaURLsHealthAndUpdateViewability_GetTokenError(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
-	url1 := "https://example.com/image1.png"
-	url2 := "https://example.com/image2.png"
-	urls := []string{url1, url2}
-	storeError := errors.New("database error for url2")
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
+	dbError := errors.New("database connection error")
 
-	// Mock URL checker for url1 (healthy)
+	// Mock URL health check
 	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url1).
+		Check(ctx, imageURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: nil,
-			Error:      nil,
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
 		})
 
-	// Mock URL checker for url2 (healthy)
-	mocks.urlChecker.EXPECT().
-		Check(gomock.Any(), url2).
-		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: nil,
-			Error:      nil,
-		})
-
-	// Mock store updates - the order is non-deterministic (map iteration)
-	// url1 might succeed or not be called at all, depending on iteration order
+	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url1, schema.MediaHealthStatusHealthy, nil).
-		Return(nil).
-		MaxTimes(1)
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
 
-	// url2 will fail when called
+	// Mock token retrieval - error
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url2, schema.MediaHealthStatusHealthy, nil).
-		Return(storeError).
-		MaxTimes(1)
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(nil, dbError)
 
-	results, err := mocks.executor.CheckMediaURLsHealth(ctx, urls)
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
-	// The function should return error when any store update fails
 	assert.Error(t, err)
-	assert.Equal(t, storeError, err)
-	assert.Nil(t, results)
+	assert.Contains(t, err.Error(), "failed to get token")
+	assert.False(t, isViewable)
+}
+
+func TestCheckMediaURLsHealthAndUpdateViewability_BatchUpdateViewabilityError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
+	dbError := errors.New("failed to update viewability")
+
+	// Mock URL health check
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
+		})
+
+	// Mock database update for media health
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - error
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return(nil, dbError)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to update token viewability")
+	assert.False(t, isViewable)
+}
+
+func TestCheckMediaURLsHealthAndUpdateViewability_UpdateMediaHealthError_NonFatal(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
+	dbError := errors.New("failed to update media health")
+
+	// Mock URL health check
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
+		})
+
+	// Mock database update for media health - fails but should be non-fatal
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		Return(dbError)
+
+	// Mock token retrieval - should still proceed
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update
+	changes := []store.TokenViewabilityChange{
+		{
+			TokenID:     token.ID,
+			TokenCID:    tokenCID,
+			OldViewable: false,
+			NewViewable: true,
+		},
+	}
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return(changes, nil)
+
+	// Should succeed despite media health update error
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+
+	assert.NoError(t, err)
+	assert.True(t, isViewable)
 }

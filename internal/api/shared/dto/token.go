@@ -17,6 +17,7 @@ type TokenResponse struct {
 	TokenNumber     string               `json:"token_number"`
 	CurrentOwner    *string              `json:"current_owner"`
 	Burned          bool                 `json:"burned"`
+	Viewable        bool                 `json:"viewable"`
 	CreatedAt       time.Time            `json:"created_at"`
 	UpdatedAt       time.Time            `json:"updated_at"`
 
@@ -64,6 +65,7 @@ func MapTokenToDTO(token *schema.Token, metadata *schema.TokenMetadata) *TokenRe
 		TokenNumber:     token.TokenNumber,
 		CurrentOwner:    token.CurrentOwner,
 		Burned:          token.Burned,
+		Viewable:        token.IsViewable,
 		CreatedAt:       token.CreatedAt,
 		UpdatedAt:       token.UpdatedAt,
 	}
