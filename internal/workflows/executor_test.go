@@ -4189,10 +4189,74 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleBrokenURL(t *tes
 		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
 		Return([]store.TokenViewabilityChange{}, nil)
 
+	// Mock get viewability status - not viewable
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityInfo{
+			{
+				TokenID:    token.ID,
+				TokenCID:   tokenCID,
+				IsViewable: false,
+			},
+		}, nil)
+
 	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
 	assert.False(t, isViewable)
+}
+
+func TestCheckMediaURLsHealthAndUpdateViewability_Success_AlreadyViewableNoChange(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
+
+	// Mock URL health check - healthy
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
+		})
+
+	// Mock database update for media health
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		Return(nil)
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - no changes (was already viewable, still viewable)
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{}, nil)
+
+	// Mock get viewability status - viewable
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityInfo{
+			{
+				TokenID:    token.ID,
+				TokenCID:   tokenCID,
+				IsViewable: true, // Token is viewable
+			},
+		}, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+
+	assert.NoError(t, err)
+	assert.True(t, isViewable) // Should return true even though there were no changes
 }
 
 func TestCheckMediaURLsHealthAndUpdateViewability_Success_MultipleURLs(t *testing.T) {
@@ -4345,6 +4409,17 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Invalid(t *tes
 		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
 		Return([]store.TokenViewabilityChange{}, nil)
 
+	// Mock get viewability status - not viewable
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityInfo{
+			{
+				TokenID:    token.ID,
+				TokenCID:   tokenCID,
+				IsViewable: false,
+			},
+		}, nil)
+
 	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
@@ -4451,6 +4526,17 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testi
 		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
 		Return([]store.TokenViewabilityChange{}, nil)
 
+	// Mock get viewability status - not viewable
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityInfo{
+			{
+				TokenID:    token.ID,
+				TokenCID:   tokenCID,
+				IsViewable: false,
+			},
+		}, nil)
+
 	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
 	assert.NoError(t, err)
@@ -4465,19 +4551,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList(t *testing.T) {
 	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
 	mediaURLs := []string{}
 
-	// Mock token retrieval
-	token := &schema.Token{
-		ID:       uint64(123),
-		TokenCID: tokenCID,
-	}
-	mocks.store.EXPECT().
-		GetTokenByTokenCID(ctx, tokenCID).
-		Return(token, nil)
-
-	// Mock viewability update - no changes
-	mocks.store.EXPECT().
-		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
-		Return([]store.TokenViewabilityChange{}, nil)
+	// No URLs to check, should return false
 
 	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
@@ -4648,4 +4722,101 @@ func TestCheckMediaURLsHealthAndUpdateViewability_UpdateMediaHealthError_NonFata
 
 	assert.NoError(t, err)
 	assert.True(t, isViewable)
+}
+
+func TestCheckMediaURLsHealthAndUpdateViewability_GetViewabilityError(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
+	dbError := errors.New("failed to get viewability")
+
+	// Mock URL health check
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
+		})
+
+	// Mock database update for media health
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		Return(nil)
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - no changes
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{}, nil)
+
+	// Mock get viewability status - error
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
+		Return(nil, dbError)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get token viewability")
+	assert.False(t, isViewable)
+}
+
+func TestCheckMediaURLsHealthAndUpdateViewability_ViewabilityInfoNotFound(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	mediaURLs := []string{imageURL}
+
+	// Mock URL health check
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status: uri.HealthStatusHealthy,
+			Error:  nil,
+		})
+
+	// Mock database update for media health
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		Return(nil)
+
+	// Mock token retrieval
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// Mock viewability update - no changes
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{}, nil)
+
+	// Mock get viewability status - empty result
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityInfo{}, nil)
+
+	isViewable, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "token viewability info not found")
+	assert.False(t, isViewable)
 }

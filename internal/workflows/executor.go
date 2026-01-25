@@ -556,6 +556,11 @@ func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context,
 		zap.Int("url_count", len(mediaURLs)),
 	)
 
+	// If no URLs to check, return false
+	if len(mediaURLs) == 0 {
+		return false, nil
+	}
+
 	// Use goroutines to check URLs in parallel
 	type urlResult struct {
 		url          string
@@ -634,11 +639,24 @@ func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context,
 	if err != nil {
 		return false, fmt.Errorf("failed to update token viewability: %w", err)
 	}
-	if len(changes) == 0 {
-		return false, nil
+
+	// If there are changes, return the new viewability status
+	if len(changes) > 0 {
+		return changes[0].NewViewable, nil
 	}
 
-	return changes[0].NewViewable, nil
+	// If no changes, the viewability status didn't change
+	// We need to query the current status to return the correct value
+	viewabilityInfo, err := e.store.GetTokensViewabilityByIDs(ctx, []uint64{token.ID})
+	if err != nil {
+		return false, fmt.Errorf("failed to get token viewability: %w", err)
+	}
+
+	if len(viewabilityInfo) == 0 {
+		return false, fmt.Errorf("token viewability info not found")
+	}
+
+	return viewabilityInfo[0].IsViewable, nil
 }
 
 // UpdateTokenBurn updates a token and related provenance data for burn event
