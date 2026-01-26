@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
-
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
@@ -584,11 +583,6 @@ func (r *tokenResolver) Standard(ctx context.Context, obj *dto.TokenResponse) (s
 // Offset is the resolver for the offset field.
 func (r *tokenListResolver) Offset(ctx context.Context, obj *dto.TokenListResponse) (*Uint64, error) {
 	return FromNativeUint64(obj.Offset), nil
-}
-
-// Total is the resolver for the total field.
-func (r *tokenListResolver) Total(ctx context.Context, obj *dto.TokenListResponse) (Uint64, error) {
-	return Uint64(obj.Total), nil
 }
 
 // TokenID is the resolver for the token_id field.

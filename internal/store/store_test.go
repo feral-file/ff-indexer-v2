@@ -1804,13 +1804,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 	t.Run("filter by owner", func(t *testing.T) {
 		owner1 := "0xfilter100000000000000000000000000000000001"
-		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Owners:            []string{owner1},
 			Limit:             10,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(3))
 		assert.GreaterOrEqual(t, len(tokens), 3)
 		for _, token := range tokens {
 			if token.CurrentOwner != nil {
@@ -1820,13 +1819,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 	})
 
 	t.Run("filter by chain", func(t *testing.T) {
-		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Chains:            []domain.Chain{domain.ChainEthereumSepolia},
 			Limit:             10,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(1))
 		assert.GreaterOrEqual(t, len(tokens), 1)
 		for _, result := range tokens {
 			assert.Equal(t, domain.ChainEthereumSepolia, result.Chain)
@@ -1835,13 +1833,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 	t.Run("filter by contract address", func(t *testing.T) {
 		contract1 := "0x0000000000000000000000000000000000001111"
-		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{contract1},
 			Limit:             10,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(2))
 		assert.LessOrEqual(t, len(tokens), 2)
 		for _, token := range tokens {
 			assert.Equal(t, contract1, token.ContractAddress)
@@ -1850,17 +1847,16 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 
 	t.Run("pagination", func(t *testing.T) {
 		// Get first page
-		page1, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		page1, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Limit:             2,
 			Offset:            0,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(4))
 		assert.LessOrEqual(t, len(page1), 2)
 
 		// Get second page
-		page2, _, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		page2, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Limit:             2,
 			Offset:            2,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
@@ -1875,13 +1871,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 	})
 
 	t.Run("filter with no results", func(t *testing.T) {
-		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			TokenCIDs:         []string{"eip155:1:erc721:0xnonexistent:999"},
 			Limit:             10,
 			IncludeUnviewable: true, // Test tokens don't have media URLs
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(0), total)
 		assert.Equal(t, 0, len(tokens))
 	})
 
@@ -1985,13 +1980,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Query for owner2 (current owner of all 3 tokens)
-		tokens, total, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Owners:            []string{owner2},
 			Limit:             10,
 			IncludeUnviewable: true, // These test tokens don't have media health records
 		})
 		require.NoError(t, err)
-		require.Equal(t, int(total), 3, "owner2 owns 3 tokens") //nolint:gosec,G115
 		require.Equal(t, len(tokens), 3, "should return 3 results")
 
 		// Verify sorting: tokens sorted by latest provenance event involving owner2 (DESC)
@@ -2133,13 +2127,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Test 1: Default behavior (IncludeUnviewable = false) - should only return viewable tokens
-		tokensHealthyOnly, totalHealthyOnly, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokensHealthyOnly, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
 			IncludeUnviewable: false, // Default: exclude unviewable tokens
 			Limit:             10,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(2), totalHealthyOnly, "should only return 2 viewable tokens (healthy animation and healthy image)")
 		assert.Len(t, tokensHealthyOnly, 2)
 
 		// Verify only healthy tokens are returned
@@ -2155,13 +2148,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.False(t, returnedAddrs[mixedHealthAddr], "token with broken animation (despite healthy image) should be excluded")
 
 		// Test 2: IncludeUnviewable = true - should return all tokensAll
-		tokensAll, totalAll, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokensAll, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{healthyAnimAddr, healthyImageAddr, brokenAnimAddr, brokenImageAddr, noMediaAddr, mixedHealthAddr},
 			IncludeUnviewable: true, // Include all tokens regardless of media health
 			Limit:             10,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(6), totalAll, "should return all 6 tokens when IncludeBrokenMedia is true")
 		assert.Len(t, tokensAll, 6)
 
 		// Verify all tokens are returned
@@ -2177,7 +2169,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.True(t, returnedAddrsAll[mixedHealthAddr])
 
 		// Test 3: Animation priority - token with broken animation but healthy image is not viewable
-		tokensMixed, _, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		tokensMixed, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{mixedHealthAddr},
 			IncludeUnviewable: false,
 			Limit:             10,
@@ -2186,13 +2178,12 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.Len(t, tokensMixed, 0, "token with broken animation should not be viewable even with healthy image")
 
 		// Test 4: Verify animation priority with IncludeBrokenMedia = true
-		resultsMixedInclude, totalMixedInclude, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		resultsMixedInclude, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ContractAddresses: []string{mixedHealthAddr},
 			IncludeUnviewable: true,
 			Limit:             10,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(1), totalMixedInclude)
 		assert.Len(t, resultsMixedInclude, 1)
 	})
 }

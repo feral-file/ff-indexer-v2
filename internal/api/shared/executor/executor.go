@@ -169,6 +169,12 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		defaultIncludeUnviewable := false
 		includeUnviewable = &defaultIncludeUnviewable
 	}
+	if *limit == 0 {
+		return &dto.TokenListResponse{
+			Tokens: []dto.TokenResponse{},
+			Offset: nil,
+		}, nil
+	}
 
 	// Normalize token CIDs
 	if len(tokenCIDs) > 0 {
@@ -200,14 +206,20 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		Chains:            chains,
 		TokenCIDs:         tokenCIDs,
 		IncludeUnviewable: *includeUnviewable,
-		Limit:             int(*limit),
+		Limit:             int(*limit) + 1, // limit+1 to detect whether there are more results
 		Offset:            *offset,
 	}
 
 	// Get tokens
-	tokens, total, err := e.store.GetTokensByFilter(ctx, filter)
+	tokens, err := e.store.GetTokensByFilter(ctx, filter)
 	if err != nil {
 		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get tokens: %v", err))
+	}
+
+	limitInt := int(*limit)
+	hasMore := len(tokens) > limitInt
+	if hasMore {
+		tokens = tokens[:limitInt]
 	}
 
 	// Collect token IDs for bulk queries
@@ -379,15 +391,14 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 
 	// Build response with pagination
 	var nextOffset *uint64
-	if *offset+uint64(len(tokens)) < total { //nolint:gosec,G115
-		offsetVal := *offset + uint64(len(tokens))
+	if hasMore { //nolint:gosec,G115
+		offsetVal := *offset + uint64(limitInt)
 		nextOffset = &offsetVal
 	}
 
 	return &dto.TokenListResponse{
 		Tokens: tokenDTOs,
 		Offset: nextOffset,
-		Total:  total,
 	}, nil
 }
 

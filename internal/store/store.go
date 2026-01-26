@@ -235,7 +235,7 @@ type Store interface {
 	// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID
 	GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*TokensWithMetadataResult, error)
 	// GetTokensByFilter retrieves tokens based on filters
-	GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, uint64, error)
+	GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, error)
 	// CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
 	// For multi-edition tokens (FA2/ERC1155), this also handles subsequent mints via conflict resolution
 	CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error

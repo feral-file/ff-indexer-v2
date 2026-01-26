@@ -9,11 +9,10 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "github.com/golang/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockStore is a mock of Store interface.
@@ -625,13 +624,12 @@ func (mr *MockStoreMockRecorder) GetTokensByCIDs(ctx, tokenCIDs interface{}) *go
 }
 
 // GetTokensByFilter mocks base method.
-func (m *MockStore) GetTokensByFilter(ctx context.Context, filter store.TokenQueryFilter) ([]schema.Token, uint64, error) {
+func (m *MockStore) GetTokensByFilter(ctx context.Context, filter store.TokenQueryFilter) ([]schema.Token, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTokensByFilter", ctx, filter)
 	ret0, _ := ret[0].([]schema.Token)
-	ret1, _ := ret[1].(uint64)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // GetTokensByFilter indicates an expected call of GetTokensByFilter.

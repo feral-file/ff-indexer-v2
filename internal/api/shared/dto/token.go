@@ -53,7 +53,6 @@ type PaginatedOwners struct {
 type TokenListResponse struct {
 	Tokens []TokenResponse `json:"items"`
 	Offset *uint64         `json:"offset,omitempty"`
-	Total  uint64          `json:"total"`
 }
 
 // MapTokenToDTO maps a schema.Token to TokenResponse
