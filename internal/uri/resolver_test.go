@@ -72,7 +72,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+					HeadNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp1, nil)
 
 				// Second gateway succeeds
@@ -82,7 +82,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+					HeadNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp2, nil)
 			},
 			expected:    "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
@@ -114,7 +114,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://arweave.net/abc123").
+					HeadNoRetry(gomock.Any(), "https://arweave.net/abc123").
 					Return(mockResp1, nil)
 
 				// Second gateway fails to ensure deterministic behavior
@@ -126,7 +126,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://ar-io.net/abc123").
+					HeadNoRetry(gomock.Any(), "https://ar-io.net/abc123").
 					Return(mockResp2, nil).
 					AnyTimes()
 			},
@@ -155,7 +155,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+					HeadNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp1, nil)
 
 				mockResp2 := &http.Response{
@@ -164,7 +164,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+					HeadNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp2, nil)
 			},
 			expectedErr: "no working IPFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
@@ -178,7 +178,7 @@ func TestResolver_Resolve(t *testing.T) {
 			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), gomock.Any()).
+					HeadNoRetry(gomock.Any(), gomock.Any()).
 					Return(nil, assert.AnError)
 			},
 			expectedErr: "no working IPFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
@@ -204,7 +204,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://arweave.net/abc123").
+					HeadNoRetry(gomock.Any(), "https://arweave.net/abc123").
 					Return(mockResp, nil)
 			},
 			expectedErr: "no working Arweave gateway found for TX: abc123",
@@ -218,7 +218,7 @@ func TestResolver_Resolve(t *testing.T) {
 			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), gomock.Any()).
+					HeadNoRetry(gomock.Any(), gomock.Any()).
 					Return(nil, assert.AnError)
 			},
 			expectedErr: "no working Arweave gateway found for TX: abc123",
@@ -238,7 +238,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+					HeadNoRetry(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp1, nil)
 
 				// Second gateway fails to ensure deterministic behavior
@@ -249,7 +249,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://onchfs-backup.example.com/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+					HeadNoRetry(gomock.Any(), "https://onchfs-backup.example.com/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp2, nil).
 					AnyTimes()
 			},
@@ -277,7 +277,7 @@ func TestResolver_Resolve(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+					HeadNoRetry(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp, nil)
 			},
 			expectedErr: "no working OnChFS gateway found for hash: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
@@ -291,7 +291,7 @@ func TestResolver_Resolve(t *testing.T) {
 			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
 				mockHTTP.
 					EXPECT().
-					Head(gomock.Any(), gomock.Any()).
+					HeadNoRetry(gomock.Any(), gomock.Any()).
 					Return(nil, assert.AnError)
 			},
 			expectedErr: "no working OnChFS gateway found for hash: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",

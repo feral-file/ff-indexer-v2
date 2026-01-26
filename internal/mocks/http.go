@@ -110,6 +110,21 @@ func (mr *MockHTTPClientMockRecorder) GetResponse(ctx, url, headers interface{})
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetResponse", reflect.TypeOf((*MockHTTPClient)(nil).GetResponse), ctx, url, headers)
 }
 
+// GetResponseNoRetry mocks base method.
+func (m *MockHTTPClient) GetResponseNoRetry(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetResponseNoRetry", ctx, url, headers)
+	ret0, _ := ret[0].(*http.Response)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetResponseNoRetry indicates an expected call of GetResponseNoRetry.
+func (mr *MockHTTPClientMockRecorder) GetResponseNoRetry(ctx, url, headers interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetResponseNoRetry", reflect.TypeOf((*MockHTTPClient)(nil).GetResponseNoRetry), ctx, url, headers)
+}
+
 // Head mocks base method.
 func (m *MockHTTPClient) Head(ctx context.Context, url string) (*http.Response, error) {
 	m.ctrl.T.Helper()

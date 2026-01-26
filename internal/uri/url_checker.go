@@ -152,7 +152,7 @@ func (c *urlChecker) checkArweaveGateway(ctx context.Context, txID string) Healt
 // checkHTTPS checks regular HTTPS URLs
 func (c *urlChecker) checkHTTPS(ctx context.Context, url string) HealthCheckResult {
 	// 1. Try HEAD request first
-	resp, err := c.httpClient.Head(ctx, url)
+	resp, err := c.httpClient.HeadNoRetry(ctx, url)
 	if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if resp.Body != nil {
 			_ = resp.Body.Close()
@@ -179,7 +179,7 @@ func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheck
 		"Range": "bytes=0-1023", // Request only first 1KB
 	}
 
-	resp, err := c.httpClient.GetResponse(ctx, url, headers)
+	resp, err := c.httpClient.GetResponseNoRetry(ctx, url, headers)
 	if err != nil {
 		// Check if it's a transient error
 		if adapter.IsHTTPRetryableError(err) {
@@ -229,7 +229,7 @@ func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheck
 
 // checkWithoutRange performs a HEAD request without Range header as final fallback
 func (c *urlChecker) checkWithoutRange(ctx context.Context, url string) HealthCheckResult {
-	resp, err := c.httpClient.GetResponse(ctx, url, nil)
+	resp, err := c.httpClient.GetResponseNoRetry(ctx, url, nil)
 	if err != nil {
 		if adapter.IsHTTPRetryableError(err) {
 			errMsg := err.Error()

@@ -37,7 +37,7 @@ func FindWorkingIPFSGateway(ctx context.Context, httpClient adapter.HTTPClient, 
 			defer wg.Done()
 
 			url := fmt.Sprintf("%s/ipfs/%s", gw, cid)
-			resp, err := httpClient.Head(ctx, url)
+			resp, err := httpClient.HeadNoRetry(ctx, url)
 			if err != nil {
 				resultCh <- result{err: err}
 				return
@@ -96,7 +96,7 @@ func FindWorkingArweaveGateway(ctx context.Context, httpClient adapter.HTTPClien
 			defer wg.Done()
 
 			url := fmt.Sprintf("%s/%s", gw, txID)
-			resp, err := httpClient.Head(ctx, url)
+			resp, err := httpClient.HeadNoRetry(ctx, url)
 			if err != nil {
 				resultCh <- result{err: err}
 				return
@@ -156,7 +156,7 @@ func FindWorkingOnChFSGateway(ctx context.Context, httpClient adapter.HTTPClient
 			defer wg.Done()
 
 			url := fmt.Sprintf("%s/%s", gw, hash)
-			resp, err := httpClient.Head(ctx, url)
+			resp, err := httpClient.HeadNoRetry(ctx, url)
 			if err != nil {
 				resultCh <- result{err: err}
 				return

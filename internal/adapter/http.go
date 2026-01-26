@@ -31,6 +31,10 @@ type HTTPClient interface {
 	// The caller is responsible for checking status code and closing the response body
 	GetResponse(ctx context.Context, url string, headers map[string]string) (*http.Response, error)
 
+	// GetResponseNoRetry performs a GET request and returns the full HTTP response without retry
+	// The caller is responsible for checking status code and closing the response body
+	GetResponseNoRetry(ctx context.Context, url string, headers map[string]string) (*http.Response, error)
+
 	// GetBytes performs a GET request with custom headers and returns the response body
 	GetBytes(ctx context.Context, url string, headers map[string]string) ([]byte, error)
 
@@ -252,6 +256,22 @@ func (c *RealHTTPClient) GetResponse(ctx context.Context, url string, headers ma
 	}
 
 	return c.doRequestWithRetryAndResponse(ctx, req)
+}
+
+// GetResponseNoRetry performs a GET request and returns the full HTTP response without retry
+// The caller is responsible for checking status code and closing the response body
+func (c *RealHTTPClient) GetResponseNoRetry(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	return c.client.Do(req)
 }
 
 // GetBytes performs a GET request with custom headers and returns the response body
