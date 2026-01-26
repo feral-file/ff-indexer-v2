@@ -391,8 +391,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 
 	// Build response with pagination
 	var nextOffset *uint64
-	if hasMore { //nolint:gosec,G115
-		offsetVal := *offset + uint64(limitInt)
+	if hasMore {
+		offsetVal := *offset + uint64(*limit)
 		nextOffset = &offsetVal
 	}
 
