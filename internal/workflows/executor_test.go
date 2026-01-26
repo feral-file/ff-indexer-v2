@@ -3728,7 +3728,7 @@ func TestDeliverWebhookHTTP_Success(t *testing.T) {
 	}
 
 	mocks.httpClient.EXPECT().
-		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		PostNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) (*http.Response, error) {
 			// Verify headers
 			assert.Equal(t, "application/json", headers["Content-Type"])
@@ -3786,7 +3786,7 @@ func TestDeliverWebhookHTTP_HTTPError(t *testing.T) {
 
 	// Mock failed HTTP response
 	mocks.httpClient.EXPECT().
-		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		PostNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
 		Return(nil, expectedError)
 
 	// Mock update webhook delivery status succeeds
@@ -3834,7 +3834,7 @@ func TestDeliverWebhookHTTP_Non2xxStatusCode(t *testing.T) {
 	}
 
 	mocks.httpClient.EXPECT().
-		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		PostNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
 		Return(mockResponse, nil)
 
 	// Mock read all from io reader succeeds
@@ -3888,7 +3888,7 @@ func TestDeliverWebhookHTTP_ReadBodyError(t *testing.T) {
 	}
 
 	mocks.httpClient.EXPECT().
-		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		PostNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) (*http.Response, error) {
 			return mockResponse, nil
 		})
@@ -3948,7 +3948,7 @@ func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
 
 	// Mock successful HTTP response
 	mocks.httpClient.EXPECT().
-		PostWithHeadersNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
+		PostNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
 		Return(mockResponse, nil)
 
 	// Mock read all from io reader succeeds

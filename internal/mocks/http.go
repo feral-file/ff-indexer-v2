@@ -36,78 +36,78 @@ func (m *MockHTTPClient) EXPECT() *MockHTTPClientMockRecorder {
 	return m.recorder
 }
 
-// Get mocks base method.
-func (m *MockHTTPClient) Get(ctx context.Context, url string, result interface{}) error {
+// GetAndUnmarshal mocks base method.
+func (m *MockHTTPClient) GetAndUnmarshal(ctx context.Context, url string, result interface{}) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Get", ctx, url, result)
+	ret := m.ctrl.Call(m, "GetAndUnmarshal", ctx, url, result)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// Get indicates an expected call of Get.
-func (mr *MockHTTPClientMockRecorder) Get(ctx, url, result interface{}) *gomock.Call {
+// GetAndUnmarshal indicates an expected call of GetAndUnmarshal.
+func (mr *MockHTTPClientMockRecorder) GetAndUnmarshal(ctx, url, result interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockHTTPClient)(nil).Get), ctx, url, result)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAndUnmarshal", reflect.TypeOf((*MockHTTPClient)(nil).GetAndUnmarshal), ctx, url, result)
 }
 
-// GetPartialContent mocks base method.
-func (m *MockHTTPClient) GetPartialContent(ctx context.Context, url string, maxBytes int) ([]byte, error) {
+// GetBytes mocks base method.
+func (m *MockHTTPClient) GetBytes(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetPartialContent", ctx, url, maxBytes)
+	ret := m.ctrl.Call(m, "GetBytes", ctx, url, headers)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetPartialContent indicates an expected call of GetPartialContent.
-func (mr *MockHTTPClientMockRecorder) GetPartialContent(ctx, url, maxBytes interface{}) *gomock.Call {
+// GetBytes indicates an expected call of GetBytes.
+func (mr *MockHTTPClientMockRecorder) GetBytes(ctx, url, headers interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPartialContent", reflect.TypeOf((*MockHTTPClient)(nil).GetPartialContent), ctx, url, maxBytes)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBytes", reflect.TypeOf((*MockHTTPClient)(nil).GetBytes), ctx, url, headers)
 }
 
-// GetWithHeaders mocks base method.
-func (m *MockHTTPClient) GetWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
+// GetPartialBytes mocks base method.
+func (m *MockHTTPClient) GetPartialBytes(ctx context.Context, url string, maxBytes int) ([]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetWithHeaders", ctx, url, headers)
+	ret := m.ctrl.Call(m, "GetPartialBytes", ctx, url, maxBytes)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetWithHeaders indicates an expected call of GetWithHeaders.
-func (mr *MockHTTPClientMockRecorder) GetWithHeaders(ctx, url, headers interface{}) *gomock.Call {
+// GetPartialBytes indicates an expected call of GetPartialBytes.
+func (mr *MockHTTPClientMockRecorder) GetPartialBytes(ctx, url, maxBytes interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWithHeaders", reflect.TypeOf((*MockHTTPClient)(nil).GetWithHeaders), ctx, url, headers)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPartialBytes", reflect.TypeOf((*MockHTTPClient)(nil).GetPartialBytes), ctx, url, maxBytes)
 }
 
-// GetWithResponse mocks base method.
-func (m *MockHTTPClient) GetWithResponse(ctx context.Context, url string) (*http.Response, error) {
+// GetPartialBytesNoRetry mocks base method.
+func (m *MockHTTPClient) GetPartialBytesNoRetry(ctx context.Context, url string, maxBytes int) ([]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetWithResponse", ctx, url)
+	ret := m.ctrl.Call(m, "GetPartialBytesNoRetry", ctx, url, maxBytes)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPartialBytesNoRetry indicates an expected call of GetPartialBytesNoRetry.
+func (mr *MockHTTPClientMockRecorder) GetPartialBytesNoRetry(ctx, url, maxBytes interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPartialBytesNoRetry", reflect.TypeOf((*MockHTTPClient)(nil).GetPartialBytesNoRetry), ctx, url, maxBytes)
+}
+
+// GetResponse mocks base method.
+func (m *MockHTTPClient) GetResponse(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetResponse", ctx, url, headers)
 	ret0, _ := ret[0].(*http.Response)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetWithResponse indicates an expected call of GetWithResponse.
-func (mr *MockHTTPClientMockRecorder) GetWithResponse(ctx, url interface{}) *gomock.Call {
+// GetResponse indicates an expected call of GetResponse.
+func (mr *MockHTTPClientMockRecorder) GetResponse(ctx, url, headers interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWithResponse", reflect.TypeOf((*MockHTTPClient)(nil).GetWithResponse), ctx, url)
-}
-
-// GetWithResponseAndHeaders mocks base method.
-func (m *MockHTTPClient) GetWithResponseAndHeaders(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetWithResponseAndHeaders", ctx, url, headers)
-	ret0, _ := ret[0].(*http.Response)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetWithResponseAndHeaders indicates an expected call of GetWithResponseAndHeaders.
-func (mr *MockHTTPClientMockRecorder) GetWithResponseAndHeaders(ctx, url, headers interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWithResponseAndHeaders", reflect.TypeOf((*MockHTTPClient)(nil).GetWithResponseAndHeaders), ctx, url, headers)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetResponse", reflect.TypeOf((*MockHTTPClient)(nil).GetResponse), ctx, url, headers)
 }
 
 // Head mocks base method.
@@ -125,32 +125,47 @@ func (mr *MockHTTPClientMockRecorder) Head(ctx, url interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Head", reflect.TypeOf((*MockHTTPClient)(nil).Head), ctx, url)
 }
 
-// Post mocks base method.
-func (m *MockHTTPClient) Post(ctx context.Context, url, contentType string, body io.Reader) ([]byte, error) {
+// HeadNoRetry mocks base method.
+func (m *MockHTTPClient) HeadNoRetry(ctx context.Context, url string) (*http.Response, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Post", ctx, url, contentType, body)
-	ret0, _ := ret[0].([]byte)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Post indicates an expected call of Post.
-func (mr *MockHTTPClientMockRecorder) Post(ctx, url, contentType, body interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Post", reflect.TypeOf((*MockHTTPClient)(nil).Post), ctx, url, contentType, body)
-}
-
-// PostWithHeadersNoRetry mocks base method.
-func (m *MockHTTPClient) PostWithHeadersNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PostWithHeadersNoRetry", ctx, url, headers, body)
+	ret := m.ctrl.Call(m, "HeadNoRetry", ctx, url)
 	ret0, _ := ret[0].(*http.Response)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// PostWithHeadersNoRetry indicates an expected call of PostWithHeadersNoRetry.
-func (mr *MockHTTPClientMockRecorder) PostWithHeadersNoRetry(ctx, url, headers, body interface{}) *gomock.Call {
+// HeadNoRetry indicates an expected call of HeadNoRetry.
+func (mr *MockHTTPClientMockRecorder) HeadNoRetry(ctx, url interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PostWithHeadersNoRetry", reflect.TypeOf((*MockHTTPClient)(nil).PostWithHeadersNoRetry), ctx, url, headers, body)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadNoRetry", reflect.TypeOf((*MockHTTPClient)(nil).HeadNoRetry), ctx, url)
+}
+
+// PostBytes mocks base method.
+func (m *MockHTTPClient) PostBytes(ctx context.Context, url, contentType string, body io.Reader) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PostBytes", ctx, url, contentType, body)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PostBytes indicates an expected call of PostBytes.
+func (mr *MockHTTPClientMockRecorder) PostBytes(ctx, url, contentType, body interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PostBytes", reflect.TypeOf((*MockHTTPClient)(nil).PostBytes), ctx, url, contentType, body)
+}
+
+// PostNoRetry mocks base method.
+func (m *MockHTTPClient) PostNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PostNoRetry", ctx, url, headers, body)
+	ret0, _ := ret[0].(*http.Response)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PostNoRetry indicates an expected call of PostNoRetry.
+func (mr *MockHTTPClientMockRecorder) PostNoRetry(ctx, url, headers, body interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PostNoRetry", reflect.TypeOf((*MockHTTPClient)(nil).PostNoRetry), ctx, url, headers, body)
 }

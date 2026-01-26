@@ -33,7 +33,7 @@ func (f *TezosBlockFetcher) FetchLatestBlock(ctx context.Context) (uint64, error
 		Level uint64 `json:"level"`
 	}
 
-	if err := f.httpClient.Get(ctx, url, &head); err != nil {
+	if err := f.httpClient.GetAndUnmarshal(ctx, url, &head); err != nil {
 		return 0, fmt.Errorf("failed to get latest block from TzKT: %w", err)
 	}
 
@@ -49,7 +49,7 @@ func (f *TezosBlockFetcher) FetchBlockTimestamp(ctx context.Context, blockNumber
 		Timestamp string `json:"timestamp"`
 	}
 
-	if err := f.httpClient.Get(ctx, url, &blockInfo); err != nil {
+	if err := f.httpClient.GetAndUnmarshal(ctx, url, &blockInfo); err != nil {
 		return time.Time{}, fmt.Errorf("failed to get block %d from TzKT: %w", blockNumber, err)
 	}
 

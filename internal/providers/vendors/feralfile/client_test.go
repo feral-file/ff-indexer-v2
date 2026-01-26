@@ -70,7 +70,7 @@ func TestClient_GetArtwork_Success(t *testing.T) {
 	expectedURL := "https://feralfile.com/api/artworks/" + tokenID + "?includeArtist=true"
 
 	mockHTTPClient.EXPECT().
-		Get(ctx, expectedURL, gomock.Any()).
+		GetAndUnmarshal(ctx, expectedURL, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
 			// Marshal and unmarshal to simulate real API behavior
 			data, _ := json.Marshal(expectedResponse)
@@ -107,7 +107,7 @@ func TestClient_GetArtwork_HTTPError(t *testing.T) {
 	expectedError := errors.New("network error")
 
 	mockHTTPClient.EXPECT().
-		Get(ctx, expectedURL, gomock.Any()).
+		GetAndUnmarshal(ctx, expectedURL, gomock.Any()).
 		Return(expectedError).
 		Times(1)
 
@@ -132,7 +132,7 @@ func TestClient_GetArtwork_InvalidJSON(t *testing.T) {
 	expectedURL := "https://feralfile.com/api/artworks/" + tokenID + "?includeArtist=true"
 
 	mockHTTPClient.EXPECT().
-		Get(ctx, expectedURL, gomock.Any()).
+		GetAndUnmarshal(ctx, expectedURL, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
 			// Simulate invalid JSON by trying to unmarshal invalid data
 			return json.Unmarshal([]byte("invalid json"), result)
@@ -164,7 +164,7 @@ func TestClient_GetArtwork_MissingResult(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		Get(ctx, expectedURL, gomock.Any()).
+		GetAndUnmarshal(ctx, expectedURL, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
 			data, _ := json.Marshal(invalidResponse)
 			return json.Unmarshal(data, result)
@@ -199,7 +199,7 @@ func TestClient_GetArtwork_EmptyResponse(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		Get(ctx, expectedURL, gomock.Any()).
+		GetAndUnmarshal(ctx, expectedURL, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
 			data, _ := json.Marshal(emptyResponse)
 			return json.Unmarshal(data, result)
@@ -229,7 +229,7 @@ func TestClient_GetArtwork_URLFormat(t *testing.T) {
 	expectedURL := apiBaseURL + "/artworks/" + tokenID + "?includeArtist=true"
 
 	mockHTTPClient.EXPECT().
-		Get(ctx, expectedURL, gomock.Any()).
+		GetAndUnmarshal(ctx, expectedURL, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
 			response := feralfile.ArtworkResponse{
 				Result: feralfile.Artwork{

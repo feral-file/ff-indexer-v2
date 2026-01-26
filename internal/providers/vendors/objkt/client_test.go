@@ -83,7 +83,7 @@ func TestClient_GetToken_Success(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		Post(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
+		PostBytes(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url, contentType string, body interface{}) ([]byte, error) {
 			data, _ := json.Marshal(expectedResponse)
 			return data, nil
@@ -121,7 +121,7 @@ func TestClient_GetToken_HTTPError(t *testing.T) {
 	expectedError := errors.New("network error")
 
 	mockHTTPClient.EXPECT().
-		Post(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
+		PostBytes(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
 		Return(nil, expectedError).
 		Times(1)
 
@@ -147,7 +147,7 @@ func TestClient_GetToken_InvalidJSON(t *testing.T) {
 	tokenID := "125"
 
 	mockHTTPClient.EXPECT().
-		Post(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
+		PostBytes(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
 		Return([]byte("invalid json"), nil).
 		Times(1)
 
@@ -180,7 +180,7 @@ func TestClient_GetToken_EmptyResponse(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		Post(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
+		PostBytes(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url, contentType string, body interface{}) ([]byte, error) {
 			data, _ := json.Marshal(emptyResponse)
 			return data, nil

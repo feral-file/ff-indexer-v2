@@ -85,7 +85,7 @@ func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, projectID stri
 		return nil, fmt.Errorf("failed to marshal GraphQL request: %w", err)
 	}
 
-	respBody, err := c.httpClient.Post(ctx, c.graphqlURL, "application/json", bytes.NewReader(requestBody))
+	respBody, err := c.httpClient.PostBytes(ctx, c.graphqlURL, "application/json", bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to call ArtBlocks GraphQL API: %w", err)
 	}

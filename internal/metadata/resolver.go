@@ -410,7 +410,7 @@ func (r *resolver) parseDataURI(uri string) (map[string]interface{}, error) {
 // fetchFromHTTP fetches metadata from an HTTP(S) URL
 func (r *resolver) fetchFromHTTP(ctx context.Context, url string) (map[string]interface{}, error) {
 	var metadata map[string]interface{}
-	err := r.httpClient.Get(ctx, url, &metadata)
+	err := r.httpClient.GetAndUnmarshal(ctx, url, &metadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch URL: %w", err)
 	}

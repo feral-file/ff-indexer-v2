@@ -179,7 +179,7 @@ func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheck
 		"Range": "bytes=0-1023", // Request only first 1KB
 	}
 
-	resp, err := c.httpClient.GetWithResponseAndHeaders(ctx, url, headers)
+	resp, err := c.httpClient.GetResponse(ctx, url, headers)
 	if err != nil {
 		// Check if it's a transient error
 		if adapter.IsHTTPRetryableError(err) {
@@ -229,7 +229,7 @@ func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheck
 
 // checkWithoutRange performs a HEAD request without Range header as final fallback
 func (c *urlChecker) checkWithoutRange(ctx context.Context, url string) HealthCheckResult {
-	resp, err := c.httpClient.GetWithResponse(ctx, url)
+	resp, err := c.httpClient.GetResponse(ctx, url, nil)
 	if err != nil {
 		if adapter.IsHTTPRetryableError(err) {
 			errMsg := err.Error()

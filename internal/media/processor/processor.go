@@ -153,7 +153,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		)
 
 		// Fetch first 512 bytes to detect content-type
-		partialContent, err := p.httpClient.GetPartialContent(ctx, resolvedURL, 512)
+		partialContent, err := p.httpClient.GetPartialBytes(ctx, resolvedURL, 512)
 		if err != nil {
 			return fmt.Errorf("failed to get content-type via partial GET: %w", err)
 		}

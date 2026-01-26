@@ -115,14 +115,14 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://example.com/generator.html").
 		Return("https://example.com/generator.html", nil)
-	// Mock Head to fail so it falls back to GetPartialContent
+	// Mock Head to fail so it falls back to GetPartialBytes
 	mocks.httpClient.
 		EXPECT().
 		Head(gomock.Any(), "https://example.com/generator.html").
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
 		Return([]byte("fake generator data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -189,14 +189,14 @@ func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://example.com/generator.html").
 		Return("https://example.com/generator.html", nil)
-	// Mock Head to fail so it falls back to GetPartialContent
+	// Mock Head to fail so it falls back to GetPartialBytes
 	mocks.httpClient.
 		EXPECT().
 		Head(gomock.Any(), "https://example.com/generator.html").
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
 		Return([]byte("fake generator data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -251,14 +251,14 @@ func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {
 		EXPECT().
 		Resolve(gomock.Any(), "https://example.com/generator.html").
 		Return("https://example.com/generator.html", nil)
-	// Mock Head to fail so it falls back to GetPartialContent
+	// Mock Head to fail so it falls back to GetPartialBytes
 	mocks.httpClient.
 		EXPECT().
 		Head(gomock.Any(), "https://example.com/generator.html").
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://example.com/generator.html", gomock.Any()).
 		Return([]byte("fake generator data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -596,7 +596,7 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), expectedAnimationURL, gomock.Any()).
+		GetPartialBytes(gomock.Any(), expectedAnimationURL, gomock.Any()).
 		Return([]byte("fake html data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -677,7 +677,7 @@ func TestEnhancer_Enhance_FeralFile_ImageMedium(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), expectedImageURL, gomock.Any()).
+		GetPartialBytes(gomock.Any(), expectedImageURL, gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -760,7 +760,7 @@ func TestEnhancer_Enhance_FeralFile_MayaManStarQuest(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), expectedAnimationURL, gomock.Any()).
+		GetPartialBytes(gomock.Any(), expectedAnimationURL, gomock.Any()).
 		Return([]byte("fake html data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -1219,7 +1219,7 @@ func TestEnhancer_Enhance_Objkt_FeralFileNotAffected(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), expectedImageURL, gomock.Any()).
+		GetPartialBytes(gomock.Any(), expectedImageURL, gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -1324,7 +1324,7 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), animationURL, gomock.Any()).
+		GetPartialBytes(gomock.Any(), animationURL, gomock.Any()).
 		Return([]byte("fake video data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -1540,7 +1540,7 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), resolvedImageURL, gomock.Any()).
+		GetPartialBytes(gomock.Any(), resolvedImageURL, gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -1615,7 +1615,7 @@ func TestEnhancer_Enhance_Objkt_URIResolverSuccess(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://best-gateway.io/ipfs/QmTest456", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://best-gateway.io/ipfs/QmTest456", gomock.Any()).
 		Return([]byte("fake data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -1688,7 +1688,7 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://ipfs.io/ipfs/QmTest456", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmTest456", gomock.Any()).
 		Return([]byte("fake data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)

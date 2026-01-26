@@ -125,7 +125,7 @@ func TestURLChecker_Check(t *testing.T) {
 				// GET with Range also fails
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 
 				// Now fallback to IPFS gateway resolution - first gateway succeeds (second call to same URL)
@@ -196,7 +196,7 @@ func TestURLChecker_Check(t *testing.T) {
 				// GET with Range also fails
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 
 				// Now fallback to Arweave gateway resolution - first gateway succeeds (second call to same URL)
@@ -266,7 +266,7 @@ func TestURLChecker_Check(t *testing.T) {
 				// GET with Range also fails
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
@@ -318,7 +318,7 @@ func TestURLChecker_Check(t *testing.T) {
 				// GET with Range also fails
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 
 				// Now fallback to IPFS gateway resolution - all gateways fail (parallel calls)
@@ -364,7 +364,7 @@ func TestURLChecker_Check(t *testing.T) {
 				// GET with Range also fails
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 
 				// Now fallback to Arweave gateway resolution - gateway fails (second call)
@@ -404,7 +404,7 @@ func TestURLChecker_Check(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
 					Return(mockResp, nil)
 
 				mockIO.
@@ -438,7 +438,7 @@ func TestURLChecker_Check(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
 					Return(mockResp, nil)
 
 				mockIO.
@@ -472,7 +472,7 @@ func TestURLChecker_Check(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
 					Return(mockResp1, nil)
 
 				mockIO.
@@ -487,7 +487,7 @@ func TestURLChecker_Check(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					GetWithResponse(gomock.Any(), "https://example.com/image.png").
+					GetResponse(gomock.Any(), "https://example.com/image.png", nil).
 					Return(mockResp2, nil)
 
 				mockIO.
@@ -521,7 +521,7 @@ func TestURLChecker_Check(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
 					Return(mockResp1, nil)
 
 				mockIO.
@@ -536,7 +536,7 @@ func TestURLChecker_Check(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					GetWithResponse(gomock.Any(), "https://example.com/image.png").
+					GetResponse(gomock.Any(), "https://example.com/image.png", nil).
 					Return(mockResp2, nil)
 
 				mockIO.
@@ -566,7 +566,7 @@ func TestURLChecker_Check(t *testing.T) {
 				// GET with Range returns retryable error
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, &mockRetryableError{})
 			},
 			expectedStatus: uri.HealthStatusTransientError,
@@ -591,7 +591,7 @@ func TestURLChecker_Check(t *testing.T) {
 				// GET with Range returns non-retryable error
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 			},
 			expectedStatus: uri.HealthStatusBroken,
@@ -620,7 +620,7 @@ func TestURLChecker_Check(t *testing.T) {
 				}
 				mockHTTP.
 					EXPECT().
-					GetWithResponseAndHeaders(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					GetResponse(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
 					Return(mockResp1, nil)
 
 				mockIO.
@@ -631,7 +631,7 @@ func TestURLChecker_Check(t *testing.T) {
 				// Fallback to GET without Range returns retryable error
 				mockHTTP.
 					EXPECT().
-					GetWithResponse(gomock.Any(), "https://example.com/image.png").
+					GetResponse(gomock.Any(), "https://example.com/image.png", nil).
 					Return(nil, &mockRetryableError{})
 			},
 			expectedStatus: uri.HealthStatusTransientError,

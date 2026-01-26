@@ -113,7 +113,7 @@ func TestResolver_Resolve_ERC721(t *testing.T) {
 	}
 	mocks.httpClient.
 		EXPECT().
-		Get(gomock.Any(), "https://example.com/metadata.json", gomock.Any()).
+		GetAndUnmarshal(gomock.Any(), "https://example.com/metadata.json", gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
 			*result.(*map[string]interface{}) = metadata
 			return nil
@@ -143,7 +143,7 @@ func TestResolver_Resolve_ERC721(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://example.com/animation.mp4", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://example.com/animation.mp4", gomock.Any()).
 		Return([]byte("fake animation data"), nil)
 
 	// Mock registry lookup for publisher resolution (called once in resolvePublisher)
@@ -197,7 +197,7 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 	}
 	mocks.httpClient.
 		EXPECT().
-		Get(gomock.Any(), "https://example.com/metadata/1.json", gomock.Any()).
+		GetAndUnmarshal(gomock.Any(), "https://example.com/metadata/1.json", gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
 			*result.(*map[string]interface{}) = metadata
 			return nil
@@ -221,7 +221,7 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://example.com/image.png", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://example.com/image.png", gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
 	// Mock registry lookup for publisher resolution (called once in resolvePublisher)
@@ -308,7 +308,7 @@ func TestResolver_Resolve_FA2(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://ipfs.io/ipfs/QmYYY", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmYYY", gomock.Any()).
 		Return([]byte("fake artifact data"), nil)
 
 	// Mock registry lookup for publisher resolution (called once in resolvePublisher)
@@ -470,7 +470,7 @@ func TestResolver_Resolve_EthereumNoOriginationFound(t *testing.T) {
 	}
 	mocks.httpClient.
 		EXPECT().
-		Get(gomock.Any(), "https://example.com/metadata.json", gomock.Any()).
+		GetAndUnmarshal(gomock.Any(), "https://example.com/metadata.json", gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
 			*result.(*map[string]interface{}) = metadata
 			return nil
@@ -493,7 +493,7 @@ func TestResolver_Resolve_EthereumNoOriginationFound(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://example.com/image.png", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://example.com/image.png", gomock.Any()).
 		Return([]byte("fake image data"), nil)
 
 	// Mock registry lookup for publisher resolution
@@ -568,7 +568,7 @@ func TestResolver_Resolve_TezosNoOriginationFound(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://ipfs.io/ipfs/QmYYY", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmYYY", gomock.Any()).
 		Return([]byte("fake artifact data"), nil)
 
 	// Mock registry lookup for publisher resolution
@@ -642,7 +642,7 @@ func TestResolver_Resolve_URIResolverSuccess(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://working-gateway.io/ipfs/QmArtifact", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://working-gateway.io/ipfs/QmArtifact", gomock.Any()).
 		Return([]byte("fake artifact data"), nil)
 
 	// Mock registry lookup for publisher resolution
@@ -714,7 +714,7 @@ func TestResolver_Resolve_URIResolverFallback(t *testing.T) {
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialContent(gomock.Any(), "https://ipfs.io/ipfs/QmArtifact", gomock.Any()).
+		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmArtifact", gomock.Any()).
 		Return([]byte("fake artifact data"), nil)
 
 	// Mock registry lookup for publisher resolution

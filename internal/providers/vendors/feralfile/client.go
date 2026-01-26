@@ -115,7 +115,7 @@ func (c *FeralFileClient) GetArtwork(ctx context.Context, tokenID string) (*Artw
 	url := fmt.Sprintf("%s/artworks/%s?includeArtist=true", c.apiBaseURL, tokenID)
 
 	var response ArtworkResponse
-	if err := c.httpClient.Get(ctx, url, &response); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, url, &response); err != nil {
 		return nil, fmt.Errorf("failed to call Feral File API: %w", err)
 	}
 

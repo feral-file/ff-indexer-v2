@@ -72,7 +72,7 @@ func detectMimeType(
 	if mimeType == "" {
 		// Download first 512 bytes for mime type detection
 		const maxBytes = 512
-		content, err := httpClient.GetPartialContent(ctx, resolvedURL, maxBytes)
+		content, err := httpClient.GetPartialBytes(ctx, resolvedURL, maxBytes)
 		if err != nil {
 			logger.WarnCtx(ctx, "Failed to download content for mime type detection",
 				zap.String("url", resolvedURL),

@@ -195,7 +195,7 @@ func (c *tzktClient) GetTransactionsByID(ctx context.Context, txID uint64) ([]Tz
 	url := fmt.Sprintf("%s/v1/operations/transactions?id=%d", c.baseURL, txID)
 
 	var txs []TzKTTransaction
-	if err := c.httpClient.Get(ctx, url, &txs); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, url, &txs); err != nil {
 		return nil, fmt.Errorf("failed to get transaction %d: %w", txID, err)
 	}
 
@@ -229,7 +229,7 @@ func (c *tzktClient) GetTokenBalances(ctx context.Context, contractAddress strin
 	url := fmt.Sprintf("%s/v1/tokens/balances?token.contract=%s&token.tokenId=%s&limit=10000", c.baseURL, contractAddress, tokenID)
 
 	var balances []TzKTTokenBalance
-	if err := c.httpClient.Get(ctx, url, &balances); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, url, &balances); err != nil {
 		return nil, fmt.Errorf("failed to get token balances for %s/%s: %w", contractAddress, tokenID, err)
 	}
 
@@ -242,7 +242,7 @@ func (c *tzktClient) GetTokenMetadata(ctx context.Context, contractAddress strin
 	url := fmt.Sprintf("%s/v1/tokens?contract=%s&tokenId=%s", c.baseURL, contractAddress, tokenID)
 
 	var tokens []TzKTToken
-	if err := c.httpClient.Get(ctx, url, &tokens); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, url, &tokens); err != nil {
 		return nil, fmt.Errorf("failed to get token metadata for %s/%s: %w", contractAddress, tokenID, err)
 	}
 
@@ -260,7 +260,7 @@ func (c *tzktClient) GetTokenTransfers(ctx context.Context, contractAddress stri
 	url := fmt.Sprintf("%s/v1/tokens/transfers?token.contract=%s&token.tokenId=%s&sort.asc=level&limit=10000", c.baseURL, contractAddress, tokenID)
 
 	var transfers []TzKTTokenTransfer
-	if err := c.httpClient.Get(ctx, url, &transfers); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, url, &transfers); err != nil {
 		return nil, fmt.Errorf("failed to get token transfers for %s/%s: %w", contractAddress, tokenID, err)
 	}
 
@@ -273,7 +273,7 @@ func (c *tzktClient) GetTokenMetadataUpdates(ctx context.Context, contractAddres
 	bigMapsURL := fmt.Sprintf("%s/v1/contracts/%s/bigmaps?tags.any=token_metadata", c.baseURL, contractAddress)
 
 	var bigMaps []TzKTBigMap
-	if err := c.httpClient.Get(ctx, bigMapsURL, &bigMaps); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, bigMapsURL, &bigMaps); err != nil {
 		return nil, fmt.Errorf("failed to get contract bigmaps: %w", err)
 	}
 
@@ -301,7 +301,7 @@ func (c *tzktClient) GetTokenMetadataUpdates(ctx context.Context, contractAddres
 	updatesURL := fmt.Sprintf("%s/v1/bigmaps/updates?bigmap=%d&sort.asc=id&limit=10000", c.baseURL, tokenMetadataBigMapPtr)
 
 	var updates []TzKTBigMapUpdate
-	if err := c.httpClient.Get(ctx, updatesURL, &updates); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, updatesURL, &updates); err != nil {
 		return nil, fmt.Errorf("failed to get bigmap updates: %w", err)
 	}
 
@@ -396,7 +396,7 @@ func (c *tzktClient) GetTokenBalancesByAccountWithinBlockRange(ctx context.Conte
 		c.baseURL, accountAddress, fromBlock, toBlock, limit, offset)
 
 	var balances []TzKTTokenBalance
-	if err := c.httpClient.Get(ctx, url, &balances); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, url, &balances); err != nil {
 		return nil, fmt.Errorf("failed to get token balances for account %s within block range [%d, %d]: %w", accountAddress, fromBlock, toBlock, err)
 	}
 
@@ -522,7 +522,7 @@ func (c *tzktClient) getTransactionFromBitmapUpdate(ctx context.Context, updates
 		c.baseURL, updates.Contract.Address, updates.Level)
 
 	var transactions []TzKTTransaction
-	if err := c.httpClient.Get(ctx, txURL, &transactions); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, txURL, &transactions); err != nil {
 		return nil, fmt.Errorf("failed to get transactions: %w", err)
 	}
 
@@ -567,7 +567,7 @@ func (c *tzktClient) GetContractDeployer(ctx context.Context, contractAddress st
 	url := fmt.Sprintf("%s/v1/operations/originations?originatedContract=%s&limit=1", c.baseURL, contractAddress)
 
 	var originations []TzKTOrigination
-	if err := c.httpClient.Get(ctx, url, &originations); err != nil {
+	if err := c.httpClient.GetAndUnmarshal(ctx, url, &originations); err != nil {
 		return "", fmt.Errorf("failed to get contract origination for %s: %w", contractAddress, err)
 	}
 

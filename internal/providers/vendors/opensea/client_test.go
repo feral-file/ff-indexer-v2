@@ -57,7 +57,7 @@ func TestOpenSeaClient_GetNFT(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetWithHeaders(ctx, expectedURL, expectedHeaders).
+		GetBytes(ctx, expectedURL, expectedHeaders).
 		Return(responseJSON, nil)
 
 	identifier := "1"
@@ -148,7 +148,7 @@ func TestOpenSeaClient_GetNFT_APIError(t *testing.T) {
 	tokenID := "1"
 
 	mockHTTPClient.EXPECT().
-		GetWithHeaders(ctx, gomock.Any(), gomock.Any()).
+		GetBytes(ctx, gomock.Any(), gomock.Any()).
 		Return(nil, assert.AnError)
 
 	result, err := client.GetNFT(ctx, contractAddress, tokenID)
@@ -174,7 +174,7 @@ func TestOpenSeaClient_GetNFT_UnmarshalError(t *testing.T) {
 	responseJSON := []byte(`invalid json`)
 
 	mockHTTPClient.EXPECT().
-		GetWithHeaders(ctx, gomock.Any(), gomock.Any()).
+		GetBytes(ctx, gomock.Any(), gomock.Any()).
 		Return(responseJSON, nil)
 
 	mockJSON.EXPECT().
@@ -204,7 +204,7 @@ func TestOpenSeaClient_GetNFT_ResponseErrors(t *testing.T) {
 	responseJSON := []byte(`{"errors": ["NFT not found"]}`)
 
 	mockHTTPClient.EXPECT().
-		GetWithHeaders(ctx, gomock.Any(), gomock.Any()).
+		GetBytes(ctx, gomock.Any(), gomock.Any()).
 		Return(responseJSON, nil)
 
 	mockJSON.EXPECT().

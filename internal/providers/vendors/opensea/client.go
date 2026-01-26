@@ -83,7 +83,7 @@ func (c *OpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID str
 		"X-API-KEY": c.apiKey,
 	}
 
-	respBody, err := c.httpClient.GetWithHeaders(ctx, url, headers)
+	respBody, err := c.httpClient.GetBytes(ctx, url, headers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call OpenSea API: %w", err)
 	}

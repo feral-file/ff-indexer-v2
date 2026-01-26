@@ -93,7 +93,7 @@ func (d *downloader) Download(ctx context.Context, url string) (*DownloadResult,
 	logger.Info("Downloading file", zap.String("url", url))
 
 	// Use the injected HTTP client for streaming downloads
-	resp, err := d.httpClient.GetWithResponse(ctx, url)
+	resp, err := d.httpClient.GetResponse(ctx, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download: %w", err)
 	}

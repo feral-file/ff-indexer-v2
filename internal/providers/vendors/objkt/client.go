@@ -106,7 +106,7 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
 	}
 
 	// Make the POST request
-	responseBody, err := c.httpClient.Post(ctx, c.apiURL, "application/json", bytes.NewReader(requestBody))
+	responseBody, err := c.httpClient.PostBytes(ctx, c.apiURL, "application/json", bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to call objkt v3 API: %w", err)
 	}

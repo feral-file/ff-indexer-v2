@@ -1533,7 +1533,7 @@ func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.Webhoo
 	}
 
 	// Send HTTP request
-	resp, err := e.httpClient.PostWithHeadersNoRetry(ctx, client.WebhookURL, headers, bytes.NewReader(payload))
+	resp, err := e.httpClient.PostNoRetry(ctx, client.WebhookURL, headers, bytes.NewReader(payload))
 	if err != nil {
 		logger.ErrorCtx(ctx, errors.New("failed to post webhook HTTP request"),
 			zap.Error(err), zap.String("clientID", client.ClientID))

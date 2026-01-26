@@ -24,33 +24,36 @@ import (
 //
 //go:generate mockgen -source=http.go -destination=../mocks/http.go -package=mocks -mock_names=HTTPClient=MockHTTPClient
 type HTTPClient interface {
-	// Get performs a GET request and unmarshals the response into result
-	Get(ctx context.Context, url string, result interface{}) error
+	// GetAndUnmarshal performs a GET request and unmarshals the response into result
+	GetAndUnmarshal(ctx context.Context, url string, result interface{}) error
 
-	// Post performs a POST request and returns the response body
-	Post(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error)
+	// GetResponse performs a GET request and returns the full HTTP response
+	// The caller is responsible for checking status code and closing the response body
+	GetResponse(ctx context.Context, url string, headers map[string]string) (*http.Response, error)
 
-	// PostWithHeadersNoRetry performs a POST request with custom headers and returns the response without retry
-	PostWithHeadersNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error)
+	// GetBytes performs a GET request with custom headers and returns the response body
+	GetBytes(ctx context.Context, url string, headers map[string]string) ([]byte, error)
+
+	// GetPartialBytes performs a GET request with Range header to fetch partial content
+	// Returns the partial content as bytes
+	GetPartialBytes(ctx context.Context, url string, maxBytes int) ([]byte, error)
+
+	// GetPartialBytesNoRetry performs a GET request with Range header to fetch partial content without retry
+	// Returns the partial content as bytes
+	GetPartialBytesNoRetry(ctx context.Context, url string, maxBytes int) ([]byte, error)
+
+	// PostBytes performs a POST request and returns the response body as bytes
+	PostBytes(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error)
+
+	// PostNoRetry performs a POST request with custom headers and returns the response without retry
+	PostNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error)
 
 	// Head performs a HEAD request
 	// The caller is responsible for closing the response body
 	Head(ctx context.Context, url string) (*http.Response, error)
 
-	// GetPartialContent performs a GET request with Range header to fetch partial content
-	// Returns the partial content as bytes
-	GetPartialContent(ctx context.Context, url string, maxBytes int) ([]byte, error)
-
-	// GetWithResponse performs a GET request and returns the full HTTP response
-	// The caller is responsible for checking status code and closing the response body
-	GetWithResponse(ctx context.Context, url string) (*http.Response, error)
-
-	// GetWithHeaders performs a GET request with custom headers and returns the response body
-	GetWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, error)
-
-	// GetWithResponseAndHeaders performs a GET request with custom headers and returns the full HTTP response
-	// The caller is responsible for checking status code and closing the response body
-	GetWithResponseAndHeaders(ctx context.Context, url string, headers map[string]string) (*http.Response, error)
+	// HeadNoRetry performs a HEAD request without retry
+	HeadNoRetry(ctx context.Context, url string) (*http.Response, error)
 }
 
 // RealHTTPClient implements HTTPClient using the standard http package
@@ -214,9 +217,9 @@ func (c *RealHTTPClient) doRequestWithRetry(ctx context.Context, req *http.Reque
 	return respBody, nil
 }
 
-// Get performs a GET request and unmarshals the response into result
+// GetAndUnmarshal performs a GET request and unmarshals the response into result
 // Implements exponential backoff retry for rate limiting (429) responses
-func (c *RealHTTPClient) Get(ctx context.Context, url string, result interface{}) error {
+func (c *RealHTTPClient) GetAndUnmarshal(ctx context.Context, url string, result interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -235,9 +238,91 @@ func (c *RealHTTPClient) Get(ctx context.Context, url string, result interface{}
 	return nil
 }
 
-// Post performs a POST request and returns the response body
+// GetResponse performs a GET request and returns the full HTTP response
+// The caller is responsible for checking status code and closing the response body
+func (c *RealHTTPClient) GetResponse(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	return c.doRequestWithRetryAndResponse(ctx, req)
+}
+
+// GetBytes performs a GET request with custom headers and returns the response body
 // Implements exponential backoff retry for rate limiting (429) responses
-func (c *RealHTTPClient) Post(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error) {
+func (c *RealHTTPClient) GetBytes(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	return c.doRequestWithRetry(ctx, req)
+}
+
+// GetPartialBytes performs a GET request with Range header to fetch partial content
+// Returns the partial content as bytes
+func (c *RealHTTPClient) GetPartialBytes(ctx context.Context, url string, maxBytes int) ([]byte, error) {
+	return c.getPartialBytesNoRetry(ctx, url, maxBytes, func(req *http.Request) (*http.Response, error) {
+		return c.doRequestWithRetryAndResponse(ctx, req)
+	})
+}
+
+// GetPartialBytesNoRetry performs a GET request with Range header to fetch partial content without retry
+// Returns the partial content as bytes
+func (c *RealHTTPClient) GetPartialBytesNoRetry(ctx context.Context, url string, maxBytes int) ([]byte, error) {
+	return c.getPartialBytesNoRetry(ctx, url, maxBytes, func(req *http.Request) (*http.Response, error) {
+		return c.client.Do(req)
+	})
+}
+
+// getPartialBytesNoRetry performs a GET request with Range header to fetch partial content without retry
+// Returns the partial content as bytes
+func (c *RealHTTPClient) getPartialBytesNoRetry(ctx context.Context, url string, maxBytes int, doFunc func(req *http.Request) (*http.Response, error)) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set Range header to fetch only the first maxBytes
+	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", maxBytes-1))
+
+	resp, err := doFunc(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
+		}
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+	}
+
+	// Read the response body (limited by Range header or entire content if server doesn't support Range)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return body, nil
+}
+
+// PostBytes performs a POST request and returns the response body
+// Implements exponential backoff retry for rate limiting (429) responses
+func (c *RealHTTPClient) PostBytes(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -250,8 +335,8 @@ func (c *RealHTTPClient) Post(ctx context.Context, url string, contentType strin
 	return c.doRequestWithRetry(ctx, req)
 }
 
-// PostWithHeadersNoRetry performs a POST request with custom headers and returns the response without retry
-func (c *RealHTTPClient) PostWithHeadersNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error) {
+// PostNoRetry performs a POST request with custom headers and returns the response without retry
+func (c *RealHTTPClient) PostNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -276,79 +361,12 @@ func (c *RealHTTPClient) Head(ctx context.Context, url string) (*http.Response, 
 	return c.doRequestWithRetryAndResponse(ctx, req)
 }
 
-// GetPartialContent performs a GET request with Range header to fetch partial content
-// Returns the partial content as bytes
-func (c *RealHTTPClient) GetPartialContent(ctx context.Context, url string, maxBytes int) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// HeadNoRetry performs a HEAD request without retry
+func (c *RealHTTPClient) HeadNoRetry(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set Range header to fetch only the first maxBytes
-	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", maxBytes-1))
-
-	resp, err := c.doRequestWithRetryAndResponse(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", req.URL.String()))
-		}
-	}()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
-	}
-
-	// Read the response body (limited by Range header or entire content if server doesn't support Range)
-	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	return body, nil
-}
-
-// GetWithResponse performs a GET request and returns the full HTTP response
-// The caller is responsible for checking status code and closing the response body
-func (c *RealHTTPClient) GetWithResponse(ctx context.Context, url string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	return c.doRequestWithRetryAndResponse(ctx, req)
-}
-
-// GetWithHeaders performs a GET request with custom headers and returns the response body
-// Implements exponential backoff retry for rate limiting (429) responses
-func (c *RealHTTPClient) GetWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set custom headers
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-
-	return c.doRequestWithRetry(ctx, req)
-}
-
-// GetWithResponseAndHeaders performs a GET request with custom headers and returns the full HTTP response
-// The caller is responsible for checking status code and closing the response body
-func (c *RealHTTPClient) GetWithResponseAndHeaders(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set custom headers
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
-
-	return c.doRequestWithRetryAndResponse(ctx, req)
+	return c.client.Do(req)
 }
