@@ -406,7 +406,7 @@ func (s *pgStore) GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID s
 }
 
 // GetTokensByFilter retrieves tokens with their metadata based on filters
-func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, uint64, error) {
+func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, error) {
 	query := s.db.WithContext(ctx).Model(&schema.Token{}).
 		Select("DISTINCT ON (tokens.id, latest_pe.timestamp) tokens.*")
 
@@ -444,13 +444,6 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		query = query.Where("tokens.token_cid IN ?", filter.TokenCIDs)
 	}
 
-	// Count total before pagination
-	var total int64
-	countQuery := query
-	if err := countQuery.Count(&total).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to count tokens: %w", err)
-	}
-
 	// Join with latest provenance event to sort by timestamp
 	// When filtering by owners, only consider provenance events related to those owners
 	if len(filter.Owners) > 0 {
@@ -477,10 +470,10 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 
 	var tokens []schema.Token
 	if err := query.Find(&tokens).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to get tokens: %w", err)
+		return nil, fmt.Errorf("failed to get tokens: %w", err)
 	}
 
-	return tokens, uint64(total), nil //nolint:gosec,G115
+	return tokens, nil
 }
 
 // GetTokenOwners retrieves owners (balances) for a token

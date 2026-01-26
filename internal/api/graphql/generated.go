@@ -14,11 +14,10 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
-	gqlparser "github.com/vektah/gqlparser/v2"
-	"github.com/vektah/gqlparser/v2/ast"
-
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
+	gqlparser "github.com/vektah/gqlparser/v2"
+	"github.com/vektah/gqlparser/v2/ast"
 )
 
 // region    ************************** generated!.gotpl **************************
@@ -215,7 +214,6 @@ type ComplexityRoot struct {
 	TokenList struct {
 		Offset func(childComplexity int) int
 		Tokens func(childComplexity int) int
-		Total  func(childComplexity int) int
 	}
 
 	TokenMetadata struct {
@@ -331,7 +329,6 @@ type TokenResolver interface {
 }
 type TokenListResolver interface {
 	Offset(ctx context.Context, obj *dto.TokenListResponse) (*Uint64, error)
-	Total(ctx context.Context, obj *dto.TokenListResponse) (Uint64, error)
 }
 type TokenMetadataResolver interface {
 	TokenID(ctx context.Context, obj *dto.TokenMetadataResponse) (Uint64, error)
@@ -1074,12 +1071,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TokenList.Tokens(childComplexity), true
-	case "TokenList.total":
-		if e.complexity.TokenList.Total == nil {
-			break
-		}
-
-		return e.complexity.TokenList.Total(childComplexity), true
 
 	case "TokenMetadata.animation_url":
 		if e.complexity.TokenMetadata.AnimationURL == nil {
@@ -1524,7 +1515,6 @@ type Token {
 type TokenList {
   items: [Token!]!
   offset: Uint64
-  total: Uint64!
 }
 
 # Change journal entry
@@ -1716,7 +1706,6 @@ type IndexingJob {
   failed_at: Time
   canceled_at: Time
 }
-
 `, BuiltIn: false},
 }
 var parsedSchema = gqlparser.MustLoadSchema(sources...)
@@ -4747,8 +4736,6 @@ func (ec *executionContext) fieldContext_Query_tokens(ctx context.Context, field
 				return ec.fieldContext_TokenList_items(ctx, field)
 			case "offset":
 				return ec.fieldContext_TokenList_offset(ctx, field)
-			case "total":
-				return ec.fieldContext_TokenList_total(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type TokenList", field.Name)
 		},
@@ -5798,35 +5785,6 @@ func (ec *executionContext) _TokenList_offset(ctx context.Context, field graphql
 }
 
 func (ec *executionContext) fieldContext_TokenList_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "TokenList",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Uint64 does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _TokenList_total(ctx context.Context, field graphql.CollectedField, obj *dto.TokenListResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_TokenList_total,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.TokenList().Total(ctx, obj)
-		},
-		nil,
-		ec.marshalNUint642githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_TokenList_total(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "TokenList",
 		Field:      field,
@@ -10071,42 +10029,6 @@ func (ec *executionContext) _TokenList(ctx context.Context, sel ast.SelectionSet
 					}
 				}()
 				res = ec._TokenList_offset(ctx, field, obj)
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "total":
-			field := field
-
-			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._TokenList_total(ctx, field, obj)
-				if res == graphql.Null {
-					atomic.AddUint32(&fs.Invalids, 1)
-				}
 				return res
 			}
 

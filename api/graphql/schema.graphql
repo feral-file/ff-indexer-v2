@@ -140,7 +140,6 @@ type Token {
 type TokenList {
   items: [Token!]!
   offset: Uint64
-  total: Uint64!
 }
 
 # Change journal entry
@@ -332,4 +331,3 @@ type IndexingJob {
   failed_at: Time
   canceled_at: Time
 }
-

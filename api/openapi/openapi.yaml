@@ -1748,7 +1748,6 @@ components:
       type: object
       required:
         - items
-        - total
       properties:
         items:
           type: array
@@ -1758,13 +1757,8 @@ components:
         offset:
           type: [integer, "null"]
           format: uint64
-          description: Current offset for pagination
+          description: Next offset for pagination (null if there are no more results)
           example: 0
-        total:
-          type: integer
-          format: uint64
-          description: Total number of tokens matching the filter
-          example: 1000
 
     ChangeResponse:
       type: object

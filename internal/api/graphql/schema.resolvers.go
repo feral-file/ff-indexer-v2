@@ -586,11 +586,6 @@ func (r *tokenListResolver) Offset(ctx context.Context, obj *dto.TokenListRespon
 	return FromNativeUint64(obj.Offset), nil
 }
 
-// Total is the resolver for the total field.
-func (r *tokenListResolver) Total(ctx context.Context, obj *dto.TokenListResponse) (Uint64, error) {
-	return Uint64(obj.Total), nil
-}
-
 // TokenID is the resolver for the token_id field.
 func (r *tokenMetadataResolver) TokenID(ctx context.Context, obj *dto.TokenMetadataResponse) (Uint64, error) {
 	return Uint64(obj.TokenID), nil
