@@ -96,7 +96,10 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 - Go 1.24+
 - Docker and Docker Compose
-- PostgreSQL 15+
+- PostgreSQL 18+
+- Temporal 1.29.0+
+- Redis 8.2.2+
+- NATs Jetstream 2.12.1+
 - Access to Ethereum RPC endpoints
 
 ## License

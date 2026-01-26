@@ -7,7 +7,10 @@ import (
 	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 )
+
+const PROVIDER_NAME = "opensea"
 
 var ErrNoAPIKey = errors.New("no API key provided")
 
@@ -48,19 +51,21 @@ type Client interface {
 
 // OpenSeaClient implements OpenSea client
 type OpenSeaClient struct {
-	httpClient adapter.HTTPClient
-	apiURL     string
-	apiKey     string
-	json       adapter.JSON
+	httpClient     adapter.HTTPClient
+	rateLimitProxy ratelimit.Proxy
+	apiURL         string
+	apiKey         string
+	json           adapter.JSON
 }
 
 // NewClient creates a new OpenSea client
-func NewClient(httpClient adapter.HTTPClient, apiURL string, apiKey string, json adapter.JSON) Client {
+func NewClient(httpClient adapter.HTTPClient, rateLimitProxy ratelimit.Proxy, apiURL string, apiKey string, json adapter.JSON) Client {
 	return &OpenSeaClient{
-		httpClient: httpClient,
-		apiURL:     apiURL,
-		apiKey:     apiKey,
-		json:       json,
+		httpClient:     httpClient,
+		rateLimitProxy: rateLimitProxy,
+		apiURL:         apiURL,
+		apiKey:         apiKey,
+		json:           json,
 	}
 }
 
@@ -83,7 +88,9 @@ func (c *OpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID str
 		"X-API-KEY": c.apiKey,
 	}
 
-	respBody, err := c.httpClient.GetBytes(ctx, url, headers)
+	respBody, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
+		return c.httpClient.GetBytes(ctx, url, headers)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to call OpenSea API: %w", err)
 	}

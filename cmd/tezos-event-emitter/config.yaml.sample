@@ -32,6 +32,21 @@ tezos:
   block_head_ttl: 10
   block_head_stale_window: 60
 
+rate_limiter:
+  redis_addr: :6379
+  redis_password:
+  redis_db:
+  redis_key_prefix:
+  max_workers: 10
+  max_queue_size: 1000
+  enable_local_fallback: true
+  local_fallback_multiplier: 0.5
+  providers:
+    tzkt:
+      requests_per_second: 10
+      burst: 10
+      max_queue_time: 5m
+
 worker:
   pool_size: 20
   queue_size: 1024

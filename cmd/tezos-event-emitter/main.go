@@ -22,6 +22,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jetstream"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
@@ -83,6 +84,13 @@ func main() {
 	natsJS := adapter.NewNatsJetStream()
 	signalR := adapter.NewSignalR()
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
+	redisAdapter := adapter.NewRedisClient(cfg.RateLimiter.RedisAddr, cfg.RateLimiter.RedisPassword, cfg.RateLimiter.RedisDB)
+
+	// Rate limit proxy
+	rateLimitProxy, err := ratelimit.NewProxy(cfg.RateLimiter, redisAdapter, clockAdapter)
+	if err != nil {
+		logger.FatalCtx(ctx, "Failed to initialize rate limit proxy", zap.Error(err))
+	}
 
 	// Initialize NATS publisher
 	natsPublisher, err := jetstream.NewPublisher(
@@ -110,7 +118,7 @@ func main() {
 		}, clockAdapter)
 
 	// Initialize TzKT client
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter, tzBlockProvider)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, rateLimitProxy, clockAdapter, tzBlockProvider)
 
 	// Initialize Tezos subscriber
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{

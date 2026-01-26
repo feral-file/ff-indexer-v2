@@ -48,7 +48,7 @@ services:
 
   # Temporal server
   temporal:
-    image: temporalio/auto-setup:1.24.2
+    image: temporalio/auto-setup:1.29.0
     container_name: temporal
     depends_on:
       temporal-postgres:
@@ -78,7 +78,7 @@ services:
 
   # Temporal Web UI
   temporal-ui:
-    image: temporalio/ui:2.26.2
+    image: temporalio/ui:2.42.1
     container_name: temporal-ui
     depends_on:
       temporal:
@@ -92,9 +92,32 @@ services:
       - ff-indexer-network
     restart: unless-stopped
 
+  # Redis for rate limiting
+  redis:
+    image: redis:8.2.2-alpine
+    container_name: ff-indexer-redis
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD:-redis_password}
+    environment:
+      - REDIS_PASSWORD=${FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD:-redis_password}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ff-indexer-network
+    restart: unless-stopped
+
   # NATS JetStream for event streaming
   nats:
-    image: nats:2.10-alpine
+    image: nats:2.12.1-alpine
     container_name: ff-indexer-nats
     command:
       - "-js"
@@ -195,6 +218,8 @@ services:
         condition: service_healthy
       nats-setup:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     volumes:
       - ../../cmd/tezos-event-emitter/config.yaml.sample:/app/config.yaml:ro
     env_file:
@@ -204,6 +229,9 @@ services:
       # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_NATS_URL=nats://nats:4222
+      - FF_INDEXER_RATE_LIMITER_REDIS_ADDR=redis:6379
+      - FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD=${FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD:-redis_password}
+      - FF_INDEXER_RATE_LIMITER_REDIS_DB=${FF_INDEXER_RATE_LIMITER_REDIS_DB:-0}
     networks:
       - ff-indexer-network
     restart: unless-stopped
@@ -275,6 +303,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       temporal:
         condition: service_healthy
     volumes:
@@ -287,6 +317,9 @@ services:
       # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
+      - FF_INDEXER_RATE_LIMITER_REDIS_ADDR=redis:6379
+      - FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD=${FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD:-redis_password}
+      - FF_INDEXER_RATE_LIMITER_REDIS_DB=${FF_INDEXER_RATE_LIMITER_REDIS_DB:-0}
     networks:
       - ff-indexer-network
     restart: unless-stopped
@@ -420,6 +453,8 @@ volumes:
   temporal_data:
     driver: local
   nats_data:
+    driver: local
+  redis_data:
     driver: local
 
 networks:

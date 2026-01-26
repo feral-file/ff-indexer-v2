@@ -20,8 +20,9 @@ func TestOpenSeaClient_GetNFT(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
+	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
 
-	client := opensea.NewClient(mockHTTPClient, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
@@ -55,6 +56,12 @@ func TestOpenSeaClient_GetNFT(t *testing.T) {
 	expectedHeaders := map[string]string{
 		"X-API-KEY": "test-api-key",
 	}
+
+	mockRateLimitProxy.EXPECT().
+		Request(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
 
 	mockHTTPClient.EXPECT().
 		GetBytes(ctx, expectedURL, expectedHeaders).
@@ -119,9 +126,10 @@ func TestOpenSeaClient_GetNFT_NoAPIKey(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
+	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
 
 	// Create client without API key (empty string)
-	client := opensea.NewClient(mockHTTPClient, "https://api.opensea.io/api/v2", "", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
@@ -140,12 +148,19 @@ func TestOpenSeaClient_GetNFT_APIError(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
+	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
 
-	client := opensea.NewClient(mockHTTPClient, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
 	tokenID := "1"
+
+	mockRateLimitProxy.EXPECT().
+		Request(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
 
 	mockHTTPClient.EXPECT().
 		GetBytes(ctx, gomock.Any(), gomock.Any()).
@@ -164,14 +179,21 @@ func TestOpenSeaClient_GetNFT_UnmarshalError(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
+	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
 
-	client := opensea.NewClient(mockHTTPClient, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
 	tokenID := "1"
 
 	responseJSON := []byte(`invalid json`)
+
+	mockRateLimitProxy.EXPECT().
+		Request(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
 
 	mockHTTPClient.EXPECT().
 		GetBytes(ctx, gomock.Any(), gomock.Any()).
@@ -194,14 +216,21 @@ func TestOpenSeaClient_GetNFT_ResponseErrors(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
+	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
 
-	client := opensea.NewClient(mockHTTPClient, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
 	tokenID := "1"
 
 	responseJSON := []byte(`{"errors": ["NFT not found"]}`)
+
+	mockRateLimitProxy.EXPECT().
+		Request(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
 
 	mockHTTPClient.EXPECT().
 		GetBytes(ctx, gomock.Any(), gomock.Any()).
@@ -330,7 +359,7 @@ func TestOpenSeaClient_Integration(t *testing.T) {
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
 	jsonAdapter := adapter.NewJSON()
 
-	client := opensea.NewClient(httpClient, "https://api.opensea.io/api/v2", apiKey, jsonAdapter)
+	client := opensea.NewClient(httpClient, nil, "https://api.opensea.io/api/v2", apiKey, jsonAdapter)
 
 	ctx := context.Background()
 	contractAddress := "0x513AC47320798fB6D74543242a9c0F686682998D" // BAYC
