@@ -267,6 +267,15 @@ func TestProxy_Request_Success(t *testing.T) {
 			Remaining: 9,
 		}, nil)
 
+	// Mock fairness delay after successful token acquisition
+	mocks.clock.EXPECT().
+		After(gomock.Any()).
+		DoAndReturn(func(d time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			ch <- time.Now()
+			return ch
+		})
+
 	// Execute request
 	ctx := context.Background()
 	expectedResult := "success"
@@ -394,6 +403,13 @@ func TestProxy_Request_RateLimitExceeded_WithRetryAfter(t *testing.T) {
 				Allowed:   1,
 				Remaining: 9,
 			}, nil),
+		mocks.clock.EXPECT().
+			After(gomock.Any()). // Fairness delay after successful token acquisition
+			DoAndReturn(func(d time.Duration) <-chan time.Time {
+				ch := make(chan time.Time, 1)
+				ch <- time.Now()
+				return ch
+			}),
 	)
 
 	ctx := context.Background()
@@ -473,6 +489,15 @@ func TestProxy_Request_RequestFunctionError(t *testing.T) {
 	mocks.redisRateLimiter.EXPECT().
 		Allow(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&redis_rate.Result{Allowed: 1}, nil)
+
+	// Mock fairness delay after successful token acquisition
+	mocks.clock.EXPECT().
+		After(gomock.Any()).
+		DoAndReturn(func(d time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			ch <- time.Now()
+			return ch
+		})
 
 	ctx := context.Background()
 	expectedError := errors.New("request failed")
@@ -589,6 +614,16 @@ func TestProxy_Request_Concurrent(t *testing.T) {
 		Return(&redis_rate.Result{Allowed: 1}, nil).
 		MinTimes(3)
 
+	// Mock fairness delay after successful token acquisition for each request
+	mocks.clock.EXPECT().
+		After(gomock.Any()).
+		DoAndReturn(func(d time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			ch <- time.Now()
+			return ch
+		}).
+		MinTimes(3)
+
 	ctx := context.Background()
 	done := make(chan bool, 3)
 
@@ -647,6 +682,15 @@ func TestProxy_Request_MultipleProviders(t *testing.T) {
 		Allow(gomock.Any(), "test:limiter:provider-1", gomock.Any()).
 		Return(&redis_rate.Result{Allowed: 1}, nil)
 
+	// Mock fairness delay for provider-1
+	mocks.clock.EXPECT().
+		After(gomock.Any()).
+		DoAndReturn(func(d time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			ch <- time.Now()
+			return ch
+		})
+
 	result1, err := proxy.Request(ctx, "provider-1", func(ctx context.Context) (interface{}, error) {
 		return "provider-1-result", nil
 	})
@@ -657,6 +701,15 @@ func TestProxy_Request_MultipleProviders(t *testing.T) {
 	mocks.redisRateLimiter.EXPECT().
 		Allow(gomock.Any(), "test:limiter:provider-2", gomock.Any()).
 		Return(&redis_rate.Result{Allowed: 1}, nil)
+
+	// Mock fairness delay for provider-2
+	mocks.clock.EXPECT().
+		After(gomock.Any()).
+		DoAndReturn(func(d time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			ch <- time.Now()
+			return ch
+		})
 
 	result2, err := proxy.Request(ctx, "provider-2", func(ctx context.Context) (interface{}, error) {
 		return "provider-2-result", nil

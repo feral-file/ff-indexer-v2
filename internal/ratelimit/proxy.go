@@ -237,11 +237,23 @@ func (p *proxy) acquireToken(ctx context.Context, limiter *providerLimiter) erro
 				// Continue to local limiter
 			} else if allowed {
 				// Token acquired successfully
-				return nil
+				// Add small delay to prevent a single worker from monopolizing tokens
+				// This ensures fairness across multiple workers
+				fairnessDelay := time.Duration(float64(time.Second/time.Duration(limiter.config.RequestsPerSecond)) * (0.5 + 2*rand.Float64())) //nolint:gosec,G404
+				logger.Debug("Fairness delay",
+					zap.String("provider", limiter.name),
+					zap.Duration("fairness_delay", fairnessDelay),
+				)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-p.clock.After(fairnessDelay):
+					return nil
+				}
 			} else if retryAfter > 0 {
 				// Rate limited - sleep with jitter and retry
-				// Add jitter to spread out retry attempts (50-150% of retryAfter)
-				jitter := time.Duration(float64(retryAfter) * (0.5 + rand.Float64())) //nolint:gosec,G404
+				// Add jitter to spread out retry attempts (50-250% of retryAfter)
+				jitter := time.Duration(float64(retryAfter) * (0.5 + 2*rand.Float64())) //nolint:gosec,G404
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
