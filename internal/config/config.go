@@ -127,11 +127,12 @@ type EthereumEmitterConfig struct {
 
 // TezosEmitterConfig holds configuration for tezos-event-emitter
 type TezosEmitterConfig struct {
-	BaseConfig `mapstructure:",squash"`
-	Worker     WorkerConfig   `mapstructure:"worker"`
-	Database   DatabaseConfig `mapstructure:"database"`
-	NATS       NATSConfig     `mapstructure:"nats"`
-	Tezos      TezosConfig    `mapstructure:"tezos"`
+	BaseConfig  `mapstructure:",squash"`
+	Worker      WorkerConfig      `mapstructure:"worker"`
+	Database    DatabaseConfig    `mapstructure:"database"`
+	NATS        NATSConfig        `mapstructure:"nats"`
+	Tezos       TezosConfig       `mapstructure:"tezos"`
+	RateLimiter RateLimiterConfig `mapstructure:"rate_limiter"`
 }
 
 // EventBridgeConfig holds configuration for event-bridge
@@ -146,16 +147,17 @@ type EventBridgeConfig struct {
 // WorkerCoreConfig holds configuration for worker-core
 type WorkerCoreConfig struct {
 	BaseConfig                   `mapstructure:",squash"`
-	Database                     DatabaseConfig `mapstructure:"database"`
-	Temporal                     TemporalConfig `mapstructure:"temporal"`
-	Ethereum                     EthereumConfig `mapstructure:"ethereum"`
-	Tezos                        TezosConfig    `mapstructure:"tezos"`
-	Vendors                      VendorsConfig  `mapstructure:"vendors"`
-	URI                          URIConfig      `mapstructure:"uri"`
-	EthereumTokenSweepStartBlock uint64         `mapstructure:"ethereum_token_sweep_start_block"`
-	TezosTokenSweepStartBlock    uint64         `mapstructure:"tezos_token_sweep_start_block"`
-	PublisherRegistryPath        string         `mapstructure:"publisher_registry_path"`
-	BlacklistPath                string         `mapstructure:"blacklist_path"`
+	Database                     DatabaseConfig    `mapstructure:"database"`
+	Temporal                     TemporalConfig    `mapstructure:"temporal"`
+	Ethereum                     EthereumConfig    `mapstructure:"ethereum"`
+	Tezos                        TezosConfig       `mapstructure:"tezos"`
+	Vendors                      VendorsConfig     `mapstructure:"vendors"`
+	URI                          URIConfig         `mapstructure:"uri"`
+	RateLimiter                  RateLimiterConfig `mapstructure:"rate_limiter"`
+	EthereumTokenSweepStartBlock uint64            `mapstructure:"ethereum_token_sweep_start_block"`
+	TezosTokenSweepStartBlock    uint64            `mapstructure:"tezos_token_sweep_start_block"`
+	PublisherRegistryPath        string            `mapstructure:"publisher_registry_path"`
+	BlacklistPath                string            `mapstructure:"blacklist_path"`
 
 	// Budgeted Indexing Mode Configuration
 	BudgetedIndexingEnabled           bool `mapstructure:"budgeted_indexing_enabled"`
@@ -179,6 +181,52 @@ type CloudflareConfig struct {
 	// AccountID is the Cloudflare account ID (used for both Images and Stream)
 	AccountID string `mapstructure:"account_id"`
 	APIToken  string `mapstructure:"api_token"`
+}
+
+// RateLimitConfig holds rate limiting configuration for a specific API provider
+type RateLimitConfig struct {
+	// RequestsPerSecond is the maximum RPS allowed by the provider
+	RequestsPerSecond int `mapstructure:"requests_per_second"`
+
+	// Burst is the maximum burst size for the token bucket (allows short bursts above RPS)
+	// If not specified, defaults to RequestsPerSecond
+	Burst int `mapstructure:"burst"`
+
+	// MaxQueueTime is the maximum time a request can wait in queue for a token
+	// Default: 5m
+	MaxQueueTime time.Duration `mapstructure:"max_queue_time"`
+}
+
+// RateLimiterConfig holds global rate limiter proxy configuration
+type RateLimiterConfig struct {
+	// Redis configuration
+	RedisAddr     string `mapstructure:"redis_addr"`
+	RedisPassword string `mapstructure:"redis_password"`
+	RedisDB       int    `mapstructure:"redis_db"`
+
+	// RedisKeyPrefix is the prefix for all Redis keys used by the rate limiter
+	// Default: "ff:indexer:limiter:"
+	RedisKeyPrefix string `mapstructure:"redis_key_prefix"`
+
+	// MaxWorkers is the maximum number of concurrent worker goroutines
+	// Default: runtime.NumCPU() * 10
+	MaxWorkers int `mapstructure:"max_workers"`
+
+	// MaxQueueSize is the maximum number of tasks that can be queued
+	// Default: 10000
+	MaxQueueSize int `mapstructure:"max_queue_size"`
+
+	// EnableLocalFallback enables local in-memory rate limiting when Redis is unavailable
+	// WARNING: When multiple instances run with local fallback, the aggregate RPS
+	// will be multiplied by the number of instances
+	EnableLocalFallback bool `mapstructure:"enable_local_fallback"`
+
+	// LocalFallbackMultiplier reduces the RPS limit when falling back to local limiting
+	// Default: 0.5 (50% of configured RPS per instance)
+	LocalFallbackMultiplier float64 `mapstructure:"local_fallback_multiplier"`
+
+	// Provider-specific rate limits
+	Providers map[string]RateLimitConfig `mapstructure:"providers"`
 }
 
 // WorkerMediaConfig holds configuration for worker-media
@@ -261,6 +309,16 @@ func LoadTezosEmitterConfig(configFile string, envPath string) (*TezosEmitterCon
 	v.SetDefault("tezos.block_head_stale_window", 60)
 	v.SetDefault("worker.pool_size", 20)
 	v.SetDefault("worker.queue_size", 2048)
+	v.SetDefault("rate_limiter.redis_addr", "localhost:6379")
+	v.SetDefault("rate_limiter.redis_db", 0)
+	v.SetDefault("rate_limiter.redis_key_prefix", "ff:indexer:limiter:")
+	v.SetDefault("rate_limiter.max_workers", 10)
+	v.SetDefault("rate_limiter.max_queue_size", 10000)
+	v.SetDefault("rate_limiter.enable_local_fallback", true)
+	v.SetDefault("rate_limiter.local_fallback_multiplier", 0.5)
+	v.SetDefault("rate_limiter.providers.tzkt.requests_per_second", 10)
+	v.SetDefault("rate_limiter.providers.tzkt.burst", 10)
+	v.SetDefault("rate_limiter.providers.tzkt.max_queue_time", "15m")
 
 	if err := v.ReadInConfig(); err != nil {
 		var error viper.ConfigFileNotFoundError
@@ -340,6 +398,22 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 	v.SetDefault("budgeted_indexing_enabled", false)
 	v.SetDefault("budgeted_indexing_default_daily_quota", 1000)
+	v.SetDefault("rate_limiter.redis_addr", "localhost:6379")
+	v.SetDefault("rate_limiter.redis_db", 0)
+	v.SetDefault("rate_limiter.redis_key_prefix", "ff:indexer:limiter:")
+	v.SetDefault("rate_limiter.max_workers", 10)
+	v.SetDefault("rate_limiter.max_queue_size", 10000)
+	v.SetDefault("rate_limiter.enable_local_fallback", true)
+	v.SetDefault("rate_limiter.local_fallback_multiplier", 0.5)
+	v.SetDefault("rate_limiter.providers.tzkt.requests_per_second", 10)
+	v.SetDefault("rate_limiter.providers.tzkt.burst", 10)
+	v.SetDefault("rate_limiter.providers.tzkt.max_queue_time", "15m")
+	v.SetDefault("rate_limiter.providers.opensea.requests_per_second", 4)
+	v.SetDefault("rate_limiter.providers.opensea.burst", 4)
+	v.SetDefault("rate_limiter.providers.opensea.max_queue_time", "15m")
+	v.SetDefault("rate_limiter.providers.objkt.requests_per_second", 2)
+	v.SetDefault("rate_limiter.providers.objkt.burst", 2)
+	v.SetDefault("rate_limiter.providers.objkt.max_queue_time", "15m")
 
 	if err := v.ReadInConfig(); err != nil {
 		var error viper.ConfigFileNotFoundError
@@ -601,6 +675,24 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
 		"media_health_sweeper.uri.onchfs_gateways",
+		// Rate Limiter
+		"rate_limiter.redis_addr",
+		"rate_limiter.redis_password",
+		"rate_limiter.redis_db",
+		"rate_limiter.redis_key_prefix",
+		"rate_limiter.max_workers",
+		"rate_limiter.max_queue_size",
+		"rate_limiter.enable_local_fallback",
+		"rate_limiter.local_fallback_multiplier",
+		"rate_limiter.providers.tzkt.requests_per_second",
+		"rate_limiter.providers.tzkt.burst",
+		"rate_limiter.providers.tzkt.max_queue_time",
+		"rate_limiter.providers.objkt.requests_per_second",
+		"rate_limiter.providers.objkt.burst",
+		"rate_limiter.providers.objkt.max_queue_time",
+		"rate_limiter.providers.opensea.requests_per_second",
+		"rate_limiter.providers.opensea.burst",
+		"rate_limiter.providers.opensea.max_queue_time",
 	}
 
 	for _, key := range commonKeys {

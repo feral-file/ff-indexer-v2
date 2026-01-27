@@ -29,6 +29,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -96,6 +97,7 @@ func main() {
 	ioAdapter := adapter.NewIO()
 	temporalActivityAdapter := adapter.NewActivity()
 	temporalWorkflowAdapter := adapter.NewWorkflow()
+	redisAdapter := adapter.NewRedisClient(cfg.RateLimiter.RedisAddr, cfg.RateLimiter.RedisPassword, cfg.RateLimiter.RedisDB)
 
 	// Initialize ethereum client
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
@@ -105,6 +107,12 @@ func main() {
 		logger.FatalCtx(ctx, "Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
 	}
 	defer adapterEthClient.Close()
+
+	// Rate limit proxy
+	rateLimitProxy, err := ratelimit.NewProxy(cfg.RateLimiter, redisAdapter, clockAdapter)
+	if err != nil {
+		logger.FatalCtx(ctx, "Failed to initialize rate limit proxy", zap.Error(err))
+	}
 
 	// Create Ethereum block provider with appropriate TTL
 	ethBlockFetcher := ethereum.NewEthereumBlockFetcher(adapterEthClient)
@@ -129,13 +137,13 @@ func main() {
 		}, clockAdapter)
 
 	// Initialize Tezos client
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, clockAdapter, tzBlockProvider)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, rateLimitProxy, clockAdapter, tzBlockProvider)
 
 	// Initialize vendors
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
-	objktClient := objkt.NewClient(httpClient, cfg.Vendors.ObjktURL, jsonAdapter)
-	openseaClient := opensea.NewClient(httpClient, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
+	objktClient := objkt.NewClient(httpClient, rateLimitProxy, cfg.Vendors.ObjktURL, jsonAdapter)
+	openseaClient := opensea.NewClient(httpClient, rateLimitProxy, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
 
 	// Initialize registry loaders
 	publisherLoader := registry.NewPublisherRegistryLoader(fs, jsonAdapter)

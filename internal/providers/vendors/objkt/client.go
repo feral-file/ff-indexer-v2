@@ -6,7 +6,10 @@ import (
 	"fmt"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 )
+
+const PROVIDER_NAME = "objkt"
 
 // TokenResponse represents the GraphQL response from objkt v3 API
 type TokenResponse struct {
@@ -55,17 +58,19 @@ type Client interface {
 
 // ObjktClient implements objkt client
 type ObjktClient struct {
-	httpClient adapter.HTTPClient
-	apiURL     string
-	json       adapter.JSON
+	httpClient     adapter.HTTPClient
+	rateLimitProxy ratelimit.Proxy
+	apiURL         string
+	json           adapter.JSON
 }
 
 // NewClient creates a new objkt client
-func NewClient(httpClient adapter.HTTPClient, apiURL string, json adapter.JSON) Client {
+func NewClient(httpClient adapter.HTTPClient, rateLimitProxy ratelimit.Proxy, apiURL string, json adapter.JSON) Client {
 	return &ObjktClient{
-		httpClient: httpClient,
-		apiURL:     apiURL,
-		json:       json,
+		httpClient:     httpClient,
+		rateLimitProxy: rateLimitProxy,
+		apiURL:         apiURL,
+		json:           json,
 	}
 }
 
@@ -106,7 +111,9 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
 	}
 
 	// Make the POST request
-	responseBody, err := c.httpClient.PostBytes(ctx, c.apiURL, "application/json", bytes.NewReader(requestBody))
+	responseBody, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
+		return c.httpClient.PostBytes(ctx, c.apiURL, "application/json", bytes.NewReader(requestBody))
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to call objkt v3 API: %w", err)
 	}

@@ -42,7 +42,8 @@ func TestClient_GetToken_Success(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := adapter.NewJSON()
-	client := objkt.NewClient(mockHTTPClient, OBJKT_API_URL, mockJSON)
+	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
+	client := objkt.NewClient(mockHTTPClient, mockRateLimitProxy, OBJKT_API_URL, mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "KT19oAHnjgpQ6PauwgC8RxAb5pVj6svg9Myn"
@@ -82,6 +83,12 @@ func TestClient_GetToken_Success(t *testing.T) {
 		},
 	}
 
+	mockRateLimitProxy.EXPECT().
+		Request(gomock.Any(), objkt.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
+
 	mockHTTPClient.EXPECT().
 		PostBytes(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
 		DoAndReturn(func(ctx context.Context, url, contentType string, body interface{}) ([]byte, error) {
@@ -112,13 +119,20 @@ func TestClient_GetToken_HTTPError(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := adapter.NewJSON()
-	client := objkt.NewClient(mockHTTPClient, OBJKT_API_URL, mockJSON)
+	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
+	client := objkt.NewClient(mockHTTPClient, mockRateLimitProxy, OBJKT_API_URL, mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "KT19oAHnjgpQ6PauwgC8RxAb5pVj6svg9Myn"
 	tokenID := "125"
 
 	expectedError := errors.New("network error")
+
+	mockRateLimitProxy.EXPECT().
+		Request(gomock.Any(), objkt.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
 
 	mockHTTPClient.EXPECT().
 		PostBytes(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
@@ -140,11 +154,18 @@ func TestClient_GetToken_InvalidJSON(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := adapter.NewJSON()
-	client := objkt.NewClient(mockHTTPClient, OBJKT_API_URL, mockJSON)
+	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
+	client := objkt.NewClient(mockHTTPClient, mockRateLimitProxy, OBJKT_API_URL, mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "KT19oAHnjgpQ6PauwgC8RxAb5pVj6svg9Myn"
 	tokenID := "125"
+
+	mockRateLimitProxy.EXPECT().
+		Request(gomock.Any(), objkt.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
 
 	mockHTTPClient.EXPECT().
 		PostBytes(ctx, OBJKT_API_URL, "application/json", gomock.Any()).
@@ -165,7 +186,7 @@ func TestClient_GetToken_EmptyResponse(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := adapter.NewJSON()
-	client := objkt.NewClient(mockHTTPClient, OBJKT_API_URL, mockJSON)
+	client := objkt.NewClient(mockHTTPClient, nil, OBJKT_API_URL, mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "KT19oAHnjgpQ6PauwgC8RxAb5pVj6svg9Myn"
@@ -201,7 +222,7 @@ func TestClient_GetToken_Integration(t *testing.T) {
 
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
 	jsonAdapter := adapter.NewJSON()
-	client := objkt.NewClient(httpClient, OBJKT_API_URL, jsonAdapter)
+	client := objkt.NewClient(httpClient, nil, OBJKT_API_URL, jsonAdapter)
 
 	ctx := context.Background()
 
@@ -294,7 +315,7 @@ func TestClient_GetToken_Integration_InvalidToken(t *testing.T) {
 
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
 	jsonAdapter := adapter.NewJSON()
-	client := objkt.NewClient(httpClient, OBJKT_API_URL, jsonAdapter)
+	client := objkt.NewClient(httpClient, nil, OBJKT_API_URL, jsonAdapter)
 
 	ctx := context.Background()
 	invalidContract := "KT1InvalidContractAddress"
@@ -312,7 +333,7 @@ func TestClient_GetToken_Integration_InvalidToken(t *testing.T) {
 func TestClient_GetToken_Integration_ContextCancellation(t *testing.T) {
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
 	jsonAdapter := adapter.NewJSON()
-	client := objkt.NewClient(httpClient, OBJKT_API_URL, jsonAdapter)
+	client := objkt.NewClient(httpClient, nil, OBJKT_API_URL, jsonAdapter)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -334,7 +355,7 @@ func TestClient_GetToken_Integration_EdgeCases(t *testing.T) {
 
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
 	jsonAdapter := adapter.NewJSON()
-	client := objkt.NewClient(httpClient, OBJKT_API_URL, jsonAdapter)
+	client := objkt.NewClient(httpClient, nil, OBJKT_API_URL, jsonAdapter)
 
 	ctx := context.Background()
 

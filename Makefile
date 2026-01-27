@@ -16,7 +16,7 @@ DOCKER_COMPOSE := env -i \
 DOCKER_COMPOSE_FLAGS := 
 
 # Service names
-INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui nats
+INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui nats redis
 EMITTER_SERVICES := ethereum-event-emitter tezos-event-emitter
 WORKER_SERVICES := worker-core worker-media
 APP_SERVICES := event-bridge api sweeper
@@ -91,7 +91,7 @@ up: ## Start all services
 	@echo "$(COLOR_GREEN)✓ All services started$(COLOR_RESET)"
 	@$(MAKE) ps
 
-up-infra: ## Start only infrastructure services (postgres, temporal, nats)
+up-infra: ## Start only infrastructure services (postgres, temporal, nats, redis)
 	@echo "$(COLOR_GREEN)Starting infrastructure services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) up -d $(INFRA_SERVICES)
 	@echo "$(COLOR_GREEN)✓ Infrastructure services started$(COLOR_RESET)"
@@ -363,4 +363,5 @@ dev: up-infra ## Start development mode (only infrastructure, run services local
 	@echo "  PostgreSQL: localhost:5432"
 	@echo "  Temporal:   localhost:7233"
 	@echo "  NATS:       localhost:4222"
+	@echo "  Redis:      localhost:6379"
 

@@ -191,6 +191,7 @@ func NewExecutor(
 	blacklist registry.BlacklistRegistry,
 	urlChecker uri.URLChecker,
 	dataURIChecker uri.DataURIChecker,
+
 ) Executor {
 	return &executor{
 		store:            store,

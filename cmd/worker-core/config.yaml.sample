@@ -63,3 +63,25 @@ uri:
   onchfs_gateways:
     - https://onchfs.fxhash2.xyz
 
+rate_limiter:
+  redis_addr: :6379
+  redis_password: 
+  redis_db:
+  redis_key_prefix:
+  max_workers: 10
+  max_queue_size: 1000
+  enable_local_fallback: true
+  local_fallback_multiplier: 0.5
+  providers:
+    tzkt:
+      requests_per_second: 10
+      burst: 10
+      max_queue_time: 5m
+    opensea:
+      requests_per_second: 4
+      burst: 4
+      max_queue_time: 5m
+    objkt:
+      requests_per_second: 2
+      burst: 2
+      max_queue_time: 5m
