@@ -73,6 +73,14 @@ type WorkerCoreConfig struct {
 	EthereumTokenSweepStartBlock uint64
 	// TezosTokenSweepStartBlock is the start block for the Tezos token sweep
 	TezosTokenSweepStartBlock uint64
+	// EthereumOwnerFirstBatchTarget is the first-run batch target (token count) for Ethereum owner indexing.
+	EthereumOwnerFirstBatchTarget int
+	// EthereumOwnerSubsequentBatchTarget is the subsequent-run batch target (token count) for Ethereum owner indexing.
+	EthereumOwnerSubsequentBatchTarget int
+	// TezosOwnerFirstBatchTarget is the first-run batch target (token count) for Tezos owner indexing.
+	TezosOwnerFirstBatchTarget int
+	// TezosOwnerSubsequentBatchTarget is the subsequent-run batch target (token count) for Tezos owner indexing.
+	TezosOwnerSubsequentBatchTarget int
 	// MediaTaskQueue is the task queue for the media worker
 	MediaTaskQueue string
 	// BudgetedIndexingModeEnabled enables quota-based token indexing

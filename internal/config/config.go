@@ -162,6 +162,12 @@ type WorkerCoreConfig struct {
 	// Budgeted Indexing Mode Configuration
 	BudgetedIndexingEnabled           bool `mapstructure:"budgeted_indexing_enabled"`
 	BudgetedIndexingDefaultDailyQuota int  `mapstructure:"budgeted_indexing_default_daily_quota"`
+
+	// Owner Indexing Configuration (token-count targets for block-aligned chunking)
+	EthereumOwnerFirstBatchTarget      int `mapstructure:"ethereum_owner_first_batch_target"`
+	EthereumOwnerSubsequentBatchTarget int `mapstructure:"ethereum_owner_subsequent_batch_target"`
+	TezosOwnerFirstBatchTarget         int `mapstructure:"tezos_owner_first_batch_target"`
+	TezosOwnerSubsequentBatchTarget    int `mapstructure:"tezos_owner_subsequent_batch_target"`
 }
 
 // APIConfig holds configuration for API server
@@ -398,6 +404,10 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 	v.SetDefault("budgeted_indexing_enabled", false)
 	v.SetDefault("budgeted_indexing_default_daily_quota", 1000)
+	v.SetDefault("ethereum_owner_first_batch_target", 20)
+	v.SetDefault("ethereum_owner_subsequent_batch_target", 3)
+	v.SetDefault("tezos_owner_first_batch_target", 20)
+	v.SetDefault("tezos_owner_subsequent_batch_target", 1)
 	v.SetDefault("rate_limiter.redis_addr", "localhost:6379")
 	v.SetDefault("rate_limiter.redis_db", 0)
 	v.SetDefault("rate_limiter.redis_key_prefix", "ff:indexer:limiter:")
@@ -658,6 +668,10 @@ func bindAllEnvVars(v *viper.Viper) {
 		"blacklist_path",
 		"budgeted_indexing_enabled",
 		"budgeted_indexing_default_daily_quota",
+		"ethereum_owner_first_batch_target",
+		"ethereum_owner_subsequent_batch_target",
+		"tezos_owner_first_batch_target",
+		"tezos_owner_subsequent_batch_target",
 		// Media specific
 		"max_static_image_size",
 		"max_animated_image_size",

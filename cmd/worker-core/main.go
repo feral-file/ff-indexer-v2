@@ -253,13 +253,17 @@ func main() {
 	// Create worker core instance
 	workerCore := workflows.NewWorkerCore(executor,
 		workflows.WorkerCoreConfig{
-			EthereumTokenSweepStartBlock:      cfg.EthereumTokenSweepStartBlock,
-			TezosTokenSweepStartBlock:         cfg.TezosTokenSweepStartBlock,
-			EthereumChainID:                   cfg.Ethereum.ChainID,
-			TezosChainID:                      cfg.Tezos.ChainID,
-			MediaTaskQueue:                    cfg.Temporal.MediaTaskQueue,
-			BudgetedIndexingModeEnabled:       cfg.BudgetedIndexingEnabled,
-			BudgetedIndexingDefaultDailyQuota: cfg.BudgetedIndexingDefaultDailyQuota,
+			EthereumTokenSweepStartBlock:       cfg.EthereumTokenSweepStartBlock,
+			TezosTokenSweepStartBlock:          cfg.TezosTokenSweepStartBlock,
+			EthereumChainID:                    cfg.Ethereum.ChainID,
+			TezosChainID:                       cfg.Tezos.ChainID,
+			EthereumOwnerFirstBatchTarget:      cfg.EthereumOwnerFirstBatchTarget,
+			EthereumOwnerSubsequentBatchTarget: cfg.EthereumOwnerSubsequentBatchTarget,
+			TezosOwnerFirstBatchTarget:         cfg.TezosOwnerFirstBatchTarget,
+			TezosOwnerSubsequentBatchTarget:    cfg.TezosOwnerSubsequentBatchTarget,
+			MediaTaskQueue:                     cfg.Temporal.MediaTaskQueue,
+			BudgetedIndexingModeEnabled:        cfg.BudgetedIndexingEnabled,
+			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
 		}, blacklistRegistry, temporalWorkflowAdapter)
 
 	// Register workflows

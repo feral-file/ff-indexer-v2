@@ -47,12 +47,16 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
 	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
-		TezosChainID:                      domain.ChainTezosMainnet,
-		EthereumChainID:                   domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock:      1000,
-		TezosTokenSweepStartBlock:         1000,
-		MediaTaskQueue:                    "media-task-queue",
-		BudgetedIndexingDefaultDailyQuota: 1000,
+		TezosChainID:                       domain.ChainTezosMainnet,
+		EthereumChainID:                    domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:       1000,
+		TezosTokenSweepStartBlock:          1000,
+		EthereumOwnerFirstBatchTarget:      50,
+		EthereumOwnerSubsequentBatchTarget: 50,
+		TezosOwnerFirstBatchTarget:         50,
+		TezosOwnerSubsequentBatchTarget:    50,
+		MediaTaskQueue:                     "media-task-queue",
+		BudgetedIndexingDefaultDailyQuota:  1000,
 	}, s.blacklist, s.temporalWorkflow)
 }
 
@@ -762,13 +766,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_GetLatestBlockErr
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_QuotaExhausted() {
 	// Setup worker core with budgeted mode enabled and low quota
 	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
-		TezosChainID:                      domain.ChainTezosMainnet,
-		EthereumChainID:                   domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock:      1000,
-		TezosTokenSweepStartBlock:         1000,
-		MediaTaskQueue:                    "media-task-queue",
-		BudgetedIndexingModeEnabled:       true, // Enabled
-		BudgetedIndexingDefaultDailyQuota: 50,   // Low quota
+		TezosChainID:                       domain.ChainTezosMainnet,
+		EthereumChainID:                    domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:       1000,
+		TezosTokenSweepStartBlock:          1000,
+		EthereumOwnerFirstBatchTarget:      50,
+		EthereumOwnerSubsequentBatchTarget: 50,
+		TezosOwnerFirstBatchTarget:         50,
+		TezosOwnerSubsequentBatchTarget:    50,
+		MediaTaskQueue:                     "media-task-queue",
+		BudgetedIndexingModeEnabled:        true, // Enabled
+		BudgetedIndexingDefaultDailyQuota:  50,   // Low quota
 	}, s.blacklist, s.temporalWorkflow)
 
 	address := "tz1abc123def456"
@@ -833,13 +841,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Quot
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Normal() {
 	// Setup worker core with budgeted mode enabled and sufficient quota
 	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
-		TezosChainID:                      domain.ChainTezosMainnet,
-		EthereumChainID:                   domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock:      1000,
-		TezosTokenSweepStartBlock:         1000,
-		MediaTaskQueue:                    "media-task-queue",
-		BudgetedIndexingModeEnabled:       true,
-		BudgetedIndexingDefaultDailyQuota: 1000, // High quota
+		TezosChainID:                       domain.ChainTezosMainnet,
+		EthereumChainID:                    domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:       1000,
+		TezosTokenSweepStartBlock:          1000,
+		EthereumOwnerFirstBatchTarget:      50,
+		EthereumOwnerSubsequentBatchTarget: 50,
+		TezosOwnerFirstBatchTarget:         50,
+		TezosOwnerSubsequentBatchTarget:    50,
+		MediaTaskQueue:                     "media-task-queue",
+		BudgetedIndexingModeEnabled:        true,
+		BudgetedIndexingDefaultDailyQuota:  1000, // High quota
 	}, s.blacklist, s.temporalWorkflow)
 
 	address := "tz1xyz789"
@@ -893,13 +905,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Norm
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_PartialQuota() {
 	// Setup worker core with budgeted mode enabled
 	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
-		TezosChainID:                      domain.ChainTezosMainnet,
-		EthereumChainID:                   domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock:      1000,
-		TezosTokenSweepStartBlock:         1000,
-		MediaTaskQueue:                    "media-task-queue",
-		BudgetedIndexingModeEnabled:       true,
-		BudgetedIndexingDefaultDailyQuota: 1000,
+		TezosChainID:                       domain.ChainTezosMainnet,
+		EthereumChainID:                    domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:       1000,
+		TezosTokenSweepStartBlock:          1000,
+		EthereumOwnerFirstBatchTarget:      50,
+		EthereumOwnerSubsequentBatchTarget: 50,
+		TezosOwnerFirstBatchTarget:         50,
+		TezosOwnerSubsequentBatchTarget:    50,
+		MediaTaskQueue:                     "media-task-queue",
+		BudgetedIndexingModeEnabled:        true,
+		BudgetedIndexingDefaultDailyQuota:  1000,
 	}, s.blacklist, s.temporalWorkflow)
 
 	address := "tz1partial"
@@ -1335,13 +1351,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_QuotaExhausted() {
 	// Setup worker core with budgeted mode enabled and low quota
 	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
-		TezosChainID:                      domain.ChainTezosMainnet,
-		EthereumChainID:                   domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock:      1000,
-		TezosTokenSweepStartBlock:         1000,
-		MediaTaskQueue:                    "media-task-queue",
-		BudgetedIndexingModeEnabled:       true,
-		BudgetedIndexingDefaultDailyQuota: 50,
+		TezosChainID:                       domain.ChainTezosMainnet,
+		EthereumChainID:                    domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:       1000,
+		TezosTokenSweepStartBlock:          1000,
+		EthereumOwnerFirstBatchTarget:      50,
+		EthereumOwnerSubsequentBatchTarget: 50,
+		TezosOwnerFirstBatchTarget:         50,
+		TezosOwnerSubsequentBatchTarget:    50,
+		MediaTaskQueue:                     "media-task-queue",
+		BudgetedIndexingModeEnabled:        true,
+		BudgetedIndexingDefaultDailyQuota:  50,
 	}, s.blacklist, s.temporalWorkflow)
 
 	address := "0x1234567890123456789012345678901234567890"
@@ -1417,13 +1437,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Q
 func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Normal() {
 	// Setup worker core with budgeted mode enabled and sufficient quota
 	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
-		TezosChainID:                      domain.ChainTezosMainnet,
-		EthereumChainID:                   domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock:      1000,
-		TezosTokenSweepStartBlock:         1000,
-		MediaTaskQueue:                    "media-task-queue",
-		BudgetedIndexingModeEnabled:       true,
-		BudgetedIndexingDefaultDailyQuota: 1000,
+		TezosChainID:                       domain.ChainTezosMainnet,
+		EthereumChainID:                    domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:       1000,
+		TezosTokenSweepStartBlock:          1000,
+		EthereumOwnerFirstBatchTarget:      50,
+		EthereumOwnerSubsequentBatchTarget: 50,
+		TezosOwnerFirstBatchTarget:         50,
+		TezosOwnerSubsequentBatchTarget:    50,
+		MediaTaskQueue:                     "media-task-queue",
+		BudgetedIndexingModeEnabled:        true,
+		BudgetedIndexingDefaultDailyQuota:  1000,
 	}, s.blacklist, s.temporalWorkflow)
 
 	address := "0xabcdef1234567890123456789012345678901234"
@@ -1488,13 +1512,17 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_N
 func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_PartialQuota() {
 	// Setup worker core with budgeted mode enabled
 	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
-		TezosChainID:                      domain.ChainTezosMainnet,
-		EthereumChainID:                   domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock:      1000,
-		TezosTokenSweepStartBlock:         1000,
-		MediaTaskQueue:                    "media-task-queue",
-		BudgetedIndexingModeEnabled:       true,
-		BudgetedIndexingDefaultDailyQuota: 1000,
+		TezosChainID:                       domain.ChainTezosMainnet,
+		EthereumChainID:                    domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock:       1000,
+		TezosTokenSweepStartBlock:          1000,
+		EthereumOwnerFirstBatchTarget:      50,
+		EthereumOwnerSubsequentBatchTarget: 50,
+		TezosOwnerFirstBatchTarget:         50,
+		TezosOwnerSubsequentBatchTarget:    50,
+		MediaTaskQueue:                     "media-task-queue",
+		BudgetedIndexingModeEnabled:        true,
+		BudgetedIndexingDefaultDailyQuota:  1000,
 	}, s.blacklist, s.temporalWorkflow)
 
 	address := "0xfedcba9876543210987654321098765432109876"

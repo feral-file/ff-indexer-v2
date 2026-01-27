@@ -20,12 +20,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
-const (
-	// TOKEN_INDEXING_CHUNK_SIZE is the number of tokens to process in a single batch
-	// This balances between resumability (smaller chunks) and efficiency (fewer workflow calls)
-	TOKEN_INDEXING_CHUNK_SIZE = 50
-)
-
 // IndexTokenOwners indexes tokens for multiple addresses sequentially
 func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) error {
 	logger.InfoWf(ctx, "Starting token owners indexing",
@@ -213,12 +207,45 @@ func sortTokensByBlock(tokens []domain.TokenWithBlock, descending bool) {
 	})
 }
 
-// chunkTokensByCount splits tokens into chunks of specified size
-func chunkTokensByCount(tokens []domain.TokenWithBlock, chunkSize int) [][]domain.TokenWithBlock {
+func normalizeOwnerBatchTarget(target int, defaultTarget int) int {
+	if target <= 0 {
+		return defaultTarget
+	}
+	return target
+}
+
+// chunkTokensByTargetBlockAligned splits tokens into chunks based on token-count targets,
+// while never splitting tokens from the same block.
+//
+// For the first chunk, it uses firstBatchTarget. For subsequent chunks, it uses subsequentBatchTarget.
+// Each chunk may exceed its target to include the full boundary block (block-aligned "overflow" is allowed).
+//
+// Callers must ensure tokens are sorted/grouped by block number first.
+func chunkTokensByTargetBlockAligned(tokens []domain.TokenWithBlock, firstBatchTarget int, subsequentBatchTarget int) [][]domain.TokenWithBlock {
+	firstBatchTarget = normalizeOwnerBatchTarget(firstBatchTarget, 20)
+	subsequentBatchTarget = normalizeOwnerBatchTarget(subsequentBatchTarget, 1)
+
 	var chunks [][]domain.TokenWithBlock
-	for i := 0; i < len(tokens); i += chunkSize {
-		end := min(i+chunkSize, len(tokens))
-		chunks = append(chunks, tokens[i:end])
+
+	chunkStart := 0
+	chunkIndex := 0
+	for chunkStart < len(tokens) {
+		target := subsequentBatchTarget
+		if chunkIndex == 0 {
+			target = firstBatchTarget
+		}
+
+		relativeEnd := findLastCompleteBlockIndexByTarget(tokens[chunkStart:], target)
+		if relativeEnd <= 0 {
+			// Safety net: this should be impossible because target >= 1 and tokens[chunkStart:] is non-empty.
+			// Keep a guard to guarantee forward progress even if future changes violate this invariant.
+			relativeEnd = len(tokens) - chunkStart
+		}
+
+		chunkEnd := chunkStart + relativeEnd
+		chunks = append(chunks, tokens[chunkStart:chunkEnd])
+		chunkStart = chunkEnd
+		chunkIndex++
 	}
 	return chunks
 }
@@ -255,7 +282,7 @@ func extractChunkInfo(tokens []domain.TokenWithBlock) tokenChunkInfo {
 	return info
 }
 
-// findLastCompleteBlockIndex finds the index of the last token that completes a block
+// findLastCompleteBlockIndexByQuota finds the index of the last token that completes a block
 // within the allowed quota count. This ensures we never split tokens from the same block.
 // Returns the index+1 (suitable for slicing). If the first block exceeds quota, returns
 // all tokens from that block to ensure forward progress.
@@ -267,7 +294,7 @@ func extractChunkInfo(tokens []domain.TokenWithBlock) tokenChunkInfo {
 // - tokens=[{block:100}, {block:100}, {block:101}], allowedCount=2 -> returns 2 (include both block 100 tokens)
 // - tokens=[{block:100}, {block:100}, {block:100}], allowedCount=2 -> returns 3 (include all of first block despite exceeding quota)
 // - tokens=[{block:100}, {block:101}, {block:101}], allowedCount=2 -> returns 1 (only complete block 100)
-func findLastCompleteBlockIndex(tokens []domain.TokenWithBlock, allowedCount int) int {
+func findLastCompleteBlockIndexByQuota(tokens []domain.TokenWithBlock, allowedCount int) int {
 	if allowedCount <= 0 || len(tokens) == 0 {
 		return 0
 	}
@@ -307,6 +334,35 @@ func findLastCompleteBlockIndex(tokens []domain.TokenWithBlock, allowedCount int
 	}
 
 	return lastIndex + 1
+}
+
+// findLastCompleteBlockIndexByTarget finds the index of the last token that completes a block
+// after taking at least targetCount tokens. This ensures we never split tokens from the same block.
+//
+// Unlike findLastCompleteBlockIndexByQuota, this function allows exceeding targetCount to include
+// all tokens from the boundary block (block-aligned "overflow" is allowed).
+//
+// Returns the index+1 (suitable for slicing).
+//
+// This function works correctly regardless of token sort order (ascending or descending)
+// as long as tokens are grouped by block number (i.e., all tokens from the same block are contiguous).
+func findLastCompleteBlockIndexByTarget(tokens []domain.TokenWithBlock, targetCount int) int {
+	if targetCount <= 0 || len(tokens) == 0 {
+		return 0
+	}
+
+	if targetCount >= len(tokens) {
+		return len(tokens)
+	}
+
+	boundaryBlock := tokens[targetCount-1].BlockNumber
+
+	end := targetCount
+	for end < len(tokens) && tokens[end].BlockNumber == boundaryBlock {
+		end++
+	}
+
+	return end
 }
 
 // IndexTezosTokenOwner indexes all tokens held by a Tezos address
@@ -408,7 +464,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string, 
 
 		// Sort by block number (descending - newest first) and process in chunks
 		sortTokensByBlock(allTokens, true)
-		chunks := chunkTokensByCount(allTokens, TOKEN_INDEXING_CHUNK_SIZE)
+		chunks := chunkTokensByTargetBlockAligned(allTokens, w.config.TezosOwnerFirstBatchTarget, w.config.TezosOwnerSubsequentBatchTarget)
 
 		// Store the actual scanned block range (not token block range)
 		scannedMinBlock := w.config.TezosTokenSweepStartBlock
@@ -521,7 +577,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string, 
 
 			// Sort by block (descending - newest first) and process in chunks
 			sortTokensByBlock(backwardTokens, true)
-			chunks := chunkTokensByCount(backwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
+			chunks := chunkTokensByTargetBlockAligned(backwardTokens, w.config.TezosOwnerSubsequentBatchTarget, w.config.TezosOwnerSubsequentBatchTarget)
 
 			// Store the actual scanned block range (not token block range)
 			scannedMinBlock := w.config.TezosTokenSweepStartBlock
@@ -618,7 +674,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string, 
 
 			// Sort by block (ascending - oldest first) and process in chunks
 			sortTokensByBlock(forwardTokens, false)
-			chunks := chunkTokensByCount(forwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
+			chunks := chunkTokensByTargetBlockAligned(forwardTokens, w.config.TezosOwnerSubsequentBatchTarget, w.config.TezosOwnerSubsequentBatchTarget)
 
 			// Store the actual scanned block range (not token block range)
 			scannedMinBlock := storedMaxBlock + 1
@@ -805,7 +861,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 
 		// Sort by block number (descending - newest first) and process in chunks
 		sortTokensByBlock(allTokens, true)
-		chunks := chunkTokensByCount(allTokens, TOKEN_INDEXING_CHUNK_SIZE)
+		chunks := chunkTokensByTargetBlockAligned(allTokens, w.config.EthereumOwnerFirstBatchTarget, w.config.EthereumOwnerSubsequentBatchTarget)
 
 		// Store the actual scanned block range (not token block range)
 		scannedMinBlock := allTokensResult.EffectiveFromBlock
@@ -925,7 +981,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 
 			// Sort by block (descending - newest first) and process in chunks
 			sortTokensByBlock(backwardTokens, true)
-			chunks := chunkTokensByCount(backwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
+			chunks := chunkTokensByTargetBlockAligned(backwardTokens, w.config.EthereumOwnerSubsequentBatchTarget, w.config.EthereumOwnerSubsequentBatchTarget)
 
 			// Store the actual scanned block range (not token block range)
 			scannedMinBlock := backwardTokensResult.EffectiveFromBlock
@@ -1030,7 +1086,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 
 			// Sort by block (ascending - oldest first) and process in chunks
 			sortTokensByBlock(forwardTokens, false)
-			chunks := chunkTokensByCount(forwardTokens, TOKEN_INDEXING_CHUNK_SIZE)
+			chunks := chunkTokensByTargetBlockAligned(forwardTokens, w.config.EthereumOwnerSubsequentBatchTarget, w.config.EthereumOwnerSubsequentBatchTarget)
 
 			// Store the actual scanned block range (not token block range)
 			scannedMinBlock := forwardTokensResult.EffectiveFromBlock
@@ -1188,7 +1244,7 @@ func (w *workerCore) processChunkWithQuota(
 	if allowedCount < requestedCount {
 		// Find the last complete block within quota
 		// TODO: Keep this for tezos for now, as we don't support truncating the tezos tokens yet
-		completeBlockIndex := findLastCompleteBlockIndex(tokens, allowedCount)
+		completeBlockIndex := findLastCompleteBlockIndexByQuota(tokens, allowedCount)
 
 		if completeBlockIndex <= 0 {
 			// Edge case: even the first block exceeds quota
