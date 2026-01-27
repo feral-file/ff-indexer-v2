@@ -510,6 +510,10 @@ tezos:
 				assert.Equal(t, 50.0, cfg.Temporal.WorkerActivitiesPerSecond)
 				assert.Equal(t, "https://api.tzkt.io", cfg.Tezos.APIURL)
 				assert.Equal(t, "https://artblocks-mainnet.hasura.app/v1/graphql", cfg.Vendors.ArtBlocksURL)
+				assert.Equal(t, 20, cfg.EthereumOwnerFirstBatchTarget)
+				assert.Equal(t, 1, cfg.EthereumOwnerSubsequentBatchTarget)
+				assert.Equal(t, 20, cfg.TezosOwnerFirstBatchTarget)
+				assert.Equal(t, 1, cfg.TezosOwnerSubsequentBatchTarget)
 			},
 		},
 		{
