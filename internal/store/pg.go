@@ -523,7 +523,9 @@ func (s *pgStore) GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, lim
 		return make(map[uint64][]schema.Balance), make(map[uint64]uint64), nil
 	}
 
-	// Use a window function to limit results per token and get total counts
+	// Use CTE with LATERAL JOIN for optimal performance
+	// - CTE aggregates counts in a single pass
+	// - LATERAL join allows index-based seeks per token_id
 	type balanceWithTotal struct {
 		schema.Balance
 		TotalCount uint64 `gorm:"column:total_count"`
@@ -531,16 +533,24 @@ func (s *pgStore) GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, lim
 
 	var balancesWithTotals []balanceWithTotal
 	err := s.db.WithContext(ctx).Raw(`
-		SELECT * FROM (
-			SELECT 
-				*, 
-				ROW_NUMBER() OVER (PARTITION BY token_id ORDER BY id ASC) as rn,
-				COUNT(*) OVER (PARTITION BY token_id) as total_count
+		WITH counts AS (
+			SELECT token_id, COUNT(*) as total_count
 			FROM balances
-			WHERE token_id IN ?
-		) sub
-		WHERE rn <= ?
-	`, tokenIDs, limit).Scan(&balancesWithTotals).Error
+			WHERE token_id = ANY($1)
+			GROUP BY token_id
+		)
+		SELECT 
+			b.*,
+			c.total_count
+		FROM counts c
+		CROSS JOIN LATERAL (
+			SELECT *
+			FROM balances
+			WHERE token_id = c.token_id
+			ORDER BY id ASC
+			LIMIT $2
+		) b
+	`, pq.Array(tokenIDs), limit).Scan(&balancesWithTotals).Error
 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get owners bulk: %w", err)
@@ -592,7 +602,9 @@ func (s *pgStore) GetTokenProvenanceEventsBulk(ctx context.Context, tokenIDs []u
 		return make(map[uint64][]schema.ProvenanceEvent), make(map[uint64]uint64), nil
 	}
 
-	// Use a window function to limit results per token and get total counts, ordered by timestamp DESC (most recent first)
+	// Use CTE with LATERAL join for optimal performance
+	// - CTE aggregates counts in a single pass
+	// - LATERAL join allows index-based seeks per token_id
 	type eventWithTotal struct {
 		schema.ProvenanceEvent
 		TotalCount uint64 `gorm:"column:total_count"`
@@ -600,17 +612,24 @@ func (s *pgStore) GetTokenProvenanceEventsBulk(ctx context.Context, tokenIDs []u
 
 	var eventsWithTotals []eventWithTotal
 	err := s.db.WithContext(ctx).Raw(`
-		SELECT * FROM (
-			SELECT 
-				*, 
-				ROW_NUMBER() OVER (PARTITION BY token_id ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC) as rn,
-				COUNT(*) OVER (PARTITION BY token_id) as total_count
+		WITH counts AS (
+			SELECT token_id, COUNT(*) as total_count
 			FROM provenance_events
-			WHERE token_id IN ?
-		) sub
-		WHERE rn <= ?
-		ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
-	`, tokenIDs, limit).Scan(&eventsWithTotals).Error
+			WHERE token_id = ANY($1)
+			GROUP BY token_id
+		)
+		SELECT 
+			e.*,
+			c.total_count
+		FROM counts c
+		CROSS JOIN LATERAL (
+			SELECT *
+			FROM provenance_events
+			WHERE token_id = c.token_id
+			ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
+			LIMIT $2
+		) e
+	`, pq.Array(tokenIDs), limit).Scan(&eventsWithTotals).Error
 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get provenance events bulk: %w", err)

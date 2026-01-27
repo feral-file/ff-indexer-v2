@@ -292,6 +292,7 @@ CREATE INDEX idx_tokens_token_cid_viewable ON tokens (token_cid, is_viewable);
 CREATE INDEX idx_balances_token_owner ON balances (token_id, owner_address);
 CREATE INDEX idx_balances_owner_address ON balances (owner_address);
 CREATE INDEX idx_balances_updated_at ON balances (updated_at);
+CREATE INDEX idx_balances_token_id_id ON balances (token_id, id ASC);
 
 -- Token Metadata table indexes
 CREATE INDEX idx_token_metadata_enrichment_level ON token_metadata (enrichment_level);
@@ -341,6 +342,7 @@ CREATE INDEX idx_provenance_events_to_address ON provenance_events (to_address);
 CREATE INDEX idx_provenance_events_token_id_from_address_timestamp ON provenance_events (token_id, from_address, timestamp);
 CREATE INDEX idx_provenance_events_token_id_to_address_timestamp ON provenance_events (token_id, to_address, timestamp);
 CREATE INDEX idx_provenance_events_id_text ON provenance_events (CAST(id AS TEXT));
+CREATE INDEX idx_provenance_events_token_id_timestamp_desc ON provenance_events (token_id, timestamp DESC, ((raw->>'tx_index')::bigint) DESC);
 
 -- Token Ownership Periods table indexes
 CREATE INDEX idx_token_ownership_token_owner_periods ON token_ownership_periods (token_id, owner_address, acquired_at, released_at);

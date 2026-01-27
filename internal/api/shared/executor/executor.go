@@ -169,12 +169,6 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		defaultIncludeUnviewable := false
 		includeUnviewable = &defaultIncludeUnviewable
 	}
-	if *limit == 0 {
-		return &dto.TokenListResponse{
-			Tokens: []dto.TokenResponse{},
-			Offset: nil,
-		}, nil
-	}
 
 	// Normalize token CIDs
 	if len(tokenCIDs) > 0 {
