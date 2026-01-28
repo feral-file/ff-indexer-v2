@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/md5" //nolint:gosec,G501,for indexing purposes only
+	"crypto/md5" //nolint:gosec,G501,MD5 used for non-cryptographic database indexing only, not security
 	"encoding/hex"
 	"encoding/json"
 	"errors"

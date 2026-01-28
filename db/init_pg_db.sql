@@ -124,8 +124,8 @@ CREATE TABLE token_media_health (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     
-    -- One health record per token per URL per source
-    UNIQUE(token_id, media_url, media_source)
+    -- One health record per token per URL hash per source (using hash for efficiency)
+    UNIQUE(token_id, media_url_hash, media_source)
 );
 
 -- Changes Journal table - Audit log for tracking all changes to indexed data

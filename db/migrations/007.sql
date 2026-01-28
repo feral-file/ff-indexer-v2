@@ -18,8 +18,8 @@ CREATE TABLE token_media_health (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     
-    -- One health record per token per URL per source
-    UNIQUE(token_id, media_url, media_source)
+    -- One health record per token per URL hash per source (using hash for efficiency)
+    UNIQUE(token_id, media_url_hash, media_source)
 );
 
 -- Essential indexes
@@ -78,7 +78,7 @@ SELECT
     '1970-01-01 00:00:00+00' as last_checked_at
 FROM token_metadata 
 WHERE image_url IS NOT NULL AND image_url != ''
-ON CONFLICT (token_id, media_url, media_source) DO NOTHING;
+ON CONFLICT (token_id, media_url_hash, media_source) DO NOTHING;
 
 -- Insert animation URLs from metadata
 INSERT INTO token_media_health (token_id, media_url, media_url_hash, media_source, health_status, last_checked_at)
@@ -91,7 +91,7 @@ SELECT
     '1970-01-01 00:00:00+00' as last_checked_at
 FROM token_metadata 
 WHERE animation_url IS NOT NULL AND animation_url != ''
-ON CONFLICT (token_id, media_url, media_source) DO NOTHING;
+ON CONFLICT (token_id, media_url_hash, media_source) DO NOTHING;
 
 -- Insert image URLs from enrichment
 INSERT INTO token_media_health (token_id, media_url, media_url_hash, media_source, health_status, last_checked_at)
@@ -104,7 +104,7 @@ SELECT
     '1970-01-01 00:00:00+00' as last_checked_at
 FROM enrichment_sources 
 WHERE image_url IS NOT NULL AND image_url != ''
-ON CONFLICT (token_id, media_url, media_source) DO NOTHING;
+ON CONFLICT (token_id, media_url_hash, media_source) DO NOTHING;
 
 -- Insert animation URLs from enrichment
 INSERT INTO token_media_health (token_id, media_url, media_url_hash, media_source, health_status, last_checked_at)
@@ -117,4 +117,4 @@ SELECT
     '1970-01-01 00:00:00+00' as last_checked_at
 FROM enrichment_sources 
 WHERE animation_url IS NOT NULL AND animation_url != ''
-ON CONFLICT (token_id, media_url, media_source) DO NOTHING;
+ON CONFLICT (token_id, media_url_hash, media_source) DO NOTHING;

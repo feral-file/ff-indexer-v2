@@ -242,7 +242,7 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 - `idx_token_media_health_token_status_source` on (token_id, health_status, media_source)
 
 **Unique Constraints**:
-- `(token_id, media_url, media_source)` (unique)
+- `(token_id, media_url_hash, media_source)` (unique) - Uses hash for efficiency while maintaining uniqueness
 
 **Relationships**:
 - Many-to-one with `tokens`
