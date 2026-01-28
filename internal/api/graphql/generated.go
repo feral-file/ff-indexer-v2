@@ -331,6 +331,7 @@ type TokenResolver interface {
 }
 type TokenListResolver interface {
 	Offset(ctx context.Context, obj *dto.TokenListResponse) (*Uint64, error)
+	Total(ctx context.Context, obj *dto.TokenListResponse) (Uint64, error)
 }
 type TokenMetadataResolver interface {
 	TokenID(ctx context.Context, obj *dto.TokenMetadataResponse) (Uint64, error)
@@ -1523,7 +1524,7 @@ type Token {
 type TokenList {
   items: [Token!]!
   offset: Uint64
-  total: Int! @deprecated(reason: "reason: Use the offset as the indicator for next page")
+  total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
 }
 
 # Change journal entry
@@ -5815,10 +5816,10 @@ func (ec *executionContext) _TokenList_total(ctx context.Context, field graphql.
 		field,
 		ec.fieldContext_TokenList_total,
 		func(ctx context.Context) (any, error) {
-			return obj.Total, nil
+			return ec.resolvers.TokenList().Total(ctx, obj)
 		},
 		nil,
-		ec.marshalNInt2int,
+		ec.marshalNUint642githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
 		true,
 		true,
 	)
@@ -5828,10 +5829,10 @@ func (ec *executionContext) fieldContext_TokenList_total(_ context.Context, fiel
 	fc = &graphql.FieldContext{
 		Object:     "TokenList",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Int does not have child fields")
+			return nil, errors.New("field of type Uint64 does not have child fields")
 		},
 	}
 	return fc, nil
@@ -10093,10 +10094,41 @@ func (ec *executionContext) _TokenList(ctx context.Context, sel ast.SelectionSet
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "total":
-			out.Values[i] = ec._TokenList_total(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._TokenList_total(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
