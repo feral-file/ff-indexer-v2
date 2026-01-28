@@ -107,10 +107,10 @@ type TokenViewabilityInfo struct {
 
 // TokenViewabilityChange represents a change in token viewability
 type TokenViewabilityChange struct {
-	TokenID     uint64
-	TokenCID    string
-	OldViewable bool
-	NewViewable bool
+	TokenID     uint64 `gorm:"column:token_id"`
+	TokenCID    string `gorm:"column:token_cid"`
+	OldViewable bool   `gorm:"column:old_viewable"`
+	NewViewable bool   `gorm:"column:new_viewable"`
 }
 
 // UpdateTokenTransferInput represents the input for updating a token transfer (assumes token exists)
