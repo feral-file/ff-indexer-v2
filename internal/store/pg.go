@@ -2674,7 +2674,8 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 
 	// URL removed or changed - delete old record
 	if oldURLStr != "" {
-		if err := tx.Where("token_id = ? AND media_url = ? AND media_source = ?", tokenID, oldURLStr, source).
+		oldURLHash := md5Hash(oldURLStr)
+		if err := tx.Where("token_id = ? AND media_url_hash = ? AND media_source = ?", tokenID, oldURLHash, source).
 			Delete(&schema.TokenMediaHealth{}).Error; err != nil {
 			return fmt.Errorf("failed to delete old health record: %w", err)
 		}
