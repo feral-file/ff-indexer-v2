@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec,G501,for indexing purposes only
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -43,7 +43,7 @@ func md5Hash(s string) string {
 	if s == "" {
 		return ""
 	}
-	hash := md5.Sum([]byte(s))
+	hash := md5.Sum([]byte(s)) //nolint:gosec,G401,for indexing purposes only
 	return hex.EncodeToString(hash[:])
 }
 
@@ -2783,7 +2783,7 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, s
 func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error {
 	oldHash := md5Hash(oldURL)
 	newHash := md5Hash(newURL)
-	
+
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Update token_media_health
 		if err := tx.Model(&schema.TokenMediaHealth{}).
