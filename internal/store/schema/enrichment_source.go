@@ -38,8 +38,12 @@ type EnrichmentSource struct {
 	VendorHash *string `gorm:"column:vendor_hash;type:text"`
 	// ImageURL is the normalized image URL from vendor
 	ImageURL *string `gorm:"column:image_url;type:text"`
+	// ImageURLHash is the MD5 hash of ImageURL for efficient indexing
+	ImageURLHash *string `gorm:"column:image_url_hash;type:text"`
 	// AnimationURL is the normalized animation URL from vendor
 	AnimationURL *string `gorm:"column:animation_url;type:text"`
+	// AnimationURLHash is the MD5 hash of AnimationURL for efficient indexing
+	AnimationURLHash *string `gorm:"column:animation_url_hash;type:text"`
 	// Name is the normalized name from vendor
 	Name *string `gorm:"column:name;type:text"`
 	// Description is the normalized description from vendor

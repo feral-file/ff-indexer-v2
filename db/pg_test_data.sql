@@ -194,7 +194,7 @@ SELECT setval('balances_id_seq', 100, true);
 -- Metadata for Token 1
 INSERT INTO token_metadata (
     token_id, origin_json, latest_json, latest_hash, enrichment_level,
-    last_refreshed_at, image_url, animation_url, name, description, artists, publisher, mime_type,
+    last_refreshed_at, image_url, image_url_hash, animation_url, animation_url_hash, name, description, artists, publisher, mime_type,
     created_at, updated_at
 )
 VALUES (
@@ -205,6 +205,8 @@ VALUES (
     'vendor',
     now() - interval '30 days',
     'https://example.com/bayc/1.png',
+    md5('https://example.com/bayc/1.png'),
+    NULL,
     NULL,
     'Bored Ape #1',
     'A bored ape from the yacht club',
@@ -218,7 +220,7 @@ VALUES (
 -- Metadata for Token 2
 INSERT INTO token_metadata (
     token_id, origin_json, latest_json, latest_hash, enrichment_level,
-    last_refreshed_at, image_url, name, mime_type,
+    last_refreshed_at, image_url, image_url_hash, name, mime_type,
     created_at, updated_at
 )
 VALUES (
@@ -229,6 +231,7 @@ VALUES (
     'none',
     now() - interval '25 days',
     'https://example.com/bayc/2.png',
+    md5('https://example.com/bayc/2.png'),
     'Bored Ape #2',
     'image/png',
     now() - interval '25 days',
@@ -238,7 +241,7 @@ VALUES (
 -- Metadata for Token 4 (ERC1155)
 INSERT INTO token_metadata (
     token_id, origin_json, latest_json, latest_hash, enrichment_level,
-    last_refreshed_at, image_url, animation_url, name, mime_type,
+    last_refreshed_at, image_url, image_url_hash, animation_url, animation_url_hash, name, mime_type,
     created_at, updated_at
 )
 VALUES (
@@ -249,7 +252,9 @@ VALUES (
     'vendor',
     now() - interval '15 days',
     'https://example.com/artblock/1.png',
+    md5('https://example.com/artblock/1.png'),
     'https://example.com/artblock/1.mp4',
+    md5('https://example.com/artblock/1.mp4'),
     'Art Block #1',
     'video/mp4',
     now() - interval '15 days',
@@ -263,7 +268,7 @@ VALUES (
 -- Enrichment source for Token 1
 INSERT INTO enrichment_sources (
     token_id, vendor, vendor_json, vendor_hash,
-    image_url, animation_url, name, description, artists, mime_type,
+    image_url, image_url_hash, animation_url, animation_url_hash, name, description, artists, mime_type,
     created_at, updated_at
 )
 VALUES (
@@ -272,6 +277,8 @@ VALUES (
     '{"platform":"artblocks","project":"chromie-squiggle","token":"1"}',
     'vendor_hash_1',
     'https://artblocks.io/images/1.png',
+    md5('https://artblocks.io/images/1.png'),
+    NULL,
     NULL,
     'Chromie Squiggle #1',
     'A generative art piece from Art Blocks',
@@ -284,7 +291,7 @@ VALUES (
 -- Enrichment source for Token 4
 INSERT INTO enrichment_sources (
     token_id, vendor, vendor_json, vendor_hash,
-    image_url, animation_url, name, mime_type,
+    image_url, image_url_hash, animation_url, animation_url_hash, name, mime_type,
     created_at, updated_at
 )
 VALUES (
@@ -293,7 +300,9 @@ VALUES (
     '{"platform":"fxhash","project":"test","token":"1"}',
     'vendor_hash_4',
     'https://fxhash.xyz/images/1.png',
+    md5('https://fxhash.xyz/images/1.png'),
     'https://fxhash.xyz/videos/1.mp4',
+    md5('https://fxhash.xyz/videos/1.mp4'),
     'fxhash Genesis #1',
     'video/mp4',
     now() - interval '14 days',
@@ -303,7 +312,7 @@ VALUES (
 -- Enrichment source for Token 2 (using OpenSea)
 INSERT INTO enrichment_sources (
     token_id, vendor, vendor_json, vendor_hash,
-    image_url, name, description, artists, mime_type,
+    image_url, image_url_hash, name, description, artists, mime_type,
     created_at, updated_at
 )
 VALUES (
@@ -312,6 +321,7 @@ VALUES (
     '{"identifier":"2","collection":"bored-ape-yacht-club","contract":"0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D","name":"Bored Ape #2","description":"BAYC from OpenSea","image_url":"https://opensea.io/images/2.png"}',
     'vendor_hash_opensea_2',
     'https://opensea.io/images/2.png',
+    md5('https://opensea.io/images/2.png'),
     'Bored Ape #2',
     'BAYC from OpenSea',
     '[{"did":"did:pkh:eip155:1:0xartist789012345678901234567890","name":"BAYC Artist"}]',
@@ -1006,13 +1016,14 @@ SELECT setval('webhook_deliveries_id_seq', 100, true);
 
 -- Media health for Token 1 (image from metadata - healthy)
 INSERT INTO token_media_health (
-    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    id, token_id, media_url, media_url_hash, media_source, health_status, last_checked_at, last_error,
     created_at, updated_at
 )
 VALUES (
     1,
     1,
     'https://example.com/bayc/1.png',
+    md5('https://example.com/bayc/1.png'),
     'metadata_image',
     'healthy',
     now() - interval '1 day',
@@ -1023,13 +1034,14 @@ VALUES (
 
 -- Media health for Token 1 (image from enrichment - healthy)
 INSERT INTO token_media_health (
-    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    id, token_id, media_url, media_url_hash, media_source, health_status, last_checked_at, last_error,
     created_at, updated_at
 )
 VALUES (
     2,
     1,
     'https://artblocks.io/images/1.png',
+    md5('https://artblocks.io/images/1.png'),
     'enrichment_image',
     'healthy',
     now() - interval '1 day',
@@ -1040,13 +1052,14 @@ VALUES (
 
 -- Media health for Token 2 (image from metadata - healthy)
 INSERT INTO token_media_health (
-    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    id, token_id, media_url, media_url_hash, media_source, health_status, last_checked_at, last_error,
     created_at, updated_at
 )
 VALUES (
     3,
     2,
     'https://example.com/bayc/2.png',
+    md5('https://example.com/bayc/2.png'),
     'metadata_image',
     'healthy',
     now() - interval '2 days',
@@ -1057,13 +1070,14 @@ VALUES (
 
 -- Media health for Token 2 (image from enrichment - healthy)
 INSERT INTO token_media_health (
-    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    id, token_id, media_url, media_url_hash, media_source, health_status, last_checked_at, last_error,
     created_at, updated_at
 )
 VALUES (
     4,
     2,
     'https://opensea.io/images/2.png',
+    md5('https://opensea.io/images/2.png'),
     'enrichment_image',
     'healthy',
     now() - interval '2 days',
@@ -1074,13 +1088,14 @@ VALUES (
 
 -- Media health for Token 4 (image from metadata - healthy)
 INSERT INTO token_media_health (
-    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    id, token_id, media_url, media_url_hash, media_source, health_status, last_checked_at, last_error,
     created_at, updated_at
 )
 VALUES (
     5,
     4,
     'https://example.com/artblock/1.png',
+    md5('https://example.com/artblock/1.png'),
     'metadata_image',
     'healthy',
     now() - interval '1 day',
@@ -1091,13 +1106,14 @@ VALUES (
 
 -- Media health for Token 4 (animation from metadata - healthy)
 INSERT INTO token_media_health (
-    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    id, token_id, media_url, media_url_hash, media_source, health_status, last_checked_at, last_error,
     created_at, updated_at
 )
 VALUES (
     6,
     4,
     'https://example.com/artblock/1.mp4',
+    md5('https://example.com/artblock/1.mp4'),
     'metadata_animation',
     'healthy',
     now() - interval '1 day',
@@ -1108,13 +1124,14 @@ VALUES (
 
 -- Media health for Token 4 (image from enrichment - healthy)
 INSERT INTO token_media_health (
-    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    id, token_id, media_url, media_url_hash, media_source, health_status, last_checked_at, last_error,
     created_at, updated_at
 )
 VALUES (
     7,
     4,
     'https://fxhash.xyz/images/1.png',
+    md5('https://fxhash.xyz/images/1.png'),
     'enrichment_image',
     'healthy',
     now() - interval '1 day',
@@ -1125,13 +1142,14 @@ VALUES (
 
 -- Media health for Token 4 (animation from enrichment - healthy)
 INSERT INTO token_media_health (
-    id, token_id, media_url, media_source, health_status, last_checked_at, last_error,
+    id, token_id, media_url, media_url_hash, media_source, health_status, last_checked_at, last_error,
     created_at, updated_at
 )
 VALUES (
     8,
     4,
     'https://fxhash.xyz/videos/1.mp4',
+    md5('https://fxhash.xyz/videos/1.mp4'),
     'enrichment_animation',
     'healthy',
     now() - interval '1 day',

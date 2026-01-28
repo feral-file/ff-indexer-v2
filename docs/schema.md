@@ -70,7 +70,9 @@ Stores original and enriched metadata for tokens.
 | enrichment_level | enrichment_level | Enrichment status (none, vendor) |
 | last_refreshed_at | TIMESTAMPTZ | Last metadata refresh timestamp |
 | image_url | TEXT | Normalized image URL |
+| image_url_hash | TEXT | MD5 hash of image_url for efficient indexing |
 | animation_url | TEXT | Normalized animation/video URL |
+| animation_url_hash | TEXT | MD5 hash of animation_url for efficient indexing |
 | name | TEXT | Token name |
 | description | TEXT | Token description |
 | artists | JSONB | Array of artist information |
@@ -86,9 +88,13 @@ Stores original and enriched metadata for tokens.
 - `idx_token_metadata_publisher` GIN on (publisher) WHERE publisher IS NOT NULL
 - `idx_token_metadata_origin_json_gin` GIN on (origin_json)
 - `idx_token_metadata_latest_json_gin` GIN on (latest_json)
+- `idx_token_metadata_image_url_hash` on (image_url_hash) WHERE image_url IS NOT NULL
+- `idx_token_metadata_animation_url_hash` on (animation_url_hash) WHERE animation_url IS NOT NULL
 
 **Relationships**:
 - One-to-one with `tokens`
+
+**Note**: MD5 hash columns enable efficient indexing of URLs without size limitations, as hash values are fixed-length (32 characters). This resolves index size constraints that can occur with variable-length URLs.
 
 ### enrichment_sources
 
@@ -101,7 +107,9 @@ Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, Super
 | vendor_json | JSONB | Raw API response |
 | vendor_hash | TEXT | Hash of vendor_json for change detection |
 | image_url | TEXT | Normalized image URL from vendor |
+| image_url_hash | TEXT | MD5 hash of image_url for efficient indexing |
 | animation_url | TEXT | Normalized animation URL from vendor |
+| animation_url_hash | TEXT | MD5 hash of animation_url for efficient indexing |
 | name | TEXT | Normalized name from vendor |
 | description | TEXT | Normalized description from vendor |
 | artists | JSONB | Normalized artists array |
@@ -114,9 +122,13 @@ Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, Super
 - `idx_enrichment_sources_vendor_hash` on (vendor_hash) WHERE vendor_hash IS NOT NULL
 - `idx_enrichment_sources_artists` GIN on (artists) WHERE artists IS NOT NULL
 - `idx_enrichment_sources_vendor_json_gin` GIN on (vendor_json)
+- `idx_enrichment_sources_image_url_hash` on (image_url_hash) WHERE image_url IS NOT NULL
+- `idx_enrichment_sources_animation_url_hash` on (animation_url_hash) WHERE animation_url IS NOT NULL
 
 **Relationships**:
 - One-to-one with `tokens`
+
+**Note**: MD5 hash columns enable efficient indexing of URLs without size limitations, as hash values are fixed-length (32 characters). This resolves index size constraints that can occur with variable-length URLs.
 
 ### balances
 
@@ -215,6 +227,7 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 | id | BIGSERIAL | Primary key |
 | token_id | BIGINT | Foreign key to tokens.id |
 | media_url | TEXT | URL being checked for health |
+| media_url_hash | TEXT | MD5 hash of media_url for efficient indexing |
 | media_source | TEXT | Source of URL (metadata_image, metadata_animation, enrichment_image, enrichment_animation) |
 | health_status | media_health_status | Health status (unknown, healthy, broken, checking) |
 | last_checked_at | TIMESTAMPTZ | Last health check timestamp |
@@ -224,10 +237,9 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 
 **Indexes**:
 - `idx_token_media_health_token_id` on (token_id)
-- `idx_token_media_health_url` on (media_url)
+- `idx_token_media_health_url_hash` on (media_url_hash)
 - `idx_token_media_health_last_checked` on (last_checked_at)
-- `idx_token_media_health_token_status` on (token_id, health_status)
-- `idx_token_media_health_source` on (media_source)
+- `idx_token_media_health_token_status_source` on (token_id, health_status, media_source)
 
 **Unique Constraints**:
 - `(token_id, media_url, media_source)` (unique)
@@ -240,6 +252,8 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 - Tracks health of both metadata and enrichment source URLs
 - Supports alternative gateway discovery for IPFS/Arweave/OnChFS
 - Animation URLs have precedence over image URLs for filtering
+
+**Note**: The `media_url_hash` column uses MD5 hashing to enable efficient URL lookups without index size limitations. This is particularly important for long URLs that would otherwise exceed PostgreSQL's B-tree index size limits.
 
 ### provenance_events
 
@@ -608,6 +622,23 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - **Composite indexes** for common query patterns (chain + contract + token)
 - **Partial indexes** for filtered queries (WHERE burned = true, WHERE current_owner IS NOT NULL)
 - **GIN indexes** for JSONB columns used in queries
+- **MD5 hash indexes** for variable-length URLs to avoid size limitations
+
+### URL Indexing Optimization
+
+To handle potentially long URLs without exceeding PostgreSQL's B-tree index size limits, we use MD5 hashing:
+
+- **Problem**: URLs can be very long (especially data URIs and complex IPFS/Arweave URLs), which can exceed PostgreSQL's index size limits
+- **Solution**: Store MD5 hashes of URLs in separate columns and index those instead
+- **Implementation**:
+  - `token_metadata`: `image_url_hash`, `animation_url_hash`
+  - `enrichment_sources`: `image_url_hash`, `animation_url_hash`
+  - `token_media_health`: `media_url_hash`
+- **Benefits**:
+  - Fixed-length hash values (32 characters) eliminate size constraints
+  - Fast lookups using hash-based indexes
+  - Original URLs preserved for display and data integrity
+  - Automatic hash population in application layer
 
 ### Query Patterns
 
@@ -617,6 +648,7 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 3. Get metadata → `token_id` foreign key
 4. Get provenance events → `idx_provenance_events_token_id`
 5. Search metadata → GIN indexes on JSONB columns
+6. Find tokens by media URL → `idx_token_media_health_url_hash` using MD5 hash
 
 ## Performance Considerations
 

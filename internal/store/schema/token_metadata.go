@@ -93,8 +93,12 @@ type TokenMetadata struct {
 	LastRefreshedAt *time.Time `gorm:"column:last_refreshed_at;type:timestamptz;index:idx_token_metadata_last_refreshed_at"`
 	// ImageURL is the direct URL to the token's image
 	ImageURL *string `gorm:"column:image_url;type:text"`
+	// ImageURLHash is the MD5 hash of ImageURL for efficient indexing
+	ImageURLHash *string `gorm:"column:image_url_hash;type:text"`
 	// AnimationURL is the URL to animated content like videos or interactive content
 	AnimationURL *string `gorm:"column:animation_url;type:text"`
+	// AnimationURLHash is the MD5 hash of AnimationURL for efficient indexing
+	AnimationURLHash *string `gorm:"column:animation_url_hash;type:text"`
 	// Name is the token's name
 	Name *string `gorm:"column:name;type:text"`
 	// Description is the token's description

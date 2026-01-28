@@ -55,7 +55,9 @@ CREATE TABLE token_metadata (
     enrichment_level enrichment_level NOT NULL DEFAULT 'none',
     last_refreshed_at TIMESTAMPTZ,
     image_url TEXT,
+    image_url_hash TEXT,  -- MD5 hash of image_url for efficient indexing
     animation_url TEXT,
+    animation_url_hash TEXT,  -- MD5 hash of animation_url for efficient indexing
     name TEXT,
     description TEXT,
     artists JSONB,
@@ -72,7 +74,9 @@ CREATE TABLE enrichment_sources (
     vendor_json JSONB,                     -- raw response from vendor API
     vendor_hash TEXT,                      -- hash of vendor_json to detect changes
     image_url TEXT,                        -- normalized image URL from vendor
+    image_url_hash TEXT,                   -- MD5 hash of image_url for efficient indexing
     animation_url TEXT,                    -- normalized animation URL from vendor
+    animation_url_hash TEXT,               -- MD5 hash of animation_url for efficient indexing
     name TEXT,                             -- normalized name from vendor
     description TEXT,                      -- normalized description from vendor
     artists JSONB,                         -- normalized artists array from vendor
@@ -112,6 +116,7 @@ CREATE TABLE token_media_health (
     id BIGSERIAL PRIMARY KEY,
     token_id BIGINT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
     media_url TEXT NOT NULL,
+    media_url_hash TEXT NOT NULL,  -- MD5 hash of media_url for efficient indexing
     media_source TEXT NOT NULL,  -- 'metadata_image', 'metadata_animation', 'enrichment_image', 'enrichment_animation'
     health_status media_health_status NOT NULL DEFAULT 'unknown',
     last_checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -293,15 +298,15 @@ CREATE INDEX idx_token_metadata_enrichment_level ON token_metadata (enrichment_l
 CREATE INDEX idx_token_metadata_last_refreshed_at ON token_metadata (last_refreshed_at);
 CREATE INDEX idx_token_metadata_artists ON token_metadata USING GIN (artists) WHERE artists IS NOT NULL AND jsonb_array_length(artists) > 0;
 CREATE INDEX idx_token_metadata_publisher ON token_metadata USING GIN (publisher) WHERE publisher IS NOT NULL AND jsonb_typeof(publisher) = 'object';
-CREATE INDEX idx_token_metadata_image_url ON token_metadata (image_url) WHERE image_url IS NOT NULL;
-CREATE INDEX idx_token_metadata_animation_url ON token_metadata (animation_url) WHERE animation_url IS NOT NULL;
+CREATE INDEX idx_token_metadata_image_url_hash ON token_metadata (image_url_hash) WHERE image_url IS NOT NULL;
+CREATE INDEX idx_token_metadata_animation_url_hash ON token_metadata (animation_url_hash) WHERE animation_url IS NOT NULL;
 
 -- Enrichment Sources table indexes
 CREATE INDEX idx_enrichment_sources_vendor ON enrichment_sources (vendor);
 CREATE INDEX idx_enrichment_sources_vendor_hash ON enrichment_sources (vendor_hash) WHERE vendor_hash IS NOT NULL;
 CREATE INDEX idx_enrichment_sources_artists ON enrichment_sources USING GIN (artists) WHERE artists IS NOT NULL;
-CREATE INDEX idx_enrichment_sources_image_url ON enrichment_sources (image_url) WHERE image_url IS NOT NULL;
-CREATE INDEX idx_enrichment_sources_animation_url ON enrichment_sources (animation_url) WHERE animation_url IS NOT NULL;
+CREATE INDEX idx_enrichment_sources_image_url_hash ON enrichment_sources (image_url_hash) WHERE image_url IS NOT NULL;
+CREATE INDEX idx_enrichment_sources_animation_url_hash ON enrichment_sources (animation_url_hash) WHERE animation_url IS NOT NULL;
 
 -- Media Assets table indexes
 CREATE INDEX idx_media_assets_source_url ON media_assets (source_url);
@@ -311,7 +316,7 @@ CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);
 
 -- Token Media Health table indexes
 CREATE INDEX idx_token_media_health_token_id ON token_media_health (token_id);
-CREATE INDEX idx_token_media_health_url ON token_media_health (media_url);
+CREATE INDEX idx_token_media_health_url_hash ON token_media_health (media_url_hash);
 CREATE INDEX idx_token_media_health_last_checked ON token_media_health (last_checked_at);
 CREATE INDEX idx_token_media_health_token_status_source ON token_media_health (token_id, health_status, media_source);
 

@@ -47,6 +47,9 @@ type TokenMediaHealth struct {
 	// MediaURL is the URL being checked for health
 	MediaURL string `gorm:"column:media_url;not null;type:text"`
 
+	// MediaURLHash is the MD5 hash of MediaURL for efficient indexing
+	MediaURLHash string `gorm:"column:media_url_hash;not null;type:text"`
+
 	// MediaSource indicates where this URL came from: metadata_image, metadata_animation, enrichment_image, enrichment_animation
 	MediaSource MediaHealthSource `gorm:"column:media_source;not null;type:text"`
 

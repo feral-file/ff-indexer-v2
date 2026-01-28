@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,24 @@ func hasDBResolver(db *gorm.DB) bool {
 // NewPGStore creates a new PostgreSQL store instance
 func NewPGStore(db *gorm.DB) Store {
 	return &pgStore{db: db}
+}
+
+// md5Hash computes the MD5 hash of a string and returns it as a hex string
+func md5Hash(s string) string {
+	if s == "" {
+		return ""
+	}
+	hash := md5.Sum([]byte(s))
+	return hex.EncodeToString(hash[:])
+}
+
+// ptrMd5Hash computes the MD5 hash of a string pointer and returns it as a pointer to hex string
+func ptrMd5Hash(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	hash := md5Hash(*s)
+	return &hash
 }
 
 // ConfigureConnectionPool configures the connection pool settings for a GORM database connection.
@@ -672,19 +692,21 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 
 		// 2. Upsert the metadata
 		metadata := schema.TokenMetadata{
-			TokenID:         input.TokenID,
-			OriginJSON:      input.OriginJSON,
-			LatestJSON:      input.LatestJSON,
-			LatestHash:      input.LatestHash,
-			EnrichmentLevel: input.EnrichmentLevel,
-			LastRefreshedAt: &input.LastRefreshedAt,
-			ImageURL:        input.ImageURL,
-			AnimationURL:    input.AnimationURL,
-			Name:            input.Name,
-			Artists:         input.Artists,
-			Description:     input.Description,
-			Publisher:       input.Publisher,
-			MimeType:        input.MimeType,
+			TokenID:          input.TokenID,
+			OriginJSON:       input.OriginJSON,
+			LatestJSON:       input.LatestJSON,
+			LatestHash:       input.LatestHash,
+			EnrichmentLevel:  input.EnrichmentLevel,
+			LastRefreshedAt:  &input.LastRefreshedAt,
+			ImageURL:         input.ImageURL,
+			ImageURLHash:     ptrMd5Hash(input.ImageURL),
+			AnimationURL:     input.AnimationURL,
+			AnimationURLHash: ptrMd5Hash(input.AnimationURL),
+			Name:             input.Name,
+			Artists:          input.Artists,
+			Description:      input.Description,
+			Publisher:        input.Publisher,
+			MimeType:         input.MimeType,
 		}
 
 		err = tx.Save(&metadata).Error
@@ -826,16 +848,18 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 
 		// 2. Upsert enrichment source
 		enrichmentSource := schema.EnrichmentSource{
-			TokenID:      input.TokenID,
-			Vendor:       input.Vendor,
-			VendorJSON:   input.VendorJSON,
-			VendorHash:   input.VendorHash,
-			ImageURL:     input.ImageURL,
-			AnimationURL: input.AnimationURL,
-			Name:         input.Name,
-			Description:  input.Description,
-			Artists:      input.Artists,
-			MimeType:     input.MimeType,
+			TokenID:          input.TokenID,
+			Vendor:           input.Vendor,
+			VendorJSON:       input.VendorJSON,
+			VendorHash:       input.VendorHash,
+			ImageURL:         input.ImageURL,
+			ImageURLHash:     ptrMd5Hash(input.ImageURL),
+			AnimationURL:     input.AnimationURL,
+			AnimationURLHash: ptrMd5Hash(input.AnimationURL),
+			Name:             input.Name,
+			Description:      input.Description,
+			Artists:          input.Artists,
+			MimeType:         input.MimeType,
 		}
 
 		if err := tx.Save(&enrichmentSource).Error; err != nil {
@@ -2661,6 +2685,7 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 		health := &schema.TokenMediaHealth{
 			TokenID:       tokenID,
 			MediaURL:      newURLStr,
+			MediaURLHash:  md5Hash(newURLStr),
 			MediaSource:   source,
 			HealthStatus:  schema.MediaHealthStatusUnknown,
 			LastCheckedAt: time.Now(),
@@ -2699,12 +2724,13 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 
 // GetTokenIDsByMediaURL returns all token IDs that use a specific URL
 func (s *pgStore) GetTokenIDsByMediaURL(ctx context.Context, url string) ([]uint64, error) {
+	urlHash := md5Hash(url)
 	var tokenIDs []uint64
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("token_id").
 		Distinct("token_id").
-		Where("media_url = ?", url).
+		Where("media_url_hash = ?", urlHash).
 		Pluck("token_id", &tokenIDs).Error
 
 	if err != nil {
@@ -2735,6 +2761,7 @@ func (s *pgStore) GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint
 
 // UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
 func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error {
+	urlHash := md5Hash(url)
 	updates := map[string]interface{}{
 		"health_status":   status,
 		"last_checked_at": time.Now(),
@@ -2748,18 +2775,22 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, s
 
 	return s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
-		Where("media_url = ?", url).
+		Where("media_url_hash = ?", urlHash).
 		Updates(updates).Error
 }
 
 // UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
 func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error {
+	oldHash := md5Hash(oldURL)
+	newHash := md5Hash(newURL)
+	
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Update token_media_health
 		if err := tx.Model(&schema.TokenMediaHealth{}).
-			Where("media_url = ?", oldURL).
+			Where("media_url_hash = ?", oldHash).
 			Updates(map[string]interface{}{
 				"media_url":       newURL,
+				"media_url_hash":  newHash,
 				"health_status":   schema.MediaHealthStatusHealthy,
 				"last_checked_at": time.Now(),
 				"last_error":      nil,
@@ -2769,29 +2800,41 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		// 2. Update token_metadata.image_url
 		if err := tx.Model(&schema.TokenMetadata{}).
-			Where("image_url = ?", oldURL).
-			Update("image_url", newURL).Error; err != nil {
+			Where("image_url_hash = ?", oldHash).
+			Updates(map[string]interface{}{
+				"image_url":      newURL,
+				"image_url_hash": newHash,
+			}).Error; err != nil {
 			return fmt.Errorf("failed to update token_metadata.image_url: %w", err)
 		}
 
 		// 3. Update token_metadata.animation_url
 		if err := tx.Model(&schema.TokenMetadata{}).
-			Where("animation_url = ?", oldURL).
-			Update("animation_url", newURL).Error; err != nil {
+			Where("animation_url_hash = ?", oldHash).
+			Updates(map[string]interface{}{
+				"animation_url":      newURL,
+				"animation_url_hash": newHash,
+			}).Error; err != nil {
 			return fmt.Errorf("failed to update token_metadata.animation_url: %w", err)
 		}
 
 		// 4. Update enrichment_sources.image_url
 		if err := tx.Model(&schema.EnrichmentSource{}).
-			Where("image_url = ?", oldURL).
-			Update("image_url", newURL).Error; err != nil {
+			Where("image_url_hash = ?", oldHash).
+			Updates(map[string]interface{}{
+				"image_url":      newURL,
+				"image_url_hash": newHash,
+			}).Error; err != nil {
 			return fmt.Errorf("failed to update enrichment_sources.image_url: %w", err)
 		}
 
 		// 5. Update enrichment_sources.animation_url
 		if err := tx.Model(&schema.EnrichmentSource{}).
-			Where("animation_url = ?", oldURL).
-			Update("animation_url", newURL).Error; err != nil {
+			Where("animation_url_hash = ?", oldHash).
+			Updates(map[string]interface{}{
+				"animation_url":      newURL,
+				"animation_url_hash": newHash,
+			}).Error; err != nil {
 			return fmt.Errorf("failed to update enrichment_sources.animation_url: %w", err)
 		}
 
