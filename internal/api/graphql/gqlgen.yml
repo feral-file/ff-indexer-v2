@@ -270,6 +270,8 @@ models:
         fieldName: Tokens
       offset:
         fieldName: Offset
+      total:
+        fieldName: Total
 
   Change:
     model:

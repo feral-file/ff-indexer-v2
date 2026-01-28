@@ -9,10 +9,11 @@ import (
 	reflect "reflect"
 	time "time"
 
+	gomock "github.com/golang/mock/gomock"
+
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
-	gomock "github.com/golang/mock/gomock"
 )
 
 // MockStore is a mock of Store interface.

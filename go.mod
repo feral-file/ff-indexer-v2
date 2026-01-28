@@ -32,7 +32,7 @@ require (
 	github.com/xo/resvg v0.6.0
 	go.temporal.io/api v1.54.0
 	go.temporal.io/sdk v1.38.0
-	go.uber.org/mock v0.5.0
+	go.uber.org/mock v0.5.0 // indirect
 	go.uber.org/zap v1.27.0
 	golang.org/x/time v0.9.0
 	gorm.io/datatypes v1.2.7

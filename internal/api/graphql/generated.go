@@ -14,10 +14,11 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
-	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
-	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	gqlparser "github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
+
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 )
 
 // region    ************************** generated!.gotpl **************************
@@ -214,6 +215,7 @@ type ComplexityRoot struct {
 	TokenList struct {
 		Offset func(childComplexity int) int
 		Tokens func(childComplexity int) int
+		Total  func(childComplexity int) int
 	}
 
 	TokenMetadata struct {
@@ -1071,6 +1073,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TokenList.Tokens(childComplexity), true
+	case "TokenList.total":
+		if e.complexity.TokenList.Total == nil {
+			break
+		}
+
+		return e.complexity.TokenList.Total(childComplexity), true
 
 	case "TokenMetadata.animation_url":
 		if e.complexity.TokenMetadata.AnimationURL == nil {
@@ -1515,6 +1523,7 @@ type Token {
 type TokenList {
   items: [Token!]!
   offset: Uint64
+  total: Int! @deprecated(reason: "reason: Use the offset as the indicator for next page")
 }
 
 # Change journal entry
@@ -4736,6 +4745,8 @@ func (ec *executionContext) fieldContext_Query_tokens(ctx context.Context, field
 				return ec.fieldContext_TokenList_items(ctx, field)
 			case "offset":
 				return ec.fieldContext_TokenList_offset(ctx, field)
+			case "total":
+				return ec.fieldContext_TokenList_total(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type TokenList", field.Name)
 		},
@@ -5792,6 +5803,35 @@ func (ec *executionContext) fieldContext_TokenList_offset(_ context.Context, fie
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Uint64 does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenList_total(ctx context.Context, field graphql.CollectedField, obj *dto.TokenListResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenList_total,
+		func(ctx context.Context) (any, error) {
+			return obj.Total, nil
+		},
+		nil,
+		ec.marshalNInt2int,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenList_total(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenList",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -10052,6 +10092,11 @@ func (ec *executionContext) _TokenList(ctx context.Context, sel ast.SelectionSet
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "total":
+			out.Values[i] = ec._TokenList_total(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}

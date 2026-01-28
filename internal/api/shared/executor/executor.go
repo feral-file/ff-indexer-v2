@@ -399,6 +399,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	return &dto.TokenListResponse{
 		Tokens: tokenDTOs,
 		Offset: nextOffset,
+		Total:  0, // Deprecated: use the offset as the indicator for next page
 	}, nil
 }
 

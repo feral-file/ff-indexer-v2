@@ -140,6 +140,7 @@ type Token {
 type TokenList {
   items: [Token!]!
   offset: Uint64
+  total: Int! @deprecated(reason: "reason: Use the offset as the indicator for next page")
 }
 
 # Change journal entry
