@@ -28,15 +28,18 @@ INSERT INTO token_ownership_provenance (
     last_tx_index,
     last_event_type
 )
-SELECT DISTINCT ON (token_id, to_address)
-    token_id,
-    to_address as owner_address,
-    timestamp as last_timestamp,
-    (raw->>'tx_index')::bigint as last_tx_index,
-    event_type as last_event_type
-FROM provenance_events
-WHERE to_address IS NOT NULL
-ORDER BY token_id, to_address, timestamp DESC, (raw->>'tx_index')::bigint DESC
+SELECT DISTINCT ON (b.token_id, b.owner_address)
+    b.token_id,
+    b.owner_address,
+    pe.timestamp as last_timestamp,
+    (pe.raw->>'tx_index')::bigint as last_tx_index,
+    pe.event_type as last_event_type
+FROM balances b
+INNER JOIN provenance_events pe 
+    ON pe.token_id = b.token_id 
+    AND pe.to_address = b.owner_address
+WHERE b.quantity > 0  -- Only current owners
+ORDER BY b.token_id, b.owner_address, pe.timestamp DESC, (pe.raw->>'tx_index')::bigint DESC
 ON CONFLICT (token_id, owner_address) DO NOTHING;
 
 COMMIT;
