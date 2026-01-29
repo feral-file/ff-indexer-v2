@@ -525,6 +525,14 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string, 
 				// Continue-as-new to reset event history and resume indexing
 				return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address, jobID)
 			}
+
+			// Add a brief delay to prevent exceeding third-party service rate limits
+			if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
+				logger.ErrorWf(ctx,
+					fmt.Errorf("failed to sleep"),
+					zap.Error(err),
+				)
+			}
 		}
 
 		// Final update to ensure we mark the complete scanned range
@@ -627,6 +635,14 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string, 
 					// Continue-as-new to reset event history and resume indexing
 					return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address, jobID)
 				}
+
+				// Add a brief delay to prevent exceeding third-party service rate limits
+				if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
+					logger.ErrorWf(ctx,
+						fmt.Errorf("failed to sleep"),
+						zap.Error(err),
+					)
+				}
 			}
 
 			// Final update to ensure we mark the complete scanned range
@@ -724,6 +740,14 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string, 
 					}
 					// Continue-as-new to reset event history and resume indexing
 					return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address, jobID)
+				}
+
+				// Add a brief delay to prevent exceeding third-party service rate limits
+				if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
+					logger.ErrorWf(ctx,
+						fmt.Errorf("failed to sleep"),
+						zap.Error(err),
+					)
 				}
 			}
 
@@ -922,6 +946,14 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 				// Continue-as-new to reset event history and resume indexing
 				return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address, jobID)
 			}
+
+			// Add a brief delay to prevent exceeding third-party service rate limits
+			if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
+				logger.ErrorWf(ctx,
+					fmt.Errorf("failed to sleep"),
+					zap.Error(err),
+				)
+			}
 		}
 
 		// Final update to ensure we mark the complete scanned range
@@ -1032,6 +1064,14 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 					// Continue-as-new to reset event history and resume indexing
 					return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address, jobID)
 				}
+
+				// Add a brief delay to prevent exceeding third-party service rate limits
+				if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
+					logger.ErrorWf(ctx,
+						fmt.Errorf("failed to sleep"),
+						zap.Error(err),
+					)
+				}
 			}
 
 			// Final update to ensure we mark the complete scanned range
@@ -1137,6 +1177,14 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 					// Continue-as-new to reset event history and resume indexing
 					return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address, jobID)
 				}
+
+				// Add a brief delay to prevent exceeding third-party service rate limits
+				if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
+					logger.ErrorWf(ctx,
+						fmt.Errorf("failed to sleep"),
+						zap.Error(err),
+					)
+				}
 			}
 
 			// Final update to ensure we mark the complete scanned range
@@ -1171,7 +1219,7 @@ func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.To
 	}
 
 	indexTokensWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowExecutionTimeout: time.Hour,
 	}
 	indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
 

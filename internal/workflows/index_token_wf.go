@@ -58,7 +58,7 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 	// FIXME: This should be optional of the token already minted
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
-		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowExecutionTimeout: time.Hour,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 	}
@@ -133,7 +133,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 
 		childWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:               "index-full-token-" + event.TokenCID().String(),
-			WorkflowExecutionTimeout: 30 * time.Minute,
+			WorkflowExecutionTimeout: time.Hour,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 		}
@@ -294,7 +294,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	// FIXME: This should be optional of the token already minted
 	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
-		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowExecutionTimeout: time.Hour,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 	}
@@ -315,7 +315,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 	if event.Standard != domain.StandardERC1155 {
 		provenanceWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:               "index-full-provenance-" + event.TokenCID().String(),
-			WorkflowExecutionTimeout: 30 * time.Minute,
+			WorkflowExecutionTimeout: time.Hour,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 		}
@@ -349,7 +349,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 
 	// Configure child workflow options
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowExecutionTimeout: 30 * time.Minute,
+		WorkflowExecutionTimeout: time.Hour,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
@@ -461,7 +461,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	// Step 2: Start child workflow to index token metadata (fire and forget)
 	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + tokenCID.String(),
-		WorkflowExecutionTimeout: 15 * time.Minute,
+		WorkflowExecutionTimeout: time.Hour,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 	}
@@ -483,7 +483,7 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	} else {
 		provenanceWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:               "index-full-provenance-" + tokenCID.String(),
-			WorkflowExecutionTimeout: 30 * time.Minute,
+			WorkflowExecutionTimeout: time.Hour,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 		}

@@ -48,7 +48,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 	// Step 2: Start child workflow to index token metadata
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
-		WorkflowExecutionTimeout: 30 * time.Minute,
+		WorkflowExecutionTimeout: time.Hour,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
 	}
@@ -244,7 +244,7 @@ func (w *workerCore) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs
 	for _, tokenCID := range tokenCIDs {
 		childWorkflowOptions := workflow.ChildWorkflowOptions{
 			WorkflowID:               fmt.Sprintf("index-metadata-%s", tokenCID.String()),
-			WorkflowExecutionTimeout: 30 * time.Minute,
+			WorkflowExecutionTimeout: time.Hour,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for children to complete
 		}
