@@ -28,6 +28,7 @@ type Token struct {
 	// Logic: Has at least one healthy animation URL, OR (no animations AND has healthy image URL)
 	IsViewable bool `gorm:"column:is_viewable;not null;default:false"`
 	// LastProvenanceTimestamp is the cached timestamp of the most recent provenance event for this token
+	// This is actually the known latest provenance timestamp for this token, not the actual latest provenance timestamp
 	LastProvenanceTimestamp *time.Time `gorm:"column:last_provenance_timestamp;type:timestamptz"`
 	// CreatedAt is the timestamp when this record was first indexed
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
