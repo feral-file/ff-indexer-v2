@@ -44,6 +44,8 @@ Primary entity for tracking tokens across all supported blockchains.
 | token_number | TEXT | Token ID within contract |
 | current_owner | TEXT | Current owner address (NULL for multi-owner tokens) |
 | burned | BOOLEAN | Whether token has been burned |
+| is_viewable | BOOLEAN | Whether token has accessible media URLs (for filtering unviewable tokens) |
+| last_provenance_timestamp | TIMESTAMPTZ | Cached timestamp of most recent provenance event (denormalized for query performance) |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
@@ -52,10 +54,19 @@ Primary entity for tracking tokens across all supported blockchains.
 - `idx_tokens_current_owner` on (current_owner) WHERE current_owner IS NOT NULL
 - `idx_tokens_burned` on (burned) WHERE burned
 - `idx_tokens_created_at` on (created_at)
+- `idx_tokens_last_prov_timestamp_id` on (last_provenance_timestamp DESC NULLS LAST, id DESC) - for sorting by latest activity
+- `idx_tokens_viewable_last_prov_timestamp` on (is_viewable, last_provenance_timestamp DESC NULLS LAST, id DESC) - for filtered sorting
 
 **Unique Constraints**:
 - `token_cid` (unique)
 - `(chain, contract_address, token_number)` (unique)
+
+**Query Sorting**:
+The tokens query supports two sort options:
+- `sort_by=created_at` - Sort by token creation timestamp
+- `sort_by=latest_provenance` (default) - Sort by latest provenance event:
+  - When `owners` filter is provided: Sorts by latest provenance event for those specific owners (via join with `token_ownership_provenance`)
+  - Without `owners` filter: Uses denormalized `last_provenance_timestamp` field for efficient sorting
 
 ### token_metadata
 
@@ -296,6 +307,45 @@ Optional audit trail of blockchain events.
 
 **Relationships**:
 - Many-to-one with `tokens`
+
+---
+
+### token_ownership_provenance
+
+Materialized view tracking the most recent provenance event per token-owner pair. Optimizes owner-filtered token queries by avoiding expensive LATERAL JOINs.
+
+**Purpose:**
+- Enables fast sorting by latest activity when filtering tokens by owner
+- Pre-computes latest provenance timestamp per token-owner pair
+- Only tracks recipients (to_address), not senders (from_address)
+- Used for `sort_by=latest_provenance` with owner filter
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Primary key |
+| token_id | BIGINT | Foreign key to tokens.id (CASCADE DELETE) |
+| owner_address | TEXT | Address that received the token (to_address from provenance event) |
+| last_timestamp | TIMESTAMPTZ | Timestamp of most recent provenance event where this address was recipient |
+| last_tx_index | BIGINT | Transaction index for tiebreaking when timestamps are equal |
+| last_event_type | event_type | Type of the most recent provenance event |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Indexes**:
+- `idx_token_ownership_prov_owner_token_timestamp` on (owner_address, token_id, last_timestamp DESC, last_tx_index DESC, id DESC)
+- `idx_token_ownership_prov_token_timestamp` on (token_id, last_timestamp DESC, last_tx_index DESC, id DESC)
+
+**Unique Constraints**:
+- `(token_id, owner_address)` (unique) - One record per token-owner pair
+
+**Relationships**:
+- Many-to-one with `tokens` (CASCADE DELETE)
+
+**Maintenance**:
+- Maintained by application code via UPSERT operations
+- Monotonic timestamp enforcement in UPSERT WHERE clause prevents out-of-order updates
+
+---
 
 ### changes_journal
 

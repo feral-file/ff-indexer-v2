@@ -21,6 +21,19 @@ func (o Order) Valid() bool {
 	return o == OrderAsc || o == OrderDesc
 }
 
+// TokenSortBy enumeration for token sorting
+type TokenSortBy string
+
+const (
+	TokenSortByCreatedAt  TokenSortBy = "created_at"
+	TokenLatestProvenance TokenSortBy = "latest_provenance"
+)
+
+// Valid checks if a token sort by is valid
+func (t TokenSortBy) Valid() bool {
+	return t == TokenSortByCreatedAt || t == TokenLatestProvenance
+}
+
 // Expansion enumeration for expansions
 type Expansion string
 
@@ -30,6 +43,7 @@ const (
 	ExpansionMetadata         Expansion = "metadata"
 	ExpansionEnrichmentSource Expansion = "enrichment_source"
 	ExpansionMediaAsset       Expansion = "media_asset"
+	ExpansionOwnerProvenances Expansion = "owner_provenances"
 	// Deprecated: Use ExpansionMediaAsset instead
 	ExpansionMetadataMediaAsset Expansion = "metadata_media_asset"
 	// Deprecated: Use ExpansionMediaAsset instead
@@ -44,6 +58,7 @@ func (e Expansion) Valid() bool {
 		e == ExpansionMetadata ||
 		e == ExpansionEnrichmentSource ||
 		e == ExpansionMediaAsset ||
+		e == ExpansionOwnerProvenances ||
 		e == ExpansionMetadataMediaAsset ||
 		e == ExpansionEnrichmentSourceMediaAsset ||
 		e == ExpansionSubject

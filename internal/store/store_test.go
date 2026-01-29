@@ -68,6 +68,29 @@ func buildTestProvenanceEvent(chain domain.Chain, eventType schema.ProvenanceEve
 	}
 }
 
+func buildTestProvenanceEventWithTime(chain domain.Chain, eventType schema.ProvenanceEventType, from, to *string, quantity string, txHash string, blockNum uint64, txIndex int, timestamp time.Time) CreateProvenanceEventInput {
+	blockHash := "0xblockhash"
+	rawData := map[string]interface{}{
+		"tx_hash":      txHash,
+		"block_number": blockNum,
+		"tx_index":     txIndex,
+	}
+	rawBytes, _ := json.Marshal(rawData)
+
+	return CreateProvenanceEventInput{
+		Chain:       chain,
+		EventType:   eventType,
+		FromAddress: from,
+		ToAddress:   to,
+		Quantity:    quantity,
+		TxHash:      txHash,
+		BlockNumber: blockNum,
+		BlockHash:   &blockHash,
+		Raw:         rawBytes,
+		Timestamp:   timestamp,
+	}
+}
+
 // buildTestTokenMint creates a complete token mint input
 func buildTestTokenMint(chain domain.Chain, standard domain.ChainStandard, contract, tokenNum string, owner string) CreateTokenMintInput {
 	token := buildTestToken(chain, standard, contract, tokenNum)
@@ -774,7 +797,7 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 			{OwnerAddress: owner2, Quantity: "1"},
 		}
 		input.Events = []CreateProvenanceEventInput{
-			buildTestProvenanceEvent(
+			buildTestProvenanceEventWithTime(
 				domain.ChainEthereumMainnet,
 				schema.ProvenanceEventTypeMint,
 				&zeroAddr,
@@ -782,8 +805,10 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 				"1",
 				"0xmint3000",
 				1000,
+				1,                                    // tx_index
+				time.Now().UTC().Add(-2*time.Second), // Earlier timestamp
 			),
-			buildTestProvenanceEvent(
+			buildTestProvenanceEventWithTime(
 				domain.ChainEthereumMainnet,
 				schema.ProvenanceEventTypeTransfer,
 				&owner1,
@@ -791,6 +816,8 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 				"1",
 				"0xtransfer3000",
 				1001,
+				1,                                    // tx_index
+				time.Now().UTC().Add(-1*time.Second), // Later timestamp
 			),
 		}
 
@@ -1984,9 +2011,11 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			Owners:            []string{owner2},
 			Limit:             10,
 			IncludeUnviewable: true, // These test tokens don't have media health records
+			SortBy:            TokenSortByLatestProvenance,
+			SortOrder:         SortOrderDesc,
 		})
 		require.NoError(t, err)
-		require.Equal(t, len(tokens), 3, "should return 3 results")
+		require.Equal(t, 3, len(tokens), "should return 3 results")
 
 		// Verify sorting: tokens sorted by latest provenance event involving owner2 (DESC)
 		// token1's latest event with owner2: T4 (1h ago) - most recent
@@ -1995,6 +2024,123 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.Equal(t, token1Data.ID, tokens[0].ID, "token1 should be first (T4: most recent owner2 event)")
 		assert.Equal(t, token3Data.ID, tokens[1].ID, "token3 should be second (T5: middle owner2 event)")
 		assert.Equal(t, token2Data.ID, tokens[2].ID, "token2 should be third (T2: oldest owner2 event)")
+	})
+
+	t.Run("sort by general provenance timestamp without owner filter", func(t *testing.T) {
+		owner := "0xgeneralowner00000000000000000000000001"
+
+		// Create tokens with different provenance timestamps
+		// Token 1: Minted 12 hours ago
+		token1 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000060001", "1", owner)
+		token1.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-12 * time.Hour)
+		err := store.CreateTokenMint(ctx, token1)
+		require.NoError(t, err)
+
+		// Token 2: Minted 6 hours ago (most recent)
+		token2 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000060002", "2", owner)
+		token2.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-6 * time.Hour)
+		err = store.CreateTokenMint(ctx, token2)
+		require.NoError(t, err)
+
+		// Token 3: Minted 9 hours ago
+		token3 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000060003", "3", owner)
+		token3.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-9 * time.Hour)
+		err = store.CreateTokenMint(ctx, token3)
+		require.NoError(t, err)
+
+		// Get token IDs for assertions
+		token1Data, err := store.GetTokenByTokenCID(ctx, token1.Token.TokenCID)
+		require.NoError(t, err)
+		token2Data, err := store.GetTokenByTokenCID(ctx, token2.Token.TokenCID)
+		require.NoError(t, err)
+		token3Data, err := store.GetTokenByTokenCID(ctx, token3.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Query without owner filter - should use tokens.last_provenance_timestamp
+		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			Limit:             10,
+			IncludeUnviewable: true,
+			SortBy:            TokenSortByLatestProvenance, // Without owner filter, falls back to tokens.last_provenance_timestamp
+			SortOrder:         SortOrderDesc,
+		})
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(tokens), 3, "should return at least 3 tokens")
+
+		// Find our test tokens in results
+		var foundTokens []uint64
+		for _, token := range tokens {
+			if token.ID == token1Data.ID || token.ID == token2Data.ID || token.ID == token3Data.ID {
+				foundTokens = append(foundTokens, token.ID)
+			}
+		}
+		require.Equal(t, 3, len(foundTokens), "should find all 3 test tokens")
+
+		// Verify sorting: tokens sorted by last_provenance_timestamp DESC
+		// token2 (6h ago) should come before token3 (9h ago) should come before token1 (12h ago)
+		assert.Equal(t, token2Data.ID, foundTokens[0], "token2 should be first (most recent)")
+		assert.Equal(t, token3Data.ID, foundTokens[1], "token3 should be second")
+		assert.Equal(t, token1Data.ID, foundTokens[2], "token1 should be third (oldest)")
+	})
+
+	t.Run("sort with tx_index tiebreaker when timestamps are equal", func(t *testing.T) {
+		owner := "0xtiebreaker000000000000000000000000000001"
+		sameTimestamp := time.Now().UTC().Add(-2 * time.Hour)
+
+		// Create tokens with same timestamp but different tx_index
+		// Token 1: tx_index = 5
+		token1 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000070001", "1", owner)
+		token1.ProvenanceEvent.Timestamp = sameTimestamp
+		token1.ProvenanceEvent.Raw = []byte(`{"tx_hash":"0xmint1","block_number":3000,"tx_index":5}`)
+		err := store.CreateTokenMint(ctx, token1)
+		require.NoError(t, err)
+
+		// Token 2: tx_index = 15 (highest, should be first)
+		token2 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000070002", "2", owner)
+		token2.ProvenanceEvent.Timestamp = sameTimestamp
+		token2.ProvenanceEvent.Raw = []byte(`{"tx_hash":"0xmint2","block_number":3000,"tx_index":15}`)
+		err = store.CreateTokenMint(ctx, token2)
+		require.NoError(t, err)
+
+		// Token 3: tx_index = 10
+		token3 := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000070003", "3", owner)
+		token3.ProvenanceEvent.Timestamp = sameTimestamp
+		token3.ProvenanceEvent.Raw = []byte(`{"tx_hash":"0xmint3","block_number":3000,"tx_index":10}`)
+		err = store.CreateTokenMint(ctx, token3)
+		require.NoError(t, err)
+
+		// Get token IDs for assertions
+		token1Data, err := store.GetTokenByTokenCID(ctx, token1.Token.TokenCID)
+		require.NoError(t, err)
+		token2Data, err := store.GetTokenByTokenCID(ctx, token2.Token.TokenCID)
+		require.NoError(t, err)
+		token3Data, err := store.GetTokenByTokenCID(ctx, token3.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Query with owner filter (uses token_ownership_provenance with tx_index tiebreaker)
+		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			Owners:            []string{owner},
+			Limit:             10,
+			IncludeUnviewable: true,
+			SortBy:            TokenSortByLatestProvenance,
+			SortOrder:         SortOrderDesc,
+		})
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(tokens), 3, "should return at least 3 tokens")
+
+		// Find our test tokens in results
+		var foundTokens []uint64
+		for _, token := range tokens {
+			if token.ID == token1Data.ID || token.ID == token2Data.ID || token.ID == token3Data.ID {
+				foundTokens = append(foundTokens, token.ID)
+			}
+		}
+		require.Equal(t, 3, len(foundTokens), "should find all 3 test tokens")
+
+		// Verify sorting: when timestamps are equal, tx_index DESC is used as tiebreaker
+		// token2 (tx_index=15) -> token3 (tx_index=10) -> token1 (tx_index=5)
+		assert.Equal(t, token2Data.ID, foundTokens[0], "token2 should be first (highest tx_index)")
+		assert.Equal(t, token3Data.ID, foundTokens[1], "token3 should be second (middle tx_index)")
+		assert.Equal(t, token1Data.ID, foundTokens[2], "token1 should be third (lowest tx_index)")
 	})
 
 	t.Run("IncludeBrokenMedia flag filters tokens by media health", func(t *testing.T) {
@@ -4247,6 +4393,298 @@ func testGetTokenOwnersBulk(t *testing.T, store Store) {
 	})
 }
 
+func testGetTokenOwnerProvenancesBulk(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("returns owner provenances for multiple tokens", func(t *testing.T) {
+		owner1 := "0xownerprov1111111111111111111111111111111"
+		owner2 := "0xownerprov2222222222222222222222222222222"
+		owner3 := "0xownerprov3333333333333333333333333333333"
+
+		// Create ERC1155 token with single owner
+		token1Token := buildTestToken(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0xprovbulk1111111111111111111111111111111",
+			"1",
+		)
+		token1Token.CurrentOwner = nil
+
+		// Create token with mint event to owner1
+		token1Input := CreateTokenWithProvenancesInput{
+			Token: token1Token,
+			Balances: []CreateBalanceInput{
+				{OwnerAddress: owner1, Quantity: "50"},
+			},
+			Events: []CreateProvenanceEventInput{
+				buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeMint,
+					nil,
+					&owner1,
+					"50",
+					"0xmintprovbulk1",
+					1000,
+				),
+			},
+		}
+		err := store.CreateTokenWithProvenances(ctx, token1Input)
+		require.NoError(t, err)
+
+		token1, err := store.GetTokenByTokenCID(ctx, token1Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add transfers to create provenance for owner2 and owner3
+		transferInput1 := UpdateTokenTransferInput{
+			TokenCID:     token1Token.TokenCID,
+			CurrentOwner: nil,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner1,
+				Delta:        "30",
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner2,
+				Delta:        "30",
+			},
+			ProvenanceEvent: buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				&owner1,
+				&owner2,
+				"30",
+				"0xtransferprov1",
+				1001,
+			),
+		}
+		err = store.UpdateTokenTransfer(ctx, transferInput1)
+		require.NoError(t, err)
+
+		transferInput2 := UpdateTokenTransferInput{
+			TokenCID:     token1Token.TokenCID,
+			CurrentOwner: nil,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner1,
+				Delta:        "20",
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: owner3,
+				Delta:        "20",
+			},
+			ProvenanceEvent: buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				&owner1,
+				&owner3,
+				"20",
+				"0xtransferprov2",
+				1002,
+			),
+		}
+		err = store.UpdateTokenTransfer(ctx, transferInput2)
+		require.NoError(t, err)
+
+		// Create ERC721 token with single owner
+		token2Input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xprovbulk2222222222222222222222222222222",
+			"2",
+			owner1,
+		)
+		err = store.CreateTokenMint(ctx, token2Input)
+		require.NoError(t, err)
+
+		token2, err := store.GetTokenByTokenCID(ctx, token2Input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Test bulk query - all owners
+		tokenIDs := []uint64{token1.ID, token2.ID}
+		bulkProvenances, bulkTotals, err := store.GetTokenOwnerProvenancesBulk(ctx, tokenIDs, nil, 20)
+		require.NoError(t, err)
+
+		// Verify results
+		assert.Len(t, bulkProvenances, 2)
+
+		// Token1 should have 2 owner provenances (owner2 and owner3)
+		// owner1 is not included because their balance is now 0 after both transfers
+		assert.Len(t, bulkProvenances[token1.ID], 2)
+		assert.Equal(t, uint64(2), bulkTotals[token1.ID])
+
+		// Verify they're sorted by last_timestamp DESC
+		// owner3's transfer (1002) was most recent, then owner2's transfer (1001)
+		assert.Equal(t, owner3, bulkProvenances[token1.ID][0].OwnerAddress)
+		assert.Equal(t, schema.ProvenanceEventTypeTransfer, bulkProvenances[token1.ID][0].LastEventType)
+
+		assert.Equal(t, owner2, bulkProvenances[token1.ID][1].OwnerAddress)
+		assert.Equal(t, schema.ProvenanceEventTypeTransfer, bulkProvenances[token1.ID][1].LastEventType)
+
+		// Token2 should have 1 owner provenance
+		assert.Len(t, bulkProvenances[token2.ID], 1)
+		assert.Equal(t, uint64(1), bulkTotals[token2.ID])
+		assert.Equal(t, owner1, bulkProvenances[token2.ID][0].OwnerAddress)
+		assert.Equal(t, schema.ProvenanceEventTypeMint, bulkProvenances[token2.ID][0].LastEventType)
+	})
+
+	t.Run("filters by specific owner addresses when provided", func(t *testing.T) {
+		owner1 := "0xownerprov4444444444444444444444444444444"
+		owner2 := "0xownerprov5555555555555555555555555555555"
+
+		// Create token with multiple owners
+		tokenToken := buildTestToken(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0xprovbulk4444444444444444444444444444444",
+			"4",
+		)
+		tokenToken.CurrentOwner = nil
+
+		tokenInput := CreateTokenWithProvenancesInput{
+			Token: tokenToken,
+			Balances: []CreateBalanceInput{
+				{OwnerAddress: owner1, Quantity: "50"},
+				{OwnerAddress: owner2, Quantity: "50"},
+			},
+			Events: []CreateProvenanceEventInput{
+				buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeMint,
+					nil,
+					&owner1,
+					"100",
+					"0xmintprovbulk4",
+					1000,
+				),
+			},
+		}
+		err := store.CreateTokenWithProvenances(ctx, tokenInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, tokenToken.TokenCID)
+		require.NoError(t, err)
+
+		// Query with specific owner filter
+		bulkProvenances, bulkTotals, err := store.GetTokenOwnerProvenancesBulk(ctx, []uint64{token.ID}, []string{owner1}, 20)
+		require.NoError(t, err)
+
+		// Should only return provenance for owner1
+		assert.Len(t, bulkProvenances[token.ID], 1)
+		assert.Equal(t, uint64(1), bulkTotals[token.ID])
+		assert.Equal(t, owner1, bulkProvenances[token.ID][0].OwnerAddress)
+	})
+
+	t.Run("limits results per token when no owner filter", func(t *testing.T) {
+		// Create token with 5 owners
+		owners := []string{
+			"0xownerprov6666666666666666666666666666666",
+			"0xownerprov7777777777777777777777777777777",
+			"0xownerprov8888888888888888888888888888888",
+			"0xownerprov9999999999999999999999999999999",
+			"0xownerprovaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}
+
+		tokenToken := buildTestToken(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0xprovbulk5555555555555555555555555555555",
+			"5",
+		)
+		tokenToken.CurrentOwner = nil
+
+		// Create initial token with mint to first owner
+		tokenInput := CreateTokenWithProvenancesInput{
+			Token: tokenToken,
+			Balances: []CreateBalanceInput{
+				{OwnerAddress: owners[0], Quantity: "100"},
+			},
+			Events: []CreateProvenanceEventInput{
+				buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeMint,
+					nil,
+					&owners[0],
+					"100",
+					"0xmintprovbulk5",
+					1000,
+				),
+			},
+		}
+		err := store.CreateTokenWithProvenances(ctx, tokenInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, tokenToken.TokenCID)
+		require.NoError(t, err)
+
+		// Transfer 20 tokens to each of the other 4 owners
+		// This creates provenance records for each owner
+		for i := 1; i < len(owners); i++ {
+			transferInput := UpdateTokenTransferInput{
+				TokenCID:     tokenToken.TokenCID,
+				CurrentOwner: nil,
+				SenderBalanceUpdate: &UpdateBalanceInput{
+					OwnerAddress: owners[0],
+					Delta:        "20",
+				},
+				ReceiverBalanceUpdate: &UpdateBalanceInput{
+					OwnerAddress: owners[i],
+					Delta:        "20",
+				},
+				ProvenanceEvent: buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeTransfer,
+					&owners[0],
+					&owners[i],
+					"20",
+					fmt.Sprintf("0xtransferprov%d", i),
+					uint64(1000+i), //nolint:gosec,G115
+				),
+			}
+			err = store.UpdateTokenTransfer(ctx, transferInput)
+			require.NoError(t, err)
+		}
+
+		// Query with limit of 3
+		bulkProvenances, bulkTotals, err := store.GetTokenOwnerProvenancesBulk(ctx, []uint64{token.ID}, nil, 3)
+		require.NoError(t, err)
+
+		// Should only return 3 results even though there are 5 owners
+		assert.Len(t, bulkProvenances[token.ID], 3)
+		// But total should be 5 (all owners)
+		assert.Equal(t, uint64(5), bulkTotals[token.ID])
+	})
+
+	t.Run("returns empty map for empty token IDs", func(t *testing.T) {
+		bulkProvenances, bulkTotals, err := store.GetTokenOwnerProvenancesBulk(ctx, []uint64{}, nil, 20)
+		require.NoError(t, err)
+		assert.Empty(t, bulkProvenances)
+		assert.Empty(t, bulkTotals)
+	})
+
+	t.Run("handles tokens with no owner provenances", func(t *testing.T) {
+		tokenInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xprovbulk3333333333333333333333333333333",
+			"3",
+			"0xowner3111111111111111111111111111111111111",
+		)
+		err := store.CreateTokenMint(ctx, tokenInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Query with a non-existent token ID mixed in
+		bulkProvenances, bulkTotals, err := store.GetTokenOwnerProvenancesBulk(ctx, []uint64{token.ID, 999999}, nil, 20)
+		require.NoError(t, err)
+
+		// Should have provenance for the real token only
+		assert.Len(t, bulkProvenances[token.ID], 1)
+		assert.Equal(t, uint64(1), bulkTotals[token.ID])
+		assert.NotContains(t, bulkProvenances, uint64(999999))
+		assert.NotContains(t, bulkTotals, uint64(999999))
+	})
+}
+
 func testGetTokenProvenanceEventsBulk(t *testing.T, store Store) {
 	ctx := context.Background()
 
@@ -5957,6 +6395,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"KeyValueStore", testKeyValueStore},
 		{"MediaAssets", testMediaAssets},
 		{"GetTokenOwnersBulk", testGetTokenOwnersBulk},
+		{"GetTokenOwnerProvenancesBulk", testGetTokenOwnerProvenancesBulk},
 		{"GetTokenProvenanceEventsBulk", testGetTokenProvenanceEventsBulk},
 		{"WebhookClients", testWebhookClients},
 		{"WebhookDeliveries", testWebhookDeliveries},

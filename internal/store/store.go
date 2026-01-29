@@ -10,6 +10,32 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
+// TokenSortBy enumeration for token sorting
+type TokenSortBy string
+
+const (
+	TokenSortByCreatedAt        TokenSortBy = "created_at"
+	TokenSortByLatestProvenance TokenSortBy = "latest_provenance"
+)
+
+// Valid checks if a token sort by is valid
+func (t TokenSortBy) Valid() bool {
+	return t == TokenSortByCreatedAt || t == TokenSortByLatestProvenance
+}
+
+// SortOrder enumeration for sorting
+type SortOrder string
+
+const (
+	SortOrderAsc  SortOrder = "asc"
+	SortOrderDesc SortOrder = "desc"
+)
+
+// Valid checks if a sort order is valid
+func (s SortOrder) Valid() bool {
+	return s == SortOrderAsc || s == SortOrderDesc
+}
+
 // CreateTokenInput represents the input for creating a token
 type CreateTokenInput struct {
 	TokenCID        string
@@ -146,7 +172,9 @@ type TokenQueryFilter struct {
 	TokenNumbers      []string
 	TokenIDs          []uint64
 	TokenCIDs         []string
-	IncludeUnviewable bool // If false (default), only return tokens with is_viewable=true
+	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
+	SortBy            TokenSortBy // Sort field: created_at or last_owner_provenance_timestamp
+	SortOrder         SortOrder   // Sort order: asc or desc
 	Limit             int
 	Offset            uint64 // Offset for pagination
 }
@@ -321,6 +349,12 @@ type Store interface {
 	GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.Balance, map[uint64]uint64, error)
 	// GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
 	GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) ([]domain.TokenCID, error)
+	// GetTokenOwnerProvenancesBulk retrieves latest provenance per owner for multiple tokens
+	// If ownerAddresses is provided, only returns provenances for those specific owners
+	// Otherwise returns all owners, limited to maxPerToken per token (to prevent unbounded results for ERC1155)
+	// Results are sorted by last_timestamp DESC, last_tx_index DESC
+	// Returns a map of tokenID -> provenances and a map of tokenID -> total count. Limit is applied per token.
+	GetTokenOwnerProvenancesBulk(ctx context.Context, tokenIDs []uint64, ownerAddresses []string, maxPerToken int) (map[uint64][]schema.TokenOwnershipProvenance, map[uint64]uint64, error)
 
 	// =============================================================================
 	// Provenance & Event Tracking

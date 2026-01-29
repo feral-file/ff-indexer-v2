@@ -32,7 +32,7 @@ type Executor interface {
 	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 
 	// GetChanges retrieves changes with optional filters and expansions
 	// Returns changes in ascending order by ID (sequential audit log)
@@ -155,7 +155,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -169,11 +169,13 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		defaultIncludeUnviewable := false
 		includeUnviewable = &defaultIncludeUnviewable
 	}
-	if *limit == 0 {
-		return &dto.TokenListResponse{
-			Tokens: []dto.TokenResponse{},
-			Offset: nil,
-		}, nil
+	if sortBy == nil {
+		defaultSortBy := types.TokenLatestProvenance
+		sortBy = &defaultSortBy
+	}
+	if sortOrder == nil {
+		defaultSortOrder := types.OrderDesc
+		sortOrder = &defaultSortOrder
 	}
 
 	// Normalize token CIDs
@@ -197,6 +199,10 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		owners = normalizedOwners
 	}
 
+	// Convert API types to store types
+	storeSortBy := types.ToStoreTokenSortBy(*sortBy)
+	storeSortOrder := types.ToStoreSortOrder(*sortOrder)
+
 	// Build filter
 	filter := store.TokenQueryFilter{
 		Owners:            owners,
@@ -206,6 +212,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		Chains:            chains,
 		TokenCIDs:         tokenCIDs,
 		IncludeUnviewable: *includeUnviewable,
+		SortBy:            storeSortBy,
+		SortOrder:         storeSortOrder,
 		Limit:             int(*limit) + 1, // limit+1 to detect whether there are more results
 		Offset:            *offset,
 	}
@@ -233,6 +241,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	var bulkOwnersTotals map[uint64]uint64
 	var bulkProvenanceEvents map[uint64][]schema.ProvenanceEvent
 	var bulkProvenanceTotals map[uint64]uint64
+	var bulkOwnerProvenances map[uint64][]schema.TokenOwnershipProvenance
+	var bulkOwnerProvenancesTotals map[uint64]uint64
 	var bulkEnrichmentSources map[uint64]*schema.EnrichmentSource
 	var bulkMetadata map[uint64]*schema.TokenMetadata
 	var allMediaSourceURLs []string
@@ -244,15 +254,27 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		switch exp {
 		case types.ExpansionOwners:
 			// Default limit for bulk owner queries
+			// TODO: If owner filter is set, only fetch for those specific owners
+			// Otherwise cap at DEFAULT_OWNERS_LIMIT per token to prevent unbounded results
 			bulkOwners, bulkOwnersTotals, err = e.store.GetTokenOwnersBulk(ctx, tokenIDsForBulk, int(constants.DEFAULT_OWNERS_LIMIT))
 			if err != nil {
 				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get owners: %v", err))
 			}
 		case types.ExpansionProvenanceEvents:
 			// Default limit for bulk provenance queries
+			// TODO: If owner filter is set, only fetch for those specific owners
+			// Otherwise cap at DEFAULT_PROVENANCE_EVENTS_LIMIT per token to prevent unbounded results
 			bulkProvenanceEvents, bulkProvenanceTotals, err = e.store.GetTokenProvenanceEventsBulk(ctx, tokenIDsForBulk, int(constants.DEFAULT_PROVENANCE_EVENTS_LIMIT))
 			if err != nil {
 				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance events: %v", err))
+			}
+		case types.ExpansionOwnerProvenances:
+			// Fetch latest provenance per owner for all requested tokens
+			// If owners filter is set, only fetch for those specific owners
+			// Otherwise cap at DEFAULT_PROVENANCE_EVENTS_LIMIT per token to prevent unbounded results
+			bulkOwnerProvenances, bulkOwnerProvenancesTotals, err = e.store.GetTokenOwnerProvenancesBulk(ctx, tokenIDsForBulk, owners, int(constants.DEFAULT_PROVENANCE_EVENTS_LIMIT))
+			if err != nil {
+				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get owner provenances: %v", err))
 			}
 		case types.ExpansionMetadata, types.ExpansionMetadataMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			if bulkMetadata == nil { // Avoid fetching multiple times if multiple metadata-related expansions are requested
@@ -348,6 +370,19 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 						Events: eventDTOs,
 						Offset: nil, // No pagination in bulk queries
 						Total:  total,
+					}
+				}
+			case types.ExpansionOwnerProvenances:
+				if ownerProvenances, ok := bulkOwnerProvenances[token.ID]; ok {
+					ownerProvenanceDTOs := make([]dto.OwnerProvenanceResponse, len(ownerProvenances))
+					for j := range ownerProvenances {
+						ownerProvenanceDTOs[j] = *dto.MapOwnerProvenanceToDTO(&ownerProvenances[j])
+					}
+					total := bulkOwnerProvenancesTotals[token.ID] // Get actual total from DB
+					tokenDTO.OwnerProvenances = &dto.PaginatedOwnerProvenances{
+						OwnerProvenances: ownerProvenanceDTOs,
+						Offset:           nil, // No pagination in bulk queries
+						Total:            total,
 					}
 				}
 			case types.ExpansionEnrichmentSource:

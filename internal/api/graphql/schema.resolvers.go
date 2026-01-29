@@ -292,6 +292,21 @@ func (r *mutationResolver) CreateWebhookClient(ctx context.Context, webhookURL s
 	return response, nil
 }
 
+// LastTxIndex is the resolver for the last_tx_index field.
+func (r *ownerProvenanceResolver) LastTxIndex(ctx context.Context, obj *dto.OwnerProvenanceResponse) (Uint64, error) {
+	return Uint64(obj.LastTxIndex), nil //nolint:gosec,G115
+}
+
+// Offset is the resolver for the offset field.
+func (r *paginatedOwnerProvenancesResolver) Offset(ctx context.Context, obj *dto.PaginatedOwnerProvenances) (*Uint64, error) {
+	return FromNativeUint64(obj.Offset), nil
+}
+
+// Total is the resolver for the total field.
+func (r *paginatedOwnerProvenancesResolver) Total(ctx context.Context, obj *dto.PaginatedOwnerProvenances) (Uint64, error) {
+	return Uint64(obj.Total), nil
+}
+
 // Offset is the resolver for the offset field.
 func (r *paginatedOwnersResolver) Offset(ctx context.Context, obj *dto.PaginatedOwners) (*Uint64, error) {
 	return FromNativeUint64(obj.Offset), nil
@@ -396,7 +411,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expands []string,
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Auto-detect expansions from GraphQL query fields
 	autoExpansions := autoDetectTokenExpansions(ctx)
 
@@ -443,6 +458,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 	for _, expansion := range manualExpansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionOwnerProvenances &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
 			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
@@ -453,6 +469,16 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 
 	// Merge manual and auto-detected expansions
 	expansions := mergeExpansions(manualExpansions, autoExpansions)
+
+	// Validate sortBy
+	if sortBy != nil && !sortBy.Valid() {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_by: %s. Must be a valid sort field", *sortBy))
+	}
+
+	// Validate sortOrder
+	if sortOrder != nil && !sortOrder.Valid() {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", *sortOrder))
+	}
 
 	// Validate provenance event order
 	if provenanceEventsOrder != nil && !provenanceEventsOrder.Valid() {
@@ -477,7 +503,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		}
 	}
 
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
 }
 
 // Changes is the resolver for the changes field.
@@ -639,6 +665,14 @@ func (r *Resolver) MediaAsset() MediaAssetResolver { return &mediaAssetResolver{
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
 
+// OwnerProvenance returns OwnerProvenanceResolver implementation.
+func (r *Resolver) OwnerProvenance() OwnerProvenanceResolver { return &ownerProvenanceResolver{r} }
+
+// PaginatedOwnerProvenances returns PaginatedOwnerProvenancesResolver implementation.
+func (r *Resolver) PaginatedOwnerProvenances() PaginatedOwnerProvenancesResolver {
+	return &paginatedOwnerProvenancesResolver{r}
+}
+
 // PaginatedOwners returns PaginatedOwnersResolver implementation.
 func (r *Resolver) PaginatedOwners() PaginatedOwnersResolver { return &paginatedOwnersResolver{r} }
 
@@ -671,6 +705,8 @@ type enrichmentSourceResolver struct{ *Resolver }
 type indexingJobResolver struct{ *Resolver }
 type mediaAssetResolver struct{ *Resolver }
 type mutationResolver struct{ *Resolver }
+type ownerProvenanceResolver struct{ *Resolver }
+type paginatedOwnerProvenancesResolver struct{ *Resolver }
 type paginatedOwnersResolver struct{ *Resolver }
 type paginatedProvenanceEventsResolver struct{ *Resolver }
 type provenanceEventResolver struct{ *Resolver }

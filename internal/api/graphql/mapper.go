@@ -48,6 +48,8 @@ func processTokenFields(reqCtx *graphql.OperationContext, fields []graphql.Colle
 			expansion = types.ExpansionOwners
 		case "provenance_events":
 			expansion = types.ExpansionProvenanceEvents
+		case "owner_provenances":
+			expansion = types.ExpansionOwnerProvenances
 		case "metadata":
 			expansion = types.ExpansionMetadata
 		case "enrichment_source":

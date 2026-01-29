@@ -13,6 +13,12 @@ enum Order {
   desc
 }
 
+# TokenSortBy enumeration for token sorting
+enum TokenSortBy {
+  created_at
+  latest_provenance
+}
+
 # Artist/Creator information
 type Artist {
   did: String!
@@ -84,6 +90,23 @@ type PaginatedProvenanceEvents {
   total: Uint64!
 }
 
+# Paginated owner provenances list
+type PaginatedOwnerProvenances {
+  items: [OwnerProvenance!]!
+  offset: Uint64
+  total: Uint64!
+}
+
+# Owner provenance - latest provenance event per owner
+type OwnerProvenance {
+  owner_address: String!
+  last_timestamp: Time!
+  last_tx_index: Uint64!
+  last_event_type: String!
+  created_at: Time!
+  updated_at: Time!
+}
+
 # Enrichment source data from vendor APIs
 type EnrichmentSource {
   token_id: Uint64!
@@ -125,11 +148,13 @@ type Token {
   current_owner: String
   burned: Boolean!
   viewable: Boolean!
+  last_provenance_timestamp: Time
   created_at: Time!
   updated_at: Time!
   metadata: TokenMetadata
   owners: PaginatedOwners
   provenance_events: PaginatedProvenanceEvents
+  owner_provenances: PaginatedOwnerProvenances
   enrichment_source: EnrichmentSource
   metadata_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
   enrichment_source_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
@@ -221,6 +246,8 @@ type Query {
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
+    sort_by: TokenSortBy = latest_provenance
+    sort_order: Order = desc
     expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
     owners_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")

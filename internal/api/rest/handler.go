@@ -168,6 +168,8 @@ func (h *handler) ListTokens(c *gin.Context) {
 	provenanceEventsOffset := &queryParams.ProvenanceEventOffset
 	provenanceEventsOrder := &queryParams.ProvenanceEventOrder
 	includeUnviewable := &queryParams.IncludeUnviewable
+	sortBy := &queryParams.SortBy
+	sortOrder := &queryParams.SortOrder
 
 	// Call executor's GetTokens method
 	response, err := h.executor.GetTokens(
@@ -181,6 +183,8 @@ func (h *handler) ListTokens(c *gin.Context) {
 		limit,
 		offset,
 		includeUnviewable,
+		sortBy,
+		sortOrder,
 		expansions,
 		ownersLimit,
 		ownersOffset,
