@@ -335,6 +335,26 @@ health: ## Check health status of all services
 	@echo "$(COLOR_BLUE)Service Health Status:$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) ps --format "table {{.Name}}\t{{.Status}}\t{{.Health}}"
 
+##@ Check Commands
+
+lint: ## Run linters
+	@echo "$(COLOR_BLUE)Running linters...$(COLOR_RESET)"
+	@docker run --rm -v "$(PWD):/app" -w /app golangci/golangci-lint:v2.1.6 golangci-lint run --verbose
+	@echo "$(COLOR_GREEN)✓ Linters passed$(COLOR_RESET)"
+
+imports: ## Format imports
+	@echo "$(COLOR_BLUE)Formatting imports...$(COLOR_RESET)"
+	@goimports -w -local "github.com/feral-file/ff-indexer-v2" .
+	@echo "$(COLOR_GREEN)✓ Imports formatted$(COLOR_RESET)"
+
+test: ## Run tests
+	@echo "$(COLOR_BLUE)Running tests...$(COLOR_RESET)"
+	@go test -cover ./...
+	@echo "$(COLOR_GREEN)✓ Tests passed$(COLOR_RESET)"
+
+check: imports lint test ## Run linters, format imports, and tests
+	@echo "$(COLOR_GREEN)✓ All checks passed$(COLOR_RESET)"
+
 ##@ Quick Start
 
 quickstart: setup build-all up ## Complete setup, build, and start (first time setup)

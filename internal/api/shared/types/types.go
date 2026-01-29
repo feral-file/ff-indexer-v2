@@ -21,6 +21,19 @@ func (o Order) Valid() bool {
 	return o == OrderAsc || o == OrderDesc
 }
 
+// TokenSortBy enumeration for token sorting
+type TokenSortBy string
+
+const (
+	TokenSortByCreatedAt  TokenSortBy = "created_at"
+	TokenLatestProvenance TokenSortBy = "latest_provenance"
+)
+
+// Valid checks if a token sort by is valid
+func (t TokenSortBy) Valid() bool {
+	return t == TokenSortByCreatedAt || t == TokenLatestProvenance
+}
+
 // Expansion enumeration for expansions
 type Expansion string
 

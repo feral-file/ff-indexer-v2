@@ -67,6 +67,10 @@ type ListTokensQueryParams struct {
 	Limit  uint8  `form:"limit,default=20"`
 	Offset uint64 `form:"offset,default=0"`
 
+	// Sorting
+	SortBy    types.TokenSortBy `form:"sort_by,default=latest_provenance"`
+	SortOrder types.Order       `form:"sort_order,default=desc"`
+
 	// Expansion
 	Expansions []types.Expansion `form:"expand"`
 
@@ -165,6 +169,16 @@ func (p *ListTokensQueryParams) Validate() error {
 		return apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", p.ProvenanceEventOrder))
 	}
 
+	// Validate sort_by
+	if !p.SortBy.Valid() {
+		return apierrors.NewValidationError(fmt.Sprintf("Invalid sort_by: %s. Must be a valid sort field", p.SortBy))
+	}
+
+	// Validate sort_order
+	if !p.SortOrder.Valid() {
+		return apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", p.SortOrder))
+	}
+
 	return nil
 }
 
@@ -205,6 +219,16 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	// Validate order
 	if !params.ProvenanceEventOrder.Asc() && !params.ProvenanceEventOrder.Desc() {
 		params.ProvenanceEventOrder = types.OrderDesc
+	}
+
+	// Validate sort order
+	if !params.SortOrder.Asc() && !params.SortOrder.Desc() {
+		params.SortOrder = types.OrderDesc
+	}
+
+	// Validate sort by
+	if !params.SortBy.Valid() {
+		params.SortBy = types.TokenLatestProvenance
 	}
 
 	return &params, nil

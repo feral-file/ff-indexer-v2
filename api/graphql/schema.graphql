@@ -13,6 +13,12 @@ enum Order {
   desc
 }
 
+# TokenSortBy enumeration for token sorting
+enum TokenSortBy {
+  created_at
+  latest_provenance
+}
+
 # Artist/Creator information
 type Artist {
   did: String!
@@ -240,6 +246,8 @@ type Query {
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
+    sort_by: TokenSortBy = latest_provenance
+    sort_order: Order = desc
     expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
     owners_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")

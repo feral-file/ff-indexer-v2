@@ -68,6 +68,29 @@ func buildTestProvenanceEvent(chain domain.Chain, eventType schema.ProvenanceEve
 	}
 }
 
+func buildTestProvenanceEventWithTime(chain domain.Chain, eventType schema.ProvenanceEventType, from, to *string, quantity string, txHash string, blockNum uint64, txIndex int, timestamp time.Time) CreateProvenanceEventInput {
+	blockHash := "0xblockhash"
+	rawData := map[string]interface{}{
+		"tx_hash":      txHash,
+		"block_number": blockNum,
+		"tx_index":     txIndex,
+	}
+	rawBytes, _ := json.Marshal(rawData)
+
+	return CreateProvenanceEventInput{
+		Chain:       chain,
+		EventType:   eventType,
+		FromAddress: from,
+		ToAddress:   to,
+		Quantity:    quantity,
+		TxHash:      txHash,
+		BlockNumber: blockNum,
+		BlockHash:   &blockHash,
+		Raw:         rawBytes,
+		Timestamp:   timestamp,
+	}
+}
+
 // buildTestTokenMint creates a complete token mint input
 func buildTestTokenMint(chain domain.Chain, standard domain.ChainStandard, contract, tokenNum string, owner string) CreateTokenMintInput {
 	token := buildTestToken(chain, standard, contract, tokenNum)
@@ -774,7 +797,7 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 			{OwnerAddress: owner2, Quantity: "1"},
 		}
 		input.Events = []CreateProvenanceEventInput{
-			buildTestProvenanceEvent(
+			buildTestProvenanceEventWithTime(
 				domain.ChainEthereumMainnet,
 				schema.ProvenanceEventTypeMint,
 				&zeroAddr,
@@ -782,8 +805,10 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 				"1",
 				"0xmint3000",
 				1000,
+				1,                                    // tx_index
+				time.Now().UTC().Add(-2*time.Second), // Earlier timestamp
 			),
-			buildTestProvenanceEvent(
+			buildTestProvenanceEventWithTime(
 				domain.ChainEthereumMainnet,
 				schema.ProvenanceEventTypeTransfer,
 				&owner1,
@@ -791,6 +816,8 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 				"1",
 				"0xtransfer3000",
 				1001,
+				1,                                    // tx_index
+				time.Now().UTC().Add(-1*time.Second), // Later timestamp
 			),
 		}
 
@@ -1984,9 +2011,11 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			Owners:            []string{owner2},
 			Limit:             10,
 			IncludeUnviewable: true, // These test tokens don't have media health records
+			SortBy:            TokenSortByLatestProvenance,
+			SortOrder:         SortOrderDesc,
 		})
 		require.NoError(t, err)
-		require.Equal(t, len(tokens), 3, "should return 3 results")
+		require.Equal(t, 3, len(tokens), "should return 3 results")
 
 		// Verify sorting: tokens sorted by latest provenance event involving owner2 (DESC)
 		// token1's latest event with owner2: T4 (1h ago) - most recent
@@ -2031,6 +2060,8 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			Limit:             10,
 			IncludeUnviewable: true,
+			SortBy:            TokenSortByLatestProvenance, // Without owner filter, falls back to tokens.last_provenance_timestamp
+			SortOrder:         SortOrderDesc,
 		})
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(tokens), 3, "should return at least 3 tokens")
@@ -2090,6 +2121,8 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			Owners:            []string{owner},
 			Limit:             10,
 			IncludeUnviewable: true,
+			SortBy:            TokenSortByLatestProvenance,
+			SortOrder:         SortOrderDesc,
 		})
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(tokens), 3, "should return at least 3 tokens")

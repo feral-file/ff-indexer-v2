@@ -10,6 +10,32 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
+// TokenSortBy enumeration for token sorting
+type TokenSortBy string
+
+const (
+	TokenSortByCreatedAt        TokenSortBy = "created_at"
+	TokenSortByLatestProvenance TokenSortBy = "latest_provenance"
+)
+
+// Valid checks if a token sort by is valid
+func (t TokenSortBy) Valid() bool {
+	return t == TokenSortByCreatedAt || t == TokenSortByLatestProvenance
+}
+
+// SortOrder enumeration for sorting
+type SortOrder string
+
+const (
+	SortOrderAsc  SortOrder = "asc"
+	SortOrderDesc SortOrder = "desc"
+)
+
+// Valid checks if a sort order is valid
+func (s SortOrder) Valid() bool {
+	return s == SortOrderAsc || s == SortOrderDesc
+}
+
 // CreateTokenInput represents the input for creating a token
 type CreateTokenInput struct {
 	TokenCID        string
@@ -146,7 +172,9 @@ type TokenQueryFilter struct {
 	TokenNumbers      []string
 	TokenIDs          []uint64
 	TokenCIDs         []string
-	IncludeUnviewable bool // If false (default), only return tokens with is_viewable=true
+	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
+	SortBy            TokenSortBy // Sort field: created_at or last_owner_provenance_timestamp
+	SortOrder         SortOrder   // Sort order: asc or desc
 	Limit             int
 	Offset            uint64 // Offset for pagination
 }

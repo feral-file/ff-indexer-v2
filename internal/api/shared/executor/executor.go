@@ -32,7 +32,7 @@ type Executor interface {
 	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
 
 	// GetChanges retrieves changes with optional filters and expansions
 	// Returns changes in ascending order by ID (sequential audit log)
@@ -155,7 +155,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -168,6 +168,14 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	if includeUnviewable == nil {
 		defaultIncludeUnviewable := false
 		includeUnviewable = &defaultIncludeUnviewable
+	}
+	if sortBy == nil {
+		defaultSortBy := types.TokenLatestProvenance
+		sortBy = &defaultSortBy
+	}
+	if sortOrder == nil {
+		defaultSortOrder := types.OrderDesc
+		sortOrder = &defaultSortOrder
 	}
 
 	// Normalize token CIDs
@@ -191,6 +199,10 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		owners = normalizedOwners
 	}
 
+	// Convert API types to store types
+	storeSortBy := types.ToStoreTokenSortBy(*sortBy)
+	storeSortOrder := types.ToStoreSortOrder(*sortOrder)
+
 	// Build filter
 	filter := store.TokenQueryFilter{
 		Owners:            owners,
@@ -200,6 +212,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		Chains:            chains,
 		TokenCIDs:         tokenCIDs,
 		IncludeUnviewable: *includeUnviewable,
+		SortBy:            storeSortBy,
+		SortOrder:         storeSortOrder,
 		Limit:             int(*limit) + 1, // limit+1 to detect whether there are more results
 		Offset:            *offset,
 	}
@@ -240,12 +254,16 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		switch exp {
 		case types.ExpansionOwners:
 			// Default limit for bulk owner queries
+			// TODO: If owner filter is set, only fetch for those specific owners
+			// Otherwise cap at DEFAULT_OWNERS_LIMIT per token to prevent unbounded results
 			bulkOwners, bulkOwnersTotals, err = e.store.GetTokenOwnersBulk(ctx, tokenIDsForBulk, int(constants.DEFAULT_OWNERS_LIMIT))
 			if err != nil {
 				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get owners: %v", err))
 			}
 		case types.ExpansionProvenanceEvents:
 			// Default limit for bulk provenance queries
+			// TODO: If owner filter is set, only fetch for those specific owners
+			// Otherwise cap at DEFAULT_PROVENANCE_EVENTS_LIMIT per token to prevent unbounded results
 			bulkProvenanceEvents, bulkProvenanceTotals, err = e.store.GetTokenProvenanceEventsBulk(ctx, tokenIDsForBulk, int(constants.DEFAULT_PROVENANCE_EVENTS_LIMIT))
 			if err != nil {
 				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance events: %v", err))

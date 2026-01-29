@@ -592,8 +592,19 @@ func (s *pgStore) GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID s
 func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, error) {
 	query := s.db.WithContext(ctx).Model(&schema.Token{})
 
-	// If filtering by owners, join with token_ownership_provenance for owner-specific sorting
-	if len(filter.Owners) > 0 {
+	// Determine sort field and order with defaults
+	sortBy := filter.SortBy
+	if sortBy == "" {
+		sortBy = TokenSortByCreatedAt // Default
+	}
+	sortOrder := filter.SortOrder
+	if sortOrder == "" {
+		sortOrder = SortOrderDesc // Default
+	}
+
+	// If filtering by owners and sorting by last_owner_provenance_timestamp,
+	// join with token_ownership_provenance for owner-specific sorting
+	if len(filter.Owners) > 0 && sortBy == TokenSortByLatestProvenance {
 		// Subquery: get latest timestamp per token for the specified owners
 		subQuery := s.db.Model(&schema.TokenOwnershipProvenance{}).
 			Select("DISTINCT ON (token_id) token_id, last_timestamp, last_tx_index").
@@ -609,6 +620,14 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 	// Apply viewability filter
 	if !filter.IncludeUnviewable {
 		query = query.Where("tokens.is_viewable = ?", true)
+	}
+
+	// Apply owner filter: check current ownership via balances table
+	if len(filter.Owners) > 0 {
+		query = query.Where("tokens.id IN (?)",
+			s.db.Model(&schema.Balance{}).
+				Select("token_id").
+				Where("owner_address IN ?", filter.Owners))
 	}
 
 	// Apply other filters
@@ -628,13 +647,34 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		query = query.Where("tokens.token_cid IN ?", filter.TokenCIDs)
 	}
 
-	// Apply sorting based on whether we have owner filter
-	if len(filter.Owners) > 0 {
-		// Sort by owner-specific latest timestamp from join, with tx_index as tiebreaker
-		query = query.Order("top.last_timestamp DESC").Order("top.last_tx_index DESC").Order("tokens.id DESC")
-	} else {
-		// Sort by denormalized timestamp on tokens table (enables index-only scan)
-		query = query.Order("tokens.last_provenance_timestamp DESC NULLS LAST").Order("tokens.id DESC")
+	// Apply sorting based on sort field
+	switch sortBy {
+	case TokenSortByLatestProvenance:
+		if len(filter.Owners) > 0 {
+			// Sort by owner-specific latest timestamp from join, with tx_index as tiebreaker
+			if sortOrder == SortOrderAsc {
+				query = query.Order("top.last_timestamp ASC NULLS LAST").Order("top.last_tx_index ASC").Order("tokens.id ASC")
+			} else {
+				query = query.Order("top.last_timestamp DESC NULLS LAST").Order("top.last_tx_index DESC").Order("tokens.id DESC")
+			}
+		} else {
+			// Fallback to denormalized timestamp on tokens table (enables index-only scan)
+			if sortOrder == SortOrderAsc {
+				query = query.Order("tokens.last_provenance_timestamp ASC NULLS LAST").Order("tokens.id ASC")
+			} else {
+				query = query.Order("tokens.last_provenance_timestamp DESC NULLS LAST").Order("tokens.id DESC")
+			}
+		}
+	case TokenSortByCreatedAt:
+		// Sort by created_at
+		if sortOrder == SortOrderAsc {
+			query = query.Order("tokens.created_at ASC").Order("tokens.id ASC")
+		} else {
+			query = query.Order("tokens.created_at DESC").Order("tokens.id DESC")
+		}
+	default:
+		// Default to created_at desc
+		query = query.Order("tokens.created_at DESC").Order("tokens.id DESC")
 	}
 
 	// Apply pagination
