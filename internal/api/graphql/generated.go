@@ -47,6 +47,8 @@ type ResolverRoot interface {
 	IndexingJob() IndexingJobResolver
 	MediaAsset() MediaAssetResolver
 	Mutation() MutationResolver
+	OwnerProvenance() OwnerProvenanceResolver
+	PaginatedOwnerProvenances() PaginatedOwnerProvenancesResolver
 	PaginatedOwners() PaginatedOwnersResolver
 	PaginatedProvenanceEvents() PaginatedProvenanceEventsResolver
 	ProvenanceEvent() ProvenanceEventResolver
@@ -149,6 +151,21 @@ type ComplexityRoot struct {
 		UpdatedAt    func(childComplexity int) int
 	}
 
+	OwnerProvenance struct {
+		CreatedAt     func(childComplexity int) int
+		LastEventType func(childComplexity int) int
+		LastTimestamp func(childComplexity int) int
+		LastTxIndex   func(childComplexity int) int
+		OwnerAddress  func(childComplexity int) int
+		UpdatedAt     func(childComplexity int) int
+	}
+
+	PaginatedOwnerProvenances struct {
+		Offset           func(childComplexity int) int
+		OwnerProvenances func(childComplexity int) int
+		Total            func(childComplexity int) int
+	}
+
 	PaginatedOwners struct {
 		Offset func(childComplexity int) int
 		Owners func(childComplexity int) int
@@ -200,9 +217,11 @@ type ComplexityRoot struct {
 		EnrichmentSource            func(childComplexity int) int
 		EnrichmentSourceMediaAssets func(childComplexity int) int
 		ID                          func(childComplexity int) int
+		LastProvenanceTimestamp     func(childComplexity int) int
 		MediaAssets                 func(childComplexity int) int
 		Metadata                    func(childComplexity int) int
 		MetadataMediaAssets         func(childComplexity int) int
+		OwnerProvenances            func(childComplexity int) int
 		Owners                      func(childComplexity int) int
 		ProvenanceEvents            func(childComplexity int) int
 		Standard                    func(childComplexity int) int
@@ -297,6 +316,13 @@ type MutationResolver interface {
 	TriggerAddressIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error)
 	TriggerMetadataIndexing(ctx context.Context, tokenIds []Uint64, tokenCids []string) (*dto.TriggerIndexingResponse, error)
 	CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts *int) (*dto.CreateWebhookClientResponse, error)
+}
+type OwnerProvenanceResolver interface {
+	LastTxIndex(ctx context.Context, obj *dto.OwnerProvenanceResponse) (Uint64, error)
+}
+type PaginatedOwnerProvenancesResolver interface {
+	Offset(ctx context.Context, obj *dto.PaginatedOwnerProvenances) (*Uint64, error)
+	Total(ctx context.Context, obj *dto.PaginatedOwnerProvenances) (Uint64, error)
 }
 type PaginatedOwnersResolver interface {
 	Offset(ctx context.Context, obj *dto.PaginatedOwners) (*Uint64, error)
@@ -761,6 +787,62 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.Owner.UpdatedAt(childComplexity), true
 
+	case "OwnerProvenance.created_at":
+		if e.complexity.OwnerProvenance.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.OwnerProvenance.CreatedAt(childComplexity), true
+	case "OwnerProvenance.last_event_type":
+		if e.complexity.OwnerProvenance.LastEventType == nil {
+			break
+		}
+
+		return e.complexity.OwnerProvenance.LastEventType(childComplexity), true
+	case "OwnerProvenance.last_timestamp":
+		if e.complexity.OwnerProvenance.LastTimestamp == nil {
+			break
+		}
+
+		return e.complexity.OwnerProvenance.LastTimestamp(childComplexity), true
+	case "OwnerProvenance.last_tx_index":
+		if e.complexity.OwnerProvenance.LastTxIndex == nil {
+			break
+		}
+
+		return e.complexity.OwnerProvenance.LastTxIndex(childComplexity), true
+	case "OwnerProvenance.owner_address":
+		if e.complexity.OwnerProvenance.OwnerAddress == nil {
+			break
+		}
+
+		return e.complexity.OwnerProvenance.OwnerAddress(childComplexity), true
+	case "OwnerProvenance.updated_at":
+		if e.complexity.OwnerProvenance.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.OwnerProvenance.UpdatedAt(childComplexity), true
+
+	case "PaginatedOwnerProvenances.offset":
+		if e.complexity.PaginatedOwnerProvenances.Offset == nil {
+			break
+		}
+
+		return e.complexity.PaginatedOwnerProvenances.Offset(childComplexity), true
+	case "PaginatedOwnerProvenances.items":
+		if e.complexity.PaginatedOwnerProvenances.OwnerProvenances == nil {
+			break
+		}
+
+		return e.complexity.PaginatedOwnerProvenances.OwnerProvenances(childComplexity), true
+	case "PaginatedOwnerProvenances.total":
+		if e.complexity.PaginatedOwnerProvenances.Total == nil {
+			break
+		}
+
+		return e.complexity.PaginatedOwnerProvenances.Total(childComplexity), true
+
 	case "PaginatedOwners.offset":
 		if e.complexity.PaginatedOwners.Offset == nil {
 			break
@@ -1001,6 +1083,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.ID(childComplexity), true
+	case "Token.last_provenance_timestamp":
+		if e.complexity.Token.LastProvenanceTimestamp == nil {
+			break
+		}
+
+		return e.complexity.Token.LastProvenanceTimestamp(childComplexity), true
 	case "Token.media_assets":
 		if e.complexity.Token.MediaAssets == nil {
 			break
@@ -1019,6 +1107,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.MetadataMediaAssets(childComplexity), true
+	case "Token.owner_provenances":
+		if e.complexity.Token.OwnerProvenances == nil {
+			break
+		}
+
+		return e.complexity.Token.OwnerProvenances(childComplexity), true
 	case "Token.owners":
 		if e.complexity.Token.Owners == nil {
 			break
@@ -1468,6 +1562,23 @@ type PaginatedProvenanceEvents {
   total: Uint64!
 }
 
+# Paginated owner provenances list
+type PaginatedOwnerProvenances {
+  items: [OwnerProvenance!]!
+  offset: Uint64
+  total: Uint64!
+}
+
+# Owner provenance - latest provenance event per owner
+type OwnerProvenance {
+  owner_address: String!
+  last_timestamp: Time!
+  last_tx_index: Uint64!
+  last_event_type: String!
+  created_at: Time!
+  updated_at: Time!
+}
+
 # Enrichment source data from vendor APIs
 type EnrichmentSource {
   token_id: Uint64!
@@ -1509,11 +1620,13 @@ type Token {
   current_owner: String
   burned: Boolean!
   viewable: Boolean!
+  last_provenance_timestamp: Time
   created_at: Time!
   updated_at: Time!
   metadata: TokenMetadata
   owners: PaginatedOwners
   provenance_events: PaginatedProvenanceEvents
+  owner_provenances: PaginatedOwnerProvenances
   enrichment_source: EnrichmentSource
   metadata_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
   enrichment_source_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
@@ -3960,6 +4073,281 @@ func (ec *executionContext) fieldContext_Owner_updated_at(_ context.Context, fie
 	return fc, nil
 }
 
+func (ec *executionContext) _OwnerProvenance_owner_address(ctx context.Context, field graphql.CollectedField, obj *dto.OwnerProvenanceResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_OwnerProvenance_owner_address,
+		func(ctx context.Context) (any, error) {
+			return obj.OwnerAddress, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_OwnerProvenance_owner_address(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerProvenance",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerProvenance_last_timestamp(ctx context.Context, field graphql.CollectedField, obj *dto.OwnerProvenanceResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_OwnerProvenance_last_timestamp,
+		func(ctx context.Context) (any, error) {
+			return obj.LastTimestamp, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_OwnerProvenance_last_timestamp(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerProvenance",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerProvenance_last_tx_index(ctx context.Context, field graphql.CollectedField, obj *dto.OwnerProvenanceResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_OwnerProvenance_last_tx_index,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.OwnerProvenance().LastTxIndex(ctx, obj)
+		},
+		nil,
+		ec.marshalNUint642githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_OwnerProvenance_last_tx_index(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerProvenance",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Uint64 does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerProvenance_last_event_type(ctx context.Context, field graphql.CollectedField, obj *dto.OwnerProvenanceResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_OwnerProvenance_last_event_type,
+		func(ctx context.Context) (any, error) {
+			return obj.LastEventType, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_OwnerProvenance_last_event_type(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerProvenance",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerProvenance_created_at(ctx context.Context, field graphql.CollectedField, obj *dto.OwnerProvenanceResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_OwnerProvenance_created_at,
+		func(ctx context.Context) (any, error) {
+			return obj.CreatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_OwnerProvenance_created_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerProvenance",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OwnerProvenance_updated_at(ctx context.Context, field graphql.CollectedField, obj *dto.OwnerProvenanceResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_OwnerProvenance_updated_at,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdatedAt, nil
+		},
+		nil,
+		ec.marshalNTime2timeᚐTime,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_OwnerProvenance_updated_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OwnerProvenance",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PaginatedOwnerProvenances_items(ctx context.Context, field graphql.CollectedField, obj *dto.PaginatedOwnerProvenances) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_PaginatedOwnerProvenances_items,
+		func(ctx context.Context) (any, error) {
+			return obj.OwnerProvenances, nil
+		},
+		nil,
+		ec.marshalNOwnerProvenance2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐOwnerProvenanceResponseᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_PaginatedOwnerProvenances_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PaginatedOwnerProvenances",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "owner_address":
+				return ec.fieldContext_OwnerProvenance_owner_address(ctx, field)
+			case "last_timestamp":
+				return ec.fieldContext_OwnerProvenance_last_timestamp(ctx, field)
+			case "last_tx_index":
+				return ec.fieldContext_OwnerProvenance_last_tx_index(ctx, field)
+			case "last_event_type":
+				return ec.fieldContext_OwnerProvenance_last_event_type(ctx, field)
+			case "created_at":
+				return ec.fieldContext_OwnerProvenance_created_at(ctx, field)
+			case "updated_at":
+				return ec.fieldContext_OwnerProvenance_updated_at(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type OwnerProvenance", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PaginatedOwnerProvenances_offset(ctx context.Context, field graphql.CollectedField, obj *dto.PaginatedOwnerProvenances) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_PaginatedOwnerProvenances_offset,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.PaginatedOwnerProvenances().Offset(ctx, obj)
+		},
+		nil,
+		ec.marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_PaginatedOwnerProvenances_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PaginatedOwnerProvenances",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Uint64 does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _PaginatedOwnerProvenances_total(ctx context.Context, field graphql.CollectedField, obj *dto.PaginatedOwnerProvenances) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_PaginatedOwnerProvenances_total,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.PaginatedOwnerProvenances().Total(ctx, obj)
+		},
+		nil,
+		ec.marshalNUint642githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_PaginatedOwnerProvenances_total(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "PaginatedOwnerProvenances",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Uint64 does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _PaginatedOwners_items(ctx context.Context, field graphql.CollectedField, obj *dto.PaginatedOwners) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -4681,6 +5069,8 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_burned(ctx, field)
 			case "viewable":
 				return ec.fieldContext_Token_viewable(ctx, field)
+			case "last_provenance_timestamp":
+				return ec.fieldContext_Token_last_provenance_timestamp(ctx, field)
 			case "created_at":
 				return ec.fieldContext_Token_created_at(ctx, field)
 			case "updated_at":
@@ -4691,6 +5081,8 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_owners(ctx, field)
 			case "provenance_events":
 				return ec.fieldContext_Token_provenance_events(ctx, field)
+			case "owner_provenances":
+				return ec.fieldContext_Token_owner_provenances(ctx, field)
 			case "enrichment_source":
 				return ec.fieldContext_Token_enrichment_source(ctx, field)
 			case "metadata_media_assets":
@@ -5312,6 +5704,35 @@ func (ec *executionContext) fieldContext_Token_viewable(_ context.Context, field
 	return fc, nil
 }
 
+func (ec *executionContext) _Token_last_provenance_timestamp(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Token_last_provenance_timestamp,
+		func(ctx context.Context) (any, error) {
+			return obj.LastProvenanceTimestamp, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Token_last_provenance_timestamp(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Token",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Token_created_at(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -5500,6 +5921,43 @@ func (ec *executionContext) fieldContext_Token_provenance_events(_ context.Conte
 				return ec.fieldContext_PaginatedProvenanceEvents_total(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type PaginatedProvenanceEvents", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Token_owner_provenances(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Token_owner_provenances,
+		func(ctx context.Context) (any, error) {
+			return obj.OwnerProvenances, nil
+		},
+		nil,
+		ec.marshalOPaginatedOwnerProvenances2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐPaginatedOwnerProvenances,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Token_owner_provenances(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Token",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "items":
+				return ec.fieldContext_PaginatedOwnerProvenances_items(ctx, field)
+			case "offset":
+				return ec.fieldContext_PaginatedOwnerProvenances_offset(ctx, field)
+			case "total":
+				return ec.fieldContext_PaginatedOwnerProvenances_total(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type PaginatedOwnerProvenances", field.Name)
 		},
 	}
 	return fc, nil
@@ -5755,6 +6213,8 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_burned(ctx, field)
 			case "viewable":
 				return ec.fieldContext_Token_viewable(ctx, field)
+			case "last_provenance_timestamp":
+				return ec.fieldContext_Token_last_provenance_timestamp(ctx, field)
 			case "created_at":
 				return ec.fieldContext_Token_created_at(ctx, field)
 			case "updated_at":
@@ -5765,6 +6225,8 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_owners(ctx, field)
 			case "provenance_events":
 				return ec.fieldContext_Token_provenance_events(ctx, field)
+			case "owner_provenances":
+				return ec.fieldContext_Token_owner_provenances(ctx, field)
 			case "enrichment_source":
 				return ec.fieldContext_Token_enrichment_source(ctx, field)
 			case "metadata_media_assets":
@@ -9183,6 +9645,209 @@ func (ec *executionContext) _Owner(ctx context.Context, sel ast.SelectionSet, ob
 	return out
 }
 
+var ownerProvenanceImplementors = []string{"OwnerProvenance"}
+
+func (ec *executionContext) _OwnerProvenance(ctx context.Context, sel ast.SelectionSet, obj *dto.OwnerProvenanceResponse) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, ownerProvenanceImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OwnerProvenance")
+		case "owner_address":
+			out.Values[i] = ec._OwnerProvenance_owner_address(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "last_timestamp":
+			out.Values[i] = ec._OwnerProvenance_last_timestamp(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "last_tx_index":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._OwnerProvenance_last_tx_index(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "last_event_type":
+			out.Values[i] = ec._OwnerProvenance_last_event_type(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "created_at":
+			out.Values[i] = ec._OwnerProvenance_created_at(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "updated_at":
+			out.Values[i] = ec._OwnerProvenance_updated_at(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var paginatedOwnerProvenancesImplementors = []string{"PaginatedOwnerProvenances"}
+
+func (ec *executionContext) _PaginatedOwnerProvenances(ctx context.Context, sel ast.SelectionSet, obj *dto.PaginatedOwnerProvenances) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, paginatedOwnerProvenancesImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("PaginatedOwnerProvenances")
+		case "items":
+			out.Values[i] = ec._PaginatedOwnerProvenances_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "offset":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._PaginatedOwnerProvenances_offset(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "total":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._PaginatedOwnerProvenances_total(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var paginatedOwnersImplementors = []string{"PaginatedOwners"}
 
 func (ec *executionContext) _PaginatedOwners(ctx context.Context, sel ast.SelectionSet, obj *dto.PaginatedOwners) graphql.Marshaler {
@@ -9997,6 +10662,8 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "last_provenance_timestamp":
+			out.Values[i] = ec._Token_last_provenance_timestamp(ctx, field, obj)
 		case "created_at":
 			out.Values[i] = ec._Token_created_at(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -10013,6 +10680,8 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			out.Values[i] = ec._Token_owners(ctx, field, obj)
 		case "provenance_events":
 			out.Values[i] = ec._Token_provenance_events(ctx, field, obj)
+		case "owner_provenances":
+			out.Values[i] = ec._Token_owner_provenances(ctx, field, obj)
 		case "enrichment_source":
 			out.Values[i] = ec._Token_enrichment_source(ctx, field, obj)
 		case "metadata_media_assets":
@@ -11115,6 +11784,54 @@ func (ec *executionContext) marshalNOwner2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑ
 	return ret
 }
 
+func (ec *executionContext) marshalNOwnerProvenance2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐOwnerProvenanceResponse(ctx context.Context, sel ast.SelectionSet, v dto.OwnerProvenanceResponse) graphql.Marshaler {
+	return ec._OwnerProvenance(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNOwnerProvenance2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐOwnerProvenanceResponseᚄ(ctx context.Context, sel ast.SelectionSet, v []dto.OwnerProvenanceResponse) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNOwnerProvenance2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐOwnerProvenanceResponse(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) marshalNProvenanceEvent2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐProvenanceEventResponse(ctx context.Context, sel ast.SelectionSet, v dto.ProvenanceEventResponse) graphql.Marshaler {
 	return ec._ProvenanceEvent(ctx, sel, &v)
 }
@@ -11750,6 +12467,13 @@ func (ec *executionContext) marshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑ
 	_ = ctx
 	res := graphql.MarshalString(string(*v))
 	return res
+}
+
+func (ec *executionContext) marshalOPaginatedOwnerProvenances2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐPaginatedOwnerProvenances(ctx context.Context, sel ast.SelectionSet, v *dto.PaginatedOwnerProvenances) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._PaginatedOwnerProvenances(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOPaginatedOwners2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐPaginatedOwners(ctx context.Context, sel ast.SelectionSet, v *dto.PaginatedOwners) graphql.Marshaler {

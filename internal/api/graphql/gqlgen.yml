@@ -68,6 +68,8 @@ models:
         fieldName: Burned
       viewable:
         fieldName: Viewable
+      last_provenance_timestamp:
+        fieldName: LastProvenanceTimestamp
       created_at:
         fieldName: CreatedAt
       updated_at:
@@ -402,6 +404,34 @@ models:
         fieldName: FailedAt
       canceled_at:
         fieldName: CanceledAt
+
+  OwnerProvenance:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.OwnerProvenanceResponse
+    fields:
+      owner_address:
+        fieldName: OwnerAddress
+      last_timestamp:
+        fieldName: LastTimestamp
+      last_tx_index:
+        fieldName: LastTxIndex
+      last_event_type:
+        fieldName: LastEventType
+      created_at:
+        fieldName: CreatedAt
+      updated_at:
+        fieldName: UpdatedAt
+
+  PaginatedOwnerProvenances:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.PaginatedOwnerProvenances
+    fields:
+      items:
+        fieldName: OwnerProvenances
+      offset:
+        fieldName: Offset
+      total:
+        fieldName: Total
 
 # Skip generating resolver stubs for these fields (we'll implement them manually)
 omit_slice_element_pointers: true

@@ -227,6 +227,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	var bulkOwnersTotals map[uint64]uint64
 	var bulkProvenanceEvents map[uint64][]schema.ProvenanceEvent
 	var bulkProvenanceTotals map[uint64]uint64
+	var bulkOwnerProvenances map[uint64][]schema.TokenOwnershipProvenance
+	var bulkOwnerProvenancesTotals map[uint64]uint64
 	var bulkEnrichmentSources map[uint64]*schema.EnrichmentSource
 	var bulkMetadata map[uint64]*schema.TokenMetadata
 	var allMediaSourceURLs []string
@@ -247,6 +249,14 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 			bulkProvenanceEvents, bulkProvenanceTotals, err = e.store.GetTokenProvenanceEventsBulk(ctx, tokenIDsForBulk, int(constants.DEFAULT_PROVENANCE_EVENTS_LIMIT))
 			if err != nil {
 				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance events: %v", err))
+			}
+		case types.ExpansionOwnerProvenances:
+			// Fetch latest provenance per owner for all requested tokens
+			// If owners filter is set, only fetch for those specific owners
+			// Otherwise cap at DEFAULT_PROVENANCE_EVENTS_LIMIT per token to prevent unbounded results
+			bulkOwnerProvenances, bulkOwnerProvenancesTotals, err = e.store.GetTokenOwnerProvenancesBulk(ctx, tokenIDsForBulk, owners, int(constants.DEFAULT_PROVENANCE_EVENTS_LIMIT))
+			if err != nil {
+				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get owner provenances: %v", err))
 			}
 		case types.ExpansionMetadata, types.ExpansionMetadataMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			if bulkMetadata == nil { // Avoid fetching multiple times if multiple metadata-related expansions are requested
@@ -342,6 +352,19 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 						Events: eventDTOs,
 						Offset: nil, // No pagination in bulk queries
 						Total:  total,
+					}
+				}
+			case types.ExpansionOwnerProvenances:
+				if ownerProvenances, ok := bulkOwnerProvenances[token.ID]; ok {
+					ownerProvenanceDTOs := make([]dto.OwnerProvenanceResponse, len(ownerProvenances))
+					for j := range ownerProvenances {
+						ownerProvenanceDTOs[j] = *dto.MapOwnerProvenanceToDTO(&ownerProvenances[j])
+					}
+					total := bulkOwnerProvenancesTotals[token.ID] // Get actual total from DB
+					tokenDTO.OwnerProvenances = &dto.PaginatedOwnerProvenances{
+						OwnerProvenances: ownerProvenanceDTOs,
+						Offset:           nil, // No pagination in bulk queries
+						Total:            total,
 					}
 				}
 			case types.ExpansionEnrichmentSource:

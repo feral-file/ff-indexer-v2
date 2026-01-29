@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 
@@ -272,6 +273,163 @@ func (s *pgStore) SetBlockCursor(ctx context.Context, chain string, blockNumber 
 	return nil
 }
 
+// updateProvenanceTracking updates the denormalized provenance tracking tables
+// (tokens.last_provenance_timestamp and token_ownership_provenance)
+// This function must be called within a transaction after a provenance event is successfully inserted.
+// It maintains atomicity and ensures timestamps move forward monotonically.
+func (s *pgStore) updateProvenanceTracking(ctx context.Context, tx *gorm.DB, event *schema.ProvenanceEvent, tokenStandard domain.ChainStandard) error {
+	// 1. Update tokens.last_provenance_timestamp
+	// Only update if the new timestamp is newer than the current one (monotonic forward)
+	if err := tx.WithContext(ctx).
+		Model(&schema.Token{}).
+		Where("id = ?", event.TokenID).
+		Where("last_provenance_timestamp IS NULL OR last_provenance_timestamp <= ?", event.Timestamp).
+		Update("last_provenance_timestamp", event.Timestamp).Error; err != nil {
+		return fmt.Errorf("failed to update token last_provenance_timestamp: %w", err)
+	}
+
+	// 2. Update token_ownership_provenance for to_address (recipient)
+	if event.ToAddress != nil && *event.ToAddress != "" && *event.ToAddress != domain.ETHEREUM_ZERO_ADDRESS {
+		// Extract tx_index from raw JSON
+		var txIndex int64
+		var rawMap map[string]interface{}
+		if err := json.Unmarshal(event.Raw, &rawMap); err == nil {
+			if txIndexFloat, ok := rawMap["tx_index"].(float64); ok {
+				txIndex = int64(txIndexFloat)
+			}
+		}
+
+		ownershipProv := schema.TokenOwnershipProvenance{
+			TokenID:       event.TokenID,
+			OwnerAddress:  *event.ToAddress,
+			LastTimestamp: event.Timestamp,
+			LastTxIndex:   txIndex,
+			LastEventType: event.EventType,
+		}
+
+		// UPSERT: Insert new record or update existing one
+		// Only update if new timestamp is newer (monotonic forward)
+		if err := tx.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "token_id"}, {Name: "owner_address"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"last_timestamp":  event.Timestamp,
+				"last_tx_index":   txIndex,
+				"last_event_type": event.EventType,
+			}),
+			Where: clause.Where{
+				Exprs: []clause.Expression{
+					// Only update if new timestamp is strictly newer
+					clause.Expr{SQL: "token_ownership_provenance.last_timestamp <= EXCLUDED.last_timestamp"},
+				},
+			},
+		}).Create(&ownershipProv).Error; err != nil {
+			return fmt.Errorf("failed to upsert token_ownership_provenance for address %s: %w", *event.ToAddress, err)
+		}
+	}
+
+	// 3. Clean up old owner records for from_address (sender)
+	// Only remove if they no longer own the token (balance is 0 or doesn't exist)
+	if event.FromAddress != nil && *event.FromAddress != "" && *event.FromAddress != domain.ETHEREUM_ZERO_ADDRESS &&
+		event.EventType != schema.ProvenanceEventTypeMint { // Don't clean on mint (no previous owner)
+
+		shouldDelete := false
+
+		// For ERC721 (single owner): Always remove old owner on transfer/burn
+		if tokenStandard == domain.StandardERC721 {
+			shouldDelete = true
+		} else {
+			// For ERC1155/FA2 (multi-owner): Only remove if balance is 0 or doesn't exist
+			var balance schema.Balance
+			err := tx.WithContext(ctx).
+				Where("token_id = ? AND owner_address = ?", event.TokenID, *event.FromAddress).
+				First(&balance).Error
+
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// No balance record means balance is 0, safe to delete
+				shouldDelete = true
+			} else if err != nil {
+				return fmt.Errorf("failed to check balance for cleanup: %w", err)
+			} else if balance.Quantity == "0" {
+				// Balance exists but is 0, safe to delete
+				shouldDelete = true
+			}
+			// If balance > 0, don't delete (they still own some)
+		}
+
+		if shouldDelete {
+			if err := tx.WithContext(ctx).
+				Where("token_id = ? AND owner_address = ?", event.TokenID, *event.FromAddress).
+				Delete(&schema.TokenOwnershipProvenance{}).Error; err != nil {
+				return fmt.Errorf("failed to delete old owner from token_ownership_provenance: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// findLatestEventPerOwner groups provenance events by owner address and returns the latest event for each owner.
+// Events are sorted by timestamp DESC, tx_index DESC to find the most recent event.
+// Only considers to_address (recipients), not from_address.
+// Skips events with ID == 0 (duplicates that weren't inserted).
+func findLatestEventPerOwner(events []schema.ProvenanceEvent) map[string]*schema.ProvenanceEvent {
+	if len(events) == 0 {
+		return make(map[string]*schema.ProvenanceEvent)
+	}
+
+	// Sort events by timestamp DESC, tx_index DESC (latest first)
+	sort.Slice(events, func(i, j int) bool {
+		// Skip events that weren't inserted
+		if events[i].ID == 0 || events[j].ID == 0 {
+			return events[i].ID > events[j].ID
+		}
+
+		// Compare timestamps
+		if !events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].Timestamp.After(events[j].Timestamp)
+		}
+
+		// Timestamps are equal, compare tx_index
+		var iTxIndex, jTxIndex int64
+		var iRawMap, jRawMap map[string]interface{}
+
+		if err := json.Unmarshal(events[i].Raw, &iRawMap); err == nil {
+			if txIndexFloat, ok := iRawMap["tx_index"].(float64); ok {
+				iTxIndex = int64(txIndexFloat)
+			}
+		}
+		if err := json.Unmarshal(events[j].Raw, &jRawMap); err == nil {
+			if txIndexFloat, ok := jRawMap["tx_index"].(float64); ok {
+				jTxIndex = int64(txIndexFloat)
+			}
+		}
+
+		return iTxIndex > jTxIndex
+	})
+
+	// Track which owners we've already seen (latest event recorded)
+	seenOwners := make(map[string]bool)
+	latestEventPerOwner := make(map[string]*schema.ProvenanceEvent)
+
+	// Iterate from latest to oldest, recording first occurrence of each owner
+	for i := range events {
+		if events[i].ID == 0 {
+			continue // Skip events that weren't inserted
+		}
+
+		// Track to_address (recipient/owner)
+		if events[i].ToAddress != nil && *events[i].ToAddress != "" {
+			owner := *events[i].ToAddress
+			if !seenOwners[owner] {
+				seenOwners[owner] = true
+				latestEventPerOwner[owner] = &events[i]
+			}
+		}
+	}
+
+	return latestEventPerOwner
+}
+
 // CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
 func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -353,7 +511,12 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			return fmt.Errorf("failed to update ownership periods: %w", err)
 		}
 
-		// 5. Create the change journal entry
+		// 5. Update provenance tracking (denormalized tables for query optimization)
+		if err := s.updateProvenanceTracking(ctx, tx, &provenanceEvent, input.Token.Standard); err != nil {
+			return fmt.Errorf("failed to update provenance tracking: %w", err)
+		}
+
+		// 6. Create the change journal entry
 		// For mint events: subject_type = 'token', subject_id = provenance_event_id
 		// Populate meta with provenance information
 		meta := schema.ProvenanceChangeMeta{
@@ -427,66 +590,55 @@ func (s *pgStore) GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID s
 
 // GetTokensByFilter retrieves tokens with their metadata based on filters
 func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, error) {
-	query := s.db.WithContext(ctx).Model(&schema.Token{}).
-		Select("DISTINCT ON (tokens.id, latest_pe.timestamp) tokens.*")
+	query := s.db.WithContext(ctx).Model(&schema.Token{})
 
-	// By default, only return viewable tokens (is_viewable = true)
-	// Unless IncludeUnviewable is explicitly set to true
+	// If filtering by owners, join with token_ownership_provenance for owner-specific sorting
+	if len(filter.Owners) > 0 {
+		// Subquery: get latest timestamp per token for the specified owners
+		subQuery := s.db.Model(&schema.TokenOwnershipProvenance{}).
+			Select("DISTINCT ON (token_id) token_id, last_timestamp, last_tx_index").
+			Where("owner_address IN ?", filter.Owners).
+			Order("token_id").
+			Order("last_timestamp DESC").
+			Order("last_tx_index DESC").
+			Order("id DESC") // Tiebreaker for deterministic results when timestamps & tx_index are equal
+
+		query = query.Joins("JOIN (?) AS top ON top.token_id = tokens.id", subQuery)
+	}
+
+	// Apply viewability filter
 	if !filter.IncludeUnviewable {
 		query = query.Where("tokens.is_viewable = ?", true)
 	}
 
-	// Apply filters
-	if len(filter.Owners) > 0 {
-		// Filter by current owners only (balances or current_owner)
-		query = query.
-			Joins("LEFT JOIN balances ON balances.token_id = tokens.id").
-			Where("balances.owner_address IN ? OR tokens.current_owner IN ?", filter.Owners, filter.Owners)
-	}
-
+	// Apply other filters
 	if len(filter.TokenIDs) > 0 {
 		query = query.Where("tokens.id IN ?", filter.TokenIDs)
 	}
-
 	if len(filter.Chains) > 0 {
 		query = query.Where("tokens.chain IN ?", filter.Chains)
 	}
-
 	if len(filter.ContractAddresses) > 0 {
 		query = query.Where("tokens.contract_address IN ?", filter.ContractAddresses)
 	}
-
 	if len(filter.TokenNumbers) > 0 {
 		query = query.Where("tokens.token_number IN ?", filter.TokenNumbers)
 	}
-
 	if len(filter.TokenCIDs) > 0 {
 		query = query.Where("tokens.token_cid IN ?", filter.TokenCIDs)
 	}
 
-	// Join with latest provenance event to sort by timestamp
-	// When filtering by owners, only consider provenance events related to those owners
+	// Apply sorting based on whether we have owner filter
 	if len(filter.Owners) > 0 {
-		query = query.Joins(`LEFT JOIN LATERAL (
-			SELECT timestamp
-			FROM provenance_events
-			WHERE provenance_events.token_id = tokens.id
-			AND (provenance_events.from_address IN ? OR provenance_events.to_address IN ?)
-			ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
-			LIMIT 1
-		) latest_pe ON true`, filter.Owners, filter.Owners)
+		// Sort by owner-specific latest timestamp from join, with tx_index as tiebreaker
+		query = query.Order("top.last_timestamp DESC").Order("top.last_tx_index DESC").Order("tokens.id DESC")
 	} else {
-		query = query.Joins(`LEFT JOIN LATERAL (
-			SELECT timestamp
-			FROM provenance_events
-			WHERE provenance_events.token_id = tokens.id
-			ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
-			LIMIT 1
-		) latest_pe ON true`)
+		// Sort by denormalized timestamp on tokens table (enables index-only scan)
+		query = query.Order("tokens.last_provenance_timestamp DESC NULLS LAST").Order("tokens.id DESC")
 	}
 
-	// Apply pagination with sorting by latest provenance event timestamp descending
-	query = query.Order("latest_pe.timestamp DESC NULLS LAST").Order("tokens.id DESC").Limit(filter.Limit).Offset(int(filter.Offset)) //nolint:gosec,G115
+	// Apply pagination
+	query = query.Limit(filter.Limit).Offset(int(filter.Offset)) //nolint:gosec,G115
 
 	var tokens []schema.Token
 	if err := query.Find(&tokens).Error; err != nil {
@@ -562,6 +714,102 @@ func (s *pgStore) GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, lim
 	for _, bwt := range balancesWithTotals {
 		result[bwt.TokenID] = append(result[bwt.TokenID], bwt.Balance)
 		totals[bwt.TokenID] = bwt.TotalCount
+	}
+
+	return result, totals, nil
+}
+
+// GetTokenOwnerProvenancesBulk retrieves latest provenance per owner for multiple tokens
+func (s *pgStore) GetTokenOwnerProvenancesBulk(ctx context.Context, tokenIDs []uint64, ownerAddresses []string, maxPerToken int) (map[uint64][]schema.TokenOwnershipProvenance, map[uint64]uint64, error) {
+	if len(tokenIDs) == 0 {
+		return make(map[uint64][]schema.TokenOwnershipProvenance), make(map[uint64]uint64), nil
+	}
+
+	var provenances []schema.TokenOwnershipProvenance
+	var err error
+
+	// Path 1: Owner-filtered query (most common case)
+	// Uses composite index: idx_token_ownership_prov_owner_timestamp (owner_address, last_timestamp DESC, ...)
+	if len(ownerAddresses) > 0 {
+		err = s.db.WithContext(ctx).
+			Where("token_id = ANY(?)", pq.Array(tokenIDs)).
+			Where("owner_address = ANY(?)", pq.Array(ownerAddresses)).
+			Order("token_id, last_timestamp DESC, last_tx_index DESC, id DESC").
+			Find(&provenances).Error
+
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get owner provenances bulk: %w", err)
+		}
+	} else if maxPerToken > 0 {
+		// Path 2: No owner filter with per-token limit
+		err = s.db.WithContext(ctx).Raw(`
+			SELECT p.*
+			FROM unnest($1::bigint[]) AS t(token_id)
+			CROSS JOIN LATERAL (
+				SELECT *
+				FROM token_ownership_provenance
+				WHERE token_id = t.token_id
+				ORDER BY last_timestamp DESC, last_tx_index DESC, id DESC
+				LIMIT $2
+			) p
+			ORDER BY p.token_id, p.last_timestamp DESC, p.last_tx_index DESC, p.id DESC
+		`, pq.Array(tokenIDs), maxPerToken).Scan(&provenances).Error
+
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get owner provenances bulk: %w", err)
+		}
+	} else {
+		// Path 3: No filter, no limit (uncommon, but handle it)
+		err = s.db.WithContext(ctx).
+			Where("token_id = ANY(?)", pq.Array(tokenIDs)).
+			Order("token_id, last_timestamp DESC, last_tx_index DESC, id DESC").
+			Find(&provenances).Error
+
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get owner provenances bulk: %w", err)
+		}
+	}
+
+	// Get total counts for each token
+	type countResult struct {
+		TokenID uint64 `gorm:"column:token_id"`
+		Total   uint64 `gorm:"column:total"`
+	}
+	var counts []countResult
+
+	if len(ownerAddresses) > 0 {
+		// Count only for filtered owners
+		err = s.db.WithContext(ctx).
+			Model(&schema.TokenOwnershipProvenance{}).
+			Select("token_id, COUNT(*) as total").
+			Where("token_id = ANY(?)", pq.Array(tokenIDs)).
+			Where("owner_address = ANY(?)", pq.Array(ownerAddresses)).
+			Group("token_id").
+			Find(&counts).Error
+	} else {
+		// Count all owner provenances per token
+		err = s.db.WithContext(ctx).
+			Model(&schema.TokenOwnershipProvenance{}).
+			Select("token_id, COUNT(*) as total").
+			Where("token_id = ANY(?)", pq.Array(tokenIDs)).
+			Group("token_id").
+			Find(&counts).Error
+	}
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get owner provenances counts: %w", err)
+	}
+
+	// Build totals map
+	totals := make(map[uint64]uint64)
+	for _, count := range counts {
+		totals[count.TokenID] = count.Total
+	}
+
+	// Group by token ID
+	result := make(map[uint64][]schema.TokenOwnershipProvenance)
+	for _, p := range provenances {
+		result[p.TokenID] = append(result[p.TokenID], p)
 	}
 
 	return result, totals, nil
@@ -1054,7 +1302,12 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 			return fmt.Errorf("failed to update ownership periods: %w", err)
 		}
 
-		// 6. Create the change journal entry
+		// 6. Update provenance tracking (denormalized tables for query optimization)
+		if err := s.updateProvenanceTracking(ctx, tx, &provenanceEvent, token.Standard); err != nil {
+			return fmt.Errorf("failed to update provenance tracking: %w", err)
+		}
+
+		// 7. Create the change journal entry
 		// For burn events: subject_type = 'token', subject_id = provenance_event_id
 		// Populate meta with provenance information
 		meta := schema.ProvenanceChangeMeta{
@@ -1263,7 +1516,12 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 			return fmt.Errorf("failed to update ownership periods: %w", err)
 		}
 
-		// 7. Create the change journal entry
+		// 7. Update provenance tracking (denormalized tables for query optimization)
+		if err := s.updateProvenanceTracking(ctx, tx, &provenanceEvent, token.Standard); err != nil {
+			return fmt.Errorf("failed to update provenance tracking: %w", err)
+		}
+
+		// 8. Create the change journal entry
 		// For transfer events: subject_type depends on token standard
 		// - ERC721 (single token): subject_type = 'owner'
 		// - ERC1155/FA2 (multi-token): subject_type = 'balance'
@@ -1363,6 +1621,11 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 			if err := tx.Where("token_id = ?", token.ID).Delete(&schema.TokenOwnershipPeriod{}).Error; err != nil {
 				return fmt.Errorf("failed to delete existing ownership periods: %w", err)
 			}
+
+			// Delete existing token ownership provenance since we're re-creating all provenance data
+			if err := tx.Where("token_id = ?", token.ID).Delete(&schema.TokenOwnershipProvenance{}).Error; err != nil {
+				return fmt.Errorf("failed to delete existing token ownership provenance: %w", err)
+			}
 		}
 
 		if len(input.Balances) > 0 {
@@ -1440,7 +1703,15 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				}
 			}
 
-			// 6. Batch insert changes_journal entries for all events
+			// 6. Update provenance tracking efficiently - find latest event per owner
+			latestEventPerOwner := findLatestEventPerOwner(provenanceEvents)
+			for _, event := range latestEventPerOwner {
+				if err := s.updateProvenanceTracking(ctx, tx, event, token.Standard); err != nil {
+					return fmt.Errorf("failed to update provenance tracking: %w", err)
+				}
+			}
+
+			// 7. Batch insert changes_journal entries for all events
 			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
 			for _, evt := range provenanceEvents {
 				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
@@ -1606,7 +1877,15 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 				}
 			}
 
-			// 5. Create changes_journal entries for newly inserted events
+			// 5. Update provenance tracking efficiently - find latest event per owner
+			latestEventPerOwner := findLatestEventPerOwner(provenanceEvents)
+			for _, event := range latestEventPerOwner {
+				if err := s.updateProvenanceTracking(ctx, tx, event, token.Standard); err != nil {
+					return fmt.Errorf("failed to update provenance tracking: %w", err)
+				}
+			}
+
+			// 6. Create changes_journal entries for newly inserted events
 			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
 			for _, evt := range provenanceEvents {
 				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)

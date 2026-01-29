@@ -321,6 +321,12 @@ type Store interface {
 	GetTokenOwnersBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.Balance, map[uint64]uint64, error)
 	// GetTokenCIDsByOwner retrieves all token CIDs owned by an address (where balance > 0)
 	GetTokenCIDsByOwner(ctx context.Context, ownerAddress string) ([]domain.TokenCID, error)
+	// GetTokenOwnerProvenancesBulk retrieves latest provenance per owner for multiple tokens
+	// If ownerAddresses is provided, only returns provenances for those specific owners
+	// Otherwise returns all owners, limited to maxPerToken per token (to prevent unbounded results for ERC1155)
+	// Results are sorted by last_timestamp DESC, last_tx_index DESC
+	// Returns a map of tokenID -> provenances and a map of tokenID -> total count. Limit is applied per token.
+	GetTokenOwnerProvenancesBulk(ctx context.Context, tokenIDs []uint64, ownerAddresses []string, maxPerToken int) (map[uint64][]schema.TokenOwnershipProvenance, map[uint64]uint64, error)
 
 	// =============================================================================
 	// Provenance & Event Tracking

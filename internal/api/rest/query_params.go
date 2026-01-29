@@ -127,6 +127,7 @@ func (p *ListTokensQueryParams) Validate() error {
 	hasProvenanceExpansion := false
 	for _, expansion := range p.Expansions {
 		if expansion != types.ExpansionOwners &&
+			expansion != types.ExpansionOwnerProvenances &&
 			expansion != types.ExpansionProvenanceEvents &&
 			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&

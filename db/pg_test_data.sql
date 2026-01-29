@@ -7,7 +7,7 @@
 -- =============================================================================
 
 -- ERC721 Token 1 (Ethereum Mainnet) - Single owner, with full metadata and healthy media
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, last_provenance_timestamp, created_at, updated_at)
 VALUES (
     1,
     'eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:1',
@@ -18,12 +18,13 @@ VALUES (
     '0x1234567890123456789012345678901234567890',
     false,
     true, -- Has healthy image URLs
+    now() - interval '30 days', -- last_provenance_timestamp (mint event)
     now() - interval '30 days',
     now() - interval '30 days'
 );
 
 -- ERC721 Token 2 (Ethereum Mainnet) - Different owner, with metadata and healthy media
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, last_provenance_timestamp, created_at, updated_at)
 VALUES (
     2,
     'eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:2',
@@ -34,12 +35,13 @@ VALUES (
     '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
     false,
     true, -- Has healthy image URLs
+    now() - interval '25 days', -- last_provenance_timestamp (mint event)
     now() - interval '25 days',
     now() - interval '25 days'
 );
 
 -- ERC721 Token 3 (Ethereum Sepolia) - Test network, no media health
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, last_provenance_timestamp, created_at, updated_at)
 VALUES (
     3,
     'eip155:11155111:erc721:0x1111111111111111111111111111111111111111:1',
@@ -50,12 +52,13 @@ VALUES (
     '0x2222222222222222222222222222222222222222',
     false,
     false, -- No media health records
+    now() - interval '20 days', -- last_provenance_timestamp (mint event)
     now() - interval '20 days',
     now() - interval '20 days'
 );
 
 -- ERC1155 Token 1 (Ethereum Mainnet) - Multi-owner token with healthy animation
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, last_provenance_timestamp, created_at, updated_at)
 VALUES (
     4,
     'eip155:1:erc1155:0xd07dc4262BCDbf85190C01c996b4C06a461d2430:1',
@@ -66,12 +69,13 @@ VALUES (
     NULL,
     false,
     true, -- Has healthy animation URLs (takes priority)
+    now() - interval '10 days', -- last_provenance_timestamp (latest transfer)
     now() - interval '15 days',
     now() - interval '15 days'
 );
 
 -- ERC721 Token 4 (Burned token) - no media health
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, last_provenance_timestamp, created_at, updated_at)
 VALUES (
     5,
     'eip155:1:erc721:0x3333333333333333333333333333333333333333:999',
@@ -82,12 +86,13 @@ VALUES (
     NULL,
     true,
     false, -- Burned token, no media
+    now() - interval '5 days', -- last_provenance_timestamp (burn event)
     now() - interval '10 days',
     now() - interval '5 days'
 );
 
 -- FA2 Token 1 (Tezos Mainnet) - no media health
-INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, created_at, updated_at)
+INSERT INTO tokens (id, token_cid, chain, standard, contract_address, token_number, current_owner, burned, is_viewable, last_provenance_timestamp, created_at, updated_at)
 VALUES (
     6,
     'tezos:mainnet:fa2:KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton:0',
@@ -98,6 +103,7 @@ VALUES (
     NULL,
     false,
     false, -- No media health records
+    now() - interval '8 days', -- last_provenance_timestamp (mint event)
     now() - interval '8 days',
     now() - interval '8 days'
 );
@@ -541,6 +547,98 @@ VALUES (
 
 -- Reset sequence
 SELECT setval('provenance_events_id_seq', 100, true);
+
+-- =============================================================================
+-- Token Ownership Provenance (Latest per owner)
+-- =============================================================================
+
+-- Token 1: Current owner is 0x1234... (from mint)
+INSERT INTO token_ownership_provenance (token_id, owner_address, last_timestamp, last_tx_index, last_event_type, created_at, updated_at)
+VALUES (
+    1,
+    '0x1234567890123456789012345678901234567890',
+    now() - interval '30 days',
+    10,
+    'mint',
+    now() - interval '30 days',
+    now() - interval '30 days'
+);
+
+-- Token 2: Current owner is 0xabcdef... (from mint)
+INSERT INTO token_ownership_provenance (token_id, owner_address, last_timestamp, last_tx_index, last_event_type, created_at, updated_at)
+VALUES (
+    2,
+    '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+    now() - interval '25 days',
+    5,
+    'mint',
+    now() - interval '25 days',
+    now() - interval '25 days'
+);
+
+-- Token 3: Current owner is 0x2222... (from mint)
+INSERT INTO token_ownership_provenance (token_id, owner_address, last_timestamp, last_tx_index, last_event_type, created_at, updated_at)
+VALUES (
+    3,
+    '0x2222222222222222222222222222222222222222',
+    now() - interval '20 days',
+    1,
+    'mint',
+    now() - interval '20 days',
+    now() - interval '20 days'
+);
+
+-- Token 4: Three current owners (ERC1155 - multi-owner)
+-- Owner 1: 0x4444... (from mint at 15 days ago)
+INSERT INTO token_ownership_provenance (token_id, owner_address, last_timestamp, last_tx_index, last_event_type, created_at, updated_at)
+VALUES (
+    4,
+    '0x4444444444444444444444444444444444444444',
+    now() - interval '15 days',
+    20,
+    'mint',
+    now() - interval '15 days',
+    now() - interval '15 days'
+);
+
+-- Owner 2: 0x5555... (from transfer at 12 days ago)
+INSERT INTO token_ownership_provenance (token_id, owner_address, last_timestamp, last_tx_index, last_event_type, created_at, updated_at)
+VALUES (
+    4,
+    '0x5555555555555555555555555555555555555555',
+    now() - interval '12 days',
+    15,
+    'transfer',
+    now() - interval '12 days',
+    now() - interval '12 days'
+);
+
+-- Owner 3: 0x6666... (from transfer at 10 days ago - most recent for this token)
+INSERT INTO token_ownership_provenance (token_id, owner_address, last_timestamp, last_tx_index, last_event_type, created_at, updated_at)
+VALUES (
+    4,
+    '0x6666666666666666666666666666666666666666',
+    now() - interval '10 days',
+    8,
+    'transfer',
+    now() - interval '10 days',
+    now() - interval '10 days'
+);
+
+-- Token 5: Burned, last owner was 0x3333... (burn event at 5 days ago)
+-- Note: We don't track the burn event for the "to_address" (0x000...000)
+
+-- Token 6: Current owner is tz1VSUr... (from mint)
+INSERT INTO token_ownership_provenance (token_id, owner_address, last_timestamp, last_tx_index, last_event_type, created_at, updated_at)
+VALUES (
+    6,
+    'tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb',
+    now() - interval '8 days',
+    0, -- Tezos uses 'level' in raw JSON, but we'll use 0 for simplicity in test data
+    'mint',
+    now() - interval '8 days',
+    now() - interval '8 days'
+);
 
 -- =============================================================================
 -- Token Ownership Periods

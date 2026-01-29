@@ -9,22 +9,24 @@ import (
 
 // TokenResponse represents a token with optional expansions
 type TokenResponse struct {
-	ID              uint64               `json:"id"`
-	TokenCID        string               `json:"token_cid"`
-	Chain           domain.Chain         `json:"chain"`
-	Standard        domain.ChainStandard `json:"standard"`
-	ContractAddress string               `json:"contract_address"`
-	TokenNumber     string               `json:"token_number"`
-	CurrentOwner    *string              `json:"current_owner"`
-	Burned          bool                 `json:"burned"`
-	Viewable        bool                 `json:"viewable"`
-	CreatedAt       time.Time            `json:"created_at"`
-	UpdatedAt       time.Time            `json:"updated_at"`
+	ID                      uint64               `json:"id"`
+	TokenCID                string               `json:"token_cid"`
+	Chain                   domain.Chain         `json:"chain"`
+	Standard                domain.ChainStandard `json:"standard"`
+	ContractAddress         string               `json:"contract_address"`
+	TokenNumber             string               `json:"token_number"`
+	CurrentOwner            *string              `json:"current_owner"`
+	Burned                  bool                 `json:"burned"`
+	Viewable                bool                 `json:"viewable"`
+	LastProvenanceTimestamp *time.Time           `json:"last_provenance_timestamp"`
+	CreatedAt               time.Time            `json:"created_at"`
+	UpdatedAt               time.Time            `json:"updated_at"`
 
 	// Expansions
 	Metadata         *TokenMetadataResponse     `json:"metadata,omitempty"`
 	Owners           *PaginatedOwners           `json:"owners,omitempty"`
 	ProvenanceEvents *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`
+	OwnerProvenances *PaginatedOwnerProvenances `json:"owner_provenances,omitempty"`
 	EnrichmentSource *EnrichmentSourceResponse  `json:"enrichment_source,omitempty"`
 	// Deprecated: Use MediaAssets instead
 	MetadataMediaAssets []MediaAssetResponse `json:"metadata_media_assets,omitempty"`
@@ -42,11 +44,28 @@ type OwnerResponse struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// OwnerProvenanceResponse represents the latest provenance event for a specific owner
+type OwnerProvenanceResponse struct {
+	OwnerAddress  string    `json:"owner_address"`
+	LastTimestamp time.Time `json:"last_timestamp"`
+	LastTxIndex   int64     `json:"last_tx_index"`
+	LastEventType string    `json:"last_event_type"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 // PaginatedOwners represents paginated owners
 type PaginatedOwners struct {
 	Owners []OwnerResponse `json:"items"`
 	Offset *uint64         `json:"offset,omitempty"`
 	Total  uint64          `json:"total"`
+}
+
+// PaginatedOwnerProvenances represents paginated owner provenances
+type PaginatedOwnerProvenances struct {
+	OwnerProvenances []OwnerProvenanceResponse `json:"items"`
+	Offset           *uint64                   `json:"offset,omitempty"`
+	Total            uint64                    `json:"total"`
 }
 
 // TokenListResponse represents a paginated list of tokens
@@ -63,17 +82,18 @@ func MapTokenToDTO(token *schema.Token) *TokenResponse {
 	}
 
 	return &TokenResponse{
-		ID:              token.ID,
-		TokenCID:        token.TokenCID,
-		Chain:           token.Chain,
-		Standard:        token.Standard,
-		ContractAddress: token.ContractAddress,
-		TokenNumber:     token.TokenNumber,
-		CurrentOwner:    token.CurrentOwner,
-		Burned:          token.Burned,
-		Viewable:        token.IsViewable,
-		CreatedAt:       token.CreatedAt,
-		UpdatedAt:       token.UpdatedAt,
+		ID:                      token.ID,
+		TokenCID:                token.TokenCID,
+		Chain:                   token.Chain,
+		Standard:                token.Standard,
+		ContractAddress:         token.ContractAddress,
+		TokenNumber:             token.TokenNumber,
+		CurrentOwner:            token.CurrentOwner,
+		Burned:                  token.Burned,
+		Viewable:                token.IsViewable,
+		LastProvenanceTimestamp: token.LastProvenanceTimestamp,
+		CreatedAt:               token.CreatedAt,
+		UpdatedAt:               token.UpdatedAt,
 	}
 }
 
@@ -84,5 +104,17 @@ func MapOwnerToDTO(balance *schema.Balance) *OwnerResponse {
 		Quantity:     balance.Quantity,
 		CreatedAt:    balance.CreatedAt,
 		UpdatedAt:    balance.UpdatedAt,
+	}
+}
+
+// MapOwnerProvenanceToDTO maps a schema.TokenOwnershipProvenance to OwnerProvenanceResponse
+func MapOwnerProvenanceToDTO(provenance *schema.TokenOwnershipProvenance) *OwnerProvenanceResponse {
+	return &OwnerProvenanceResponse{
+		OwnerAddress:  provenance.OwnerAddress,
+		LastTimestamp: provenance.LastTimestamp,
+		LastTxIndex:   provenance.LastTxIndex,
+		LastEventType: string(provenance.LastEventType),
+		CreatedAt:     provenance.CreatedAt,
+		UpdatedAt:     provenance.UpdatedAt,
 	}
 }

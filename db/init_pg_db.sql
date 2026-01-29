@@ -29,6 +29,7 @@ CREATE TABLE tokens (
     current_owner TEXT,
     burned BOOLEAN NOT NULL DEFAULT FALSE,
     is_viewable BOOLEAN NOT NULL DEFAULT FALSE,
+    last_provenance_timestamp TIMESTAMPTZ,  -- Cached timestamp of most recent provenance event (added in migration 011)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (chain, contract_address, token_number),
@@ -187,6 +188,23 @@ CREATE TABLE token_ownership_periods (
 -- Create partial unique index to ensure only one active ownership period per token-owner combination
 CREATE UNIQUE INDEX unique_active_token_owner ON token_ownership_periods (token_id, owner_address) WHERE (released_at IS NULL);
 
+-- Token Ownership Provenance table - Tracks the most recent provenance event per token-owner pair
+-- This table enables fast owner-filtered queries by denormalizing the latest provenance timestamp
+-- for each address that received tokens (to_address only, not from_address).
+CREATE TABLE token_ownership_provenance (
+    id BIGSERIAL PRIMARY KEY,
+    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
+    owner_address TEXT NOT NULL,
+    last_timestamp TIMESTAMPTZ NOT NULL,
+    last_tx_index BIGINT NOT NULL,
+    last_event_type event_type NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    
+    -- Unique constraint: one record per token-owner pair
+    CONSTRAINT uq_token_ownership_provenance_token_owner UNIQUE(token_id, owner_address)
+);
+
 -- Watched Addresses table - For owner-based indexing
 CREATE TABLE watched_addresses (
     chain          TEXT        NOT NULL,
@@ -287,6 +305,8 @@ CREATE INDEX idx_tokens_created_at ON tokens (created_at);
 CREATE INDEX idx_tokens_viewable ON tokens (is_viewable);
 CREATE INDEX idx_tokens_chain_owner_viewable ON tokens (chain, current_owner, is_viewable) WHERE current_owner IS NOT NULL;
 CREATE INDEX idx_tokens_token_cid_viewable ON tokens (token_cid, is_viewable);
+CREATE INDEX idx_tokens_last_prov_timestamp_id ON tokens (last_provenance_timestamp DESC NULLS LAST, id DESC);
+CREATE INDEX idx_tokens_viewable_last_prov_timestamp ON tokens (is_viewable, last_provenance_timestamp DESC NULLS LAST, id DESC);
 
 -- Balances table indexes
 CREATE INDEX idx_balances_token_owner ON balances (token_id, owner_address);
@@ -349,6 +369,12 @@ CREATE INDEX idx_token_ownership_token_owner_periods ON token_ownership_periods 
 CREATE INDEX idx_token_ownership_owner_periods ON token_ownership_periods (owner_address, acquired_at, released_at);
 CREATE INDEX idx_token_ownership_token_id_text_periods ON token_ownership_periods (CAST(token_id AS TEXT), owner_address, acquired_at, released_at);
 CREATE INDEX idx_token_ownership_current_owners ON token_ownership_periods (token_id, owner_address) WHERE released_at IS NULL;
+
+-- Token Ownership Provenance table indexes
+-- Index 1: For owner-filtered token queries (GetTokensByFilter with owner filter)
+CREATE INDEX idx_token_ownership_prov_owner_token_timestamp ON token_ownership_provenance (owner_address, token_id, last_timestamp DESC, last_tx_index DESC, id DESC);
+-- Index 2: For LATERAL JOIN queries (GetTokenOwnerProvenancesBulk without owner filter)
+CREATE INDEX idx_token_ownership_prov_token_timestamp ON token_ownership_provenance (token_id, last_timestamp DESC, last_tx_index DESC, id DESC);
 
 -- Watched Addresses table indexes
 CREATE INDEX idx_watched_addresses_watching ON watched_addresses (watching, chain, address);
@@ -461,6 +487,11 @@ CREATE TRIGGER update_token_ownership_periods_updated_at
     BEFORE UPDATE ON token_ownership_periods 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to token_ownership_provenance
+CREATE TRIGGER update_token_ownership_provenance_updated_at
+    BEFORE UPDATE ON token_ownership_provenance
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Apply updated_at trigger to webhook_clients
 CREATE TRIGGER update_webhook_clients_updated_at
     BEFORE UPDATE ON webhook_clients
@@ -502,6 +533,7 @@ COMMENT ON TABLE token_media_health IS 'Tracks health check status for media URL
 COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. subject_id is polymorphic: provenance_event_id (token/owner/balance), token_id (metadata/enrich_source), media_asset_id (media_asset). Token association is resolved through subject_id based on subject_type';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
 COMMENT ON TABLE token_ownership_periods IS 'Tracks when addresses owned tokens with quantity > 0. Used for efficiently querying ownership history and metadata changes during ownership. Automatically maintained by application logic on provenance event creation';
+COMMENT ON TABLE token_ownership_provenance IS 'Tracks the most recent provenance event per token-owner pair. Enables fast owner-filtered queries without LATERAL JOINs by denormalizing latest timestamp for each address that received tokens (to_address only, not from_address). Maintained by application code with monotonic timestamp enforcement in UPSERT WHERE clause.';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';
 COMMENT ON TABLE webhook_clients IS 'Registered webhook clients for event notifications with HTTPS endpoints and event filtering';

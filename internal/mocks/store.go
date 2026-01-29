@@ -530,6 +530,22 @@ func (mr *MockStoreMockRecorder) GetTokenMetadataByTokenIDs(ctx, tokenIDs interf
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadataByTokenIDs", reflect.TypeOf((*MockStore)(nil).GetTokenMetadataByTokenIDs), ctx, tokenIDs)
 }
 
+// GetTokenOwnerProvenancesBulk mocks base method.
+func (m *MockStore) GetTokenOwnerProvenancesBulk(ctx context.Context, tokenIDs []uint64, ownerAddresses []string, maxPerToken int) (map[uint64][]schema.TokenOwnershipProvenance, map[uint64]uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenOwnerProvenancesBulk", ctx, tokenIDs, ownerAddresses, maxPerToken)
+	ret0, _ := ret[0].(map[uint64][]schema.TokenOwnershipProvenance)
+	ret1, _ := ret[1].(map[uint64]uint64)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetTokenOwnerProvenancesBulk indicates an expected call of GetTokenOwnerProvenancesBulk.
+func (mr *MockStoreMockRecorder) GetTokenOwnerProvenancesBulk(ctx, tokenIDs, ownerAddresses, maxPerToken interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenOwnerProvenancesBulk", reflect.TypeOf((*MockStore)(nil).GetTokenOwnerProvenancesBulk), ctx, tokenIDs, ownerAddresses, maxPerToken)
+}
+
 // GetTokenOwners mocks base method.
 func (m *MockStore) GetTokenOwners(ctx context.Context, tokenID uint64, limit int, offset uint64) ([]schema.Balance, uint64, error) {
 	m.ctrl.T.Helper()

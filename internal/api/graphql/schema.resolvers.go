@@ -292,6 +292,21 @@ func (r *mutationResolver) CreateWebhookClient(ctx context.Context, webhookURL s
 	return response, nil
 }
 
+// LastTxIndex is the resolver for the last_tx_index field.
+func (r *ownerProvenanceResolver) LastTxIndex(ctx context.Context, obj *dto.OwnerProvenanceResponse) (Uint64, error) {
+	return Uint64(obj.LastTxIndex), nil
+}
+
+// Offset is the resolver for the offset field.
+func (r *paginatedOwnerProvenancesResolver) Offset(ctx context.Context, obj *dto.PaginatedOwnerProvenances) (*Uint64, error) {
+	return FromNativeUint64(obj.Offset), nil
+}
+
+// Total is the resolver for the total field.
+func (r *paginatedOwnerProvenancesResolver) Total(ctx context.Context, obj *dto.PaginatedOwnerProvenances) (Uint64, error) {
+	return Uint64(obj.Total), nil
+}
+
 // Offset is the resolver for the offset field.
 func (r *paginatedOwnersResolver) Offset(ctx context.Context, obj *dto.PaginatedOwners) (*Uint64, error) {
 	return FromNativeUint64(obj.Offset), nil
@@ -443,6 +458,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 	for _, expansion := range manualExpansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionOwnerProvenances &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
 			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
@@ -639,6 +655,14 @@ func (r *Resolver) MediaAsset() MediaAssetResolver { return &mediaAssetResolver{
 // Mutation returns MutationResolver implementation.
 func (r *Resolver) Mutation() MutationResolver { return &mutationResolver{r} }
 
+// OwnerProvenance returns OwnerProvenanceResolver implementation.
+func (r *Resolver) OwnerProvenance() OwnerProvenanceResolver { return &ownerProvenanceResolver{r} }
+
+// PaginatedOwnerProvenances returns PaginatedOwnerProvenancesResolver implementation.
+func (r *Resolver) PaginatedOwnerProvenances() PaginatedOwnerProvenancesResolver {
+	return &paginatedOwnerProvenancesResolver{r}
+}
+
 // PaginatedOwners returns PaginatedOwnersResolver implementation.
 func (r *Resolver) PaginatedOwners() PaginatedOwnersResolver { return &paginatedOwnersResolver{r} }
 
@@ -671,6 +695,8 @@ type enrichmentSourceResolver struct{ *Resolver }
 type indexingJobResolver struct{ *Resolver }
 type mediaAssetResolver struct{ *Resolver }
 type mutationResolver struct{ *Resolver }
+type ownerProvenanceResolver struct{ *Resolver }
+type paginatedOwnerProvenancesResolver struct{ *Resolver }
 type paginatedOwnersResolver struct{ *Resolver }
 type paginatedProvenanceEventsResolver struct{ *Resolver }
 type provenanceEventResolver struct{ *Resolver }

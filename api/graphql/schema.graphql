@@ -84,6 +84,23 @@ type PaginatedProvenanceEvents {
   total: Uint64!
 }
 
+# Paginated owner provenances list
+type PaginatedOwnerProvenances {
+  items: [OwnerProvenance!]!
+  offset: Uint64
+  total: Uint64!
+}
+
+# Owner provenance - latest provenance event per owner
+type OwnerProvenance {
+  owner_address: String!
+  last_timestamp: Time!
+  last_tx_index: Uint64!
+  last_event_type: String!
+  created_at: Time!
+  updated_at: Time!
+}
+
 # Enrichment source data from vendor APIs
 type EnrichmentSource {
   token_id: Uint64!
@@ -125,11 +142,13 @@ type Token {
   current_owner: String
   burned: Boolean!
   viewable: Boolean!
+  last_provenance_timestamp: Time
   created_at: Time!
   updated_at: Time!
   metadata: TokenMetadata
   owners: PaginatedOwners
   provenance_events: PaginatedProvenanceEvents
+  owner_provenances: PaginatedOwnerProvenances
   enrichment_source: EnrichmentSource
   metadata_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
   enrichment_source_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
