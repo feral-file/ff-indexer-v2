@@ -353,7 +353,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 
 	// Hard cap to prevent flooding the task queue when a chunk contains a very large number of tokens
 	// (e.g., thousands of tokens minted in the same block).
-	const maxParallel = 10
+	const maxParallel = 5
 
 	// Configure child workflow options
 	baseChildWorkflowOptions := workflow.ChildWorkflowOptions{
