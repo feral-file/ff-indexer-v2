@@ -458,24 +458,27 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 	// WEBHOOK: Trigger queryable event notification (fire-and-forget)
 	w.triggerWebhookTokenIndexingNotification(ctx, tokenCID, webhook.EventTypeTokenIndexingQueryable, address)
 
-	// Step 2: Start child workflow to index token metadata (fire and forget)
+	// Step 2: Index token metadata (wait for completion).
+	//
+	// NOTE: This workflow is used by owner-indexing, which can enqueue a large number of tokens.
+	// Waiting here provides backpressure so we don't flood the system with metadata/provenance
+	// workflows across chunks (and across many owners).
 	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:               "index-metadata-" + tokenCID.String(),
 		WorkflowExecutionTimeout: time.Hour,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
 	metadataCtx := workflow.WithChildOptions(ctx, metadataWorkflowOptions)
 
-	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, tokenCID, address).GetChildWorkflowExecution()
-	if err := metadataWorkflowExec.Get(ctx, nil); err != nil {
-		logger.WarnWf(ctx, "Failed to start metadata indexing workflow",
+	if err := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, tokenCID, address).Get(ctx, nil); err != nil {
+		logger.WarnWf(ctx, "Metadata indexing workflow failed",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
 	}
 
-	// Step 3: Start child workflow to index full provenance (fire and forget)
+	// Step 3: Index full provenance (wait for completion).
 	// If the token is an ERC1155 token and address is provided, skip the full provenance indexing workflow
 	_, standard, _, _ := tokenCID.Parse()
 	if standard == domain.StandardERC1155 && address != nil {
@@ -485,13 +488,12 @@ func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, 
 			WorkflowID:               "index-full-provenance-" + tokenCID.String(),
 			WorkflowExecutionTimeout: time.Hour,
 			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
+			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 		}
 		provenanceCtx := workflow.WithChildOptions(ctx, provenanceWorkflowOptions)
 
-		provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, tokenCID, address).GetChildWorkflowExecution()
-		if err := provenanceWorkflowExec.Get(ctx, nil); err != nil {
-			logger.WarnWf(ctx, "Failed to start full provenance indexing workflow",
+		if err := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, tokenCID, address).Get(ctx, nil); err != nil {
+			logger.WarnWf(ctx, "Full provenance indexing workflow failed",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
