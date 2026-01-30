@@ -1219,7 +1219,7 @@ func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.To
 	}
 
 	indexTokensWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowExecutionTimeout: 2 * time.Hour,
+		WorkflowExecutionTimeout: 12 * time.Hour,
 	}
 	indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
 
