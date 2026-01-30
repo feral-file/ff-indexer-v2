@@ -320,7 +320,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	}
 
 	// Set file size if available
-	if resp.ContentLength > 0 {
+	if resp != nil && resp.ContentLength > 0 {
 		mediaAssetInput.FileSizeBytes = &resp.ContentLength
 	}
 
