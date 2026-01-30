@@ -347,34 +347,97 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 		zap.String("address", types.SafeString(address)),
 	)
 
+	if len(tokenCIDs) == 0 {
+		return nil
+	}
+
+	// Hard cap to prevent flooding the task queue when a chunk contains a very large number of tokens
+	// (e.g., thousands of tokens minted in the same block).
+	const maxParallel = 10
+
 	// Configure child workflow options
-	childWorkflowOptions := workflow.ChildWorkflowOptions{
+	baseChildWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowExecutionTimeout: time.Hour,
 		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
 	}
 
-	// Start child workflows for tokens
-	var childFutures []workflow.ChildWorkflowFuture
-	for _, tokenCID := range tokenCIDs {
+	runCtx, cancel := workflow.WithCancel(ctx)
+	defer cancel()
+
+	startChild := func(workerCtx workflow.Context, tokenCID domain.TokenCID) error {
 		workflowID := fmt.Sprintf("index-token-%s", tokenCID.String())
+		childWorkflowOptions := baseChildWorkflowOptions
 		childWorkflowOptions.WorkflowID = workflowID
-		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
+		childCtx := workflow.WithChildOptions(workerCtx, childWorkflowOptions)
 
-		// Execute child workflow
+		// Execute child workflow and wait for completion.
 		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID, address)
-		childFutures = append(childFutures, childFuture)
-
 		logger.InfoWf(ctx, "Triggered token indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.String("workflowID", workflowID),
 		)
+
+		return childFuture.Get(workerCtx, nil)
 	}
 
-	// Wait for all workflows to complete
-	for _, childFuture := range childFutures {
-		if err := childFuture.Get(ctx, nil); err != nil {
-			return err
+	// Worker-pool: cap concurrency regardless of how large tokenCIDs is.
+	workerCount := min(maxParallel, len(tokenCIDs))
+	nextTokenIndex := 0
+	nextTokenMu := workflow.NewMutex(runCtx)
+
+	errCh := workflow.NewNamedBufferedChannel(runCtx, "index-tokens-err", 1)
+	doneCh := workflow.NewNamedBufferedChannel(runCtx, "index-tokens-done", workerCount)
+
+	for i := 0; i < workerCount; i++ {
+		workflow.Go(runCtx, func(workerCtx workflow.Context) {
+			defer doneCh.Send(workerCtx, struct{}{})
+
+			for {
+				var tokenCID domain.TokenCID
+
+				if err := nextTokenMu.Lock(workerCtx); err != nil {
+					// Context canceled (likely due to another worker error); stop this worker.
+					return
+				}
+				if nextTokenIndex >= len(tokenCIDs) {
+					nextTokenMu.Unlock()
+					return
+				}
+				tokenCID = tokenCIDs[nextTokenIndex]
+				nextTokenIndex++
+				nextTokenMu.Unlock()
+
+				if err := startChild(workerCtx, tokenCID); err != nil {
+					_ = errCh.SendAsync(err)
+					cancel()
+					return
+				}
+			}
+		})
+	}
+
+	completed := 0
+	for completed < workerCount {
+		var firstErr error
+
+		selector := workflow.NewSelector(runCtx)
+		selector.AddReceive(errCh, func(c workflow.ReceiveChannel, more bool) {
+			if more {
+				c.Receive(runCtx, &firstErr)
+			}
+		})
+		selector.AddReceive(doneCh, func(c workflow.ReceiveChannel, more bool) {
+			if more {
+				var v struct{}
+				c.Receive(runCtx, &v)
+				completed++
+			}
+		})
+		selector.Select(runCtx)
+
+		if firstErr != nil {
+			return firstErr
 		}
 	}
 
