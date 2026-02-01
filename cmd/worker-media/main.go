@@ -109,7 +109,8 @@ func main() {
 	}
 
 	// Initialize downloader for media file downloads
-	mediaDownloader := downloader.NewDownloader(httpClient, fileSystem)
+	mediaDownloaderHTTPClient := adapter.NewHTTPClient(15 * time.Minute)
+	mediaDownloader := downloader.NewDownloader(mediaDownloaderHTTPClient, fileSystem)
 
 	// Initialize Cloudflare media provider (handles both Images and Stream)
 	cloudflareConfig := &cloudflare.Config{

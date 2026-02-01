@@ -92,7 +92,6 @@ func (w *worker) IndexMediaWorkflow(ctx workflow.Context, url string) error {
 	// Configure activity options with longer timeout for media processing
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Minute, // Much longer timeout for downloading and uploading media
-		HeartbeatTimeout:    2 * time.Minute,  // Heartbeat to track progress
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    30 * time.Second,
 			BackoffCoefficient: 2.0,
