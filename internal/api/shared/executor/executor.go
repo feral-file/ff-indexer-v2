@@ -565,7 +565,7 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
 	options := client.StartWorkflowOptions{
 		TaskQueue:                e.orchestratorTaskQueue,
-		WorkflowExecutionTimeout: 30 * time.Minute,
+		WorkflowExecutionTimeout: 5 * time.Hour,
 	}
 	wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokens, normalizedTokenCIDs, nil)
 	if err != nil {
@@ -769,7 +769,7 @@ func (e *executor) TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint6
 	// The workflow will handle child workflows for individual tokens
 	options := client.StartWorkflowOptions{
 		TaskQueue:                e.orchestratorTaskQueue,
-		WorkflowExecutionTimeout: 30 * time.Minute,
+		WorkflowExecutionTimeout: time.Hour,
 	}
 	wfRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexMultipleTokensMetadata, uniqueTokenCIDs)
 	if err != nil {
