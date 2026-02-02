@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"time"
 
 	"gorm.io/datatypes"
@@ -55,6 +56,17 @@ type ProvenanceEvent struct {
 
 	// Associations
 	Token Token `gorm:"foreignKey:TokenID;constraint:OnDelete:CASCADE"`
+}
+
+// TxIndex returns the transaction index of the provenance event
+func (pe *ProvenanceEvent) TxIndex() int64 {
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(pe.Raw, &rawMap); err == nil {
+		if txIndexFloat, ok := rawMap["tx_index"].(float64); ok {
+			return int64(txIndexFloat)
+		}
+	}
+	return 0
 }
 
 // TableName specifies the table name for the ProvenanceEvent model

@@ -368,66 +368,56 @@ func (s *pgStore) updateProvenanceTracking(ctx context.Context, tx *gorm.DB, eve
 	return nil
 }
 
-// findLatestEventPerOwner groups provenance events by owner address and returns the latest event for each owner.
-// Events are sorted by timestamp DESC, tx_index DESC to find the most recent event.
-// Only considers to_address (recipients), not from_address.
-// Skips events with ID == 0 (duplicates that weren't inserted).
-func findLatestEventPerOwner(events []schema.ProvenanceEvent) map[string]*schema.ProvenanceEvent {
+// findLatestEvents filters provenance events to keep only the most recent per token/owner.
+// For ERC721: one event per token. For ERC1155/FA2: one event per owner-token pair.
+func findLatestEvents(events []schema.ProvenanceEvent, standard domain.ChainStandard) []schema.ProvenanceEvent {
 	if len(events) == 0 {
-		return make(map[string]*schema.ProvenanceEvent)
+		return nil
 	}
 
-	// Sort events by timestamp DESC, tx_index DESC (latest first)
+	isMultiOwner := standard == domain.StandardERC1155 || standard == domain.StandardFA2
+
+	// Sort by timestamp DESC, then tx_index DESC
 	sort.Slice(events, func(i, j int) bool {
-		// Skip events that weren't inserted
 		if events[i].ID == 0 || events[j].ID == 0 {
 			return events[i].ID > events[j].ID
 		}
-
-		// Compare timestamps
 		if !events[i].Timestamp.Equal(events[j].Timestamp) {
 			return events[i].Timestamp.After(events[j].Timestamp)
 		}
-
-		// Timestamps are equal, compare tx_index
-		var iTxIndex, jTxIndex int64
-		var iRawMap, jRawMap map[string]interface{}
-
-		if err := json.Unmarshal(events[i].Raw, &iRawMap); err == nil {
-			if txIndexFloat, ok := iRawMap["tx_index"].(float64); ok {
-				iTxIndex = int64(txIndexFloat)
-			}
-		}
-		if err := json.Unmarshal(events[j].Raw, &jRawMap); err == nil {
-			if txIndexFloat, ok := jRawMap["tx_index"].(float64); ok {
-				jTxIndex = int64(txIndexFloat)
-			}
-		}
-
-		return iTxIndex > jTxIndex
+		return events[i].TxIndex() > events[j].TxIndex()
 	})
 
-	// Track which owners we've already seen (latest event recorded)
-	seenOwners := make(map[string]bool)
-	latestEventPerOwner := make(map[string]*schema.ProvenanceEvent)
+	// Deduplicate: keep first occurrence (most recent) of each unique key
+	seen := make(map[string]bool)
+	result := make([]schema.ProvenanceEvent, 0, len(events))
 
-	// Iterate from latest to oldest, recording first occurrence of each owner
 	for i := range events {
+		// Skip events that are not inserted (duplicate)
 		if events[i].ID == 0 {
-			continue // Skip events that weren't inserted
+			continue
 		}
 
-		// Track to_address (recipient/owner)
-		if events[i].ToAddress != nil && *events[i].ToAddress != "" {
-			owner := *events[i].ToAddress
-			if !seenOwners[owner] {
-				seenOwners[owner] = true
-				latestEventPerOwner[owner] = &events[i]
-			}
+		// Skip events that are not owner-based
+		if events[i].ToAddress == nil || *events[i].ToAddress == "" {
+			continue
+		}
+
+		// Generate key for deduplication
+		var key string
+		if isMultiOwner {
+			key = fmt.Sprintf("%s:%d", *events[i].ToAddress, events[i].TokenID)
+		} else {
+			key = fmt.Sprintf("%d", events[i].TokenID)
+		}
+
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, events[i])
 		}
 	}
 
-	return latestEventPerOwner
+	return result
 }
 
 // CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
@@ -1743,9 +1733,10 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				}
 			}
 
-			// 6. Update provenance tracking efficiently - find latest event per owner
-			latestEventPerOwner := findLatestEventPerOwner(provenanceEvents)
-			for _, event := range latestEventPerOwner {
+			// 6. Update provenance tracking efficiently - find latest event
+			latestEvents := findLatestEvents(provenanceEvents, token.Standard)
+			for i := range latestEvents {
+				event := &latestEvents[i]
 				if err := s.updateProvenanceTracking(ctx, tx, event, token.Standard); err != nil {
 					return fmt.Errorf("failed to update provenance tracking: %w", err)
 				}
@@ -1918,8 +1909,9 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 			}
 
 			// 5. Update provenance tracking efficiently - find latest event per owner
-			latestEventPerOwner := findLatestEventPerOwner(provenanceEvents)
-			for _, event := range latestEventPerOwner {
+			latestEvents := findLatestEvents(provenanceEvents, token.Standard)
+			for i := range latestEvents {
+				event := &latestEvents[i]
 				if err := s.updateProvenanceTracking(ctx, tx, event, token.Standard); err != nil {
 					return fmt.Errorf("failed to update provenance tracking: %w", err)
 				}
