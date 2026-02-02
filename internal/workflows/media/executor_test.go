@@ -174,33 +174,6 @@ func TestIndexMediaFile_UnsupportedMediaFile(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestIndexMediaFile_UnsupportedSelfHostedMediaFile(t *testing.T) {
-	mocks := setupTestExecutor(t)
-	defer tearDownTestExecutor(mocks)
-
-	ctx := context.Background()
-	url := "https://mysite.com/image.png"
-
-	// Mock store GetMediaAssetBySourceURL to return nil (not exists)
-	mocks.mediaProcessor.EXPECT().
-		Provider().
-		Return(cloudflare.CLOUDFLARE_PROVIDER_NAME)
-
-	mocks.store.EXPECT().
-		GetMediaAssetBySourceURL(ctx, url, schema.StorageProviderCloudflare).
-		Return(nil, nil)
-
-	// Mock mediaProcessor.Process to return unsupported self-hosted error
-	mocks.mediaProcessor.EXPECT().
-		Process(ctx, url).
-		Return(domain.ErrUnsupportedSelfHostedMediaFile)
-
-	err := mocks.executor.IndexMediaFile(ctx, url)
-
-	// Should not return error for known skip errors
-	assert.NoError(t, err)
-}
-
 func TestIndexMediaFile_ExceededMaxFileSize(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)

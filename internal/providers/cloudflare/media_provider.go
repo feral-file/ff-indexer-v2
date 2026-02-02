@@ -2,6 +2,7 @@ package cloudflare
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -28,6 +29,14 @@ const (
 	CLOUDFLARE_PROVIDER_NAME         = "cloudflare"
 	CLOUDFLARE_IMAGE_ENDPOINT_REGEX  = `^(https://imagedelivery\.net/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+)(?:/([A-Za-z0-9_-]+))?$`
 	CLOUDFLARE_STREAM_ENDPOINT_REGEX = `^(https://customer-[A-Za-z0-9]+\.cloudflarestream\.com/[A-Za-z0-9]+/manifest/video)\.(m3u8|mpd)$`
+)
+
+var (
+	// Error Code: 5413
+	ErrImageExceededMaxFileSize = errors.New("image exceeded max file size")
+
+	// Error Code: 5443
+	ErrAnimationTooLarge = errors.New("animation too large")
 )
 
 // Config holds configuration for Cloudflare Images and Stream
@@ -63,7 +72,11 @@ func NewMediaProvider(cfClient adapter.CloudflareClient, config *Config, dl down
 
 // UploadImageFromURL uploads an image to Cloudflare Images from a URL
 func (p *mediaProvider) UploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
-	return p.uploadImageFromURLInternal(ctx, sourceURL, metadata)
+	result, err := p.uploadImageFromURLInternal(ctx, sourceURL, metadata)
+	if err != nil {
+		return nil, categorizeError(err)
+	}
+	return result, nil
 }
 
 // UploadImageFromReader uploads an image to Cloudflare Images from an io.Reader
@@ -77,7 +90,7 @@ func (p *mediaProvider) UploadImageFromReader(ctx context.Context, reader io.Rea
 	// Upload directly from the reader
 	image, err := p.uploadImageUsingReader(ctx, reader, filename, metadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to upload image from reader: %w", err)
+		return nil, categorizeError(err)
 	}
 
 	// Convert variants to result format
@@ -86,16 +99,20 @@ func (p *mediaProvider) UploadImageFromReader(ctx context.Context, reader io.Rea
 
 // UploadVideo uploads a video to Cloudflare Stream from a URL
 func (p *mediaProvider) UploadVideo(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
-	return p.uploadVideo(ctx, sourceURL, metadata)
+	result, err := p.uploadVideo(ctx, sourceURL, metadata)
+	if err != nil {
+		return nil, categorizeError(err)
+	}
+	return result, nil
 }
 
 // uploadImageFromURLInternal uploads an image to Cloudflare Images from a URL
 // with automatic fallback to download-and-upload if URL-based upload fails
 func (p *mediaProvider) uploadImageFromURLInternal(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
 	// Validate source URL is a valid image URL
-	if !types.IsValidURL(sourceURL) {
-		logger.WarnCtx(ctx, "Invalid image URL", zap.String("url", sourceURL))
-		return nil, domain.ErrInvalidURL
+	if !types.IsHTTPSURL(sourceURL) {
+		logger.WarnCtx(ctx, "only HTTPS URLs are supported", zap.String("url", sourceURL))
+		return nil, domain.ErrUnsupportedURL
 	}
 
 	// Validate the source URL is a Cloudflare Images URL
@@ -237,9 +254,9 @@ func (p *mediaProvider) buildImageUploadResult(ctx context.Context, image *cloud
 // uploadVideo uploads a video to Cloudflare Stream via URL
 func (p *mediaProvider) uploadVideo(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
 	// Validate the source URL is a valid video URL
-	if !types.IsValidURL(sourceURL) {
-		logger.WarnCtx(ctx, "Invalid video URL", zap.String("url", sourceURL))
-		return nil, domain.ErrInvalidURL
+	if !types.IsHTTPSURL(sourceURL) {
+		logger.WarnCtx(ctx, "only HTTPS URLs are supported", zap.String("url", sourceURL))
+		return nil, domain.ErrUnsupportedURL
 	}
 
 	// Validate the source URL is a Cloudflare Stream URL
@@ -533,4 +550,20 @@ func getFileExtFromMimeType(mimeType string) string {
 	}
 
 	return ""
+}
+
+// categorizeError categorizes a Cloudflare error into a specific error type
+// It returns the specific error type or the original error if it doesn't match any of the known error codes
+func categorizeError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	switch {
+	case strings.Contains(err.Error(), "5413"):
+		return ErrImageExceededMaxFileSize
+	case strings.Contains(err.Error(), "5443"):
+		return ErrAnimationTooLarge
+	}
+	return err
 }

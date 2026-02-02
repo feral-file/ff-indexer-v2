@@ -101,26 +101,18 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		zap.String("provider", p.provider.Name()),
 	)
 
-	// Step 1: Resolve the URL (handle IPFS, Arweave, etc.)
-	resolvedURL, err := p.uriResolver.Resolve(ctx, sourceURL)
-	if err != nil {
-		return fmt.Errorf("failed to resolve URL: %w", err)
-	}
-
-	logger.InfoCtx(ctx, "URL resolved", zap.String("sourceURL", sourceURL), zap.String("resolvedURL", resolvedURL))
-
-	// Step 2: Try HEAD request first to get content-type and size
+	// Step 1: Try HEAD request first to get content-type and size
 	// If HEAD fails, fallback to partial GET request
 	var contentType string
 	var contentLength int64
 
-	resp, err := p.httpClient.Head(ctx, resolvedURL)
+	resp, err := p.httpClient.Head(ctx, sourceURL)
 	if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		// HEAD request succeeded
 		defer func() {
 			if resp.Body != nil {
 				if err := resp.Body.Close(); err != nil {
-					logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", resolvedURL))
+					logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", sourceURL))
 				}
 			}
 		}()
@@ -137,7 +129,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		// HEAD failed, fallback to partial GET to detect content-type
 		if resp != nil && resp.Body != nil {
 			if err := resp.Body.Close(); err != nil {
-				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", resolvedURL))
+				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", sourceURL))
 			}
 		}
 
@@ -153,7 +145,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		)
 
 		// Fetch first 512 bytes to detect content-type
-		partialContent, err := p.httpClient.GetPartialBytes(ctx, resolvedURL, 512)
+		partialContent, err := p.httpClient.GetPartialBytes(ctx, sourceURL, 512)
 		if err != nil {
 			return fmt.Errorf("failed to get content-type via partial GET: %w", err)
 		}
@@ -213,15 +205,15 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		}
 	}
 
-	// Step 3: Handle SVG rasterization if needed
+	// Step 2: Handle SVG rasterization if needed
 	originalContentType := contentType
 	var uploadResult *mediaprovider.UploadResult
 
 	if isSVG {
-		logger.InfoCtx(ctx, "SVG detected, rasterizing to PNG", zap.String("url", resolvedURL))
+		logger.InfoCtx(ctx, "SVG detected, rasterizing to PNG", zap.String("url", sourceURL))
 
 		// Download the SVG content using the downloader
-		downloadResult, err := p.downloader.Download(ctx, resolvedURL)
+		downloadResult, err := p.downloader.Download(ctx, sourceURL)
 		if err != nil {
 			return fmt.Errorf("failed to download SVG: %w", err)
 		}
@@ -266,19 +258,24 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 			return fmt.Errorf("failed to upload rasterized image: %w", err)
 		}
 	} else {
-		// Step 4: Upload to provider based on media type
+		// Step 3: Upload to provider based on media type
 		if isVideo {
-			logger.InfoCtx(ctx, "Uploading video", zap.String("url", resolvedURL))
-			uploadResult, err = p.provider.UploadVideo(ctx, resolvedURL, uploadMetadata)
+			logger.InfoCtx(ctx, "Uploading video", zap.String("url", sourceURL))
+			uploadResult, err = p.provider.UploadVideo(ctx, sourceURL, uploadMetadata)
 		} else {
-			logger.InfoCtx(ctx, "Uploading image", zap.String("url", resolvedURL))
-			uploadResult, err = p.provider.UploadImageFromURL(ctx, resolvedURL, uploadMetadata)
+			logger.InfoCtx(ctx, "Uploading image", zap.String("url", sourceURL))
+			uploadResult, err = p.provider.UploadImageFromURL(ctx, sourceURL, uploadMetadata)
 		}
 
 		if err != nil {
 			switch {
-			case errors.Is(err, domain.ErrInvalidURL),
-				errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile):
+			case errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile),
+				errors.Is(err, domain.ErrUnsupportedURL),
+
+				// There are no way to effectively handle these errors, so we skip processing
+				errors.Is(err, cloudflare.ErrAnimationTooLarge),
+				errors.Is(err, cloudflare.ErrImageExceededMaxFileSize):
+
 				// Known error, skip processing
 				return nil
 			default:
@@ -293,7 +290,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		zap.Int("variantCount", len(uploadResult.VariantURLs)),
 	)
 
-	// Step 5: Convert variant URLs to JSON
+	// Step 4: Convert variant URLs to JSON
 	variantURLsJSON, err := p.json.Marshal(uploadResult.VariantURLs)
 	if err != nil {
 		return fmt.Errorf("failed to marshal variant URLs: %w", err)
@@ -309,7 +306,7 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		providerMetadataJSON = datatypes.JSON(metadataBytes)
 	}
 
-	// Step 6: Store in database
+	// Step 5: Store in database
 	mediaAssetInput := store.CreateMediaAssetInput{
 		SourceURL:        sourceURL,
 		MimeType:         &contentType,

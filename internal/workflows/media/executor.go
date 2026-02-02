@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // Executor defines the interface for executing media-related activities
@@ -47,6 +48,9 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 	if url == "" {
 		return fmt.Errorf("media URL is empty")
 	}
+	if !types.IsHTTPSURL(url) {
+		return fmt.Errorf("only HTTPS URLs are supported: %s", url)
+	}
 
 	// Check if media asset already exists
 	existingAsset, err := e.store.GetMediaAssetBySourceURL(ctx, url, e.toSchemaStorageProvider())
@@ -62,7 +66,6 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 	// Process the media file
 	if err := e.mediaProcessor.Process(ctx, url); err != nil {
 		if errors.Is(err, domain.ErrUnsupportedMediaFile) ||
-			errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) ||
 			errors.Is(err, domain.ErrExceededMaxFileSize) ||
 			errors.Is(err, domain.ErrMissingContentLength) {
 			// Skip known errors

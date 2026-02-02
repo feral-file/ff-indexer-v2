@@ -33,8 +33,8 @@ var (
 	// ErrUnsupportedSelfHostedMediaFile is returned when a self-hosted media file is not supported
 	ErrUnsupportedSelfHostedMediaFile = errors.New("unsupported self-hosted media file")
 
-	// ErrInvalidURL is returned when a URL is invalid
-	ErrInvalidURL = errors.New("invalid URL")
+	// ErrUnsupportedURL is returned when a URL is not supported
+	ErrUnsupportedURL = errors.New("unsupported URL")
 
 	// ErrMissingContentLength is returned when a content length is missing
 	ErrMissingContentLength = errors.New("missing content length")
