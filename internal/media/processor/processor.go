@@ -274,7 +274,8 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 
 				// There are no way to effectively handle these errors, so we skip processing
 				errors.Is(err, cloudflare.ErrAnimationTooLarge),
-				errors.Is(err, cloudflare.ErrImageExceededMaxFileSize):
+				errors.Is(err, cloudflare.ErrImageExceededMaxFileSize),
+				errors.Is(err, cloudflare.ErrRequestEntityTooLarge):
 
 				// Known error, skip processing
 				return nil

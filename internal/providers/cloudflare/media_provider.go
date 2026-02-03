@@ -37,6 +37,9 @@ var (
 
 	// Error Code: 5443
 	ErrAnimationTooLarge = errors.New("animation too large")
+
+	// Error Code: 7011
+	ErrRequestEntityTooLarge = errors.New("request entity too large")
 )
 
 // Config holds configuration for Cloudflare Images and Stream
@@ -564,6 +567,8 @@ func categorizeError(err error) error {
 		return ErrImageExceededMaxFileSize
 	case strings.Contains(err.Error(), "5443"):
 		return ErrAnimationTooLarge
+	case strings.Contains(err.Error(), "7011"):
+		return ErrRequestEntityTooLarge
 	}
 	return err
 }
