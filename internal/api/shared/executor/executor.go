@@ -588,7 +588,7 @@ func (e *executor) TriggerOwnerIndexing(ctx context.Context, addresses []string)
 	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
 	options := client.StartWorkflowOptions{
 		TaskQueue:                e.orchestratorTaskQueue,
-		WorkflowExecutionTimeout: 15*24*time.Hour + 15*time.Minute, // 15 days + buffer
+		WorkflowExecutionTimeout: 15 * 25 * time.Hour, // 15 days + buffer
 	}
 
 	workflowRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwners, normalizedAddresses)
