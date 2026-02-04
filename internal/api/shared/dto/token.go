@@ -23,6 +23,7 @@ type TokenResponse struct {
 	UpdatedAt               time.Time            `json:"updated_at"`
 
 	// Expansions
+	Display          *TokenDisplayResponse      `json:"display,omitempty"`
 	Metadata         *TokenMetadataResponse     `json:"metadata,omitempty"`
 	Owners           *PaginatedOwners           `json:"owners,omitempty"`
 	ProvenanceEvents *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`

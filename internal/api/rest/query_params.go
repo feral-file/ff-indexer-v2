@@ -38,6 +38,7 @@ func (p *GetTokenQueryParams) Validate() error {
 			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionDisplay &&
 			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
@@ -136,6 +137,7 @@ func (p *ListTokensQueryParams) Validate() error {
 			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionDisplay &&
 			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))

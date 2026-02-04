@@ -52,6 +52,10 @@ func (t *TokenMetadataResponse) MediaURLs() []string {
 
 // MapTokenMetadataToDTO maps a schema.TokenMetadata to TokenMetadataResponse
 func MapTokenMetadataToDTO(metadata *schema.TokenMetadata) *TokenMetadataResponse {
+	if metadata == nil {
+		return nil
+	}
+
 	// Convert schema.Artists to ArtistResponse
 	var artists []ArtistResponse
 	for _, artist := range metadata.Artists {

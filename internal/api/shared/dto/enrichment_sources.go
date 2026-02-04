@@ -37,6 +37,10 @@ func (e *EnrichmentSourceResponse) MediaURLs() []string {
 
 // MapEnrichmentSourceToDTO maps a schema.EnrichmentSource to EnrichmentSourceResponse
 func MapEnrichmentSourceToDTO(enrichment *schema.EnrichmentSource) *EnrichmentSourceResponse {
+	if enrichment == nil {
+		return nil
+	}
+
 	var artists []ArtistResponse
 	for _, artist := range enrichment.Artists {
 		artists = append(artists, ArtistResponse{

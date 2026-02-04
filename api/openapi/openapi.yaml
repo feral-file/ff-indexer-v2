@@ -102,14 +102,18 @@ paths:
         - `owners` - Include paginated owner information
         - `provenance_events` - Include paginated provenance events
         - `enrichment_source` - Include vendor enrichment data
-        - `media_asset` - Include all media assets (from metadata and/or enrichment source, depending on what's expanded)
+        - `display` - Include unified display field (merges metadata and enrichment source, with enrichment taking precedence)
+        - `media_asset` - Include media assets based on requested expansions
         - `metadata_media_assets` - (Deprecated) Include media assets for token metadata only
         - `enrichment_source_media_assets` - (Deprecated) Include media assets for enrichment source only
         
-        **Note**: The `media_asset` expansion intelligently includes media from both metadata and enrichment sources:
-        - If `metadata` is also expanded, includes metadata media assets
-        - If `enrichment_source` is also expanded, includes enrichment source media assets
-        - If both are expanded, includes media assets from both sources
+        **Note**: The `media_asset` expansion behavior depends on other requested expansions:
+        - With `metadata` only: includes media assets from metadata
+        - With `enrichment_source` only: includes media assets from enrichment source
+        - With `display` only: includes media assets for URLs in the merged display (respects enrichment precedence)
+        - With `metadata` + `enrichment_source`: includes media assets from both sources
+        - With `metadata` + `display`: includes media from metadata + display merged URLs
+        - Without any source expansion: returns empty array
         
         ## Sub-resource Pagination
         When expanding owners or provenance_events, you can control pagination:
@@ -137,10 +141,10 @@ paths:
             type: array
             items:
               type: string
-              enum: [metadata, owners, provenance_events, enrichment_source, media_asset, metadata_media_assets, enrichment_source_media_assets]
+              enum: [metadata, owners, provenance_events, enrichment_source, display, media_asset, metadata_media_assets, enrichment_source_media_assets]
           style: form
           explode: false
-          example: ["metadata", "owners", "media_asset"]
+          example: ["display", "media_asset"]
         - name: owners.limit
           in: query
           description: Maximum number of owners to return (max 255)
@@ -256,14 +260,18 @@ paths:
         - `owners` - Include owner information (first 20 items per token)
         - `provenance_events` - Include provenance events (first 20 items per token, ordered by timestamp DESC)
         - `enrichment_source` - Include vendor enrichment data
-        - `media_asset` - Include all media assets (intelligently includes from metadata and/or enrichment source based on what's expanded)
+        - `display` - Include unified display field (merges metadata and enrichment source, with enrichment taking precedence)
+        - `media_asset` - Include media assets based on requested expansions
         - `metadata_media_assets` - (Deprecated) Include media assets for token metadata only
         - `enrichment_source_media_assets` - (Deprecated) Include media assets for enrichment source only
         
-        **Note**: The `media_asset` expansion intelligently includes media from expanded sources:
-        - If `metadata` is also expanded, includes metadata media assets
-        - If `enrichment_source` is also expanded, includes enrichment source media assets
-        - If both are expanded, includes media assets from both sources
+        **Note**: The `media_asset` expansion behavior depends on other requested expansions:
+        - With `metadata` only: includes media assets from metadata
+        - With `enrichment_source` only: includes media assets from enrichment source
+        - With `display` only: includes media assets for URLs in the merged display (respects enrichment precedence)
+        - With `metadata` + `enrichment_source`: includes media assets from both sources
+        - With `metadata` + `display`: includes media from metadata + display merged URLs
+        - Without any source expansion: returns empty array
         
         **Important**: When querying multiple tokens, the `owners` and `provenance_events` expansions return a fixed number of items (first 20) per token.
         Pagination parameters (`owners.limit`, `owners.offset`, `provenance_events.limit`, `provenance_events.offset`, `provenance_events.order`) are NOT supported for this endpoint.
@@ -387,10 +395,10 @@ paths:
             type: array
             items:
               type: string
-              enum: [metadata, owners, provenance_events, enrichment_source, media_asset, metadata_media_assets, enrichment_source_media_assets]
+              enum: [metadata, owners, provenance_events, enrichment_source, display, media_asset, metadata_media_assets, enrichment_source_media_assets]
           style: form
           explode: false
-          example: ["metadata", "owners", "enrichment_source"]
+          example: ["display", "media_asset"]
       responses:
         '200':
           description: Tokens retrieved successfully
@@ -1407,27 +1415,41 @@ components:
             - $ref: '#/components/schemas/EnrichmentSourceResponse'
             - type: "null"
           description: Enrichment data from vendor APIs (requires enrichment_source expansion)
+        display:
+          anyOf:
+            - $ref: '#/components/schemas/TokenDisplayResponse'
+            - type: "null"
+          description: Unified display field merging metadata and enrichment source (requires display expansion). Enrichment source takes precedence over metadata when both have the same field.
         media_assets:
           anyOf:
             - type: array
               items:
                 $ref: '#/components/schemas/MediaAssetResponse'
             - type: "null"
-          description: Unified media assets from metadata and/or enrichment source (requires media_asset expansion, includes sources based on metadata/enrichment_source expansions)
+          description: |
+            Unified media assets array (requires media_asset expansion).
+            
+            Content depends on which other expansions are requested:
+            - With `metadata`: includes media assets from metadata
+            - With `enrichment_source`: includes media assets from enrichment source  
+            - With `display`: includes only media assets for URLs in the merged display field
+            - With `metadata` + `enrichment_source`: includes media from both sources
+            - With `metadata` + `display`: includes media from metadata + display merged URLs
+            - Without any source expansion: returns empty array
         metadata_media_assets:
           anyOf:
             - type: array
               items:
                 $ref: '#/components/schemas/MediaAssetResponse'
             - type: "null"
-          description: (Deprecated) Media assets for token metadata only (requires metadata_media_assets expansion)
+          description: (Deprecated) Media assets for token metadata only (requires both metadata_media_assets AND metadata expansions). Use media_asset expansion instead.
         enrichment_source_media_assets:
           anyOf:
             - type: array
               items:
                 $ref: '#/components/schemas/MediaAssetResponse'
             - type: "null"
-          description: (Deprecated) Media assets for enrichment source only (requires enrichment_source_media_assets expansion)
+          description: (Deprecated) Media assets for enrichment source only (requires both enrichment_source_media_assets AND enrichment_source expansions). Use media_asset expansion instead.
 
     TokenMetadataResponse:
       type: object
@@ -1522,6 +1544,48 @@ components:
           type: [string, "null"]
           description: Publisher URL
           example: "https://feralfile.com"
+
+    TokenDisplayResponse:
+      type: object
+      description: |
+        Unified token display data that merges metadata and enrichment source.
+        Enrichment source takes precedence over metadata when both have the same field.
+        
+        This field is populated when the `display` expansion is requested.
+        When `display` is requested without explicit `metadata` or `enrichment_source` expansions,
+        the individual metadata and enrichment_source fields will be null (cleaned up),
+        but their data is merged into this display field.
+      properties:
+        image_url:
+          type: [string, "null"]
+          description: Primary image URL (from enrichment source if available, otherwise from metadata)
+          example: "https://example.com/image.png"
+        animation_url:
+          type: [string, "null"]
+          description: Animation/video URL (from enrichment source if available, otherwise from metadata)
+          example: "https://example.com/animation.mp4"
+        name:
+          type: [string, "null"]
+          description: Token name (from enrichment source if available, otherwise from metadata)
+          example: "Token #1234"
+        description:
+          type: [string, "null"]
+          description: Token description (from enrichment source if available, otherwise from metadata)
+          example: "A unique digital artwork"
+        publisher:
+          anyOf:
+            - $ref: '#/components/schemas/PublisherResponse'
+            - type: "null"
+          description: Publisher information (from metadata, as enrichment sources don't provide publisher)
+        artists:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtistResponse'
+          description: List of artists/creators (from enrichment source if available, otherwise from metadata)
+        mime_type:
+          type: [string, "null"]
+          description: MIME type of the animation_url or image_url (from enrichment source if available, otherwise from metadata)
+          example: "image/png"
 
     OwnerResponse:
       type: object

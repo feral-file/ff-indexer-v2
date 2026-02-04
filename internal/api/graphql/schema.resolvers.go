@@ -380,9 +380,11 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expands []string,
 	// Validate manual expansions
 	for _, expansion := range manualExpansions {
 		if expansion != types.ExpansionOwners &&
+			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionProvenanceEvents &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionDisplay &&
 			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
@@ -458,9 +460,11 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 	for _, expansion := range manualExpansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionOwnerProvenances &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionDisplay &&
 			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))

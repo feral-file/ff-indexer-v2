@@ -214,6 +214,7 @@ type ComplexityRoot struct {
 		ContractAddress             func(childComplexity int) int
 		CreatedAt                   func(childComplexity int) int
 		CurrentOwner                func(childComplexity int) int
+		Display                     func(childComplexity int) int
 		EnrichmentSource            func(childComplexity int) int
 		EnrichmentSourceMediaAssets func(childComplexity int) int
 		ID                          func(childComplexity int) int
@@ -229,6 +230,16 @@ type ComplexityRoot struct {
 		TokenNumber                 func(childComplexity int) int
 		UpdatedAt                   func(childComplexity int) int
 		Viewable                    func(childComplexity int) int
+	}
+
+	TokenDisplay struct {
+		AnimationURL func(childComplexity int) int
+		Artists      func(childComplexity int) int
+		Description  func(childComplexity int) int
+		ImageURL     func(childComplexity int) int
+		MimeType     func(childComplexity int) int
+		Name         func(childComplexity int) int
+		Publisher    func(childComplexity int) int
 	}
 
 	TokenList struct {
@@ -1065,6 +1076,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.CurrentOwner(childComplexity), true
+	case "Token.display":
+		if e.complexity.Token.Display == nil {
+			break
+		}
+
+		return e.complexity.Token.Display(childComplexity), true
 	case "Token.enrichment_source":
 		if e.complexity.Token.EnrichmentSource == nil {
 			break
@@ -1155,6 +1172,49 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.Viewable(childComplexity), true
+
+	case "TokenDisplay.animation_url":
+		if e.complexity.TokenDisplay.AnimationURL == nil {
+			break
+		}
+
+		return e.complexity.TokenDisplay.AnimationURL(childComplexity), true
+	case "TokenDisplay.artists":
+		if e.complexity.TokenDisplay.Artists == nil {
+			break
+		}
+
+		return e.complexity.TokenDisplay.Artists(childComplexity), true
+	case "TokenDisplay.description":
+		if e.complexity.TokenDisplay.Description == nil {
+			break
+		}
+
+		return e.complexity.TokenDisplay.Description(childComplexity), true
+	case "TokenDisplay.image_url":
+		if e.complexity.TokenDisplay.ImageURL == nil {
+			break
+		}
+
+		return e.complexity.TokenDisplay.ImageURL(childComplexity), true
+	case "TokenDisplay.mime_type":
+		if e.complexity.TokenDisplay.MimeType == nil {
+			break
+		}
+
+		return e.complexity.TokenDisplay.MimeType(childComplexity), true
+	case "TokenDisplay.name":
+		if e.complexity.TokenDisplay.Name == nil {
+			break
+		}
+
+		return e.complexity.TokenDisplay.Name(childComplexity), true
+	case "TokenDisplay.publisher":
+		if e.complexity.TokenDisplay.Publisher == nil {
+			break
+		}
+
+		return e.complexity.TokenDisplay.Publisher(childComplexity), true
 
 	case "TokenList.offset":
 		if e.complexity.TokenList.Offset == nil {
@@ -1615,6 +1675,17 @@ type MediaAsset {
   updated_at: Time!
 }
 
+# Unified token display data (merges metadata and enrichment source)
+type TokenDisplay {
+  image_url: String
+  animation_url: String
+  name: String
+  description: String
+  publisher: Publisher
+  artists: [Artist!]
+  mime_type: String
+}
+
 # Token with optional expansions
 type Token {
   id: Uint64!
@@ -1629,6 +1700,7 @@ type Token {
   last_provenance_timestamp: Time
   created_at: Time!
   updated_at: Time!
+  display: TokenDisplay
   metadata: TokenMetadata
   owners: PaginatedOwners
   provenance_events: PaginatedProvenanceEvents
@@ -5093,6 +5165,8 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_created_at(ctx, field)
 			case "updated_at":
 				return ec.fieldContext_Token_updated_at(ctx, field)
+			case "display":
+				return ec.fieldContext_Token_display(ctx, field)
 			case "metadata":
 				return ec.fieldContext_Token_metadata(ctx, field)
 			case "owners":
@@ -5809,6 +5883,51 @@ func (ec *executionContext) fieldContext_Token_updated_at(_ context.Context, fie
 	return fc, nil
 }
 
+func (ec *executionContext) _Token_display(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Token_display,
+		func(ctx context.Context) (any, error) {
+			return obj.Display, nil
+		},
+		nil,
+		ec.marshalOTokenDisplay2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenDisplayResponse,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Token_display(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Token",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "image_url":
+				return ec.fieldContext_TokenDisplay_image_url(ctx, field)
+			case "animation_url":
+				return ec.fieldContext_TokenDisplay_animation_url(ctx, field)
+			case "name":
+				return ec.fieldContext_TokenDisplay_name(ctx, field)
+			case "description":
+				return ec.fieldContext_TokenDisplay_description(ctx, field)
+			case "publisher":
+				return ec.fieldContext_TokenDisplay_publisher(ctx, field)
+			case "artists":
+				return ec.fieldContext_TokenDisplay_artists(ctx, field)
+			case "mime_type":
+				return ec.fieldContext_TokenDisplay_mime_type(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type TokenDisplay", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Token_metadata(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6189,6 +6308,221 @@ func (ec *executionContext) fieldContext_Token_media_assets(_ context.Context, f
 	return fc, nil
 }
 
+func (ec *executionContext) _TokenDisplay_image_url(ctx context.Context, field graphql.CollectedField, obj *dto.TokenDisplayResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenDisplay_image_url,
+		func(ctx context.Context) (any, error) {
+			return obj.ImageURL, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenDisplay_image_url(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenDisplay",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenDisplay_animation_url(ctx context.Context, field graphql.CollectedField, obj *dto.TokenDisplayResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenDisplay_animation_url,
+		func(ctx context.Context) (any, error) {
+			return obj.AnimationURL, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenDisplay_animation_url(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenDisplay",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenDisplay_name(ctx context.Context, field graphql.CollectedField, obj *dto.TokenDisplayResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenDisplay_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenDisplay_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenDisplay",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenDisplay_description(ctx context.Context, field graphql.CollectedField, obj *dto.TokenDisplayResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenDisplay_description,
+		func(ctx context.Context) (any, error) {
+			return obj.Description, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenDisplay_description(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenDisplay",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenDisplay_publisher(ctx context.Context, field graphql.CollectedField, obj *dto.TokenDisplayResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenDisplay_publisher,
+		func(ctx context.Context) (any, error) {
+			return obj.Publisher, nil
+		},
+		nil,
+		ec.marshalOPublisher2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐPublisherResponse,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenDisplay_publisher(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenDisplay",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "name":
+				return ec.fieldContext_Publisher_name(ctx, field)
+			case "url":
+				return ec.fieldContext_Publisher_url(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Publisher", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenDisplay_artists(ctx context.Context, field graphql.CollectedField, obj *dto.TokenDisplayResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenDisplay_artists,
+		func(ctx context.Context) (any, error) {
+			return obj.Artists, nil
+		},
+		nil,
+		ec.marshalOArtist2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐArtistResponseᚄ,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenDisplay_artists(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenDisplay",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "did":
+				return ec.fieldContext_Artist_did(ctx, field)
+			case "name":
+				return ec.fieldContext_Artist_name(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Artist", field.Name)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _TokenDisplay_mime_type(ctx context.Context, field graphql.CollectedField, obj *dto.TokenDisplayResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TokenDisplay_mime_type,
+		func(ctx context.Context) (any, error) {
+			return obj.MimeType, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_TokenDisplay_mime_type(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TokenDisplay",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _TokenList_items(ctx context.Context, field graphql.CollectedField, obj *dto.TokenListResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6237,6 +6571,8 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_created_at(ctx, field)
 			case "updated_at":
 				return ec.fieldContext_Token_updated_at(ctx, field)
+			case "display":
+				return ec.fieldContext_Token_display(ctx, field)
 			case "metadata":
 				return ec.fieldContext_Token_metadata(ctx, field)
 			case "owners":
@@ -10692,6 +11028,8 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "display":
+			out.Values[i] = ec._Token_display(ctx, field, obj)
 		case "metadata":
 			out.Values[i] = ec._Token_metadata(ctx, field, obj)
 		case "owners":
@@ -10708,6 +11046,54 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			out.Values[i] = ec._Token_enrichment_source_media_assets(ctx, field, obj)
 		case "media_assets":
 			out.Values[i] = ec._Token_media_assets(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var tokenDisplayImplementors = []string{"TokenDisplay"}
+
+func (ec *executionContext) _TokenDisplay(ctx context.Context, sel ast.SelectionSet, obj *dto.TokenDisplayResponse) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, tokenDisplayImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("TokenDisplay")
+		case "image_url":
+			out.Values[i] = ec._TokenDisplay_image_url(ctx, field, obj)
+		case "animation_url":
+			out.Values[i] = ec._TokenDisplay_animation_url(ctx, field, obj)
+		case "name":
+			out.Values[i] = ec._TokenDisplay_name(ctx, field, obj)
+		case "description":
+			out.Values[i] = ec._TokenDisplay_description(ctx, field, obj)
+		case "publisher":
+			out.Values[i] = ec._TokenDisplay_publisher(ctx, field, obj)
+		case "artists":
+			out.Values[i] = ec._TokenDisplay_artists(ctx, field, obj)
+		case "mime_type":
+			out.Values[i] = ec._TokenDisplay_mime_type(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -12592,6 +12978,13 @@ func (ec *executionContext) marshalOToken2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑ
 		return graphql.Null
 	}
 	return ec._Token(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOTokenDisplay2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenDisplayResponse(ctx context.Context, sel ast.SelectionSet, v *dto.TokenDisplayResponse) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._TokenDisplay(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse(ctx context.Context, sel ast.SelectionSet, v *dto.TokenListResponse) graphql.Marshaler {

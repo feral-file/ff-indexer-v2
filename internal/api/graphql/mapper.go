@@ -54,6 +54,8 @@ func processTokenFields(reqCtx *graphql.OperationContext, fields []graphql.Colle
 			expansion = types.ExpansionMetadata
 		case "enrichment_source":
 			expansion = types.ExpansionEnrichmentSource
+		case "display":
+			expansion = types.ExpansionDisplay
 		case "media_assets":
 			expansion = types.ExpansionMediaAsset
 		case "metadata_media_assets":

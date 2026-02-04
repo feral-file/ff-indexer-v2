@@ -137,6 +137,17 @@ type MediaAsset {
   updated_at: Time!
 }
 
+# Unified token display data (merges metadata and enrichment source)
+type TokenDisplay {
+  image_url: String
+  animation_url: String
+  name: String
+  description: String
+  publisher: Publisher
+  artists: [Artist!]
+  mime_type: String
+}
+
 # Token with optional expansions
 type Token {
   id: Uint64!
@@ -151,6 +162,7 @@ type Token {
   last_provenance_timestamp: Time
   created_at: Time!
   updated_at: Time!
+  display: TokenDisplay
   metadata: TokenMetadata
   owners: PaginatedOwners
   provenance_events: PaginatedProvenanceEvents

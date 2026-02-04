@@ -44,6 +44,7 @@ const (
 	ExpansionEnrichmentSource Expansion = "enrichment_source"
 	ExpansionMediaAsset       Expansion = "media_asset"
 	ExpansionOwnerProvenances Expansion = "owner_provenances"
+	ExpansionDisplay          Expansion = "display"
 	// Deprecated: Use ExpansionMediaAsset instead
 	ExpansionMetadataMediaAsset Expansion = "metadata_media_asset"
 	// Deprecated: Use ExpansionMediaAsset instead
@@ -59,6 +60,7 @@ func (e Expansion) Valid() bool {
 		e == ExpansionEnrichmentSource ||
 		e == ExpansionMediaAsset ||
 		e == ExpansionOwnerProvenances ||
+		e == ExpansionDisplay ||
 		e == ExpansionMetadataMediaAsset ||
 		e == ExpansionEnrichmentSourceMediaAsset ||
 		e == ExpansionSubject
