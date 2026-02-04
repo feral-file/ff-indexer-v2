@@ -91,6 +91,7 @@ type VendorsConfig struct {
 	ArtBlocksURL  string `mapstructure:"artblocks_url"`
 	FeralFileURL  string `mapstructure:"feralfile_url"`
 	ObjktURL      string `mapstructure:"objkt_url"`
+	ObjktAPIKey   string `mapstructure:"objkt_api_key"`
 	OpenSeaURL    string `mapstructure:"opensea_url"`
 	OpenSeaAPIKey string `mapstructure:"opensea_api_key"`
 }

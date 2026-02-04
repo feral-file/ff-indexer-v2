@@ -142,7 +142,7 @@ func main() {
 	// Initialize vendors
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
-	objktClient := objkt.NewClient(httpClient, rateLimitProxy, cfg.Vendors.ObjktURL, jsonAdapter)
+	objktClient := objkt.NewClient(httpClient, rateLimitProxy, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
 	openseaClient := opensea.NewClient(httpClient, rateLimitProxy, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
 
 	// Initialize registry loaders

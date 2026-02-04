@@ -156,18 +156,18 @@ func (mr *MockHTTPClientMockRecorder) HeadNoRetry(ctx, url interface{}) *gomock.
 }
 
 // PostBytes mocks base method.
-func (m *MockHTTPClient) PostBytes(ctx context.Context, url, contentType string, body io.Reader) ([]byte, error) {
+func (m *MockHTTPClient) PostBytes(ctx context.Context, url string, headers map[string]string, body io.Reader) ([]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PostBytes", ctx, url, contentType, body)
+	ret := m.ctrl.Call(m, "PostBytes", ctx, url, headers, body)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // PostBytes indicates an expected call of PostBytes.
-func (mr *MockHTTPClientMockRecorder) PostBytes(ctx, url, contentType, body interface{}) *gomock.Call {
+func (mr *MockHTTPClientMockRecorder) PostBytes(ctx, url, headers, body interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PostBytes", reflect.TypeOf((*MockHTTPClient)(nil).PostBytes), ctx, url, contentType, body)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PostBytes", reflect.TypeOf((*MockHTTPClient)(nil).PostBytes), ctx, url, headers, body)
 }
 
 // PostNoRetry mocks base method.

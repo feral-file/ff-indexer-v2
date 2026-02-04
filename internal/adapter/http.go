@@ -47,7 +47,7 @@ type HTTPClient interface {
 	GetPartialBytesNoRetry(ctx context.Context, url string, maxBytes int) ([]byte, error)
 
 	// PostBytes performs a POST request and returns the response body as bytes
-	PostBytes(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error)
+	PostBytes(ctx context.Context, url string, headers map[string]string, body io.Reader) ([]byte, error)
 
 	// PostNoRetry performs a POST request with custom headers and returns the response without retry
 	PostNoRetry(ctx context.Context, url string, headers map[string]string, body io.Reader) (*http.Response, error)
@@ -342,14 +342,15 @@ func (c *RealHTTPClient) getPartialBytesNoRetry(ctx context.Context, url string,
 
 // PostBytes performs a POST request and returns the response body
 // Implements exponential backoff retry for rate limiting (429) responses
-func (c *RealHTTPClient) PostBytes(ctx context.Context, url string, contentType string, body io.Reader) ([]byte, error) {
+func (c *RealHTTPClient) PostBytes(ctx context.Context, url string, headers map[string]string, body io.Reader) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 
 	return c.doRequestWithRetry(ctx, req)

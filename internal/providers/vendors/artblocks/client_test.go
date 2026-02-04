@@ -64,8 +64,8 @@ func TestClient_GetProjectMetadata_Success(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, "application/json", gomock.Any()).
-		DoAndReturn(func(ctx context.Context, url, contentType string, body interface{}) ([]byte, error) {
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
 			data, _ := json.Marshal(expectedResponse)
 			return data, nil
 		}).
@@ -97,7 +97,7 @@ func TestClient_GetProjectMetadata_HTTPError(t *testing.T) {
 	expectedError := errors.New("network error")
 
 	mockHTTPClient.EXPECT().
-		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, "application/json", gomock.Any()).
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
 		Return(nil, expectedError).
 		Times(1)
 
@@ -122,7 +122,7 @@ func TestClient_GetProjectMetadata_InvalidJSON(t *testing.T) {
 	projectID := "1"
 
 	mockHTTPClient.EXPECT().
-		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, "application/json", gomock.Any()).
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
 		Return([]byte("invalid json"), nil).
 		Times(1)
 
@@ -156,8 +156,8 @@ func TestClient_GetProjectMetadata_GraphQLError(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, "application/json", gomock.Any()).
-		DoAndReturn(func(ctx context.Context, url, contentType string, body interface{}) ([]byte, error) {
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
 			data, _ := json.Marshal(errorResponse)
 			return data, nil
 		}).
@@ -192,8 +192,8 @@ func TestClient_GetProjectMetadata_ProjectNotFound(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, "application/json", gomock.Any()).
-		DoAndReturn(func(ctx context.Context, url, contentType string, body interface{}) ([]byte, error) {
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
 			data, _ := json.Marshal(notFoundResponse)
 			return data, nil
 		}).

@@ -61,15 +61,17 @@ type ObjktClient struct {
 	httpClient     adapter.HTTPClient
 	rateLimitProxy ratelimit.Proxy
 	apiURL         string
+	apiKey         string
 	json           adapter.JSON
 }
 
 // NewClient creates a new objkt client
-func NewClient(httpClient adapter.HTTPClient, rateLimitProxy ratelimit.Proxy, apiURL string, json adapter.JSON) Client {
+func NewClient(httpClient adapter.HTTPClient, rateLimitProxy ratelimit.Proxy, apiURL string, apiKey string, json adapter.JSON) Client {
 	return &ObjktClient{
 		httpClient:     httpClient,
 		rateLimitProxy: rateLimitProxy,
 		apiURL:         apiURL,
+		apiKey:         apiKey,
 		json:           json,
 	}
 }
@@ -112,7 +114,14 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
 
 	// Make the POST request
 	responseBody, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
-		return c.httpClient.PostBytes(ctx, c.apiURL, "application/json", bytes.NewReader(requestBody))
+		headers := map[string]string{
+			"Content-Type": "application/json",
+		}
+		if c.apiKey != "" {
+			headers["X-API-KEY"] = c.apiKey
+		}
+
+		return c.httpClient.PostBytes(ctx, c.apiURL, headers, bytes.NewReader(requestBody))
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to call objkt v3 API: %w", err)
