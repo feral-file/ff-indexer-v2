@@ -1037,6 +1037,24 @@ func TestResolveTokenMetadata_Success(t *testing.T) {
 	assert.Equal(t, expectedMetadata, result)
 }
 
+func TestResolveTokenMetadata_NilMetadata(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	// Mock metadata resolver to return nil metadata
+	mocks.metadataResolver.EXPECT().
+		Resolve(ctx, tokenCID).
+		Return(nil, nil)
+
+	result, err := mocks.executor.ResolveTokenMetadata(ctx, tokenCID)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
 func TestResolveTokenMetadata_InvalidTokenCID(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)

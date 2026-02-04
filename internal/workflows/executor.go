@@ -411,6 +411,9 @@ func (e *executor) ResolveTokenMetadata(ctx context.Context, tokenCID domain.Tok
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve token metadata: %w", err)
 	}
+	if normalizedMetadata == nil {
+		return nil, nil
+	}
 
 	// Get current token with metadata from database
 	tokenWithMetadata, err := e.store.GetTokenWithMetadataByTokenCID(ctx, tokenCID.String())
