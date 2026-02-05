@@ -134,6 +134,7 @@ type ComplexityRoot struct {
 		SourceURL        func(childComplexity int) int
 		UpdatedAt        func(childComplexity int) int
 		VariantURLs      func(childComplexity int) int
+		Variants         func(childComplexity int, keys []types.MediaAssetVariantKey) int
 	}
 
 	Mutation struct {
@@ -320,6 +321,7 @@ type IndexingJobResolver interface {
 type MediaAssetResolver interface {
 	ProviderMetadata(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
 	VariantURLs(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
+	Variants(ctx context.Context, obj *dto.MediaAssetResponse, keys []types.MediaAssetVariantKey) (JSON, error)
 }
 type MutationResolver interface {
 	TriggerTokenIndexing(ctx context.Context, tokenCids []string) (*dto.TriggerIndexingResponse, error)
@@ -716,6 +718,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.MediaAsset.VariantURLs(childComplexity), true
+	case "MediaAsset.variants":
+		if e.complexity.MediaAsset.Variants == nil {
+			break
+		}
+
+		args, err := ec.field_MediaAsset_variants_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.MediaAsset.Variants(childComplexity, args["keys"].([]types.MediaAssetVariantKey)), true
 
 	case "Mutation.createWebhookClient":
 		if e.complexity.Mutation.CreateWebhookClient == nil {
@@ -1557,6 +1570,19 @@ enum TokenSortBy {
   latest_provenance
 }
 
+# MediaAssetVariantKey enumeration for variant URL keys
+enum MediaAssetVariantKey {
+  xs
+  s
+  m
+  l
+  xl
+  xxl
+  hls
+  dash
+  preview
+}
+
 # Artist/Creator information
 type Artist {
   did: String!
@@ -1670,7 +1696,8 @@ type MediaAsset {
   provider: String!
   provider_asset_id: String
   provider_metadata: JSON
-  variant_urls: JSON!
+  variant_urls: JSON! @deprecated(reason: "Use 'variants' field instead for selective querying with type-safe keys")
+  variants(keys: [MediaAssetVariantKey!]!): JSON!
   created_at: Time!
   updated_at: Time!
 }
@@ -1916,6 +1943,17 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 // endregion ************************** generated!.gotpl **************************
 
 // region    ***************************** args.gotpl *****************************
+
+func (ec *executionContext) field_MediaAsset_variants_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "keys", ec.unmarshalNMediaAssetVariantKey2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐMediaAssetVariantKeyᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["keys"] = arg0
+	return args, nil
+}
 
 func (ec *executionContext) field_Mutation_createWebhookClient_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
@@ -3740,6 +3778,47 @@ func (ec *executionContext) fieldContext_MediaAsset_variant_urls(_ context.Conte
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type JSON does not have child fields")
 		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _MediaAsset_variants(ctx context.Context, field graphql.CollectedField, obj *dto.MediaAssetResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_MediaAsset_variants,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.MediaAsset().Variants(ctx, obj, fc.Args["keys"].([]types.MediaAssetVariantKey))
+		},
+		nil,
+		ec.marshalNJSON2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐJSON,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_MediaAsset_variants(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "MediaAsset",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type JSON does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_MediaAsset_variants_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
 	}
 	return fc, nil
 }
@@ -6195,6 +6274,8 @@ func (ec *executionContext) fieldContext_Token_metadata_media_assets(_ context.C
 				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
 			case "variant_urls":
 				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
+			case "variants":
+				return ec.fieldContext_MediaAsset_variants(ctx, field)
 			case "created_at":
 				return ec.fieldContext_MediaAsset_created_at(ctx, field)
 			case "updated_at":
@@ -6246,6 +6327,8 @@ func (ec *executionContext) fieldContext_Token_enrichment_source_media_assets(_ 
 				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
 			case "variant_urls":
 				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
+			case "variants":
+				return ec.fieldContext_MediaAsset_variants(ctx, field)
 			case "created_at":
 				return ec.fieldContext_MediaAsset_created_at(ctx, field)
 			case "updated_at":
@@ -6297,6 +6380,8 @@ func (ec *executionContext) fieldContext_Token_media_assets(_ context.Context, f
 				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
 			case "variant_urls":
 				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
+			case "variants":
+				return ec.fieldContext_MediaAsset_variants(ctx, field)
 			case "created_at":
 				return ec.fieldContext_MediaAsset_created_at(ctx, field)
 			case "updated_at":
@@ -9850,6 +9935,42 @@ func (ec *executionContext) _MediaAsset(ctx context.Context, sel ast.SelectionSe
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "variants":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._MediaAsset_variants(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "created_at":
 			out.Values[i] = ec._MediaAsset_created_at(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -12138,6 +12259,82 @@ func (ec *executionContext) marshalNJSON2githubᚗcomᚋferalᚑfileᚋffᚑinde
 
 func (ec *executionContext) marshalNMediaAsset2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐMediaAssetResponse(ctx context.Context, sel ast.SelectionSet, v dto.MediaAssetResponse) graphql.Marshaler {
 	return ec._MediaAsset(ctx, sel, &v)
+}
+
+func (ec *executionContext) unmarshalNMediaAssetVariantKey2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐMediaAssetVariantKey(ctx context.Context, v any) (types.MediaAssetVariantKey, error) {
+	tmp, err := graphql.UnmarshalString(v)
+	res := types.MediaAssetVariantKey(tmp)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNMediaAssetVariantKey2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐMediaAssetVariantKey(ctx context.Context, sel ast.SelectionSet, v types.MediaAssetVariantKey) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalString(string(v))
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			ec.Errorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
+func (ec *executionContext) unmarshalNMediaAssetVariantKey2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐMediaAssetVariantKeyᚄ(ctx context.Context, v any) ([]types.MediaAssetVariantKey, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]types.MediaAssetVariantKey, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNMediaAssetVariantKey2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐMediaAssetVariantKey(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalNMediaAssetVariantKey2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐMediaAssetVariantKeyᚄ(ctx context.Context, sel ast.SelectionSet, v []types.MediaAssetVariantKey) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalNMediaAssetVariantKey2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐMediaAssetVariantKey(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) marshalNOwner2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐOwnerResponse(ctx context.Context, sel ast.SelectionSet, v dto.OwnerResponse) graphql.Marshaler {

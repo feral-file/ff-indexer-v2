@@ -115,6 +115,37 @@ func (r *mediaAssetResolver) VariantURLs(ctx context.Context, obj *dto.MediaAsse
 	return JSON(obj.VariantURLs), nil
 }
 
+// Variants is the resolver for the variants field.
+func (r *mediaAssetResolver) Variants(ctx context.Context, obj *dto.MediaAssetResponse, keys []types.MediaAssetVariantKey) (JSON, error) {
+	// If no variant URLs exist, return empty object
+	if obj.VariantURLs == nil {
+		return JSON("{}"), nil
+	}
+
+	// Parse the variant URLs from JSON
+	var allVariants map[string]string
+	if err := json.Unmarshal(obj.VariantURLs, &allVariants); err != nil {
+		return JSON("{}"), nil
+	}
+
+	// Filter to only include requested keys
+	filteredVariants := make(map[string]string)
+	for _, key := range keys {
+		keyStr := string(key)
+		if url, exists := allVariants[keyStr]; exists {
+			filteredVariants[keyStr] = url
+		}
+	}
+
+	// Marshal the filtered map back to JSON
+	resultJSON, err := json.Marshal(filteredVariants)
+	if err != nil {
+		return JSON("{}"), nil
+	}
+
+	return JSON(resultJSON), nil
+}
+
 // TriggerTokenIndexing is the resolver for the triggerTokenIndexing field.
 func (r *mutationResolver) TriggerTokenIndexing(ctx context.Context, tokenCids []string) (*dto.TriggerIndexingResponse, error) {
 	// Validate: token CIDs must be provided

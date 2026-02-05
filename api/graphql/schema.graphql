@@ -19,6 +19,19 @@ enum TokenSortBy {
   latest_provenance
 }
 
+# MediaAssetVariantKey enumeration for variant URL keys
+enum MediaAssetVariantKey {
+  xs
+  s
+  m
+  l
+  xl
+  xxl
+  hls
+  dash
+  preview
+}
+
 # Artist/Creator information
 type Artist {
   did: String!
@@ -132,7 +145,8 @@ type MediaAsset {
   provider: String!
   provider_asset_id: String
   provider_metadata: JSON
-  variant_urls: JSON!
+  variant_urls: JSON! @deprecated(reason: "Use 'variants' field instead for selective querying with type-safe keys")
+  variants(keys: [MediaAssetVariantKey!]!): JSON!
   created_at: Time!
   updated_at: Time!
 }

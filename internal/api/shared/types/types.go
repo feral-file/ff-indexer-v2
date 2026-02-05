@@ -52,16 +52,28 @@ const (
 	ExpansionSubject                    Expansion = "subject"
 )
 
-// Valid checks if an expansion is valid
-func (e Expansion) Valid() bool {
-	return e == ExpansionOwners ||
-		e == ExpansionProvenanceEvents ||
-		e == ExpansionMetadata ||
-		e == ExpansionEnrichmentSource ||
-		e == ExpansionMediaAsset ||
-		e == ExpansionOwnerProvenances ||
-		e == ExpansionDisplay ||
-		e == ExpansionMetadataMediaAsset ||
-		e == ExpansionEnrichmentSourceMediaAsset ||
-		e == ExpansionSubject
+type MediaAssetVariantKey string
+
+const (
+	MediaAssetVariantKeyXs      MediaAssetVariantKey = "xs"
+	MediaAssetVariantKeyS       MediaAssetVariantKey = "s"
+	MediaAssetVariantKeyM       MediaAssetVariantKey = "m"
+	MediaAssetVariantKeyL       MediaAssetVariantKey = "l"
+	MediaAssetVariantKeyXl      MediaAssetVariantKey = "xl"
+	MediaAssetVariantKeyXxl     MediaAssetVariantKey = "xxl"
+	MediaAssetVariantKeyHls     MediaAssetVariantKey = "hls"
+	MediaAssetVariantKeyDash    MediaAssetVariantKey = "dash"
+	MediaAssetVariantKeyPreview MediaAssetVariantKey = "preview"
+)
+
+var AllMediaAssetVariantKey = []MediaAssetVariantKey{
+	MediaAssetVariantKeyXs,
+	MediaAssetVariantKeyS,
+	MediaAssetVariantKeyM,
+	MediaAssetVariantKeyL,
+	MediaAssetVariantKeyXl,
+	MediaAssetVariantKeyXxl,
+	MediaAssetVariantKeyHls,
+	MediaAssetVariantKeyDash,
+	MediaAssetVariantKeyPreview,
 }
