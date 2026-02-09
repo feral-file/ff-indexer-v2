@@ -1287,3 +1287,104 @@ func TestTransform_AnimatedMultipleResize(t *testing.T) {
 	assert.Equal(t, "large-animation.webp", result.Filename) // Filename is derived from source URL
 	assert.Equal(t, "image/webp", result.ContentType)
 }
+
+func TestTransform_ResizeRespectsMinDimension(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockIO := mocks.NewMockIO(ctrl)
+	mockVips := mocks.NewMockVipsClient(ctrl)
+	mockSource := mocks.NewMockVipsSource(ctrl)
+	mockImage := mocks.NewMockVipsImage(ctrl)
+
+	ctx := context.Background()
+	sourceURL := "https://example.com/image-near-min.jpg"
+
+	// Mock HTTP response
+	mockResp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(bytes.NewReader(testJPEG)),
+	}
+
+	mockHTTPClient.EXPECT().
+		GetResponse(gomock.Any(), sourceURL, nil).
+		Return(mockResp, nil)
+
+	// Mock vips operations
+	mockVips.EXPECT().Startup(gomock.Any()).Times(1)
+	mockVips.EXPECT().NewSource(gomock.Any()).Return(mockSource)
+	mockSource.EXPECT().Close().Times(1)
+
+	mockVips.EXPECT().NewImageFromSource(mockSource, gomock.Any()).Return(mockImage, nil)
+
+	// Image dimensions slightly above minDimension (900px when min is 800px)
+	// Step percentage is 20%, so scale would be 0.8
+	// 900 * 0.8 = 720, which is below minDimension (800)
+	// The fix should scale to exactly 800px instead (scale = 800/900 = 0.8888...)
+	currentWidth := 900
+	currentHeight := 900
+
+	mockImage.EXPECT().Width().DoAndReturn(func() int {
+		return currentWidth
+	}).AnyTimes()
+
+	mockImage.EXPECT().Height().DoAndReturn(func() int {
+		return currentHeight
+	}).AnyTimes()
+
+	mockImage.EXPECT().HasAlpha().Return(false)
+	mockImage.EXPECT().Pages().Return(1).AnyTimes() // Still image
+	mockImage.EXPECT().Close().Times(1)
+
+	// Initial encode is too large
+	// After resize to exactly minDimension, it meets target
+	output1 := make([]byte, 11*1024*1024) // 11MB > 9MB target
+	output2 := make([]byte, 7*1024*1024)  // 7MB < 9MB target
+
+	var capturedScale float64
+	gomock.InOrder(
+		// Initial encode - too large
+		mockImage.EXPECT().JpegsaveBuffer(gomock.Any()).Return(output1, nil).Times(1),
+		// Resize should scale to exactly minDimension (800/900 = 0.8888...)
+		// NOT to step percentage (0.8) which would result in 720px
+		mockImage.EXPECT().Resize(gomock.Any(), gomock.Any()).DoAndReturn(func(scale float64, opts interface{}) error {
+			capturedScale = scale
+			currentWidth = 800
+			currentHeight = 800
+			return nil
+		}).Times(1),
+		// Second encode - meets target
+		mockImage.EXPECT().JpegsaveBuffer(gomock.Any()).Return(output2, nil).Times(1),
+	)
+
+	mockVips.EXPECT().Shutdown().Times(1)
+
+	cfg := createDefaultConfig()
+	cfg.MinImageDimension = 800   // Minimum dimension
+	cfg.ResizeStepPercentage = 20 // 20% step = 0.8 scale factor
+	tr := transformer.NewTransformer(cfg, mockHTTPClient, mockIO, mockVips)
+	defer func() {
+		_ = tr.Close()
+	}()
+
+	input := &transformer.TransformInput{
+		SourceURL:  sourceURL,
+		IsAnimated: false,
+	}
+
+	result, err := tr.Transform(ctx, input)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, int64(len(output2)), result.TransformedSize)
+	assert.Equal(t, 800, result.Width)
+	assert.Equal(t, 800, result.Height)
+
+	// Verify that the scale factor was adjusted to respect minDimension
+	// Expected: 800/900 = 0.8888... (to scale exactly to minDimension)
+	// NOT 0.8 (which would be the step percentage)
+	expectedScale := float64(800) / float64(900)
+	assert.InDelta(t, expectedScale, capturedScale, 0.0001,
+		"Scale should be adjusted to respect minDimension (800/900=0.8888), not step percentage (0.8)")
+}

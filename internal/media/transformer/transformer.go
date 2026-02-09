@@ -337,8 +337,13 @@ func (t *transformer) transformImage(
 			// Resize to max dimension
 			scale = float64(maxDimension) / float64(longEdge)
 		} else {
-			// Reduce by step percentage
+			// Reduce by step percentage, but don't go below minDimension
 			scale = float64(100-t.config.ResizeStepPercentage) / 100.0
+			newLongEdge := float64(longEdge) * scale
+			if int(newLongEdge) < minDimension {
+				// Would drop below minimum, scale to exactly minDimension instead
+				scale = float64(minDimension) / float64(longEdge)
+			}
 		}
 
 		// Resize image (works for both still and animated)
