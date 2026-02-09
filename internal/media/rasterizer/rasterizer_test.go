@@ -1,3 +1,5 @@
+//go:build cgo
+
 package rasterizer_test
 
 import (

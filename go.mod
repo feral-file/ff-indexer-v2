@@ -1,6 +1,8 @@
 module github.com/feral-file/ff-indexer-v2
 
-go 1.24.0
+go 1.24.2
+
+toolchain go1.24.13
 
 require (
 	github.com/99designs/gqlgen v0.17.81
@@ -41,7 +43,10 @@ require (
 	gorm.io/plugin/dbresolver v1.6.2
 )
 
-require github.com/go-redis/redis_rate/v10 v10.0.1
+require (
+	github.com/cshum/vipsgen v1.3.1
+	github.com/go-redis/redis_rate/v10 v10.0.1
+)
 
 require (
 	dario.cat/mergo v1.0.2 // indirect

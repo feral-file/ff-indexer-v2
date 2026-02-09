@@ -44,7 +44,23 @@ cloudflare:
 rasterizer:
   width: 2048      # Target width for SVG rasterization (height auto-calculated with best fit, 0 = use SVG natural size)
 
-max_static_image_size: 10485760      # 10MB
-max_animated_image_size: 52428800    # 50MB
-max_video_size: 314572800            # 300MB
+# Image Transform Configuration
+transform:
+  target_image_size: 9437184            # 9MB - target file size in bytes
+  target_image_pixels: 20000000         # 20 megapixels - total pixels for animations (width × height × frames)
+  max_image_dimension: 3840             # Maximum dimension (width or height) for still images
+  max_animated_image_dimension: 2048    # Maximum dimension for animated images (lower for performance)
+  min_image_dimension: 1280             # Minimum dimension for still images
+  min_animated_image_dimension: 640     # Minimum dimension for animated images (can be lower)
+  resize_step_percentage: 25            # Percentage to reduce dimensions per step
+  initial_quality: 100                  # Starting quality for compression
+  min_quality: 60                       # Minimum quality for compression
+  quality_step: 10                      # Quality reduction per step
+  max_input_bytes: 104857600            # 100MB - maximum input file size
+  max_decoded_pixels: 100000000         # 100 megapixels - total pixels safety limit (still: w×h, animated: w×h×frames)
+  transform_timeout: 60s                # Maximum time for transformation
+  worker_concurrency: 4                 # Number of concurrent transformation workers
+
+max_image_size: 10485760      # 10MB
+max_video_size: 314572800     # 300MB
 

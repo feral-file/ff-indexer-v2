@@ -4,10 +4,14 @@ FROM golang:1.24-alpine AS builder
 # Set working directory
 WORKDIR /build
 
-# Install build dependencies for CGO
+# Install build dependencies for CGO and libvips
+# Use edge repository to get libvips 8.18.0+
 RUN apk add --no-cache \
     build-base \
-    musl-dev
+    musl-dev \
+    pkgconfig \
+    --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community \
+    vips-dev~=8.18
 
 # Copy resvg library and headers from pre-built image
 COPY --from=feralfile/resvg-builder:v0.45.1 /usr/local/lib/libresvg.a /usr/local/lib/
@@ -32,9 +36,12 @@ FROM alpine:latest
 # Install runtime dependencies
 # - ca-certificates: for HTTPS
 # - libgcc: required by statically linked Go binary with CGO
+# - vips: libvips runtime library (8.18.0+ from edge)
 RUN apk add --no-cache \
     ca-certificates \
-    libgcc
+    libgcc \
+    --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community \
+    vips~=8.18
 
 # Create non-root user
 RUN addgroup -g 1000 appuser && \
