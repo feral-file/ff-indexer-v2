@@ -59,6 +59,9 @@ jobs:
           cache: true
           cache-dependency-path: ./go.sum
 
+      - name: Setup libvips
+        uses: ./.github/actions/setup-libvips
+
       - name: Install dependencies
         run: go mod download
 
@@ -70,9 +73,6 @@ jobs:
           done
         env:
           PGPASSWORD: postgres
-
-      - name: Run go vet
-        run: go vet ./...
 
       - name: Run tests with coverage
         run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|cmd|internal/store/schema|tools")
