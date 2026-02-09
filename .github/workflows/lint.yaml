@@ -41,11 +41,11 @@ jobs:
           cache: true
           cache-dependency-path: ./go.sum
 
+      - name: Setup libvips
+        uses: ./.github/actions/setup-libvips
+
       - name: Install dependencies
         run: go mod download
-
-      - name: Run go vet
-        run: go vet ./...
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8

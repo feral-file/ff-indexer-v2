@@ -244,16 +244,45 @@ type RasterizerConfig struct {
 	Width int `mapstructure:"width"`
 }
 
+// TransformConfig holds configuration for image transformation
+type TransformConfig struct {
+	// Target sizes
+	TargetImageSize   int64 `mapstructure:"target_image_size"`
+	TargetImagePixels int64 `mapstructure:"target_image_pixels"`
+
+	// Dimension limits
+	MaxImageDimension         int `mapstructure:"max_image_dimension"`
+	MaxAnimatedImageDimension int `mapstructure:"max_animated_image_dimension"`
+	MinImageDimension         int `mapstructure:"min_image_dimension"`
+	MinAnimatedImageDimension int `mapstructure:"min_animated_image_dimension"`
+	ResizeStepPercentage      int `mapstructure:"resize_step_percentage"`
+
+	// Compression settings (escape hatch)
+	InitialQuality int `mapstructure:"initial_quality"`
+	MinQuality     int `mapstructure:"min_quality"`
+	QualityStep    int `mapstructure:"quality_step"`
+
+	// Safety limits
+	MaxInputBytes    int64 `mapstructure:"max_input_bytes"`
+	MaxDecodedPixels int64 `mapstructure:"max_decoded_pixels"`
+
+	// Timeouts
+	TransformTimeout time.Duration `mapstructure:"transform_timeout"`
+
+	// Worker pool
+	WorkerConcurrency int `mapstructure:"worker_concurrency"`
+}
+
 type WorkerMediaConfig struct {
-	BaseConfig           `mapstructure:",squash"`
-	Database             DatabaseConfig   `mapstructure:"database"`
-	Temporal             TemporalConfig   `mapstructure:"temporal"`
-	URI                  URIConfig        `mapstructure:"uri"`
-	Cloudflare           CloudflareConfig `mapstructure:"cloudflare"`
-	Rasterizer           RasterizerConfig `mapstructure:"rasterizer"`
-	MaxStaticImageSize   int64            `mapstructure:"max_static_image_size"`
-	MaxAnimatedImageSize int64            `mapstructure:"max_animated_image_size"`
-	MaxVideoSize         int64            `mapstructure:"max_video_size"`
+	BaseConfig   `mapstructure:",squash"`
+	Database     DatabaseConfig   `mapstructure:"database"`
+	Temporal     TemporalConfig   `mapstructure:"temporal"`
+	URI          URIConfig        `mapstructure:"uri"`
+	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
+	Rasterizer   RasterizerConfig `mapstructure:"rasterizer"`
+	Transform    TransformConfig  `mapstructure:"transform"`
+	MaxImageSize int64            `mapstructure:"max_image_size"`
+	MaxVideoSize int64            `mapstructure:"max_video_size"`
 }
 
 // MediaHealthSweeperConfig holds configuration for the media health sweeper
@@ -496,9 +525,24 @@ func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfi
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 	v.SetDefault("rasterizer.width", 2048)
-	v.SetDefault("max_static_image_size", 10*1024*1024)   // 10MB
-	v.SetDefault("max_animated_image_size", 50*1024*1024) // 50MB
-	v.SetDefault("max_video_size", 300*1024*1024)         // 300MB
+	v.SetDefault("max_image_size", 10*1024*1024)  // 10MB
+	v.SetDefault("max_video_size", 300*1024*1024) // 300MB
+
+	// Transform defaults (90% of max for safety margin)
+	v.SetDefault("transform.target_image_size", int64(float64(10*1024*1024)*0.9)) // 9MB
+	v.SetDefault("transform.target_image_pixels", int64(float64(50000000*0.9)))   // 45 megapixels total (for animations: width * height * frames)
+	v.SetDefault("transform.max_image_dimension", 3840)
+	v.SetDefault("transform.max_animated_image_dimension", 2048)
+	v.SetDefault("transform.min_image_dimension", 1280)
+	v.SetDefault("transform.min_animated_image_dimension", 640)
+	v.SetDefault("transform.resize_step_percentage", 25)
+	v.SetDefault("transform.initial_quality", 100)
+	v.SetDefault("transform.min_quality", 60)
+	v.SetDefault("transform.quality_step", 10)
+	v.SetDefault("transform.max_input_bytes", 100*1024*1024)       // 100MB
+	v.SetDefault("transform.max_decoded_pixels", int64(100000000)) // 100 megapixels
+	v.SetDefault("transform.transform_timeout", 60*time.Second)
+	v.SetDefault("transform.worker_concurrency", 4)
 
 	if err := v.ReadInConfig(); err != nil {
 		var error viper.ConfigFileNotFoundError
@@ -674,8 +718,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"tezos_owner_first_batch_target",
 		"tezos_owner_subsequent_batch_target",
 		// Media specific
-		"max_static_image_size",
-		"max_animated_image_size",
+		"max_image_size",
 		"max_video_size",
 		"rasterizer.width",
 		// Internal Worker config
@@ -708,6 +751,21 @@ func bindAllEnvVars(v *viper.Viper) {
 		"rate_limiter.providers.opensea.requests_per_second",
 		"rate_limiter.providers.opensea.burst",
 		"rate_limiter.providers.opensea.max_queue_time",
+		// Transform
+		"transform.target_image_size",
+		"transform.target_image_pixels",
+		"transform.max_image_dimension",
+		"transform.max_animated_image_dimension",
+		"transform.min_image_dimension",
+		"transform.min_animated_image_dimension",
+		"transform.resize_step_percentage",
+		"transform.initial_quality",
+		"transform.min_quality",
+		"transform.quality_step",
+		"transform.max_input_bytes",
+		"transform.max_decoded_pixels",
+		"transform.transform_timeout",
+		"transform.worker_concurrency",
 	}
 
 	for _, key := range commonKeys {

@@ -718,8 +718,7 @@ uri:
 cloudflare:
   account_id: "test-account-id"
   api_token: "test-api-token"
-max_static_image_size: 5242880
-max_animated_image_size: 10485760
+max_image_size: 5242880
 max_video_size: 104857600
 `,
 			expectError: false,
@@ -741,8 +740,7 @@ max_video_size: 104857600
 				assert.Equal(t, "test-api-token", cfg.Cloudflare.APIToken)
 				assert.Len(t, cfg.URI.IPFSGateways, 2)
 				assert.Len(t, cfg.URI.ArweaveGateways, 2)
-				assert.Equal(t, int64(5242880), cfg.MaxStaticImageSize)
-				assert.Equal(t, int64(10485760), cfg.MaxAnimatedImageSize)
+				assert.Equal(t, int64(5242880), cfg.MaxImageSize)
 				assert.Equal(t, int64(104857600), cfg.MaxVideoSize)
 			},
 		},
@@ -765,9 +763,8 @@ database:
 				assert.Equal(t, 10.0, cfg.Temporal.WorkerActivitiesPerSecond)
 				assert.Len(t, cfg.URI.IPFSGateways, 2)
 				assert.Len(t, cfg.URI.ArweaveGateways, 1)
-				assert.Equal(t, int64(10*1024*1024), cfg.MaxStaticImageSize)   // 10MB
-				assert.Equal(t, int64(50*1024*1024), cfg.MaxAnimatedImageSize) // 50MB
-				assert.Equal(t, int64(300*1024*1024), cfg.MaxVideoSize)        // 300MB
+				assert.Equal(t, int64(10*1024*1024), cfg.MaxImageSize)  // 10MB
+				assert.Equal(t, int64(300*1024*1024), cfg.MaxVideoSize) // 300MB
 			},
 		},
 		{

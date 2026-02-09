@@ -2,7 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/md5" //nolint:gosec,G501,MD5 used for non-cryptographic database indexing only, not security
+	"crypto/md5" //nolint:gosec,G501 // MD5 used for non-cryptographic database indexing only, not security
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,7 +44,7 @@ func md5Hash(s string) string {
 	if s == "" {
 		return ""
 	}
-	hash := md5.Sum([]byte(s)) //nolint:gosec,G401,for indexing purposes only
+	hash := md5.Sum([]byte(s)) //nolint:gosec,G401 // for indexing purposes only
 	return hex.EncodeToString(hash[:])
 }
 

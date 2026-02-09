@@ -25,6 +25,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
+	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -128,8 +129,19 @@ func main() {
 		Width: cfg.Rasterizer.Width,
 	})
 
+	// Initialize vips client
+	vipsClient := adapter.NewVipsClient()
+
+	// Initialize image transformer with bounded worker pool
+	imageTransformer := transformer.NewTransformer(cfg.Transform, httpClient, ioAdapter, vipsClient)
+	logger.InfoCtx(ctx, "Initialized image transformer",
+		zap.Int("workerConcurrency", cfg.Transform.WorkerConcurrency),
+		zap.Int64("targetImageSize", cfg.Transform.TargetImageSize),
+		zap.Int64("targetImagePixels", cfg.Transform.TargetImagePixels),
+	)
+
 	// Initialize media processor
-	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, cfg.MaxStaticImageSize, cfg.MaxAnimatedImageSize, cfg.MaxVideoSize)
+	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, imageTransformer, cfg.MaxImageSize, cfg.MaxVideoSize)
 
 	// Initialize media executor for media processing activities
 	mediaExecutor := workflowsmedia.NewExecutor(dataStore, mediaProcessor)
@@ -195,6 +207,11 @@ func main() {
 
 	// Stop the worker
 	temporalWorker.Stop()
+
+	// Shutdown transformer gracefully
+	if err := imageTransformer.Close(); err != nil {
+		logger.ErrorCtx(ctx, err, zap.String("component", "transformer"))
+	}
 
 	logger.InfoCtx(ctx, "Worker Media stopped")
 }

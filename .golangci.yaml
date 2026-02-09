@@ -5,8 +5,8 @@ version: "2"
 # ================
 run:
   go: "1.21"          # minimum Go version your project supports
-  timeout: 5m          # keep the same as before
-  concurrency: 4       # parallelism (optional – default is auto‑detected)
+  timeout: 10m        # timeout for the linting process
+  concurrency: 4      # parallelism (optional – default is auto‑detected)
 
 # =================
 # Code formatters
@@ -57,6 +57,7 @@ issues:
   max-same-issues: 0         # …
   new: true                  # show only issues on changed lines (handy for CI)
   new-from-merge-base: develop  # compare against the develop branch
+
 
 # ==========
 # CLI output

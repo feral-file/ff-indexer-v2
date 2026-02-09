@@ -337,9 +337,15 @@ health: ## Check health status of all services
 
 ##@ Check Commands
 
-lint: ## Run linters
-	@echo "$(COLOR_BLUE)Running linters...$(COLOR_RESET)"
-	@docker run --rm -v "$(PWD):/app" -w /app golangci/golangci-lint:v2.1.6 golangci-lint run --verbose
+lint: ## Run linters in Docker (CGO files skipped - use lint-local for full check)
+	@echo "$(COLOR_BLUE)Running linters in Docker...$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Note: CGO files are skipped in Docker$(COLOR_RESET)"
+	@docker run --rm -v "$(PWD):/app" -w /app -e CGO_ENABLED=0 golangci/golangci-lint:v2.1.6 golangci-lint run --verbose
+	@echo "$(COLOR_GREEN)✓ Linters passed$(COLOR_RESET)"
+
+lint-local: ## Run linters locally with full CGO support (requires libvips: brew install vips)
+	@echo "$(COLOR_BLUE)Running linters locally with CGO support...$(COLOR_RESET)"
+	@golangci-lint run --verbose
 	@echo "$(COLOR_GREEN)✓ Linters passed$(COLOR_RESET)"
 
 imports: ## Format imports
@@ -352,7 +358,7 @@ test: ## Run tests
 	@go test -cover ./...
 	@echo "$(COLOR_GREEN)✓ Tests passed$(COLOR_RESET)"
 
-check: imports lint test ## Run linters, format imports, and tests
+check: imports lint-local test ## Run linters, format imports, and tests
 	@echo "$(COLOR_GREEN)✓ All checks passed$(COLOR_RESET)"
 
 ##@ Quick Start
