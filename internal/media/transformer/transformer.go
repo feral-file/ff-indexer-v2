@@ -37,6 +37,9 @@ var (
 	ErrUnsupportedFormat = errors.New("unsupported image format")
 )
 
+// MAX_WEBP_DIMENSION is the maximum dimension of a WebP image in pixels
+const MAX_WEBP_DIMENSION = 16383
+
 // TransformInput contains the input parameters for image transformation
 type TransformInput struct {
 	// SourceURL is the URL of the image to transform
@@ -211,14 +214,13 @@ func (t *transformer) transformInternal(ctx context.Context, input *TransformInp
 
 	// Step 3: Load image from source (streaming, not buffering)
 	loadOpts := vips.DefaultLoadOptions()
-	if !input.IsAnimated {
-		loadOpts.Autorotate = true
-	} else {
+	if input.IsAnimated {
 		// For animated images, load all frames
 		loadOpts.N = -1
 	}
 	loadOpts.FailOnError = true
-	loadOpts.Access = vips.AccessSequential // Sequential access for streaming
+	// Use random access to allow resize operations without "out of order read" errors
+	loadOpts.Access = vips.AccessRandom
 
 	img, err := t.vipsClient.NewImageFromSource(source, loadOpts)
 	if err != nil {
@@ -250,6 +252,34 @@ func (t *transformer) transformStill(ctx context.Context, input *TransformInput,
 	return t.transformImage(ctx, input, img, originalSize, outputFormat, false)
 }
 
+// transformSingleFrame transforms an animated image by extracting the first frame
+// and encoding it as a high-quality single-frame WebP
+func (t *transformer) transformSingleFrame(ctx context.Context, input *TransformInput, img adapter.VipsImage, originalSize int64) (*TransformResult, error) {
+	logger.InfoCtx(ctx, "Transforming to single frame image",
+		zap.String("sourceURL", input.SourceURL),
+		zap.Int64("originalSize", originalSize),
+		zap.Int("pages", img.Pages()),
+		zap.Int("pageHeight", img.PageHeight()),
+	)
+
+	// Extract the first frame by cropping to the page height
+	pageHeight := img.PageHeight()
+	width := img.Width()
+
+	// Extract just the first frame (top-left corner at 0,0)
+	if err := img.ExtractArea(0, 0, width, pageHeight); err != nil {
+		return nil, fmt.Errorf("failed to extract first frame: %w", err)
+	}
+
+	logger.InfoCtx(ctx, "Extracted first frame",
+		zap.Int("width", width),
+		zap.Int("height", pageHeight),
+	)
+
+	// Transform as a still image using WebP for best quality
+	return t.transformImage(ctx, input, img, originalSize, "webp", false)
+}
+
 // transformAnimated transforms an animated image (GIF or animated WebP)
 func (t *transformer) transformAnimated(ctx context.Context, input *TransformInput, img adapter.VipsImage, originalSize int64) (*TransformResult, error) {
 	logger.InfoCtx(ctx, "Transforming animated image",
@@ -260,6 +290,24 @@ func (t *transformer) transformAnimated(ctx context.Context, input *TransformInp
 		zap.Int("width", img.Width()),
 		zap.Int("height", img.Height()),
 	)
+
+	// Fast-fail check: WebP has a maximum dimension of 16,383 pixels
+	// For animated images stored as vertical strips, this limits the total strip height
+	// Check if the animation can physically fit within WebP's limits even at minimum dimension
+	minDimension := t.config.MinAnimatedImageDimension
+	pages := img.Pages()
+	minPossibleStripHeight := pages * minDimension
+
+	if minPossibleStripHeight > MAX_WEBP_DIMENSION {
+		logger.WarnCtx(ctx, "Animation has too many frames to fit in WebP format even at minimum dimension, falling back to single frame",
+			zap.Int("pages", pages),
+			zap.Int("minDimension", minDimension),
+			zap.Int("minPossibleStripHeight", minPossibleStripHeight),
+			zap.Int("maxWebPDimension", MAX_WEBP_DIMENSION),
+		)
+		// Fall back to encoding as single frame WebP to keep original quality
+		return t.transformSingleFrame(ctx, input, img, originalSize)
+	}
 
 	// Always use WebP for animated images - better compression than GIF
 	// WebP supports both animation and alpha channel with superior compression
@@ -306,13 +354,23 @@ func (t *transformer) transformImage(
 	quality := t.config.InitialQuality
 	processed, err := t.encodeImage(img, outputFormat, quality)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encode image: %w", err)
-	}
-
-	// Check if already meets targets
-	if t.meetsTarget(img, processed, frameWidth, frameHeight, isAnimated) {
-		return t.buildResult(input.SourceURL, processed, outputFormat, originalSize,
-			frameWidth, frameHeight, false, false, quality), nil
+		// For animated images, initial encode can fail due to WebP dimension limits
+		// If so, skip directly to resize loop to try to fix it
+		if !isWebPSizeError(err, isAnimated) {
+			return nil, fmt.Errorf("failed to encode image: %w", err)
+		}
+		// WebP size error - will be handled in resize loop below
+		logger.DebugCtx(ctx, "Initial WebP encode failed due to size limits, will resize",
+			zap.Error(err),
+			zap.Int("width", frameWidth),
+			zap.Int("height", frameHeight),
+		)
+	} else {
+		// Check if already meets targets
+		if t.meetsTarget(img, processed, frameWidth, frameHeight, isAnimated) {
+			return t.buildResult(input.SourceURL, processed, outputFormat, originalSize,
+				frameWidth, frameHeight, false, false, quality), nil
+		}
 	}
 
 	// RESIZE FIRST (preferred approach)
@@ -360,6 +418,7 @@ func (t *transformer) transformImage(
 		// libvips does NOT correctly scale page-height metadata during resize
 		// It incorrectly sets pageHeight to the total strip height instead of frame height
 		if isAnimated {
+			// Set the page height to the new frame height
 			pages := img.Pages()
 			newPageHeight := totalHeight / pages
 			if err := img.SetPageHeight(newPageHeight); err != nil {
@@ -383,6 +442,37 @@ func (t *transformer) transformImage(
 		// Encode with high quality
 		processed, err = t.encodeImage(img, outputFormat, quality)
 		if err != nil {
+			// For animated images, encoding can fail due to WebP dimension limits (16,383px max)
+			if isWebPSizeError(err, isAnimated) {
+				if longEdge > minDimension {
+					// Continue resizing to get below WebP dimension limit
+					logger.DebugCtx(ctx, "WebP encoding failed due to size limits, continuing to resize",
+						zap.Error(err),
+						zap.Int("longEdge", longEdge),
+						zap.Int("currentWidth", currentWidth),
+						zap.Int("currentHeight", currentHeight),
+						zap.Int("height", img.Height()),
+						zap.Int("width", img.Width()),
+						zap.Int("minDimension", minDimension),
+					)
+					continue
+				}
+				// Hit minimum dimension with WebP size error
+				// This means the animation has too many frames to fit within WebP's dimension limits
+				// Compression won't help since this is a dimension issue, not a quality issue
+				totalStripHeight := img.Height()
+				logger.WarnCtx(ctx, "Animated image exceeds WebP dimension limits even at minimum size",
+					zap.Error(err),
+					zap.Int("pages", img.Pages()),
+					zap.Int("frameHeight", currentHeight),
+					zap.Int("totalStripHeight", totalStripHeight),
+					zap.Int("maxWebPDimension", MAX_WEBP_DIMENSION),
+				)
+				return nil, fmt.Errorf("animated image cannot be encoded: %d frames × %dpx = %d pixels total height exceeds WebP limit of %d pixels",
+					img.Pages(), currentHeight, totalStripHeight, MAX_WEBP_DIMENSION)
+			}
+
+			// For other errors (not WebP size issues), return immediately
 			return nil, fmt.Errorf("failed to encode resized image: %w", err)
 		}
 
@@ -410,13 +500,14 @@ func (t *transformer) transformImage(
 
 		// Ensure we don't go below minimum
 		minDim := min(currentWidth, currentHeight)
-		if minDim < minDimension {
+		if minDim <= minDimension {
 			break
 		}
 	}
 
 	// COMPRESSION AS ESCAPE HATCH (only if resize didn't work)
 	// Start from InitialQuality - QualityStep to avoid re-encoding at the quality we just tried
+	// Note: WebP dimension errors should have been caught in the resize loop above
 	compressed := false
 	for quality = t.config.InitialQuality - t.config.QualityStep; quality >= t.config.MinQuality; quality -= t.config.QualityStep {
 		processed, err = t.encodeImage(img, outputFormat, quality)
@@ -512,6 +603,12 @@ func (t *transformer) encodeImage(img adapter.VipsImage, format string, quality 
 
 		// For animated images (multiple pages), optimize animation settings
 		if img.Pages() > 1 {
+			logger.Debug("Encoding animated WebP with page height",
+				zap.Int("pageHeight", img.PageHeight()),
+				zap.Int("pages", img.Pages()),
+				zap.Int("width", img.Width()),
+				zap.Int("height", img.Height()),
+			)
 			opts.Kmin = 0     // Minimum frames between keyframes (0 = no minimum)
 			opts.Kmax = 0     // Maximum frames between keyframes (0 = all keyframes for best quality)
 			opts.Mixed = true // Allow mixed lossy/lossless for better compression
@@ -574,4 +671,15 @@ func (t *transformer) buildResult(
 		Compressed:      compressed,
 		Quality:         quality,
 	}
+}
+
+// isWebPSizeError checks if an error is related to WebP dimension/size limits
+// WebP has a maximum dimension of 16,383 pixels. For animated images stored as
+// vertical strips, this limit is easily exceeded with many frames.
+func isWebPSizeError(err error, isAnimated bool) bool {
+	if err == nil || !isAnimated {
+		return false
+	}
+
+	return strings.Contains(err.Error(), "image too large")
 }

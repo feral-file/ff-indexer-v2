@@ -20,6 +20,7 @@ type VipsImage interface {
 	PageHeight() int
 	SetPageHeight(height int) error
 	Resize(scale float64, options *vips.ResizeOptions) error
+	ExtractArea(left, top, width, height int) error
 	JpegsaveBuffer(options *vips.JpegsaveBufferOptions) ([]byte, error)
 	WebpsaveBuffer(options *vips.WebpsaveBufferOptions) ([]byte, error)
 	Close()
@@ -105,6 +106,10 @@ func (i *realVipsImage) SetPageHeight(height int) error {
 
 func (i *realVipsImage) Resize(scale float64, options *vips.ResizeOptions) error {
 	return i.image.Resize(scale, options)
+}
+
+func (i *realVipsImage) ExtractArea(left, top, width, height int) error {
+	return i.image.ExtractArea(left, top, width, height)
 }
 
 func (i *realVipsImage) JpegsaveBuffer(options *vips.JpegsaveBufferOptions) ([]byte, error) {

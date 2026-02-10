@@ -277,18 +277,20 @@ func (p *processor) processVideo(ctx context.Context, sourceURL string, probe *p
 }
 
 // processImage handles image files with optional transformation
-func (p *processor) processImage(ctx context.Context, sourceURL string, probe *probeResult, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+func (p *processor) processImage(ctx context.Context, sourceURL string, probe *probeResult, metadata map[string]interface{}) (*mediaprovider.UploadResult, string, int64, error) {
 	// Decide if we need to transform upfront based on known size
 	needsTransform := probe.contentLength > p.maxImageSize
 	var uploadResult *mediaprovider.UploadResult
 	var err error
+	finalContentType := probe.contentType
+	finalContentLength := probe.contentLength
 
 	if needsTransform {
 		// Transform image if we know it's too large
 		logger.InfoCtx(ctx, "Transforming image before upload", zap.String("url", sourceURL))
-		uploadResult, err = p.transformAndUpload(ctx, sourceURL, probe.isAnimatedImage, metadata)
+		uploadResult, finalContentType, finalContentLength, err = p.transformAndUpload(ctx, sourceURL, probe.isAnimatedImage, metadata)
 		if err != nil {
-			return nil, fmt.Errorf("failed to transform and upload image: %w", err)
+			return nil, "", 0, fmt.Errorf("failed to transform and upload image: %w", err)
 		}
 	} else {
 		// Try direct upload first (size unknown or within limits)
@@ -303,21 +305,21 @@ func (p *processor) processImage(ctx context.Context, sourceURL string, probe *p
 					zap.Error(err))
 
 				// Retry with transformation
-				uploadResult, err = p.transformAndUpload(ctx, sourceURL, probe.isAnimatedImage, metadata)
+				uploadResult, finalContentType, finalContentLength, err = p.transformAndUpload(ctx, sourceURL, probe.isAnimatedImage, metadata)
 				if err != nil {
-					return nil, fmt.Errorf("failed to transform and upload image after size error: %w", err)
+					return nil, "", 0, fmt.Errorf("failed to transform and upload image after size error: %w", err)
 				}
 			} else if errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) || errors.Is(err, domain.ErrUnsupportedURL) {
 				// Known unsupported errors, skip processing
 				logger.WarnCtx(ctx, "Unsupported media file", zap.String("url", sourceURL))
-				return nil, nil
+				return nil, "", 0, nil
 			} else {
-				return nil, fmt.Errorf("failed to upload media to provider: %w", err)
+				return nil, "", 0, fmt.Errorf("failed to upload media to provider: %w", err)
 			}
 		}
 	}
 
-	return uploadResult, nil
+	return uploadResult, finalContentType, finalContentLength, nil
 }
 
 // storeMediaAsset stores the media asset in the database
@@ -400,8 +402,8 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		if err != nil {
 			return err
 		}
-	} else {
-		uploadResult, err = p.processImage(ctx, sourceURL, probe, uploadMetadata)
+	} else if probe.isImage || probe.isAnimatedImage {
+		uploadResult, finalContentType, finalContentLength, err = p.processImage(ctx, sourceURL, probe, uploadMetadata)
 		if err != nil {
 			return err
 		}
@@ -461,7 +463,7 @@ func (p *processor) transformAndUpload(
 	sourceURL string,
 	isAnimated bool,
 	metadata map[string]interface{},
-) (*mediaprovider.UploadResult, error) {
+) (*mediaprovider.UploadResult, string, int64, error) {
 	// Transform the image
 	transformInput := &transformer.TransformInput{
 		SourceURL:  sourceURL,
@@ -475,13 +477,13 @@ func (p *processor) transformAndUpload(
 		case errors.Is(err, transformer.ErrAnimationCannotFit):
 			logger.WarnCtx(ctx, "Animation cannot fit within size limits even after transformation",
 				zap.String("sourceURL", sourceURL))
-			return nil, err
+			return nil, "", 0, err
 		case errors.Is(err, transformer.ErrCannotMeetTargetSize):
 			logger.WarnCtx(ctx, "Cannot meet target size even after transformation",
 				zap.String("sourceURL", sourceURL))
-			return nil, err
+			return nil, "", 0, err
 		default:
-			return nil, fmt.Errorf("transformation failed: %w", err)
+			return nil, "", 0, fmt.Errorf("transformation failed: %w", err)
 		}
 	}
 
@@ -494,6 +496,7 @@ func (p *processor) transformAndUpload(
 		zap.Bool("resized", result.Resized),
 		zap.Bool("compressed", result.Compressed),
 		zap.Int("quality", result.Quality),
+		zap.String("contentType", result.ContentType),
 	)
 
 	// Update metadata with transformation info
@@ -504,7 +507,13 @@ func (p *processor) transformAndUpload(
 
 	// Upload the transformed image
 	reader := bytes.NewReader(result.Data)
-	return p.provider.UploadImageFromReader(ctx, reader, result.Filename, result.ContentType, metadata)
+	uploadResult, err := p.provider.UploadImageFromReader(ctx, reader, result.Filename, result.ContentType, metadata)
+	if err != nil {
+		return nil, "", 0, err
+	}
+
+	// Return the new content type and length from the transform result
+	return uploadResult, result.ContentType, result.TransformedSize, nil
 }
 
 // isSizeError checks if an error is a Cloudflare size-related error

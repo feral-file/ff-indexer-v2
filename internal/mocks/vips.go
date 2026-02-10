@@ -51,6 +51,20 @@ func (mr *MockVipsImageMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockVipsImage)(nil).Close))
 }
 
+// ExtractArea mocks base method.
+func (m *MockVipsImage) ExtractArea(left, top, width, height int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExtractArea", left, top, width, height)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ExtractArea indicates an expected call of ExtractArea.
+func (mr *MockVipsImageMockRecorder) ExtractArea(left, top, width, height interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractArea", reflect.TypeOf((*MockVipsImage)(nil).ExtractArea), left, top, width, height)
+}
+
 // HasAlpha mocks base method.
 func (m *MockVipsImage) HasAlpha() bool {
 	m.ctrl.T.Helper()

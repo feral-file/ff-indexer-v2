@@ -1006,10 +1006,11 @@ func TestTransform_AnimationCannotFit(t *testing.T) {
 	mockVips.EXPECT().NewImageFromSource(mockSource, gomock.Any()).Return(mockImage, nil)
 
 	// Already at minimum animated dimension
-	mockImage.EXPECT().Width().Return(300).AnyTimes()
-	mockImage.EXPECT().Height().Return(300).AnyTimes()
-	mockImage.EXPECT().Pages().Return(50).AnyTimes()     // Animated
-	mockImage.EXPECT().PageHeight().Return(6).AnyTimes() // 300/50 = 6 pixels per frame
+	// Use 40 frames so it passes fast-fail check: 40 × 400 = 16,000 < 16,383
+	mockImage.EXPECT().Width().Return(400).AnyTimes()
+	mockImage.EXPECT().Height().Return(400).AnyTimes()
+	mockImage.EXPECT().Pages().Return(40).AnyTimes()      // Animated
+	mockImage.EXPECT().PageHeight().Return(10).AnyTimes() // 400/40 = 10 pixels per frame
 	mockImage.EXPECT().Close().Times(1)
 
 	// All encodings still exceed target (incompressible animation)
@@ -1024,7 +1025,7 @@ func TestTransform_AnimationCannotFit(t *testing.T) {
 	mockVips.EXPECT().Shutdown().Times(1)
 
 	cfg := createDefaultConfig()
-	cfg.MinImageDimension = 300 // Can't resize below this
+	cfg.MinAnimatedImageDimension = 400 // Can't resize below this
 	tr := transformer.NewTransformer(cfg, mockHTTPClient, mockIO, mockVips)
 	defer func() {
 		_ = tr.Close()
@@ -1387,4 +1388,92 @@ func TestTransform_ResizeRespectsMinDimension(t *testing.T) {
 	expectedScale := float64(800) / float64(900)
 	assert.InDelta(t, expectedScale, capturedScale, 0.0001,
 		"Scale should be adjusted to respect minDimension (800/900=0.8888), not step percentage (0.8)")
+}
+
+func TestTransform_AnimatedWebPExceedsLimitAtMinDimension(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockIO := mocks.NewMockIO(ctrl)
+	mockVips := mocks.NewMockVipsClient(ctrl)
+	mockSource := mocks.NewMockVipsSource(ctrl)
+	mockImage := mocks.NewMockVipsImage(ctrl)
+
+	ctx := context.Background()
+	sourceURL := "https://example.com/too-many-frames.gif"
+
+	// Mock HTTP response
+	mockResp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(bytes.NewReader(testJPEG)),
+	}
+
+	mockHTTPClient.EXPECT().
+		GetResponse(gomock.Any(), sourceURL, nil).
+		Return(mockResp, nil)
+
+	// Mock vips operations
+	mockVips.EXPECT().Startup(gomock.Any()).Times(1)
+	mockVips.EXPECT().NewSource(gomock.Any()).Return(mockSource)
+	mockSource.EXPECT().Close().Times(1)
+
+	mockVips.EXPECT().NewImageFromSource(mockSource, gomock.Any()).Return(mockImage, nil)
+
+	// Animation with too many frames to fit in WebP even at minimum dimension
+	// WebP max dimension: 16,383 pixels
+	// This animation has 150 frames at 780×780px each
+	// Total strip height: 150 frames × 780px = 117,000 pixels > 16,383 pixels
+	// Even at MinAnimatedImageDimension (400px): 150 × 400 = 60,000 > 16,383
+	// Should fall back to single-frame WebP (extract first frame)
+	pages := 150
+	frameWidth := 780
+	frameHeight := 780
+
+	// Use a stateful mock: before extraction returns 150 pages, after extraction returns 1 page
+	extractCalled := false
+
+	mockImage.EXPECT().Pages().DoAndReturn(func() int {
+		if extractCalled {
+			return 1
+		}
+		return pages
+	}).AnyTimes()
+
+	mockImage.EXPECT().PageHeight().Return(frameHeight).AnyTimes()
+	mockImage.EXPECT().Width().Return(frameWidth).AnyTimes()
+	mockImage.EXPECT().Height().Return(frameHeight).AnyTimes()
+
+	// ExtractArea is called to extract the first frame - mark that it's been called
+	mockImage.EXPECT().ExtractArea(0, 0, frameWidth, frameHeight).DoAndReturn(func(_, _, _, _ int) error {
+		extractCalled = true
+		return nil
+	})
+
+	// Try to encode the image
+	mockImage.EXPECT().WebpsaveBuffer(gomock.Any()).Return(testJPEG, nil)
+
+	mockImage.EXPECT().Close().Times(1)
+	mockVips.EXPECT().Shutdown().Times(1)
+
+	cfg := createDefaultConfig()
+	cfg.MinAnimatedImageDimension = 400 // 150 × 400 = 60,000 > 16,383
+	tr := transformer.NewTransformer(cfg, mockHTTPClient, mockIO, mockVips)
+	defer func() {
+		_ = tr.Close()
+	}()
+
+	input := &transformer.TransformInput{
+		SourceURL:  sourceURL,
+		IsAnimated: true,
+	}
+
+	result, err := tr.Transform(ctx, input)
+
+	// Should succeed by falling back to single-frame WebP
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "image/webp", result.ContentType)
+	assert.Equal(t, frameWidth, result.Width)
+	assert.Equal(t, frameHeight, result.Height)
 }
