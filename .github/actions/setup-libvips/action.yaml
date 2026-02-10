@@ -11,18 +11,23 @@ runs:
         path: ~/libvips
         key: libvips-install-8.18.0-${{ runner.os }}
 
-    - name: Install libvips build dependencies
-      if: steps.cache-libvips.outputs.cache-hit != 'true'
+    - name: Install libvips runtime dependencies
       shell: bash
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          meson \
-          ninja-build \
-          build-essential \
           pkg-config \
           libglib2.0-dev \
           libexpat1-dev
+
+    - name: Install libvips build dependencies
+      if: steps.cache-libvips.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        sudo apt-get install -y \
+          meson \
+          ninja-build \
+          build-essential
 
     - name: Build libvips 8.18.0
       if: steps.cache-libvips.outputs.cache-hit != 'true'
