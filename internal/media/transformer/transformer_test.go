@@ -137,7 +137,7 @@ func TestTransform_Success_JPEG(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -200,7 +200,7 @@ func TestTransform_Success_PNG_WithAlpha(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -255,7 +255,7 @@ func TestTransform_HTTPError(t *testing.T) {
 
 	// Mock HTTP error
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(nil, errors.New("network error"))
 
 	mockVips.EXPECT().Startup(gomock.Any()).Times(1)
@@ -296,7 +296,7 @@ func TestTransform_HTTPStatusError(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	mockVips.EXPECT().Startup(gomock.Any()).Times(1)
@@ -338,7 +338,7 @@ func TestTransform_InputTooLarge(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	mockVips.EXPECT().Startup(gomock.Any()).Times(1)
@@ -382,7 +382,7 @@ func TestTransform_InvalidImage(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations - loading will fail
@@ -424,7 +424,7 @@ func TestTransform_ContextTimeout(t *testing.T) {
 
 	// Mock slow HTTP response that will exceed timeout
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		DoAndReturn(func(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
 			// Sleep longer than the transform timeout
 			time.Sleep(100 * time.Millisecond)
@@ -474,7 +474,7 @@ func TestTransform_AnimatedImage(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -489,6 +489,13 @@ func TestTransform_AnimatedImage(t *testing.T) {
 	mockImage.EXPECT().Pages().Return(10).AnyTimes()      // Multiple pages = animated
 	mockImage.EXPECT().PageHeight().Return(10).AnyTimes() // Height of each frame
 	mockImage.EXPECT().Close().Times(1)
+
+	// Mock animation metadata extraction and restoration
+	delay := []int{100, 100, 100, 100, 100, 100, 100, 100, 100, 100}
+	mockImage.EXPECT().GetArrayInt("delay").Return(delay, nil).AnyTimes()
+	mockImage.EXPECT().GetInt("loop").Return(0, nil).AnyTimes()
+	mockImage.EXPECT().SetArrayInt("delay", delay).Return(nil).AnyTimes()
+	mockImage.EXPECT().SetInt("loop", 0).AnyTimes()
 
 	// Mock WebP encode (animated images always use WebP)
 	mockImage.EXPECT().WebpsaveBuffer(gomock.Any()).Return(testJPEG, nil)
@@ -589,7 +596,7 @@ func TestTransform_TooManyPixels(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -646,7 +653,7 @@ func TestTransform_FirstEncodingMeetsTarget(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -709,7 +716,7 @@ func TestTransform_ResizeMeetsTarget(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -779,7 +786,7 @@ func TestTransform_CompressionMeetsTarget(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -852,7 +859,7 @@ func TestTransform_MultipleResizeIterations(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -929,7 +936,7 @@ func TestTransform_CannotMeetTargetSize(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -995,7 +1002,7 @@ func TestTransform_AnimationCannotFit(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -1012,6 +1019,16 @@ func TestTransform_AnimationCannotFit(t *testing.T) {
 	mockImage.EXPECT().Pages().Return(40).AnyTimes()      // Animated
 	mockImage.EXPECT().PageHeight().Return(10).AnyTimes() // 400/40 = 10 pixels per frame
 	mockImage.EXPECT().Close().Times(1)
+
+	// Mock animation metadata extraction
+	delay := make([]int, 40)
+	for i := range delay {
+		delay[i] = 100
+	}
+	mockImage.EXPECT().GetArrayInt("delay").Return(delay, nil).AnyTimes()
+	mockImage.EXPECT().GetInt("loop").Return(0, nil).AnyTimes()
+	mockImage.EXPECT().SetArrayInt("delay", delay).Return(nil).AnyTimes()
+	mockImage.EXPECT().SetInt("loop", 0).AnyTimes()
 
 	// All encodings still exceed target (incompressible animation)
 	// Will try:
@@ -1062,7 +1079,7 @@ func TestTransform_MultipleCompressionIterations(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -1136,7 +1153,7 @@ func TestTransform_ResizeThenCompress(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -1212,7 +1229,7 @@ func TestTransform_AnimatedMultipleResize(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -1243,6 +1260,13 @@ func TestTransform_AnimatedMultipleResize(t *testing.T) {
 		return currentHeight / pages
 	}).AnyTimes()
 	mockImage.EXPECT().Close().Times(1)
+
+	// Mock animation metadata extraction and restoration
+	delay := []int{100, 100}
+	mockImage.EXPECT().GetArrayInt("delay").Return(delay, nil).AnyTimes()
+	mockImage.EXPECT().GetInt("loop").Return(0, nil).AnyTimes()
+	mockImage.EXPECT().SetArrayInt("delay", delay).Return(nil).AnyTimes()
+	mockImage.EXPECT().SetInt("loop", 0).AnyTimes()
 
 	// Simulate resize iteration for animation
 	// Initial: 15MB, 2MP total pixels (within pixel target, but exceeds size target of 9MB)
@@ -1309,7 +1333,7 @@ func TestTransform_ResizeRespectsMinDimension(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -1410,7 +1434,7 @@ func TestTransform_AnimatedWebPExceedsLimitAtMinDimension(t *testing.T) {
 	}
 
 	mockHTTPClient.EXPECT().
-		GetResponse(gomock.Any(), sourceURL, nil).
+		GetResponseNoRetry(gomock.Any(), sourceURL, nil).
 		Return(mockResp, nil)
 
 	// Mock vips operations
@@ -1444,13 +1468,21 @@ func TestTransform_AnimatedWebPExceedsLimitAtMinDimension(t *testing.T) {
 	mockImage.EXPECT().Width().Return(frameWidth).AnyTimes()
 	mockImage.EXPECT().Height().Return(frameHeight).AnyTimes()
 
+	// Mock animation metadata extraction (happens before fallback decision)
+	delay := make([]int, pages)
+	for i := range delay {
+		delay[i] = 100
+	}
+	mockImage.EXPECT().GetArrayInt("delay").Return(delay, nil).AnyTimes()
+	mockImage.EXPECT().GetInt("loop").Return(0, nil).AnyTimes()
+
 	// ExtractArea is called to extract the first frame - mark that it's been called
 	mockImage.EXPECT().ExtractArea(0, 0, frameWidth, frameHeight).DoAndReturn(func(_, _, _, _ int) error {
 		extractCalled = true
 		return nil
 	})
 
-	// Try to encode the image
+	// Try to encode the image (now single frame, so no animation metadata needed)
 	mockImage.EXPECT().WebpsaveBuffer(gomock.Any()).Return(testJPEG, nil)
 
 	mockImage.EXPECT().Close().Times(1)

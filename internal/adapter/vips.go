@@ -23,6 +23,11 @@ type VipsImage interface {
 	ExtractArea(left, top, width, height int) error
 	JpegsaveBuffer(options *vips.JpegsaveBufferOptions) ([]byte, error)
 	WebpsaveBuffer(options *vips.WebpsaveBufferOptions) ([]byte, error)
+	GetInt(name string) (int, error)
+	SetInt(name string, i int)
+	GetArrayInt(name string) ([]int, error)
+	SetArrayInt(name string, values []int) error
+	GetFields() []string
 	Close()
 }
 
@@ -122,6 +127,26 @@ func (i *realVipsImage) WebpsaveBuffer(options *vips.WebpsaveBufferOptions) ([]b
 
 func (i *realVipsImage) Close() {
 	i.image.Close()
+}
+
+func (i *realVipsImage) GetInt(name string) (int, error) {
+	return i.image.GetInt(name)
+}
+
+func (i *realVipsImage) SetInt(name string, value int) {
+	i.image.SetInt(name, value)
+}
+
+func (i *realVipsImage) GetArrayInt(name string) ([]int, error) {
+	return i.image.GetArrayInt(name)
+}
+
+func (i *realVipsImage) SetArrayInt(name string, values []int) error {
+	return i.image.SetArrayInt(name, values)
+}
+
+func (i *realVipsImage) GetFields() []string {
+	return i.image.GetFields()
 }
 
 // realVipsSource wraps vips.Source

@@ -185,7 +185,7 @@ func (t *transformer) Close() error {
 // transformInternal performs the actual transformation
 func (t *transformer) transformInternal(ctx context.Context, input *TransformInput) (*TransformResult, error) {
 	// Step 1: Stream download the image
-	resp, err := t.httpClient.GetResponse(ctx, input.SourceURL, nil)
+	resp, err := t.httpClient.GetResponseNoRetry(ctx, input.SourceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get response: %w", err)
 	}
@@ -249,7 +249,7 @@ func (t *transformer) transformStill(ctx context.Context, input *TransformInput,
 		outputFormat = "webp"
 	}
 
-	return t.transformImage(ctx, input, img, originalSize, outputFormat, false)
+	return t.transformImage(ctx, input, img, originalSize, outputFormat, false, nil, 0)
 }
 
 // transformSingleFrame transforms an animated image by extracting the first frame
@@ -277,7 +277,7 @@ func (t *transformer) transformSingleFrame(ctx context.Context, input *Transform
 	)
 
 	// Transform as a still image using WebP for best quality
-	return t.transformImage(ctx, input, img, originalSize, "webp", false)
+	return t.transformImage(ctx, input, img, originalSize, "webp", false, nil, 0)
 }
 
 // transformAnimated transforms an animated image (GIF or animated WebP)
@@ -290,6 +290,28 @@ func (t *transformer) transformAnimated(ctx context.Context, input *TransformInp
 		zap.Int("width", img.Width()),
 		zap.Int("height", img.Height()),
 	)
+
+	// Extract animation metadata before any transformations
+	// libvips loses this metadata during resize operations, so we need to preserve and restore it
+	delay, err := img.GetArrayInt("delay")
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to get delay metadata, using default",
+			zap.Error(err),
+		)
+		// Use default delay of 100ms per frame if not available
+		delay = make([]int, img.Pages())
+		for i := range delay {
+			delay[i] = 100
+		}
+	}
+
+	loop, err := img.GetInt("loop")
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to get loop metadata, using default (infinite loop)",
+			zap.Error(err),
+		)
+		loop = 0 // Default to infinite loop
+	}
 
 	// Fast-fail check: WebP has a maximum dimension of 16,383 pixels
 	// For animated images stored as vertical strips, this limits the total strip height
@@ -311,7 +333,7 @@ func (t *transformer) transformAnimated(ctx context.Context, input *TransformInp
 
 	// Always use WebP for animated images - better compression than GIF
 	// WebP supports both animation and alpha channel with superior compression
-	return t.transformImage(ctx, input, img, originalSize, "webp", true)
+	return t.transformImage(ctx, input, img, originalSize, "webp", true, delay, loop)
 }
 
 // transformImage is the common transformation logic for both still and animated images
@@ -322,6 +344,8 @@ func (t *transformer) transformImage(
 	originalSize int64,
 	outputFormat string,
 	isAnimated bool,
+	animationDelay []int,
+	animationLoop int,
 ) (*TransformResult, error) {
 	// Get image properties
 	width := img.Width()
@@ -352,7 +376,7 @@ func (t *transformer) transformImage(
 
 	// Try with original dimensions and high quality first
 	quality := t.config.InitialQuality
-	processed, err := t.encodeImage(img, outputFormat, quality)
+	processed, err := t.encodeImage(img, outputFormat, quality, isAnimated)
 	if err != nil {
 		// For animated images, initial encode can fail due to WebP dimension limits
 		// If so, skip directly to resize loop to try to fix it
@@ -404,6 +428,26 @@ func (t *transformer) transformImage(
 			}
 		}
 
+		// For animated images, adjust scale to ensure exact frame alignment
+		// This prevents drift by ensuring totalHeight = pages × frameHeight exactly
+		if isAnimated {
+			pages := img.Pages()
+			originalScale := scale
+			// Calculate target frame height
+			targetFrameHeight := int(float64(currentHeight) * scale)
+			// Calculate exact total height needed
+			exactTotalHeight := pages * targetFrameHeight
+			// Recalculate scale to hit exact total height
+			scale = float64(exactTotalHeight) / float64(img.Height())
+
+			logger.DebugCtx(ctx, "Adjusted scale for frame alignment",
+				zap.Float64("originalScale", originalScale),
+				zap.Float64("adjustedScale", scale),
+				zap.Int("targetFrameHeight", targetFrameHeight),
+				zap.Int("exactTotalHeight", exactTotalHeight),
+			)
+		}
+
 		// Resize image (works for both still and animated)
 		err = img.Resize(scale, vips.DefaultResizeOptions())
 		if err != nil {
@@ -414,24 +458,38 @@ func (t *transformer) transformImage(
 		currentWidth = img.Width()
 		totalHeight := img.Height()
 
-		// For animated images, update page height after resize
-		// libvips does NOT correctly scale page-height metadata during resize
-		// It incorrectly sets pageHeight to the total strip height instead of frame height
+		// For animated images, fix metadata and ensure proper frame alignment
 		if isAnimated {
-			// Set the page height to the new frame height
 			pages := img.Pages()
 			newPageHeight := totalHeight / pages
+
+			// CRITICAL: Ensure total height is exactly pages × pageHeight
+			// The resize scale adjustment above should prevent misalignment, but check anyway
+			expectedHeight := pages * newPageHeight
+			if totalHeight != expectedHeight {
+				// This should rarely happen now, but handle it as a safety check
+				// Log as warning since it indicates the scale adjustment didn't work perfectly
+				logger.WarnCtx(ctx, "Height mismatch after resize despite scale adjustment - cropping",
+					zap.Int("totalHeight", totalHeight),
+					zap.Int("expectedHeight", expectedHeight),
+					zap.Int("difference", totalHeight-expectedHeight),
+				)
+				if err := img.ExtractArea(0, 0, currentWidth, expectedHeight); err != nil {
+					return nil, fmt.Errorf("failed to crop image to exact height: %w", err)
+				}
+			}
+
+			// Update page height metadata (libvips doesn't do this correctly)
 			if err := img.SetPageHeight(newPageHeight); err != nil {
 				return nil, fmt.Errorf("failed to set page height after resize: %w", err)
 			}
-			// For animated images, use frame height (pageHeight), not total strip height
-			currentHeight = newPageHeight
 
-			logger.DebugCtx(ctx, "Updated page height after resize",
-				zap.Int("totalHeight", totalHeight),
-				zap.Int("pages", pages),
-				zap.Int("frameHeight", newPageHeight),
-			)
+			// Restore animation metadata (libvips loses delay/loop during resize)
+			if err := t.restoreAnimationMetadata(img, animationDelay, animationLoop); err != nil {
+				return nil, fmt.Errorf("failed to restore animation metadata: %w", err)
+			}
+
+			currentHeight = newPageHeight
 		} else {
 			currentHeight = totalHeight
 		}
@@ -440,7 +498,7 @@ func (t *transformer) transformImage(
 		longEdge = max(currentWidth, currentHeight)
 
 		// Encode with high quality
-		processed, err = t.encodeImage(img, outputFormat, quality)
+		processed, err = t.encodeImage(img, outputFormat, quality, isAnimated)
 		if err != nil {
 			// For animated images, encoding can fail due to WebP dimension limits (16,383px max)
 			if isWebPSizeError(err, isAnimated) {
@@ -507,10 +565,9 @@ func (t *transformer) transformImage(
 
 	// COMPRESSION AS ESCAPE HATCH (only if resize didn't work)
 	// Start from InitialQuality - QualityStep to avoid re-encoding at the quality we just tried
-	// Note: WebP dimension errors should have been caught in the resize loop above
 	compressed := false
 	for quality = t.config.InitialQuality - t.config.QualityStep; quality >= t.config.MinQuality; quality -= t.config.QualityStep {
-		processed, err = t.encodeImage(img, outputFormat, quality)
+		processed, err = t.encodeImage(img, outputFormat, quality, isAnimated)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compress image: %w", err)
 		}
@@ -585,8 +642,20 @@ func (t *transformer) calculateTotalPixels(img adapter.VipsImage, width, height 
 	return int64(width) * int64(height)
 }
 
+// restoreAnimationMetadata restores animation metadata (delay and loop) on an image
+// This is needed because libvips loses this metadata during operations like resize
+func (t *transformer) restoreAnimationMetadata(img adapter.VipsImage, delay []int, loop int) error {
+	if len(delay) > 0 {
+		if err := img.SetArrayInt("delay", delay); err != nil {
+			return fmt.Errorf("failed to set delay metadata: %w", err)
+		}
+	}
+	img.SetInt("loop", loop)
+	return nil
+}
+
 // encodeImage encodes an image to the specified format with given quality
-func (t *transformer) encodeImage(img adapter.VipsImage, format string, quality int) ([]byte, error) {
+func (t *transformer) encodeImage(img adapter.VipsImage, format string, quality int, isAnimated bool) ([]byte, error) {
 	switch format {
 	case "jpeg":
 		opts := vips.DefaultJpegsaveBufferOptions()
@@ -598,25 +667,19 @@ func (t *transformer) encodeImage(img adapter.VipsImage, format string, quality 
 	case "webp":
 		opts := vips.DefaultWebpsaveBufferOptions()
 		opts.Q = quality
-		opts.Keep = vips.KeepNone // Strip metadata
-		opts.Effort = 4           // Balance between speed and compression
+		opts.Effort = 4 // Balance between speed and compression
 
-		// For animated images (multiple pages), optimize animation settings
-		if img.Pages() > 1 {
-			logger.Debug("Encoding animated WebP with page height",
-				zap.Int("pageHeight", img.PageHeight()),
-				zap.Int("pages", img.Pages()),
-				zap.Int("width", img.Width()),
-				zap.Int("height", img.Height()),
-			)
-			opts.Kmin = 0     // Minimum frames between keyframes (0 = no minimum)
-			opts.Kmax = 0     // Maximum frames between keyframes (0 = all keyframes for best quality)
-			opts.Mixed = true // Allow mixed lossy/lossless for better compression
-
-			// CRITICAL: Set page height to create animated WebP instead of tall static image
-			// libvips stores animated images as tall strips, so we need to tell the encoder
-			// the height of each individual frame to reconstruct the animation
+		// For animated images, preserve metadata and set page height
+		if isAnimated {
+			// CRITICAL: Keep metadata (delay, loop) - stripping it breaks animation
+			opts.Keep = vips.KeepAll
+			// CRITICAL: Set PageHeight to trigger animation encoding in libvips
 			opts.PageHeight = img.PageHeight()
+			// Allow mixed lossy/lossless encoding for better compression
+			opts.Mixed = true
+		} else {
+			// Strip metadata for still images
+			opts.Keep = vips.KeepNone
 		}
 
 		return img.WebpsaveBuffer(opts)

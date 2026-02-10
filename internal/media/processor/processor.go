@@ -309,9 +309,11 @@ func (p *processor) processImage(ctx context.Context, sourceURL string, probe *p
 				if err != nil {
 					return nil, "", 0, fmt.Errorf("failed to transform and upload image after size error: %w", err)
 				}
-			} else if errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) || errors.Is(err, domain.ErrUnsupportedURL) {
-				// Known unsupported errors, skip processing
-				logger.WarnCtx(ctx, "Unsupported media file", zap.String("url", sourceURL))
+			} else if errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) ||
+				errors.Is(err, domain.ErrUnsupportedURL) ||
+				errors.Is(err, transformer.ErrInputTooLarge) ||
+				errors.Is(err, transformer.ErrTooManyPixels) {
+				// Known errors, skip processing
 				return nil, "", 0, nil
 			} else {
 				return nil, "", 0, fmt.Errorf("failed to upload media to provider: %w", err)

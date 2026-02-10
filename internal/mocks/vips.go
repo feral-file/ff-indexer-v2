@@ -65,6 +65,50 @@ func (mr *MockVipsImageMockRecorder) ExtractArea(left, top, width, height interf
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractArea", reflect.TypeOf((*MockVipsImage)(nil).ExtractArea), left, top, width, height)
 }
 
+// GetArrayInt mocks base method.
+func (m *MockVipsImage) GetArrayInt(name string) ([]int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetArrayInt", name)
+	ret0, _ := ret[0].([]int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetArrayInt indicates an expected call of GetArrayInt.
+func (mr *MockVipsImageMockRecorder) GetArrayInt(name interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetArrayInt", reflect.TypeOf((*MockVipsImage)(nil).GetArrayInt), name)
+}
+
+// GetFields mocks base method.
+func (m *MockVipsImage) GetFields() []string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetFields")
+	ret0, _ := ret[0].([]string)
+	return ret0
+}
+
+// GetFields indicates an expected call of GetFields.
+func (mr *MockVipsImageMockRecorder) GetFields() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFields", reflect.TypeOf((*MockVipsImage)(nil).GetFields))
+}
+
+// GetInt mocks base method.
+func (m *MockVipsImage) GetInt(name string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetInt", name)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetInt indicates an expected call of GetInt.
+func (mr *MockVipsImageMockRecorder) GetInt(name interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetInt", reflect.TypeOf((*MockVipsImage)(nil).GetInt), name)
+}
+
 // HasAlpha mocks base method.
 func (m *MockVipsImage) HasAlpha() bool {
 	m.ctrl.T.Helper()
@@ -148,6 +192,32 @@ func (m *MockVipsImage) Resize(scale float64, options *vips.ResizeOptions) error
 func (mr *MockVipsImageMockRecorder) Resize(scale, options interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resize", reflect.TypeOf((*MockVipsImage)(nil).Resize), scale, options)
+}
+
+// SetArrayInt mocks base method.
+func (m *MockVipsImage) SetArrayInt(name string, values []int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetArrayInt", name, values)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetArrayInt indicates an expected call of SetArrayInt.
+func (mr *MockVipsImageMockRecorder) SetArrayInt(name, values interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetArrayInt", reflect.TypeOf((*MockVipsImage)(nil).SetArrayInt), name, values)
+}
+
+// SetInt mocks base method.
+func (m *MockVipsImage) SetInt(name string, i int) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetInt", name, i)
+}
+
+// SetInt indicates an expected call of SetInt.
+func (mr *MockVipsImageMockRecorder) SetInt(name, i interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetInt", reflect.TypeOf((*MockVipsImage)(nil).SetInt), name, i)
 }
 
 // SetPageHeight mocks base method.
