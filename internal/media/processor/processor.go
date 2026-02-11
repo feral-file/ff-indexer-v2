@@ -479,11 +479,11 @@ func (p *processor) transformAndUpload(
 		case errors.Is(err, transformer.ErrAnimationCannotFit):
 			logger.WarnCtx(ctx, "Animation cannot fit within size limits even after transformation",
 				zap.String("sourceURL", sourceURL))
-			return nil, "", 0, err
+			return nil, "", 0, nil
 		case errors.Is(err, transformer.ErrCannotMeetTargetSize):
 			logger.WarnCtx(ctx, "Cannot meet target size even after transformation",
 				zap.String("sourceURL", sourceURL))
-			return nil, "", 0, err
+			return nil, "", 0, nil
 		default:
 			return nil, "", 0, fmt.Errorf("transformation failed: %w", err)
 		}

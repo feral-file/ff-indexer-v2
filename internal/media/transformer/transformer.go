@@ -32,9 +32,6 @@ var (
 
 	// ErrInputTooLarge is returned when the input file exceeds the maximum input size
 	ErrInputTooLarge = errors.New("input file exceeds maximum input size")
-
-	// ErrUnsupportedFormat is returned when the image format is not supported
-	ErrUnsupportedFormat = errors.New("unsupported image format")
 )
 
 // MAX_WEBP_DIMENSION is the maximum dimension of a WebP image in pixels
