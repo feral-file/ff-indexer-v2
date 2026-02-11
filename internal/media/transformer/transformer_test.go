@@ -726,8 +726,8 @@ func TestTransform_ResizeMeetsTarget(t *testing.T) {
 
 	mockVips.EXPECT().NewImageFromSource(mockSource, gomock.Any()).Return(mockImage, nil)
 
-	mockImage.EXPECT().Width().Return(4000).AnyTimes()
-	mockImage.EXPECT().Height().Return(3000).AnyTimes()
+	mockImage.EXPECT().Width().Return(3500).AnyTimes()
+	mockImage.EXPECT().Height().Return(2625).AnyTimes()
 	mockImage.EXPECT().HasAlpha().Return(false)
 	mockImage.EXPECT().Pages().Return(1).AnyTimes() // Still image
 	mockImage.EXPECT().Close().Times(1)
@@ -869,8 +869,8 @@ func TestTransform_MultipleResizeIterations(t *testing.T) {
 
 	mockVips.EXPECT().NewImageFromSource(mockSource, gomock.Any()).Return(mockImage, nil)
 
-	mockImage.EXPECT().Width().Return(5000).AnyTimes()
-	mockImage.EXPECT().Height().Return(4000).AnyTimes()
+	mockImage.EXPECT().Width().Return(3500).AnyTimes()
+	mockImage.EXPECT().Height().Return(2800).AnyTimes()
 	mockImage.EXPECT().HasAlpha().Return(false)
 	mockImage.EXPECT().Pages().Return(1).AnyTimes() // Still image
 	mockImage.EXPECT().Close().Times(1)

@@ -612,13 +612,24 @@ func (t *transformer) transformImage(
 }
 
 // meetsTarget checks if the image meets the target constraints
-// For still images: only checks file size
-// For animated images: checks both file size AND total pixels
+// For still images: checks file size and max dimension
+// For animated images: checks file size, total pixels, and max dimension
 func (t *transformer) meetsTarget(img adapter.VipsImage, processedData []byte, width, height int, isAnimated bool) bool {
 	fileSize := int64(len(processedData))
 
 	// Check file size for all images
 	if fileSize > t.config.TargetImageSize {
+		return false
+	}
+
+	// Check max dimension based on image type
+	maxDimension := t.config.MaxImageDimension
+	if isAnimated {
+		maxDimension = t.config.MaxAnimatedImageDimension
+	}
+
+	// Check if either edge exceeds max dimension
+	if width > maxDimension || height > maxDimension {
 		return false
 	}
 
