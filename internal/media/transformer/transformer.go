@@ -252,34 +252,6 @@ func (t *transformer) transformStill(ctx context.Context, input *TransformInput,
 	return t.transformImage(ctx, input, img, originalSize, outputFormat, false, nil, 0)
 }
 
-// transformSingleFrame transforms an animated image by extracting the first frame
-// and encoding it as a high-quality single-frame WebP
-func (t *transformer) transformSingleFrame(ctx context.Context, input *TransformInput, img adapter.VipsImage, originalSize int64) (*TransformResult, error) {
-	logger.InfoCtx(ctx, "Transforming to single frame image",
-		zap.String("sourceURL", input.SourceURL),
-		zap.Int64("originalSize", originalSize),
-		zap.Int("pages", img.Pages()),
-		zap.Int("pageHeight", img.PageHeight()),
-	)
-
-	// Extract the first frame by cropping to the page height
-	pageHeight := img.PageHeight()
-	width := img.Width()
-
-	// Extract just the first frame (top-left corner at 0,0)
-	if err := img.ExtractArea(0, 0, width, pageHeight); err != nil {
-		return nil, fmt.Errorf("failed to extract first frame: %w", err)
-	}
-
-	logger.InfoCtx(ctx, "Extracted first frame",
-		zap.Int("width", width),
-		zap.Int("height", pageHeight),
-	)
-
-	// Transform as a still image using WebP for best quality
-	return t.transformImage(ctx, input, img, originalSize, "webp", false, nil, 0)
-}
-
 // transformAnimated transforms an animated image (GIF or animated WebP)
 func (t *transformer) transformAnimated(ctx context.Context, input *TransformInput, img adapter.VipsImage, originalSize int64) (*TransformResult, error) {
 	logger.InfoCtx(ctx, "Transforming animated image",
@@ -311,24 +283,6 @@ func (t *transformer) transformAnimated(ctx context.Context, input *TransformInp
 			zap.Error(err),
 		)
 		loop = 0 // Default to infinite loop
-	}
-
-	// Fast-fail check: WebP has a maximum dimension of 16,383 pixels
-	// For animated images stored as vertical strips, this limits the total strip height
-	// Check if the animation can physically fit within WebP's limits even at minimum dimension
-	minDimension := t.config.MinAnimatedImageDimension
-	pages := img.Pages()
-	minPossibleStripHeight := pages * minDimension
-
-	if minPossibleStripHeight > MAX_WEBP_DIMENSION {
-		logger.WarnCtx(ctx, "Animation has too many frames to fit in WebP format even at minimum dimension, falling back to single frame",
-			zap.Int("pages", pages),
-			zap.Int("minDimension", minDimension),
-			zap.Int("minPossibleStripHeight", minPossibleStripHeight),
-			zap.Int("maxWebPDimension", MAX_WEBP_DIMENSION),
-		)
-		// Fall back to encoding as single frame WebP to keep original quality
-		return t.transformSingleFrame(ctx, input, img, originalSize)
 	}
 
 	// Always use WebP for animated images - better compression than GIF
