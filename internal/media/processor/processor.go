@@ -310,9 +310,7 @@ func (p *processor) processImage(ctx context.Context, sourceURL string, probe *p
 					return nil, "", 0, fmt.Errorf("failed to transform and upload image after size error: %w", err)
 				}
 			} else if errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) ||
-				errors.Is(err, domain.ErrUnsupportedURL) ||
-				errors.Is(err, transformer.ErrInputTooLarge) ||
-				errors.Is(err, transformer.ErrTooManyPixels) {
+				errors.Is(err, domain.ErrUnsupportedURL) {
 				// Known errors, skip processing
 				return nil, "", 0, nil
 			} else {
@@ -482,6 +480,11 @@ func (p *processor) transformAndUpload(
 			return nil, "", 0, nil
 		case errors.Is(err, transformer.ErrCannotMeetTargetSize):
 			logger.WarnCtx(ctx, "Cannot meet target size even after transformation",
+				zap.String("sourceURL", sourceURL))
+			return nil, "", 0, nil
+		case errors.Is(err, transformer.ErrInputTooLarge),
+			errors.Is(err, transformer.ErrTooManyPixels):
+			logger.WarnCtx(ctx, "Image exceeds maximum input size/pixel count",
 				zap.String("sourceURL", sourceURL))
 			return nil, "", 0, nil
 		default:
