@@ -577,16 +577,23 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 		SubjectTypes: subjectTypes,
 		SubjectIDs:   subjectIDs,
 		Anchor:       anchor,
-		Since:        since, // Deprecated: kept for backward compatibility
-		Limit:        int(*limit),
-		Offset:       offsetValue, // Deprecated: only applies when using 'since' parameter
-		OrderDesc:    orderDesc,   // Deprecated: only applies when using 'since' parameter
+		Since:        since,           // Deprecated: kept for backward compatibility
+		Limit:        int(*limit) + 1, // limit+1 to detect whether there are more results
+		Offset:       offsetValue,     // Deprecated: only applies when using 'since' parameter
+		OrderDesc:    orderDesc,       // Deprecated: only applies when using 'since' parameter
 	}
 
 	// Get changes
-	results, total, err := e.store.GetChanges(ctx, filter)
+	results, _, err := e.store.GetChanges(ctx, filter)
 	if err != nil {
 		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get changes: %v", err))
+	}
+
+	// Check if there are more results and truncate to original limit
+	limitInt := int(*limit)
+	hasMore := len(results) > limitInt
+	if hasMore {
+		results = results[:limitInt]
 	}
 
 	// Map to DTOs
@@ -614,14 +621,14 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 
 	// Calculate next offset only when using deprecated 'since' parameter (offset-based pagination)
 	// For cursor-based pagination with 'anchor', use next_anchor instead
-	if anchor == nil && since != nil && offsetValue+uint64(len(results)) < total { //nolint:gosec,G115
+	if anchor == nil && since != nil && hasMore {
 		offsetVal := offsetValue + uint64(len(results))
 		nextOffset = &offsetVal
 	}
 
 	// Set next anchor for cursor-based pagination
 	// Always provide next_anchor when results are present for clients to continue from this point
-	if (anchor != nil || since == nil) && len(results) > 0 {
+	if (anchor != nil || since == nil) && hasMore {
 		maxID := results[0].ID
 		for _, change := range results {
 			if change.ID > maxID {
@@ -635,7 +642,7 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 		Changes:    changeDTOs,
 		Offset:     nextOffset,
 		NextAnchor: nextAnchor,
-		Total:      total,
+		Total:      0, // Deprecated: use the offset as the indicator for next page
 	}, nil
 }
 

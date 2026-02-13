@@ -1760,9 +1760,9 @@ type Change {
 # Paginated changes list
 type ChangeList {
   items: [Change!]!
-  offset: Uint64
+  offset: Uint64 @deprecated(reason: "Use the next_anchor as the indicator for next page")
   next_anchor: Uint64
-  total: Uint64!
+  total: Uint64! @deprecated(reason: "Use the next_anchor as the indicator for next page")
 }
 
 # Result of triggering indexing

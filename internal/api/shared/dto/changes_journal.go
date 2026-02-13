@@ -26,7 +26,7 @@ type ChangeListResponse struct {
 	Changes    []ChangeResponse `json:"items"`
 	Offset     *uint64          `json:"offset,omitempty"`      // Deprecated: Offset for the next page (offset-based pagination)
 	NextAnchor *uint64          `json:"next_anchor,omitempty"` // ID-based cursor for the next page (cursor-based pagination)
-	Total      uint64           `json:"total"`
+	Total      uint64           `json:"total"`                 // Deprecated: use the next_anchor as the indicator for next page
 }
 
 // MapChangeToDTO maps a schema.ChangesJournal to ChangeResponse
