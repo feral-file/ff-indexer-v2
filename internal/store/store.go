@@ -373,7 +373,7 @@ type Store interface {
 	// =============================================================================
 
 	// GetChanges retrieves changes with optional filters and pagination
-	GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, uint64, error)
+	GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, error)
 
 	// =============================================================================
 	// System Configuration & Monitoring

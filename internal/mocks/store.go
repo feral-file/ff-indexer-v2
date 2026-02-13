@@ -244,13 +244,12 @@ func (mr *MockStoreMockRecorder) GetBlockCursor(ctx, chain interface{}) *gomock.
 }
 
 // GetChanges mocks base method.
-func (m *MockStore) GetChanges(ctx context.Context, filter store.ChangesQueryFilter) ([]*schema.ChangesJournal, uint64, error) {
+func (m *MockStore) GetChanges(ctx context.Context, filter store.ChangesQueryFilter) ([]*schema.ChangesJournal, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetChanges", ctx, filter)
 	ret0, _ := ret[0].([]*schema.ChangesJournal)
-	ret1, _ := ret[1].(uint64)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // GetChanges indicates an expected call of GetChanges.

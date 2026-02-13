@@ -1979,7 +1979,7 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 }
 
 // GetChanges retrieves changes with optional filters and pagination
-func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, uint64, error) {
+func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, error) {
 	// Build the base query for changes
 	query := s.db.WithContext(ctx).Model(&schema.ChangesJournal{})
 
@@ -2028,12 +2028,12 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 		// Get token IDs for the given token CIDs
 		var tokens []schema.Token
 		if err := s.db.WithContext(ctx).Where("token_cid IN ?", filter.TokenCIDs).Find(&tokens).Error; err != nil {
-			return nil, 0, fmt.Errorf("failed to get tokens for token_cids: %w", err)
+			return nil, fmt.Errorf("failed to get tokens for token_cids: %w", err)
 		}
 
 		if len(tokens) == 0 {
 			// No matching tokens, return empty result
-			return []*schema.ChangesJournal{}, 0, nil
+			return []*schema.ChangesJournal{}, nil
 		}
 
 		tokenIDs := make([]uint64, len(tokens))
@@ -2090,12 +2090,6 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 		)
 	}
 
-	// Count total matching records
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to count changes: %w", err)
-	}
-
 	// Apply ordering
 	// For backward compatibility: when using deprecated 'since' parameter, order by changed_at with configurable direction
 	// Otherwise, always order by ID ascending for sequential audit log
@@ -2122,7 +2116,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 	// Execute the query
 	var changes []schema.ChangesJournal
 	if err := query.Find(&changes).Error; err != nil {
-		return nil, 0, fmt.Errorf("failed to query changes: %w", err)
+		return nil, fmt.Errorf("failed to query changes: %w", err)
 	}
 
 	// Convert to pointers
@@ -2131,7 +2125,7 @@ func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]
 		results = append(results, &changes[i])
 	}
 
-	return results, uint64(total), nil //nolint:gosec,G115
+	return results, nil
 }
 
 // GetProvenanceEventByID retrieves a provenance event by ID

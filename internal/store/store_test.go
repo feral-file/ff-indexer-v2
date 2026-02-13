@@ -160,12 +160,11 @@ func testCreateTokenMint(t *testing.T, store Store) {
 		assert.Equal(t, uint64(1), eventTotal)
 
 		// Verify change journal was created
-		changes, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{input.Token.TokenCID},
 			Limit:     10,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(1), changeTotal)
 		assert.Len(t, changes, 1)
 		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
 	})
@@ -337,12 +336,11 @@ func testUpdateTokenTransfer(t *testing.T, store Store) {
 		}
 
 		// Verify changes journal was created
-		changes, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{mintInput.Token.TokenCID},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(2), changeTotal)
 		assert.Equal(t, 2, len(changes))
 		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
 		assert.Equal(t, schema.SubjectTypeOwner, changes[1].SubjectType)
@@ -409,12 +407,11 @@ func testUpdateTokenTransfer(t *testing.T, store Store) {
 		assert.Equal(t, "30", balanceMap[owner2])
 
 		// Verify changes journal was created
-		changes, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{mintInput.Token.TokenCID},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(2), changeTotal)
 		assert.Equal(t, 2, len(changes))
 		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
 		assert.Equal(t, schema.SubjectTypeBalance, changes[1].SubjectType)
@@ -731,12 +728,11 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		assert.Equal(t, schema.ProvenanceEventTypeTransfer, provenanceEvents[1].EventType)
 
 		// Verify changes journal was created
-		changes, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{token.TokenCID},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(2), changeTotal)
 		assert.Equal(t, 2, len(changes))
 		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
 		assert.Equal(t, schema.SubjectTypeBalance, changes[1].SubjectType)
@@ -781,13 +777,12 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		require.NotNil(t, tokenResult)
 
 		// Verify initial state - changes_journal
-		changes, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{token.TokenCID},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(1), changeTotal, "should have 1 change journal entry (mint)")
-		assert.Equal(t, 1, len(changes))
+		assert.Equal(t, 1, len(changes), "should have 1 change journal entry (mint)")
 		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType, "mint event for ERC721")
 
 		// Now upsert with new owner
@@ -843,13 +838,12 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		assert.Equal(t, schema.ProvenanceEventTypeTransfer, provenanceEvents[1].EventType)
 
 		// Verify changes_journal was recreated correctly
-		changes, changeTotal, err = store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err = store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{token.TokenCID},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(2), changeTotal, "should have 2 change journal entries after upsert (mint + transfer)")
-		assert.Equal(t, 2, len(changes))
+		assert.Equal(t, 2, len(changes), "should have 2 change journal entries after upsert (mint + transfer)")
 
 		// Verify both journal entries are for provenance events
 		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType, "first change should be token (mint)")
@@ -954,13 +948,12 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		}
 
 		// Verify changes_journal entries were created for all events
-		changes, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{token.TokenCID},
 			Limit:     numEvents + 10, // Get all changes
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(numEvents+1), changeTotal, "should have change journal entry for each event") //nolint:gosec,G115
-		assert.Equal(t, numEvents+1, len(changes))
+		assert.Equal(t, numEvents+1, len(changes), "should have change journal entry for each event")
 
 		// Verify balances
 		owners, total, err := store.GetTokenOwners(ctx, tokenResult.ID, 10, 0)
@@ -1463,12 +1456,12 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 		}
 
 		// Verify changes_journal entries were created for all events
-		_, changeTotal, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{tokenCID.String()},
 			Limit:     numEvents + 10, // Get all changes
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(numEvents+1), changeTotal, "should have change journal entry for each event") //nolint:gosec,G115
+		assert.Equal(t, numEvents+1, len(changes), "should have change journal entry for each event")
 
 		// Verify balance was set correctly
 		balances, balanceTotal, err := store.GetTokenOwners(ctx, tokenResult.ID, 10, 0)
@@ -2397,12 +2390,12 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 		assert.Equal(t, mimeType, *metadata.MimeType)
 
 		// Verify change journal entry was created
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{mintInput.Token.TokenCID},
 			Limit:     10,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(1))
+		assert.GreaterOrEqual(t, len(changes), 1)
 
 		// Find metadata change
 		var foundMetadataChange bool
@@ -2475,13 +2468,12 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 		assert.Equal(t, name2, *metadata.Name)
 
 		// Verify change journal has multiple entries (mint + 2 metadata changes)
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{mintInput.Token.TokenCID},
 			Limit:     10,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, uint64(3), total) // mint + initial metadata + updated metadata
-		assert.Len(t, changes, 3)
+		assert.Len(t, changes, 3) // mint + initial metadata + updated metadata
 
 		// Find metadata changes and verify both entries exist
 		var metadataChanges []schema.MetadataChangeMeta
@@ -2812,7 +2804,7 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Verify change journal entry was created
-		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{token.TokenCID},
 		})
 		require.NoError(t, err)
@@ -2854,7 +2846,7 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Verify we now have two change journal entries
-		changes2, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes2, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{token.TokenCID},
 		})
 		require.NoError(t, err)
@@ -3044,12 +3036,11 @@ func testGetChanges(t *testing.T, store Store) {
 		err := store.CreateTokenMint(ctx, mintInput)
 		require.NoError(t, err)
 
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			TokenCIDs: []string{mintInput.Token.TokenCID},
 			Limit:     10,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(1))
 		assert.GreaterOrEqual(t, len(changes), 1)
 
 		// Verify changes were returned
@@ -3060,7 +3051,7 @@ func testGetChanges(t *testing.T, store Store) {
 
 	t.Run("order by changed_at ascending", func(t *testing.T) {
 		// Get changes (always ascending by ID)
-		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Limit: 10,
 		})
 		require.NoError(t, err)
@@ -3092,11 +3083,10 @@ func testGetChanges(t *testing.T, store Store) {
 		}
 
 		// Get first page using cursor-based pagination (no anchor)
-		page1, total1, err := store.GetChanges(ctx, ChangesQueryFilter{
+		page1, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Limit: 2,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total1, uint64(2))
 		require.Len(t, page1, 2)
 
 		// Verify first page is ordered by changed_at ASC, id ASC
@@ -3106,12 +3096,11 @@ func testGetChanges(t *testing.T, store Store) {
 
 		// Get second page using anchor from last item of first page
 		anchorID := page1[1].ID
-		page2, total2, err := store.GetChanges(ctx, ChangesQueryFilter{
+		page2, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Limit:  2,
 			Anchor: &anchorID,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total2, uint64(2))
 
 		// Ensure pages don't overlap - anchor filters by ID
 		assert.NotEqual(t, page1[0].ID, page2[0].ID)
@@ -3146,7 +3135,7 @@ func testGetChanges(t *testing.T, store Store) {
 		}
 
 		// Get changes ascending
-		changesAsc, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changesAsc, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Limit:     10,
 			OrderDesc: false,
 		})
@@ -3154,7 +3143,7 @@ func testGetChanges(t *testing.T, store Store) {
 		assert.GreaterOrEqual(t, len(changesAsc), 3)
 
 		// Get changes descending
-		changesDesc, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changesDesc, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Limit:     10,
 			OrderDesc: true,
 		})
@@ -3186,12 +3175,12 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Query with since filter
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Since: &cutoffTime,
 			Limit: 100,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(1))
+		assert.GreaterOrEqual(t, len(changes), 1)
 
 		// All changes should be after cutoff
 		for _, change := range changes {
@@ -3201,7 +3190,7 @@ func testGetChanges(t *testing.T, store Store) {
 
 	t.Run("filter by anchor id", func(t *testing.T) {
 		// Get current max ID before creating new token
-		allChanges, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		allChanges, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Limit:     1000,
 			OrderDesc: true, // Get newest first
 		})
@@ -3225,12 +3214,12 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Query with anchor filter
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Anchor: &anchorID,
 			Limit:  100,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(1))
+		assert.GreaterOrEqual(t, len(changes), 1)
 
 		// All changes should be after anchor ID
 		for _, change := range changes {
@@ -3283,12 +3272,11 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Query changes for owner1 (should include mint and transfer out)
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Addresses: []string{owner1},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(2))
 		assert.GreaterOrEqual(t, len(changes), 2)
 
 		// Verify all changes have appropriate subject types
@@ -3298,12 +3286,12 @@ func testGetChanges(t *testing.T, store Store) {
 		}
 
 		// Query changes for owner2 (should include transfer in)
-		_, total, err = store.GetChanges(ctx, ChangesQueryFilter{
+		changes2, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Addresses: []string{owner2},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(1))
+		assert.GreaterOrEqual(t, len(changes2), 1)
 	})
 
 	t.Run("filter by addresses - metadata during ownership", func(t *testing.T) {
@@ -3378,13 +3366,13 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Query changes for owner1 (should include mint, metadata update, and transfer)
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Addresses: []string{owner1},
 			TokenCIDs: []string{mintInput.Token.TokenCID},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(2)) // At least mint and metadata
+		assert.GreaterOrEqual(t, len(changes), 2) // At least mint and metadata
 
 		// Should include metadata change that happened during ownership
 		hasMetadataChange := false
@@ -3471,7 +3459,7 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Query changes for owner1 (should NOT include metadata update after transfer)
-		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Addresses: []string{owner1},
 			TokenCIDs: []string{mintInput.Token.TokenCID},
 			Limit:     100,
@@ -3530,13 +3518,13 @@ func testGetChanges(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Query changes for owner1 (should include metadata since still owner)
-		changes, total, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			Addresses: []string{owner1},
 			TokenCIDs: []string{mintInput.Token.TokenCID},
 			Limit:     100,
 		})
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, total, uint64(2)) // mint + metadata
+		assert.GreaterOrEqual(t, len(changes), 2) // mint + metadata
 
 		// Should include metadata change for current owner
 		hasMetadataChange := false
@@ -4006,7 +3994,7 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 
 		// Verify change journal entry was created
 		// Note: media_asset changes are not linked to tokens, so we fetch all changes and filter
-		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			SubjectTypes: []schema.SubjectType{schema.SubjectTypeMediaAsset},
 			SubjectIDs:   []string{fmt.Sprintf("%d", asset.ID)},
 			Limit:        100,
@@ -4095,7 +4083,7 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 
 		// Verify we have two change journal entries
 		// Note: media_asset changes are not linked to tokens, so we fetch all changes and filter
-		changes, _, err := store.GetChanges(ctx, ChangesQueryFilter{
+		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
 			SubjectTypes: []schema.SubjectType{schema.SubjectTypeMediaAsset},
 			SubjectIDs:   []string{fmt.Sprintf("%d", asset1.ID)},
 			Limit:        100,

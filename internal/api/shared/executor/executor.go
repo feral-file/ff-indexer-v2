@@ -584,7 +584,7 @@ func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs 
 	}
 
 	// Get changes
-	results, _, err := e.store.GetChanges(ctx, filter)
+	results, err := e.store.GetChanges(ctx, filter)
 	if err != nil {
 		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get changes: %v", err))
 	}
