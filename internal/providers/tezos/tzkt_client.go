@@ -211,6 +211,57 @@ func (c *tzktClient) GetTransactionsByID(ctx context.Context, txID uint64) ([]Tz
 	})
 }
 
+// getTransactionHashesByIDs batch fetches transaction hashes for multiple transaction IDs
+// Returns a map of transaction ID to transaction hash
+// Large batches are automatically chunked to avoid URL length limits and rate limiting
+func (c *tzktClient) getTransactionHashesByIDs(ctx context.Context, txIDs []uint64) (map[uint64]string, error) {
+	if len(txIDs) == 0 {
+		return make(map[uint64]string), nil
+	}
+
+	// Chunk IDs to avoid URL length limits and rate limiting
+	// Each ID is ~10 chars + comma, so 100 IDs ≈ 1100 chars (safe for URL limits)
+	const chunkSize = 100
+	txHashMap := make(map[uint64]string)
+
+	for i := 0; i < len(txIDs); i += chunkSize {
+		end := min(i+chunkSize, len(txIDs))
+		chunk := txIDs[i:end]
+
+		// Build comma-separated list for this chunk
+		idsParam := ""
+		for j, id := range chunk {
+			if j > 0 {
+				idsParam += ","
+			}
+			idsParam += fmt.Sprintf("%d", id)
+		}
+
+		// Fetch transactions for this chunk
+		txs, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTransaction, error) {
+			// Use select parameter to fetch only the fields we need (id and hash)
+			url := fmt.Sprintf("%s/v1/operations/transactions?id.in=%s&select=id,hash&limit=10000", c.baseURL, idsParam)
+
+			var txs []TzKTTransaction
+			if err := c.httpClient.GetAndUnmarshal(ctx, url, &txs); err != nil {
+				return nil, fmt.Errorf("failed to batch get transactions: %w", err)
+			}
+
+			return txs, nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch transaction chunk [%d:%d]: %w", i, end, err)
+		}
+
+		// Add results to map
+		for _, tx := range txs {
+			txHashMap[tx.ID] = tx.Hash
+		}
+	}
+
+	return txHashMap, nil
+}
+
 // GetTokenOwnerBalance retrieves token balance for a specific owner address
 func (c *tzktClient) GetTokenOwnerBalance(ctx context.Context, contractAddress string, tokenID string, ownerAddress string) (string, error) {
 	// Get all owners balance
@@ -372,11 +423,44 @@ func (c *tzktClient) GetTokenEvents(ctx context.Context, contractAddress string,
 		return nil, fmt.Errorf("failed to get token transfers: %w", err)
 	}
 
-	// Convert transfers to events
+	// 2. Collect all unique transaction IDs from transfers
+	txIDSet := make(map[uint64]struct{})
+	for i := range transfers {
+		if transfers[i].TransactionID != nil {
+			txIDSet[*transfers[i].TransactionID] = struct{}{}
+		}
+	}
+
+	// Convert set to slice
+	txIDs := make([]uint64, 0, len(txIDSet))
+	for txID := range txIDSet {
+		txIDs = append(txIDs, txID)
+	}
+
+	// 3. Batch fetch all transaction hashes at once
+	txHashMap := make(map[uint64]string)
+	if len(txIDSet) > 0 {
+		txHashMap, err = c.getTransactionHashesByIDs(ctx, txIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get transaction hashes: %w", err)
+		}
+	}
+
+	// 4. Convert transfers to events using the pre-fetched transaction hashes
 	for i := range transfers {
 		transfer := transfers[i]
 
-		event, err := c.ParseTransfer(ctx, &transfer)
+		// Look up transaction hash from the map
+		var txHash *string
+		if transfer.TransactionID != nil {
+			if hash, ok := txHashMap[*transfer.TransactionID]; ok {
+				txHash = &hash
+			} else {
+				logger.WarnCtx(ctx, "transaction hash not found in map", zap.Uint64("transaction_id", *transfer.TransactionID))
+			}
+		}
+
+		event, err := c.parseTransfer(ctx, &transfer, txHash)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse transfer: %w", err)
 		}
@@ -444,7 +528,8 @@ func (c *tzktClient) ChainID() domain.Chain {
 }
 
 // parseTransfer converts a TzKT transfer to a standardized blockchain event
-func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTransfer) (*domain.BlockchainEvent, error) {
+// txHash is optional - if nil, transaction hash will be fetched from API
+func (c *tzktClient) parseTransfer(ctx context.Context, transfer *TzKTTokenTransfer, txHash *string) (*domain.BlockchainEvent, error) {
 	// Parse timestamp
 	timestamp, err := c.clock.Parse(time.RFC3339, transfer.Timestamp)
 	if err != nil {
@@ -465,19 +550,22 @@ func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 	// Determine event type
 	eventType := domain.TransferEventType(&fromAddress, &toAddress)
 
-	// Fetch actual transaction hash
-	var txHash string
-	if transfer.TransactionID != nil {
+	// Get transaction hash - use provided hash or fetch from API
+	var finalTxHash string
+	if txHash != nil {
+		// Use the provided hash
+		finalTxHash = *txHash
+	} else if transfer.TransactionID != nil {
+		// Fetch from API
 		txs, err := c.GetTransactionsByID(ctx, *transfer.TransactionID)
 		if err != nil {
 			logger.ErrorCtx(ctx, errors.New("failed to get transaction hash"), zap.Error(err), zap.Uint64("transaction_id", *transfer.TransactionID))
 			return nil, fmt.Errorf("failed to get transaction hash: %w", err)
 		}
 		if len(txs) > 0 {
-			txHash = txs[0].Hash
+			finalTxHash = txs[0].Hash
 		}
 	} else {
-		// FIXME figure out how to get the transaction hash
 		logger.WarnCtx(ctx, "no transaction ID found for transfer", zap.Any("transfer", transfer))
 	}
 
@@ -490,7 +578,7 @@ func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 		FromAddress:     &fromAddress,
 		ToAddress:       &toAddress,
 		Quantity:        transfer.Amount,
-		TxHash:          txHash,
+		TxHash:          finalTxHash,
 		BlockNumber:     transfer.Level,
 		BlockHash:       nil, // Block hash is optional for Tezos
 		Timestamp:       timestamp,
@@ -498,6 +586,12 @@ func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 	}
 
 	return event, nil
+}
+
+// ParseTransfer converts a TzKT transfer to a standardized blockchain event
+// This is the public interface method that fetches transaction hash from API
+func (c *tzktClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTransfer) (*domain.BlockchainEvent, error) {
+	return c.parseTransfer(ctx, transfer, nil)
 }
 
 // parseBigMapUpdate converts a TzKT big map update to a standardized blockchain event
