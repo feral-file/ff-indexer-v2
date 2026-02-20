@@ -66,3 +66,18 @@ func (mr *MockTransformerMockRecorder) Transform(ctx, input interface{}) *gomock
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Transform", reflect.TypeOf((*MockTransformer)(nil).Transform), ctx, input)
 }
+
+// TransformBytes mocks base method.
+func (m *MockTransformer) TransformBytes(ctx context.Context, input *transformer.TransformInput, data []byte, outputFormat string) (*transformer.TransformResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TransformBytes", ctx, input, data, outputFormat)
+	ret0, _ := ret[0].(*transformer.TransformResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TransformBytes indicates an expected call of TransformBytes.
+func (mr *MockTransformerMockRecorder) TransformBytes(ctx, input, data, outputFormat interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransformBytes", reflect.TypeOf((*MockTransformer)(nil).TransformBytes), ctx, input, data, outputFormat)
+}

@@ -1094,11 +1094,19 @@ func collectMediaAssetDTOsFromMap(urls []string, mediaAssetsMap map[string]schem
 	}
 	var mediaDTOs []dto.MediaAssetResponse
 	for _, url := range urls {
-		if asset, ok := mediaAssetsMap[url]; ok {
+		lookupKey := normalizeMediaAssetSourceURL(url)
+		if asset, ok := mediaAssetsMap[lookupKey]; ok {
 			mediaDTOs = append(mediaDTOs, *dto.MapMediaAssetToDTO(&asset))
 		}
 	}
 	return mediaDTOs
+}
+
+func normalizeMediaAssetSourceURL(url string) string {
+	if internalTypes.IsDataURI(url) {
+		return internalTypes.DataURIStorageKey(url)
+	}
+	return url
 }
 
 // expandMediaAssets expands both metadata and enrichment source media assets (unified approach)
@@ -1164,8 +1172,22 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 		return nil
 	}
 
+	lookupSourceURLs := make([]string, 0, len(sourceURLs))
+	lookupSet := make(map[string]bool)
+	for _, url := range sourceURLs {
+		lookupKey := normalizeMediaAssetSourceURL(url)
+		if lookupKey == "" || lookupSet[lookupKey] {
+			continue
+		}
+		lookupSet[lookupKey] = true
+		lookupSourceURLs = append(lookupSourceURLs, lookupKey)
+	}
+	if len(lookupSourceURLs) == 0 {
+		return nil
+	}
+
 	// Query media assets
-	mediaAssets, err := e.store.GetMediaAssetsBySourceURLs(ctx, sourceURLs)
+	mediaAssets, err := e.store.GetMediaAssetsBySourceURLs(ctx, lookupSourceURLs)
 	if err != nil {
 		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media assets: %v", err))
 	}

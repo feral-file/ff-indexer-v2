@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
 
@@ -73,6 +74,33 @@ func TestIndexMediaFile_Success(t *testing.T) {
 
 	mocks.store.EXPECT().
 		GetMediaAssetBySourceURL(ctx, url, schema.StorageProviderCloudflare).
+		Return(nil, nil)
+
+	// Mock mediaProcessor.Process to succeed
+	mocks.mediaProcessor.EXPECT().
+		Process(ctx, url).
+		Return(nil)
+
+	err := mocks.executor.IndexMediaFile(ctx, url)
+
+	assert.NoError(t, err)
+}
+
+func TestIndexMediaFile_DataURI(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	url := "data:image/png;base64,iVBORw0KGgo="
+	storageKey := types.DataURIStorageKey(url)
+
+	// Mock store GetMediaAssetBySourceURL to return nil (not exists)
+	mocks.mediaProcessor.EXPECT().
+		Provider().
+		Return(cloudflare.CLOUDFLARE_PROVIDER_NAME)
+
+	mocks.store.EXPECT().
+		GetMediaAssetBySourceURL(ctx, storageKey, schema.StorageProviderCloudflare).
 		Return(nil, nil)
 
 	// Mock mediaProcessor.Process to succeed

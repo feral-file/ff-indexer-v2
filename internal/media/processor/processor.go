@@ -24,6 +24,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
@@ -371,6 +372,10 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		zap.String("provider", p.provider.Name()),
 	)
 
+	if types.IsDataURI(sourceURL) {
+		return p.processDataURI(ctx, sourceURL)
+	}
+
 	// Step 1: Probe the media file to get metadata
 	probe, err := p.probe(ctx, sourceURL)
 	if err != nil {
@@ -432,6 +437,141 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	)
 
 	return nil
+}
+
+func (p *processor) processDataURI(ctx context.Context, sourceURL string) error {
+	parsed, err := types.ParseDataURI(sourceURL)
+	if err != nil {
+		return err
+	}
+
+	if len(parsed.DecodedData) == 0 {
+		return domain.ErrUnsupportedMediaFile
+	}
+
+	detected := mimetype.Detect(parsed.DecodedData)
+	detectedMime := ""
+	if detected != nil {
+		detectedMime = detected.String()
+	}
+
+	contentType := selectDataURIMimeType(parsed.MimeType, detectedMime)
+	if contentType == "" {
+		return domain.ErrUnsupportedMediaFile
+	}
+
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	contentType = strings.Split(contentType, ";")[0]
+
+	if !isImageOrVideoMimeType(contentType) {
+		return domain.ErrUnsupportedMediaFile
+	}
+
+	storageKey := types.DataURIStorageKey(sourceURL)
+	metadata := map[string]interface{}{
+		"source_url_hash": strings.TrimPrefix(storageKey, "data:sha256:"),
+		"mime_type":       contentType,
+		"file_size":       int64(len(parsed.DecodedData)),
+		"data_uri":        true,
+	}
+	if parsed.MimeType != "" {
+		metadata["declared_mime_type"] = parsed.MimeType
+	}
+	if detectedMime != "" {
+		metadata["detected_mime_type"] = detectedMime
+	}
+
+	transformInput := &transformer.TransformInput{SourceURL: "data-uri", IsAnimated: false}
+
+	if contentType == "image/svg+xml" || contentType == "image/svg" {
+		logger.InfoCtx(ctx, "Rasterizing SVG data URI")
+		pngData, err := p.rasterizer.Rasterize(ctx, parsed.DecodedData)
+		if err != nil {
+			return fmt.Errorf("failed to rasterize SVG data URI: %w", err)
+		}
+
+		metadata["original_mime_type"] = contentType
+		metadata["rasterized"] = true
+
+		result, err := p.transformer.TransformBytes(ctx, transformInput, pngData, "webp")
+		if err != nil {
+			switch {
+			case errors.Is(err, transformer.ErrAnimationCannotFit),
+				errors.Is(err, transformer.ErrCannotMeetTargetSize),
+				errors.Is(err, transformer.ErrInputTooLarge),
+				errors.Is(err, transformer.ErrTooManyPixels):
+				return nil
+			default:
+				return fmt.Errorf("failed to transform rasterized SVG data URI: %w", err)
+			}
+		}
+
+		metadata["transformed"] = true
+		metadata["original_size"] = int64(len(pngData))
+		metadata["transformed_size"] = result.TransformedSize
+		metadata["mime_type"] = result.ContentType
+
+		uploadResult, err := p.uploadImageFromBytes(ctx, result.Data, result.Filename, result.ContentType, metadata)
+		if err != nil {
+			if isSizeError(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to upload transformed SVG data URI: %w", err)
+		}
+
+		return p.storeMediaAsset(ctx, storageKey, result.ContentType, result.TransformedSize, uploadResult)
+	}
+
+	if strings.HasPrefix(contentType, "video/") {
+		logger.WarnCtx(ctx, "Video data URI is not supported", zap.String("mime_type", contentType))
+		return domain.ErrUnsupportedMediaFile
+	}
+
+	result, err := p.transformer.TransformBytes(ctx, transformInput, parsed.DecodedData, "webp")
+	if err != nil {
+		switch {
+		case errors.Is(err, transformer.ErrAnimationCannotFit),
+			errors.Is(err, transformer.ErrCannotMeetTargetSize),
+			errors.Is(err, transformer.ErrInputTooLarge),
+			errors.Is(err, transformer.ErrTooManyPixels):
+			return nil
+		default:
+			return fmt.Errorf("failed to transform image data URI: %w", err)
+		}
+	}
+
+	metadata["transformed"] = true
+	metadata["original_size"] = int64(len(parsed.DecodedData))
+	metadata["transformed_size"] = result.TransformedSize
+	metadata["mime_type"] = result.ContentType
+
+	uploadResult, err := p.uploadImageFromBytes(ctx, result.Data, result.Filename, result.ContentType, metadata)
+	if err != nil {
+		if isSizeError(err) || errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) || errors.Is(err, domain.ErrUnsupportedURL) {
+			return nil
+		}
+		return fmt.Errorf("failed to upload transformed image data URI: %w", err)
+	}
+
+	return p.storeMediaAsset(ctx, storageKey, result.ContentType, result.TransformedSize, uploadResult)
+}
+
+func selectDataURIMimeType(declared, detected string) string {
+	declared = strings.TrimSpace(strings.Split(declared, ";")[0])
+	detected = strings.TrimSpace(strings.Split(detected, ";")[0])
+
+	if isImageOrVideoMimeType(detected) {
+		return detected
+	}
+	if isImageOrVideoMimeType(declared) {
+		return declared
+	}
+	return ""
+}
+
+func isImageOrVideoMimeType(mimeType string) bool {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	return strings.HasPrefix(mimeType, "image/") || strings.HasPrefix(mimeType, "video/")
 }
 
 func (p *processor) Provider() string {

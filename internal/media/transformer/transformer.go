@@ -92,6 +92,10 @@ type Transformer interface {
 	// This method is safe for concurrent use and enforces the configured worker concurrency
 	Transform(ctx context.Context, input *TransformInput) (*TransformResult, error)
 
+	// TransformBytes transforms image data to meet size and dimension constraints
+	// The outputFormat can be "jpeg" or "webp"; if empty, it is chosen based on alpha channel
+	TransformBytes(ctx context.Context, input *TransformInput, data []byte, outputFormat string) (*TransformResult, error)
+
 	// Close gracefully shuts down the transformer and its worker pool
 	Close() error
 }
@@ -172,6 +176,54 @@ func (t *transformer) Transform(ctx context.Context, input *TransformInput) (*Tr
 	return result, nil
 }
 
+// TransformBytes transforms image data to meet size and dimension constraints
+func (t *transformer) TransformBytes(ctx context.Context, input *TransformInput, data []byte, outputFormat string) (*TransformResult, error) {
+	if input == nil {
+		return nil, fmt.Errorf("input cannot be nil")
+	}
+
+	if input.SourceURL == "" {
+		return nil, fmt.Errorf("source URL cannot be empty")
+	}
+
+	if len(data) == 0 {
+		return nil, fmt.Errorf("input data cannot be empty")
+	}
+
+	logger.InfoCtx(ctx, "Starting image transformation from bytes",
+		zap.String("sourceURL", input.SourceURL),
+		zap.Int("inputBytes", len(data)),
+		zap.Bool("isAnimated", input.IsAnimated),
+		zap.String("outputFormat", outputFormat),
+	)
+
+	ctx, cancel := context.WithTimeout(ctx, t.config.TransformTimeout)
+	defer cancel()
+
+	task := t.pool.SubmitErr(func() (*TransformResult, error) {
+		return t.transformBytesInternal(ctx, input, data, outputFormat)
+	})
+
+	result, err := task.Wait()
+	if err != nil {
+		return nil, err
+	}
+
+	logger.InfoCtx(ctx, "Image transformation from bytes completed",
+		zap.String("sourceURL", input.SourceURL),
+		zap.Int("originalSize", int(result.OriginalSize)),
+		zap.Int("transformedSize", int(result.TransformedSize)),
+		zap.Int("width", result.Width),
+		zap.Int("height", result.Height),
+		zap.Bool("resized", result.Resized),
+		zap.Bool("compressed", result.Compressed),
+		zap.Int("quality", result.Quality),
+		zap.String("contentType", result.ContentType),
+	)
+
+	return result, nil
+}
+
 // Close gracefully shuts down the transformer
 func (t *transformer) Close() error {
 	_ = t.pool.Stop()
@@ -231,6 +283,44 @@ func (t *transformer) transformInternal(ctx context.Context, input *TransformInp
 	}
 
 	return t.transformStill(ctx, input, img, originalSize)
+}
+
+// transformBytesInternal performs transformation on in-memory data
+func (t *transformer) transformBytesInternal(ctx context.Context, input *TransformInput, data []byte, outputFormat string) (*TransformResult, error) {
+	originalSize := int64(len(data))
+	if originalSize > t.config.MaxInputBytes {
+		logger.WarnCtx(ctx, "Input image exceeds maximum input size",
+			zap.Int64("size", originalSize),
+			zap.Int64("maxSize", t.config.MaxInputBytes),
+		)
+		return nil, ErrInputTooLarge
+	}
+
+	reader := io.NopCloser(bytes.NewReader(data))
+	source := t.vipsClient.NewSource(reader)
+	defer source.Close()
+
+	loadOpts := vips.DefaultLoadOptions()
+	if input.IsAnimated {
+		loadOpts.N = -1
+	}
+	loadOpts.FailOnError = true
+	loadOpts.Access = vips.AccessRandom
+
+	img, err := t.vipsClient.NewImageFromSource(source, loadOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load image from source: %w", err)
+	}
+	defer img.Close()
+
+	if outputFormat == "" {
+		outputFormat = "jpeg"
+		if img.HasAlpha() {
+			outputFormat = "webp"
+		}
+	}
+
+	return t.transformImage(ctx, input, img, originalSize, outputFormat, input.IsAnimated, nil, 0)
 }
 
 // transformStill transforms a still image (JPEG, PNG, WebP, etc.)

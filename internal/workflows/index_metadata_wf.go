@@ -189,7 +189,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		// Only index valid URLs from the healthy URLs list
 		validURLs := make([]string, 0, len(result.HealthyURLs))
 		for _, url := range result.HealthyURLs {
-			if types.IsValidURL(url) {
+			if types.IsValidURL(url) || types.IsDataURI(url) {
 				validURLs = append(validURLs, url)
 			}
 		}
