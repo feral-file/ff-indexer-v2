@@ -165,6 +165,15 @@ cd cmd/worker-media
 go run main.go
 ```
 
+### Data URI Media Processing
+
+When metadata contains data URIs, the media worker decodes and transforms them server-side before upload:
+
+- Image data URIs are converted to WebP before uploading to Cloudflare Images.
+- Media assets are stored by a stable hash key to avoid oversized index entries:
+  - `source_url` in `media_assets` becomes `data:sha256:<hash>` for data URIs.
+- API expansions resolve media assets by hashing incoming data URIs to match stored keys.
+
 ### API Server
 ```bash
 cd cmd/api
@@ -442,4 +451,3 @@ make clean-images
 - Read [Architecture](docs/architecture.md) for system design details
 - Read [Schema](docs/schema.md) for database structure
 - Read [Contributing](CONTRIBUTING.md) for PR guidelines
-
