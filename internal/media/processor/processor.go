@@ -56,6 +56,7 @@ type processor struct {
 	// Dependencies
 	httpClient  adapter.HTTPClient
 	uriResolver uri.Resolver
+	dataChecker uri.DataURIChecker
 	provider    mediaprovider.Provider
 	store       store.Store
 	rasterizer  rasterizer.Rasterizer
@@ -76,6 +77,7 @@ type processor struct {
 func NewProcessor(
 	httpClient adapter.HTTPClient,
 	uriResolver uri.Resolver,
+	dataChecker uri.DataURIChecker,
 	provider mediaprovider.Provider,
 	st store.Store,
 	svgRasterizer rasterizer.Rasterizer,
@@ -89,6 +91,7 @@ func NewProcessor(
 	return &processor{
 		httpClient:   httpClient,
 		uriResolver:  uriResolver,
+		dataChecker:  dataChecker,
 		provider:     provider,
 		store:        st,
 		rasterizer:   svgRasterizer,
@@ -110,12 +113,59 @@ type probeResult struct {
 	isImage         bool
 	isSVG           bool
 	isAnimatedImage bool
+	isDataURI       bool
+	decodedBytes    []byte
+	declaredType    string
+	detectedType    string
 }
 
 // probe detects the content type and size of a media file
 func (p *processor) probe(ctx context.Context, sourceURL string) (*probeResult, error) {
 	var contentType string
 	var contentLength int64
+
+	if types.IsDataURI(sourceURL) {
+		check := p.dataChecker.Check(sourceURL)
+		if !check.Valid {
+			if check.Error != nil {
+				return nil, fmt.Errorf("invalid data URI: %s", *check.Error)
+			}
+			return nil, domain.ErrUnsupportedMediaFile
+		}
+
+		parsed, err := types.ParseDataURI(sourceURL)
+		if err != nil {
+			return nil, err
+		}
+		if len(parsed.DecodedData) == 0 {
+			return nil, domain.ErrUnsupportedMediaFile
+		}
+
+		contentType = strings.ToLower(strings.TrimSpace(check.MimeType))
+		contentType = strings.Split(contentType, ";")[0]
+		contentLength = int64(len(parsed.DecodedData))
+
+		isVideo := strings.HasPrefix(contentType, "video/")
+		isImage := strings.HasPrefix(contentType, "image/")
+		isSVG := contentType == "image/svg+xml" || contentType == "image/svg"
+		isAnimatedImage := strings.HasPrefix(contentType, "image/gif") || strings.HasPrefix(contentType, "image/webp")
+		if !isVideo && !isImage {
+			return nil, domain.ErrUnsupportedMediaFile
+		}
+
+		return &probeResult{
+			contentType:     contentType,
+			contentLength:   contentLength,
+			isVideo:         isVideo,
+			isImage:         isImage,
+			isSVG:           isSVG,
+			isAnimatedImage: isAnimatedImage,
+			isDataURI:       true,
+			decodedBytes:    parsed.DecodedData,
+			declaredType:    check.DeclaredMimeType,
+			detectedType:    check.MimeType,
+		}, nil
+	}
 
 	// Try HEAD request first to get content-type and size
 	resp, err := p.httpClient.Head(ctx, sourceURL)
@@ -221,36 +271,7 @@ func (p *processor) processSVG(ctx context.Context, sourceURL string, probe *pro
 		return nil, "", 0, fmt.Errorf("failed to read SVG data: %w", err)
 	}
 
-	// Rasterize SVG to PNG
-	pngData, err := p.rasterizer.Rasterize(ctx, svgData)
-	if err != nil {
-		logger.ErrorCtx(ctx, err)
-		return nil, "", 0, fmt.Errorf("failed to rasterize SVG: %w", err)
-	}
-
-	// Update content type and length for the rasterized image
-	newContentType := "image/png"
-	newContentLength := int64(len(pngData))
-
-	// Update upload metadata
-	metadata["original_mime_type"] = probe.contentType
-	metadata["mime_type"] = newContentType
-	metadata["file_size"] = newContentLength
-	metadata["rasterized"] = true
-
-	logger.InfoCtx(ctx, "SVG rasterized successfully",
-		zap.Int("pngSize", len(pngData)),
-		zap.String("originalContentType", probe.contentType),
-	)
-
-	// Upload the rasterized PNG from reader
-	logger.InfoCtx(ctx, "Uploading rasterized image from reader")
-	uploadResult, err := p.uploadImageFromBytes(ctx, pngData, "rasterized.png", newContentType, metadata)
-	if err != nil {
-		return nil, "", 0, fmt.Errorf("failed to upload rasterized image: %w", err)
-	}
-
-	return uploadResult, newContentType, newContentLength, nil
+	return p.processSVGBytes(ctx, svgData, probe.contentType, metadata)
 }
 
 // processVideo handles video files by uploading them directly
@@ -289,7 +310,7 @@ func (p *processor) processImage(ctx context.Context, sourceURL string, probe *p
 	if needsTransform {
 		// Transform image if we know it's too large
 		logger.InfoCtx(ctx, "Transforming image before upload", zap.String("url", sourceURL))
-		uploadResult, finalContentType, finalContentLength, err = p.transformAndUpload(ctx, sourceURL, probe.isAnimatedImage, metadata)
+		uploadResult, finalContentType, finalContentLength, err = p.transformAndUpload(ctx, sourceURL, nil, "", probe.isAnimatedImage, metadata)
 		if err != nil {
 			return nil, "", 0, fmt.Errorf("failed to transform and upload image: %w", err)
 		}
@@ -306,7 +327,7 @@ func (p *processor) processImage(ctx context.Context, sourceURL string, probe *p
 					zap.Error(err))
 
 				// Retry with transformation
-				uploadResult, finalContentType, finalContentLength, err = p.transformAndUpload(ctx, sourceURL, probe.isAnimatedImage, metadata)
+				uploadResult, finalContentType, finalContentLength, err = p.transformAndUpload(ctx, sourceURL, nil, "", probe.isAnimatedImage, metadata)
 				if err != nil {
 					return nil, "", 0, fmt.Errorf("failed to transform and upload image after size error: %w", err)
 				}
@@ -372,10 +393,6 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		zap.String("provider", p.provider.Name()),
 	)
 
-	if types.IsDataURI(sourceURL) {
-		return p.processDataURI(ctx, sourceURL)
-	}
-
 	// Step 1: Probe the media file to get metadata
 	probe, err := p.probe(ctx, sourceURL)
 	if err != nil {
@@ -384,8 +401,19 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 
 	// Step 2: Prepare metadata for upload
 	uploadMetadata := map[string]interface{}{
-		"source_url": sourceURL,
-		"mime_type":  probe.contentType,
+		"mime_type": probe.contentType,
+	}
+
+	if probe.isDataURI {
+		uploadMetadata["data_uri"] = true
+		if probe.declaredType != "" {
+			uploadMetadata["declared_mime_type"] = probe.declaredType
+		}
+		if probe.detectedType != "" {
+			uploadMetadata["detected_mime_type"] = probe.detectedType
+		}
+	} else {
+		uploadMetadata["source_url"] = sourceURL
 	}
 
 	if probe.contentLength > 0 {
@@ -398,17 +426,29 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	finalContentLength := probe.contentLength
 
 	if probe.isSVG {
-		uploadResult, finalContentType, finalContentLength, err = p.processSVG(ctx, sourceURL, probe, uploadMetadata)
+		if probe.isDataURI {
+			uploadResult, finalContentType, finalContentLength, err = p.processSVGBytes(ctx, probe.decodedBytes, probe.contentType, uploadMetadata)
+		} else {
+			uploadResult, finalContentType, finalContentLength, err = p.processSVG(ctx, sourceURL, probe, uploadMetadata)
+		}
 		if err != nil {
 			return err
 		}
 	} else if probe.isVideo {
+		if probe.isDataURI {
+			logger.WarnCtx(ctx, "Video data URI is not supported", zap.String("mime_type", probe.contentType))
+			return domain.ErrUnsupportedMediaFile
+		}
 		uploadResult, err = p.processVideo(ctx, sourceURL, probe, uploadMetadata)
 		if err != nil {
 			return err
 		}
 	} else if probe.isImage || probe.isAnimatedImage {
-		uploadResult, finalContentType, finalContentLength, err = p.processImage(ctx, sourceURL, probe, uploadMetadata)
+		if probe.isDataURI {
+			uploadResult, finalContentType, finalContentLength, err = p.processImageBytes(ctx, probe.decodedBytes, probe.isAnimatedImage, uploadMetadata)
+		} else {
+			uploadResult, finalContentType, finalContentLength, err = p.processImage(ctx, sourceURL, probe, uploadMetadata)
+		}
 		if err != nil {
 			return err
 		}
@@ -439,139 +479,41 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 	return nil
 }
 
-func (p *processor) processDataURI(ctx context.Context, sourceURL string) error {
-	parsed, err := types.ParseDataURI(sourceURL)
+func (p *processor) processSVGBytes(ctx context.Context, svgData []byte, originalContentType string, metadata map[string]interface{}) (*mediaprovider.UploadResult, string, int64, error) {
+	logger.InfoCtx(ctx, "Rasterizing SVG bytes")
+
+	pngData, err := p.rasterizer.Rasterize(ctx, svgData)
 	if err != nil {
-		return err
+		logger.ErrorCtx(ctx, err)
+		return nil, "", 0, fmt.Errorf("failed to rasterize SVG: %w", err)
 	}
 
-	if len(parsed.DecodedData) == 0 {
-		return domain.ErrUnsupportedMediaFile
+	newContentType := "image/png"
+	newContentLength := int64(len(pngData))
+
+	metadata["original_mime_type"] = originalContentType
+	metadata["mime_type"] = newContentType
+	metadata["file_size"] = newContentLength
+	metadata["rasterized"] = true
+
+	if newContentLength > p.maxImageSize {
+		return p.transformAndUpload(ctx, "", pngData, "rasterized.png", false, metadata)
 	}
 
-	detected := mimetype.Detect(parsed.DecodedData)
-	detectedMime := ""
-	if detected != nil {
-		detectedMime = detected.String()
-	}
-
-	contentType := selectDataURIMimeType(parsed.MimeType, detectedMime)
-	if contentType == "" {
-		return domain.ErrUnsupportedMediaFile
-	}
-
-	contentType = strings.ToLower(strings.TrimSpace(contentType))
-	contentType = strings.Split(contentType, ";")[0]
-
-	if !isImageOrVideoMimeType(contentType) {
-		return domain.ErrUnsupportedMediaFile
-	}
-
-	storageKey := types.DataURIStorageKey(sourceURL)
-	metadata := map[string]interface{}{
-		"source_url_hash": strings.TrimPrefix(storageKey, "data:sha256:"),
-		"mime_type":       contentType,
-		"file_size":       int64(len(parsed.DecodedData)),
-		"data_uri":        true,
-	}
-	if parsed.MimeType != "" {
-		metadata["declared_mime_type"] = parsed.MimeType
-	}
-	if detectedMime != "" {
-		metadata["detected_mime_type"] = detectedMime
-	}
-
-	transformInput := &transformer.TransformInput{SourceURL: "data-uri", IsAnimated: false}
-
-	if contentType == "image/svg+xml" || contentType == "image/svg" {
-		logger.InfoCtx(ctx, "Rasterizing SVG data URI")
-		pngData, err := p.rasterizer.Rasterize(ctx, parsed.DecodedData)
-		if err != nil {
-			return fmt.Errorf("failed to rasterize SVG data URI: %w", err)
-		}
-
-		metadata["original_mime_type"] = contentType
-		metadata["rasterized"] = true
-
-		result, err := p.transformer.TransformBytes(ctx, transformInput, pngData, "webp")
-		if err != nil {
-			switch {
-			case errors.Is(err, transformer.ErrAnimationCannotFit),
-				errors.Is(err, transformer.ErrCannotMeetTargetSize),
-				errors.Is(err, transformer.ErrInputTooLarge),
-				errors.Is(err, transformer.ErrTooManyPixels):
-				return nil
-			default:
-				return fmt.Errorf("failed to transform rasterized SVG data URI: %w", err)
-			}
-		}
-
-		metadata["transformed"] = true
-		metadata["original_size"] = int64(len(pngData))
-		metadata["transformed_size"] = result.TransformedSize
-		metadata["mime_type"] = result.ContentType
-
-		uploadResult, err := p.uploadImageFromBytes(ctx, result.Data, result.Filename, result.ContentType, metadata)
-		if err != nil {
-			if isSizeError(err) {
-				return nil
-			}
-			return fmt.Errorf("failed to upload transformed SVG data URI: %w", err)
-		}
-
-		return p.storeMediaAsset(ctx, storageKey, result.ContentType, result.TransformedSize, uploadResult)
-	}
-
-	if strings.HasPrefix(contentType, "video/") {
-		logger.WarnCtx(ctx, "Video data URI is not supported", zap.String("mime_type", contentType))
-		return domain.ErrUnsupportedMediaFile
-	}
-
-	result, err := p.transformer.TransformBytes(ctx, transformInput, parsed.DecodedData, "webp")
+	logger.InfoCtx(ctx, "Uploading rasterized image from reader")
+	uploadResult, err := p.uploadImageFromBytes(ctx, pngData, "rasterized.png", newContentType, metadata)
 	if err != nil {
-		switch {
-		case errors.Is(err, transformer.ErrAnimationCannotFit),
-			errors.Is(err, transformer.ErrCannotMeetTargetSize),
-			errors.Is(err, transformer.ErrInputTooLarge),
-			errors.Is(err, transformer.ErrTooManyPixels):
-			return nil
-		default:
-			return fmt.Errorf("failed to transform image data URI: %w", err)
+		if isSizeError(err) {
+			return p.transformAndUpload(ctx, "", pngData, "rasterized.png", false, metadata)
 		}
+		return nil, "", 0, fmt.Errorf("failed to upload rasterized image: %w", err)
 	}
 
-	metadata["transformed"] = true
-	metadata["original_size"] = int64(len(parsed.DecodedData))
-	metadata["transformed_size"] = result.TransformedSize
-	metadata["mime_type"] = result.ContentType
-
-	uploadResult, err := p.uploadImageFromBytes(ctx, result.Data, result.Filename, result.ContentType, metadata)
-	if err != nil {
-		if isSizeError(err) || errors.Is(err, domain.ErrUnsupportedSelfHostedMediaFile) || errors.Is(err, domain.ErrUnsupportedURL) {
-			return nil
-		}
-		return fmt.Errorf("failed to upload transformed image data URI: %w", err)
-	}
-
-	return p.storeMediaAsset(ctx, storageKey, result.ContentType, result.TransformedSize, uploadResult)
+	return uploadResult, newContentType, newContentLength, nil
 }
 
-func selectDataURIMimeType(declared, detected string) string {
-	declared = strings.TrimSpace(strings.Split(declared, ";")[0])
-	detected = strings.TrimSpace(strings.Split(detected, ";")[0])
-
-	if isImageOrVideoMimeType(detected) {
-		return detected
-	}
-	if isImageOrVideoMimeType(declared) {
-		return declared
-	}
-	return ""
-}
-
-func isImageOrVideoMimeType(mimeType string) bool {
-	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
-	return strings.HasPrefix(mimeType, "image/") || strings.HasPrefix(mimeType, "video/")
+func (p *processor) processImageBytes(ctx context.Context, data []byte, isAnimated bool, metadata map[string]interface{}) (*mediaprovider.UploadResult, string, int64, error) {
+	return p.transformAndUpload(ctx, "", data, "data-uri", isAnimated, metadata)
 }
 
 func (p *processor) Provider() string {
@@ -601,13 +543,20 @@ func (p *processor) uploadImageFromBytes(ctx context.Context, data []byte, filen
 func (p *processor) transformAndUpload(
 	ctx context.Context,
 	sourceURL string,
+	data []byte,
+	filename string,
 	isAnimated bool,
 	metadata map[string]interface{},
 ) (*mediaprovider.UploadResult, string, int64, error) {
 	// Transform the image
 	transformInput := &transformer.TransformInput{
 		SourceURL:  sourceURL,
+		Data:       data,
+		Filename:   filename,
 		IsAnimated: isAnimated,
+	}
+	if len(data) > 0 {
+		transformInput.SourceURL = ""
 	}
 
 	result, err := p.transformer.Transform(ctx, transformInput)
@@ -632,8 +581,7 @@ func (p *processor) transformAndUpload(
 		}
 	}
 
-	logger.InfoCtx(ctx, "Image transformed successfully",
-		zap.String("sourceURL", sourceURL),
+	fields := []zap.Field{
 		zap.Int("originalSize", int(result.OriginalSize)),
 		zap.Int("transformedSize", int(result.TransformedSize)),
 		zap.Int("width", result.Width),
@@ -642,7 +590,13 @@ func (p *processor) transformAndUpload(
 		zap.Bool("compressed", result.Compressed),
 		zap.Int("quality", result.Quality),
 		zap.String("contentType", result.ContentType),
-	)
+	}
+	if sourceURL != "" {
+		fields = append(fields, zap.String("sourceURL", sourceURL))
+	} else {
+		fields = append(fields, zap.String("filename", filename), zap.Int("inputBytes", len(data)))
+	}
+	logger.InfoCtx(ctx, "Image transformed successfully", fields...)
 
 	// Update metadata with transformation info
 	metadata["transformed"] = true

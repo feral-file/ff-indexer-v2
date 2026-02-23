@@ -2398,9 +2398,14 @@ func (s *pgStore) GetMediaAssetByID(ctx context.Context, id int64) (*schema.Medi
 
 // GetMediaAssetBySourceURL retrieves a media asset by source URL
 func (s *pgStore) GetMediaAssetBySourceURL(ctx context.Context, sourceURL string, provider schema.StorageProvider) (*schema.MediaAsset, error) {
+	if sourceURL == "" {
+		return nil, nil
+	}
+
+	sourceURLHash := md5Hash(sourceURL)
 	var media schema.MediaAsset
 	err := s.db.WithContext(ctx).
-		Where("source_url = ? AND provider = ?", sourceURL, provider).First(&media).Error
+		Where("source_url_hash = ? AND provider = ?", sourceURLHash, provider).First(&media).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -2416,9 +2421,26 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 		return []schema.MediaAsset{}, nil
 	}
 
+	urlHashes := make([]string, 0, len(sourceURLs))
+	seen := make(map[string]bool)
+	for _, url := range sourceURLs {
+		if url == "" {
+			continue
+		}
+		hash := md5Hash(url)
+		if seen[hash] {
+			continue
+		}
+		seen[hash] = true
+		urlHashes = append(urlHashes, hash)
+	}
+	if len(urlHashes) == 0 {
+		return []schema.MediaAsset{}, nil
+	}
+
 	var mediaAssets []schema.MediaAsset
 	err := s.db.WithContext(ctx).
-		Where("source_url IN ?", sourceURLs).
+		Where("source_url_hash IN ?", urlHashes).
 		Find(&mediaAssets).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to get media assets by source URLs: %w", err)
@@ -2430,18 +2452,28 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 // Uses ON CONFLICT to update existing records with new data
 func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetInput) (*schema.MediaAsset, error) {
 	var mediaAsset *schema.MediaAsset
+	if input.SourceURL == "" {
+		return nil, fmt.Errorf("source URL cannot be empty")
+	}
+
+	sourceURLHash := md5Hash(input.SourceURL)
+	var storedSourceURL *string
+	if !types.IsDataURI(input.SourceURL) {
+		storedSourceURL = &input.SourceURL
+	}
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get the old media asset (if it exists) for change tracking - BEFORE upsert
 		var oldMediaAsset *schema.MediaAsset
-		err := tx.Where("source_url = ? AND provider = ?", input.SourceURL, input.Provider).First(&oldMediaAsset).Error
+		err := tx.Where("source_url_hash = ? AND provider = ?", sourceURLHash, input.Provider).First(&oldMediaAsset).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("failed to get old media asset: %w", err)
 		}
 
 		// 2. Upsert media asset
 		newMediaAsset := schema.MediaAsset{
-			SourceURL:        input.SourceURL,
+			SourceURL:        storedSourceURL,
+			SourceURLHash:    sourceURLHash,
 			MimeType:         input.MimeType,
 			FileSizeBytes:    input.FileSizeBytes,
 			Provider:         input.Provider,
@@ -2452,8 +2484,9 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 
 		// Use ON CONFLICT to update all fields if duplicate exists
 		err = tx.Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "source_url"}, {Name: "provider"}},
+			Columns: []clause.Column{{Name: "source_url_hash"}, {Name: "provider"}},
 			DoUpdates: clause.AssignmentColumns([]string{
+				"source_url",
 				"mime_type",
 				"file_size_bytes",
 				"provider_asset_id",
@@ -2478,7 +2511,8 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 
 		metaChanges := schema.MediaAssetChangeMeta{
 			New: schema.MediaAssetFields{
-				SourceURL:        input.SourceURL,
+				SourceURL:        storedSourceURL,
+				SourceURLHash:    sourceURLHash,
 				Provider:         string(input.Provider),
 				ProviderAssetID:  input.ProviderAssetID,
 				MimeType:         input.MimeType,
@@ -2498,6 +2532,7 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 
 			metaChanges.Old = schema.MediaAssetFields{
 				SourceURL:        oldMediaAsset.SourceURL,
+				SourceURLHash:    oldMediaAsset.SourceURLHash,
 				Provider:         string(oldMediaAsset.Provider),
 				ProviderAssetID:  oldMediaAsset.ProviderAssetID,
 				MimeType:         oldMediaAsset.MimeType,

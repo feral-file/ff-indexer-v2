@@ -4020,7 +4020,9 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 		var meta schema.MediaAssetChangeMeta
 		err = json.Unmarshal(mediaChange.Meta, &meta)
 		require.NoError(t, err)
-		assert.Equal(t, sourceURL, meta.New.SourceURL)
+		require.NotNil(t, meta.New.SourceURL)
+		assert.Equal(t, sourceURL, *meta.New.SourceURL)
+		assert.Equal(t, md5Hash(sourceURL), meta.New.SourceURLHash)
 		assert.Equal(t, string(schema.StorageProviderCloudflare), meta.New.Provider)
 		assert.Equal(t, mimeType, *meta.New.MimeType)
 	})
@@ -4133,7 +4135,9 @@ func testMediaAssets(t *testing.T, store Store) {
 		asset, err := store.CreateMediaAsset(ctx, input)
 		require.NoError(t, err)
 		require.NotNil(t, asset)
-		assert.Equal(t, sourceURL, asset.SourceURL)
+		require.NotNil(t, asset.SourceURL)
+		assert.Equal(t, sourceURL, *asset.SourceURL)
+		assert.Equal(t, md5Hash(sourceURL), asset.SourceURLHash)
 		assert.Equal(t, mimeType, *asset.MimeType)
 		assert.Equal(t, fileSize, *asset.FileSizeBytes)
 

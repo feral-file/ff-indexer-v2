@@ -371,7 +371,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		// Create map for fast lookup
 		mediaAssetsMap = make(map[string]schema.MediaAsset)
 		for _, asset := range mediaAssetsList {
-			mediaAssetsMap[asset.SourceURL] = asset
+			mediaAssetsMap[asset.SourceURLHash] = asset
 		}
 	}
 
@@ -1094,7 +1094,7 @@ func collectMediaAssetDTOsFromMap(urls []string, mediaAssetsMap map[string]schem
 	}
 	var mediaDTOs []dto.MediaAssetResponse
 	for _, url := range urls {
-		lookupKey := normalizeMediaAssetSourceURL(url)
+		lookupKey := mediaAssetLookupKey(url)
 		if asset, ok := mediaAssetsMap[lookupKey]; ok {
 			mediaDTOs = append(mediaDTOs, *dto.MapMediaAssetToDTO(&asset))
 		}
@@ -1102,11 +1102,11 @@ func collectMediaAssetDTOsFromMap(urls []string, mediaAssetsMap map[string]schem
 	return mediaDTOs
 }
 
-func normalizeMediaAssetSourceURL(url string) string {
-	if internalTypes.IsDataURI(url) {
-		return internalTypes.DataURIStorageKey(url)
+func mediaAssetLookupKey(url string) string {
+	if url == "" {
+		return ""
 	}
-	return url
+	return internalTypes.MD5Hash(url)
 }
 
 // expandMediaAssets expands both metadata and enrichment source media assets (unified approach)
@@ -1175,12 +1175,12 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 	lookupSourceURLs := make([]string, 0, len(sourceURLs))
 	lookupSet := make(map[string]bool)
 	for _, url := range sourceURLs {
-		lookupKey := normalizeMediaAssetSourceURL(url)
+		lookupKey := mediaAssetLookupKey(url)
 		if lookupKey == "" || lookupSet[lookupKey] {
 			continue
 		}
 		lookupSet[lookupKey] = true
-		lookupSourceURLs = append(lookupSourceURLs, lookupKey)
+		lookupSourceURLs = append(lookupSourceURLs, url)
 	}
 	if len(lookupSourceURLs) == 0 {
 		return nil
@@ -1195,7 +1195,7 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 	// Turn media assets into a map for fast lookup
 	mediaAssetsMap := make(map[string]schema.MediaAsset)
 	for _, asset := range mediaAssets {
-		mediaAssetsMap[asset.SourceURL] = asset
+		mediaAssetsMap[asset.SourceURLHash] = asset
 	}
 
 	// Map to track media URLs should be included in the response

@@ -91,7 +91,8 @@ CREATE TABLE media_assets (
     id BIGSERIAL PRIMARY KEY,
     
     -- Original source
-    source_url TEXT NOT NULL,               -- Original URL where media was found
+    source_url TEXT,                        -- Original URL where media was found (null for data URIs)
+    source_url_hash TEXT NOT NULL,          -- MD5 hash of source_url or data URI for indexing
     mime_type TEXT,                         -- image/jpeg, video/mp4, etc.
     file_size_bytes BIGINT,
     
@@ -109,7 +110,7 @@ CREATE TABLE media_assets (
     
     -- Unique constraints: one entry per provider per asset, one entry per source URL per provider
     UNIQUE (provider, provider_asset_id),
-    UNIQUE (source_url, provider)
+    UNIQUE (source_url_hash, provider)
 );
 
 -- Token Media Health table - Tracks health check status for media URLs
@@ -330,7 +331,7 @@ CREATE INDEX idx_enrichment_sources_image_url_hash ON enrichment_sources (image_
 CREATE INDEX idx_enrichment_sources_animation_url_hash ON enrichment_sources (animation_url_hash) WHERE animation_url IS NOT NULL;
 
 -- Media Assets table indexes
-CREATE INDEX idx_media_assets_source_url ON media_assets (source_url);
+CREATE INDEX idx_media_assets_source_url_hash ON media_assets (source_url_hash);
 CREATE INDEX idx_media_assets_provider ON media_assets (provider);
 CREATE INDEX idx_media_assets_provider_asset_id ON media_assets (provider, provider_asset_id);
 CREATE INDEX idx_media_assets_created_at ON media_assets (created_at);

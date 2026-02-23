@@ -1,9 +1,7 @@
 package types
 
 import (
-	"crypto/md5" //nolint:gosec,G501 // MD5 used for non-cryptographic database indexing only, not security
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -293,29 +291,4 @@ func parseDataURIMetadata(metadata string) (string, map[string]string, bool) {
 // IsDataURI checks if a string is a valid data URI
 func IsDataURI(s string) bool {
 	return strings.HasPrefix(s, "data:") && strings.Contains(s, ",")
-}
-
-// MD5Hash computes the MD5 hash of a string and returns it as a hex string
-func MD5Hash(s string) string {
-	if s == "" {
-		return ""
-	}
-	hash := md5.Sum([]byte(s)) //nolint:gosec,G401 // for indexing purposes only
-	return hex.EncodeToString(hash[:])
-}
-
-// MD5HashPtr computes the MD5 hash of a string pointer and returns it as a pointer to a hex string
-func MD5HashPtr(s *string) *string {
-	if s == nil || *s == "" {
-		return nil
-	}
-	return StringPtr(MD5Hash(*s))
-
-}
-
-// DataURIStorageKey returns a stable storage key for a data URI.
-// It avoids storing large data URIs directly in indexed columns.
-func DataURIStorageKey(uri string) string {
-	hash := sha256.Sum256([]byte(uri))
-	return "data:sha256:" + hex.EncodeToString(hash[:])
 }

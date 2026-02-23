@@ -29,8 +29,10 @@ type MediaAsset struct {
 	ID int64 `gorm:"column:id;primaryKey;autoIncrement"`
 
 	// Original source
-	// SourceURL is the original URL where the media was found
-	SourceURL string `gorm:"column:source_url;not null;type:text;index:idx_media_assets_source_url"`
+	// SourceURL is the original URL where the media was found (null for data URIs)
+	SourceURL *string `gorm:"column:source_url;type:text"`
+	// SourceURLHash is the MD5 hash of SourceURL or data URI for indexing
+	SourceURLHash string `gorm:"column:source_url_hash;not null;type:text;index:idx_media_assets_source_url_hash;uniqueIndex:idx_media_assets_source_url_hash_provider,priority:1"`
 	// MimeType is the MIME type of the media (e.g., image/jpeg, video/mp4)
 	MimeType *string `gorm:"column:mime_type;type:text"`
 	// FileSizeBytes is the file size in bytes
@@ -38,7 +40,7 @@ type MediaAsset struct {
 
 	// Storage provider info
 	// Provider identifies the storage provider type
-	Provider StorageProvider `gorm:"column:provider;not null;type:text;index:idx_media_assets_provider;uniqueIndex:idx_media_assets_provider_asset_id,priority:1"`
+	Provider StorageProvider `gorm:"column:provider;not null;type:text;index:idx_media_assets_provider;uniqueIndex:idx_media_assets_provider_asset_id,priority:1;uniqueIndex:idx_media_assets_source_url_hash_provider,priority:2"`
 	// ProviderAssetID is the provider-specific ID (e.g., cf_image_id, s3 key, ipfs hash)
 	ProviderAssetID *string `gorm:"column:provider_asset_id;type:text;uniqueIndex:idx_media_assets_provider_asset_id,priority:2"`
 	// ProviderMetadata stores provider-specific data as JSON (e.g., cloudflare account info, s3 bucket details)

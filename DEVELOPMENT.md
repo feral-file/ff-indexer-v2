@@ -169,10 +169,10 @@ go run main.go
 
 When metadata contains data URIs, the media worker decodes and transforms them server-side before upload:
 
-- Image data URIs are converted to WebP before uploading to Cloudflare Images.
-- Media assets are stored by a stable hash key to avoid oversized index entries:
-  - `source_url` in `media_assets` becomes `data:sha256:<hash>` for data URIs.
-- API expansions resolve media assets by hashing incoming data URIs to match stored keys.
+- Data URIs are validated in probe and processed through the standard media pipeline.
+- Media assets are indexed by `source_url_hash` (MD5) to avoid oversized index entries:
+  - `source_url` is nullable (HTTP URLs stored as-is, data URIs stored as NULL).
+- API expansions resolve media assets by hashing incoming URLs for lookup.
 
 ### API Server
 ```bash
@@ -436,6 +436,20 @@ make clean
 # Remove built Docker images
 make clean-images
 ```
+
+## Testing
+
+```bash
+# Run all media-related tests (requires CGO)
+CGO_ENABLED=1 go test ./internal/media/... -v
+
+# Narrow to specific packages
+CGO_ENABLED=1 go test ./internal/media/processor -v
+CGO_ENABLED=1 go test ./internal/media/transformer -v
+CGO_ENABLED=1 go test ./internal/media/rasterizer -v
+```
+
+Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environment.
 
 ## Tips
 
