@@ -1,9 +1,7 @@
 package store
 
 import (
-	"context"
-	"crypto/md5" //nolint:gosec,G501 // MD5 used for non-cryptographic database indexing only, not security
-	"encoding/hex"
+	"context" //nolint:gosec,G501 // MD5 used for non-cryptographic database indexing only, not security
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,24 +35,6 @@ func hasDBResolver(db *gorm.DB) bool {
 // NewPGStore creates a new PostgreSQL store instance
 func NewPGStore(db *gorm.DB) Store {
 	return &pgStore{db: db}
-}
-
-// md5Hash computes the MD5 hash of a string and returns it as a hex string
-func md5Hash(s string) string {
-	if s == "" {
-		return ""
-	}
-	hash := md5.Sum([]byte(s)) //nolint:gosec,G401 // for indexing purposes only
-	return hex.EncodeToString(hash[:])
-}
-
-// ptrMd5Hash computes the MD5 hash of a string pointer and returns it as a pointer to hex string
-func ptrMd5Hash(s *string) *string {
-	if s == nil || *s == "" {
-		return nil
-	}
-	hash := md5Hash(*s)
-	return &hash
 }
 
 // ConfigureConnectionPool configures the connection pool settings for a GORM database connection.
@@ -996,9 +976,9 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			EnrichmentLevel:  input.EnrichmentLevel,
 			LastRefreshedAt:  &input.LastRefreshedAt,
 			ImageURL:         input.ImageURL,
-			ImageURLHash:     ptrMd5Hash(input.ImageURL),
+			ImageURLHash:     types.MD5HashPtr(input.ImageURL),
 			AnimationURL:     input.AnimationURL,
-			AnimationURLHash: ptrMd5Hash(input.AnimationURL),
+			AnimationURLHash: types.MD5HashPtr(input.AnimationURL),
 			Name:             input.Name,
 			Artists:          input.Artists,
 			Description:      input.Description,
@@ -1150,9 +1130,9 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 			VendorJSON:       input.VendorJSON,
 			VendorHash:       input.VendorHash,
 			ImageURL:         input.ImageURL,
-			ImageURLHash:     ptrMd5Hash(input.ImageURL),
+			ImageURLHash:     types.MD5HashPtr(input.ImageURL),
 			AnimationURL:     input.AnimationURL,
-			AnimationURLHash: ptrMd5Hash(input.AnimationURL),
+			AnimationURLHash: types.MD5HashPtr(input.AnimationURL),
 			Name:             input.Name,
 			Description:      input.Description,
 			Artists:          input.Artists,
@@ -2998,7 +2978,7 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 
 	// URL removed or changed - delete old record
 	if oldURLStr != "" {
-		oldURLHash := md5Hash(oldURLStr)
+		oldURLHash := types.MD5Hash(oldURLStr)
 		if err := tx.Where("token_id = ? AND media_url_hash = ? AND media_source = ?", tokenID, oldURLHash, source).
 			Delete(&schema.TokenMediaHealth{}).Error; err != nil {
 			return fmt.Errorf("failed to delete old health record: %w", err)
@@ -3010,7 +2990,7 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 		health := &schema.TokenMediaHealth{
 			TokenID:       tokenID,
 			MediaURL:      newURLStr,
-			MediaURLHash:  md5Hash(newURLStr),
+			MediaURLHash:  types.MD5Hash(newURLStr),
 			MediaSource:   source,
 			HealthStatus:  schema.MediaHealthStatusUnknown,
 			LastCheckedAt: time.Now(),
@@ -3049,7 +3029,7 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 
 // GetTokenIDsByMediaURL returns all token IDs that use a specific URL
 func (s *pgStore) GetTokenIDsByMediaURL(ctx context.Context, url string) ([]uint64, error) {
-	urlHash := md5Hash(url)
+	urlHash := types.MD5Hash(url)
 	var tokenIDs []uint64
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
@@ -3086,7 +3066,7 @@ func (s *pgStore) GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint
 
 // UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
 func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error {
-	urlHash := md5Hash(url)
+	urlHash := types.MD5Hash(url)
 	updates := map[string]interface{}{
 		"health_status":   status,
 		"last_checked_at": time.Now(),
@@ -3106,8 +3086,8 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, s
 
 // UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
 func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error {
-	oldHash := md5Hash(oldURL)
-	newHash := md5Hash(newURL)
+	oldHash := types.MD5Hash(oldURL)
+	newHash := types.MD5Hash(newURL)
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Update token_media_health
