@@ -45,6 +45,8 @@ go.work.sum
 
 # env file
 **/.env.local
+config/.env.media.local
+config/.env.worker-media.local
 
 # Config files (keep samples only)
 config.yaml
