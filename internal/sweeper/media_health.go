@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	SWEEP_CYCLE_INTERVAL = 15 * time.Minute // Time to sleep between sweep cycles
+	SWEEP_CYCLE_INTERVAL = 1 * time.Minute // Time to sleep between sweep cycles
 )
 
 // MediaHealthSweeperConfig holds configuration for the media health sweeper
@@ -339,13 +339,7 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 				zap.String("url", url),
 				zap.Stringp("error", result.Error),
 			)
-			// Reset status back to previous state so it can be retried
-			// We don't know the previous status, so we just set it to unknown to allow retry
-			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusUnknown, result.Error); err != nil {
-				logger.ErrorCtx(ctx, err,
-					zap.String("url", url),
-				)
-			}
+			// No need to update media health status, it will be retried later
 			return
 		}
 	}

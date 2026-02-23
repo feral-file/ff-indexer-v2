@@ -574,7 +574,7 @@ func LoadSweeperConfig(configFile string, envPath string) (*SweeperConfig, error
 	v.SetDefault("database.conn_max_idle_time", "10m")
 	v.SetDefault("media_health_sweeper.http_timeout", "30s")
 	v.SetDefault("media_health_sweeper.batch_size", 100)
-	v.SetDefault("media_health_sweeper.worker.pool_size", 50)
+	v.SetDefault("media_health_sweeper.worker.pool_size", 5)
 	v.SetDefault("media_health_sweeper.worker.queue_size", 100)
 	v.SetDefault("media_health_sweeper.recheck_after", "24h") // 1 day
 	v.SetDefault("temporal.host_port", "localhost:7233")
