@@ -220,6 +220,13 @@ func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheck
 		logger.InfoCtx(ctx, "Range not satisfiable, trying HEAD without range", zap.String("url", url))
 		return c.checkWithoutRange(ctx, url)
 
+	case http.StatusTooManyRequests: // 429 - Rate limited
+		errMsg := "rate limited (429)"
+		return HealthCheckResult{
+			Status: HealthStatusTransientError,
+			Error:  &errMsg,
+		}
+
 	default:
 		// Try one more time without range for other status codes
 		logger.InfoCtx(ctx, "GET with Range failed, trying without range", zap.String("url", url), zap.Int("status", resp.StatusCode))
@@ -227,7 +234,7 @@ func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheck
 	}
 }
 
-// checkWithoutRange performs a HEAD request without Range header as final fallback
+// checkWithoutRange performs a GET request without Range header as final fallback
 func (c *urlChecker) checkWithoutRange(ctx context.Context, url string) HealthCheckResult {
 	resp, err := c.httpClient.GetResponseNoRetry(ctx, url, nil)
 	if err != nil {
@@ -256,6 +263,14 @@ func (c *urlChecker) checkWithoutRange(ctx context.Context, url string) HealthCh
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return HealthCheckResult{
 			Status: HealthStatusHealthy,
+		}
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests { // 429 - Rate limited
+		errMsg := "rate limited (429)"
+		return HealthCheckResult{
+			Status: HealthStatusTransientError,
+			Error:  &errMsg,
 		}
 	}
 

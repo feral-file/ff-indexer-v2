@@ -128,27 +128,27 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 
-				// Now fallback to IPFS gateway resolution - first gateway succeeds (second call to same URL)
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil).
-					Times(1)
+			// Now fallback to IPFS gateway resolution - first gateway succeeds (second call to same URL)
+			mockResp1 := &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+			}
+			mockHTTP.
+				EXPECT().
+				Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+				Return(mockResp1, nil).
+				Times(1)
 
-				// Second gateway may or may not be called (runs in parallel)
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp2, nil).
-					AnyTimes()
+			// Second gateway may or may not be called (runs in parallel)
+			mockResp2 := &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+			}
+			mockHTTP.
+				EXPECT().
+				Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+				Return(mockResp2, nil).
+				AnyTimes()
 			},
 			expectedStatus: uri.HealthStatusHealthy,
 			expectedURL:    stringPtr("https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"),
@@ -199,27 +199,27 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 
-				// Now fallback to Arweave gateway resolution - first gateway succeeds (second call to same URL)
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(mockResp1, nil).
-					Times(1)
+			// Now fallback to Arweave gateway resolution - first gateway succeeds (second call to same URL)
+			mockResp1 := &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+			}
+			mockHTTP.
+				EXPECT().
+				Head(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
+				Return(mockResp1, nil).
+				Times(1)
 
-				// Second gateway may or may not be called (runs in parallel)
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://ar-io.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(mockResp2, nil).
-					AnyTimes()
+			// Second gateway may or may not be called (runs in parallel)
+			mockResp2 := &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+			}
+			mockHTTP.
+				EXPECT().
+				Head(gomock.Any(), "https://ar-io.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
+				Return(mockResp2, nil).
+				AnyTimes()
 			},
 			expectedStatus: uri.HealthStatusHealthy,
 			expectedURL:    stringPtr("https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
@@ -321,25 +321,25 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 
-				// Now fallback to IPFS gateway resolution - all gateways fail (parallel calls)
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil).
-					Times(1)
+			// Now fallback to IPFS gateway resolution - all gateways fail (parallel calls)
+			mockResp1 := &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+			}
+			mockHTTP.
+				EXPECT().
+				Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+				Return(mockResp1, nil).
+				Times(1)
 
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp2, nil)
+			mockResp2 := &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+			}
+			mockHTTP.
+				EXPECT().
+				Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
+				Return(mockResp2, nil)
 			},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
@@ -367,16 +367,16 @@ func TestURLChecker_Check(t *testing.T) {
 					GetResponseNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", map[string]string{"Range": "bytes=0-1023"}).
 					Return(nil, assert.AnError)
 
-				// Now fallback to Arweave gateway resolution - gateway fails (second call)
-				mockResp := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(mockResp, nil).
-					Times(1)
+			// Now fallback to Arweave gateway resolution - gateway fails (second call)
+			mockResp := &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(bytes.NewReader(nil)),
+			}
+			mockHTTP.
+				EXPECT().
+				Head(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
+				Return(mockResp, nil).
+				Times(1)
 			},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
@@ -597,6 +597,86 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
 			expectedError:  stringPtr("assert.AnError"),
+		},
+		{
+			name: "regular HTTPS URL - GET with Range returns 429, transient error",
+			url:  "https://example.com/image.png",
+			config: &uri.Config{
+				IPFSGateways:    []string{"https://ipfs.io"},
+				ArweaveGateways: []string{"https://arweave.net"},
+				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
+			},
+			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
+				mockHTTP.
+					EXPECT().
+					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
+					Return(nil, assert.AnError)
+
+				mockResp := &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       io.NopCloser(bytes.NewReader(nil)),
+				}
+				mockHTTP.
+					EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					Return(mockResp, nil)
+
+				mockIO.
+					EXPECT().
+					Discard(mockResp.Body).
+					Return(nil)
+			},
+			expectedStatus: uri.HealthStatusTransientError,
+			expectedURL:    nil,
+			expectedError:  stringPtr("rate limited (429)"),
+		},
+		{
+			name: "regular HTTPS URL - GET without Range returns 429, transient error",
+			url:  "https://example.com/image.png",
+			config: &uri.Config{
+				IPFSGateways:    []string{"https://ipfs.io"},
+				ArweaveGateways: []string{"https://arweave.net"},
+				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
+			},
+			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
+				mockHTTP.
+					EXPECT().
+					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
+					Return(nil, assert.AnError)
+
+				// GET with Range returns 404, triggers fallback
+				mockResp1 := &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(bytes.NewReader(nil)),
+				}
+				mockHTTP.
+					EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+					Return(mockResp1, nil)
+
+				mockIO.
+					EXPECT().
+					Discard(mockResp1.Body).
+					Return(nil)
+
+				// Fallback GET without Range returns 429
+				mockResp2 := &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       io.NopCloser(bytes.NewReader(nil)),
+				}
+				mockHTTP.
+					EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", nil).
+					Return(mockResp2, nil)
+
+				mockIO.
+					EXPECT().
+					Discard(mockResp2.Body).
+					Return(nil)
+			},
+			expectedStatus: uri.HealthStatusTransientError,
+			expectedURL:    nil,
+			expectedError:  stringPtr("rate limited (429)"),
 		},
 		{
 			name: "regular HTTPS URL - transient error from GET without Range",

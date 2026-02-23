@@ -179,9 +179,9 @@ func (c *RealHTTPClient) doRequestWithRetryAndResponse(ctx context.Context, req 
 
 	// Configure exponential backoff
 	b := backoff.NewExponentialBackOff()
-	b.InitialInterval = 5 * time.Second
-	b.MaxInterval = 30 * time.Second
-	b.MaxElapsedTime = 2 * time.Minute // Total retry duration
+	b.InitialInterval = 1 * time.Second
+	b.MaxInterval = 10 * time.Second
+	b.MaxElapsedTime = time.Minute // Total retry duration
 	b.Multiplier = 2.0
 	b.RandomizationFactor = 0.5 // Add jitter to prevent thundering herd
 
