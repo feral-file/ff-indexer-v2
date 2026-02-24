@@ -1,6 +1,8 @@
 package workflows
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"time"
 
@@ -194,33 +196,41 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 			}
 		}
 
-		// Configure child workflow options for fire-and-forget
-		childWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowID:            fmt.Sprintf("index-media-token-%s", tokenCID.String()),
-			WorkflowRunTimeout:    30 * time.Minute,
-			TaskQueue:             w.config.MediaTaskQueue,
-			WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for completion
-		}
-		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
+		// Start one IndexMediaWorkflow per URL (fire-and-forget) so that a single
+		// oversized data URI cannot cause the entire batch to fail, and failures
+		// are isolated to individual URLs.
+		// FIXME: This is a temporary solution to avoid the entire batch failing due to a single oversized data URI.
+		// The better approach for data URI could be Claim Check Pattern to ensure the data URI bypass the Temporal params size limit.
+		for _, url := range validURLs {
+			// Use a SHA-256 hash of the URL as the workflow ID so that long data
+			// URIs don't exceed Temporal's 255-character workflow ID limit.
+			hash := sha256.Sum256([]byte(url))
+			workflowID := fmt.Sprintf("index-media-%s", base64.RawURLEncoding.EncodeToString(hash[:]))
 
-		// Start the child workflow without waiting for result
-		// Use workflow name directly to avoid dependency on media package
-		childWorkflow := workflow.ExecuteChildWorkflow(childCtx, "IndexMultipleMediaWorkflow", validURLs)
+			childWorkflowOptions := workflow.ChildWorkflowOptions{
+				WorkflowID:            workflowID,
+				WorkflowRunTimeout:    30 * time.Minute,
+				TaskQueue:             w.config.MediaTaskQueue,
+				WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+				ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON,
+			}
+			childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
 
-		// Only check if workflow started successfully, don't wait for completion
-		var childExecution workflow.Execution
-		if err := childWorkflow.GetChildWorkflowExecution().Get(childCtx, &childExecution); err != nil {
-			// Log but don't fail the parent workflow
-			logger.WarnWf(ctx, "Failed to start media indexing workflow (non-fatal)",
-				zap.String("tokenCID", tokenCID.String()),
-				zap.Error(err),
-			)
-		} else {
-			logger.InfoWf(ctx, "Media indexing workflow started",
-				zap.String("tokenCID", tokenCID.String()),
-				zap.String("workflowID", childExecution.ID),
-			)
+			childWorkflow := workflow.ExecuteChildWorkflow(childCtx, "IndexMediaWorkflow", url)
+
+			var childExecution workflow.Execution
+			if err := childWorkflow.GetChildWorkflowExecution().Get(childCtx, &childExecution); err != nil {
+				logger.WarnWf(ctx, "Failed to start media indexing workflow for URL (non-fatal)",
+					zap.String("tokenCID", tokenCID.String()),
+					zap.String("workflowID", workflowID),
+					zap.Error(err),
+				)
+			} else {
+				logger.InfoWf(ctx, "Media indexing workflow started",
+					zap.String("tokenCID", tokenCID.String()),
+					zap.String("workflowID", childExecution.ID),
+				)
+			}
 		}
 	}
 
