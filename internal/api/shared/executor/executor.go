@@ -166,6 +166,11 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 		// Merge the data into display field
 		tokenDTO.Display = dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
 
+		// Replace any data URI image/animation URLs with the public variant from media_assets
+		if err := e.resolveDisplayDataURIs(ctx, []dto.TokenResponse{*tokenDTO}); err != nil {
+			return nil, err
+		}
+
 		// Clean up metadata and enrichment_source if they weren't explicitly requested
 		if !expansionMap[types.ExpansionMetadata] {
 			tokenDTO.Metadata = nil
@@ -516,6 +521,13 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		}
 
 		tokenDTOs[i] = *tokenDTO
+	}
+
+	// Replace data URI image/animation URLs in display fields with public variant URLs.
+	if expansionMap[types.ExpansionDisplay] {
+		if err := e.resolveDisplayDataURIs(ctx, tokenDTOs); err != nil {
+			return nil, err
+		}
 	}
 
 	// Build response with pagination
@@ -1419,4 +1431,89 @@ func (e *executor) GetAddressIndexingJob(ctx context.Context, workflowID string,
 	}
 
 	return response, nil
+}
+
+// resolveDisplayDataURIs replaces data URI image/animation URLs in the given token displays
+// with the corresponding "public" variant URL from the media_assets table.
+//
+// To avoid redundant DB queries, it first builds a lookup from each token's already-fetched
+// MediaAssets (populated when the media_asset expansion is also requested). Only data URIs
+// that cannot be resolved from in-memory assets are then fetched from the DB in one bulk query.
+func (e *executor) resolveDisplayDataURIs(ctx context.Context, tokens []dto.TokenResponse) error {
+	// Seed the lookup from already-fetched media assets on each token DTO.
+	publicURLs := make(map[string]string)
+	for _, token := range tokens {
+		for _, asset := range token.MediaAssets {
+			if asset.VariantURLs == nil {
+				continue
+			}
+			var variants map[string]string
+			if err := e.json.Unmarshal(asset.VariantURLs, &variants); err != nil {
+				continue
+			}
+			if publicURL, ok := variants["public"]; ok && publicURL != "" {
+				publicURLs[asset.SourceURL] = publicURL
+			}
+		}
+	}
+
+	// Collect data URIs that still need a DB lookup (not already in memory).
+	var needsDB []string
+	seen := make(map[string]bool)
+	for _, token := range tokens {
+		if token.Display == nil {
+			continue
+		}
+		for _, urlPtr := range []*string{token.Display.ImageURL, token.Display.AnimationURL} {
+			if urlPtr == nil || !internalTypes.IsDataURI(*urlPtr) || seen[*urlPtr] {
+				continue
+			}
+			seen[*urlPtr] = true
+			if _, found := publicURLs[*urlPtr]; !found {
+				needsDB = append(needsDB, *urlPtr)
+			}
+		}
+	}
+
+	if len(needsDB) > 0 {
+		assets, err := e.store.GetMediaAssetsBySourceURLs(ctx, needsDB)
+		if err != nil {
+			return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media assets for display data URIs: %v", err))
+		}
+		for _, asset := range assets {
+			if asset.VariantURLs == nil {
+				continue
+			}
+			var variants map[string]string
+			if err := e.json.Unmarshal([]byte(asset.VariantURLs), &variants); err != nil {
+				continue
+			}
+			if publicURL, ok := variants["public"]; ok && publicURL != "" {
+				publicURLs[asset.SourceURL] = publicURL
+			}
+		}
+	}
+
+	// If there is nothing to replace, return early.
+	if len(publicURLs) == 0 {
+		return nil
+	}
+
+	// Apply replacements in-place on each display.
+	for _, token := range tokens {
+		if token.Display == nil {
+			continue
+		}
+		if token.Display.ImageURL != nil {
+			if publicURL, ok := publicURLs[*token.Display.ImageURL]; ok {
+				token.Display.ImageURL = &publicURL
+			}
+		}
+		if token.Display.AnimationURL != nil {
+			if publicURL, ok := publicURLs[*token.Display.AnimationURL]; ok {
+				token.Display.AnimationURL = &publicURL
+			}
+		}
+	}
+	return nil
 }
