@@ -792,6 +792,28 @@ func (s *pgStore) GetTokenOwnerProvenancesBulk(ctx context.Context, tokenIDs []u
 	return result, totals, nil
 }
 
+// CheckStorageProviderEnum returns true if the storage_provider enum contains the value.
+func (s *pgStore) CheckStorageProviderEnum(ctx context.Context, provider schema.StorageProvider) (bool, error) {
+	if provider == "" {
+		return false, fmt.Errorf("storage provider cannot be empty")
+	}
+
+	var exists bool
+	err := s.db.WithContext(ctx).
+		Raw(`SELECT EXISTS (
+			SELECT 1
+			FROM pg_enum e
+			JOIN pg_type t ON t.oid = e.enumtypid
+			WHERE t.typname = 'storage_provider'
+			AND e.enumlabel = ?
+		)`, string(provider)).
+		Scan(&exists).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to check storage provider enum: %w", err)
+	}
+	return exists, nil
+}
+
 // GetTokenProvenanceEvents retrieves provenance events for a token
 func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, limit int, offset uint64, orderDesc bool) ([]schema.ProvenanceEvent, uint64, error) {
 	query := s.db.WithContext(ctx).Model(&schema.ProvenanceEvent{}).Where("token_id = ?", tokenID)

@@ -19,6 +19,8 @@ const (
 	StorageProviderSelfHosted StorageProvider = "self_hosted"
 	// StorageProviderCloudflare represents Cloudflare storage
 	StorageProviderCloudflare StorageProvider = "cloudflare"
+	// StorageProviderLocal represents local storage
+	StorageProviderLocal StorageProvider = "local"
 	// StorageProviderS3 represents S3-compatible storage
 	StorageProviderS3 StorageProvider = "s3"
 )
