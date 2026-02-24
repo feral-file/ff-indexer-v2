@@ -7,7 +7,7 @@ import (
 
 // MD5Hash computes the MD5 hash of a string and returns it as a hex string.
 func MD5Hash(value string) string {
-	hash := md5.Sum([]byte(value))
+	hash := md5.Sum([]byte(value)) //nolint:gosec,G501 // MD5 used for non-cryptographic database indexing only, not security
 	return hex.EncodeToString(hash[:])
 }
 

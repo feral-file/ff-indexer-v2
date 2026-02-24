@@ -2402,7 +2402,7 @@ func (s *pgStore) GetMediaAssetBySourceURL(ctx context.Context, sourceURL string
 		return nil, nil
 	}
 
-	sourceURLHash := md5Hash(sourceURL)
+	sourceURLHash := types.MD5Hash(sourceURL)
 	var media schema.MediaAsset
 	err := s.db.WithContext(ctx).
 		Where("source_url_hash = ? AND provider = ?", sourceURLHash, provider).First(&media).Error
@@ -2427,7 +2427,7 @@ func (s *pgStore) GetMediaAssetsBySourceURLs(ctx context.Context, sourceURLs []s
 		if url == "" {
 			continue
 		}
-		hash := md5Hash(url)
+		hash := types.MD5Hash(url)
 		if seen[hash] {
 			continue
 		}
@@ -2456,7 +2456,7 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 		return nil, fmt.Errorf("source URL cannot be empty")
 	}
 
-	sourceURLHash := md5Hash(input.SourceURL)
+	sourceURLHash := types.MD5Hash(input.SourceURL)
 	var storedSourceURL *string
 	if !types.IsDataURI(input.SourceURL) {
 		storedSourceURL = &input.SourceURL
