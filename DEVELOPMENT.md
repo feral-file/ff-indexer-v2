@@ -171,7 +171,7 @@ When metadata contains data URIs, the media worker decodes and transforms them s
 
 - Data URIs are validated in probe and processed through the standard media pipeline.
 - Media assets are indexed by `source_url_hash` (MD5) to avoid oversized index entries:
-  - `source_url` is nullable (HTTP URLs stored as-is, data URIs stored as NULL).
+  - `source_url` stores the raw URL (including data URIs) for consistency.
 - API expansions resolve media assets by hashing incoming URLs for lookup.
 
 ### API Server

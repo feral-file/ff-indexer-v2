@@ -29,8 +29,8 @@ type MediaAsset struct {
 	ID int64 `gorm:"column:id;primaryKey;autoIncrement"`
 
 	// Original source
-	// SourceURL is the original URL where the media was found (null for data URIs)
-	SourceURL *string `gorm:"column:source_url;type:text"`
+	// SourceURL is the original URL where the media was found
+	SourceURL string `gorm:"column:source_url;not null;type:text"`
 	// SourceURLHash is the MD5 hash of SourceURL or data URI for indexing
 	SourceURLHash string `gorm:"column:source_url_hash;not null;type:text;index:idx_media_assets_source_url_hash;uniqueIndex:idx_media_assets_source_url_hash_provider,priority:1"`
 	// MimeType is the MIME type of the media (e.g., image/jpeg, video/mp4)

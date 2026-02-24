@@ -91,7 +91,7 @@ CREATE TABLE media_assets (
     id BIGSERIAL PRIMARY KEY,
     
     -- Original source
-    source_url TEXT,                        -- Original URL where media was found (null for data URIs)
+    source_url TEXT NOT NULL,               -- Original URL where media was found
     source_url_hash TEXT NOT NULL,          -- MD5 hash of source_url or data URI for indexing
     mime_type TEXT,                         -- image/jpeg, video/mp4, etc.
     file_size_bytes BIGINT,

@@ -14,14 +14,6 @@ WHERE source_url_hash IS NULL
 ALTER TABLE media_assets
     ALTER COLUMN source_url_hash SET NOT NULL;
 
-ALTER TABLE media_assets
-    ALTER COLUMN source_url DROP NOT NULL;
-
--- Ensure data URIs do not store the raw URL
-UPDATE media_assets
-SET source_url = NULL
-WHERE source_url LIKE 'data:%';
-
 -- Replace unique constraint to use source_url_hash
 ALTER TABLE media_assets
     DROP CONSTRAINT IF EXISTS media_assets_source_url_provider_key;

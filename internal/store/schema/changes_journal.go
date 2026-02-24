@@ -90,7 +90,7 @@ type MediaAssetChangeMeta struct {
 
 // MediaAssetFields represents the media asset fields we track for changes
 type MediaAssetFields struct {
-	SourceURL        *string `json:"source_url,omitempty"`        // Original source URL
+	SourceURL        string  `json:"source_url"`                  // Original source URL
 	SourceURLHash    string  `json:"source_url_hash"`             // MD5 hash of SourceURL or data URI
 	Provider         string  `json:"provider"`                    // Storage provider
 	ProviderAssetID  *string `json:"provider_asset_id,omitempty"` // Provider-specific asset ID

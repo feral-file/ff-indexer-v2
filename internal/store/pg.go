@@ -2457,10 +2457,6 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 	}
 
 	sourceURLHash := types.MD5Hash(input.SourceURL)
-	var storedSourceURL *string
-	if !types.IsDataURI(input.SourceURL) {
-		storedSourceURL = &input.SourceURL
-	}
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get the old media asset (if it exists) for change tracking - BEFORE upsert
@@ -2472,7 +2468,7 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 
 		// 2. Upsert media asset
 		newMediaAsset := schema.MediaAsset{
-			SourceURL:        storedSourceURL,
+			SourceURL:        input.SourceURL,
 			SourceURLHash:    sourceURLHash,
 			MimeType:         input.MimeType,
 			FileSizeBytes:    input.FileSizeBytes,
@@ -2511,7 +2507,7 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 
 		metaChanges := schema.MediaAssetChangeMeta{
 			New: schema.MediaAssetFields{
-				SourceURL:        storedSourceURL,
+				SourceURL:        input.SourceURL,
 				SourceURLHash:    sourceURLHash,
 				Provider:         string(input.Provider),
 				ProviderAssetID:  input.ProviderAssetID,

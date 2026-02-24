@@ -134,7 +134,7 @@ func TestIndexMediaFile_AlreadyExists(t *testing.T) {
 	// Mock store GetMediaAssetBySourceURL to return existing asset
 	existingAsset := &schema.MediaAsset{
 		ID:        1,
-		SourceURL: &url,
+		SourceURL: url,
 	}
 
 	mocks.mediaProcessor.EXPECT().

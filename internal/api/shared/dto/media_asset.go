@@ -23,13 +23,9 @@ type MediaAssetResponse struct {
 
 // MapMediaAssetToDTO maps a schema.MediaAsset to MediaAssetResponse
 func MapMediaAssetToDTO(media *schema.MediaAsset) *MediaAssetResponse {
-	sourceURL := ""
-	if media.SourceURL != nil {
-		sourceURL = *media.SourceURL
-	}
 	dto := &MediaAssetResponse{
 		ID:              media.ID,
-		SourceURL:       sourceURL,
+		SourceURL:       media.SourceURL,
 		MimeType:        media.MimeType,
 		FileSizeBytes:   media.FileSizeBytes,
 		Provider:        string(media.Provider),
