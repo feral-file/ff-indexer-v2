@@ -1,6 +1,6 @@
 //go:build cgo
 
-package processor
+package processor_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
@@ -22,41 +23,8 @@ import (
 
 const testDataURIPNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6Y9K2kAAAAASUVORK5CYII="
 
-type testProvider struct {
-	testing      *testing.T
-	uploadCalled bool
-}
-
-func (p *testProvider) UploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
-	p.testing.Fatalf("UploadImageFromURL should not be called")
-	return nil, nil
-}
-
-func (p *testProvider) UploadImageFromReader(ctx context.Context, reader io.Reader, filename, contentType string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
-	p.uploadCalled = true
-	require.Equal(p.testing, "image/webp", contentType)
-	require.NotEmpty(p.testing, filename)
-	require.Equal(p.testing, true, metadata["data_uri"])
-	require.Equal(p.testing, true, metadata["transformed"])
-
-	return &mediaprovider.UploadResult{
-		ProviderAssetID: "asset-123",
-		VariantURLs: map[string]string{
-			"original": "https://cdn.example.com/asset-123",
-		},
-		ProviderMetadata: map[string]interface{}{
-			"provider": "test",
-		},
-	}, nil
-}
-
-func (p *testProvider) UploadVideo(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
-	p.testing.Fatalf("UploadVideo should not be called")
-	return nil, nil
-}
-
-func (p *testProvider) Name() string {
-	return "cloudflare"
+func init() {
+	_ = logger.Initialize(logger.Config{Debug: true})
 }
 
 func TestProcess_DataURIImage(t *testing.T) {
@@ -64,9 +32,7 @@ func TestProcess_DataURIImage(t *testing.T) {
 	defer ctrl.Finish()
 
 	ctx := context.Background()
-	require.NoError(t, logger.Initialize(logger.Config{Debug: true}))
 	jsonAdapter := adapter.NewJSON()
-	provider := &testProvider{testing: t}
 
 	httpClient := mocks.NewMockHTTPClient(ctrl)
 	uriResolver := mocks.NewMockURIResolver(ctrl)
@@ -77,6 +43,9 @@ func TestProcess_DataURIImage(t *testing.T) {
 	ioAdapter := mocks.NewMockIO(ctrl)
 	dl := mocks.NewMockDownloader(ctrl)
 	trans := mocks.NewMockTransformer(ctrl)
+	provider := mocks.NewMockMediaProvider(ctrl)
+
+	provider.EXPECT().Name().Return("cloudflare").AnyTimes()
 
 	dataChecker.EXPECT().
 		Check(testDataURIPNG).
@@ -108,6 +77,25 @@ func TestProcess_DataURIImage(t *testing.T) {
 			}, nil
 		})
 
+	provider.EXPECT().
+		UploadImageFromReader(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, reader io.Reader, filename, contentType string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+			require.Equal(t, "image/webp", contentType)
+			require.NotEmpty(t, filename)
+			require.Equal(t, true, metadata["data_uri"])
+			require.Equal(t, true, metadata["transformed"])
+
+			return &mediaprovider.UploadResult{
+				ProviderAssetID: "asset-123",
+				VariantURLs: map[string]string{
+					"original": "https://cdn.example.com/asset-123",
+				},
+				ProviderMetadata: map[string]interface{}{
+					"provider": "test",
+				},
+			}, nil
+		})
+
 	st.EXPECT().
 		CreateMediaAsset(ctx, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, input store.CreateMediaAssetInput) (*schema.MediaAsset, error) {
@@ -118,7 +106,7 @@ func TestProcess_DataURIImage(t *testing.T) {
 			return &schema.MediaAsset{ID: 1}, nil
 		})
 
-	proc := NewProcessor(
+	proc := processor.NewProcessor(
 		httpClient,
 		uriResolver,
 		dataChecker,
@@ -136,5 +124,4 @@ func TestProcess_DataURIImage(t *testing.T) {
 
 	err := proc.Process(ctx, testDataURIPNG)
 	require.NoError(t, err)
-	require.True(t, provider.uploadCalled)
 }
