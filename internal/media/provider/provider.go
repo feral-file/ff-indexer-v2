@@ -16,6 +16,8 @@ type UploadResult struct {
 }
 
 // Provider defines the interface for media storage providers
+//
+//go:generate mockgen -source=provider.go -destination=../../mocks/media_provider.go -package=mocks -mock_names=Provider=MockMediaProvider
 type Provider interface {
 	// UploadImageFromURL uploads an image from a URL to the provider
 	UploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*UploadResult, error)

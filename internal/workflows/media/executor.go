@@ -48,8 +48,8 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 	if url == "" {
 		return fmt.Errorf("media URL is empty")
 	}
-	if !types.IsHTTPSURL(url) {
-		return fmt.Errorf("only HTTPS URLs are supported: %s", url)
+	if !types.IsDataURI(url) && !types.IsHTTPSURL(url) {
+		return fmt.Errorf("only HTTPS URLs or data URIs are supported: %s", url)
 	}
 
 	// Check if media asset already exists

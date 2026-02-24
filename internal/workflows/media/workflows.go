@@ -25,7 +25,7 @@ func (w *worker) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string)
 	// Remove duplicate URLs
 	uniqueURLs := make(map[string]bool)
 	for _, url := range urls {
-		if types.IsValidURL(url) {
+		if types.IsValidURL(url) || types.IsDataURI(url) {
 			uniqueURLs[url] = true
 		}
 	}

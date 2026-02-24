@@ -207,6 +207,23 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_MixedValidInvalidURLs
 	s.NoError(s.env.GetWorkflowError())
 }
 
+func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_DataURI() {
+	urls := []string{
+		"data:image/png;base64,iVBORw0KGgo=",
+		"not-a-url",
+	}
+
+	// Mock child workflow executions - only for valid media sources
+	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
+
+	// Execute the workflow
+	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+
+	// Verify workflow completed successfully
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+}
+
 func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowStartFailure() {
 	urls := []string{
 		"https://example.com/media1.jpg",

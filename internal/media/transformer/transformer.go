@@ -42,6 +42,12 @@ type TransformInput struct {
 	// SourceURL is the URL of the image to transform
 	SourceURL string
 
+	// Data is the image data to transform (alternative to SourceURL)
+	Data []byte
+
+	// Filename is an optional hint for output naming when Data is used
+	Filename string
+
 	// IsAnimated indicates if this is an animated image (GIF or animated WebP)
 	IsAnimated bool
 }
@@ -135,14 +141,24 @@ func (t *transformer) Transform(ctx context.Context, input *TransformInput) (*Tr
 		return nil, fmt.Errorf("input cannot be nil")
 	}
 
-	if input.SourceURL == "" {
-		return nil, fmt.Errorf("source URL cannot be empty")
+	hasSource := strings.TrimSpace(input.SourceURL) != ""
+	hasData := len(input.Data) > 0
+	if hasSource == hasData {
+		return nil, fmt.Errorf("exactly one of source URL or data must be provided")
 	}
 
-	logger.InfoCtx(ctx, "Starting image transformation",
-		zap.String("sourceURL", input.SourceURL),
-		zap.Bool("isAnimated", input.IsAnimated),
-	)
+	if hasSource {
+		logger.InfoCtx(ctx, "Starting image transformation",
+			zap.String("sourceURL", input.SourceURL),
+			zap.Bool("isAnimated", input.IsAnimated),
+		)
+	} else {
+		logger.InfoCtx(ctx, "Starting image transformation from bytes",
+			zap.String("filename", input.Filename),
+			zap.Int("inputBytes", len(input.Data)),
+			zap.Bool("isAnimated", input.IsAnimated),
+		)
+	}
 
 	// Add timeout to context
 	ctx, cancel := context.WithTimeout(ctx, t.config.TransformTimeout)
@@ -150,7 +166,10 @@ func (t *transformer) Transform(ctx context.Context, input *TransformInput) (*Tr
 
 	// Submit to pool and wait for result
 	task := t.pool.SubmitErr(func() (*TransformResult, error) {
-		return t.transformInternal(ctx, input)
+		if hasSource {
+			return t.transformInternal(ctx, input)
+		}
+		return t.transformBytesInternal(ctx, input)
 	})
 
 	result, err := task.Wait()
@@ -158,8 +177,7 @@ func (t *transformer) Transform(ctx context.Context, input *TransformInput) (*Tr
 		return nil, err
 	}
 
-	logger.InfoCtx(ctx, "Image transformation completed",
-		zap.String("sourceURL", input.SourceURL),
+	fields := []zap.Field{
 		zap.Int("originalSize", int(result.OriginalSize)),
 		zap.Int("transformedSize", int(result.TransformedSize)),
 		zap.Int("width", result.Width),
@@ -167,7 +185,14 @@ func (t *transformer) Transform(ctx context.Context, input *TransformInput) (*Tr
 		zap.Bool("resized", result.Resized),
 		zap.Bool("compressed", result.Compressed),
 		zap.Int("quality", result.Quality),
-	)
+		zap.String("contentType", result.ContentType),
+	}
+	if hasSource {
+		fields = append(fields, zap.String("sourceURL", input.SourceURL))
+	} else {
+		fields = append(fields, zap.String("filename", input.Filename), zap.Int("inputBytes", len(input.Data)))
+	}
+	logger.InfoCtx(ctx, "Image transformation completed", fields...)
 
 	return result, nil
 }
@@ -231,6 +256,42 @@ func (t *transformer) transformInternal(ctx context.Context, input *TransformInp
 	}
 
 	return t.transformStill(ctx, input, img, originalSize)
+}
+
+// transformBytesInternal performs transformation on in-memory data
+func (t *transformer) transformBytesInternal(ctx context.Context, input *TransformInput) (*TransformResult, error) {
+	originalSize := int64(len(input.Data))
+	if originalSize > t.config.MaxInputBytes {
+		logger.WarnCtx(ctx, "Input image exceeds maximum input size",
+			zap.Int64("size", originalSize),
+			zap.Int64("maxSize", t.config.MaxInputBytes),
+		)
+		return nil, ErrInputTooLarge
+	}
+
+	reader := io.NopCloser(bytes.NewReader(input.Data))
+	source := t.vipsClient.NewSource(reader)
+	defer source.Close()
+
+	loadOpts := vips.DefaultLoadOptions()
+	if input.IsAnimated {
+		loadOpts.N = -1
+	}
+	loadOpts.FailOnError = true
+	loadOpts.Access = vips.AccessRandom
+
+	img, err := t.vipsClient.NewImageFromSource(source, loadOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load image from source: %w", err)
+	}
+	defer img.Close()
+
+	outputFormat := "jpeg"
+	if img.HasAlpha() {
+		outputFormat = "webp"
+	}
+
+	return t.transformImage(ctx, input, img, originalSize, outputFormat, input.IsAnimated, nil, 0)
 }
 
 // transformStill transforms a still image (JPEG, PNG, WebP, etc.)
@@ -343,7 +404,7 @@ func (t *transformer) transformImage(
 	} else {
 		// Check if already meets targets
 		if t.meetsTarget(img, processed, frameWidth, frameHeight, isAnimated) {
-			return t.buildResult(input.SourceURL, processed, outputFormat, originalSize,
+			return t.buildResult(t.filenameHint(input), processed, outputFormat, originalSize,
 				frameWidth, frameHeight, false, false, quality), nil
 		}
 	}
@@ -503,7 +564,7 @@ func (t *transformer) transformImage(
 
 		// Check if we've met the targets
 		if t.meetsTarget(img, processed, currentWidth, currentHeight, isAnimated) {
-			return t.buildResult(input.SourceURL, processed, outputFormat, originalSize,
+			return t.buildResult(t.filenameHint(input), processed, outputFormat, originalSize,
 				currentWidth, currentHeight, resized, false, t.config.InitialQuality), nil
 		}
 
@@ -532,7 +593,7 @@ func (t *transformer) transformImage(
 
 		// Check if we've met the targets
 		if t.meetsTarget(img, processed, currentWidth, currentHeight, isAnimated) {
-			return t.buildResult(input.SourceURL, processed, outputFormat, originalSize,
+			return t.buildResult(t.filenameHint(input), processed, outputFormat, originalSize,
 				currentWidth, currentHeight, resized, compressed, quality), nil
 		}
 	}
@@ -653,7 +714,7 @@ func (t *transformer) encodeImage(img adapter.VipsImage, format string, quality 
 
 // buildResult constructs a TransformResult
 func (t *transformer) buildResult(
-	sourceURL string,
+	filenameHint string,
 	data []byte,
 	format string,
 	originalSize int64,
@@ -661,8 +722,12 @@ func (t *transformer) buildResult(
 	resized, compressed bool,
 	quality int,
 ) *TransformResult {
-	// Extract filename from URL
-	filename := filepath.Base(sourceURL)
+	// Determine filename for output
+	filename := filenameHint
+	if filename == "" {
+		filename = "image"
+	}
+	filename = filepath.Base(filename)
 
 	// Determine content type and extension
 	var contentType, ext string
@@ -696,6 +761,16 @@ func (t *transformer) buildResult(
 		Compressed:      compressed,
 		Quality:         quality,
 	}
+}
+
+func (t *transformer) filenameHint(input *TransformInput) string {
+	if input == nil {
+		return ""
+	}
+	if input.Filename != "" {
+		return input.Filename
+	}
+	return input.SourceURL
 }
 
 // isWebPSizeError checks if an error is related to WebP dimension/size limits

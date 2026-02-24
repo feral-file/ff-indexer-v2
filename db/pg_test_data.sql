@@ -841,13 +841,14 @@ SELECT setval('changes_journal_id_seq', 100, true);
 
 -- Media asset for Token 1
 INSERT INTO media_assets (
-    id, source_url, mime_type, file_size_bytes,
+    id, source_url, source_url_hash, mime_type, file_size_bytes,
     provider, provider_asset_id, provider_metadata, variant_urls,
     created_at, updated_at
 )
 VALUES (
     1,
     'ipfs://QmTest1',
+    md5('ipfs://QmTest1'),
     'image/png',
     1024000,
     'cloudflare',
@@ -860,13 +861,14 @@ VALUES (
 
 -- Media asset for Token 4 (image)
 INSERT INTO media_assets (
-    id, source_url, mime_type, file_size_bytes,
+    id, source_url, source_url_hash, mime_type, file_size_bytes,
     provider, provider_asset_id, provider_metadata, variant_urls,
     created_at, updated_at
 )
 VALUES (
     2,
     'ipfs://QmTest4',
+    md5('ipfs://QmTest4'),
     'image/png',
     2048000,
     'cloudflare',
@@ -879,13 +881,14 @@ VALUES (
 
 -- Media asset for Token 4 (animation)
 INSERT INTO media_assets (
-    id, source_url, mime_type, file_size_bytes,
+    id, source_url, source_url_hash, mime_type, file_size_bytes,
     provider, provider_asset_id, provider_metadata, variant_urls,
     created_at, updated_at
 )
 VALUES (
     3,
     'ipfs://QmTest4Anim',
+    md5('ipfs://QmTest4Anim'),
     'video/mp4',
     10240000,
     'cloudflare',
@@ -1261,5 +1264,4 @@ VALUES (
 
 -- Reset sequence
 SELECT setval('token_media_health_id_seq', 100, true);
-
 

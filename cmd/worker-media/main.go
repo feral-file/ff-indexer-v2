@@ -140,8 +140,11 @@ func main() {
 		zap.Int64("targetImagePixels", cfg.Transform.TargetImagePixels),
 	)
 
+	// Initialize data URI checker
+	dataURIChecker := uri.NewDataURIChecker()
+
 	// Initialize media processor
-	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, imageTransformer, cfg.MaxImageSize, cfg.MaxVideoSize)
+	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, dataURIChecker, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, imageTransformer, cfg.MaxImageSize, cfg.MaxVideoSize)
 
 	// Initialize media executor for media processing activities
 	mediaExecutor := workflowsmedia.NewExecutor(dataStore, mediaProcessor)

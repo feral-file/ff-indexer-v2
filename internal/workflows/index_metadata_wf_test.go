@@ -202,10 +202,8 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutE
 		return false
 	})).Return(nil)
 
-	// Mock media indexing child workflow - match the actual workflow type
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 1 && urls[0] == "https://example.com/image.jpg"
-	})).Return(nil)
+	// Mock media indexing child workflow - one per URL
+	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, "https://example.com/image.jpg").Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
@@ -251,20 +249,9 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnha
 		return false
 	})).Return(nil)
 
-	// Mock media indexing child workflow - match the actual workflow type
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		if len(urls) != 2 {
-			return false
-		}
-
-		for _, url := range urls {
-			if url != normalizedMetadata.Image && url != enhancedImageURL {
-				return false
-			}
-		}
-
-		return true
-	})).Return(nil)
+	// Mock media indexing child workflow - one per URL
+	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, metadataImageURL).Return(nil)
+	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, enhancedImageURL).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
@@ -345,8 +332,8 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_EnhancementError
 	// Mock webhook notification workflow
 	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
-	// Mock media indexing child workflow - match the actual workflow type
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
+	// Mock media indexing child workflow - one per URL
+	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
@@ -383,7 +370,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaWorkflowSta
 	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Mock media indexing child workflow to fail at start - should not fail parent workflow
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.Anything).Return(testsuite.ErrMockStartChildWorkflowFailed)
+	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, mock.Anything).Return(testsuite.ErrMockStartChildWorkflowFailed)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
@@ -431,10 +418,9 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsHealthy
 		return false
 	})).Return(nil)
 
-	// Mock media indexing child workflow
-	s.env.OnWorkflow(s.workerMedia.IndexMultipleMediaWorkflow, mock.Anything, mock.MatchedBy(func(urls []string) bool {
-		return len(urls) == 2
-	})).Return(nil)
+	// Mock media indexing child workflow - one per URL
+	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, imageURL).Return(nil)
+	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, animationURL).Return(nil)
 
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))

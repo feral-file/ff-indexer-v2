@@ -371,7 +371,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		// Create map for fast lookup
 		mediaAssetsMap = make(map[string]schema.MediaAsset)
 		for _, asset := range mediaAssetsList {
-			mediaAssetsMap[asset.SourceURL] = asset
+			mediaAssetsMap[asset.SourceURLHash] = asset
 		}
 	}
 
@@ -1094,11 +1094,19 @@ func collectMediaAssetDTOsFromMap(urls []string, mediaAssetsMap map[string]schem
 	}
 	var mediaDTOs []dto.MediaAssetResponse
 	for _, url := range urls {
-		if asset, ok := mediaAssetsMap[url]; ok {
+		lookupKey := mediaAssetLookupKey(url)
+		if asset, ok := mediaAssetsMap[lookupKey]; ok {
 			mediaDTOs = append(mediaDTOs, *dto.MapMediaAssetToDTO(&asset))
 		}
 	}
 	return mediaDTOs
+}
+
+func mediaAssetLookupKey(url string) string {
+	if url == "" {
+		return ""
+	}
+	return internalTypes.MD5Hash(url)
 }
 
 // expandMediaAssets expands both metadata and enrichment source media assets (unified approach)
@@ -1164,8 +1172,22 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 		return nil
 	}
 
+	lookupSourceURLs := make([]string, 0, len(sourceURLs))
+	lookupSet := make(map[string]bool)
+	for _, url := range sourceURLs {
+		lookupKey := mediaAssetLookupKey(url)
+		if lookupKey == "" || lookupSet[lookupKey] {
+			continue
+		}
+		lookupSet[lookupKey] = true
+		lookupSourceURLs = append(lookupSourceURLs, url)
+	}
+	if len(lookupSourceURLs) == 0 {
+		return nil
+	}
+
 	// Query media assets
-	mediaAssets, err := e.store.GetMediaAssetsBySourceURLs(ctx, sourceURLs)
+	mediaAssets, err := e.store.GetMediaAssetsBySourceURLs(ctx, lookupSourceURLs)
 	if err != nil {
 		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media assets: %v", err))
 	}
@@ -1173,7 +1195,7 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 	// Turn media assets into a map for fast lookup
 	mediaAssetsMap := make(map[string]schema.MediaAsset)
 	for _, asset := range mediaAssets {
-		mediaAssetsMap[asset.SourceURL] = asset
+		mediaAssetsMap[asset.SourceURLHash] = asset
 	}
 
 	// Map to track media URLs should be included in the response

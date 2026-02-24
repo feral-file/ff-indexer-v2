@@ -165,6 +165,15 @@ cd cmd/worker-media
 go run main.go
 ```
 
+### Data URI Media Processing
+
+When metadata contains data URIs, the media worker decodes and transforms them server-side before upload:
+
+- Data URIs are validated in probe and processed through the standard media pipeline.
+- Media assets are indexed by `source_url_hash` (MD5) to avoid oversized index entries:
+  - `source_url` stores the raw URL (including data URIs) for consistency.
+- API expansions resolve media assets by hashing incoming URLs for lookup.
+
 ### API Server
 ```bash
 cd cmd/api
@@ -428,6 +437,20 @@ make clean
 make clean-images
 ```
 
+## Testing
+
+```bash
+# Run all media-related tests (requires CGO)
+CGO_ENABLED=1 go test ./internal/media/... -v
+
+# Narrow to specific packages
+CGO_ENABLED=1 go test ./internal/media/processor -v
+CGO_ENABLED=1 go test ./internal/media/transformer -v
+CGO_ENABLED=1 go test ./internal/media/rasterizer -v
+```
+
+Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environment.
+
 ## Tips
 
 1. **Use Temporal UI** for workflow debugging and monitoring
@@ -442,4 +465,3 @@ make clean-images
 - Read [Architecture](docs/architecture.md) for system design details
 - Read [Schema](docs/schema.md) for database structure
 - Read [Contributing](CONTRIBUTING.md) for PR guidelines
-

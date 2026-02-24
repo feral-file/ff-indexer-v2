@@ -13,6 +13,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // =============================================================================
@@ -4021,6 +4022,7 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 		err = json.Unmarshal(mediaChange.Meta, &meta)
 		require.NoError(t, err)
 		assert.Equal(t, sourceURL, meta.New.SourceURL)
+		assert.Equal(t, types.MD5Hash(sourceURL), meta.New.SourceURLHash)
 		assert.Equal(t, string(schema.StorageProviderCloudflare), meta.New.Provider)
 		assert.Equal(t, mimeType, *meta.New.MimeType)
 	})
@@ -4134,6 +4136,7 @@ func testMediaAssets(t *testing.T, store Store) {
 		require.NoError(t, err)
 		require.NotNil(t, asset)
 		assert.Equal(t, sourceURL, asset.SourceURL)
+		assert.Equal(t, types.MD5Hash(sourceURL), asset.SourceURLHash)
 		assert.Equal(t, mimeType, *asset.MimeType)
 		assert.Equal(t, fileSize, *asset.FileSizeBytes)
 
