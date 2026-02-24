@@ -37,19 +37,18 @@ func (m *MockMediaProvider) EXPECT() *MockMediaProviderMockRecorder {
 	return m.recorder
 }
 
-// UploadImageFromURL mocks base method.
-func (m *MockMediaProvider) UploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+// Name mocks base method.
+func (m *MockMediaProvider) Name() string {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UploadImageFromURL", ctx, sourceURL, metadata)
-	ret0, _ := ret[0].(*mediaprovider.UploadResult)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret := m.ctrl.Call(m, "Name")
+	ret0, _ := ret[0].(string)
+	return ret0
 }
 
-// UploadImageFromURL indicates an expected call of UploadImageFromURL.
-func (mr *MockMediaProviderMockRecorder) UploadImageFromURL(ctx, sourceURL, metadata interface{}) *gomock.Call {
+// Name indicates an expected call of Name.
+func (mr *MockMediaProviderMockRecorder) Name() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UploadImageFromURL", reflect.TypeOf((*MockMediaProvider)(nil).UploadImageFromURL), ctx, sourceURL, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Name", reflect.TypeOf((*MockMediaProvider)(nil).Name))
 }
 
 // UploadImageFromReader mocks base method.
@@ -67,6 +66,21 @@ func (mr *MockMediaProviderMockRecorder) UploadImageFromReader(ctx, reader, file
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UploadImageFromReader", reflect.TypeOf((*MockMediaProvider)(nil).UploadImageFromReader), ctx, reader, filename, contentType, metadata)
 }
 
+// UploadImageFromURL mocks base method.
+func (m *MockMediaProvider) UploadImageFromURL(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UploadImageFromURL", ctx, sourceURL, metadata)
+	ret0, _ := ret[0].(*mediaprovider.UploadResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UploadImageFromURL indicates an expected call of UploadImageFromURL.
+func (mr *MockMediaProviderMockRecorder) UploadImageFromURL(ctx, sourceURL, metadata interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UploadImageFromURL", reflect.TypeOf((*MockMediaProvider)(nil).UploadImageFromURL), ctx, sourceURL, metadata)
+}
+
 // UploadVideo mocks base method.
 func (m *MockMediaProvider) UploadVideo(ctx context.Context, sourceURL string, metadata map[string]interface{}) (*mediaprovider.UploadResult, error) {
 	m.ctrl.T.Helper()
@@ -80,18 +94,4 @@ func (m *MockMediaProvider) UploadVideo(ctx context.Context, sourceURL string, m
 func (mr *MockMediaProviderMockRecorder) UploadVideo(ctx, sourceURL, metadata interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UploadVideo", reflect.TypeOf((*MockMediaProvider)(nil).UploadVideo), ctx, sourceURL, metadata)
-}
-
-// Name mocks base method.
-func (m *MockMediaProvider) Name() string {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Name")
-	ret0, _ := ret[0].(string)
-	return ret0
-}
-
-// Name indicates an expected call of Name.
-func (mr *MockMediaProviderMockRecorder) Name() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Name", reflect.TypeOf((*MockMediaProvider)(nil).Name))
 }
