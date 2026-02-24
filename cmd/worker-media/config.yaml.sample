@@ -40,6 +40,17 @@ cloudflare:
   account_id: ""
   api_token: ""
 
+media:
+  provider: local # local | cloudflare
+  local:
+    storage_dir: ./tmp/media
+    base_url: http://localhost:8082/media
+    server:
+      enabled: true
+      host: 0.0.0.0
+      port: 8082
+      base_path: /media
+
 # SVG Rasterizer Configuration
 rasterizer:
   width: 2048      # Target width for SVG rasterization (height auto-calculated with best fit, 0 = use SVG natural size)
@@ -63,4 +74,3 @@ transform:
 
 max_image_size: 10485760      # 10MB
 max_video_size: 314572800     # 300MB
-
