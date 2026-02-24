@@ -1242,30 +1242,13 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 		}
 	}
 
-	// Save references to metadata and enrichment before potential cleanup
-	// (needed for deprecated fields that are populated after cleanup)
-	metadata := tokenDTO.Metadata
-	enrichment := tokenDTO.EnrichmentSource
-
-	// Populate display field if requested
-	if expansionMap[types.ExpansionDisplay] {
-		// Merge into display field
-		tokenDTO.Display = dto.MergeTokenDisplay(metadata, enrichment)
-
-		// Collect media URLs from display field if media_asset was requested
-		if expansionMap[types.ExpansionMediaAsset] && tokenDTO.Display != nil {
-			urls := tokenDTO.Display.MediaURLs()
-			for _, url := range urls {
+	// Collect media URLs from display if both display and media_asset are requested.
+	if expansionMap[types.ExpansionDisplay] && expansionMap[types.ExpansionMediaAsset] {
+		localDisplay := dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
+		if localDisplay != nil {
+			for _, url := range localDisplay.MediaURLs() {
 				mediaURLsMap[url] = true
 			}
-		}
-
-		// Clean up metadata and enrichment_source if they weren't explicitly requested
-		if !expansionMap[types.ExpansionMetadata] {
-			tokenDTO.Metadata = nil
-		}
-		if !expansionMap[types.ExpansionEnrichmentSource] {
-			tokenDTO.EnrichmentSource = nil
 		}
 	}
 
@@ -1278,14 +1261,14 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 
 	// Collect metadata media assets if requested (deprecated)
 	// Only populate if metadata was also explicitly requested
-	if expansionMap[types.ExpansionMetadataMediaAsset] && expansionMap[types.ExpansionMetadata] && metadata != nil { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-		tokenDTO.MetadataMediaAssets = collectMediaAssetDTOsFromMap(metadata.MediaURLs(), mediaAssetsMap) //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+	if expansionMap[types.ExpansionMetadataMediaAsset] && expansionMap[types.ExpansionMetadata] && tokenDTO.Metadata != nil { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+		tokenDTO.MetadataMediaAssets = collectMediaAssetDTOsFromMap(tokenDTO.Metadata.MediaURLs(), mediaAssetsMap) //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 	}
 
 	// Collect enrichment source media assets if requested (deprecated)
 	// Only populate if enrichment_source was also explicitly requested
-	if expansionMap[types.ExpansionEnrichmentSourceMediaAsset] && expansionMap[types.ExpansionEnrichmentSource] && enrichment != nil { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-		tokenDTO.EnrichmentSourceMediaAssets = collectMediaAssetDTOsFromMap(enrichment.MediaURLs(), mediaAssetsMap) //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+	if expansionMap[types.ExpansionEnrichmentSourceMediaAsset] && expansionMap[types.ExpansionEnrichmentSource] && tokenDTO.EnrichmentSource != nil { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+		tokenDTO.EnrichmentSourceMediaAssets = collectMediaAssetDTOsFromMap(tokenDTO.EnrichmentSource.MediaURLs(), mediaAssetsMap) //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 	}
 
 	return nil
