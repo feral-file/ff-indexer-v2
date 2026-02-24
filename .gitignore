@@ -47,6 +47,10 @@ go.work.sum
 **/.env.local
 config/.env.media.local
 config/.env.worker-media.local
+config/.env
+
+# Local media artifacts
+tmp/
 
 # Config files (keep samples only)
 config.yaml
