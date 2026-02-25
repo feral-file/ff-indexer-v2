@@ -1499,19 +1499,34 @@ func (e *executor) resolveDisplayDataURIs(ctx context.Context, tokens []dto.Toke
 		return nil
 	}
 
-	// Apply replacements in-place on each display.
-	for _, token := range tokens {
-		if token.Display == nil {
-			continue
-		}
-		if token.Display.ImageURL != nil {
-			if publicURL, ok := publicURLs[*token.Display.ImageURL]; ok {
-				token.Display.ImageURL = &publicURL
+	// Apply replacements in-place on each display and media asset.
+	for i := range tokens {
+		token := &tokens[i]
+		if token.Display != nil {
+			if token.Display.ImageURL != nil {
+				if publicURL, ok := publicURLs[*token.Display.ImageURL]; ok {
+					token.Display.ImageURL = &publicURL
+				}
+			}
+			if token.Display.AnimationURL != nil {
+				if publicURL, ok := publicURLs[*token.Display.AnimationURL]; ok {
+					token.Display.AnimationURL = &publicURL
+				}
 			}
 		}
-		if token.Display.AnimationURL != nil {
-			if publicURL, ok := publicURLs[*token.Display.AnimationURL]; ok {
-				token.Display.AnimationURL = &publicURL
+		for j := range token.MediaAssets {
+			if publicURL, ok := publicURLs[token.MediaAssets[j].SourceURL]; ok {
+				token.MediaAssets[j].SourceURL = publicURL
+			}
+		}
+		for j := range token.MetadataMediaAssets { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			if publicURL, ok := publicURLs[token.MetadataMediaAssets[j].SourceURL]; ok { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+				token.MetadataMediaAssets[j].SourceURL = publicURL //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			}
+		}
+		for j := range token.EnrichmentSourceMediaAssets { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			if publicURL, ok := publicURLs[token.EnrichmentSourceMediaAssets[j].SourceURL]; ok { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+				token.EnrichmentSourceMediaAssets[j].SourceURL = publicURL //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 			}
 		}
 	}
