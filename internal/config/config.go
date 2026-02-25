@@ -273,16 +273,38 @@ type TransformConfig struct {
 	WorkerConcurrency int `mapstructure:"worker_concurrency"`
 }
 
+// LocalMediaServerConfig holds configuration for the local media server.
+type LocalMediaServerConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	BasePath string `mapstructure:"base_path"`
+}
+
+// LocalMediaConfig holds configuration for local media provider.
+type LocalMediaConfig struct {
+	StorageDir string                 `mapstructure:"storage_dir"`
+	BaseURL    string                 `mapstructure:"base_url"`
+	Server     LocalMediaServerConfig `mapstructure:"server"`
+}
+
+// MediaProviderConfig holds configuration for media provider selection.
+type MediaProviderConfig struct {
+	Provider string           `mapstructure:"provider"`
+	Local    LocalMediaConfig `mapstructure:"local"`
+}
+
 type WorkerMediaConfig struct {
 	BaseConfig   `mapstructure:",squash"`
-	Database     DatabaseConfig   `mapstructure:"database"`
-	Temporal     TemporalConfig   `mapstructure:"temporal"`
-	URI          URIConfig        `mapstructure:"uri"`
-	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
-	Rasterizer   RasterizerConfig `mapstructure:"rasterizer"`
-	Transform    TransformConfig  `mapstructure:"transform"`
-	MaxImageSize int64            `mapstructure:"max_image_size"`
-	MaxVideoSize int64            `mapstructure:"max_video_size"`
+	Database     DatabaseConfig      `mapstructure:"database"`
+	Temporal     TemporalConfig      `mapstructure:"temporal"`
+	URI          URIConfig           `mapstructure:"uri"`
+	Cloudflare   CloudflareConfig    `mapstructure:"cloudflare"`
+	Media        MediaProviderConfig `mapstructure:"media"`
+	Rasterizer   RasterizerConfig    `mapstructure:"rasterizer"`
+	Transform    TransformConfig     `mapstructure:"transform"`
+	MaxImageSize int64               `mapstructure:"max_image_size"`
+	MaxVideoSize int64               `mapstructure:"max_video_size"`
 }
 
 // MediaHealthSweeperConfig holds configuration for the media health sweeper
@@ -527,6 +549,14 @@ func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfi
 	v.SetDefault("rasterizer.width", 2048)
 	v.SetDefault("max_image_size", 10*1024*1024)  // 10MB
 	v.SetDefault("max_video_size", 300*1024*1024) // 300MB
+	// Media provider defaults
+	v.SetDefault("media.provider", "local")
+	v.SetDefault("media.local.storage_dir", "./tmp/media")
+	v.SetDefault("media.local.base_url", "http://localhost:8082/media")
+	v.SetDefault("media.local.server.enabled", true)
+	v.SetDefault("media.local.server.host", "0.0.0.0")
+	v.SetDefault("media.local.server.port", 8082)
+	v.SetDefault("media.local.server.base_path", "/media")
 
 	// Transform defaults (90% of max for safety margin)
 	v.SetDefault("transform.target_image_size", int64(float64(10*1024*1024)*0.9)) // 9MB
@@ -766,6 +796,14 @@ func bindAllEnvVars(v *viper.Viper) {
 		"transform.max_decoded_pixels",
 		"transform.transform_timeout",
 		"transform.worker_concurrency",
+		// Media provider
+		"media.provider",
+		"media.local.storage_dir",
+		"media.local.base_url",
+		"media.local.server.enabled",
+		"media.local.server.host",
+		"media.local.server.port",
+		"media.local.server.base_path",
 	}
 
 	for _, key := range commonKeys {
