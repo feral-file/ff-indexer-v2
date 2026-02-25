@@ -1500,33 +1500,39 @@ func (e *executor) resolveDisplayDataURIs(ctx context.Context, tokens []dto.Toke
 	}
 
 	// Apply replacements in-place on each display and media asset.
+	// Media asset source URLs are updated only when they match a data URI that appeared
+	// in the display, keeping them consistent with the resolved display URLs.
 	for i := range tokens {
 		token := &tokens[i]
+
+		// Collect the data URIs actually used in this token's display so that media
+		// asset updates are scoped to those exact URLs.
+		displayDataURIs := make(map[string]bool)
 		if token.Display != nil {
-			if token.Display.ImageURL != nil {
+			if token.Display.ImageURL != nil && internalTypes.IsDataURI(*token.Display.ImageURL) {
+				displayDataURIs[*token.Display.ImageURL] = true
 				if publicURL, ok := publicURLs[*token.Display.ImageURL]; ok {
 					token.Display.ImageURL = &publicURL
 				}
 			}
-			if token.Display.AnimationURL != nil {
+			if token.Display.AnimationURL != nil && internalTypes.IsDataURI(*token.Display.AnimationURL) {
+				displayDataURIs[*token.Display.AnimationURL] = true
 				if publicURL, ok := publicURLs[*token.Display.AnimationURL]; ok {
 					token.Display.AnimationURL = &publicURL
 				}
 			}
 		}
+
+		if len(displayDataURIs) == 0 {
+			continue
+		}
+
 		for j := range token.MediaAssets {
-			if publicURL, ok := publicURLs[token.MediaAssets[j].SourceURL]; ok {
-				token.MediaAssets[j].SourceURL = publicURL
-			}
-		}
-		for j := range token.MetadataMediaAssets { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			if publicURL, ok := publicURLs[token.MetadataMediaAssets[j].SourceURL]; ok { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-				token.MetadataMediaAssets[j].SourceURL = publicURL //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			}
-		}
-		for j := range token.EnrichmentSourceMediaAssets { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			if publicURL, ok := publicURLs[token.EnrichmentSourceMediaAssets[j].SourceURL]; ok { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-				token.EnrichmentSourceMediaAssets[j].SourceURL = publicURL //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			sourceURL := token.MediaAssets[j].SourceURL
+			if displayDataURIs[sourceURL] {
+				if publicURL, ok := publicURLs[sourceURL]; ok {
+					token.MediaAssets[j].SourceURL = publicURL
+				}
 			}
 		}
 	}
