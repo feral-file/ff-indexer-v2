@@ -100,7 +100,7 @@ func sampleDataURI() string {
 
 func parseURLs(single string, multiple string) []string {
 	if strings.TrimSpace(multiple) != "" {
-		parts := strings.Split(multiple, ",")
+		parts := splitURLList(multiple)
 		urls := make([]string, 0, len(parts))
 		for _, part := range parts {
 			trimmed := strings.TrimSpace(part)
@@ -116,4 +116,31 @@ func parseURLs(single string, multiple string) []string {
 	}
 
 	return nil
+}
+
+func splitURLList(input string) []string {
+	var parts []string
+	var current strings.Builder
+	input = strings.TrimSpace(input)
+	for i := 0; i < len(input); i++ {
+		if input[i] == ',' {
+			remainder := strings.TrimSpace(input[i+1:])
+			if isURLListDelimiter(remainder) {
+				parts = append(parts, current.String())
+				current.Reset()
+				continue
+			}
+		}
+		current.WriteByte(input[i])
+	}
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+	return parts
+}
+
+func isURLListDelimiter(remainder string) bool {
+	return strings.HasPrefix(remainder, "https://") ||
+		strings.HasPrefix(remainder, "http://") ||
+		strings.HasPrefix(remainder, "data:")
 }
