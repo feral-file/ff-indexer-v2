@@ -9,11 +9,10 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "github.com/golang/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockStore is a mock of Store interface.
@@ -52,6 +51,21 @@ func (m *MockStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs [
 func (mr *MockStoreMockRecorder) BatchUpdateTokensViewability(ctx, tokenIDs interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BatchUpdateTokensViewability", reflect.TypeOf((*MockStore)(nil).BatchUpdateTokensViewability), ctx, tokenIDs)
+}
+
+// CheckStorageProviderEnum mocks base method.
+func (m *MockStore) CheckStorageProviderEnum(ctx context.Context, provider schema.StorageProvider) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckStorageProviderEnum", ctx, provider)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CheckStorageProviderEnum indicates an expected call of CheckStorageProviderEnum.
+func (mr *MockStoreMockRecorder) CheckStorageProviderEnum(ctx, provider interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckStorageProviderEnum", reflect.TypeOf((*MockStore)(nil).CheckStorageProviderEnum), ctx, provider)
 }
 
 // CreateAddressIndexingJob mocks base method.
