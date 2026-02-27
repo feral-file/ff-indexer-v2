@@ -1043,9 +1043,11 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
-		// 4. Increment token version (metadata changed)
-		if err := s.incrementTokenVersion(tx, input.TokenID); err != nil {
-			return fmt.Errorf("failed to increment token version: %w", err)
+		// 4. Increment token version only if user-visible fields changed
+		if hasMetadataChanged(oldMetadata, &metadata) {
+			if err := s.incrementTokenVersion(tx, input.TokenID); err != nil {
+				return fmt.Errorf("failed to increment token version: %w", err)
+			}
 		}
 
 		// 5. Sync media health records
@@ -1206,9 +1208,11 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
-		// 5. Increment token version (enrichment changed)
-		if err := s.incrementTokenVersion(tx, input.TokenID); err != nil {
-			return fmt.Errorf("failed to increment token version: %w", err)
+		// 5. Increment token version only if user-visible fields changed
+		if hasEnrichmentSourceChanged(oldEnrichmentSource, &enrichmentSource) {
+			if err := s.incrementTokenVersion(tx, input.TokenID); err != nil {
+				return fmt.Errorf("failed to increment token version: %w", err)
+			}
 		}
 
 		// 6. Sync media health records
@@ -3388,4 +3392,37 @@ func (s *pgStore) incrementTokenVersionBulk(tx *gorm.DB, tokenIDs []uint64) erro
 	return tx.Model(&schema.Token{}).
 		Where("id IN ?", tokenIDs).
 		Update("version", gorm.Expr("version + 1")).Error
+}
+
+// hasMetadataChanged compares user-visible fields between old and new metadata
+// Returns true if any field that affects the client's view has changed
+func hasMetadataChanged(old, new *schema.TokenMetadata) bool {
+	if old == nil {
+		return true // New metadata always counts as a change
+	}
+
+	// Compare user-visible fields (all are pointers, so we need to compare values)
+	return !types.EqualStringPtr(old.ImageURL, new.ImageURL) ||
+		!types.EqualStringPtr(old.AnimationURL, new.AnimationURL) ||
+		!types.EqualStringPtr(old.Name, new.Name) ||
+		!types.EqualStringPtr(old.Description, new.Description) ||
+		!types.EqualStringPtr(old.MimeType, new.MimeType) ||
+		!old.Artists.Equal(&new.Artists) ||
+		!old.Publisher.Equal(new.Publisher)
+}
+
+// hasEnrichmentSourceChanged compares user-visible fields between old and new enrichment source
+// Returns true if any field that affects the client's view has changed
+func hasEnrichmentSourceChanged(old, new *schema.EnrichmentSource) bool {
+	if old == nil {
+		return true // New enrichment source always counts as a change
+	}
+
+	// Compare user-visible fields (all are pointers, so we need to compare values)
+	return !types.EqualStringPtr(old.ImageURL, new.ImageURL) ||
+		!types.EqualStringPtr(old.AnimationURL, new.AnimationURL) ||
+		!types.EqualStringPtr(old.Name, new.Name) ||
+		!types.EqualStringPtr(old.Description, new.Description) ||
+		!types.EqualStringPtr(old.MimeType, new.MimeType) ||
+		!old.Artists.Equal(&new.Artists)
 }

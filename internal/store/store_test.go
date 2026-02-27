@@ -6485,6 +6485,235 @@ func testGetTokenVersionsByOwner(t *testing.T, store Store) {
 }
 
 // =============================================================================
+// Test: Token Version Increment Logic
+// =============================================================================
+
+func testTokenVersionIncrement(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("metadata: version increments when user-visible fields change", func(t *testing.T) {
+		owner := "0x1000000000000000000000000000000000000001"
+
+		// Create token
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xc000000000000000000000000000000000000001",
+			"1",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), token.Version)
+
+		// Add metadata
+		metadataInput := CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			OriginJSON:      []byte(`{"name": "Original"}`),
+			LatestJSON:      []byte(`{"name": "Original"}`),
+			LatestHash:      types.StringPtr("hash1"),
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: time.Now(),
+			ImageURL:        types.StringPtr("https://example.com/image1.jpg"),
+			Name:            types.StringPtr("Original Name"),
+			Artists: schema.Artists{
+				{
+					DID:  domain.DID("did:example:123"),
+					Name: "Artist Name",
+				},
+			},
+			Publisher: &schema.Publisher{
+				Name: types.StringPtr("Publisher Name"),
+				URL:  types.StringPtr("https://example.com/publisher.com"),
+			},
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), token.Version, "Version should increment when metadata is added")
+
+		// Update metadata with same user-visible fields (only raw JSON changes)
+		metadataInput.OriginJSON = []byte(`{"name": "Original", "extra": "field"}`) // Changed raw JSON
+		metadataInput.LatestJSON = []byte(`{"name": "Original", "extra": "field"}`) // Changed raw JSON
+		metadataInput.LatestHash = types.StringPtr("hash2")                         // Changed hash
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), token.Version, "Version should NOT increment when only raw JSON changes")
+
+		// Update metadata with changed user-visible field (name)
+		metadataInput.Name = types.StringPtr("Updated Name")
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, uint64(3), token.Version, "Version should increment when name changes")
+
+		// Update metadata with changed image URL
+		metadataInput.ImageURL = types.StringPtr("https://example.com/image2.jpg")
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, uint64(4), token.Version, "Version should increment when image URL changes")
+
+		// Change AnimationURL
+		metadataInput.AnimationURL = types.StringPtr("https://example.com/anim2.mp4")
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.Equal(t, uint64(5), token.Version, "AnimationURL change should increment version")
+
+		// Change Description
+		metadataInput.Description = types.StringPtr("New Description")
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.Equal(t, uint64(6), token.Version, "Description change should increment version")
+
+		// Change MimeType
+		metadataInput.MimeType = types.StringPtr("video/mp4")
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.Equal(t, uint64(7), token.Version, "MimeType change should increment version")
+
+		// Update Artists with same artists
+		metadataInput.Artists = schema.Artists{
+			{
+				DID:  domain.DID("did:example:123"),
+				Name: "Artist Name",
+			},
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.Equal(t, uint64(7), token.Version, "Artists change should increment version")
+
+		// Change Artists
+		metadataInput.Artists = schema.Artists{
+			{
+				DID:  domain.DID("did:example:456"),
+				Name: "Artist Name 2",
+			},
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.Equal(t, uint64(8), token.Version, "Artists change should increment version")
+
+		// Update Publisher with same publisher
+		metadataInput.Publisher = &schema.Publisher{
+			Name: types.StringPtr("Publisher Name"),
+			URL:  types.StringPtr("https://example.com/publisher.com"),
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.Equal(t, uint64(8), token.Version, "Publisher change should increment version")
+
+		// Change Publisher
+		metadataInput.Publisher = &schema.Publisher{
+			Name: types.StringPtr("Publisher Name 2"),
+			URL:  types.StringPtr("https://example.com/publisher2.com"),
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.Equal(t, uint64(9), token.Version, "Publisher change should increment version")
+	})
+
+	t.Run("enrichment: version increments when user-visible fields change", func(t *testing.T) {
+		owner := "0x3000000000000000000000000000000000000003"
+
+		// Create token with metadata
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xc000000000000000000000000000000000000003",
+			"1",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Add metadata first (required for enrichment)
+		metadataInput := CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			OriginJSON:      []byte(`{}`),
+			LatestJSON:      []byte(`{}`),
+			LatestHash:      types.StringPtr("hash1"),
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: time.Now(),
+		}
+		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		versionAfterMetadata := token.Version
+
+		// Add enrichment source
+		enrichmentInput := CreateEnrichmentSourceInput{
+			TokenID:     token.ID,
+			Vendor:      schema.VendorArtBlocks,
+			VendorJSON:  []byte(`{"name": "Original"}`),
+			VendorHash:  types.StringPtr("vendor_hash1"),
+			ImageURL:    types.StringPtr("https://artblocks.com/image1.jpg"),
+			Name:        types.StringPtr("ArtBlocks Name"),
+			Description: types.StringPtr("Description"),
+		}
+		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, versionAfterMetadata+1, token.Version, "Version should increment when enrichment is added")
+
+		// Update enrichment with same user-visible fields (only vendor JSON changes)
+		enrichmentInput.VendorJSON = []byte(`{"name": "Original", "extra": "data"}`)
+		enrichmentInput.VendorHash = types.StringPtr("vendor_hash2")
+		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, versionAfterMetadata+1, token.Version, "Version should NOT increment when only vendor JSON changes")
+
+		// Update enrichment with changed user-visible field (name)
+		enrichmentInput.Name = types.StringPtr("Updated ArtBlocks Name")
+		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, versionAfterMetadata+2, token.Version, "Version should increment when enrichment name changes")
+
+		// Update enrichment with changed image URL
+		enrichmentInput.ImageURL = types.StringPtr("https://artblocks.com/image2.jpg")
+		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
+		require.NoError(t, err)
+
+		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.Equal(t, versionAfterMetadata+3, token.Version, "Version should increment when enrichment image URL changes")
+	})
+}
+
+// =============================================================================
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
 
@@ -6521,6 +6750,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
 		{"GetTokenVersionsByOwner", testGetTokenVersionsByOwner},
+		{"TokenVersionIncrement", testTokenVersionIncrement},
 	}
 
 	for _, tt := range tests {
