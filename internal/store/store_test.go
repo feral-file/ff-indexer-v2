@@ -6357,6 +6357,133 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 	})
 }
 
+func testGetTokenVersionsByOwner(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("returns empty map for address with no tokens", func(t *testing.T) {
+		result, err := store.GetTokenVersionsByOwner(ctx, "0xnobody0000000000000000000000000000000000")
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("returns ERC721 tokens for owner", func(t *testing.T) {
+		owner := "0x1000000000000000000000000000000000000001"
+
+		// Create token owned by this address
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xc000000000000000000000000000000000000001",
+			"1",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		// Get versions
+		result, err := store.GetTokenVersionsByOwner(ctx, owner)
+		require.NoError(t, err)
+		assert.Len(t, result, 1)
+		assert.Contains(t, result, mintInput.Token.TokenCID)
+		assert.Equal(t, uint64(1), result[mintInput.Token.TokenCID])
+	})
+
+	t.Run("returns ERC1155 tokens with balance for owner", func(t *testing.T) {
+		owner := "0x2000000000000000000000000000000000000002"
+
+		// Create ERC1155 token with balance for this address
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0xc000000000000000000000000000000000000002",
+			"1",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		// Get versions
+		result, err := store.GetTokenVersionsByOwner(ctx, owner)
+		require.NoError(t, err)
+		assert.Len(t, result, 1)
+		assert.Contains(t, result, mintInput.Token.TokenCID)
+	})
+
+	t.Run("excludes burned tokens", func(t *testing.T) {
+		owner := "0x3000000000000000000000000000000000000003"
+
+		// Create token
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xc000000000000000000000000000000000000003",
+			"1",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mintInput)
+		require.NoError(t, err)
+
+		// Burn it
+		_, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+
+		burnEvent := CreateProvenanceEventInput{
+			Chain:       domain.ChainEthereumMainnet,
+			EventType:   schema.ProvenanceEventTypeBurn,
+			FromAddress: &owner,
+			ToAddress:   nil,
+			Quantity:    "1",
+			TxHash:      "0xburn000000000000000000000000000000000000000000000000000000000001",
+			BlockNumber: 200,
+			Timestamp:   time.Now(),
+		}
+
+		err = store.UpdateTokenBurn(ctx, CreateTokenBurnInput{
+			TokenCID:        mintInput.Token.TokenCID,
+			ProvenanceEvent: burnEvent,
+		})
+		require.NoError(t, err)
+
+		// Get versions - should be empty (burned tokens excluded)
+		result, err := store.GetTokenVersionsByOwner(ctx, owner)
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("returns multiple tokens across different standards", func(t *testing.T) {
+		owner := "0x5000000000000000000000000000000000000005"
+
+		// Create ERC721 token
+		mint721 := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0xc000000000000000000000000000000000000721",
+			"1",
+			owner,
+		)
+		err := store.CreateTokenMint(ctx, mint721)
+		require.NoError(t, err)
+
+		// Create ERC1155 token
+		mint1155 := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC1155,
+			"0xc000000000000000000000000000000000001155",
+			"1",
+			owner,
+		)
+		err = store.CreateTokenMint(ctx, mint1155)
+		require.NoError(t, err)
+
+		// Get versions - should have both
+		result, err := store.GetTokenVersionsByOwner(ctx, owner)
+		require.NoError(t, err)
+		assert.Len(t, result, 2)
+		assert.Contains(t, result, mint721.Token.TokenCID)
+		assert.Contains(t, result, mint1155.Token.TokenCID)
+	})
+}
+
 // =============================================================================
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
@@ -6393,6 +6520,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"AddressIndexingJobs", testAddressIndexingJobs},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
+		{"GetTokenVersionsByOwner", testGetTokenVersionsByOwner},
 	}
 
 	for _, tt := range tests {

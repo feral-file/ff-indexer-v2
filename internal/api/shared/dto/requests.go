@@ -143,3 +143,37 @@ func (r *CreateWebhookClientRequest) Validate(debug bool) error {
 
 	return nil
 }
+
+// KnownToken represents a token and its version that the client currently has
+type KnownToken struct {
+	TokenCID string `json:"token_cid" binding:"required"`
+	Version  uint64 `json:"version" binding:"required"`
+}
+
+// SyncCollectionRequest represents the client's known token state for an address
+type SyncCollectionRequest struct {
+	// KnownTokens is an array of token_cid and version pairs that the client currently has
+	// Example: [{"token_cid": "eip155:1:erc721:0xabc:1", "version": 10}, {"token_cid": "eip155:1:erc721:0xdef:2", "version": 5}]
+	KnownTokens []KnownToken `json:"known_tokens" binding:"required"`
+}
+
+// Validate validates the sync collection request
+func (r *SyncCollectionRequest) Validate() error {
+	if len(r.KnownTokens) == 0 {
+		return fmt.Errorf("known_tokens cannot be empty")
+	}
+
+	// Add max size limit to prevent abuse
+	if len(r.KnownTokens) > 10000 {
+		return fmt.Errorf("known_tokens cannot exceed 10000 entries")
+	}
+
+	// Validate token CIDs format (basic check)
+	for _, token := range r.KnownTokens {
+		if token.TokenCID == "" {
+			return fmt.Errorf("token_cid cannot be empty")
+		}
+	}
+
+	return nil
+}

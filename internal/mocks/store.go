@@ -609,6 +609,21 @@ func (mr *MockStoreMockRecorder) GetTokenProvenanceEventsBulk(ctx, tokenIDs, lim
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenProvenanceEventsBulk", reflect.TypeOf((*MockStore)(nil).GetTokenProvenanceEventsBulk), ctx, tokenIDs, limit)
 }
 
+// GetTokenVersionsByOwner mocks base method.
+func (m *MockStore) GetTokenVersionsByOwner(ctx context.Context, ownerAddress string) (map[string]uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenVersionsByOwner", ctx, ownerAddress)
+	ret0, _ := ret[0].(map[string]uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenVersionsByOwner indicates an expected call of GetTokenVersionsByOwner.
+func (mr *MockStoreMockRecorder) GetTokenVersionsByOwner(ctx, ownerAddress interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenVersionsByOwner", reflect.TypeOf((*MockStore)(nil).GetTokenVersionsByOwner), ctx, ownerAddress)
+}
+
 // GetTokenWithMetadataByTokenCID mocks base method.
 func (m *MockStore) GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*store.TokensWithMetadataResult, error) {
 	m.ctrl.T.Helper()

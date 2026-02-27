@@ -58,3 +58,21 @@ type AddressIndexingJobResponse struct {
 	FailedAt            *time.Time `json:"failed_at,omitempty"`
 	CanceledAt          *time.Time `json:"canceled_at,omitempty"`
 }
+
+// SyncCollectionResponse represents the server's sync action plan
+type SyncCollectionResponse struct {
+	ActionPlan ActionPlan `json:"action_plan"`
+}
+
+// ActionPlan tells the client exactly what actions to take
+type ActionPlan struct {
+	// Updates: token_cids that exist in both client and server, but server has newer version
+	Updates []string `json:"updates"`
+
+	// New: token_cids that exist on server but not in client's known_tokens
+	New []string `json:"new"`
+
+	// Removals: token_cids that exist in client's known_tokens but not on server
+	// (token was transferred out or burned)
+	Removals []string `json:"removals"`
+}

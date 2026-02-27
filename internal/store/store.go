@@ -376,6 +376,15 @@ type Store interface {
 	GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, error)
 
 	// =============================================================================
+	// Collection Sync Operations
+	// =============================================================================
+
+	// GetTokenVersionsByOwner retrieves all token CIDs and their versions for a specific owner
+	// Used for scoped state sync to compare client state with server state
+	// Returns a map of token_cid -> version for all tokens owned by the address
+	GetTokenVersionsByOwner(ctx context.Context, ownerAddress string) (map[string]uint64, error)
+
+	// =============================================================================
 	// System Configuration & Monitoring
 	// =============================================================================
 

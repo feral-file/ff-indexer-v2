@@ -1,0 +1,72 @@
+---
+description: Development workflow and code generation rules
+alwaysApply: true
+---
+
+# Development Workflow
+
+Follow these workflows when making changes to the codebase.
+
+## Code Generation
+
+### GraphQL Schema Updates
+
+When the GraphQL schema has been updated:
+
+```bash
+cd internal/api/graphql
+go run github.com/99designs/gqlgen generate
+```
+
+### Mock Generation
+
+When interfaces with `//go:generate mockgen` instruction have been:
+- Changed
+- Added (with the instruction)
+- Removed
+
+Run mock generation:
+
+```bash
+go generate ./...
+```
+
+**Important**: DO NOT update mocks manually. Always regenerate them using `go generate`.
+
+## Validation
+
+After making code changes, always run:
+
+```bash
+make check
+```
+
+This formats code, runs linting, and tests the entire project.
+
+## Database Schema Changes
+
+When database schema changes are needed:
+
+1. **Create migration file** in `db/migrations/` following the naming convention:
+   - Use sequential numbering: `001.sql`, `002.sql`, `003.sql`, etc.
+   - For special migrations, add a suffix: `011_backfill.sql`
+
+2. **Reflect changes** in `db/init_pg_db.sql` to keep the init script up to date
+
+3. **Update test data** in `pg_test_data` if needed for the schema changes
+
+## Documentation Updates
+
+### Database Schema or Architecture Changes
+
+Update documentation in the `docs/` folder when:
+- Database schema changes
+- Architecture changes
+
+### Significant Codebase Changes
+
+Update `README.md` or `DEVELOPMENT.md` when:
+- Major features are added
+- Architecture significantly changes
+- Setup or deployment processes change
+- Dependencies or requirements change

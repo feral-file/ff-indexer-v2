@@ -1043,7 +1043,12 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
-		// 4. Sync media health records
+		// 4. Increment token version (metadata changed)
+		if err := s.incrementTokenVersion(tx, input.TokenID); err != nil {
+			return fmt.Errorf("failed to increment token version: %w", err)
+		}
+
+		// 5. Sync media health records
 		var oldImageURL, oldAnimationURL *string
 		if oldMetadata != nil {
 			oldImageURL = oldMetadata.ImageURL
@@ -1201,7 +1206,12 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
-		// 5. Sync media health records
+		// 5. Increment token version (enrichment changed)
+		if err := s.incrementTokenVersion(tx, input.TokenID); err != nil {
+			return fmt.Errorf("failed to increment token version: %w", err)
+		}
+
+		// 6. Sync media health records
 		var oldImageURL, oldAnimationURL *string
 		if oldEnrichmentSource != nil {
 			oldImageURL = oldEnrichmentSource.ImageURL
@@ -1317,7 +1327,12 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 			return fmt.Errorf("failed to update provenance tracking: %w", err)
 		}
 
-		// 7. Create the change journal entry
+		// 7. Increment token version (burned)
+		if err := s.incrementTokenVersion(tx, token.ID); err != nil {
+			return fmt.Errorf("failed to increment token version: %w", err)
+		}
+
+		// 8. Create the change journal entry
 		// For burn events: subject_type = 'token', subject_id = provenance_event_id
 		// Populate meta with provenance information
 		meta := schema.ProvenanceChangeMeta{
@@ -1531,7 +1546,12 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 			return fmt.Errorf("failed to update provenance tracking: %w", err)
 		}
 
-		// 8. Create the change journal entry
+		// 8. Increment token version (ownership changed)
+		if err := s.incrementTokenVersion(tx, token.ID); err != nil {
+			return fmt.Errorf("failed to increment token version: %w", err)
+		}
+
+		// 9. Create the change journal entry
 		// For transfer events: subject_type depends on token standard
 		// - ERC721 (single token): subject_type = 'owner'
 		// - ERC1155/FA2 (multi-token): subject_type = 'balance'
@@ -3293,6 +3313,15 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 			}).Create(&journalEntries).Error; err != nil {
 				return fmt.Errorf("failed to create change journal entries: %w", err)
 			}
+
+			// Step 3: Increment token versions for all changed tokens
+			changedTokenIDs := make([]uint64, len(changes))
+			for i, change := range changes {
+				changedTokenIDs[i] = change.TokenID
+			}
+			if err := s.incrementTokenVersionBulk(tx, changedTokenIDs); err != nil {
+				return fmt.Errorf("failed to increment token versions: %w", err)
+			}
 		}
 
 		return nil
@@ -3303,4 +3332,60 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 	}
 
 	return changes, nil
+}
+
+// =============================================================================
+// Collection Sync Operations
+// =============================================================================
+
+// GetTokenVersionsByOwner retrieves all token CIDs and their versions for a specific owner
+func (s *pgStore) GetTokenVersionsByOwner(ctx context.Context, ownerAddress string) (map[string]uint64, error) {
+
+	// Single query approach: Use balances table for all token standards
+	// Both ERC721 and ERC1155/FA2 maintain balance records
+	var results []struct {
+		TokenCID string `gorm:"column:token_cid"`
+		Version  uint64 `gorm:"column:version"`
+	}
+
+	err := s.db.WithContext(ctx).
+		Table("balances").
+		Select("tokens.token_cid, tokens.version").
+		Joins("INNER JOIN tokens ON tokens.id = balances.token_id").
+		Where("balances.owner_address = ?", ownerAddress).
+		Where("balances.quantity > ?", 0).
+		Where("tokens.burned = ?", false).
+		Find(&results).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token versions: %w", err)
+	}
+
+	// Convert to map
+	tokenVersions := make(map[string]uint64, len(results))
+	for _, row := range results {
+		tokenVersions[row.TokenCID] = row.Version
+	}
+
+	return tokenVersions, nil
+}
+
+// incrementTokenVersion increments the version for a token
+// Should be called within a transaction whenever a user-visible change occurs
+func (s *pgStore) incrementTokenVersion(tx *gorm.DB, tokenID uint64) error {
+	return tx.Model(&schema.Token{}).
+		Where("id = ?", tokenID).
+		Update("version", gorm.Expr("version + 1")).Error
+}
+
+// incrementTokenVersionBulk increments versions for multiple tokens
+// Should be called within a transaction whenever user-visible changes occur
+func (s *pgStore) incrementTokenVersionBulk(tx *gorm.DB, tokenIDs []uint64) error {
+	if len(tokenIDs) == 0 {
+		return nil
+	}
+
+	return tx.Model(&schema.Token{}).
+		Where("id IN ?", tokenIDs).
+		Update("version", gorm.Expr("version + 1")).Error
 }

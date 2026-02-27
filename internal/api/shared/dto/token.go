@@ -19,6 +19,7 @@ type TokenResponse struct {
 	Burned                  bool                 `json:"burned"`
 	Viewable                bool                 `json:"viewable"`
 	LastProvenanceTimestamp *time.Time           `json:"last_provenance_timestamp"`
+	Version                 uint64               `json:"version"`
 	CreatedAt               time.Time            `json:"created_at"`
 	UpdatedAt               time.Time            `json:"updated_at"`
 
@@ -93,6 +94,7 @@ func MapTokenToDTO(token *schema.Token) *TokenResponse {
 		Burned:                  token.Burned,
 		Viewable:                token.IsViewable,
 		LastProvenanceTimestamp: token.LastProvenanceTimestamp,
+		Version:                 token.Version,
 		CreatedAt:               token.CreatedAt,
 		UpdatedAt:               token.UpdatedAt,
 	}

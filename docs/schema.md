@@ -46,6 +46,7 @@ Primary entity for tracking tokens across all supported blockchains.
 | burned | BOOLEAN | Whether token has been burned |
 | is_viewable | BOOLEAN | Whether token has accessible media URLs (for filtering unviewable tokens) |
 | last_provenance_timestamp | TIMESTAMPTZ | Cached timestamp of most recent provenance event (denormalized for query performance) |
+| version | BIGINT | Incremented on user-visible changes (ownership, metadata, enrichment, viewability, burn status); used for scoped state sync |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 

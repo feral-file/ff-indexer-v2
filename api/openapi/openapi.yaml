@@ -50,8 +50,10 @@ servers:
 tags:
   - name: tokens
     description: Token data and metadata operations
+  - name: collections
+    description: Collection sync and state management operations
   - name: changes
-    description: Change tracking and journal operations
+    description: Change tracking and journal operations (deprecated)
   - name: workflows
     description: Temporal workflow status and tracking operations
   - name: indexing
@@ -422,7 +424,11 @@ paths:
   /api/v1/changes:
     get:
       summary: Get changes
+      deprecated: true
       description: |
+        **DEPRECATED**: This endpoint is being replaced by scoped state sync (`POST /api/v1/collection/{address}/sync`).
+        Use the new endpoint for better performance and simpler client logic.
+        
         Retrieves a paginated list of changes from the changes journal.
         
         The changes journal tracks all modifications to indexed data, including:
@@ -561,6 +567,68 @@ paths:
                 $ref: '#/components/schemas/ChangeListResponse'
         '422':
           description: Validation error - Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/collection/{address}/sync:
+    post:
+      summary: Sync collection state for an address
+      description: |
+        Compares the client's known token state with the server's state for a specific address
+        and returns a directed action plan for synchronization.
+        
+        This endpoint uses a snapshot-based sync mechanism where:
+        1. Client sends its current state (token CIDs and versions)
+        2. Server compares with its current state
+        3. Server returns exactly what actions the client should take:
+           - **updates**: Token CIDs that exist in both but server has newer version
+           - **new**: Token CIDs that exist on server but not in client
+           - **removals**: Token CIDs that exist in client but not on server (transferred out or burned)
+        
+        **This endpoint does not require authentication** - it is open for public use.
+        
+        ## Limits
+        - Maximum 10,000 known tokens per request
+        - Address must be a valid Ethereum or Tezos address
+        
+        ## Example Use Case
+        A client maintains a local cache of tokens for address `0xABC...` with version tracking.
+        When the client wants to sync, it sends all known token CIDs with their versions.
+        The server compares and tells the client exactly which tokens to update, add, or remove.
+      operationId: syncCollection
+      tags:
+        - collections
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Owner address (Ethereum or Tezos format)
+          schema:
+            type: string
+          example: "0x1234567890123456789012345678901234567890"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncCollectionRequest'
+      responses:
+        '200':
+          description: Sync action plan returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncCollectionResponse'
+        '400':
+          description: Invalid request (bad address format, empty known_tokens, etc.)
           content:
             application/json:
               schema:
@@ -1352,6 +1420,7 @@ components:
         - token_number
         - burned
         - viewable
+        - version
         - created_at
         - updated_at
       properties:
@@ -1388,6 +1457,16 @@ components:
           type: boolean
           description: Whether the token has accessible media URLs
           example: true
+        last_provenance_timestamp:
+          type: [string, "null"]
+          format: date-time
+          description: Timestamp of the most recent provenance event (cached for query performance)
+          example: "2024-01-15T10:30:00Z"
+        version:
+          type: integer
+          format: uint64
+          description: Version number incremented on user-visible changes (ownership, metadata, enrichment, viewability, burn status); used for scoped state sync
+          example: 42
         created_at:
           type: string
           format: date-time
@@ -2016,6 +2095,82 @@ components:
           type: string
           description: Temporal run ID for tracking
           example: "run-456"
+
+    SyncCollectionRequest:
+      type: object
+      required:
+        - known_tokens
+      properties:
+        known_tokens:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnownToken'
+          description: |
+            Array of token CIDs and their versions that the client currently has.
+            Maximum 10,000 entries.
+          minItems: 1
+          maxItems: 10000
+          example:
+            - token_cid: "eip155:1:erc721:0xabc123:1234"
+              version: 10
+            - token_cid: "eip155:1:erc721:0xdef456:5678"
+              version: 5
+
+    KnownToken:
+      type: object
+      required:
+        - token_cid
+        - version
+      properties:
+        token_cid:
+          type: string
+          description: Token CID
+          example: "eip155:1:erc721:0xabc123:1234"
+        version:
+          type: integer
+          format: uint64
+          description: Version number the client has for this token
+          example: 10
+
+    SyncCollectionResponse:
+      type: object
+      required:
+        - action_plan
+      properties:
+        action_plan:
+          $ref: '#/components/schemas/ActionPlan'
+
+    ActionPlan:
+      type: object
+      required:
+        - updates
+        - new
+        - removals
+      properties:
+        updates:
+          type: array
+          items:
+            type: string
+          description: |
+            Token CIDs that exist in both client and server, but server has newer version.
+            Client should fetch and update these tokens.
+          example: ["eip155:1:erc721:0xabc123:1234"]
+        new:
+          type: array
+          items:
+            type: string
+          description: |
+            Token CIDs that exist on server but not in client's known_tokens.
+            Client should fetch and add these tokens to its collection.
+          example: ["eip155:1:erc721:0xdef456:5678"]
+        removals:
+          type: array
+          items:
+            type: string
+          description: |
+            Token CIDs that exist in client's known_tokens but not on server.
+            These tokens were transferred out or burned. Client should remove them.
+          example: ["eip155:1:erc721:0xold789:9999"]
 
     AddressIndexingJobInfo:
       type: object
