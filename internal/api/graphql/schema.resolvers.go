@@ -725,7 +725,8 @@ func (r *workflowStatusResolver) ExecutionTime(ctx context.Context, obj *dto.Wor
 
 // Version is the resolver for the version field.
 func (r *knownTokenInputResolver) Version(ctx context.Context, obj *dto.KnownToken, data Uint64) error {
-	panic(fmt.Errorf("not implemented: Version - version"))
+	obj.Version = uint64(data)
+	return nil
 }
 
 // Change returns ChangeResolver implementation.
