@@ -30,6 +30,7 @@ CREATE TABLE tokens (
     burned BOOLEAN NOT NULL DEFAULT FALSE,
     is_viewable BOOLEAN NOT NULL DEFAULT FALSE,
     last_provenance_timestamp TIMESTAMPTZ,  -- Cached timestamp of most recent provenance event (added in migration 011)
+    version BIGINT NOT NULL DEFAULT 1,         -- Incremented on user-visible changes for scoped state sync (added in migration 013)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (chain, contract_address, token_number),

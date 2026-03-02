@@ -10,6 +10,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // Handler defines the interface for REST API handlers
@@ -59,6 +60,10 @@ type Handler interface {
 	// GetAddressIndexingJob retrieves an indexing job by workflow ID
 	// GET /api/v1/indexing/jobs/:workflow_id
 	GetAddressIndexingJob(c *gin.Context)
+
+	// SyncCollection compares client's known tokens with server state for an address
+	// POST /api/v1/collection/:address/sync
+	SyncCollection(c *gin.Context)
 
 	// HealthCheck returns the health status of the API
 	// GET /health
@@ -449,6 +454,54 @@ func (h *handler) GetAddressIndexingJob(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, job)
+}
+
+// SyncCollection compares client's known tokens with server state for an address
+func (h *handler) SyncCollection(c *gin.Context) {
+	address := c.Param("address")
+	if address == "" {
+		respondBadRequest(c, "address is required")
+		return
+	}
+
+	// Validate address format
+	if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+		respondBadRequest(c, "invalid address format")
+		return
+	}
+
+	var req dto.SyncCollectionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	// Validate request body
+	err := req.Validate()
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	// Convert array to map for executor
+	knownTokensMap := make(map[string]uint64, len(req.KnownTokens))
+	for _, token := range req.KnownTokens {
+		knownTokensMap[token.TokenCID] = token.Version
+	}
+
+	// Call executor's SyncCollection method
+	response, err := h.executor.SyncCollection(
+		c.Request.Context(),
+		address,
+		knownTokensMap,
+	)
+
+	if err != nil {
+		respondInternalError(c, err, "Failed to sync collection")
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // HealthCheck returns the health status of the API

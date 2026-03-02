@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -66,6 +67,10 @@ type Executor interface {
 
 	// GetAddressIndexingJob retrieves an indexing job by workflow ID
 	GetAddressIndexingJob(ctx context.Context, workflowID string, opts GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error)
+
+	// SyncCollection compares client's known tokens with server state for an address
+	// Returns a directed action plan: updates, new tokens, and removals
+	SyncCollection(ctx context.Context, address string, knownTokens map[string]uint64) (*dto.SyncCollectionResponse, error)
 }
 
 // GetAddressIndexingJobOptions configures optional data to include in indexing job response
@@ -1537,4 +1542,58 @@ func (e *executor) resolveDisplayDataURIs(ctx context.Context, tokens []dto.Toke
 		}
 	}
 	return nil
+}
+
+// SyncCollection compares client's known tokens with server state for an address
+func (e *executor) SyncCollection(ctx context.Context, address string, knownTokens map[string]uint64) (*dto.SyncCollectionResponse, error) {
+	// Normalize address
+	normalizedAddress := domain.NormalizeAddress(address)
+
+	// Get server's truth: all tokens owned by this address with their versions
+	serverTokens, err := e.store.GetTokenVersionsByOwner(ctx, normalizedAddress)
+	if err != nil {
+		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get tokens for address: %v", err))
+	}
+
+	// Perform set comparison
+	var updates, new, removals []string
+
+	// Find updates and new tokens
+	for tokenCID, serverVersion := range serverTokens {
+		clientVersion, existsInClient := knownTokens[tokenCID]
+
+		if existsInClient {
+			// Token exists in both - check if server has newer version
+			if serverVersion > clientVersion {
+				updates = append(updates, tokenCID)
+			}
+			// If serverVersion == clientVersion, no action needed (in sync)
+			// If serverVersion < clientVersion, this shouldn't happen (client can't be ahead)
+			// but we'll treat it as "in sync" and not include in updates
+		} else {
+			// Token exists on server but not in client - it's new
+			new = append(new, tokenCID)
+		}
+	}
+
+	// Find removals (client has it but server doesn't)
+	for tokenCID := range knownTokens {
+		if _, existsOnServer := serverTokens[tokenCID]; !existsOnServer {
+			// Token was transferred out or burned
+			removals = append(removals, tokenCID)
+		}
+	}
+
+	// Sort for deterministic responses
+	sort.Strings(updates)
+	sort.Strings(new)
+	sort.Strings(removals)
+
+	return &dto.SyncCollectionResponse{
+		ActionPlan: dto.ActionPlan{
+			Updates:  updates,
+			New:      new,
+			Removals: removals,
+		},
+	}, nil
 }

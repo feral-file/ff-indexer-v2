@@ -118,6 +118,18 @@ func (mr *MockAPIHandlerMockRecorder) ListTokens(c interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokens", reflect.TypeOf((*MockAPIHandler)(nil).ListTokens), c)
 }
 
+// SyncCollection mocks base method.
+func (m *MockAPIHandler) SyncCollection(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SyncCollection", c)
+}
+
+// SyncCollection indicates an expected call of SyncCollection.
+func (mr *MockAPIHandlerMockRecorder) SyncCollection(c interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SyncCollection", reflect.TypeOf((*MockAPIHandler)(nil).SyncCollection), c)
+}
+
 // TriggerAddressIndexing mocks base method.
 func (m *MockAPIHandler) TriggerAddressIndexing(c *gin.Context) {
 	m.ctrl.T.Helper()

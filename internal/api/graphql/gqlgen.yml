@@ -78,6 +78,8 @@ models:
         fieldName: Viewable
       last_provenance_timestamp:
         fieldName: LastProvenanceTimestamp
+      version:
+        fieldName: Version
       created_at:
         fieldName: CreatedAt
       updated_at:
@@ -459,6 +461,33 @@ models:
         fieldName: Artists
       mime_type:
         fieldName: MimeType
+
+  KnownTokenInput:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.KnownToken
+    fields:
+      token_cid:
+        fieldName: TokenCID
+      version:
+        fieldName: Version
+
+  SyncCollectionResult:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.SyncCollectionResponse
+    fields:
+      action_plan:
+        fieldName: ActionPlan
+
+  ActionPlan:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.ActionPlan
+    fields:
+      updates:
+        fieldName: Updates
+      new:
+        fieldName: New
+      removals:
+        fieldName: Removals
 
 # Skip generating resolver stubs for these fields (we'll implement them manually)
 omit_slice_element_pointers: true

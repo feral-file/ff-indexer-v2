@@ -323,6 +323,42 @@ func (r *mutationResolver) CreateWebhookClient(ctx context.Context, webhookURL s
 	return response, nil
 }
 
+// SyncCollection is the resolver for the syncCollection field.
+func (r *mutationResolver) SyncCollection(ctx context.Context, address string, knownTokens []dto.KnownToken) (*dto.SyncCollectionResponse, error) {
+	// Validate address
+	if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+	}
+
+	// Validate input
+	if len(knownTokens) == 0 {
+		return nil, apierrors.NewValidationError("known_tokens cannot be empty")
+	}
+	if len(knownTokens) > 10000 {
+		return nil, apierrors.NewValidationError("known_tokens cannot exceed 10000 entries")
+	}
+
+	// Convert array to map format expected by executor
+	knownTokensMap := make(map[string]uint64, len(knownTokens))
+	for _, token := range knownTokens {
+		if token.TokenCID == "" {
+			return nil, apierrors.NewValidationError("token_cid cannot be empty")
+		}
+		knownTokensMap[token.TokenCID] = uint64(token.Version)
+	}
+
+	// Call executor
+	response, err := r.executor.SyncCollection(ctx, address, knownTokensMap)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert response to GraphQL types
+	return &dto.SyncCollectionResponse{
+		ActionPlan: response.ActionPlan,
+	}, nil
+}
+
 // LastTxIndex is the resolver for the last_tx_index field.
 func (r *ownerProvenanceResolver) LastTxIndex(ctx context.Context, obj *dto.OwnerProvenanceResponse) (Uint64, error) {
 	return Uint64(obj.LastTxIndex), nil //nolint:gosec,G115
@@ -642,6 +678,11 @@ func (r *tokenResolver) Standard(ctx context.Context, obj *dto.TokenResponse) (s
 	return string(obj.Standard), nil
 }
 
+// Version is the resolver for the version field.
+func (r *tokenResolver) Version(ctx context.Context, obj *dto.TokenResponse) (Uint64, error) {
+	return Uint64(obj.Version), nil
+}
+
 // Offset is the resolver for the offset field.
 func (r *tokenListResolver) Offset(ctx context.Context, obj *dto.TokenListResponse) (*Uint64, error) {
 	return FromNativeUint64(obj.Offset), nil
@@ -680,6 +721,12 @@ func (r *workflowStatusResolver) ExecutionTime(ctx context.Context, obj *dto.Wor
 	}
 	val := Uint64(*obj.ExecutionTime)
 	return &val, nil
+}
+
+// Version is the resolver for the version field.
+func (r *knownTokenInputResolver) Version(ctx context.Context, obj *dto.KnownToken, data Uint64) error {
+	obj.Version = uint64(data)
+	return nil
 }
 
 // Change returns ChangeResolver implementation.
@@ -734,6 +781,9 @@ func (r *Resolver) TokenMetadata() TokenMetadataResolver { return &tokenMetadata
 // WorkflowStatus returns WorkflowStatusResolver implementation.
 func (r *Resolver) WorkflowStatus() WorkflowStatusResolver { return &workflowStatusResolver{r} }
 
+// KnownTokenInput returns KnownTokenInputResolver implementation.
+func (r *Resolver) KnownTokenInput() KnownTokenInputResolver { return &knownTokenInputResolver{r} }
+
 type changeResolver struct{ *Resolver }
 type changeListResolver struct{ *Resolver }
 type enrichmentSourceResolver struct{ *Resolver }
@@ -750,3 +800,4 @@ type tokenResolver struct{ *Resolver }
 type tokenListResolver struct{ *Resolver }
 type tokenMetadataResolver struct{ *Resolver }
 type workflowStatusResolver struct{ *Resolver }
+type knownTokenInputResolver struct{ *Resolver }

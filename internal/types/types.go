@@ -33,6 +33,17 @@ func SafeString(s *string) string {
 	return *s
 }
 
+// EqualStringPtr compares two pointers to strings for equality
+func EqualStringPtr(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
 // IsNumeric checks if a string is a valid numeric value
 func IsNumeric(s string) bool {
 	return regexp.MustCompile(`^[0-9]+$`).MatchString(s)

@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/json"
 	"time"
@@ -47,6 +48,19 @@ func (a Artists) Value() (driver.Value, error) {
 	return json.Marshal(a)
 }
 
+// Equal compares two Artists fields for equality
+func (a *Artists) Equal(other *Artists) bool {
+	if a == nil && other == nil {
+		return true
+	}
+	if a == nil || other == nil {
+		return false
+	}
+	aJSON, _ := json.Marshal(a)
+	otherJSON, _ := json.Marshal(other)
+	return bytes.Equal(aJSON, otherJSON)
+}
+
 // Publisher represents the publisher of the token
 type Publisher struct {
 	Name *string `json:"name,omitempty"`
@@ -65,6 +79,17 @@ func (p *Publisher) Scan(value interface{}) error {
 		return nil
 	}
 	return json.Unmarshal(value.([]byte), p)
+}
+
+// Equal compares two Publisher fields for equality
+func (p *Publisher) Equal(other *Publisher) bool {
+	if p == nil && other == nil {
+		return true
+	}
+	if p == nil || other == nil {
+		return false
+	}
+	return *p.Name == *other.Name && *p.URL == *other.URL
 }
 
 // EnrichmentLevel indicates the completeness of metadata enrichment

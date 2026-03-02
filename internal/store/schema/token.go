@@ -30,6 +30,10 @@ type Token struct {
 	// LastProvenanceTimestamp is the cached timestamp of the most recent provenance event for this token
 	// This is actually the known latest provenance timestamp for this token, not the actual latest provenance timestamp
 	LastProvenanceTimestamp *time.Time `gorm:"column:last_provenance_timestamp;type:timestamptz"`
+	// Version is incremented whenever the token changes in a way that's visible to clients
+	// Changes include: ownership, metadata, enrichment, viewability, burn status
+	// Used for scoped state sync to detect changes
+	Version uint64 `gorm:"column:version;not null;default:1"`
 	// CreatedAt is the timestamp when this record was first indexed
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is the timestamp when this record was last updated
