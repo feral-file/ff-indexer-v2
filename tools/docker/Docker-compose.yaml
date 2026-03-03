@@ -356,6 +356,9 @@ services:
       # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
       - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
+    # Increase shared memory for Chromium (default 64MB is insufficient)
+    # Chromium requires adequate shared memory to avoid hanging during rendering
+    shm_size: "1g"
     networks:
       - ff-indexer-network
     restart: unless-stopped

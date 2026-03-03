@@ -242,6 +242,12 @@ type RasterizerConfig struct {
 	// Width is the target width for SVG rasterization (0 = use SVG natural size)
 	// Height is automatically calculated to maintain aspect ratio using ScaleBestFit
 	Width int `mapstructure:"width"`
+
+	// TimeoutMs is the maximum time to wait for page operations (default: 15000ms)
+	TimeoutMs int `mapstructure:"timeout_ms"`
+
+	// BrowserFallbackEnabled enables browser fallback for SVG rasterization
+	BrowserFallbackEnabled bool `mapstructure:"browser_fallback_enabled"`
 }
 
 // TransformConfig holds configuration for image transformation
@@ -525,6 +531,8 @@ func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfi
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
 	v.SetDefault("rasterizer.width", 2048)
+	v.SetDefault("rasterizer.timeout_ms", 15000) // 15 seconds
+	v.SetDefault("rasterizer.browser_fallback_enabled", false)
 	v.SetDefault("max_image_size", 10*1024*1024)  // 10MB
 	v.SetDefault("max_video_size", 300*1024*1024) // 300MB
 
@@ -721,6 +729,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"max_image_size",
 		"max_video_size",
 		"rasterizer.width",
+		"rasterizer.timeout_ms",
+		"rasterizer.browser_fallback_enabled",
 		// Internal Worker config
 		"worker.pool_size",
 		"worker.queue_size",

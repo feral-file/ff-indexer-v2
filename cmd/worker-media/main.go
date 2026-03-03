@@ -91,6 +91,8 @@ func main() {
 	fileSystem := adapter.NewFileSystem()
 	resvgClient := adapter.NewResvgClient()
 	imageEncoder := adapter.NewImageEncoder()
+	chromedpClient := adapter.NewChromedpClient()
+	xml := adapter.NewXML()
 
 	// Initialize HTTP client
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
@@ -125,9 +127,19 @@ func main() {
 	)
 
 	// Initialize SVG rasterizer with adapters and config
-	svgRasterizer := rasterizer.NewRasterizer(resvgClient, imageEncoder, &rasterizer.Config{
-		Width: cfg.Rasterizer.Width,
-	})
+	browserRasterizer := rasterizer.NewBrowserRasterizer(
+		chromedpClient,
+		xml,
+		adapter.NewFileSystem(),
+		&rasterizer.BrowserRasterizerConfig{
+			Width:     cfg.Rasterizer.Width,
+			TimeoutMs: cfg.Rasterizer.TimeoutMs,
+		})
+	svgRasterizer := rasterizer.NewRasterizer(resvgClient, imageEncoder, browserRasterizer,
+		&rasterizer.Config{
+			Width:                 cfg.Rasterizer.Width,
+			EnableBrowserFallback: cfg.Rasterizer.BrowserFallbackEnabled,
+		})
 
 	// Initialize vips client
 	vipsClient := adapter.NewVipsClient()
