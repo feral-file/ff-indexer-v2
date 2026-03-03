@@ -37,11 +37,21 @@ FROM alpine:latest
 # - ca-certificates: for HTTPS
 # - libgcc: required by statically linked Go binary with CGO
 # - vips: libvips runtime library (8.18.0+ from edge)
+# - chromium: for headless browser SVG rendering via chromedp
+# - chromium-chromedriver: driver for chromium automation
+# - font-noto: fonts for proper text rendering in browser
 RUN apk add --no-cache \
     ca-certificates \
     libgcc \
     --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community \
-    vips~=8.18
+    vips~=8.18 \
+    chromium \
+    chromium-chromedriver \
+    font-noto
+
+# Set Chromium environment variables for headless operation
+ENV CHROME_BIN=/usr/bin/chromium-browser \
+    CHROME_PATH=/usr/lib/chromium/
 
 # Create non-root user
 RUN addgroup -g 1000 appuser && \

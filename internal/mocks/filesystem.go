@@ -5,11 +5,10 @@
 package mocks
 
 import (
+	os "os"
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
-
-	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 )
 
 // MockFileSystem is a mock of FileSystem interface.
@@ -35,11 +34,25 @@ func (m *MockFileSystem) EXPECT() *MockFileSystemMockRecorder {
 	return m.recorder
 }
 
+// Close mocks base method.
+func (m *MockFileSystem) Close(file *os.File) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close", file)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockFileSystemMockRecorder) Close(file interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockFileSystem)(nil).Close), file)
+}
+
 // Create mocks base method.
-func (m *MockFileSystem) Create(name string) (adapter.File, error) {
+func (m *MockFileSystem) Create(name string) (*os.File, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Create", name)
-	ret0, _ := ret[0].(adapter.File)
+	ret0, _ := ret[0].(*os.File)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -50,19 +63,34 @@ func (mr *MockFileSystemMockRecorder) Create(name interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockFileSystem)(nil).Create), name)
 }
 
-// ReadFile mocks base method.
-func (m *MockFileSystem) ReadFile(name string) ([]byte, error) {
+// CreateTemp mocks base method.
+func (m *MockFileSystem) CreateTemp(dir, pattern string) (*os.File, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReadFile", name)
+	ret := m.ctrl.Call(m, "CreateTemp", dir, pattern)
+	ret0, _ := ret[0].(*os.File)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CreateTemp indicates an expected call of CreateTemp.
+func (mr *MockFileSystemMockRecorder) CreateTemp(dir, pattern interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTemp", reflect.TypeOf((*MockFileSystem)(nil).CreateTemp), dir, pattern)
+}
+
+// ReadFile mocks base method.
+func (m *MockFileSystem) ReadFile(filePath string) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReadFile", filePath)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ReadFile indicates an expected call of ReadFile.
-func (mr *MockFileSystemMockRecorder) ReadFile(name interface{}) *gomock.Call {
+func (mr *MockFileSystemMockRecorder) ReadFile(filePath interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadFile", reflect.TypeOf((*MockFileSystem)(nil).ReadFile), name)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadFile", reflect.TypeOf((*MockFileSystem)(nil).ReadFile), filePath)
 }
 
 // Remove mocks base method.
@@ -93,172 +121,17 @@ func (mr *MockFileSystemMockRecorder) TempDir() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TempDir", reflect.TypeOf((*MockFileSystem)(nil).TempDir))
 }
 
-// MockFile is a mock of File interface.
-type MockFile struct {
-	ctrl     *gomock.Controller
-	recorder *MockFileMockRecorder
-}
-
-// MockFileMockRecorder is the mock recorder for MockFile.
-type MockFileMockRecorder struct {
-	mock *MockFile
-}
-
-// NewMockFile creates a new mock instance.
-func NewMockFile(ctrl *gomock.Controller) *MockFile {
-	mock := &MockFile{ctrl: ctrl}
-	mock.recorder = &MockFileMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockFile) EXPECT() *MockFileMockRecorder {
-	return m.recorder
-}
-
-// Close mocks base method.
-func (m *MockFile) Close() error {
+// WriteFile mocks base method.
+func (m *MockFileSystem) WriteFile(file *os.File, data []byte) (int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close")
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Close indicates an expected call of Close.
-func (mr *MockFileMockRecorder) Close() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockFile)(nil).Close))
-}
-
-// Write mocks base method.
-func (m *MockFile) Write(p []byte) (int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Write", p)
+	ret := m.ctrl.Call(m, "WriteFile", file, data)
 	ret0, _ := ret[0].(int)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// Write indicates an expected call of Write.
-func (mr *MockFileMockRecorder) Write(p interface{}) *gomock.Call {
+// WriteFile indicates an expected call of WriteFile.
+func (mr *MockFileSystemMockRecorder) WriteFile(file, data interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Write", reflect.TypeOf((*MockFile)(nil).Write), p)
-}
-
-// MockWritableFile is a mock of WritableFile interface.
-type MockWritableFile struct {
-	ctrl     *gomock.Controller
-	recorder *MockWritableFileMockRecorder
-}
-
-// MockWritableFileMockRecorder is the mock recorder for MockWritableFile.
-type MockWritableFileMockRecorder struct {
-	mock *MockWritableFile
-}
-
-// NewMockWritableFile creates a new mock instance.
-func NewMockWritableFile(ctrl *gomock.Controller) *MockWritableFile {
-	mock := &MockWritableFile{ctrl: ctrl}
-	mock.recorder = &MockWritableFileMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockWritableFile) EXPECT() *MockWritableFileMockRecorder {
-	return m.recorder
-}
-
-// Close mocks base method.
-func (m *MockWritableFile) Close() error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close")
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Close indicates an expected call of Close.
-func (mr *MockWritableFileMockRecorder) Close() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockWritableFile)(nil).Close))
-}
-
-// Name mocks base method.
-func (m *MockWritableFile) Name() string {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Name")
-	ret0, _ := ret[0].(string)
-	return ret0
-}
-
-// Name indicates an expected call of Name.
-func (mr *MockWritableFileMockRecorder) Name() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Name", reflect.TypeOf((*MockWritableFile)(nil).Name))
-}
-
-// Write mocks base method.
-func (m *MockWritableFile) Write(p []byte) (int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Write", p)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Write indicates an expected call of Write.
-func (mr *MockWritableFileMockRecorder) Write(p interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Write", reflect.TypeOf((*MockWritableFile)(nil).Write), p)
-}
-
-// MockReadableFile is a mock of ReadableFile interface.
-type MockReadableFile struct {
-	ctrl     *gomock.Controller
-	recorder *MockReadableFileMockRecorder
-}
-
-// MockReadableFileMockRecorder is the mock recorder for MockReadableFile.
-type MockReadableFileMockRecorder struct {
-	mock *MockReadableFile
-}
-
-// NewMockReadableFile creates a new mock instance.
-func NewMockReadableFile(ctrl *gomock.Controller) *MockReadableFile {
-	mock := &MockReadableFile{ctrl: ctrl}
-	mock.recorder = &MockReadableFileMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockReadableFile) EXPECT() *MockReadableFileMockRecorder {
-	return m.recorder
-}
-
-// Close mocks base method.
-func (m *MockReadableFile) Close() error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Close")
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Close indicates an expected call of Close.
-func (mr *MockReadableFileMockRecorder) Close() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockReadableFile)(nil).Close))
-}
-
-// Read mocks base method.
-func (m *MockReadableFile) Read(p []byte) (int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Read", p)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Read indicates an expected call of Read.
-func (mr *MockReadableFileMockRecorder) Read(p interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Read", reflect.TypeOf((*MockReadableFile)(nil).Read), p)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteFile", reflect.TypeOf((*MockFileSystem)(nil).WriteFile), file, data)
 }
