@@ -68,9 +68,10 @@ type Executor interface {
 	// GetAddressIndexingJob retrieves an indexing job by workflow ID
 	GetAddressIndexingJob(ctx context.Context, workflowID string, opts GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error)
 
-	// SyncCollection compares client's known tokens with server state for an address
-	// Returns a directed action plan: updates, new tokens, and removals
-	SyncCollection(ctx context.Context, address string, knownTokens map[string]uint64) (*dto.SyncCollectionResponse, error)
+	// SyncCollection retrieves token events for an address since a checkpoint
+	// checkpoint: optional, if nil returns events from beginning (initial sync)
+	// Uses cursor-based pagination with (timestamp, event_id) for reliable pagination
+	SyncCollection(ctx context.Context, address string, checkpoint *dto.SyncCheckpoint, limit uint8) (*dto.SyncCollectionResponse, error)
 }
 
 // GetAddressIndexingJobOptions configures optional data to include in indexing job response
@@ -1544,56 +1545,57 @@ func (e *executor) resolveDisplayDataURIs(ctx context.Context, tokens []dto.Toke
 	return nil
 }
 
-// SyncCollection compares client's known tokens with server state for an address
-func (e *executor) SyncCollection(ctx context.Context, address string, knownTokens map[string]uint64) (*dto.SyncCollectionResponse, error) {
-	// Normalize address
+// SyncCollection retrieves token changes for an address since a checkpoint with cursor-based pagination
+func (e *executor) SyncCollection(ctx context.Context, address string, checkpoint *dto.SyncCheckpoint, limit uint8) (*dto.SyncCollectionResponse, error) {
 	normalizedAddress := domain.NormalizeAddress(address)
 
-	// Get server's truth: all tokens owned by this address with their versions
-	serverTokens, err := e.store.GetTokenVersionsByOwner(ctx, normalizedAddress)
+	// Extract checkpoint values (use zero values for initial sync)
+	var sinceTimestamp time.Time
+	var sinceEventID uint64
+	if checkpoint != nil {
+		sinceTimestamp = checkpoint.Timestamp
+		sinceEventID = checkpoint.EventID
+	}
+
+	// Capture server time at query execution
+	serverTime := time.Now()
+
+	// Request limit+1 to detect if there are more results
+	events, err := e.store.GetTokenChangesByOwnerSinceCheckpoint(ctx, normalizedAddress, sinceTimestamp, sinceEventID, int(limit)+1)
 	if err != nil {
-		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get tokens for address: %v", err))
+		return nil, fmt.Errorf("failed to get token changes: %w", err)
 	}
 
-	// Perform set comparison
-	var updates, new, removals []string
+	// Check if there are more results
+	hasMore := len(events) > int(limit)
+	if hasMore {
+		// Return only the requested limit
+		events = events[:limit]
+	}
 
-	// Find updates and new tokens
-	for tokenCID, serverVersion := range serverTokens {
-		clientVersion, existsInClient := knownTokens[tokenCID]
-
-		if existsInClient {
-			// Token exists in both - check if server has newer version
-			if serverVersion > clientVersion {
-				updates = append(updates, tokenCID)
-			}
-			// If serverVersion == clientVersion, no action needed (in sync)
-			// If serverVersion < clientVersion, this shouldn't happen (client can't be ahead)
-			// but we'll treat it as "in sync" and not include in updates
-		} else {
-			// Token exists on server but not in client - it's new
-			new = append(new, tokenCID)
+	// NextCheckpoint: use the last event (by created_at ordering from DB)
+	// Since DB returns events sorted by created_at, the last event has the max created_at
+	var nextCheckpoint *dto.SyncCheckpoint
+	if len(events) > 0 {
+		lastEvent := events[len(events)-1]
+		nextCheckpoint = &dto.SyncCheckpoint{
+			Timestamp: lastEvent.CreatedAt,
+			EventID:   lastEvent.ID,
 		}
 	}
 
-	// Find removals (client has it but server doesn't)
-	for tokenCID := range knownTokens {
-		if _, existsOnServer := serverTokens[tokenCID]; !existsOnServer {
-			// Token was transferred out or burned
-			removals = append(removals, tokenCID)
+	// Sort events by occurred_at for chronological display to client
+	// DB returns them sorted by created_at for pagination consistency
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].OccurredAt.Equal(events[j].OccurredAt) {
+			return events[i].ID < events[j].ID
 		}
-	}
-
-	// Sort for deterministic responses
-	sort.Strings(updates)
-	sort.Strings(new)
-	sort.Strings(removals)
+		return events[i].OccurredAt.Before(events[j].OccurredAt)
+	})
 
 	return &dto.SyncCollectionResponse{
-		ActionPlan: dto.ActionPlan{
-			Updates:  updates,
-			New:      new,
-			Removals: removals,
-		},
+		Events:         dto.MapTokenEventsToDTOs(events),
+		NextCheckpoint: nextCheckpoint,
+		ServerTime:     serverTime,
 	}, nil
 }

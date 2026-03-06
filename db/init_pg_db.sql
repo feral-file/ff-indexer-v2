@@ -30,7 +30,6 @@ CREATE TABLE tokens (
     burned BOOLEAN NOT NULL DEFAULT FALSE,
     is_viewable BOOLEAN NOT NULL DEFAULT FALSE,
     last_provenance_timestamp TIMESTAMPTZ,  -- Cached timestamp of most recent provenance event (added in migration 011)
-    version BIGINT NOT NULL DEFAULT 1,         -- Incremented on user-visible changes for scoped state sync (added in migration 013)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (chain, contract_address, token_number),
@@ -189,6 +188,41 @@ CREATE TABLE token_ownership_periods (
 
 -- Create partial unique index to ensure only one active ownership period per token-owner combination
 CREATE UNIQUE INDEX unique_active_token_owner ON token_ownership_periods (token_id, owner_address) WHERE (released_at IS NULL);
+
+-- Token Events table - Unified event log for ownership and attribute changes
+-- Enables efficient collection sync with simple pagination
+-- Replaces changes_journal for collection sync purposes
+CREATE TABLE token_events (
+    id BIGSERIAL PRIMARY KEY,
+    token_id BIGINT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+    
+    -- Event type: ownership or attribute changes
+    event_type TEXT NOT NULL CHECK (event_type IN (
+        'acquired',              -- Token added to owner's collection
+        'released',              -- Token removed from owner's collection
+        'metadata_updated',      -- Token metadata changed
+        'enrichment_updated',    -- Token enrichment changed
+        'viewability_changed'    -- Token viewability changed
+    )),
+    
+    -- Owner address (set for ownership events, NULL for attribute events that broadcast to all owners)
+    owner_address TEXT,
+    
+    -- When the event actually occurred (NOT when it was recorded)
+    occurred_at TIMESTAMPTZ NOT NULL,
+    
+    -- Lightweight metadata for reference (JSONB for flexibility)
+    -- Examples:
+    --   acquired: {"tx_hash": "0x...", "quantity": "1"}
+    --   released: {"tx_hash": "0x...", "quantity": "1", "to_address": "0x..."}
+    --   metadata_updated: {"changed_fields": ["name", "image_url"]}
+    --   enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
+    --   viewability_changed: {"is_viewable": true}
+    metadata JSONB,
+    
+    -- When this event was recorded in the database
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- Token Ownership Provenance table - Tracks the most recent provenance event per token-owner pair
 -- This table enables fast owner-filtered queries by denormalizing the latest provenance timestamp
@@ -351,6 +385,14 @@ CREATE INDEX idx_changes_journal_subject_id ON changes_journal (subject_id);
 CREATE INDEX idx_changes_journal_subject_type_changed_at_id ON changes_journal (subject_type, changed_at, id);
 CREATE INDEX idx_changes_journal_changed_at_id ON changes_journal (changed_at, id);
 
+-- Token Events table indexes
+-- Primary index for owner-scoped sync queries (uses created_at for consistent pagination)
+CREATE INDEX idx_token_events_owner_created ON token_events(owner_address, created_at ASC, id ASC) WHERE owner_address IS NOT NULL;
+-- Index for general broadcast events queries (all broadcast events by created_at)
+CREATE INDEX idx_token_events_created_id ON token_events(created_at ASC, id ASC);
+-- Index for broadcast events by token_id (optimizes JOIN with balances table for scalability)
+CREATE INDEX idx_token_events_token_created ON token_events(token_id, created_at ASC, id ASC) WHERE owner_address IS NULL;
+
 -- Provenance Events table indexes
 CREATE INDEX idx_provenance_events_token_id ON provenance_events (token_id);
 CREATE INDEX idx_provenance_events_chain ON provenance_events (chain);
@@ -371,6 +413,7 @@ CREATE INDEX idx_token_ownership_token_owner_periods ON token_ownership_periods 
 CREATE INDEX idx_token_ownership_owner_periods ON token_ownership_periods (owner_address, acquired_at, released_at);
 CREATE INDEX idx_token_ownership_token_id_text_periods ON token_ownership_periods (CAST(token_id AS TEXT), owner_address, acquired_at, released_at);
 CREATE INDEX idx_token_ownership_current_owners ON token_ownership_periods (token_id, owner_address) WHERE released_at IS NULL;
+CREATE INDEX idx_token_ownership_periods_owner_released_token ON token_ownership_periods(owner_address, token_id) WHERE released_at IS NOT NULL;  -- For removal queries in watermark-based sync
 
 -- Token Ownership Provenance table indexes
 -- Index 1: For owner-filtered token queries (GetTokensByFilter with owner filter)

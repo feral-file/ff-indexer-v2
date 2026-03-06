@@ -1,6 +1,8 @@
 package dto
 
-import "time"
+import (
+	"time"
+)
 
 // TriggerIndexingResponse represents the response for triggering indexing
 type TriggerIndexingResponse struct {
@@ -59,20 +61,27 @@ type AddressIndexingJobResponse struct {
 	CanceledAt          *time.Time `json:"canceled_at,omitempty"`
 }
 
-// SyncCollectionResponse represents the server's sync action plan
-type SyncCollectionResponse struct {
-	ActionPlan ActionPlan `json:"action_plan"`
+// SyncCheckpoint represents a position in the event stream
+type SyncCheckpoint struct {
+	// Timestamp: filters events with created_at >= this timestamp
+	Timestamp time.Time `json:"timestamp"`
+
+	// EventID: last event ID processed (used as tie-breaker for same timestamp)
+	EventID uint64 `json:"event_id"`
 }
 
-// ActionPlan tells the client exactly what actions to take
-type ActionPlan struct {
-	// Updates: token_cids that exist in both client and server, but server has newer version
-	Updates []string `json:"updates"`
+// SyncCollectionResponse represents the server's sync response using checkpoint-based pagination
+type SyncCollectionResponse struct {
+	// Events: all token events (acquisitions, releases, attribute updates) since checkpoint
+	// Ordered by occurred_at (chronological event time) for proper timeline display
+	Events []TokenEvent `json:"events"`
 
-	// New: token_cids that exist on server but not in client's known_tokens
-	New []string `json:"new"`
+	// NextCheckpoint: checkpoint for next request
+	// - Always set to last event's (created_at, id) if any events returned
+	// - Client uses this for both pagination AND next sync cycle
+	// - Null only if no events were returned
+	NextCheckpoint *SyncCheckpoint `json:"next_checkpoint,omitempty"`
 
-	// Removals: token_cids that exist in client's known_tokens but not on server
-	// (token was transferred out or burned)
-	Removals []string `json:"removals"`
+	// ServerTime: when query executed
+	ServerTime time.Time `json:"server_time"`
 }

@@ -462,32 +462,42 @@ models:
       mime_type:
         fieldName: MimeType
 
-  KnownTokenInput:
-    model:
-      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.KnownToken
-    fields:
-      token_cid:
-        fieldName: TokenCID
-      version:
-        fieldName: Version
-
   SyncCollectionResult:
     model:
       - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.SyncCollectionResponse
     fields:
-      action_plan:
-        fieldName: ActionPlan
+      events:
+        fieldName: Events
+      next_checkpoint:
+        fieldName: NextCheckpoint
+      server_time:
+        fieldName: ServerTime
 
-  ActionPlan:
+  SyncCheckpoint:
     model:
-      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.ActionPlan
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.SyncCheckpoint
     fields:
-      updates:
-        fieldName: Updates
-      new:
-        fieldName: New
-      removals:
-        fieldName: Removals
+      timestamp:
+        fieldName: Timestamp
+      event_id:
+        fieldName: EventID
+
+  TokenEvent:
+    model:
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.TokenEvent
+    fields:
+      id:
+        fieldName: ID
+      token_id:
+        fieldName: TokenID
+      event_type:
+        fieldName: EventType
+      owner_address:
+        fieldName: OwnerAddress
+      occurred_at:
+        fieldName: OccurredAt
+      metadata:
+        fieldName: Metadata
 
 # Skip generating resolver stubs for these fields (we'll implement them manually)
 omit_slice_element_pointers: true

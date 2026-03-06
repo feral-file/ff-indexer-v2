@@ -454,6 +454,21 @@ func (mr *MockStoreMockRecorder) GetTokenCIDsByOwner(ctx, ownerAddress interface
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenCIDsByOwner", reflect.TypeOf((*MockStore)(nil).GetTokenCIDsByOwner), ctx, ownerAddress)
 }
 
+// GetTokenChangesByOwnerSinceCheckpoint mocks base method.
+func (m *MockStore) GetTokenChangesByOwnerSinceCheckpoint(ctx context.Context, ownerAddress string, sinceTimestamp time.Time, sinceEventID uint64, limit int) ([]schema.TokenEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenChangesByOwnerSinceCheckpoint", ctx, ownerAddress, sinceTimestamp, sinceEventID, limit)
+	ret0, _ := ret[0].([]schema.TokenEvent)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenChangesByOwnerSinceCheckpoint indicates an expected call of GetTokenChangesByOwnerSinceCheckpoint.
+func (mr *MockStoreMockRecorder) GetTokenChangesByOwnerSinceCheckpoint(ctx, ownerAddress, sinceTimestamp, sinceEventID, limit interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenChangesByOwnerSinceCheckpoint", reflect.TypeOf((*MockStore)(nil).GetTokenChangesByOwnerSinceCheckpoint), ctx, ownerAddress, sinceTimestamp, sinceEventID, limit)
+}
+
 // GetTokenCountsByAddress mocks base method.
 func (m *MockStore) GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*store.TokenCountsByAddress, error) {
 	m.ctrl.T.Helper()
@@ -607,21 +622,6 @@ func (m *MockStore) GetTokenProvenanceEventsBulk(ctx context.Context, tokenIDs [
 func (mr *MockStoreMockRecorder) GetTokenProvenanceEventsBulk(ctx, tokenIDs, limit interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenProvenanceEventsBulk", reflect.TypeOf((*MockStore)(nil).GetTokenProvenanceEventsBulk), ctx, tokenIDs, limit)
-}
-
-// GetTokenVersionsByOwner mocks base method.
-func (m *MockStore) GetTokenVersionsByOwner(ctx context.Context, ownerAddress string) (map[string]uint64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokenVersionsByOwner", ctx, ownerAddress)
-	ret0, _ := ret[0].(map[string]uint64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetTokenVersionsByOwner indicates an expected call of GetTokenVersionsByOwner.
-func (mr *MockStoreMockRecorder) GetTokenVersionsByOwner(ctx, ownerAddress interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenVersionsByOwner", reflect.TypeOf((*MockStore)(nil).GetTokenVersionsByOwner), ctx, ownerAddress)
 }
 
 // GetTokenWithMetadataByTokenCID mocks base method.

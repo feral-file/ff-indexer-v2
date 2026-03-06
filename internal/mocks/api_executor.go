@@ -132,18 +132,18 @@ func (mr *MockAPIExecutorMockRecorder) GetWorkflowStatus(ctx, workflowID, runID 
 }
 
 // SyncCollection mocks base method.
-func (m *MockAPIExecutor) SyncCollection(ctx context.Context, address string, knownTokens map[string]uint64) (*dto.SyncCollectionResponse, error) {
+func (m *MockAPIExecutor) SyncCollection(ctx context.Context, address string, checkpoint *dto.SyncCheckpoint, limit uint8) (*dto.SyncCollectionResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SyncCollection", ctx, address, knownTokens)
+	ret := m.ctrl.Call(m, "SyncCollection", ctx, address, checkpoint, limit)
 	ret0, _ := ret[0].(*dto.SyncCollectionResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SyncCollection indicates an expected call of SyncCollection.
-func (mr *MockAPIExecutorMockRecorder) SyncCollection(ctx, address, knownTokens interface{}) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) SyncCollection(ctx, address, checkpoint, limit interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SyncCollection", reflect.TypeOf((*MockAPIExecutor)(nil).SyncCollection), ctx, address, knownTokens)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SyncCollection", reflect.TypeOf((*MockAPIExecutor)(nil).SyncCollection), ctx, address, checkpoint, limit)
 }
 
 // TriggerAddressIndexing mocks base method.
