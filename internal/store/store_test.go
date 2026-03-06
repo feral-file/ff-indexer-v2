@@ -6357,359 +6357,305 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 	})
 }
 
-func testGetTokenVersionsByOwner(t *testing.T, store Store) {
-	ctx := context.Background()
-
-	t.Run("returns empty map for address with no tokens", func(t *testing.T) {
-		result, err := store.GetTokenVersionsByOwner(ctx, "0xnobody0000000000000000000000000000000000")
-		require.NoError(t, err)
-		assert.Empty(t, result)
-	})
-
-	t.Run("returns ERC721 tokens for owner", func(t *testing.T) {
-		owner := "0x1000000000000000000000000000000000000001"
-
-		// Create token owned by this address
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xc000000000000000000000000000000000000001",
-			"1",
-			owner,
-		)
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		// Get versions
-		result, err := store.GetTokenVersionsByOwner(ctx, owner)
-		require.NoError(t, err)
-		assert.Len(t, result, 1)
-		assert.Contains(t, result, mintInput.Token.TokenCID)
-		assert.Equal(t, uint64(1), result[mintInput.Token.TokenCID])
-	})
-
-	t.Run("returns ERC1155 tokens with balance for owner", func(t *testing.T) {
-		owner := "0x2000000000000000000000000000000000000002"
-
-		// Create ERC1155 token with balance for this address
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC1155,
-			"0xc000000000000000000000000000000000000002",
-			"1",
-			owner,
-		)
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		// Get versions
-		result, err := store.GetTokenVersionsByOwner(ctx, owner)
-		require.NoError(t, err)
-		assert.Len(t, result, 1)
-		assert.Contains(t, result, mintInput.Token.TokenCID)
-	})
-
-	t.Run("excludes burned tokens", func(t *testing.T) {
-		owner := "0x3000000000000000000000000000000000000003"
-
-		// Create token
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xc000000000000000000000000000000000000003",
-			"1",
-			owner,
-		)
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		// Burn it
-		_, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-
-		burnEvent := CreateProvenanceEventInput{
-			Chain:       domain.ChainEthereumMainnet,
-			EventType:   schema.ProvenanceEventTypeBurn,
-			FromAddress: &owner,
-			ToAddress:   nil,
-			Quantity:    "1",
-			TxHash:      "0xburn000000000000000000000000000000000000000000000000000000000001",
-			BlockNumber: 200,
-			Timestamp:   time.Now(),
-		}
-
-		err = store.UpdateTokenBurn(ctx, CreateTokenBurnInput{
-			TokenCID:        mintInput.Token.TokenCID,
-			ProvenanceEvent: burnEvent,
-		})
-		require.NoError(t, err)
-
-		// Get versions - should be empty (burned tokens excluded)
-		result, err := store.GetTokenVersionsByOwner(ctx, owner)
-		require.NoError(t, err)
-		assert.Empty(t, result)
-	})
-
-	t.Run("returns multiple tokens across different standards", func(t *testing.T) {
-		owner := "0x5000000000000000000000000000000000000005"
-
-		// Create ERC721 token
-		mint721 := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xc000000000000000000000000000000000000721",
-			"1",
-			owner,
-		)
-		err := store.CreateTokenMint(ctx, mint721)
-		require.NoError(t, err)
-
-		// Create ERC1155 token
-		mint1155 := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC1155,
-			"0xc000000000000000000000000000000000001155",
-			"1",
-			owner,
-		)
-		err = store.CreateTokenMint(ctx, mint1155)
-		require.NoError(t, err)
-
-		// Get versions - should have both
-		result, err := store.GetTokenVersionsByOwner(ctx, owner)
-		require.NoError(t, err)
-		assert.Len(t, result, 2)
-		assert.Contains(t, result, mint721.Token.TokenCID)
-		assert.Contains(t, result, mint1155.Token.TokenCID)
-	})
-}
-
-// =============================================================================
-// Test: Token Version Increment Logic
 // =============================================================================
 
-func testTokenVersionIncrement(t *testing.T, store Store) {
+// =============================================================================
+// Test: GetTokenChangesByOwnerSinceCheckpoint
+// =============================================================================
+
+func testGetTokenChangesByOwnerSinceCheckpoint(t *testing.T, store Store) {
 	ctx := context.Background()
+	address1 := "0xowner1"
+	address2 := "0xowner2"
 
-	t.Run("metadata: version increments when user-visible fields change", func(t *testing.T) {
-		owner := "0x1000000000000000000000000000000000000001"
-
-		// Create token
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xc000000000000000000000000000000000000001",
-			"1",
-			owner,
-		)
-		err := store.CreateTokenMint(ctx, mintInput)
+	t.Run("returns empty events for brand new sync (epoch time)", func(t *testing.T) {
+		events, err := store.GetTokenChangesByOwnerSinceCheckpoint(ctx, address1, time.Time{}, 0, 100)
 		require.NoError(t, err)
-
-		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-		require.Equal(t, uint64(1), token.Version)
-
-		// Add metadata
-		metadataInput := CreateTokenMetadataInput{
-			TokenID:         token.ID,
-			OriginJSON:      []byte(`{"name": "Original"}`),
-			LatestJSON:      []byte(`{"name": "Original"}`),
-			LatestHash:      types.StringPtr("hash1"),
-			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: time.Now(),
-			ImageURL:        types.StringPtr("https://example.com/image1.jpg"),
-			Name:            types.StringPtr("Original Name"),
-			Artists: schema.Artists{
-				{
-					DID:  domain.DID("did:example:123"),
-					Name: "Artist Name",
-				},
-			},
-			Publisher: &schema.Publisher{
-				Name: types.StringPtr("Publisher Name"),
-				URL:  types.StringPtr("https://example.com/publisher.com"),
-			},
-		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-		require.Equal(t, uint64(2), token.Version, "Version should increment when metadata is added")
-
-		// Update metadata with same user-visible fields (only raw JSON changes)
-		metadataInput.OriginJSON = []byte(`{"name": "Original", "extra": "field"}`) // Changed raw JSON
-		metadataInput.LatestJSON = []byte(`{"name": "Original", "extra": "field"}`) // Changed raw JSON
-		metadataInput.LatestHash = types.StringPtr("hash2")                         // Changed hash
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-		require.Equal(t, uint64(2), token.Version, "Version should NOT increment when only raw JSON changes")
-
-		// Update metadata with changed user-visible field (name)
-		metadataInput.Name = types.StringPtr("Updated Name")
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-		require.Equal(t, uint64(3), token.Version, "Version should increment when name changes")
-
-		// Update metadata with changed image URL
-		metadataInput.ImageURL = types.StringPtr("https://example.com/image2.jpg")
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-		require.Equal(t, uint64(4), token.Version, "Version should increment when image URL changes")
-
-		// Change AnimationURL
-		metadataInput.AnimationURL = types.StringPtr("https://example.com/anim2.mp4")
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.Equal(t, uint64(5), token.Version, "AnimationURL change should increment version")
-
-		// Change Description
-		metadataInput.Description = types.StringPtr("New Description")
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.Equal(t, uint64(6), token.Version, "Description change should increment version")
-
-		// Change MimeType
-		metadataInput.MimeType = types.StringPtr("video/mp4")
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.Equal(t, uint64(7), token.Version, "MimeType change should increment version")
-
-		// Update Artists with same artists
-		metadataInput.Artists = schema.Artists{
-			{
-				DID:  domain.DID("did:example:123"),
-				Name: "Artist Name",
-			},
-		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.Equal(t, uint64(7), token.Version, "Artists change should increment version")
-
-		// Change Artists
-		metadataInput.Artists = schema.Artists{
-			{
-				DID:  domain.DID("did:example:456"),
-				Name: "Artist Name 2",
-			},
-		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-
-		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.Equal(t, uint64(8), token.Version, "Artists change should increment version")
-
-		// Update Publisher with same publisher
-		metadataInput.Publisher = &schema.Publisher{
-			Name: types.StringPtr("Publisher Name"),
-			URL:  types.StringPtr("https://example.com/publisher.com"),
-		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.Equal(t, uint64(8), token.Version, "Publisher change should increment version")
-
-		// Change Publisher
-		metadataInput.Publisher = &schema.Publisher{
-			Name: types.StringPtr("Publisher Name 2"),
-			URL:  types.StringPtr("https://example.com/publisher2.com"),
-		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-		token, _ = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.Equal(t, uint64(9), token.Version, "Publisher change should increment version")
+		require.Empty(t, events)
 	})
 
-	t.Run("enrichment: version increments when user-visible fields change", func(t *testing.T) {
-		owner := "0x3000000000000000000000000000000000000003"
-
-		// Create token with metadata
-		mintInput := buildTestTokenMint(
+	t.Run("includes acquisition events for owner", func(t *testing.T) {
+		// Create a token mint (acquisition)
+		input := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
 			domain.StandardERC721,
-			"0xc000000000000000000000000000000000000003",
-			"1",
-			owner,
+			"0x1111111111111111111111111111111111111111",
+			"100",
+			address1,
 		)
-		err := store.CreateTokenMint(ctx, mintInput)
+		err := store.CreateTokenMint(ctx, input)
 		require.NoError(t, err)
 
-		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		// Get the token to retrieve its ID
+		token, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
 		require.NoError(t, err)
 
-		// Add metadata first (required for enrichment)
-		metadataInput := CreateTokenMetadataInput{
+		// Query events
+		events, err := store.GetTokenChangesByOwnerSinceCheckpoint(ctx, address1, time.Time{}, 0, 100)
+		require.NoError(t, err)
+		require.NotEmpty(t, events)
+
+		// Find the acquisition event
+		var found bool
+		for _, evt := range events {
+			if evt.EventType == schema.EventTypeAcquired && evt.TokenID == token.ID {
+				found = true
+				require.Equal(t, address1, *evt.OwnerAddress)
+				require.NotEmpty(t, evt.Metadata)
+				break
+			}
+		}
+		require.True(t, found, "acquisition event should be present")
+	})
+
+	t.Run("includes release events for owner", func(t *testing.T) {
+		// Create a token and then transfer it
+		input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0x2222222222222222222222222222222222222222",
+			"101",
+			address1,
+		)
+		err := store.CreateTokenMint(ctx, input)
+		require.NoError(t, err)
+
+		// Get the token to retrieve its ID
+		token, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Transfer the token (releases ownership)
+		owner2Addr := address2
+		transferInput := UpdateTokenTransferInput{
+			TokenCID:     input.Token.TokenCID,
+			CurrentOwner: &owner2Addr,
+			SenderBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: address1,
+				Delta:        "1",
+			},
+			ReceiverBalanceUpdate: &UpdateBalanceInput{
+				OwnerAddress: address2,
+				Delta:        "1",
+			},
+			ProvenanceEvent: buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet,
+				schema.ProvenanceEventTypeTransfer,
+				&address1,
+				&address2,
+				"1",
+				"0xtransfer1",
+				101,
+			),
+		}
+		err = store.UpdateTokenTransfer(ctx, transferInput)
+		require.NoError(t, err)
+
+		// Query all events (filters by created_at >= epoch)
+		events, err := store.GetTokenChangesByOwnerSinceCheckpoint(ctx, address1, time.Time{}, 0, 100)
+		require.NoError(t, err)
+		require.NotEmpty(t, events)
+
+		// Find the release event
+		var found bool
+		for _, evt := range events {
+			if evt.EventType == schema.EventTypeReleased && evt.TokenID == token.ID {
+				found = true
+				require.Equal(t, address1, *evt.OwnerAddress)
+				require.NotEmpty(t, evt.Metadata)
+				break
+			}
+		}
+		require.True(t, found, "release event should be present for address1")
+	})
+
+	t.Run("includes metadata update events (broadcast) for currently owned tokens", func(t *testing.T) {
+		// Create a token for address1
+		input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0x3333333333333333333333333333333333333333",
+			"102",
+			address1,
+		)
+		err := store.CreateTokenMint(ctx, input)
+		require.NoError(t, err)
+
+		// Get the token to retrieve its ID
+		token, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// Update metadata (broadcast event)
+		name := "Updated Name"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
 			TokenID:         token.ID,
 			OriginJSON:      []byte(`{}`),
 			LatestJSON:      []byte(`{}`),
-			LatestHash:      types.StringPtr("hash1"),
 			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: time.Now(),
+			LastRefreshedAt: time.Now().UTC(),
+			Name:            &name,
+		})
+		require.NoError(t, err)
+
+		// Query all events (filters by created_at >= epoch)
+		events, err := store.GetTokenChangesByOwnerSinceCheckpoint(ctx, address1, time.Time{}, 0, 100)
+		require.NoError(t, err)
+		require.NotEmpty(t, events)
+
+		// Find the metadata_updated event
+		var found bool
+		for _, evt := range events {
+			if evt.EventType == schema.EventTypeMetadataUpdated && evt.TokenID == token.ID {
+				found = true
+				require.Nil(t, evt.OwnerAddress, "metadata update should be broadcast (nil owner)")
+				require.NotEmpty(t, evt.Metadata)
+				break
+			}
 		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
+		require.True(t, found, "metadata_updated event should be present for address1's token")
+	})
+
+	t.Run("does not include broadcast events for tokens not owned", func(t *testing.T) {
+		// Create a token for address2
+		input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0x4444444444444444444444444444444444444444",
+			"103",
+			address2,
+		)
+		err := store.CreateTokenMint(ctx, input)
 		require.NoError(t, err)
 
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		// Get the token to retrieve its ID
+		token, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
 		require.NoError(t, err)
-		versionAfterMetadata := token.Version
 
-		// Add enrichment source
-		enrichmentInput := CreateEnrichmentSourceInput{
-			TokenID:     token.ID,
-			Vendor:      schema.VendorArtBlocks,
-			VendorJSON:  []byte(`{"name": "Original"}`),
-			VendorHash:  types.StringPtr("vendor_hash1"),
-			ImageURL:    types.StringPtr("https://artblocks.com/image1.jpg"),
-			Name:        types.StringPtr("ArtBlocks Name"),
-			Description: types.StringPtr("Description"),
+		// Update metadata for address2's token
+		time.Sleep(10 * time.Millisecond)
+		beforeMetadataUpdate := time.Now().UTC()
+		name := "Address2 Token"
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         token.ID,
+			OriginJSON:      []byte(`{}`),
+			LatestJSON:      []byte(`{}`),
+			EnrichmentLevel: schema.EnrichmentLevelNone,
+			LastRefreshedAt: time.Now().UTC(),
+			Name:            &name,
+		})
+		require.NoError(t, err)
+
+		// Query events for address1 (who does NOT own this token)
+		events, err := store.GetTokenChangesByOwnerSinceCheckpoint(ctx, address1, beforeMetadataUpdate, 0, 100)
+		require.NoError(t, err)
+
+		// Ensure address1 does NOT receive broadcast events for address2's token
+		for _, evt := range events {
+			require.NotEqual(t, token.ID, evt.TokenID, "address1 should not receive events for tokens they don't own")
 		}
-		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
-		require.NoError(t, err)
+	})
 
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-		require.Equal(t, versionAfterMetadata+1, token.Version, "Version should increment when enrichment is added")
+	t.Run("respects limit parameter", func(t *testing.T) {
+		// Create multiple tokens for address1
+		for i := range 10 {
+			input := buildTestTokenMint(
+				domain.ChainEthereumMainnet,
+				domain.StandardERC721,
+				"0x5555555555555555555555555555555555555555",
+				fmt.Sprintf("%d", 200+i),
+				address1,
+			)
+			err := store.CreateTokenMint(ctx, input)
+			require.NoError(t, err)
+			time.Sleep(2 * time.Millisecond)
+		}
 
-		// Update enrichment with same user-visible fields (only vendor JSON changes)
-		enrichmentInput.VendorJSON = []byte(`{"name": "Original", "extra": "data"}`)
-		enrichmentInput.VendorHash = types.StringPtr("vendor_hash2")
-		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
+		// Query with a limit of 5
+		events, err := store.GetTokenChangesByOwnerSinceCheckpoint(ctx, address1, time.Time{}, 0, 5)
 		require.NoError(t, err)
+		require.LessOrEqual(t, len(events), 5, "should respect the limit parameter")
+	})
 
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-		require.Equal(t, versionAfterMetadata+1, token.Version, "Version should NOT increment when only vendor JSON changes")
+	t.Run("returns events ordered by occurred_at, id ASC", func(t *testing.T) {
+		// Create multiple tokens with known timestamps
+		for i := range 5 {
+			input := buildTestTokenMint(
+				domain.ChainEthereumMainnet,
+				domain.StandardERC721,
+				"0x6666666666666666666666666666666666666666",
+				fmt.Sprintf("%d", 300+i),
+				address1,
+			)
+			err := store.CreateTokenMint(ctx, input)
+			require.NoError(t, err)
+			time.Sleep(5 * time.Millisecond)
+		}
 
-		// Update enrichment with changed user-visible field (name)
-		enrichmentInput.Name = types.StringPtr("Updated ArtBlocks Name")
-		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
+		// Query all events
+		events, err := store.GetTokenChangesByOwnerSinceCheckpoint(ctx, address1, time.Time{}, 0, 100)
 		require.NoError(t, err)
+		require.NotEmpty(t, events)
 
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-		require.Equal(t, versionAfterMetadata+2, token.Version, "Version should increment when enrichment name changes")
+		// Verify ordering: occurred_at ASC, id ASC
+		for i := 1; i < len(events); i++ {
+			prev := events[i-1]
+			curr := events[i]
 
-		// Update enrichment with changed image URL
-		enrichmentInput.ImageURL = types.StringPtr("https://artblocks.com/image2.jpg")
-		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
-		require.NoError(t, err)
+			// Either occurred_at is strictly increasing, or if equal, ID is increasing
+			if prev.OccurredAt.Equal(curr.OccurredAt) {
+				require.Less(t, prev.ID, curr.ID, "events with same occurred_at should be ordered by ID ASC")
+			} else {
+				require.True(t, prev.OccurredAt.Before(curr.OccurredAt), "events should be ordered by occurred_at ASC")
+			}
+		}
+	})
 
-		token, err = store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	t.Run("cursor-based pagination with event_id tie-breaker using created_at", func(t *testing.T) {
+		// Create multiple events
+		for i := range 5 {
+			input := buildTestTokenMint(
+				domain.ChainEthereumMainnet,
+				domain.StandardERC721,
+				"0x7777777777777777777777777777777777777777",
+				fmt.Sprintf("%d", 400+i),
+				address1,
+			)
+			err := store.CreateTokenMint(ctx, input)
+			require.NoError(t, err)
+		}
+
+		// Get all events from epoch (filters by created_at >= epoch)
+		allEvents, err := store.GetTokenChangesByOwnerSinceCheckpoint(ctx, address1, time.Time{}, 0, 100)
 		require.NoError(t, err)
-		require.Equal(t, versionAfterMetadata+3, token.Version, "Version should increment when enrichment image URL changes")
+		require.NotEmpty(t, allEvents)
+
+		// Test pagination with checkpoint (created_at + event_id)
+		if len(allEvents) > 0 {
+			firstEvent := allEvents[0]
+
+			// Query with checkpoint after first event (using created_at)
+			remainingEvents, err := store.GetTokenChangesByOwnerSinceCheckpoint(
+				ctx,
+				address1,
+				firstEvent.CreatedAt, // Use created_at for filtering
+				firstEvent.ID,
+				100,
+			)
+			require.NoError(t, err)
+
+			// Should not include the first event (event_id is excluded via > comparison)
+			for _, evt := range remainingEvents {
+				require.NotEqual(t, firstEvent.ID, evt.ID, "checkpoint event should be excluded")
+			}
+
+			// All remaining events should have (created_at, id) > checkpoint
+			for _, evt := range remainingEvents {
+				if evt.CreatedAt.Equal(firstEvent.CreatedAt) {
+					require.Greater(t, evt.ID, firstEvent.ID, "events at same created_at should have id > checkpoint.event_id")
+				} else {
+					require.True(t, evt.CreatedAt.After(firstEvent.CreatedAt), "events should have created_at > checkpoint.timestamp")
+				}
+			}
+		}
 	})
 }
 
@@ -6737,6 +6683,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"EnrichmentSource", testEnrichmentSource},
 		{"CreateMediaAssetWithChangeJournal", testCreateMediaAssetWithChangeJournal},
 		{"GetChanges", testGetChanges},
+		{"GetTokenChangesByOwnerSinceCheckpoint", testGetTokenChangesByOwnerSinceCheckpoint},
 		{"BlockCursor", testBlockCursor},
 		{"WatchedAddresses", testWatchedAddresses},
 		{"KeyValueStore", testKeyValueStore},
@@ -6749,8 +6696,6 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"AddressIndexingJobs", testAddressIndexingJobs},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
-		{"GetTokenVersionsByOwner", testGetTokenVersionsByOwner},
-		{"TokenVersionIncrement", testTokenVersionIncrement},
 	}
 
 	for _, tt := range tests {

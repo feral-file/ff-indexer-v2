@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
+	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
@@ -18,6 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
@@ -321,42 +323,6 @@ func (r *mutationResolver) CreateWebhookClient(ctx context.Context, webhookURL s
 		return nil, err
 	}
 	return response, nil
-}
-
-// SyncCollection is the resolver for the syncCollection field.
-func (r *mutationResolver) SyncCollection(ctx context.Context, address string, knownTokens []dto.KnownToken) (*dto.SyncCollectionResponse, error) {
-	// Validate address
-	if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
-		return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
-	}
-
-	// Validate input
-	if len(knownTokens) == 0 {
-		return nil, apierrors.NewValidationError("known_tokens cannot be empty")
-	}
-	if len(knownTokens) > 10000 {
-		return nil, apierrors.NewValidationError("known_tokens cannot exceed 10000 entries")
-	}
-
-	// Convert array to map format expected by executor
-	knownTokensMap := make(map[string]uint64, len(knownTokens))
-	for _, token := range knownTokens {
-		if token.TokenCID == "" {
-			return nil, apierrors.NewValidationError("token_cid cannot be empty")
-		}
-		knownTokensMap[token.TokenCID] = uint64(token.Version)
-	}
-
-	// Call executor
-	response, err := r.executor.SyncCollection(ctx, address, knownTokensMap)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert response to GraphQL types
-	return &dto.SyncCollectionResponse{
-		ActionPlan: response.ActionPlan,
-	}, nil
 }
 
 // LastTxIndex is the resolver for the last_tx_index field.
@@ -663,6 +629,49 @@ func (r *queryResolver) IndexingJob(ctx context.Context, workflowID string) (*dt
 	return r.executor.GetAddressIndexingJob(ctx, workflowID, opts)
 }
 
+// SyncCollection is the resolver for the syncCollection field.
+func (r *queryResolver) SyncCollection(ctx context.Context, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) (*dto.SyncCollectionResponse, error) {
+	// Validate address
+	if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
+	}
+
+	// Build checkpoint from parameters
+	var checkpoint *dto.SyncCheckpoint
+	if checkpointTimestamp != nil && checkpointEventID != nil {
+		checkpoint = &dto.SyncCheckpoint{
+			Timestamp: *checkpointTimestamp,
+			EventID:   *ToNativeUint64(checkpointEventID),
+		}
+		logger.DebugCtx(ctx, "checkpoint provided",
+			zap.String("timestamp", checkpointTimestamp.Format(time.RFC3339)),
+			zap.Uint64("event_id", checkpoint.EventID))
+	} else if checkpointTimestamp != nil || checkpointEventID != nil {
+		// Both or neither must be provided
+		return nil, apierrors.NewValidationError("checkpoint_timestamp and checkpoint_event_id must both be provided or both omitted")
+	}
+
+	// Set default limit
+	limitValue := constants.DEFAULT_SYNC_COLLECTION_LIMIT
+	if limit != nil {
+		l := ToNativeUint8(limit)
+		limitValue = *l
+	}
+
+	// Call executor
+	response, err := r.executor.SyncCollection(ctx, address, checkpoint, limitValue)
+	if err != nil {
+		return nil, err
+	}
+
+	return response, nil
+}
+
+// EventID is the resolver for the event_id field.
+func (r *syncCheckpointResolver) EventID(ctx context.Context, obj *dto.SyncCheckpoint) (Uint64, error) {
+	return Uint64(obj.EventID), nil
+}
+
 // ID is the resolver for the id field.
 func (r *tokenResolver) ID(ctx context.Context, obj *dto.TokenResponse) (Uint64, error) {
 	return Uint64(obj.ID), nil
@@ -678,9 +687,22 @@ func (r *tokenResolver) Standard(ctx context.Context, obj *dto.TokenResponse) (s
 	return string(obj.Standard), nil
 }
 
-// Version is the resolver for the version field.
-func (r *tokenResolver) Version(ctx context.Context, obj *dto.TokenResponse) (Uint64, error) {
-	return Uint64(obj.Version), nil
+// ID is the resolver for the id field.
+func (r *tokenEventResolver) ID(ctx context.Context, obj *dto.TokenEvent) (Uint64, error) {
+	return Uint64(obj.ID), nil
+}
+
+// TokenID is the resolver for the token_id field.
+func (r *tokenEventResolver) TokenID(ctx context.Context, obj *dto.TokenEvent) (Uint64, error) {
+	return Uint64(obj.TokenID), nil
+}
+
+// Metadata is the resolver for the metadata field.
+func (r *tokenEventResolver) Metadata(ctx context.Context, obj *dto.TokenEvent) (JSON, error) {
+	if obj.Metadata == nil {
+		return JSON("{}"), nil
+	}
+	return JSON(obj.Metadata), nil
 }
 
 // Offset is the resolver for the offset field.
@@ -723,12 +745,6 @@ func (r *workflowStatusResolver) ExecutionTime(ctx context.Context, obj *dto.Wor
 	return &val, nil
 }
 
-// Version is the resolver for the version field.
-func (r *knownTokenInputResolver) Version(ctx context.Context, obj *dto.KnownToken, data Uint64) error {
-	obj.Version = uint64(data)
-	return nil
-}
-
 // Change returns ChangeResolver implementation.
 func (r *Resolver) Change() ChangeResolver { return &changeResolver{r} }
 
@@ -769,8 +785,14 @@ func (r *Resolver) ProvenanceEvent() ProvenanceEventResolver { return &provenanc
 // Query returns QueryResolver implementation.
 func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
+// SyncCheckpoint returns SyncCheckpointResolver implementation.
+func (r *Resolver) SyncCheckpoint() SyncCheckpointResolver { return &syncCheckpointResolver{r} }
+
 // Token returns TokenResolver implementation.
 func (r *Resolver) Token() TokenResolver { return &tokenResolver{r} }
+
+// TokenEvent returns TokenEventResolver implementation.
+func (r *Resolver) TokenEvent() TokenEventResolver { return &tokenEventResolver{r} }
 
 // TokenList returns TokenListResolver implementation.
 func (r *Resolver) TokenList() TokenListResolver { return &tokenListResolver{r} }
@@ -780,9 +802,6 @@ func (r *Resolver) TokenMetadata() TokenMetadataResolver { return &tokenMetadata
 
 // WorkflowStatus returns WorkflowStatusResolver implementation.
 func (r *Resolver) WorkflowStatus() WorkflowStatusResolver { return &workflowStatusResolver{r} }
-
-// KnownTokenInput returns KnownTokenInputResolver implementation.
-func (r *Resolver) KnownTokenInput() KnownTokenInputResolver { return &knownTokenInputResolver{r} }
 
 type changeResolver struct{ *Resolver }
 type changeListResolver struct{ *Resolver }
@@ -796,8 +815,9 @@ type paginatedOwnersResolver struct{ *Resolver }
 type paginatedProvenanceEventsResolver struct{ *Resolver }
 type provenanceEventResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
+type syncCheckpointResolver struct{ *Resolver }
 type tokenResolver struct{ *Resolver }
+type tokenEventResolver struct{ *Resolver }
 type tokenListResolver struct{ *Resolver }
 type tokenMetadataResolver struct{ *Resolver }
 type workflowStatusResolver struct{ *Resolver }
-type knownTokenInputResolver struct{ *Resolver }

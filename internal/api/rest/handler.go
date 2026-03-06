@@ -3,6 +3,7 @@ package rest
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -61,8 +62,8 @@ type Handler interface {
 	// GET /api/v1/indexing/jobs/:workflow_id
 	GetAddressIndexingJob(c *gin.Context)
 
-	// SyncCollection compares client's known tokens with server state for an address
-	// POST /api/v1/collection/:address/sync
+	// SyncCollection retrieves token changes for an address using timestamp-based watermark mechanism
+	// GET /api/v1/collection/:address/sync?last_sync_time=<RFC3339 timestamp>&limit=<int>
 	SyncCollection(c *gin.Context)
 
 	// HealthCheck returns the health status of the API
@@ -456,7 +457,8 @@ func (h *handler) GetAddressIndexingJob(c *gin.Context) {
 	c.JSON(http.StatusOK, job)
 }
 
-// SyncCollection compares client's known tokens with server state for an address
+// SyncCollection retrieves token changes for an address using checkpoint-based pagination
+// GET /api/v1/collection/:address/sync?checkpoint_timestamp=<RFC3339>&checkpoint_event_id=<uint64>&limit=<int>
 func (h *handler) SyncCollection(c *gin.Context) {
 	address := c.Param("address")
 	if address == "" {
@@ -470,30 +472,51 @@ func (h *handler) SyncCollection(c *gin.Context) {
 		return
 	}
 
-	var req dto.SyncCollectionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+	// Parse checkpoint parameters (both must be provided or both omitted)
+	var checkpoint *dto.SyncCheckpoint
+	checkpointTimestampStr := c.Query("checkpoint_timestamp")
+	checkpointEventIDStr := c.Query("checkpoint_event_id")
+
+	if checkpointTimestampStr != "" && checkpointEventIDStr != "" {
+		// Parse timestamp
+		checkpointTimestamp, err := time.Parse(time.RFC3339, checkpointTimestampStr)
+		if err != nil {
+			respondBadRequest(c, "invalid checkpoint_timestamp format, expected RFC3339")
+			return
+		}
+
+		// Parse event ID
+		var checkpointEventID uint64
+		if _, err := fmt.Sscanf(checkpointEventIDStr, "%d", &checkpointEventID); err != nil {
+			respondBadRequest(c, "invalid checkpoint_event_id format")
+			return
+		}
+
+		checkpoint = &dto.SyncCheckpoint{
+			Timestamp: checkpointTimestamp,
+			EventID:   checkpointEventID,
+		}
+	} else if checkpointTimestampStr != "" || checkpointEventIDStr != "" {
+		// Both or neither must be provided
+		respondBadRequest(c, "checkpoint_timestamp and checkpoint_event_id must both be provided or both omitted")
 		return
 	}
 
-	// Validate request body
-	err := req.Validate()
-	if err != nil {
-		respondValidationError(c, err.Error())
-		return
-	}
-
-	// Convert array to map for executor
-	knownTokensMap := make(map[string]uint64, len(req.KnownTokens))
-	for _, token := range req.KnownTokens {
-		knownTokensMap[token.TokenCID] = token.Version
+	// Parse limit (optional, default from constants)
+	limit := constants.DEFAULT_SYNC_COLLECTION_LIMIT
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if _, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil {
+			respondBadRequest(c, "invalid limit format")
+			return
+		}
 	}
 
 	// Call executor's SyncCollection method
 	response, err := h.executor.SyncCollection(
 		c.Request.Context(),
 		address,
-		knownTokensMap,
+		checkpoint,
+		limit,
 	)
 
 	if err != nil {

@@ -35,7 +35,7 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 		v1.GET("/changes", handler.GetChanges)
 
 		// Collection sync endpoint (public read access)
-		v1.POST("/collection/:address/sync", handler.SyncCollection)
+		v1.GET("/collection/:address/sync", handler.SyncCollection)
 
 		// Workflow endpoints (public read access)
 		v1.GET("/workflows/:workflow_id/runs/:run_id", handler.GetWorkflowStatus)

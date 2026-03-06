@@ -579,30 +579,47 @@ paths:
                 $ref: '#/components/schemas/APIError'
 
   /api/v1/collection/{address}/sync:
-    post:
-      summary: Sync collection state for an address
+    get:
+      summary: Sync collection state using checkpoint-based pagination
       description: |
-        Compares the client's known token state with the server's state for a specific address
-        and returns a directed action plan for synchronization.
+        Retrieves token events for an address since a specific checkpoint using cursor-based pagination.
         
-        This endpoint uses a snapshot-based sync mechanism where:
-        1. Client sends its current state (token CIDs and versions)
-        2. Server compares with its current state
-        3. Server returns exactly what actions the client should take:
-           - **updates**: Token CIDs that exist in both but server has newer version
-           - **new**: Token CIDs that exist on server but not in client
-           - **removals**: Token CIDs that exist in client but not on server (transferred out or burned)
+        This endpoint uses a checkpoint mechanism (timestamp + event_id) where:
+        1. Client tracks a checkpoint from the last sync response
+        2. Server returns all token events since that checkpoint:
+           - **acquired**: Token added to owner's collection
+           - **released**: Token removed from owner's collection
+           - **metadata_updated**: Token metadata changed (broadcast to all current owners)
+           - **enrichment_updated**: Token enrichment changed (broadcast to all current owners)
+           - **viewability_changed**: Token viewability changed (broadcast to all current owners)
+        3. If `next_checkpoint` is returned, use it for pagination (more events available)
+        4. If `next_checkpoint` is null and `has_more` is false, client has caught up
         
         **This endpoint does not require authentication** - it is open for public use.
         
-        ## Limits
-        - Maximum 10,000 known tokens per request
-        - Address must be a valid Ethereum or Tezos address
+        ## First Sync
+        Omit checkpoint parameters to get events from the beginning. Server returns events with a checkpoint.
+        
+        ## Pagination
+        - If `next_checkpoint` is returned (not null), there are more results available
+        - Use the returned checkpoint values (`timestamp` and `event_id`) for the next request
+        - When `next_checkpoint` is null, all results have been retrieved
+        
+        ## Creating New Checkpoint
+        After catching up (when `next_checkpoint` is null), use `server_time` from response to create
+        a new checkpoint for the next sync cycle with `event_id=0`.
+        
+        ## Advantages
+        - Event-based: captures all changes with context (acquisition, release, metadata updates)
+        - Reliable cursor: (timestamp, event_id) tuple eliminates pagination gaps
+        - No clock drift: server controls timestamps
+        - Efficient: direct index usage with tuple comparison
+        - Chronological ordering by `occurred_at` maintains event flow
         
         ## Example Use Case
-        A client maintains a local cache of tokens for address `0xABC...` with version tracking.
-        When the client wants to sync, it sends all known token CIDs with their versions.
-        The server compares and tells the client exactly which tokens to update, add, or remove.
+        1. First sync: `GET /api/v1/collection/0xABC.../sync` → returns events + next_checkpoint
+        2. Pagination: `GET /api/v1/collection/0xABC.../sync?checkpoint_timestamp=T&checkpoint_event_id=123` → next page
+        3. Caught up: when next_checkpoint is null, wait and use server_time for next sync
       operationId: syncCollection
       tags:
         - collections
@@ -614,21 +631,40 @@ paths:
           schema:
             type: string
           example: "0x1234567890123456789012345678901234567890"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SyncCollectionRequest'
+        - name: checkpoint_timestamp
+          in: query
+          required: false
+          description: Checkpoint timestamp from previous response (RFC3339 format, omit for first sync). Must be provided with checkpoint_event_id.
+          schema:
+            type: string
+            format: date-time
+          example: "2026-03-03T15:17:26.616392Z"
+        - name: checkpoint_event_id
+          in: query
+          required: false
+          description: Checkpoint event ID from previous response (must be provided with checkpoint_timestamp)
+          schema:
+            type: integer
+            format: uint64
+          example: 12345
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of events to return per page
+          schema:
+            type: integer
+            format: uint8
+            default: 20
+          example: 20
       responses:
         '200':
-          description: Sync action plan returned successfully
+          description: Token changes returned successfully
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SyncCollectionResponse'
         '400':
-          description: Invalid request (bad address format, empty known_tokens, etc.)
+          description: Invalid request (bad address format, invalid checkpoint, etc.)
           content:
             application/json:
               schema:
@@ -2096,81 +2132,118 @@ components:
           description: Temporal run ID for tracking
           example: "run-456"
 
-    SyncCollectionRequest:
+    SyncCheckpoint:
       type: object
       required:
-        - known_tokens
+        - timestamp
+        - event_id
       properties:
-        known_tokens:
-          type: array
-          items:
-            $ref: '#/components/schemas/KnownToken'
-          description: |
-            Array of token CIDs and their versions that the client currently has.
-            Maximum 10,000 entries.
-          minItems: 1
-          maxItems: 10000
-          example:
-            - token_cid: "eip155:1:erc721:0xabc123:1234"
-              version: 10
-            - token_cid: "eip155:1:erc721:0xdef456:5678"
-              version: 5
-
-    KnownToken:
-      type: object
-      required:
-        - token_cid
-        - version
-      properties:
-        token_cid:
+        timestamp:
           type: string
-          description: Token CID
-          example: "eip155:1:erc721:0xabc123:1234"
-        version:
+          format: date-time
+          description: |
+            Checkpoint timestamp (RFC3339 format). Filters events with created_at >= this timestamp.
+            Uses database insertion time (not event occurrence time) to catch late-ingested historical events.
+          example: "2026-03-03T15:17:26.616392Z"
+        event_id:
           type: integer
           format: uint64
-          description: Version number the client has for this token
-          example: 10
+          description: |
+            Checkpoint event ID for tie-breaking. When created_at equals checkpoint timestamp,
+            only events with id > event_id are included.
+          example: 12345
 
     SyncCollectionResponse:
       type: object
       required:
-        - action_plan
+        - events
+        - server_time
       properties:
-        action_plan:
-          $ref: '#/components/schemas/ActionPlan'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TokenEvent'
+          description: |
+            List of token events since checkpoint, ordered chronologically by occurred_at, then by id.
+            Events include acquisitions, releases, and attribute updates (metadata, enrichment, viewability).
+          example:
+            - id: 12345
+              token_id: 987
+              event_type: "acquired"
+              owner_address: "0x1234567890123456789012345678901234567890"
+              occurred_at: "2026-03-03T15:17:26.616392Z"
+              metadata: {"tx_hash": "0xabc...", "quantity": "1"}
+            - id: 12346
+              token_id: 987
+              event_type: "metadata_updated"
+              owner_address: null
+              occurred_at: "2026-03-03T16:00:00.000000Z"
+              metadata: {"changed_fields": ["name", "image_url"]}
+        next_checkpoint:
+          $ref: '#/components/schemas/SyncCheckpoint'
+          description: |
+            Next checkpoint for continuing pagination or next sync cycle.
+            Always set to last event's (created_at, id) if any events returned.
+            Client uses this for both pagination and subsequent syncs.
+            Null only if no events were returned.
+        server_time:
+          type: string
+          format: date-time
+          description: |
+            Server time when query executed (RFC3339 format).
+          example: "2026-03-03T16:30:00.123456Z"
 
-    ActionPlan:
+    TokenEvent:
       type: object
       required:
-        - updates
-        - new
-        - removals
+        - id
+        - token_id
+        - event_type
+        - occurred_at
       properties:
-        updates:
-          type: array
-          items:
-            type: string
+        id:
+          type: integer
+          format: uint64
+          description: Unique event ID
+          example: 12345
+        token_id:
+          type: integer
+          format: uint64
+          description: ID of the token this event relates to
+          example: 987
+        event_type:
+          type: string
+          enum: [acquired, released, metadata_updated, enrichment_updated, viewability_changed]
           description: |
-            Token CIDs that exist in both client and server, but server has newer version.
-            Client should fetch and update these tokens.
-          example: ["eip155:1:erc721:0xabc123:1234"]
-        new:
-          type: array
-          items:
-            type: string
+            Type of event:
+            - `acquired`: Token added to owner's collection
+            - `released`: Token removed from owner's collection  
+            - `metadata_updated`: Token metadata changed (broadcast to all current owners)
+            - `enrichment_updated`: Token enrichment changed (broadcast to all current owners)
+            - `viewability_changed`: Token viewability changed (broadcast to all current owners)
+          example: "acquired"
+        owner_address:
+          type: string
           description: |
-            Token CIDs that exist on server but not in client's known_tokens.
-            Client should fetch and add these tokens to its collection.
-          example: ["eip155:1:erc721:0xdef456:5678"]
-        removals:
-          type: array
-          items:
-            type: string
+            Owner address for ownership events (acquired/released).
+            NULL for attribute events (metadata_updated, enrichment_updated, viewability_changed) that broadcast to all current owners.
+          example: "0x1234567890123456789012345678901234567890"
+        occurred_at:
+          type: string
+          format: date-time
+          description: Timestamp when the event actually occurred (RFC3339 format)
+          example: "2026-03-03T15:17:26.616392Z"
+        metadata:
+          type: object
           description: |
-            Token CIDs that exist in client's known_tokens but not on server.
-            These tokens were transferred out or burned. Client should remove them.
-          example: ["eip155:1:erc721:0xold789:9999"]
+            Lightweight event metadata (JSONB format).
+            Structure varies by event_type:
+            - acquired: {"tx_hash": "0x...", "quantity": "1"}
+            - released: {"tx_hash": "0x...", "quantity": "1", "to_address": "0x..."}
+            - metadata_updated: {"changed_fields": ["name", "image_url"]}
+            - enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
+            - viewability_changed: {"is_viewable": true}
+          example: {"tx_hash": "0xabc123...", "quantity": "1"}
 
     AddressIndexingJobInfo:
       type: object

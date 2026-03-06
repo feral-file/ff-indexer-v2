@@ -174,7 +174,6 @@ type Token {
   burned: Boolean!
   viewable: Boolean!
   last_provenance_timestamp: Time
-  version: Uint64!
   created_at: Time!
   updated_at: Time!
   display: TokenDisplay
@@ -299,10 +298,10 @@ type Query {
     anchor: Uint64
     since: String @deprecated(reason: "Use 'anchor' for reliable ID-based pagination. Different subject types use different timestamp semantics.")
     limit: Uint8 = 20
-    offset: Uint64 = 0 @deprecated(reason: "Use 'anchor' for cursor-based pagination instead. Offset only applies with 'since' parameter.")
+    offset: Uint64 = 0 @deprecated(reason: "Use 'anchor' for 1-based pagination instead. Offset only applies with 'since' parameter.")
     order: Order = asc @deprecated(reason: "Order parameter only applies when using deprecated 'since' parameter. Always ascending with 'anchor'.")
     expand: [String!] @deprecated(reason: "Expansion is now auto-detected from your GraphQL query fields (subject). Explicitly specifying expand is no longer necessary.")
-  ): ChangeList @deprecated(reason: "Use syncCollection mutation for better performance and simpler client logic")
+  ): ChangeList @deprecated(reason: "Use syncCollection for better performance and simpler client logic")
 
   # Get workflow status by workflow ID and run ID
   # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id
@@ -316,6 +315,20 @@ type Query {
   indexingJob(
     workflow_id: String!
   ): IndexingJob
+
+  # Sync collection state for an address using checkpoint-based pagination (open, no authentication required)
+  # Returns token events (acquisitions, releases, attribute updates) since the checkpoint
+  # Equivalent to: GET /api/v1/collection/:address/sync?checkpoint_timestamp=<timestamp>&checkpoint_event_id=<id>
+  # 
+  # For initial sync, omit checkpoint parameters (or pass null)
+  # For pagination, use the next_checkpoint from previous response
+  # When next_checkpoint is null and has_more is false, client has caught up
+  syncCollection(
+    address: String!
+    checkpoint_timestamp: Time
+    checkpoint_event_id: Uint64
+    limit: Uint8
+  ): SyncCollectionResult
 }
 
 # Root Mutation type
@@ -356,35 +369,41 @@ type Mutation {
     event_filters: [String!]!
     retry_max_attempts: Int
   ): WebhookClientResult
-
-  # Sync collection state for an address (open, no authentication required)
-  # Equivalent to: POST /api/v1/collection/:address/sync
-  # Compares client's known token state with server state and returns sync actions
-  syncCollection(
-    address: String!
-    known_tokens: [KnownTokenInput!]!
-  ): SyncCollectionResult
 }
 
-# Input type for known tokens in collection sync
-input KnownTokenInput {
-  token_cid: String!
-  version: Uint64!
+# Checkpoint for cursor-based pagination
+type SyncCheckpoint {
+  # Timestamp: filters events with created_at >= this value
+  timestamp: Time!
+  # Event ID for tie-breaking: when created_at = timestamp, only events with id > event_id are included
+  event_id: Uint64!
 }
 
-# Result of collection sync operation
 type SyncCollectionResult {
-  action_plan: ActionPlan!
+  # All token events (acquisitions, releases, attribute updates) since checkpoint
+  # Ordered by occurred_at (chronological event time) for proper timeline display
+  events: [TokenEvent!]!
+  # Next checkpoint for continuing pagination or next sync cycle
+  # Null only if no events were returned
+  next_checkpoint: SyncCheckpoint
+  # Server time when query executed
+  server_time: Time!
 }
 
-# Action plan for syncing collection
-type ActionPlan {
-  # Token CIDs that exist in both client and server, but server has newer version
-  updates: [String!]!
-  # Token CIDs that exist on server but not in client's known_tokens
-  new: [String!]!
-  # Token CIDs that exist in client's known_tokens but not on server (transferred out or burned)
-  removals: [String!]!
+# Token event for collection sync
+type TokenEvent {
+  # Event ID
+  id: Uint64!
+  # Token ID
+  token_id: Uint64!
+  # Event type: acquired, released, metadata_updated, enrichment_updated, viewability_changed
+  event_type: String!
+  # Owner address (NULL for attribute events that broadcast to all current owners)
+  owner_address: String
+  # When the event occurred
+  occurred_at: Time!
+  # Lightweight metadata (JSONB)
+  metadata: JSON
 }
 
 # Webhook client result

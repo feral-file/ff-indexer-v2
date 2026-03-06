@@ -379,10 +379,9 @@ type Store interface {
 	// Collection Sync Operations
 	// =============================================================================
 
-	// GetTokenVersionsByOwner retrieves all token CIDs and their versions for a specific owner
-	// Used for scoped state sync to compare client state with server state
-	// Returns a map of token_cid -> version for all tokens owned by the address
-	GetTokenVersionsByOwner(ctx context.Context, ownerAddress string) (map[string]uint64, error)
+	// GetTokenChangesByOwnerSinceCheckpoint retrieves token changes for an owner since a specific checkpoint
+	// Uses cursor-based pagination with (timestamp, event_id) tuple for reliable pagination
+	GetTokenChangesByOwnerSinceCheckpoint(ctx context.Context, ownerAddress string, sinceTimestamp time.Time, sinceEventID uint64, limit int) ([]schema.TokenEvent, error)
 
 	// =============================================================================
 	// System Configuration & Monitoring
