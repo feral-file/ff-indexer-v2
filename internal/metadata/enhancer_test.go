@@ -1278,17 +1278,17 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	name := "Bored Ape #1"
 	description := "A Bored Ape from OpenSea"
 	imageURL := "https://i.seadn.io/gae/1.png"
-	animationURL := "https://i.seadn.io/gae/1.mp4"
+	displayAnimationURL := "https://i.seadn.io/gae/1.mp4"
 	resolvedImageURL := fmt.Sprintf("%s?w=3840", imageURL)
 
 	nftMetadata := &opensea.NFTMetadata{
-		Identifier:   "1",
-		Collection:   "bored-ape-yacht-club",
-		Contract:     "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
-		Name:         &name,
-		Description:  &description,
-		ImageURL:     &imageURL,
-		AnimationURL: &animationURL,
+		Identifier:          "1",
+		Collection:          "bored-ape-yacht-club",
+		Contract:            "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+		Name:                &name,
+		Description:         &description,
+		ImageURL:            &imageURL,
+		DisplayAnimationURL: &displayAnimationURL,
 		Traits: []opensea.Trait{
 			{
 				TraitType: "Background",
@@ -1316,15 +1316,15 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	// Mock URI resolver and HTTP client for MIME type detection
 	mocks.uriResolver.
 		EXPECT().
-		Resolve(gomock.Any(), animationURL).
-		Return(animationURL, nil)
+		Resolve(gomock.Any(), displayAnimationURL).
+		Return(displayAnimationURL, nil)
 	mocks.httpClient.
 		EXPECT().
-		Head(gomock.Any(), animationURL).
+		Head(gomock.Any(), displayAnimationURL).
 		Return(nil, assert.AnError)
 	mocks.httpClient.
 		EXPECT().
-		GetPartialBytes(gomock.Any(), animationURL, gomock.Any()).
+		GetPartialBytes(gomock.Any(), displayAnimationURL, gomock.Any()).
 		Return([]byte("fake video data"), nil)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -1340,7 +1340,7 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	assert.NotNil(t, result.ImageURL)
 	assert.Equal(t, resolvedImageURL, *result.ImageURL)
 	assert.NotNil(t, result.AnimationURL)
-	assert.Equal(t, animationURL, *result.AnimationURL)
+	assert.Equal(t, displayAnimationURL, *result.AnimationURL)
 	assert.Len(t, result.Artists, 1)
 	assert.Equal(t, "Yuga Labs", result.Artists[0].Name)
 	assert.NotNil(t, result.MimeType)

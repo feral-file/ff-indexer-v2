@@ -37,7 +37,7 @@ func TestOpenSeaClient_GetNFT(t *testing.T) {
 			"name": "Bored Ape #1",
 			"description": "A Bored Ape from the Yacht Club",
 			"image_url": "https://i.seadn.io/gae/1.png",
-			"animation_url": "https://i.seadn.io/gae/1.mp4",
+			"display_animation_url": "https://i.seadn.io/gae/1.mp4",
 			"metadata_url": "ipfs://QmTest1",
 			"traits": [
 				{
@@ -73,18 +73,18 @@ func TestOpenSeaClient_GetNFT(t *testing.T) {
 	name := "Bored Ape #1"
 	description := "A Bored Ape from the Yacht Club"
 	imageURL := "https://i.seadn.io/gae/1.png"
-	animationURL := "https://i.seadn.io/gae/1.mp4"
+	displayAnimationURL := "https://i.seadn.io/gae/1.mp4"
 	metadataURL := "ipfs://QmTest1"
 
 	expectedNFT := &opensea.NFTMetadata{
-		Identifier:   identifier,
-		Collection:   collection,
-		Contract:     contract,
-		Name:         &name,
-		Description:  &description,
-		ImageURL:     &imageURL,
-		AnimationURL: &animationURL,
-		MetadataURL:  &metadataURL,
+		Identifier:          identifier,
+		Collection:          collection,
+		Contract:            contract,
+		Name:                &name,
+		Description:         &description,
+		ImageURL:            &imageURL,
+		DisplayAnimationURL: &displayAnimationURL,
+		MetadataURL:         &metadataURL,
 		Traits: []opensea.Trait{
 			{
 				TraitType: "Background",
@@ -115,7 +115,7 @@ func TestOpenSeaClient_GetNFT(t *testing.T) {
 	assert.Equal(t, name, *result.Name)
 	assert.Equal(t, description, *result.Description)
 	assert.Equal(t, imageURL, *result.ImageURL)
-	assert.Equal(t, animationURL, *result.AnimationURL)
+	assert.Equal(t, displayAnimationURL, *result.DisplayAnimationURL)
 	assert.Equal(t, metadataURL, *result.MetadataURL)
 	assert.Len(t, result.Traits, 2)
 }
@@ -373,6 +373,6 @@ func TestOpenSeaClient_Integration(t *testing.T) {
 	assert.NotEmpty(t, result.Name)
 	assert.NotEmpty(t, result.Description)
 	assert.NotEmpty(t, result.ImageURL)
-	assert.NotEmpty(t, result.AnimationURL)
+	assert.NotEmpty(t, result.DisplayAnimationURL)
 	assert.NotEmpty(t, result.MetadataURL)
 }

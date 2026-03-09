@@ -16,15 +16,15 @@ var ErrNoAPIKey = errors.New("no API key provided")
 
 // NFTMetadata represents the NFT metadata from OpenSea API
 type NFTMetadata struct {
-	Identifier   string  `json:"identifier"`
-	Collection   string  `json:"collection"`
-	Contract     string  `json:"contract"`
-	Name         *string `json:"name"`
-	Description  *string `json:"description"`
-	ImageURL     *string `json:"image_url"`
-	AnimationURL *string `json:"animation_url"`
-	MetadataURL  *string `json:"metadata_url"`
-	Traits       []Trait `json:"traits"`
+	Identifier          string  `json:"identifier"`
+	Collection          string  `json:"collection"`
+	Contract            string  `json:"contract"`
+	Name                *string `json:"name"`
+	Description         *string `json:"description"`
+	ImageURL            *string `json:"image_url"`
+	DisplayAnimationURL *string `json:"display_animation_url"`
+	MetadataURL         *string `json:"metadata_url"`
+	Traits              []Trait `json:"traits"`
 }
 
 // Trait represents a trait/attribute of an NFT

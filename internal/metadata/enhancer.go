@@ -418,8 +418,8 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 	}
 
 	// Set animation URL
-	if nft.AnimationURL != nil && *nft.AnimationURL != "" {
-		enhanced.AnimationURL = nft.AnimationURL
+	if nft.DisplayAnimationURL != nil && *nft.DisplayAnimationURL != "" {
+		enhanced.AnimationURL = nft.DisplayAnimationURL
 	}
 
 	// Try to extract artist from traits
