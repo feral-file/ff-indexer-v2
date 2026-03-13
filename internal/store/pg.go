@@ -3054,6 +3054,7 @@ func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID
 
 	err := s.db.WithContext(ctx).
 		Model(&schema.AddressIndexingJob{}).
+		Clauses(clause.OnConflict{DoNothing: true}).
 		Where("workflow_id = ?", workflowID).
 		Updates(updates).Error
 	if err != nil {
@@ -3074,6 +3075,7 @@ func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflow
 
 	err := s.db.WithContext(ctx).
 		Model(&schema.AddressIndexingJob{}).
+		Clauses(clause.OnConflict{UpdateAll: true}).
 		Where("workflow_id = ?", workflowID).
 		Updates(updates).Error
 	if err != nil {

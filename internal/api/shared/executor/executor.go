@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
@@ -725,14 +726,22 @@ func (e *executor) TriggerOwnerIndexing(ctx context.Context, addresses []string)
 // Creates individual workflows for each address with job tracking
 // If an active job already exists for an address, returns the existing job info instead of creating a new one
 func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error) {
-	// Normalize addresses
+	// Normalize and deduplicate addresses
 	normalizedAddresses := domain.NormalizeAddresses(addresses)
+	uniqueAddresses := make([]string, 0, len(normalizedAddresses))
+	seen := make(map[string]bool)
+	for _, addr := range normalizedAddresses {
+		if !seen[addr] {
+			seen[addr] = true
+			uniqueAddresses = append(uniqueAddresses, addr)
+		}
+	}
 
 	// Start IndexTokenOwner workflow for each address individually
 	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
-	jobs := make([]dto.AddressIndexingJobInfo, len(normalizedAddresses))
+	jobs := make([]dto.AddressIndexingJobInfo, 0, len(uniqueAddresses))
 
-	for i, address := range normalizedAddresses {
+	for _, address := range uniqueAddresses {
 		// Determine chain from address
 		var chainID domain.Chain
 		blockchain := internalTypes.AddressToBlockchain(address)
@@ -753,10 +762,10 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 
 		if existingJob != nil {
 			// Return existing job info instead of creating new one
-			jobs[i] = dto.AddressIndexingJobInfo{
+			jobs = append(jobs, dto.AddressIndexingJobInfo{
 				Address:    address,
 				WorkflowID: existingJob.WorkflowID,
-			}
+			})
 
 			logger.Info(fmt.Sprintf("Found existing %s job for address", existingJob.Status),
 				zap.String("address", address),
@@ -768,8 +777,10 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 
 		// No active job found - start new workflow
 		options := client.StartWorkflowOptions{
+			ID:                       fmt.Sprintf("index-token-owner-%s", address),
 			TaskQueue:                e.orchestratorTaskQueue,
 			WorkflowExecutionTimeout: 15*24*time.Hour + 15*time.Minute,
+			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		}
 		workflowRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwner, address)
 		if err != nil {
@@ -794,10 +805,10 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 			// Don't fail the request if job creation fails - workflow will handle it
 		}
 
-		jobs[i] = dto.AddressIndexingJobInfo{
+		jobs = append(jobs, dto.AddressIndexingJobInfo{
 			Address:    address,
 			WorkflowID: workflowID,
-		}
+		})
 
 		logger.Info("Started new indexing job for address",
 			zap.String("address", address),
