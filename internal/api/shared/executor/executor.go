@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
@@ -777,10 +776,8 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 
 		// No active job found - start new workflow
 		options := client.StartWorkflowOptions{
-			ID:                       fmt.Sprintf("index-token-owner-%s", address),
 			TaskQueue:                e.orchestratorTaskQueue,
 			WorkflowExecutionTimeout: 15*24*time.Hour + 15*time.Minute,
-			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		}
 		workflowRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwner, address)
 		if err != nil {
