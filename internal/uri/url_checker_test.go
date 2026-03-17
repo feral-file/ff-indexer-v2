@@ -763,6 +763,9 @@ func TestURLChecker_Check_BlocksUnsafeHosts(t *testing.T) {
 		"http://169.254.169.254/latest/meta-data",
 		"http://10.0.0.1/admin",
 		"http://[::1]/internal",
+		"http://kubernetes.default.svc/api",
+		"http://kubernetes.default.svc.cluster.local/api",
+		"http://vault.tools.cluster.local/v1/secret",
 	}
 
 	for _, testURL := range tests {

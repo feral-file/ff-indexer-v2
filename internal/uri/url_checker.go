@@ -144,6 +144,15 @@ func isBlockedURLHost(host string) bool {
 		return true
 	}
 
+	// Block Kubernetes internal service discovery hostnames
+	if host == "svc" ||
+		host == "cluster.local" ||
+		strings.HasSuffix(host, ".svc") ||
+		strings.HasSuffix(host, ".svc.cluster.local") ||
+		strings.HasSuffix(host, ".cluster.local") {
+		return true
+	}
+
 	ip := net.ParseIP(host)
 	if ip == nil {
 		return false
