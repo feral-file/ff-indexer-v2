@@ -51,6 +51,22 @@ type urlChecker struct {
 	onchfsGateways  []string
 }
 
+var lookupIPAddrs = func(ctx context.Context, host string) ([]net.IP, error) {
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr.IP != nil {
+			ips = append(ips, addr.IP)
+		}
+	}
+
+	return ips, nil
+}
+
 // NewURLChecker creates a new health checker
 func NewURLChecker(httpClient adapter.HTTPClient, io adapter.IO, config *Config) URLChecker {
 	return &urlChecker{
@@ -97,6 +113,25 @@ func (c *urlChecker) Check(ctx context.Context, rawURL string) HealthCheckResult
 		return HealthCheckResult{
 			Status: HealthStatusBroken,
 			Error:  &errMsg,
+		}
+	}
+
+	ips, err := lookupIPAddrs(ctx, strings.TrimRight(strings.ToLower(parsedURL.Hostname()), "."))
+	if err != nil || len(ips) == 0 {
+		errMsg := "unable to resolve URL host"
+		return HealthCheckResult{
+			Status: HealthStatusBroken,
+			Error:  &errMsg,
+		}
+	}
+
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			errMsg := "URL host resolves to a blocked address"
+			return HealthCheckResult{
+				Status: HealthStatusBroken,
+				Error:  &errMsg,
+			}
 		}
 	}
 
@@ -164,6 +199,10 @@ func isBlockedURLHost(host string) bool {
 		return false
 	}
 
+	return isBlockedIP(ip)
+}
+
+func isBlockedIP(ip net.IP) bool {
 	return ip.IsLoopback() ||
 		ip.IsPrivate() ||
 		ip.IsLinkLocalUnicast() ||
