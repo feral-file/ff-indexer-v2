@@ -275,7 +275,7 @@ func (b *bridge) forwardToWorker(ctx context.Context, event *domain.BlockchainEv
 	}
 
 	opt := client.StartWorkflowOptions{
-		ID:                    fmt.Sprintf("process-event-%s-%s", event.Chain, event.TxHash),
+		ID:                    fmt.Sprintf("process-event-%s-%s-%d", event.Chain, event.TxHash, event.LogIndex),
 		TaskQueue:             b.config.TemporalTaskQueue,
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 		WorkflowRunTimeout:    30 * time.Minute,

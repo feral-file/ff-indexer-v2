@@ -109,6 +109,7 @@ type BlockchainEvent struct {
 	BlockHash       *string       `json:"block_hash,omitempty"`      // block hash (optional, nil if not available)
 	Timestamp       time.Time     `json:"timestamp"`                 // block timestamp
 	TxIndex         uint64        `json:"tx_index"`                  // transaction index in the block (for ordering)
+	LogIndex        uint64        `json:"log_index"`                 // log index in the block/tx (for ordering)
 }
 
 func (e *BlockchainEvent) Valid() bool {

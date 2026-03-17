@@ -357,7 +357,7 @@ func findLatestEvents(events []schema.ProvenanceEvent, standard domain.ChainStan
 
 	isMultiOwner := standard == domain.StandardERC1155 || standard == domain.StandardFA2
 
-	// Sort by timestamp DESC, then tx_index DESC
+	// Sort by timestamp DESC, then tx_index DESC, then log_index DESC
 	sort.Slice(events, func(i, j int) bool {
 		if events[i].ID == 0 || events[j].ID == 0 {
 			return events[i].ID > events[j].ID
@@ -365,7 +365,10 @@ func findLatestEvents(events []schema.ProvenanceEvent, standard domain.ChainStan
 		if !events[i].Timestamp.Equal(events[j].Timestamp) {
 			return events[i].Timestamp.After(events[j].Timestamp)
 		}
-		return events[i].TxIndex() > events[j].TxIndex()
+		if events[i].TxIndex() != events[j].TxIndex() {
+			return events[i].TxIndex() > events[j].TxIndex()
+		}
+		return events[i].LogIndex() > events[j].LogIndex()
 	})
 
 	// Deduplicate: keep first occurrence (most recent) of each unique key
