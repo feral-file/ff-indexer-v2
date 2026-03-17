@@ -3,7 +3,9 @@ package uri
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"go.uber.org/zap"
@@ -81,6 +83,23 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		}
 	}
 
+	parsedURL, err := url.Parse(url)
+	if err != nil {
+		errMsg := "invalid URL format"
+		return HealthCheckResult{
+			Status: HealthStatusBroken,
+			Error:  &errMsg,
+		}
+	}
+
+	if isBlockedURLHost(parsedURL.Hostname()) {
+		errMsg := "URL host is not allowed"
+		return HealthCheckResult{
+			Status: HealthStatusBroken,
+			Error:  &errMsg,
+		}
+	}
+
 	// 1. Always try the HTTP URL first
 	result := c.checkHTTPS(ctx, url)
 
@@ -113,6 +132,29 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 
 	// 4. For other HTTP URLs, return the original result
 	return result
+}
+
+func isBlockedURLHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return true
+	}
+
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified()
 }
 
 // checkIPFSGateway resolves IPFS CID across multiple gateways and returns the first working one
