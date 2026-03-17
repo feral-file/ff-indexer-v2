@@ -3,6 +3,7 @@ package uri
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 )
 
 type stubHTTPClient struct {
-	headFn func(ctx context.Context, url string) (*http.Response, error)
+	headFn        func(ctx context.Context, url string) (*http.Response, error)
+	headNoRetryFn func(ctx context.Context, url string) (*http.Response, error)
+	getFn         func(ctx context.Context, url string, headers map[string]string) (*http.Response, error)
 }
 
 func (s *stubHTTPClient) GetAndUnmarshal(ctx context.Context, url string, result interface{}) error {
@@ -22,6 +25,9 @@ func (s *stubHTTPClient) GetResponse(ctx context.Context, url string, headers ma
 	panic("unexpected call")
 }
 func (s *stubHTTPClient) GetResponseNoRetry(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+	if s.getFn != nil {
+		return s.getFn(ctx, url, headers)
+	}
 	panic("unexpected call")
 }
 func (s *stubHTTPClient) GetBytes(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
@@ -40,11 +46,14 @@ func (s *stubHTTPClient) PostNoRetry(ctx context.Context, url string, headers ma
 	panic("unexpected call")
 }
 func (s *stubHTTPClient) Head(ctx context.Context, url string) (*http.Response, error) {
+	if s.headFn != nil {
+		return s.headFn(ctx, url)
+	}
 	panic("unexpected call")
 }
 func (s *stubHTTPClient) HeadNoRetry(ctx context.Context, url string) (*http.Response, error) {
-	if s.headFn != nil {
-		return s.headFn(ctx, url)
+	if s.headNoRetryFn != nil {
+		return s.headNoRetryFn(ctx, url)
 	}
 	panic("unexpected call")
 }
@@ -82,7 +91,7 @@ func TestURLChecker_Check_AllowsHostnameResolvingToPublicIP(t *testing.T) {
 	}
 	defer func() { lookupIPAddrs = origLookup }()
 
-	httpClient := &stubHTTPClient{headFn: func(ctx context.Context, url string) (*http.Response, error) {
+	httpClient := &stubHTTPClient{headNoRetryFn: func(ctx context.Context, url string) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil))}, nil
 	}}
 
@@ -91,4 +100,49 @@ func TestURLChecker_Check_AllowsHostnameResolvingToPublicIP(t *testing.T) {
 
 	assert.Equal(t, HealthStatusHealthy, result.Status)
 	assert.Nil(t, result.Error)
+}
+
+func TestURLChecker_Check_ReturnsTransientOnTemporaryLookupError(t *testing.T) {
+	origLookup := lookupIPAddrs
+	lookupIPAddrs = func(ctx context.Context, host string) ([]net.IP, error) {
+		return nil, &net.DNSError{IsTimeout: true}
+	}
+	defer func() { lookupIPAddrs = origLookup }()
+
+	checker := NewURLChecker(&stubHTTPClient{}, &stubIO{}, &Config{})
+	result := checker.Check(context.Background(), "https://safe-looking.example/image.png")
+
+	assert.Equal(t, HealthStatusTransientError, result.Status)
+	assert.NotNil(t, result.Error)
+	assert.Contains(t, *result.Error, "temporary DNS")
+}
+
+func TestURLChecker_Check_ContinuesToIPFSFallbackOnPermanentLookupError(t *testing.T) {
+	origLookup := lookupIPAddrs
+	lookupIPAddrs = func(ctx context.Context, host string) ([]net.IP, error) {
+		return nil, errors.New("no such host")
+	}
+	defer func() { lookupIPAddrs = origLookup }()
+
+	httpClient := &stubHTTPClient{
+		headNoRetryFn: func(ctx context.Context, url string) (*http.Response, error) {
+			return nil, errors.New("dial error")
+		},
+		getFn: func(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+			return nil, errors.New("dial error")
+		},
+		headFn: func(ctx context.Context, url string) (*http.Response, error) {
+			if url == "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG" {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+		},
+	}
+
+	checker := NewURLChecker(httpClient, &stubIO{}, &Config{IPFSGateways: []string{"https://ipfs.io"}})
+	result := checker.Check(context.Background(), "https://dead-host.example/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+
+	assert.Equal(t, HealthStatusHealthy, result.Status)
+	assert.NotNil(t, result.WorkingURL)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", *result.WorkingURL)
 }

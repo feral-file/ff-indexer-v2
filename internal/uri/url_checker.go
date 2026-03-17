@@ -2,6 +2,7 @@ package uri
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -116,21 +117,49 @@ func (c *urlChecker) Check(ctx context.Context, rawURL string) HealthCheckResult
 		}
 	}
 
-	ips, err := lookupIPAddrs(ctx, strings.TrimRight(strings.ToLower(parsedURL.Hostname()), "."))
-	if err != nil || len(ips) == 0 {
-		errMsg := "unable to resolve URL host"
-		return HealthCheckResult{
-			Status: HealthStatusBroken,
-			Error:  &errMsg,
-		}
-	}
+	isIPFS, cid := types.IsIPFSGatewayURL(rawURL)
+	isArweave, txID := types.IsArweaveGatewayURL(rawURL)
+	isOnChFS, _ := types.IsOnChFSGatewayURL(rawURL)
+	isGatewayURL := isIPFS || isArweave || isOnChFS
 
-	for _, ip := range ips {
-		if isBlockedIP(ip) {
-			errMsg := "URL host resolves to a blocked address"
+	host := strings.TrimRight(strings.ToLower(parsedURL.Hostname()), ".")
+	ips, err := lookupIPAddrs(ctx, host)
+	if err != nil {
+		if isTemporaryLookupError(err) {
+			errMsg := "temporary DNS resolution failure"
+			return HealthCheckResult{
+				Status: HealthStatusTransientError,
+				Error:  &errMsg,
+			}
+		}
+
+		if !isGatewayURL {
+			errMsg := "unable to resolve URL host"
 			return HealthCheckResult{
 				Status: HealthStatusBroken,
 				Error:  &errMsg,
+			}
+		}
+
+		logger.WarnCtx(ctx, "Failed to resolve gateway URL host, continuing with fallback resolution", zap.String("url", rawURL), zap.Error(err))
+	} else if len(ips) == 0 {
+		if !isGatewayURL {
+			errMsg := "unable to resolve URL host"
+			return HealthCheckResult{
+				Status: HealthStatusBroken,
+				Error:  &errMsg,
+			}
+		}
+
+		logger.WarnCtx(ctx, "No IP addresses resolved for gateway URL host, continuing with fallback resolution", zap.String("url", rawURL))
+	} else {
+		for _, ip := range ips {
+			if isBlockedIP(ip) {
+				errMsg := "URL host resolves to a blocked address"
+				return HealthCheckResult{
+					Status: HealthStatusBroken,
+					Error:  &errMsg,
+				}
 			}
 		}
 	}
@@ -146,19 +175,19 @@ func (c *urlChecker) Check(ctx context.Context, rawURL string) HealthCheckResult
 	// 3. If broken or transient error, try fallback resolution for known gateway types
 
 	// Check if it's an IPFS gateway URL - resolve with CID
-	if isIPFS, cid := types.IsIPFSGatewayURL(rawURL); isIPFS {
+	if isIPFS {
 		logger.InfoCtx(ctx, "HTTP check failed, trying IPFS gateway resolution", zap.String("url", rawURL), zap.String("cid", cid))
 		return c.checkIPFSGateway(ctx, cid)
 	}
 
 	// Check if it's an Arweave gateway URL - resolve with tx ID
-	if isArweave, txID := types.IsArweaveGatewayURL(rawURL); isArweave {
+	if isArweave {
 		logger.InfoCtx(ctx, "HTTP check failed, trying Arweave gateway resolution", zap.String("url", rawURL), zap.String("txID", txID))
 		return c.checkArweaveGateway(ctx, txID)
 	}
 
 	// Check if it's an OnChFS URL - try to resolve via gateways
-	if isOnChFS, _ := types.IsOnChFSGatewayURL(rawURL); isOnChFS {
+	if isOnChFS {
 		logger.InfoCtx(ctx, "HTTP check failed for OnChFS URL, assuming healthy", zap.String("url", rawURL))
 		return HealthCheckResult{
 			Status: HealthStatusHealthy, // Assume healthy, not resolved for now
@@ -209,6 +238,25 @@ func isBlockedIP(ip net.IP) bool {
 		ip.IsLinkLocalMulticast() ||
 		ip.IsMulticast() ||
 		ip.IsUnspecified()
+}
+
+func isTemporaryLookupError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return true
+		}
+		if netErr.Temporary() {
+			return true
+		}
+	}
+
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.Timeout() || dnsErr.Temporary()
+	}
+
+	return false
 }
 
 // checkIPFSGateway resolves IPFS CID across multiple gateways and returns the first working one
