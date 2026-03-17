@@ -758,6 +758,7 @@ func stringPtr(s string) *string {
 func TestURLChecker_Check_BlocksUnsafeHosts(t *testing.T) {
 	tests := []string{
 		"http://localhost/internal",
+		"http://localhost./internal",
 		"http://localhost:8080/internal",
 		"http://127.0.0.1/internal",
 		"http://169.254.169.254/latest/meta-data",
@@ -766,7 +767,9 @@ func TestURLChecker_Check_BlocksUnsafeHosts(t *testing.T) {
 		"http://[::1%25lo]/internal",
 		"http://[fe80::1%25eth0]/internal",
 		"http://kubernetes.default.svc/api",
+		"http://kubernetes.default.svc./api",
 		"http://kubernetes.default.svc.cluster.local/api",
+		"http://kubernetes.default.svc.cluster.local./api",
 		"http://vault.tools.cluster.local/v1/secret",
 	}
 

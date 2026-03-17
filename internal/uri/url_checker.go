@@ -136,6 +136,7 @@ func (c *urlChecker) Check(ctx context.Context, rawURL string) HealthCheckResult
 
 func isBlockedURLHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimRight(host, ".")
 	if host == "" {
 		return true
 	}
