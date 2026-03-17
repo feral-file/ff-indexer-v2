@@ -3,7 +3,9 @@ package uri
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"go.uber.org/zap"
@@ -38,7 +40,7 @@ type HealthCheckResult struct {
 type URLChecker interface {
 	// Check performs a health check on a URL
 	// Returns the health status, an alternative working URL if found, and any error
-	Check(ctx context.Context, url string) HealthCheckResult
+	Check(ctx context.Context, rawURL string) HealthCheckResult
 }
 
 type urlChecker struct {
@@ -62,9 +64,9 @@ func NewURLChecker(httpClient adapter.HTTPClient, io adapter.IO, config *Config)
 
 // Check performs a health check on a URL
 // This checker only handles HTTP/HTTPS URLs, not URI schemes like ipfs://, ar://, onchfs://
-func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
+func (c *urlChecker) Check(ctx context.Context, rawURL string) HealthCheckResult {
 	// Validate that this is an HTTP/HTTPS URL
-	if !types.IsValidURL(url) {
+	if !types.IsValidURL(rawURL) {
 		errMsg := "invalid URL format"
 		return HealthCheckResult{
 			Status: HealthStatusBroken,
@@ -73,7 +75,7 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	}
 
 	// Only accept HTTP/HTTPS URLs
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		errMsg := "only HTTP/HTTPS URLs are supported"
 		return HealthCheckResult{
 			Status: HealthStatusBroken,
@@ -81,8 +83,25 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		}
 	}
 
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		errMsg := "invalid URL format"
+		return HealthCheckResult{
+			Status: HealthStatusBroken,
+			Error:  &errMsg,
+		}
+	}
+
+	if isBlockedURLHost(parsedURL.Hostname()) {
+		errMsg := "URL host is not allowed"
+		return HealthCheckResult{
+			Status: HealthStatusBroken,
+			Error:  &errMsg,
+		}
+	}
+
 	// 1. Always try the HTTP URL first
-	result := c.checkHTTPS(ctx, url)
+	result := c.checkHTTPS(ctx, rawURL)
 
 	// 2. If healthy, return immediately
 	if result.Status == HealthStatusHealthy {
@@ -92,20 +111,20 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	// 3. If broken or transient error, try fallback resolution for known gateway types
 
 	// Check if it's an IPFS gateway URL - resolve with CID
-	if isIPFS, cid := types.IsIPFSGatewayURL(url); isIPFS {
-		logger.InfoCtx(ctx, "HTTP check failed, trying IPFS gateway resolution", zap.String("url", url), zap.String("cid", cid))
+	if isIPFS, cid := types.IsIPFSGatewayURL(rawURL); isIPFS {
+		logger.InfoCtx(ctx, "HTTP check failed, trying IPFS gateway resolution", zap.String("url", rawURL), zap.String("cid", cid))
 		return c.checkIPFSGateway(ctx, cid)
 	}
 
 	// Check if it's an Arweave gateway URL - resolve with tx ID
-	if isArweave, txID := types.IsArweaveGatewayURL(url); isArweave {
-		logger.InfoCtx(ctx, "HTTP check failed, trying Arweave gateway resolution", zap.String("url", url), zap.String("txID", txID))
+	if isArweave, txID := types.IsArweaveGatewayURL(rawURL); isArweave {
+		logger.InfoCtx(ctx, "HTTP check failed, trying Arweave gateway resolution", zap.String("url", rawURL), zap.String("txID", txID))
 		return c.checkArweaveGateway(ctx, txID)
 	}
 
 	// Check if it's an OnChFS URL - try to resolve via gateways
-	if isOnChFS, _ := types.IsOnChFSGatewayURL(url); isOnChFS {
-		logger.InfoCtx(ctx, "HTTP check failed for OnChFS URL, assuming healthy", zap.String("url", url))
+	if isOnChFS, _ := types.IsOnChFSGatewayURL(rawURL); isOnChFS {
+		logger.InfoCtx(ctx, "HTTP check failed for OnChFS URL, assuming healthy", zap.String("url", rawURL))
 		return HealthCheckResult{
 			Status: HealthStatusHealthy, // Assume healthy, not resolved for now
 		}
@@ -113,6 +132,43 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 
 	// 4. For other HTTP URLs, return the original result
 	return result
+}
+
+func isBlockedURLHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return true
+	}
+
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+
+	// Block Kubernetes internal service discovery hostnames
+	if host == "svc" ||
+		host == "cluster.local" ||
+		strings.HasSuffix(host, ".svc") ||
+		strings.HasSuffix(host, ".svc.cluster.local") ||
+		strings.HasSuffix(host, ".cluster.local") {
+		return true
+	}
+
+	ipHost := host
+	if zoneIndex := strings.LastIndex(ipHost, "%"); zoneIndex != -1 {
+		ipHost = ipHost[:zoneIndex]
+	}
+
+	ip := net.ParseIP(ipHost)
+	if ip == nil {
+		return false
+	}
+
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified()
 }
 
 // checkIPFSGateway resolves IPFS CID across multiple gateways and returns the first working one
