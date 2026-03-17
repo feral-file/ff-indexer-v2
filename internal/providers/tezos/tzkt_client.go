@@ -498,7 +498,7 @@ func (c *tzktClient) GetTokenEvents(ctx context.Context, contractAddress string,
 			return events[i].BlockNumber < events[j].BlockNumber
 		}
 
-		// If block numbers are also equal, compare transaction indices
+		// If block numbers are also equal, compare transaction indices (transfer IDs in Tezos)
 		return events[i].TxIndex < events[j].TxIndex
 	})
 
@@ -582,7 +582,8 @@ func (c *tzktClient) parseTransfer(ctx context.Context, transfer *TzKTTokenTrans
 		BlockNumber:     transfer.Level,
 		BlockHash:       nil, // Block hash is optional for Tezos
 		Timestamp:       timestamp,
-		TxIndex:         transfer.ID, // Use transfer ID as log index
+		TxIndex:         transfer.ID, // Use transfer ID as transaction index for ordering
+		LogIndex:        transfer.ID, // Use transfer ID as log index for ordering
 	}
 
 	return event, nil
@@ -639,7 +640,8 @@ func (c *tzktClient) ParseBigMapUpdate(ctx context.Context, update *TzKTBigMapUp
 		BlockNumber:     update.Level,
 		BlockHash:       nil, // Block hash is optional for Tezos
 		Timestamp:       timestamp,
-		TxIndex:         update.ID,
+		TxIndex:         update.ID, // Use update ID as transaction index for ordering
+		LogIndex:        update.ID, // Use update ID as log index for ordering
 	}
 
 	return event, nil

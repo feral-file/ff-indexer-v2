@@ -759,7 +759,7 @@ func (f *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 		}
 	}
 
-	// Sort events by timestamp, then block number, then transaction index for deterministic ordering
+	// Sort events by timestamp, then block number, then transaction index, then log index for deterministic ordering
 	sort.SliceStable(events, func(i, j int) bool {
 		// First, compare timestamps
 		if !events[i].Timestamp.Equal(events[j].Timestamp) {
@@ -772,7 +772,12 @@ func (f *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 		}
 
 		// If block numbers are also equal, compare transaction indices
-		return events[i].TxIndex < events[j].TxIndex
+		if events[i].TxIndex != events[j].TxIndex {
+			return events[i].TxIndex < events[j].TxIndex
+		}
+
+		// If transaction indices are also equal, compare log indices
+		return events[i].LogIndex < events[j].LogIndex
 	})
 
 	return events, nil
@@ -1197,6 +1202,7 @@ func (f *ethereumClient) parseTransferBatchForToken(ctx context.Context, vLog ty
 			BlockNumber:     vLog.BlockNumber,
 			BlockHash:       &blockHash,
 			TxIndex:         uint64(vLog.TxIndex), //nolint:gosec,G115
+			LogIndex:        uint64(vLog.Index),   //nolint:gosec,G115
 			Timestamp:       blockTimestamp,
 		}
 		event.EventType = domain.TransferEventType(event.FromAddress, event.ToAddress)
@@ -1625,6 +1631,8 @@ func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 		TxHash:          vLog.TxHash.Hex(),
 		BlockNumber:     vLog.BlockNumber,
 		BlockHash:       &blockHash,
+		TxIndex:         uint64(vLog.TxIndex),                     //nolint:gosec,G115
+		LogIndex:        uint64(vLog.Index),                       //nolint:gosec,G115
 		Timestamp:       time.Unix(int64(vLog.BlockTimestamp), 0), //nolint:gosec,G115
 	}
 

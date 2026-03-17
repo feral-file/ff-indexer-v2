@@ -69,6 +69,17 @@ func (pe *ProvenanceEvent) TxIndex() int64 {
 	return 0
 }
 
+// LogIndex returns the log index of the provenance event
+func (pe *ProvenanceEvent) LogIndex() int64 {
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(pe.Raw, &rawMap); err == nil {
+		if logIndexFloat, ok := rawMap["log_index"].(float64); ok {
+			return int64(logIndexFloat)
+		}
+	}
+	return 0
+}
+
 // TableName specifies the table name for the ProvenanceEvent model
 func (ProvenanceEvent) TableName() string {
 	return "provenance_events"
