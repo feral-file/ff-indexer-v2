@@ -754,3 +754,60 @@ func TestURLChecker_Check(t *testing.T) {
 func stringPtr(s string) *string {
 	return &s
 }
+
+func TestURLChecker_Check_BlocksUnsafeHosts(t *testing.T) {
+	tests := []string{
+		"http://localhost/internal",
+		"http://localhost:8080/internal",
+		"http://127.0.0.1/internal",
+		"http://169.254.169.254/latest/meta-data",
+		"http://10.0.0.1/admin",
+		"http://[::1]/internal",
+		"http://kubernetes.default.svc/api",
+		"http://kubernetes.default.svc.cluster.local/api",
+		"http://vault.tools.cluster.local/v1/secret",
+	}
+
+	for _, testURL := range tests {
+		t.Run(testURL, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockHTTP := mocks.NewMockHTTPClient(ctrl)
+			mockIO := mocks.NewMockIO(ctrl)
+
+			checker := uri.NewURLChecker(mockHTTP, mockIO, &uri.Config{})
+			result := checker.Check(context.Background(), testURL)
+
+			assert.Equal(t, uri.HealthStatusBroken, result.Status)
+			assert.Nil(t, result.WorkingURL)
+			assert.NotNil(t, result.Error)
+			assert.Contains(t, *result.Error, "not allowed")
+		})
+	}
+}
+
+func TestURLChecker_Check_AllowsPublicHost(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTP := mocks.NewMockHTTPClient(ctrl)
+	mockIO := mocks.NewMockIO(ctrl)
+
+	publicURL := "https://example.com/image.png"
+	mockResp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(nil)),
+	}
+	mockHTTP.
+		EXPECT().
+		HeadNoRetry(gomock.Any(), publicURL).
+		Return(mockResp, nil)
+
+	checker := uri.NewURLChecker(mockHTTP, mockIO, &uri.Config{})
+	result := checker.Check(context.Background(), publicURL)
+
+	assert.Equal(t, uri.HealthStatusHealthy, result.Status)
+	assert.Nil(t, result.WorkingURL)
+	assert.Nil(t, result.Error)
+}
