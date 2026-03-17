@@ -109,23 +109,31 @@ func (c *urlChecker) Check(ctx context.Context, rawURL string) HealthCheckResult
 		}
 	}
 
+	isIPFS, cid := types.IsIPFSGatewayURL(rawURL)
+	isArweave, txID := types.IsArweaveGatewayURL(rawURL)
+	isOnChFS, _ := types.IsOnChFSGatewayURL(rawURL)
+
 	if isBlockedURLHost(parsedURL.Hostname()) {
+		if result, ok := c.resolveWithGatewayFallback(ctx, rawURL, isIPFS, cid, isArweave, txID, isOnChFS); ok {
+			return result
+		}
+
 		errMsg := "URL host is not allowed"
 		return HealthCheckResult{
 			Status: HealthStatusBroken,
 			Error:  &errMsg,
 		}
 	}
-
-	isIPFS, cid := types.IsIPFSGatewayURL(rawURL)
-	isArweave, txID := types.IsArweaveGatewayURL(rawURL)
-	isOnChFS, _ := types.IsOnChFSGatewayURL(rawURL)
 	isGatewayURL := isIPFS || isArweave || isOnChFS
 
 	host := strings.TrimRight(strings.ToLower(parsedURL.Hostname()), ".")
 	ips, err := lookupIPAddrs(ctx, host)
 	if err != nil {
 		if isTemporaryLookupError(err) {
+			if result, ok := c.resolveWithGatewayFallback(ctx, rawURL, isIPFS, cid, isArweave, txID, isOnChFS); ok {
+				return result
+			}
+
 			errMsg := "temporary DNS resolution failure"
 			return HealthCheckResult{
 				Status: HealthStatusTransientError,
@@ -155,6 +163,10 @@ func (c *urlChecker) Check(ctx context.Context, rawURL string) HealthCheckResult
 	} else {
 		for _, ip := range ips {
 			if isBlockedIP(ip) {
+				if result, ok := c.resolveWithGatewayFallback(ctx, rawURL, isIPFS, cid, isArweave, txID, isOnChFS); ok {
+					return result
+				}
+
 				errMsg := "URL host resolves to a blocked address"
 				return HealthCheckResult{
 					Status: HealthStatusBroken,
@@ -174,28 +186,31 @@ func (c *urlChecker) Check(ctx context.Context, rawURL string) HealthCheckResult
 
 	// 3. If broken or transient error, try fallback resolution for known gateway types
 
-	// Check if it's an IPFS gateway URL - resolve with CID
-	if isIPFS {
-		logger.InfoCtx(ctx, "HTTP check failed, trying IPFS gateway resolution", zap.String("url", rawURL), zap.String("cid", cid))
-		return c.checkIPFSGateway(ctx, cid)
-	}
-
-	// Check if it's an Arweave gateway URL - resolve with tx ID
-	if isArweave {
-		logger.InfoCtx(ctx, "HTTP check failed, trying Arweave gateway resolution", zap.String("url", rawURL), zap.String("txID", txID))
-		return c.checkArweaveGateway(ctx, txID)
-	}
-
-	// Check if it's an OnChFS URL - try to resolve via gateways
-	if isOnChFS {
-		logger.InfoCtx(ctx, "HTTP check failed for OnChFS URL, assuming healthy", zap.String("url", rawURL))
-		return HealthCheckResult{
-			Status: HealthStatusHealthy, // Assume healthy, not resolved for now
-		}
+	if result, ok := c.resolveWithGatewayFallback(ctx, rawURL, isIPFS, cid, isArweave, txID, isOnChFS); ok {
+		return result
 	}
 
 	// 4. For other HTTP URLs, return the original result
 	return result
+}
+
+func (c *urlChecker) resolveWithGatewayFallback(ctx context.Context, rawURL string, isIPFS bool, cid string, isArweave bool, txID string, isOnChFS bool) (HealthCheckResult, bool) {
+	if isIPFS {
+		logger.InfoCtx(ctx, "HTTP check failed, trying IPFS gateway resolution", zap.String("url", rawURL), zap.String("cid", cid))
+		return c.checkIPFSGateway(ctx, cid), true
+	}
+
+	if isArweave {
+		logger.InfoCtx(ctx, "HTTP check failed, trying Arweave gateway resolution", zap.String("url", rawURL), zap.String("txID", txID))
+		return c.checkArweaveGateway(ctx, txID), true
+	}
+
+	if isOnChFS {
+		logger.InfoCtx(ctx, "HTTP check failed for OnChFS URL, assuming healthy", zap.String("url", rawURL))
+		return HealthCheckResult{Status: HealthStatusHealthy}, true
+	}
+
+	return HealthCheckResult{}, false
 }
 
 func isBlockedURLHost(host string) bool {

@@ -146,3 +146,51 @@ func TestURLChecker_Check_ContinuesToIPFSFallbackOnPermanentLookupError(t *testi
 	assert.NotNil(t, result.WorkingURL)
 	assert.Equal(t, "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", *result.WorkingURL)
 }
+
+func TestURLChecker_Check_ContinuesToIPFSFallbackWhenHostIsBlocked(t *testing.T) {
+	httpClient := &stubHTTPClient{
+		headFn: func(ctx context.Context, url string) (*http.Response, error) {
+			if url == "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG" {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+		},
+	}
+
+	checker := NewURLChecker(httpClient, &stubIO{}, &Config{IPFSGateways: []string{"https://ipfs.io"}})
+	result := checker.Check(context.Background(), "http://localhost/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+
+	assert.Equal(t, HealthStatusHealthy, result.Status)
+	assert.NotNil(t, result.WorkingURL)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", *result.WorkingURL)
+}
+
+func TestURLChecker_Check_ContinuesToIPFSFallbackOnTemporaryLookupError(t *testing.T) {
+	origLookup := lookupIPAddrs
+	lookupIPAddrs = func(ctx context.Context, host string) ([]net.IP, error) {
+		return nil, &net.DNSError{IsTimeout: true}
+	}
+	defer func() { lookupIPAddrs = origLookup }()
+
+	httpClient := &stubHTTPClient{
+		headNoRetryFn: func(ctx context.Context, url string) (*http.Response, error) {
+			return nil, errors.New("dial error")
+		},
+		getFn: func(ctx context.Context, url string, headers map[string]string) (*http.Response, error) {
+			return nil, errors.New("dial error")
+		},
+		headFn: func(ctx context.Context, url string) (*http.Response, error) {
+			if url == "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG" {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+		},
+	}
+
+	checker := NewURLChecker(httpClient, &stubIO{}, &Config{IPFSGateways: []string{"https://ipfs.io"}})
+	result := checker.Check(context.Background(), "https://dead-host.example/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+
+	assert.Equal(t, HealthStatusHealthy, result.Status)
+	assert.NotNil(t, result.WorkingURL)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", *result.WorkingURL)
+}
