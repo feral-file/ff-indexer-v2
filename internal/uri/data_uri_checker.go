@@ -24,7 +24,7 @@ type DataURIChecker interface {
 	// Check validates a data URI according to RFC 2397
 	// It checks:
 	// 1. Format follows RFC 2397
-	// 2. Mime type is image/* or video/*
+	// 2. Mime type is supported (image/*, video/*, text/*, application/json, application/pdf)
 	// 3. Content matches declared mime type using magic numbers
 	Check(dataURI string) DataURICheckResult
 }
@@ -48,9 +48,9 @@ func (c *dataURIChecker) Check(dataURI string) DataURICheckResult {
 		}
 	}
 
-	// 2. Validate mime type is image/* or video/*
-	if !isImageOrVideoMimeType(parsed.MimeType) {
-		errMsg := fmt.Sprintf("unsupported mime type: %s (only image/* and video/* are supported)", parsed.MimeType)
+	// 2. Validate mime type is supported
+	if !isSupportedMimeType(parsed.MimeType) {
+		errMsg := fmt.Sprintf("unsupported mime type: %s (supported types: image/*, video/*, text/*, application/json, application/pdf)", parsed.MimeType)
 		return DataURICheckResult{
 			Valid:            false,
 			Error:            &errMsg,
@@ -90,16 +90,22 @@ func (c *dataURIChecker) Check(dataURI string) DataURICheckResult {
 	}
 }
 
-// isImageOrVideoMimeType checks if a mime type is image/* or video/*
-func isImageOrVideoMimeType(mimeType string) bool {
+// isSupportedMimeType checks if a mime type is supported
+// Supported types: image/*, video/*, text/*, application/json, application/pdf
+func isSupportedMimeType(mimeType string) bool {
 	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
-	return strings.HasPrefix(mimeType, "image/") || strings.HasPrefix(mimeType, "video/")
+	return strings.HasPrefix(mimeType, "image/") ||
+		strings.HasPrefix(mimeType, "video/") ||
+		strings.HasPrefix(mimeType, "text/") ||
+		mimeType == "application/json" ||
+		mimeType == "application/pdf"
 }
 
 // mimeTypesMatch checks if two mime types match
 // It performs a flexible comparison that accounts for:
 // - Case differences
 // - Generic types (e.g., image/svg matches image/svg+xml)
+// - Text-based formats (text/*, application/json) where detection may vary
 func mimeTypesMatch(declared, detected string) bool {
 	declared = strings.ToLower(strings.TrimSpace(declared))
 	detected = strings.ToLower(strings.TrimSpace(detected))
@@ -118,6 +124,25 @@ func mimeTypesMatch(declared, detected string) bool {
 	// Extract base type without parameters (e.g., "image/png; charset=utf-8" -> "image/png")
 	declaredBase := strings.Split(declared, ";")[0]
 	detectedBase := strings.Split(detected, ";")[0]
+	declaredBase = strings.TrimSpace(declaredBase)
+	detectedBase = strings.TrimSpace(detectedBase)
 
-	return strings.TrimSpace(declaredBase) == strings.TrimSpace(detectedBase)
+	// Check base types match
+	if declaredBase == detectedBase {
+		return true
+	}
+
+	// For text-based formats, be more lenient as detection is unreliable
+	// If declared is text/html, text/plain, or application/json, accept if detected is any text/* type
+	if (declaredBase == "text/html" || declaredBase == "text/plain" || declaredBase == "application/json") &&
+		strings.HasPrefix(detectedBase, "text/") {
+		return true
+	}
+
+	// If declared is application/json and detected is text/plain, accept
+	if declaredBase == "application/json" && detectedBase == "text/plain" {
+		return true
+	}
+
+	return false
 }

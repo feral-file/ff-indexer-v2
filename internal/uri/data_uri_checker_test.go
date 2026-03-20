@@ -66,6 +66,25 @@ func TestDataURIChecker_Check(t *testing.T) {
 	}
 	validGIFBase64 := base64.StdEncoding.EncodeToString(gifData)
 
+	// Valid HTML content
+	htmlContent := `<!DOCTYPE html><html><body><h1>Hello World</h1></body></html>`
+	htmlBase64 := base64.StdEncoding.EncodeToString([]byte(htmlContent))
+
+	// Valid JSON content
+	jsonContent := `{"name":"Test NFT","description":"A test token"}`
+	jsonBase64 := base64.StdEncoding.EncodeToString([]byte(jsonContent))
+
+	// Valid plain text
+	plainText := "This is plain text content for an NFT"
+	plainTextBase64 := base64.StdEncoding.EncodeToString([]byte(plainText))
+
+	// Minimal valid PDF (PDF header)
+	pdfData := []byte{
+		0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34, // %PDF-1.4
+		0x0A, 0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A,
+	}
+	pdfBase64 := base64.StdEncoding.EncodeToString(pdfData)
+
 	tests := []struct {
 		name                   string
 		dataURI                string
@@ -129,15 +148,15 @@ func TestDataURIChecker_Check(t *testing.T) {
 		{
 			name:                   "unsupported mime type - text",
 			dataURI:                "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte("hello")),
-			expectValid:            false,
-			expectError:            strPtr("unsupported mime type: text/plain (only image/* and video/* are supported)"),
+			expectValid:            true,
+			expectMimeType:         "text/plain; charset=utf-8",
 			expectDeclaredMimeType: "text/plain",
 		},
 		{
-			name:                   "unsupported mime type - application/json",
+			name:                   "valid JSON with application/json",
 			dataURI:                "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(`{"test":"data"}`)),
-			expectValid:            false,
-			expectError:            strPtr("unsupported mime type: application/json (only image/* and video/* are supported)"),
+			expectValid:            true,
+			expectMimeType:         "application/json",
 			expectDeclaredMimeType: "application/json",
 		},
 		{
@@ -160,8 +179,9 @@ func TestDataURIChecker_Check(t *testing.T) {
 			name:                   "valid PNG without explicit mime type",
 			dataURI:                "data:;base64," + validPNGBase64,
 			expectValid:            false,
-			expectError:            strPtr("unsupported mime type: text/plain (only image/* and video/* are supported)"),
+			expectMimeType:         "image/png",
 			expectDeclaredMimeType: "text/plain",
+			expectError:            strPtr("mime type mismatch: declared text/plain but detected image/png"),
 		},
 		{
 			name:                   "valid PNG with charset parameter",
@@ -190,6 +210,87 @@ func TestDataURIChecker_Check(t *testing.T) {
 			expectValid:            true,
 			expectMimeType:         "image/png",
 			expectDeclaredMimeType: "image/png",
+		},
+		// Text and document formats
+		{
+			name:                   "valid HTML with text/html",
+			dataURI:                "data:text/html;base64," + htmlBase64,
+			expectValid:            true,
+			expectMimeType:         "text/html; charset=utf-8",
+			expectDeclaredMimeType: "text/html",
+		},
+		{
+			name:                   "valid HTML with charset",
+			dataURI:                "data:text/html;charset=utf-8;base64," + htmlBase64,
+			expectValid:            true,
+			expectMimeType:         "text/html; charset=utf-8",
+			expectDeclaredMimeType: "text/html",
+		},
+		{
+			name:                   "valid JSON with application/json and charset",
+			dataURI:                "data:application/json;charset=utf-8;base64," + jsonBase64,
+			expectValid:            true,
+			expectMimeType:         "application/json",
+			expectDeclaredMimeType: "application/json",
+		},
+		{
+			name:                   "valid plain text",
+			dataURI:                "data:text/plain;base64," + plainTextBase64,
+			expectValid:            true,
+			expectMimeType:         "text/plain; charset=utf-8",
+			expectDeclaredMimeType: "text/plain",
+		},
+		{
+			name:                   "valid plain text without base64",
+			dataURI:                "data:text/plain,Hello%20World",
+			expectValid:            true,
+			expectMimeType:         "text/plain; charset=utf-8",
+			expectDeclaredMimeType: "text/plain",
+		},
+		{
+			name:                   "valid PDF",
+			dataURI:                "data:application/pdf;base64," + pdfBase64,
+			expectValid:            true,
+			expectMimeType:         "application/pdf",
+			expectDeclaredMimeType: "application/pdf",
+		},
+		{
+			name:                   "HTML without base64 (URL-encoded)",
+			dataURI:                "data:text/html,%3Chtml%3E%3Cbody%3ETest%3C%2Fbody%3E%3C%2Fhtml%3E",
+			expectValid:            true,
+			expectMimeType:         "text/html; charset=utf-8",
+			expectDeclaredMimeType: "text/html",
+		},
+		{
+			name:                   "JSON without base64",
+			dataURI:                `data:application/json,{"key":"value"}`,
+			expectValid:            true,
+			expectMimeType:         "application/json",
+			expectDeclaredMimeType: "application/json",
+		},
+		{
+			name:        "empty HTML content",
+			dataURI:     "data:text/html;base64,",
+			expectValid: false,
+			expectError: strPtr("invalid data URI: empty data"),
+		},
+		{
+			name:        "empty JSON content",
+			dataURI:     "data:application/json;base64,",
+			expectValid: false,
+			expectError: strPtr("invalid data URI: empty data"),
+		},
+		{
+			name:        "unsupported mime type - audio",
+			dataURI:     "data:audio/mp3;base64," + base64.StdEncoding.EncodeToString([]byte("fake audio")),
+			expectValid: false,
+			expectError: strPtr("unsupported mime type: audio/mp3 (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
+		},
+		{
+			name:        "unsupported mime type - application/xml",
+			dataURI:     "data:application/xml;base64," + base64.StdEncoding.EncodeToString([]byte("<root></root>")),
+			expectValid: false,
+			expectError: strPtr("unsupported mime type: application/xml (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
 		},
 	}
 
@@ -278,12 +379,12 @@ func TestDataURIChecker_Check_EdgeCases(t *testing.T) {
 		{
 			name:        "empty metadata with comma",
 			dataURI:     "data:,test",
-			expectValid: false, // text/plain is default, not image/video
+			expectValid: true, // text/plain is now supported
 		},
 		{
 			name:        "only base64 flag without mime type",
 			dataURI:     "data:;base64," + smallPNGBase64,
-			expectValid: false, // defaults to text/plain
+			expectValid: false, // defaults to text/plain but content is PNG
 		},
 		{
 			name:        "multiple semicolons in metadata",
