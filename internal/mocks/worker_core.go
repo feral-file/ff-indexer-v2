@@ -191,20 +191,6 @@ func (mr *MockCoreWorkerMockRecorder) IndexTokenOwner(ctx, address interface{}) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenOwner", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokenOwner), ctx, address)
 }
 
-// IndexTokenOwners mocks base method.
-func (m *MockCoreWorker) IndexTokenOwners(ctx workflow.Context, addresses []string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexTokenOwners", ctx, addresses)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// IndexTokenOwners indicates an expected call of IndexTokenOwners.
-func (mr *MockCoreWorkerMockRecorder) IndexTokenOwners(ctx, addresses interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexTokenOwners", reflect.TypeOf((*MockCoreWorker)(nil).IndexTokenOwners), ctx, addresses)
-}
-
 // IndexTokenProvenances mocks base method.
 func (m *MockCoreWorker) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()

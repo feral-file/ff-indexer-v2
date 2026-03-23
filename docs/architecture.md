@@ -77,7 +77,7 @@ FF-Indexer v2 is a distributed system that indexes NFT data from multiple blockc
 - `IndexTokenFromEvent` - Full token indexing from event
 - `IndexToken` - Index token by TokenCID
 - `IndexTokens` - Batch token indexing
-- `IndexTokenOwners` - Owner-based indexing
+- `IndexTokenOwner` - Owner-based sweep for one address (per-chain child workflows)
 
 **Activities**:
 - `CreateTokenMint` - Create token record from mint event

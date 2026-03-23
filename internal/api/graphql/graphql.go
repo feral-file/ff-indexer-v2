@@ -74,11 +74,6 @@ func (h *gqlHandler) authMiddleware(ctx context.Context, next graphql.OperationH
 			for _, selection := range opctx.Operation.SelectionSet {
 				if field, ok := selection.(*ast.Field); ok {
 					mutationName = field.Name
-					// triggerOwnerIndexing requires authentication (JWT or API key)
-					if field.Name == "triggerOwnerIndexing" {
-						requiresAuth = true
-						break
-					}
 					if field.Name == "triggerAddressIndexing" {
 						requiresAuth = true
 						break
