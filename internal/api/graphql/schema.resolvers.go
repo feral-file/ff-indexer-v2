@@ -24,52 +24,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
-// ID is the resolver for the id field.
-func (r *changeResolver) ID(ctx context.Context, obj *dto.ChangeResponse) (Uint64, error) {
-	return Uint64(obj.ID), nil
-}
-
-// SubjectType is the resolver for the subject_type field.
-func (r *changeResolver) SubjectType(ctx context.Context, obj *dto.ChangeResponse) (string, error) {
-	return string(obj.SubjectType), nil
-}
-
-// Meta is the resolver for the meta field.
-func (r *changeResolver) Meta(ctx context.Context, obj *dto.ChangeResponse) (JSON, error) {
-	if obj.Meta == nil {
-		return JSON("{}"), nil
-	}
-	return JSON(obj.Meta), nil
-}
-
-// Subject is the resolver for the subject field.
-func (r *changeResolver) Subject(ctx context.Context, obj *dto.ChangeResponse) (JSON, error) {
-	if obj.Subject == nil {
-		return JSON("null"), nil
-	}
-	// Subject is already an interface{}, we need to marshal it to JSON
-	bytes, err := json.Marshal(obj.Subject)
-	if err != nil {
-		return JSON("null"), nil
-	}
-	return JSON(bytes), nil
-}
-
-// Offset is the resolver for the offset field.
-func (r *changeListResolver) Offset(ctx context.Context, obj *dto.ChangeListResponse) (*Uint64, error) {
-	return FromNativeUint64(obj.Offset), nil
-}
-
-// NextAnchor is the resolver for the next_anchor field.
-func (r *changeListResolver) NextAnchor(ctx context.Context, obj *dto.ChangeListResponse) (*Uint64, error) {
-	return FromNativeUint64(obj.NextAnchor), nil
-}
-
-// Total is the resolver for the total field.
-func (r *changeListResolver) Total(ctx context.Context, obj *dto.ChangeListResponse) (Uint64, error) {
-	return Uint64(obj.Total), nil
-}
-
 // TokenID is the resolver for the token_id field.
 func (r *enrichmentSourceResolver) TokenID(ctx context.Context, obj *dto.EnrichmentSourceResponse) (Uint64, error) {
 	return Uint64(obj.TokenID), nil
@@ -543,56 +497,6 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
 }
 
-// Changes is the resolver for the changes field.
-func (r *queryResolver) Changes(ctx context.Context, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, anchor *Uint64, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error) {
-	// Auto-detect expansions from GraphQL query fields
-	autoExpansions := autoDetectChangeExpansions(ctx)
-
-	// Convert manual expansions to domain.Expansion (for backward compatibility)
-	manualExpansions := convertExpansionStrings(expand)
-
-	// Validate token CIDs
-	for _, tokenCid := range tokenCids {
-		if !domain.TokenCID(tokenCid).Valid() {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid token CID: %s. Must be a valid token CID", tokenCid))
-		}
-	}
-
-	// Validate addresses
-	for _, address := range addresses {
-		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid address: %s. Must be a valid Tezos or Ethereum address", address))
-		}
-	}
-
-	// Validate manual expansions
-	for _, expansion := range manualExpansions {
-		if expansion != types.ExpansionSubject {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
-		}
-	}
-
-	// Merge manual and auto-detected expansions
-	expansions := mergeExpansions(manualExpansions, autoExpansions)
-
-	// Parse deprecated 'since' parameter
-	var sinceTime *time.Time
-	if since != nil && *since != "" {
-		t, err := time.Parse(time.RFC3339Nano, *since)
-		if err != nil {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid since timestamp format: %s. Use RFC3339 format", *since))
-		}
-		sinceTime = &t
-	}
-
-	// Validate order
-	if order != nil && !order.Valid() {
-		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid order: %s. Must be a valid order", *order))
-	}
-
-	return r.executor.GetChanges(ctx, convertToUint64(tokenIds), tokenCids, addresses, convertSubjectTypes(subjectTypes), subjectIds, ToNativeUint64(anchor), sinceTime, ToNativeUint8(limit), ToNativeUint64(offset), order, expansions)
-}
-
 // WorkflowStatus is the resolver for the workflowStatus field.
 func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error) {
 	if workflowID == "" {
@@ -745,12 +649,6 @@ func (r *workflowStatusResolver) ExecutionTime(ctx context.Context, obj *dto.Wor
 	return &val, nil
 }
 
-// Change returns ChangeResolver implementation.
-func (r *Resolver) Change() ChangeResolver { return &changeResolver{r} }
-
-// ChangeList returns ChangeListResolver implementation.
-func (r *Resolver) ChangeList() ChangeListResolver { return &changeListResolver{r} }
-
 // EnrichmentSource returns EnrichmentSourceResolver implementation.
 func (r *Resolver) EnrichmentSource() EnrichmentSourceResolver { return &enrichmentSourceResolver{r} }
 
@@ -803,8 +701,6 @@ func (r *Resolver) TokenMetadata() TokenMetadataResolver { return &tokenMetadata
 // WorkflowStatus returns WorkflowStatusResolver implementation.
 func (r *Resolver) WorkflowStatus() WorkflowStatusResolver { return &workflowStatusResolver{r} }
 
-type changeResolver struct{ *Resolver }
-type changeListResolver struct{ *Resolver }
 type enrichmentSourceResolver struct{ *Resolver }
 type indexingJobResolver struct{ *Resolver }
 type mediaAssetResolver struct{ *Resolver }

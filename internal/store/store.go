@@ -179,20 +179,6 @@ type TokenQueryFilter struct {
 	Offset            uint64 // Offset for pagination
 }
 
-// ChangesQueryFilter represents filters for changes queries
-type ChangesQueryFilter struct {
-	TokenIDs     []uint64             // Filter by token IDs
-	TokenCIDs    []string             // Filter by token CIDs
-	Addresses    []string             // Filter by addresses (matches from/to addresses in provenance events)
-	SubjectTypes []schema.SubjectType // Filter by subject types
-	SubjectIDs   []string             // Filter by subject IDs
-	Anchor       *uint64              // ID-based cursor - only show changes after this ID (exclusive) - recommended
-	Since        *time.Time           // Deprecated: Timestamp filter - only show changes after this time (use Anchor instead)
-	Limit        int                  // Number of results to return
-	Offset       uint64               // Deprecated: Offset for pagination (only applies when using 'since' parameter, not used with 'anchor')
-	OrderDesc    bool                 // Deprecated: Order descending (only applies when using 'since' parameter)
-}
-
 // TokensWithMetadataResult represents a token with its metadata
 type TokensWithMetadataResult struct {
 	Token    *schema.Token
@@ -264,12 +250,12 @@ type Store interface {
 	GetTokenWithMetadataByTokenCID(ctx context.Context, tokenCID string) (*TokensWithMetadataResult, error)
 	// GetTokensByFilter retrieves tokens based on filters
 	GetTokensByFilter(ctx context.Context, filter TokenQueryFilter) ([]schema.Token, error)
-	// CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
+	// CreateTokenMint creates a new token with associated balance and provenance event in a single transaction
 	// For multi-edition tokens (FA2/ERC1155), this also handles subsequent mints via conflict resolution
 	CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error
 	// UpdateTokenTransfer updates a token transfer (assumes token exists)
 	UpdateTokenTransfer(ctx context.Context, input UpdateTokenTransferInput) error
-	// UpdateTokenBurn updates a token as burned with associated balance update, change journal, and provenance event in a single transaction
+	// UpdateTokenBurn updates a token as burned with associated balance update and provenance event in a single transaction
 	UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error
 	// CreateTokenWithProvenances creates or updates a token with all its provenance data (balances and events)
 	CreateTokenWithProvenances(ctx context.Context, input CreateTokenWithProvenancesInput) error
@@ -367,13 +353,6 @@ type Store interface {
 	GetTokenProvenanceEventsBulk(ctx context.Context, tokenIDs []uint64, limit int) (map[uint64][]schema.ProvenanceEvent, map[uint64]uint64, error)
 	// GetProvenanceEventByID retrieves a provenance event by ID
 	GetProvenanceEventByID(ctx context.Context, id uint64) (*schema.ProvenanceEvent, error)
-
-	// =============================================================================
-	// Changes & Audit Log
-	// =============================================================================
-
-	// GetChanges retrieves changes with optional filters and pagination
-	GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, error)
 
 	// =============================================================================
 	// Collection Sync Operations

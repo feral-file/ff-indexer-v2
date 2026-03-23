@@ -58,11 +58,11 @@ type Executor interface {
 	CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (*MediaHealthCheckResult, error)
 
 	// IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
-	// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
+	// Minimal provenance data includes balances for from/to addresses, provenance event related to the event
 	IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error
 
 	// IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID
-	// Full provenance data includes balances for all addresses, provenance events and change journal related to the token
+	// Full provenance data includes balances for all addresses, provenance events related to the token
 	IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error
 
 	// IndexTokenWithMinimalProvenancesByTokenCID indexes token with minimal provenances using tokenCID
@@ -330,7 +330,7 @@ func (e *executor) CreateTokenMint(ctx context.Context, event *domain.Blockchain
 		input.Balance.Quantity = balance
 	}
 
-	// Create the token atomically with balance, provenance event, and change journal
+	// Create the token atomically with balance and provenance event
 	if err := e.store.CreateTokenMint(ctx, input); err != nil {
 		return fmt.Errorf("failed to create token mint: %w", err)
 	}
@@ -391,7 +391,7 @@ func (e *executor) UpdateTokenTransfer(ctx context.Context, event *domain.Blockc
 		},
 	}
 
-	// Update the token atomically with balance updates, provenance event, and change journal
+	// Update the token atomically with balance updates and provenance event
 	if err := e.store.UpdateTokenTransfer(ctx, input); err != nil {
 		return fmt.Errorf("failed to update token transfer: %w", err)
 	}
@@ -726,7 +726,7 @@ func (e *executor) UpdateTokenBurn(ctx context.Context, event *domain.Blockchain
 		},
 	}
 
-	// Update the token burn atomically with balance update, provenance event, and change journal
+	// Update the token burn atomically with balance update and provenance event
 	if err := e.store.UpdateTokenBurn(ctx, input); err != nil {
 		return fmt.Errorf("failed to update token burn: %w", err)
 	}
@@ -773,7 +773,7 @@ func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.Block
 }
 
 // IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
-// Minimal provenance data includes balances for from/to addresses, provenance event and change journal related to the event
+// Minimal provenance data includes balances for from/to addresses, provenance event related to the event
 func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Validate event
 	if !event.Valid() {
@@ -910,7 +910,7 @@ func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain
 
 // IndexTokenWithMinimalProvenancesByTokenCID indexes token with minimal provenances using tokenCID
 // Minimal provenance data includes balances for all addresses (or specific owner if provided).
-// The provenance events and change journal are not included for full indexing,
+// The provenance events are not included for full indexing,
 // but ARE included for owner-specific indexing.
 // If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
 func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
@@ -1205,7 +1205,7 @@ func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(
 }
 
 // IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID
-// Full provenance data includes balances for all addresses, provenance events and change journal related to the token
+// Full provenance data includes balances for all addresses, provenance events related to the token
 func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
 	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
 

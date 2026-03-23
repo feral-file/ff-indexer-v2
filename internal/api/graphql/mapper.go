@@ -7,7 +7,6 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // autoDetectTokenExpansions automatically detects which token expansions are needed
@@ -79,50 +78,6 @@ func processTokenFields(reqCtx *graphql.OperationContext, fields []graphql.Colle
 	}
 }
 
-// autoDetectChangeExpansions automatically detects which change expansions are needed
-// based on the GraphQL query fields that are being requested.
-// Supports both individual item queries and list queries by recursively traversing field selections.
-func autoDetectChangeExpansions(ctx context.Context) []types.Expansion {
-	fc := graphql.GetFieldContext(ctx)
-	if fc == nil {
-		return nil
-	}
-
-	var expansions []types.Expansion
-	expansionSet := make(map[types.Expansion]bool)
-
-	// Collect all selected fields from the GraphQL query
-	fields := graphql.CollectFieldsCtx(ctx, nil)
-
-	// Get the operation context for recursive field collection
-	reqCtx := graphql.GetOperationContext(ctx)
-
-	// Recursively process fields to handle both individual and list queries
-	processChangeFields(reqCtx, fields, expansionSet)
-
-	// Convert set to slice
-	for expansion := range expansionSet {
-		expansions = append(expansions, expansion)
-	}
-
-	return expansions
-}
-
-// processChangeFields recursively processes GraphQL fields to detect change expansions
-func processChangeFields(reqCtx *graphql.OperationContext, fields []graphql.CollectedField, expansionSet map[types.Expansion]bool) {
-	for _, field := range fields {
-		if field.Name == "subject" {
-			expansionSet[types.ExpansionSubject] = true
-		}
-
-		// Recursively process nested selections (e.g., for "items" in list queries)
-		if len(field.Selections) > 0 {
-			nestedFields := graphql.CollectFields(reqCtx, field.Selections, nil)
-			processChangeFields(reqCtx, nestedFields, expansionSet)
-		}
-	}
-}
-
 // mergeExpansions merges manual and auto-detected expansions, removing duplicates
 // Manual expansions take precedence and are listed first for backward compatibility
 func mergeExpansions(manual []types.Expansion, autoDetected []types.Expansion) []types.Expansion {
@@ -177,19 +132,6 @@ func convertChainStrings(chainStrings []string) []domain.Chain {
 		chains[i] = domain.Chain(chain)
 	}
 	return chains
-}
-
-// convertSubjectTypes converts GraphQL subject types to schema.SubjectType
-func convertSubjectTypes(subjectTypes []string) []schema.SubjectType {
-	if subjectTypes == nil {
-		return nil
-	}
-
-	stypes := make([]schema.SubjectType, len(subjectTypes))
-	for i, subjectType := range subjectTypes {
-		stypes[i] = schema.SubjectType(subjectType)
-	}
-	return stypes
 }
 
 // convertToUint64 converts a slice of Uint64 to a slice of uint64

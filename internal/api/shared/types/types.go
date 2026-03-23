@@ -49,7 +49,6 @@ const (
 	ExpansionMetadataMediaAsset Expansion = "metadata_media_asset"
 	// Deprecated: Use ExpansionMediaAsset instead
 	ExpansionEnrichmentSourceMediaAsset Expansion = "enrichment_source_media_asset"
-	ExpansionSubject                    Expansion = "subject"
 )
 
 type MediaAssetVariantKey string

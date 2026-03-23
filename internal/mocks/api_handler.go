@@ -58,18 +58,6 @@ func (mr *MockAPIHandlerMockRecorder) GetAddressIndexingJob(c interface{}) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIHandler)(nil).GetAddressIndexingJob), c)
 }
 
-// GetChanges mocks base method.
-func (m *MockAPIHandler) GetChanges(c *gin.Context) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "GetChanges", c)
-}
-
-// GetChanges indicates an expected call of GetChanges.
-func (mr *MockAPIHandlerMockRecorder) GetChanges(c interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChanges", reflect.TypeOf((*MockAPIHandler)(nil).GetChanges), c)
-}
-
 // GetToken mocks base method.
 func (m *MockAPIHandler) GetToken(c *gin.Context) {
 	m.ctrl.T.Helper()

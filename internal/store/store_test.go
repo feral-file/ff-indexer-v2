@@ -123,7 +123,7 @@ func buildTestTokenMint(chain domain.Chain, standard domain.ChainStandard, contr
 func testCreateTokenMint(t *testing.T, store Store) {
 	ctx := context.Background()
 
-	t.Run("successful mint creates token, balance, provenance event, and change journal", func(t *testing.T) {
+	t.Run("successful mint creates token, balance, and provenance event", func(t *testing.T) {
 		input := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
 			domain.StandardERC721,
@@ -159,15 +159,6 @@ func testCreateTokenMint(t *testing.T, store Store) {
 		_, eventTotal, err := store.GetTokenProvenanceEvents(ctx, token.ID, 10, 0, false)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(1), eventTotal)
-
-		// Verify change journal was created
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{input.Token.TokenCID},
-			Limit:     10,
-		})
-		require.NoError(t, err)
-		assert.Len(t, changes, 1)
-		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
 	})
 
 	t.Run("duplicate event with same token and addresses should be idempotent", func(t *testing.T) {
@@ -335,16 +326,6 @@ func testUpdateTokenTransfer(t *testing.T, store Store) {
 				assert.Fail(t, "unexpected provenance event type", event.EventType)
 			}
 		}
-
-		// Verify changes journal was created
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{mintInput.Token.TokenCID},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.Equal(t, 2, len(changes))
-		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
-		assert.Equal(t, schema.SubjectTypeOwner, changes[1].SubjectType)
 	})
 
 	t.Run("transfer ERC1155 partial quantity", func(t *testing.T) {
@@ -406,16 +387,6 @@ func testUpdateTokenTransfer(t *testing.T, store Store) {
 		}
 		assert.Equal(t, "70", balanceMap[owner1])
 		assert.Equal(t, "30", balanceMap[owner2])
-
-		// Verify changes journal was created
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{mintInput.Token.TokenCID},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.Equal(t, 2, len(changes))
-		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
-		assert.Equal(t, schema.SubjectTypeBalance, changes[1].SubjectType)
 	})
 
 	t.Run("transfer entire balance should delete zero balance", func(t *testing.T) {
@@ -727,16 +698,6 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		assert.Equal(t, uint64(2), eventTotal)
 		assert.Equal(t, schema.ProvenanceEventTypeMint, provenanceEvents[0].EventType)
 		assert.Equal(t, schema.ProvenanceEventTypeTransfer, provenanceEvents[1].EventType)
-
-		// Verify changes journal was created
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{token.TokenCID},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.Equal(t, 2, len(changes))
-		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType)
-		assert.Equal(t, schema.SubjectTypeBalance, changes[1].SubjectType)
 	})
 
 	t.Run("upsert existing token with new provenances", func(t *testing.T) {
@@ -776,15 +737,6 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		tokenResult, err := store.GetTokenByTokenCID(ctx, token.TokenCID)
 		require.NoError(t, err)
 		require.NotNil(t, tokenResult)
-
-		// Verify initial state - changes_journal
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{token.TokenCID},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.Equal(t, 1, len(changes), "should have 1 change journal entry (mint)")
-		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType, "mint event for ERC721")
 
 		// Now upsert with new owner
 		owner2 := "0xowner4000000000000000000000000000000000004"
@@ -837,18 +789,6 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		assert.Equal(t, uint64(2), eventTotal, "should have 2 events after upsert")
 		assert.Equal(t, schema.ProvenanceEventTypeMint, provenanceEvents[0].EventType)
 		assert.Equal(t, schema.ProvenanceEventTypeTransfer, provenanceEvents[1].EventType)
-
-		// Verify changes_journal was recreated correctly
-		changes, err = store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{token.TokenCID},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.Equal(t, 2, len(changes), "should have 2 change journal entries after upsert (mint + transfer)")
-
-		// Verify both journal entries are for provenance events
-		assert.Equal(t, schema.SubjectTypeToken, changes[0].SubjectType, "first change should be token (mint)")
-		assert.Equal(t, schema.SubjectTypeOwner, changes[1].SubjectType, "second change should be owner (transfer)")
 	})
 
 	t.Run("create token with large number of provenance events to test batch insert", func(t *testing.T) {
@@ -947,14 +887,6 @@ func testCreateTokenWithProvenances(t *testing.T, store Store) {
 		for i, evt := range provenanceEvents {
 			assert.NotZero(t, evt.ID, "event %d should have a valid ID", i)
 		}
-
-		// Verify changes_journal entries were created for all events
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{token.TokenCID},
-			Limit:     numEvents + 10, // Get all changes
-		})
-		require.NoError(t, err)
-		assert.Equal(t, numEvents+1, len(changes), "should have change journal entry for each event")
 
 		// Verify balances
 		owners, total, err := store.GetTokenOwners(ctx, tokenResult.ID, 10, 0)
@@ -1455,14 +1387,6 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 		for i, evt := range provenanceEvents {
 			assert.NotZero(t, evt.ID, "event %d should have a valid ID", i)
 		}
-
-		// Verify changes_journal entries were created for all events
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{tokenCID.String()},
-			Limit:     numEvents + 10, // Get all changes
-		})
-		require.NoError(t, err)
-		assert.Equal(t, numEvents+1, len(changes), "should have change journal entry for each event")
 
 		// Verify balance was set correctly
 		balances, balanceTotal, err := store.GetTokenOwners(ctx, tokenResult.ID, 10, 0)
@@ -2389,24 +2313,6 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 		assert.Equal(t, imageURL, *metadata.ImageURL)
 		assert.Equal(t, name, *metadata.Name)
 		assert.Equal(t, mimeType, *metadata.MimeType)
-
-		// Verify change journal entry was created
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{mintInput.Token.TokenCID},
-			Limit:     10,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changes), 1)
-
-		// Find metadata change
-		var foundMetadataChange bool
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMetadata {
-				foundMetadataChange = true
-				break
-			}
-		}
-		assert.True(t, foundMetadataChange, "Should have metadata change journal entry")
 	})
 
 	t.Run("update existing metadata", func(t *testing.T) {
@@ -2467,50 +2373,6 @@ func testUpsertTokenMetadata(t *testing.T, store Store) {
 		assert.Equal(t, hash2, *metadata.LatestHash)
 		assert.Equal(t, imageURL2, *metadata.ImageURL)
 		assert.Equal(t, name2, *metadata.Name)
-
-		// Verify change journal has multiple entries (mint + 2 metadata changes)
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{mintInput.Token.TokenCID},
-			Limit:     10,
-		})
-		require.NoError(t, err)
-		assert.Len(t, changes, 3) // mint + initial metadata + updated metadata
-
-		// Find metadata changes and verify both entries exist
-		var metadataChanges []schema.MetadataChangeMeta
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMetadata {
-				var metaChanges schema.MetadataChangeMeta
-				err := json.Unmarshal(change.Meta, &metaChanges)
-				require.NoError(t, err)
-				metadataChanges = append(metadataChanges, metaChanges)
-			}
-		}
-
-		// Should have 2 metadata change entries
-		assert.Len(t, metadataChanges, 2)
-
-		// First metadata change: old is empty (initial creation)
-		var initialChange, updateChange *schema.MetadataChangeMeta
-		for i := range metadataChanges {
-			if metadataChanges[i].Old.ImageURL == nil {
-				initialChange = &metadataChanges[i]
-			} else {
-				updateChange = &metadataChanges[i]
-			}
-		}
-
-		require.NotNil(t, initialChange, "Should have initial metadata change with no old values")
-		require.NotNil(t, updateChange, "Should have metadata update with old values")
-
-		// Verify initial change has new values
-		assert.Equal(t, token.ID, initialChange.TokenID)
-		assert.Equal(t, imageURL1, *initialChange.New.ImageURL)
-
-		// Verify update change has both old and new values
-		assert.Equal(t, token.ID, updateChange.TokenID)
-		assert.Equal(t, imageURL1, *updateChange.Old.ImageURL)
-		assert.Equal(t, imageURL2, *updateChange.New.ImageURL)
 	})
 }
 
@@ -2757,8 +2619,7 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		assert.Equal(t, enrichment.TokenID, enrichment2.TokenID)
 	})
 
-	t.Run("creates change journal entry for enrichment source", func(t *testing.T) {
-		// Create a token first
+	t.Run("upsert enrichment source updates stored fields", func(t *testing.T) {
 		owner := "0xenrich100000000000000000000000000000002"
 		mintInput := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
@@ -2773,7 +2634,6 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
 		require.NoError(t, err)
 
-		// Create metadata first
 		originJSON := json.RawMessage(`{"name": "Test"}`)
 		now := time.Now().UTC()
 		metadataInput := CreateTokenMetadataInput{
@@ -2786,7 +2646,6 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		err = store.UpsertTokenMetadata(ctx, metadataInput)
 		require.NoError(t, err)
 
-		// Create enrichment source - should create a change journal entry
 		vendorJSON := json.RawMessage(`{"platform": "fxhash", "project": "Test"}`)
 		vendorHash := "vendorhash456"
 		imageURL := "https://fxhash.xyz/image.png"
@@ -2804,34 +2663,14 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		err = store.UpsertEnrichmentSource(ctx, enrichmentInput)
 		require.NoError(t, err)
 
-		// Verify change journal entry was created
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{token.TokenCID},
-		})
+		enrichment, err := store.GetEnrichmentSourceByTokenID(ctx, token.ID)
 		require.NoError(t, err)
+		require.NotNil(t, enrichment)
+		assert.Equal(t, string(schema.VendorFXHash), string(enrichment.Vendor))
+		assert.Equal(t, imageURL, *enrichment.ImageURL)
 
-		// Should have at least one change journal entry for enrichment source
-		var enrichSourceChanges []*schema.ChangesJournal
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeEnrichSource {
-				enrichSourceChanges = append(enrichSourceChanges, change)
-			}
-		}
-		require.Greater(t, len(enrichSourceChanges), 0, "Expected at least one enrich_source change journal entry")
-
-		// Unmarshal and verify meta
-		enrichChange := enrichSourceChanges[0]
-		var meta schema.EnrichmentSourceChangeMeta
-		err = json.Unmarshal(enrichChange.Meta, &meta)
-		require.NoError(t, err)
-		assert.Equal(t, token.ID, meta.TokenID)
-		assert.Equal(t, string(schema.VendorFXHash), meta.New.Vendor)
-		assert.Equal(t, imageURL, *meta.New.ImageURL)
-
-		// Update enrichment source - should create another change journal entry
 		vendorHash2 := "vendorhash789"
 		imageURL2 := "https://fxhash.xyz/image2.png"
-
 		enrichmentInput2 := CreateEnrichmentSourceInput{
 			TokenID:    token.ID,
 			Vendor:     schema.VendorFXHash,
@@ -2841,32 +2680,15 @@ func testEnrichmentSource(t *testing.T, store Store) {
 			Name:       &name,
 		}
 
-		// Sleep to ensure different timestamp
 		time.Sleep(10 * time.Millisecond)
 		err = store.UpsertEnrichmentSource(ctx, enrichmentInput2)
 		require.NoError(t, err)
 
-		// Verify we now have two change journal entries
-		changes2, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{token.TokenCID},
-		})
+		enrichment2, err := store.GetEnrichmentSourceByTokenID(ctx, token.ID)
 		require.NoError(t, err)
-
-		enrichSourceChanges2 := []*schema.ChangesJournal{}
-		for _, change := range changes2 {
-			if change.SubjectType == schema.SubjectTypeEnrichSource {
-				enrichSourceChanges2 = append(enrichSourceChanges2, change)
-			}
-		}
-		require.GreaterOrEqual(t, len(enrichSourceChanges2), 2, "Expected at least two enrich_source change journal entries")
-
-		// Verify the latest change has both old and new values
-		var latestMeta schema.EnrichmentSourceChangeMeta
-		err = json.Unmarshal(enrichSourceChanges2[len(enrichSourceChanges2)-1].Meta, &latestMeta)
-		require.NoError(t, err)
-		assert.Equal(t, token.ID, latestMeta.TokenID)
-		assert.Equal(t, imageURL, *latestMeta.Old.ImageURL)
-		assert.Equal(t, imageURL2, *latestMeta.New.ImageURL)
+		require.NotNil(t, enrichment2)
+		assert.Equal(t, vendorHash2, *enrichment2.VendorHash)
+		assert.Equal(t, imageURL2, *enrichment2.ImageURL)
 	})
 
 	t.Run("returns enrichment sources for multiple tokens", func(t *testing.T) {
@@ -3015,526 +2837,6 @@ func testEnrichmentSource(t *testing.T, store Store) {
 		assert.NotNil(t, bulkEnrichments[token.ID])
 		assert.Equal(t, schema.VendorFeralFile, bulkEnrichments[token.ID].Vendor)
 		assert.NotContains(t, bulkEnrichments, uint64(999997))
-	})
-}
-
-// =============================================================================
-// Test: Changes Journal
-// =============================================================================
-
-func testGetChanges(t *testing.T, store Store) {
-	ctx := context.Background()
-
-	t.Run("filter by token CIDs", func(t *testing.T) {
-		owner := "0xchanges100000000000000000000000000000000001"
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xchanges100000000000000000000000000000001",
-			"1",
-			owner,
-		)
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			TokenCIDs: []string{mintInput.Token.TokenCID},
-			Limit:     10,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changes), 1)
-
-		// Verify changes were returned
-		for _, change := range changes {
-			assert.NotNil(t, change)
-		}
-	})
-
-	t.Run("order by changed_at ascending", func(t *testing.T) {
-		// Get changes (always ascending by ID)
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Limit: 10,
-		})
-		require.NoError(t, err)
-		require.NotEmpty(t, changes)
-
-		// Verify ascending order by changed_at
-		for i := 1; i < len(changes); i++ {
-			assert.True(t, changes[i].ChangedAt.After(changes[i-1].ChangedAt) || changes[i].ChangedAt.Equal(changes[i-1].ChangedAt), "changed_at should always be in ascending order")
-		}
-	})
-
-	t.Run("pagination", func(t *testing.T) {
-		owner := "0xchangespagination00000000000000000000001"
-
-		// Create test data - at least 5 tokens to test pagination
-		for i := range 5 {
-			mintInput := buildTestTokenMint(
-				domain.ChainEthereumMainnet,
-				domain.StandardERC721,
-				fmt.Sprintf("0xpagination%042d", i),
-				"1",
-				owner,
-			)
-			// Adjust timestamp to ensure different changed_at times
-			mintInput.ProvenanceEvent.Timestamp = time.Now().UTC().Add(time.Duration(i) * time.Minute)
-			err := store.CreateTokenMint(ctx, mintInput)
-			require.NoError(t, err)
-			time.Sleep(10 * time.Millisecond) // Small delay to ensure different created_at
-		}
-
-		// Get first page using cursor-based pagination (no anchor)
-		page1, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Limit: 2,
-		})
-		require.NoError(t, err)
-		require.Len(t, page1, 2)
-
-		// Verify first page is ordered by changed_at ASC, id ASC
-		assert.True(t, page1[1].ChangedAt.After(page1[0].ChangedAt) ||
-			(page1[1].ChangedAt.Equal(page1[0].ChangedAt) && page1[1].ID > page1[0].ID),
-			"First page should be ordered by changed_at ASC, id ASC")
-
-		// Get second page using anchor from last item of first page
-		anchorID := page1[1].ID
-		page2, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Limit:  2,
-			Anchor: &anchorID,
-		})
-		require.NoError(t, err)
-
-		// Ensure pages don't overlap - anchor filters by ID
-		assert.NotEqual(t, page1[0].ID, page2[0].ID)
-		assert.NotEqual(t, page1[1].ID, page2[0].ID)
-		assert.Greater(t, page2[0].ID, anchorID, "Second page should start after anchor ID")
-
-		// Verify second page is also ordered by changed_at ASC, id ASC
-		if len(page2) >= 2 {
-			assert.True(t, page2[1].ChangedAt.After(page2[0].ChangedAt) ||
-				(page2[1].ChangedAt.Equal(page2[0].ChangedAt) && page2[1].ID > page2[0].ID),
-				"Second page should be ordered by changed_at ASC, id ASC")
-		}
-	})
-
-	t.Run("order ascending and descending", func(t *testing.T) {
-		owner := "0xchanges200000000000000000000000000000000002"
-
-		// Create multiple tokens with different timestamps
-		for i := range 3 {
-			mintInput := buildTestTokenMint(
-				domain.ChainEthereumMainnet,
-				domain.StandardERC721,
-				fmt.Sprintf("0xchanges2000000000000000000000000000000%03d", i),
-				"1",
-				owner,
-			)
-			// Adjust timestamp
-			mintInput.ProvenanceEvent.Timestamp = time.Now().UTC().Add(time.Duration(i) * time.Hour)
-			err := store.CreateTokenMint(ctx, mintInput)
-			require.NoError(t, err)
-			time.Sleep(10 * time.Millisecond) // Small delay to ensure different created_at
-		}
-
-		// Get changes ascending
-		changesAsc, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Limit:     10,
-			OrderDesc: false,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changesAsc), 3)
-
-		// Get changes descending
-		changesDesc, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Limit:     10,
-			OrderDesc: true,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changesDesc), 3)
-
-		// Verify order (first item in desc should be later than first in asc)
-		if len(changesAsc) > 0 && len(changesDesc) > 0 {
-			assert.True(t, changesDesc[0].ChangedAt.After(changesAsc[0].ChangedAt) ||
-				changesDesc[0].ChangedAt.Equal(changesAsc[0].ChangedAt))
-		}
-	})
-
-	t.Run("filter by since timestamp", func(t *testing.T) {
-		cutoffTime := time.Now().UTC()
-		time.Sleep(10 * time.Millisecond)
-
-		// Create token after cutoff
-		owner := "0xchanges300000000000000000000000000000000003"
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xchanges300000000000000000000000000000003",
-			"1",
-			owner,
-		)
-		mintInput.ProvenanceEvent.Timestamp = time.Now().UTC()
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		// Query with since filter
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Since: &cutoffTime,
-			Limit: 100,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changes), 1)
-
-		// All changes should be after cutoff
-		for _, change := range changes {
-			assert.True(t, change.ChangedAt.After(cutoffTime) || change.ChangedAt.Equal(cutoffTime))
-		}
-	})
-
-	t.Run("filter by anchor id", func(t *testing.T) {
-		// Get current max ID before creating new token
-		allChanges, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Limit:     1000,
-			OrderDesc: true, // Get newest first
-		})
-		require.NoError(t, err)
-		var anchorID uint64
-		if len(allChanges) > 0 {
-			anchorID = allChanges[0].ID
-		}
-
-		// Create token after anchor
-		owner := "0xchanges300000000000000000000000000000000004"
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0xchanges300000000000000000000000000000004",
-			"1",
-			owner,
-		)
-		mintInput.ProvenanceEvent.Timestamp = time.Now().UTC()
-		err = store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		// Query with anchor filter
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Anchor: &anchorID,
-			Limit:  100,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changes), 1)
-
-		// All changes should be after anchor ID
-		for _, change := range changes {
-			assert.Greater(t, change.ID, anchorID)
-		}
-	})
-
-	t.Run("filter by addresses - provenance events", func(t *testing.T) {
-		// Create a token and mint it to owner1
-		owner1 := "0xchanges400000000000000000000000000000000001"
-		owner2 := "0xchanges400000000000000000000000000000000002"
-		contract := "0xchanges400000000000000000000000000000004"
-
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			contract,
-			"1",
-			owner1,
-		)
-		mintInput.ProvenanceEvent.Timestamp = time.Now().UTC()
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		time.Sleep(10 * time.Millisecond)
-
-		// Transfer to owner2
-		transferInput := UpdateTokenTransferInput{
-			TokenCID:     mintInput.Token.TokenCID,
-			CurrentOwner: &owner2,
-			SenderBalanceUpdate: &UpdateBalanceInput{
-				OwnerAddress: owner1,
-				Delta:        "1",
-			},
-			ReceiverBalanceUpdate: &UpdateBalanceInput{
-				OwnerAddress: owner2,
-				Delta:        "1",
-			},
-			ProvenanceEvent: buildTestProvenanceEvent(
-				domain.ChainEthereumMainnet,
-				schema.ProvenanceEventTypeTransfer,
-				&owner1,
-				&owner2,
-				"1",
-				"0xtransfer_changes400",
-				1001,
-			),
-		}
-		err = store.UpdateTokenTransfer(ctx, transferInput)
-		require.NoError(t, err)
-
-		// Query changes for owner1 (should include mint and transfer out)
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Addresses: []string{owner1},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changes), 2)
-
-		// Verify all changes have appropriate subject types
-		for _, change := range changes {
-			// For ERC721: mint = token, transfer = owner
-			assert.Contains(t, []schema.SubjectType{schema.SubjectTypeToken, schema.SubjectTypeOwner}, change.SubjectType)
-		}
-
-		// Query changes for owner2 (should include transfer in)
-		changes2, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Addresses: []string{owner2},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changes2), 1)
-	})
-
-	t.Run("filter by addresses - metadata during ownership", func(t *testing.T) {
-		// Create a token and mint it to owner1
-		owner1 := "0xchanges500000000000000000000000000000000001"
-		owner2 := "0xchanges500000000000000000000000000000000002"
-		contract := "0xchanges500000000000000000000000000000005"
-
-		mintTime := time.Now().UTC()
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			contract,
-			"1",
-			owner1,
-		)
-		mintInput.ProvenanceEvent.Timestamp = mintTime
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-
-		time.Sleep(10 * time.Millisecond)
-
-		// Update metadata while owner1 still owns it
-		metadataTime := mintTime.Add(1 * time.Hour)
-		latestJSON := json.RawMessage(`{"name": "Test NFT", "image": "ipfs://test"}`)
-		hash := "hash123"
-		imageURL := "https://example.com/image.png"
-		name := "Test NFT"
-
-		metadataInput := CreateTokenMetadataInput{
-			TokenID:         token.ID,
-			LatestJSON:      latestJSON,
-			LatestHash:      &hash,
-			ImageURL:        &imageURL,
-			Name:            &name,
-			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: metadataTime,
-		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-
-		time.Sleep(10 * time.Millisecond)
-
-		// Transfer to owner2 AFTER metadata update
-		transferTime := metadataTime.Add(1 * time.Hour)
-		transferInput := UpdateTokenTransferInput{
-			TokenCID:     mintInput.Token.TokenCID,
-			CurrentOwner: &owner2,
-			SenderBalanceUpdate: &UpdateBalanceInput{
-				OwnerAddress: owner1,
-				Delta:        "1",
-			},
-			ReceiverBalanceUpdate: &UpdateBalanceInput{
-				OwnerAddress: owner2,
-				Delta:        "1",
-			},
-			ProvenanceEvent: buildTestProvenanceEvent(
-				domain.ChainEthereumMainnet,
-				schema.ProvenanceEventTypeTransfer,
-				&owner1,
-				&owner2,
-				"1",
-				"0xtransfer_changes500",
-				1002,
-			),
-		}
-		transferInput.ProvenanceEvent.Timestamp = transferTime
-		err = store.UpdateTokenTransfer(ctx, transferInput)
-		require.NoError(t, err)
-
-		// Query changes for owner1 (should include mint, metadata update, and transfer)
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Addresses: []string{owner1},
-			TokenCIDs: []string{mintInput.Token.TokenCID},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changes), 2) // At least mint and metadata
-
-		// Should include metadata change that happened during ownership
-		hasMetadataChange := false
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMetadata {
-				hasMetadataChange = true
-				// Verify metadata change happened during ownership (after mint, before transfer)
-				assert.True(t, change.ChangedAt.After(mintTime))
-				assert.True(t, change.ChangedAt.Before(transferTime))
-			}
-		}
-		assert.True(t, hasMetadataChange, "Metadata change during ownership should be included")
-	})
-
-	t.Run("filter by addresses - exclude metadata after transfer", func(t *testing.T) {
-		// Create a token and mint it to owner1
-		owner1 := "0xchanges600000000000000000000000000000000001"
-		owner2 := "0xchanges600000000000000000000000000000000002"
-		contract := "0xchanges600000000000000000000000000000006"
-
-		mintTime := time.Now().UTC()
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			contract,
-			"1",
-			owner1,
-		)
-		mintInput.ProvenanceEvent.Timestamp = mintTime
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-
-		time.Sleep(10 * time.Millisecond)
-
-		// Transfer to owner2 FIRST
-		transferTime := mintTime.Add(1 * time.Hour)
-		transferInput := UpdateTokenTransferInput{
-			TokenCID:     mintInput.Token.TokenCID,
-			CurrentOwner: &owner2,
-			SenderBalanceUpdate: &UpdateBalanceInput{
-				OwnerAddress: owner1,
-				Delta:        "1",
-			},
-			ReceiverBalanceUpdate: &UpdateBalanceInput{
-				OwnerAddress: owner2,
-				Delta:        "1",
-			},
-			ProvenanceEvent: buildTestProvenanceEvent(
-				domain.ChainEthereumMainnet,
-				schema.ProvenanceEventTypeTransfer,
-				&owner1,
-				&owner2,
-				"1",
-				"0xtransfer_changes600",
-				1002,
-			),
-		}
-		transferInput.ProvenanceEvent.Timestamp = transferTime
-		err = store.UpdateTokenTransfer(ctx, transferInput)
-		require.NoError(t, err)
-
-		time.Sleep(10 * time.Millisecond)
-
-		// Update metadata AFTER owner1 transferred it away
-		metadataTime := transferTime.Add(1 * time.Hour)
-		latestJSON := json.RawMessage(`{"name": "Updated NFT", "image": "ipfs://updated"}`)
-		hash := "hash456"
-		imageURL := "https://example.com/image2.png"
-		name := "Updated NFT"
-
-		metadataInput := CreateTokenMetadataInput{
-			TokenID:         token.ID,
-			LatestJSON:      latestJSON,
-			LatestHash:      &hash,
-			ImageURL:        &imageURL,
-			Name:            &name,
-			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: metadataTime,
-		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-
-		// Query changes for owner1 (should NOT include metadata update after transfer)
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Addresses: []string{owner1},
-			TokenCIDs: []string{mintInput.Token.TokenCID},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-
-		// Should NOT include metadata change that happened after transfer
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMetadata {
-				// Any metadata changes should be before the transfer
-				assert.True(t, change.ChangedAt.Before(transferTime),
-					"Metadata change after transfer should NOT be included for previous owner")
-			}
-		}
-	})
-
-	t.Run("filter by addresses - metadata for current owner", func(t *testing.T) {
-		// Create a token and mint it to owner1
-		owner1 := "0xchanges700000000000000000000000000000000001"
-		contract := "0xchanges700000000000000000000000000000007"
-
-		mintTime := time.Now().UTC()
-		mintInput := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			contract,
-			"1",
-			owner1,
-		)
-		mintInput.ProvenanceEvent.Timestamp = mintTime
-		err := store.CreateTokenMint(ctx, mintInput)
-		require.NoError(t, err)
-
-		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
-		require.NoError(t, err)
-
-		time.Sleep(10 * time.Millisecond)
-
-		// Update metadata while owner1 still owns it (no transfer)
-		metadataTime := mintTime.Add(1 * time.Hour)
-		latestJSON := json.RawMessage(`{"name": "Forever NFT", "image": "ipfs://forever"}`)
-		hash := "hash789"
-		imageURL := "https://example.com/image3.png"
-		name := "Forever NFT"
-
-		metadataInput := CreateTokenMetadataInput{
-			TokenID:         token.ID,
-			LatestJSON:      latestJSON,
-			LatestHash:      &hash,
-			ImageURL:        &imageURL,
-			Name:            &name,
-			EnrichmentLevel: schema.EnrichmentLevelNone,
-			LastRefreshedAt: metadataTime,
-		}
-		err = store.UpsertTokenMetadata(ctx, metadataInput)
-		require.NoError(t, err)
-
-		// Query changes for owner1 (should include metadata since still owner)
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			Addresses: []string{owner1},
-			TokenCIDs: []string{mintInput.Token.TokenCID},
-			Limit:     100,
-		})
-		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(changes), 2) // mint + metadata
-
-		// Should include metadata change for current owner
-		hasMetadataChange := false
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMetadata {
-				hasMetadataChange = true
-			}
-		}
-		assert.True(t, hasMetadataChange, "Metadata change should be included for current owner")
 	})
 }
 
@@ -3957,11 +3259,10 @@ func testKeyValueStore(t *testing.T, store Store) {
 // Test: Media Assets
 // =============================================================================
 
-func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
+func testCreateMediaAssetUpsert(t *testing.T, store Store) {
 	ctx := context.Background()
 
-	t.Run("always creates change journal entry", func(t *testing.T) {
-		// Create a token first
+	t.Run("create returns persisted media asset", func(t *testing.T) {
 		owner := "0xmedia10000000000000000000000000000000001"
 		mintInput := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
@@ -3973,7 +3274,6 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 		err := store.CreateTokenMint(ctx, mintInput)
 		require.NoError(t, err)
 
-		// Create media asset - should create change journal entry
 		sourceURL := "https://example.com/media1.png"
 		mimeType := "image/png"
 		fileSize := int64(1024)
@@ -3992,43 +3292,12 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 		asset, err := store.CreateMediaAsset(ctx, input)
 		require.NoError(t, err)
 		require.NotNil(t, asset)
-
-		// Verify change journal entry was created
-		// Note: media_asset changes are not linked to tokens, so we fetch all changes and filter
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			SubjectTypes: []schema.SubjectType{schema.SubjectTypeMediaAsset},
-			SubjectIDs:   []string{fmt.Sprintf("%d", asset.ID)},
-			Limit:        100,
-		})
-		require.NoError(t, err)
-
-		// Should have at least one change journal entry for media asset
-		var mediaAssetChanges []*schema.ChangesJournal
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMediaAsset &&
-				change.SubjectID == fmt.Sprintf("%d", asset.ID) {
-				mediaAssetChanges = append(mediaAssetChanges, change)
-			}
-		}
-		require.Greater(t, len(mediaAssetChanges), 0, "Expected at least one media_asset change journal entry")
-
-		// Verify the change journal entry has correct data
-		mediaChange := mediaAssetChanges[0]
-		assert.Equal(t, schema.SubjectTypeMediaAsset, mediaChange.SubjectType)
-		assert.Equal(t, fmt.Sprintf("%d", asset.ID), mediaChange.SubjectID)
-
-		// Unmarshal and verify meta
-		var meta schema.MediaAssetChangeMeta
-		err = json.Unmarshal(mediaChange.Meta, &meta)
-		require.NoError(t, err)
-		assert.Equal(t, sourceURL, meta.New.SourceURL)
-		assert.Equal(t, types.MD5Hash(sourceURL), meta.New.SourceURLHash)
-		assert.Equal(t, string(schema.StorageProviderCloudflare), meta.New.Provider)
-		assert.Equal(t, mimeType, *meta.New.MimeType)
+		assert.Equal(t, sourceURL, asset.SourceURL)
+		assert.Equal(t, types.MD5Hash(sourceURL), asset.SourceURLHash)
+		assert.Equal(t, mimeType, *asset.MimeType)
 	})
 
-	t.Run("tracks changes on update", func(t *testing.T) {
-		// Create a token first
+	t.Run("same source URL and provider updates row", func(t *testing.T) {
 		owner := "0xmedia10000000000000000000000000000000002"
 		mintInput := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
@@ -4040,7 +3309,6 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 		err := store.CreateTokenMint(ctx, mintInput)
 		require.NoError(t, err)
 
-		// Create initial media asset
 		sourceURL := "https://example.com/media3.png"
 		mimeType1 := "image/png"
 		fileSize1 := int64(1024)
@@ -4059,13 +3327,11 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 		asset1, err := store.CreateMediaAsset(ctx, input1)
 		require.NoError(t, err)
 
-		// Update media asset (same source_url and provider)
 		mimeType2 := "image/jpeg"
 		fileSize2 := int64(2048)
 		providerAssetID2 := "asset789-updated"
 		variantURLs2 := datatypes.JSON([]byte(`{"thumbnail":"https://cdn.example.com/thumb3-v2.png"}`))
 
-		// Sleep to ensure different timestamp
 		time.Sleep(10 * time.Millisecond)
 
 		input2 := CreateMediaAssetInput{
@@ -4080,35 +3346,10 @@ func testCreateMediaAssetWithChangeJournal(t *testing.T, store Store) {
 		asset2, err := store.CreateMediaAsset(ctx, input2)
 		require.NoError(t, err)
 
-		// Should have same ID (updated, not new)
 		assert.Equal(t, asset1.ID, asset2.ID)
-
-		// Verify we have two change journal entries
-		// Note: media_asset changes are not linked to tokens, so we fetch all changes and filter
-		changes, err := store.GetChanges(ctx, ChangesQueryFilter{
-			SubjectTypes: []schema.SubjectType{schema.SubjectTypeMediaAsset},
-			SubjectIDs:   []string{fmt.Sprintf("%d", asset1.ID)},
-			Limit:        100,
-		})
-		require.NoError(t, err)
-
-		mediaAssetChanges := []*schema.ChangesJournal{}
-		for _, change := range changes {
-			if change.SubjectType == schema.SubjectTypeMediaAsset &&
-				change.SubjectID == fmt.Sprintf("%d", asset1.ID) {
-				mediaAssetChanges = append(mediaAssetChanges, change)
-			}
-		}
-		require.GreaterOrEqual(t, len(mediaAssetChanges), 2, "Expected at least two media_asset change journal entries")
-
-		// Verify the latest change has both old and new values
-		var latestMeta schema.MediaAssetChangeMeta
-		err = json.Unmarshal(mediaAssetChanges[len(mediaAssetChanges)-1].Meta, &latestMeta)
-		require.NoError(t, err)
-		assert.Equal(t, mimeType1, *latestMeta.Old.MimeType)
-		assert.Equal(t, mimeType2, *latestMeta.New.MimeType)
-		assert.Equal(t, providerAssetID1, *latestMeta.Old.ProviderAssetID)
-		assert.Equal(t, providerAssetID2, *latestMeta.New.ProviderAssetID)
+		assert.Equal(t, mimeType2, *asset2.MimeType)
+		assert.Equal(t, fileSize2, *asset2.FileSizeBytes)
+		assert.Equal(t, providerAssetID2, *asset2.ProviderAssetID)
 	})
 }
 
@@ -6681,8 +5922,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokenMetadataByTokenID", testGetTokenMetadataByTokenID},
 		{"GetTokenMetadataByTokenIDs", testGetTokenMetadataByTokenIDs},
 		{"EnrichmentSource", testEnrichmentSource},
-		{"CreateMediaAssetWithChangeJournal", testCreateMediaAssetWithChangeJournal},
-		{"GetChanges", testGetChanges},
+		{"CreateMediaAssetUpsert", testCreateMediaAssetUpsert},
 		{"GetTokenChangesByOwnerSinceCheckpoint", testGetTokenChangesByOwnerSinceCheckpoint},
 		{"BlockCursor", testBlockCursor},
 		{"WatchedAddresses", testWatchedAddresses},

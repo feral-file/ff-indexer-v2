@@ -5,7 +5,7 @@ info:
     REST API for the Feral File blockchain indexer service.
     
     This API provides access to indexed NFT token data from multiple blockchains,
-    including ownership information, metadata, provenance events, and change tracking.
+    including ownership information, metadata, and provenance events.
     
     ## Supported Blockchains
     - Ethereum (mainnet, sepolia)
@@ -16,7 +16,6 @@ info:
     - Ownership tracking across multiple chains
     - Provenance event history
     - Metadata enrichment from vendor APIs
-    - Change journal for tracking data updates
     - Token indexing triggers
     - Metadata refresh triggers
     
@@ -52,8 +51,6 @@ tags:
     description: Token data and metadata operations
   - name: collections
     description: Collection sync and state management operations
-  - name: changes
-    description: Change tracking and journal operations (deprecated)
   - name: workflows
     description: Temporal workflow status and tracking operations
   - name: indexing
@@ -408,163 +405,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenListResponse'
-        '422':
-          description: Validation error - Invalid query parameters
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-
-  /api/v1/changes:
-    get:
-      summary: Get changes
-      deprecated: true
-      description: |
-        **DEPRECATED**: This endpoint is being replaced by scoped state sync (`POST /api/v1/collection/{address}/sync`).
-        Use the new endpoint for better performance and simpler client logic.
-        
-        Retrieves a paginated list of changes from the changes journal.
-        
-        The changes journal tracks all modifications to indexed data, including:
-        - Token changes (mint, burn)
-        - Owner changes (transfers)
-        - Balance changes (for ERC1155/FA2)
-        - Metadata changes
-        - Media asset changes
-        
-        Changes are always returned in ascending order by ID (sequential audit log).
-        
-        ## Filters
-        - `token_id` - Filter by token ID(s) - supports multiple values
-        - `token_cid` - Filter by token CID(s)
-        - `address` - Filter by address(es) involved in the change
-        - `subject_type` - Filter by subject type(s) - supports multiple values
-        - `subject_id` - Filter by subject ID(s) - supports multiple values
-        - `anchor` - Only show changes after this anchor ID (recommended for cursor-based pagination)
-        - `since` - Deprecated: Only show changes after this timestamp (RFC3339 format)
-        
-        ## Pagination
-        - `limit` - Number of items per page (default: 20, max: 255)
-        - `anchor` - Recommended: Use next_anchor from previous response for cursor-based pagination
-        - `offset` - Deprecated: Starting position (only applies with 'since' parameter, ignored with 'anchor')
-        - `order` - Deprecated: Sort order (only applies with 'since' parameter, ignored with 'anchor')
-        
-        ## Expansions
-        - `subject` - Include the full subject data based on subject_type
-      operationId: getChanges
-      tags:
-        - changes
-      parameters:
-        - name: token_id
-          in: query
-          description: Filter by token ID(s) - supports multiple values
-          schema:
-            type: array
-            items:
-              type: string
-          style: form
-          explode: true
-          example: ["1234"]
-        - name: token_cid
-          in: query
-          description: Filter by token CID(s) - supports multiple values
-          schema:
-            type: array
-            items:
-              type: string
-          style: form
-          explode: true
-          example: ["eip155:1:erc721:0xabc123:1234"]
-        - name: address
-          in: query
-          description: Filter by address(es) - supports multiple values
-          schema:
-            type: array
-            items:
-              type: string
-          style: form
-          explode: true
-          example: ["0xabc123"]
-        - name: subject_type
-          in: query
-          description: Filter by subject type(s) - supports multiple values
-          schema:
-            type: array
-            items:
-              type: string
-          style: form
-          explode: true
-          example: ["token"]
-        - name: subject_id
-          in: query
-          description: Filter by subject ID(s) - supports multiple values
-          schema:
-            type: array
-            items:
-              type: string
-          style: form
-          explode: true
-          example: ["1234"]
-        - name: anchor
-          in: query
-          description: Only show changes after this anchor ID
-          schema:
-            type: integer
-            format: uint64
-          example: 1234
-        - name: since
-          in: query
-          description: "Deprecated: Only show changes after this timestamp (RFC3339 format)"
-          schema:
-            type: string
-            format: date-time
-          example: "2024-01-01T00:00:00Z"
-        - name: limit
-          in: query
-          description: Maximum number of changes to return (max 255)
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 255
-            default: 20
-        - name: offset
-          in: query
-          description: "Deprecated: Offset for pagination (only applies when using 'since' parameter, ignored with 'anchor')"
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
-        - name: order
-          in: query
-          description: "Deprecated: Sort order (only applies when using 'since' parameter, ignored with 'anchor')"
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: asc
-        - name: expand
-          in: query
-          description: Comma-separated list of expansions to include
-          schema:
-            type: array
-            items:
-              type: string
-              enum: [subject]
-          style: form
-          explode: false
-          example: ["subject"]
-      responses:
-        '200':
-          description: Changes retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ChangeListResponse'
         '422':
           description: Validation error - Invalid query parameters
           content:
@@ -1395,27 +1235,6 @@ components:
         - fa2
       example: erc721
 
-    SubjectType:
-      type: string
-      description: |
-        Type of entity that was changed in the changes journal.
-        
-        Subject types:
-        - `token` - Change to token data (mint, burn, etc.)
-        - `owner` - Change in token ownership (transfer)
-        - `balance` - Change in token balance (for ERC1155/FA2)
-        - `metadata` - Change in token metadata
-        - `enrich_source` - Change in enrichment source data
-        - `media_asset` - Change in media asset status or URLs
-      enum:
-        - token
-        - owner
-        - balance
-        - metadata
-        - enrich_source
-        - media_asset
-      example: token
-
     ProvenanceEventType:
       type: string
       description: |
@@ -1974,86 +1793,6 @@ components:
           format: uint64
           description: Next offset for pagination (null if there are no more results)
           example: 0
-
-    ChangeResponse:
-      type: object
-      required:
-        - id
-        - token_cid
-        - subject_type
-        - subject_id
-        - changed_at
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: integer
-          format: uint64
-          description: Internal database ID
-          example: 99999
-        token_cid:
-          type: string
-          description: Token CID that was affected
-          example: "eip155:1:erc721:0xabc123:1234"
-        subject_type:
-          $ref: '#/components/schemas/SubjectType'
-        subject_id:
-          type: string
-          description: |
-            Polymorphic reference to the subject that changed:
-            - For 'token'/'owner': provenance_event_id
-            - For 'balance': balance_id
-            - For 'metadata': token_id
-            - For 'media': media_asset_id
-          example: "67890"
-        changed_at:
-          type: string
-          format: date-time
-          description: Timestamp when the change occurred
-          example: "2024-01-02T12:00:00Z"
-        meta:
-          type: [object, "null"]
-          description: Additional context about the change as JSON
-          example: {"fields_changed": ["name", "description"]}
-        created_at:
-          type: string
-          format: date-time
-          description: Timestamp when change was recorded
-          example: "2024-01-02T12:00:00Z"
-        updated_at:
-          type: string
-          format: date-time
-          description: Timestamp when change was last updated
-          example: "2024-01-02T12:00:00Z"
-        subject:
-          description: Expanded subject data (available when expand=subject)
-          oneOf:
-            - $ref: '#/components/schemas/TokenResponse'
-            - $ref: '#/components/schemas/OwnerResponse'
-            - $ref: '#/components/schemas/TokenMetadataResponse'
-            - type: "null"
-
-    ChangeListResponse:
-      type: object
-      required:
-        - items
-        - total
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ChangeResponse'
-          description: List of changes
-        offset:
-          type: [integer, "null"]
-          format: uint64
-          description: Current offset for pagination
-          example: 0
-        total:
-          type: integer
-          format: uint64
-          description: Total number of changes matching the filter
-          example: 500
 
     TriggerTokenIndexingRequest:
       type: object

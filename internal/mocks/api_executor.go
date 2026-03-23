@@ -7,7 +7,6 @@ package mocks
 import (
 	context "context"
 	reflect "reflect"
-	time "time"
 
 	gomock "github.com/golang/mock/gomock"
 
@@ -15,7 +14,6 @@ import (
 	executor "github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	types "github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
-	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // MockAPIExecutor is a mock of Executor interface.
@@ -69,21 +67,6 @@ func (m *MockAPIExecutor) GetAddressIndexingJob(ctx context.Context, workflowID 
 func (mr *MockAPIExecutorMockRecorder) GetAddressIndexingJob(ctx, workflowID, opts interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIExecutor)(nil).GetAddressIndexingJob), ctx, workflowID, opts)
-}
-
-// GetChanges mocks base method.
-func (m *MockAPIExecutor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expansions []types.Expansion) (*dto.ChangeListResponse, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetChanges", ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, anchor, since, limit, offset, order, expansions)
-	ret0, _ := ret[0].(*dto.ChangeListResponse)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetChanges indicates an expected call of GetChanges.
-func (mr *MockAPIExecutorMockRecorder) GetChanges(ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, anchor, since, limit, offset, order, expansions interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChanges", reflect.TypeOf((*MockAPIExecutor)(nil).GetChanges), ctx, tokenIDs, tokenCIDs, addresses, subjectTypes, subjectIDs, anchor, since, limit, offset, order, expansions)
 }
 
 // GetToken mocks base method.

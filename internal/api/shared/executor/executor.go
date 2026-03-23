@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"go.temporal.io/sdk/client"
@@ -34,12 +33,6 @@ type Executor interface {
 
 	// GetTokens retrieves tokens with optional filters and expansions
 	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
-
-	// GetChanges retrieves changes with optional filters and expansions
-	// Returns changes in ascending order by ID (sequential audit log)
-	// Note: 'order' parameter only applies when using deprecated 'since' parameter
-	// Deprecated parameter: since, offset, order (use anchor instead for reliable pagination)
-	GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expansions []types.Expansion) (*dto.ChangeListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens by their CIDs
 	// Returns a workflow ID and run ID for tracking the indexing progress
@@ -550,120 +543,6 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	}, nil
 }
 
-func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expansions []types.Expansion) (*dto.ChangeListResponse, error) {
-	// Use defaults if not provided
-	if limit == nil {
-		defaultLimit := constants.DEFAULT_CHANGES_LIMIT
-		limit = &defaultLimit
-	}
-	if offset == nil {
-		defaultOffset := constants.DEFAULT_OFFSET
-		offset = &defaultOffset
-	}
-
-	// Determine ordering: 'order' only applies when using deprecated 'since' parameter
-	// When using 'anchor' or neither, always ascending by ID
-	orderDesc := anchor == nil && since != nil && order != nil && order.Desc()
-
-	// Determine offset: only applies when using deprecated 'since' parameter
-	// When using 'anchor' for cursor-based pagination, offset is not used (cursor continues from anchor ID)
-	var offsetValue uint64
-	if anchor == nil && since != nil {
-		offsetValue = *offset
-	}
-
-	// Normalize token CIDs
-	if len(tokenCIDs) > 0 {
-		normalizedTokenCIDs := make([]string, len(tokenCIDs))
-		for i, tokenCID := range tokenCIDs {
-			normalizedTokenCIDs[i] = domain.TokenCID(tokenCID).Normalized().String()
-		}
-		tokenCIDs = normalizedTokenCIDs
-	}
-
-	// Normalize addresses
-	if len(addresses) > 0 {
-		normalizedAddresses := domain.NormalizeAddresses(addresses)
-		addresses = normalizedAddresses
-	}
-
-	// Build filter
-	filter := store.ChangesQueryFilter{
-		TokenIDs:     tokenIDs,
-		TokenCIDs:    tokenCIDs,
-		Addresses:    addresses,
-		SubjectTypes: subjectTypes,
-		SubjectIDs:   subjectIDs,
-		Anchor:       anchor,
-		Since:        since,           // Deprecated: kept for backward compatibility
-		Limit:        int(*limit) + 1, // limit+1 to detect whether there are more results
-		Offset:       offsetValue,     // Deprecated: only applies when using 'since' parameter
-		OrderDesc:    orderDesc,       // Deprecated: only applies when using 'since' parameter
-	}
-
-	// Get changes
-	results, err := e.store.GetChanges(ctx, filter)
-	if err != nil {
-		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get changes: %v", err))
-	}
-
-	// Check if there are more results and truncate to original limit
-	limitInt := int(*limit)
-	hasMore := len(results) > limitInt
-	if hasMore {
-		results = results[:limitInt]
-	}
-
-	// Map to DTOs
-	changeDTOs := make([]dto.ChangeResponse, len(results))
-	for i, change := range results {
-		changeDTO := dto.MapChangeToDTO(change)
-
-		// Handle subject expansion
-		for _, exp := range expansions {
-			if exp == types.ExpansionSubject {
-				subject, err := e.expandSubject(ctx, change)
-				if err != nil {
-					return nil, err
-				}
-				changeDTO.Subject = subject
-			}
-		}
-
-		changeDTOs[i] = *changeDTO
-	}
-
-	// Build response with pagination
-	var nextOffset *uint64
-	var nextAnchor *uint64
-
-	// Calculate next offset only when using deprecated 'since' parameter (offset-based pagination)
-	// For cursor-based pagination with 'anchor', use next_anchor instead
-	if anchor == nil && since != nil && hasMore {
-		offsetVal := offsetValue + uint64(len(results))
-		nextOffset = &offsetVal
-	}
-
-	// Set next anchor for cursor-based pagination
-	// Always provide next_anchor when results are present for clients to continue from this point
-	if (anchor != nil || since == nil) && hasMore {
-		maxID := results[0].ID
-		for _, change := range results {
-			if change.ID > maxID {
-				maxID = change.ID
-			}
-		}
-		nextAnchor = &maxID
-	}
-
-	return &dto.ChangeListResponse{
-		Changes:    changeDTOs,
-		Offset:     nextOffset,
-		NextAnchor: nextAnchor,
-		Total:      0, // Deprecated: use the offset as the indicator for next page
-	}, nil
-}
-
 func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error) {
 	// Normalize token CIDs
 	normalizedTokenCIDs := make([]domain.TokenCID, len(tokenCIDs))
@@ -1036,81 +915,6 @@ func (e *executor) expandEnrichmentSource(ctx context.Context, tokenDTO *dto.Tok
 		tokenDTO.EnrichmentSource = dto.MapEnrichmentSourceToDTO(enrichment)
 	}
 	return nil
-}
-
-// expandSubject expands the subject of a change journal entry
-func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJournal) (interface{}, error) {
-	switch change.SubjectType {
-	case schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance:
-		// For token and owner changes, the subject is a provenance event
-		provenanceEventID, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id: %v", err))
-		}
-		event, err := e.store.GetProvenanceEventByID(ctx, provenanceEventID)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance event: %v", err))
-		}
-		if event == nil {
-			return nil, nil
-		}
-		return dto.MapProvenanceEventToDTO(event), nil
-
-	case schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource:
-		// For metadata and enrichment source changes,
-		// the subject ID is token_id for metadata and enrichment_source
-		tokenID, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for metadata: %v", err))
-		}
-
-		token, err := e.store.GetTokenByID(ctx, tokenID)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token: %v", err))
-		}
-		if token == nil {
-			return nil, nil
-		}
-
-		return dto.MapTokenToDTO(token), nil
-
-	case schema.SubjectTypeMediaAsset:
-		// For media asset changes, the subject ID is media_asset_id
-		mediaAssetID, err := strconv.ParseInt(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for media asset: %v", err))
-		}
-
-		mediaAsset, err := e.store.GetMediaAssetByID(ctx, mediaAssetID)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media asset: %v", err))
-		}
-		if mediaAsset == nil {
-			return nil, nil
-		}
-
-		return dto.MapMediaAssetToDTO(mediaAsset), nil
-
-	case schema.SubjectTypeTokenViewability:
-		// For token viewability changes, the subject ID is token_id
-		tokenID, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for token viewability: %v", err))
-		}
-
-		token, err := e.store.GetTokenByID(ctx, tokenID)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token: %v", err))
-		}
-		if token == nil {
-			return nil, nil
-		}
-
-		return dto.MapTokenToDTO(token), nil
-
-	default:
-		return nil, nil
-	}
 }
 
 // collectMediaAssetDTOsFromMap collects media asset DTOs by looking up URLs in the provided map

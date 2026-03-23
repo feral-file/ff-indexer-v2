@@ -31,9 +31,6 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 		// Token metadata refresh by IDs or CIDs (open, no authentication required)
 		v1.POST("/tokens/metadata/index", handler.TriggerMetadataIndexing)
 
-		// Changes endpoint (public read access)
-		v1.GET("/changes", handler.GetChanges)
-
 		// Collection sync endpoint (public read access)
 		v1.GET("/collection/:address/sync", handler.SyncCollection)
 
