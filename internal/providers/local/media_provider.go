@@ -101,7 +101,7 @@ func (p *mediaProvider) storeFromReader(ctx context.Context, reader io.Reader, f
 		}
 	}
 
-	if err := os.MkdirAll(storageDir, 0o755); err != nil {
+	if err := os.MkdirAll(storageDir, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
 

@@ -15,6 +15,8 @@ import (
 	pgdriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 var (
@@ -188,4 +190,21 @@ func TestPostgreSQLStore(t *testing.T) {
 	}
 
 	RunStoreTests(t, initPGTestDB, cleanupPGTestDB)
+}
+
+func TestCheckStorageProviderEnum(t *testing.T) {
+	ctx := context.Background()
+	st := initPGTestDB(t)
+
+	exists, err := st.CheckStorageProviderEnum(ctx, schema.StorageProviderLocal)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	exists, err = st.CheckStorageProviderEnum(ctx, schema.StorageProvider("does_not_exist"))
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	exists, err = st.CheckStorageProviderEnum(ctx, "")
+	require.Error(t, err)
+	require.False(t, exists)
 }

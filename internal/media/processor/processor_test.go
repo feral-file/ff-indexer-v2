@@ -125,3 +125,68 @@ func TestProcess_DataURIImage(t *testing.T) {
 	err := proc.Process(ctx, testDataURIPNG)
 	require.NoError(t, err)
 }
+
+func TestProcess_DataURIImage_LocalProvider(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx := context.Background()
+	jsonAdapter := adapter.NewJSON()
+
+	httpClient := mocks.NewMockHTTPClient(ctrl)
+	uriResolver := mocks.NewMockURIResolver(ctrl)
+	dataChecker := mocks.NewMockDataURIChecker(ctrl)
+	st := mocks.NewMockStore(ctrl)
+	raster := mocks.NewMockRasterizer(ctrl)
+	fs := mocks.NewMockFileSystem(ctrl)
+	ioAdapter := mocks.NewMockIO(ctrl)
+	dl := mocks.NewMockDownloader(ctrl)
+	trans := mocks.NewMockTransformer(ctrl)
+	provider := mocks.NewMockMediaProvider(ctrl)
+
+	provider.EXPECT().Name().Return("local").AnyTimes()
+
+	dataChecker.EXPECT().
+		Check(testDataURIPNG).
+		Return(uri.DataURICheckResult{Valid: true, MimeType: "image/png", DeclaredMimeType: "image/png"})
+
+	trans.EXPECT().
+		Transform(gomock.Any(), gomock.Any()).
+		Return(&transformer.TransformResult{Data: []byte("webp"), ContentType: "image/webp", Filename: "image.webp"}, nil)
+
+	provider.EXPECT().
+		UploadImageFromReader(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&mediaprovider.UploadResult{
+			ProviderAssetID: "asset-123",
+			VariantURLs: map[string]string{
+				"original": "http://localhost/media/asset-123",
+			},
+			ProviderMetadata: map[string]interface{}{"provider": "local"},
+		}, nil)
+
+	st.EXPECT().
+		CreateMediaAsset(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateMediaAssetInput) (*schema.MediaAsset, error) {
+			require.Equal(t, schema.StorageProviderLocal, input.Provider)
+			return &schema.MediaAsset{ID: 1}, nil
+		})
+
+	proc := processor.NewProcessor(
+		httpClient,
+		uriResolver,
+		dataChecker,
+		provider,
+		st,
+		raster,
+		fs,
+		ioAdapter,
+		jsonAdapter,
+		dl,
+		trans,
+		10*1024*1024,
+		10*1024*1024,
+	)
+
+	err := proc.Process(ctx, testDataURIPNG)
+	require.NoError(t, err)
+}
