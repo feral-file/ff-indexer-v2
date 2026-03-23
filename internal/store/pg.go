@@ -111,7 +111,6 @@ func NormalizeConnectionPoolSettings(maxOpenConns, maxIdleConns int, connMaxLife
 // Example with headroom of 1000:
 //   - Balance struct: 3 fields → (65,535 - 1,000) / 3 = 21,511 records/batch
 //   - ProvenanceEvent struct: 11 fields → (65,535 - 1,000) / 11 = 5,866 records/batch
-//   - ChangesJournal struct: 4 fields → (65,535 - 1,000) / 4 = 16,133 records/batch
 //
 // The function uses a total headroom to account for batch-level overhead:
 //   - GORM-added timestamp fields (created_at, updated_at) across all records
@@ -403,7 +402,7 @@ func findLatestEvents(events []schema.ProvenanceEvent, standard domain.ChainStan
 	return result
 }
 
-// CreateTokenMint creates a new token with associated balance, change journal, and provenance event in a single transaction
+// CreateTokenMint creates a new token with associated balance and provenance event in a single transaction
 func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Create or get the token (handle multi-edition tokens like FA2/ERC1155)
@@ -479,49 +478,14 @@ func (s *pgStore) CreateTokenMint(ctx context.Context, input CreateTokenMintInpu
 			return nil
 		}
 
-		// 4. Update ownership periods based on the provenance event
+		// 4. Record ownership token_events (acquired/released) from provenance
 		if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvent, input.Token.Standard); err != nil {
-			return fmt.Errorf("failed to update ownership periods: %w", err)
+			return fmt.Errorf("failed to record ownership token events: %w", err)
 		}
 
 		// 5. Update provenance tracking (denormalized tables for query optimization)
 		if err := s.updateProvenanceTracking(ctx, tx, &provenanceEvent, input.Token.Standard); err != nil {
 			return fmt.Errorf("failed to update provenance tracking: %w", err)
-		}
-
-		// 6. Create the change journal entry
-		// For mint events: subject_type = 'token', subject_id = provenance_event_id
-		// Populate meta with provenance information
-		meta := schema.ProvenanceChangeMeta{
-			TokenID:     token.ID,
-			Chain:       token.Chain,
-			Standard:    token.Standard,
-			Contract:    token.ContractAddress,
-			TokenNumber: token.TokenNumber,
-			From:        input.ProvenanceEvent.FromAddress,
-			To:          input.ProvenanceEvent.ToAddress,
-			Quantity:    input.ProvenanceEvent.Quantity,
-			TxHash:      input.ProvenanceEvent.TxHash,
-		}
-		metaJSON, err := json.Marshal(meta)
-		if err != nil {
-			return fmt.Errorf("failed to marshal change journal meta: %w", err)
-		}
-
-		changeJournal := schema.ChangesJournal{
-			SubjectType: schema.SubjectTypeToken,
-			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
-			ChangedAt:   input.ProvenanceEvent.Timestamp,
-			Meta:        metaJSON,
-		}
-
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-			DoNothing: true,
-		}).
-			Clauses(clause.Returning{Columns: []clause.Column{}}).
-			Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
 		return nil
@@ -838,12 +802,12 @@ func (s *pgStore) GetTokenProvenanceEvents(ctx context.Context, tokenID uint64, 
 		return nil, 0, fmt.Errorf("failed to count provenance events: %w", err)
 	}
 
-	// Apply ordering by timestamp (with tx_index as tiebreaker)
+	// Apply ordering by timestamp (with tx_index and id as tiebreakers for stable ordering)
 	// Use bigint to avoid overflow with large transaction indexes
 	if orderDesc {
-		query = query.Order("timestamp DESC, (raw->>'tx_index')::bigint DESC")
+		query = query.Order("timestamp DESC, (raw->>'tx_index')::bigint DESC, id DESC")
 	} else {
-		query = query.Order("timestamp ASC, (raw->>'tx_index')::bigint ASC")
+		query = query.Order("timestamp ASC, (raw->>'tx_index')::bigint ASC, id ASC")
 	}
 
 	// Apply pagination
@@ -887,7 +851,7 @@ func (s *pgStore) GetTokenProvenanceEventsBulk(ctx context.Context, tokenIDs []u
 			SELECT *
 			FROM provenance_events
 			WHERE token_id = c.token_id
-			ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC
+			ORDER BY timestamp DESC, (raw->>'tx_index')::bigint DESC, id DESC
 			LIMIT $2
 		) e
 	`, pq.Array(tokenIDs), limit).Scan(&eventsWithTotals).Error
@@ -994,59 +958,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			return fmt.Errorf("failed to upsert token metadata: %w", err)
 		}
 
-		// 3. Create or update the change journal entry with both old and new metadata
-		// subject_id = token_id (which is the PK of token_metadata table)
-		// Build the meta with old (optional) and new (required) metadata fields
-		metaChanges := schema.MetadataChangeMeta{
-			TokenID: input.TokenID,
-			New: schema.MetadataFields{
-				AnimationURL: metadata.AnimationURL,
-				ImageURL:     metadata.ImageURL,
-				Artists:      metadata.Artists,
-				Publisher:    metadata.Publisher,
-				Name:         metadata.Name,
-				Description:  metadata.Description,
-				MimeType:     metadata.MimeType,
-			},
-		}
-
-		// Add old metadata if it existed
-		if oldMetadata != nil {
-			metaChanges.Old = schema.MetadataFields{
-				AnimationURL: oldMetadata.AnimationURL,
-				ImageURL:     oldMetadata.ImageURL,
-				Artists:      oldMetadata.Artists,
-				Publisher:    oldMetadata.Publisher,
-				Name:         oldMetadata.Name,
-				Description:  oldMetadata.Description,
-				MimeType:     oldMetadata.MimeType,
-			}
-		}
-
-		metaJSON, err := json.Marshal(metaChanges)
-		if err != nil {
-			return fmt.Errorf("failed to marshal change journal meta: %w", err)
-		}
-
-		changeJournal := schema.ChangesJournal{
-			SubjectType: schema.SubjectTypeMetadata,
-			SubjectID:   fmt.Sprintf("%d", input.TokenID), // token_metadata.token_id (PK)
-			ChangedAt:   input.LastRefreshedAt,
-			Meta:        metaJSON,
-		}
-
-		// Use ON CONFLICT DO NOTHING to skip duplicates based on unique constraint
-		// This allows tracking multiple metadata changes over time (changed_at is part of the unique key)
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-			DoNothing: true,
-		}).
-			Clauses(clause.Returning{Columns: []clause.Column{}}).
-			Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
-		}
-
-		// 4. Create metadata_updated token event if user-visible fields changed
+		// 3. Create metadata_updated token event if user-visible fields changed
 		changedFields := getMetadataChangedFields(oldMetadata, &metadata)
 		if len(changedFields) > 0 {
 			metadataUpdate := schema.MetadataUpdateMetadata{
@@ -1063,7 +975,7 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			}
 		}
 
-		// 5. Sync media health records
+		// 4. Sync media health records
 		var oldImageURL, oldAnimationURL *string
 		if oldMetadata != nil {
 			oldImageURL = oldMetadata.ImageURL
@@ -1170,58 +1082,7 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 			return fmt.Errorf("failed to update enrichment level: %w", err)
 		}
 
-		// 4. Create change journal entry
-		metaChanges := schema.EnrichmentSourceChangeMeta{
-			TokenID: input.TokenID,
-			New: schema.EnrichmentSourceFields{
-				Vendor:       string(enrichmentSource.Vendor),
-				VendorHash:   enrichmentSource.VendorHash,
-				AnimationURL: enrichmentSource.AnimationURL,
-				ImageURL:     enrichmentSource.ImageURL,
-				Name:         enrichmentSource.Name,
-				Description:  enrichmentSource.Description,
-				Artists:      enrichmentSource.Artists,
-				MimeType:     enrichmentSource.MimeType,
-			},
-		}
-
-		// Add old enrichment source if it existed
-		if oldEnrichmentSource != nil {
-			metaChanges.Old = schema.EnrichmentSourceFields{
-				Vendor:       string(oldEnrichmentSource.Vendor),
-				VendorHash:   oldEnrichmentSource.VendorHash,
-				AnimationURL: oldEnrichmentSource.AnimationURL,
-				ImageURL:     oldEnrichmentSource.ImageURL,
-				Name:         oldEnrichmentSource.Name,
-				Description:  oldEnrichmentSource.Description,
-				Artists:      oldEnrichmentSource.Artists,
-				MimeType:     oldEnrichmentSource.MimeType,
-			}
-		}
-
-		metaJSON, err := json.Marshal(metaChanges)
-		if err != nil {
-			return fmt.Errorf("failed to marshal change journal meta: %w", err)
-		}
-
-		changeJournal := schema.ChangesJournal{
-			SubjectType: schema.SubjectTypeEnrichSource,
-			SubjectID:   fmt.Sprintf("%d", input.TokenID), // enrichment_sources.token_id (PK)
-			ChangedAt:   time.Now(),
-			Meta:        metaJSON,
-		}
-
-		// Use ON CONFLICT DO NOTHING to skip duplicates based on unique constraint
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-			DoNothing: true,
-		}).
-			Clauses(clause.Returning{Columns: []clause.Column{}}).
-			Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
-		}
-
-		// 5. Create enrichment_updated token event if user-visible fields changed
+		// 4. Create enrichment_updated token event if user-visible fields changed
 		changedFields := getEnrichmentChangedFields(oldEnrichmentSource, &enrichmentSource)
 		if len(changedFields) > 0 {
 			enrichmentUpdate := schema.EnrichmentUpdateMetadata{
@@ -1239,7 +1100,7 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 			}
 		}
 
-		// 6. Sync media health records
+		// 5. Sync media health records
 		var oldImageURL, oldAnimationURL *string
 		if oldEnrichmentSource != nil {
 			oldImageURL = oldEnrichmentSource.ImageURL
@@ -1260,7 +1121,7 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 	})
 }
 
-// UpdateTokenBurn updates a token as burned with associated balance update, change journal, and provenance event in a single transaction
+// UpdateTokenBurn updates a token as burned with associated balance update and provenance event in a single transaction
 // This method assumes the token and balance records already exist
 func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -1345,9 +1206,9 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
-		// 5. Update ownership periods based on the provenance event
+		// 5. Record ownership token_events (acquired/released) from provenance
 		if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvent, token.Standard); err != nil {
-			return fmt.Errorf("failed to update ownership periods: %w", err)
+			return fmt.Errorf("failed to record ownership token events: %w", err)
 		}
 
 		// 6. Update provenance tracking (denormalized tables for query optimization)
@@ -1355,47 +1216,11 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 			return fmt.Errorf("failed to update provenance tracking: %w", err)
 		}
 
-		// 7. Create the change journal entry
-		// For burn events: subject_type = 'token', subject_id = provenance_event_id
-		// Populate meta with provenance information
-		meta := schema.ProvenanceChangeMeta{
-			TokenID:     token.ID,
-			Chain:       token.Chain,
-			Standard:    token.Standard,
-			Contract:    token.ContractAddress,
-			TokenNumber: token.TokenNumber,
-			From:        input.ProvenanceEvent.FromAddress,
-			To:          input.ProvenanceEvent.ToAddress,
-			Quantity:    input.ProvenanceEvent.Quantity,
-			TxHash:      input.ProvenanceEvent.TxHash,
-		}
-		metaJSON, err := json.Marshal(meta)
-		if err != nil {
-			return fmt.Errorf("failed to marshal change journal meta: %w", err)
-		}
-
-		changeJournal := schema.ChangesJournal{
-			SubjectType: schema.SubjectTypeToken,
-			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
-			ChangedAt:   input.ProvenanceEvent.Timestamp,
-			Meta:        metaJSON,
-		}
-
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-			DoNothing: true,
-		}).
-			Clauses(clause.Returning{Columns: []clause.Column{}}).
-			Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
-		}
-
 		return nil
 	})
 }
 
 // CreateMetadataUpdate creates a provenance event for a metadata update
-// Note: The change journal entry is created separately in UpsertTokenMetadata where we have access to the actual metadata changes
 func (s *pgStore) CreateMetadataUpdate(ctx context.Context, input CreateMetadataUpdateInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get the token to ensure it exists
@@ -1559,52 +1384,14 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 				input.ProvenanceEvent.Chain, input.ProvenanceEvent.TxHash)
 		}
 
-		// 6. Update ownership periods based on the provenance event
+		// 6. Record ownership token_events (acquired/released) from provenance
 		if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvent, token.Standard); err != nil {
-			return fmt.Errorf("failed to update ownership periods: %w", err)
+			return fmt.Errorf("failed to record ownership token events: %w", err)
 		}
 
 		// 7. Update provenance tracking (denormalized tables for query optimization)
 		if err := s.updateProvenanceTracking(ctx, tx, &provenanceEvent, token.Standard); err != nil {
 			return fmt.Errorf("failed to update provenance tracking: %w", err)
-		}
-
-		// 8. Create the change journal entry
-		// For transfer events: subject_type depends on token standard
-		// - ERC721 (single token): subject_type = 'owner'
-		// - ERC1155/FA2 (multi-token): subject_type = 'balance'
-		// Populate meta with provenance information
-		meta := schema.ProvenanceChangeMeta{
-			TokenID:     token.ID,
-			Chain:       token.Chain,
-			Standard:    token.Standard,
-			Contract:    token.ContractAddress,
-			TokenNumber: token.TokenNumber,
-			From:        input.ProvenanceEvent.FromAddress,
-			To:          input.ProvenanceEvent.ToAddress,
-			Quantity:    input.ProvenanceEvent.Quantity,
-			TxHash:      input.ProvenanceEvent.TxHash,
-		}
-		metaJSON, err := json.Marshal(meta)
-		if err != nil {
-			return fmt.Errorf("failed to marshal change journal meta: %w", err)
-		}
-
-		subjectType := types.ProvenanceEventTypeToSubjectType(input.ProvenanceEvent.EventType, token.Standard)
-		changeJournal := schema.ChangesJournal{
-			SubjectType: subjectType,
-			SubjectID:   fmt.Sprintf("%d", provenanceEvent.ID),
-			ChangedAt:   input.ProvenanceEvent.Timestamp,
-			Meta:        metaJSON,
-		}
-
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-			DoNothing: true,
-		}).
-			Clauses(clause.Returning{Columns: []clause.Column{}}).
-			Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
 		}
 
 		return nil
@@ -1634,40 +1421,18 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 		}
 
 		// 2. Delete existing related records to ensure data freshness
-		// Delete changes_journal entries first
-		// Only delete journal entries related to provenance data (token, owner, balance)
-		// Other journal types (e.g., metadata, enrichment_sources, media_assets) should be preserved as they may not be tied to on-chain events
 		if len(input.Events) > 0 {
-			// First, get existing provenance event IDs
-			var existingProvenances []schema.ProvenanceEvent
-			if err := tx.Where("token_id = ?", token.ID).Find(&existingProvenances).Error; err != nil {
-				return fmt.Errorf("failed to get existing provenance events: %w", err)
-			}
-
-			// Delete changes_journal entries linked to these provenance events
-			if len(existingProvenances) > 0 {
-				existingEventIDs := make([]string, len(existingProvenances))
-				for i, pe := range existingProvenances {
-					existingEventIDs[i] = strconv.FormatUint(pe.ID, 10)
-				}
-
-				// subject_id contains the provenance_event_id for token/owner/balance types
-				if err := tx.Where("subject_type IN ? AND subject_id IN ?",
-					[]schema.SubjectType{schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance},
-					existingEventIDs).
-					Delete(&schema.ChangesJournal{}).Error; err != nil {
-					return fmt.Errorf("failed to delete existing changes_journal entries: %w", err)
-				}
-			}
-
 			// Delete existing provenance events
 			if err := tx.Where("token_id = ?", token.ID).Delete(&schema.ProvenanceEvent{}).Error; err != nil {
 				return fmt.Errorf("failed to delete existing provenance events: %w", err)
 			}
 
-			// Delete existing ownership periods since we're re-creating all provenance data
-			if err := tx.Where("token_id = ?", token.ID).Delete(&schema.TokenOwnershipPeriod{}).Error; err != nil {
-				return fmt.Errorf("failed to delete existing ownership periods: %w", err)
+			// Remove ownership token_events so replay stays consistent with rebuilt provenance
+			if err := tx.Where("token_id = ? AND event_type IN ?", token.ID, []string{
+				string(schema.EventTypeAcquired),
+				string(schema.EventTypeReleased),
+			}).Delete(&schema.TokenEvent{}).Error; err != nil {
+				return fmt.Errorf("failed to delete ownership token events: %w", err)
 			}
 
 			// Delete existing token ownership provenance since we're re-creating all provenance data
@@ -1739,7 +1504,7 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				return fmt.Errorf("failed to create provenance events: %w", err)
 			}
 
-			// 5. Update ownership periods for all provenance events
+			// 5. Record ownership token_events for all inserted provenance events
 			for i := range provenanceEvents {
 				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
 				if provenanceEvents[i].ID == 0 {
@@ -1747,7 +1512,7 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				}
 
 				if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvents[i], token.Standard); err != nil {
-					return fmt.Errorf("failed to update ownership periods for event %d: %w", i, err)
+					return fmt.Errorf("failed to record ownership token events for event %d: %w", i, err)
 				}
 			}
 
@@ -1758,62 +1523,6 @@ func (s *pgStore) CreateTokenWithProvenances(ctx context.Context, input CreateTo
 				if err := s.updateProvenanceTracking(ctx, tx, event, token.Standard); err != nil {
 					return fmt.Errorf("failed to update provenance tracking: %w", err)
 				}
-			}
-
-			// 7. Batch insert changes_journal entries for all events
-			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
-			for _, evt := range provenanceEvents {
-				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
-				// These event could have ID == 0 and already have change journals from when they were first inserted
-				if evt.ID == 0 {
-					continue
-				}
-
-				// Skip events that are not on-chain events (metadata updates considered as off-chain for change journal)
-				if evt.EventType != schema.ProvenanceEventTypeMint &&
-					evt.EventType != schema.ProvenanceEventTypeBurn &&
-					evt.EventType != schema.ProvenanceEventTypeTransfer {
-					continue
-				}
-
-				// Populate meta with provenance information
-				meta := schema.ProvenanceChangeMeta{
-					TokenID:     token.ID,
-					Chain:       token.Chain,
-					Standard:    token.Standard,
-					Contract:    token.ContractAddress,
-					TokenNumber: token.TokenNumber,
-					From:        evt.FromAddress,
-					To:          evt.ToAddress,
-					Quantity:    *evt.Quantity,
-				}
-				if evt.TxHash != nil {
-					meta.TxHash = *evt.TxHash
-				}
-				metaJSON, err := json.Marshal(meta)
-				if err != nil {
-					return fmt.Errorf("failed to marshal change journal meta: %w", err)
-				}
-
-				subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType, token.Standard)
-				changeJournals = append(changeJournals, schema.ChangesJournal{
-					SubjectType: subjectType,
-					SubjectID:   fmt.Sprintf("%d", evt.ID),
-					ChangedAt:   evt.Timestamp,
-					Meta:        metaJSON,
-				})
-			}
-
-			// ChangesJournal has 4 fields: subject_type, subject_id, changed_at, meta
-			batchSize = calculateSafeBatchSize(len(changeJournals), 4)
-
-			// Use ON CONFLICT DO NOTHING with the unique constraint columns
-			// Unique constraint: (subject_type, subject_id, changed_at)
-			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-				DoNothing: true,
-			}).CreateInBatches(changeJournals, batchSize).Error; err != nil {
-				return fmt.Errorf("failed to create changes_journal entries: %w", err)
 			}
 		}
 
@@ -1914,7 +1623,7 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 				return fmt.Errorf("failed to create provenance events: %w", err)
 			}
 
-			// 5. Update ownership periods for newly inserted provenance events
+			// 5. Record ownership token_events for newly inserted provenance events
 			for i := range provenanceEvents {
 				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
 				if provenanceEvents[i].ID == 0 {
@@ -1922,7 +1631,7 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 				}
 
 				if err := s.updateOwnershipPeriods(ctx, tx, &provenanceEvents[i], token.Standard); err != nil {
-					return fmt.Errorf("failed to update ownership periods for event %d: %w", i, err)
+					return fmt.Errorf("failed to record ownership token events for event %d: %w", i, err)
 				}
 			}
 
@@ -1935,215 +1644,10 @@ func (s *pgStore) UpsertTokenBalanceForOwner(ctx context.Context, input UpsertTo
 				}
 			}
 
-			// 7. Create changes_journal entries for newly inserted events
-			changeJournals := make([]schema.ChangesJournal, 0, len(provenanceEvents))
-			for _, evt := range provenanceEvents {
-				// Skip events that weren't inserted (due to ON CONFLICT DO NOTHING)
-				if evt.ID == 0 {
-					continue
-				}
-
-				// Skip non-provenance events (metadata updates)
-				if evt.EventType != schema.ProvenanceEventTypeMint &&
-					evt.EventType != schema.ProvenanceEventTypeBurn &&
-					evt.EventType != schema.ProvenanceEventTypeTransfer {
-					continue
-				}
-
-				// Populate meta with provenance information
-				meta := schema.ProvenanceChangeMeta{
-					TokenID:     token.ID,
-					Chain:       token.Chain,
-					Standard:    token.Standard,
-					Contract:    token.ContractAddress,
-					TokenNumber: token.TokenNumber,
-					From:        evt.FromAddress,
-					To:          evt.ToAddress,
-					Quantity:    *evt.Quantity,
-				}
-				if evt.TxHash != nil {
-					meta.TxHash = *evt.TxHash
-				}
-				metaJSON, err := json.Marshal(meta)
-				if err != nil {
-					return fmt.Errorf("failed to marshal change journal meta: %w", err)
-				}
-
-				subjectType := types.ProvenanceEventTypeToSubjectType(evt.EventType, token.Standard)
-				changeJournals = append(changeJournals, schema.ChangesJournal{
-					SubjectType: subjectType,
-					SubjectID:   fmt.Sprintf("%d", evt.ID),
-					ChangedAt:   evt.Timestamp,
-					Meta:        metaJSON,
-				})
-			}
-
-			// Use ON CONFLICT DO NOTHING with the unique constraint columns
-			if len(changeJournals) > 0 {
-				// ChangesJournal has 4 fields: subject_type, subject_id, changed_at, meta
-				batchSize := calculateSafeBatchSize(len(changeJournals), 4)
-
-				if err := tx.Clauses(clause.OnConflict{
-					Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-					DoNothing: true,
-				}).CreateInBatches(changeJournals, batchSize).Error; err != nil {
-					return fmt.Errorf("failed to create changes_journal entries: %w", err)
-				}
-			}
 		}
 
 		return nil
 	})
-}
-
-// GetChanges retrieves changes with optional filters and pagination
-func (s *pgStore) GetChanges(ctx context.Context, filter ChangesQueryFilter) ([]*schema.ChangesJournal, error) {
-	// Build the base query for changes
-	query := s.db.WithContext(ctx).Model(&schema.ChangesJournal{})
-
-	// Apply anchor filter (ID-based cursor) - takes precedence over since
-	if filter.Anchor != nil {
-		// Anchor is a cursor - show records after this ID (ascending order)
-		query = query.Where("id > ?", *filter.Anchor)
-	} else if filter.Since != nil {
-		// Deprecated: timestamp filter - kept for backward compatibility
-		// Note: This may cause inconsistent results due to different timestamp semantics across subject types
-		query = query.Where("changed_at >= ?", *filter.Since)
-	}
-
-	// Apply subject type filter
-	if len(filter.SubjectTypes) > 0 {
-		query = query.Where("subject_type IN ?", filter.SubjectTypes)
-	}
-
-	// Apply subject ID filter
-	if len(filter.SubjectIDs) > 0 {
-		query = query.Where("subject_id IN ?", filter.SubjectIDs)
-	}
-
-	// Filter by token_id
-	if len(filter.TokenIDs) > 0 {
-		// Build query to match changes for these tokens
-		// Different subject types reference tokens differently
-		query = query.Where(`
-			(
-				-- Provenance changes (token/owner/balance): subject_id is provenance_event_id
-				subject_type IN (?, ?, ?) AND subject_id IN (
-					SELECT CAST(id AS TEXT) FROM provenance_events WHERE token_id IN ?
-				)
-			) OR (
-				-- Metadata, enrich_source, and token_viewability changes: subject_id is token_id
-				subject_type IN (?, ?, ?) AND subject_id::BIGINT IN ?
-			)
-		`,
-			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance, filter.TokenIDs,
-			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, schema.SubjectTypeTokenViewability, filter.TokenIDs,
-		)
-	}
-
-	// Filter by token_cid - need to resolve to token_ids and check subject_id based on subject_type
-	if len(filter.TokenCIDs) > 0 {
-		// Get token IDs for the given token CIDs
-		var tokens []schema.Token
-		if err := s.db.WithContext(ctx).Where("token_cid IN ?", filter.TokenCIDs).Find(&tokens).Error; err != nil {
-			return nil, fmt.Errorf("failed to get tokens for token_cids: %w", err)
-		}
-
-		if len(tokens) == 0 {
-			// No matching tokens, return empty result
-			return []*schema.ChangesJournal{}, nil
-		}
-
-		tokenIDs := make([]uint64, len(tokens))
-		for i, token := range tokens {
-			tokenIDs[i] = token.ID
-		}
-
-		// Build query to match changes for these tokens
-		// Different subject types reference tokens differently
-		query = query.Where(`
-			(
-				-- Provenance changes (token/owner/balance): subject_id is provenance_event_id
-				subject_type IN (?, ?, ?) AND subject_id IN (
-					SELECT CAST(id AS TEXT) FROM provenance_events WHERE token_id IN ?
-				)
-			) OR (
-				-- Metadata, enrich_source, and token_viewability changes: subject_id is token_id
-				subject_type IN (?, ?, ?) AND subject_id::BIGINT IN ?
-			)
-		`,
-			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance, tokenIDs,
-			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, schema.SubjectTypeTokenViewability, tokenIDs,
-		)
-	}
-
-	// Filter by addresses - include both provenance-linked changes and metadata/enrich_source changes
-	if len(filter.Addresses) > 0 {
-		// For provenance changes, match by addresses in provenance_events
-		// For metadata/enrich_source, use the ownership periods table for fast lookups
-		query = query.Where(`
-			(
-				-- Include provenance-related changes (owner/balance/token) linked to specific provenance events
-				subject_type IN (?, ?, ?) AND EXISTS (
-					SELECT 1 FROM provenance_events pe
-					WHERE pe.id::text = changes_journal.subject_id
-					AND (pe.from_address IN ? OR pe.to_address IN ?)
-				)
-			) OR (
-				-- Include metadata/enrich_source changes that occurred during ownership periods
-				-- Use the pre-computed ownership periods table for fast lookups
-				subject_type IN (?, ?, ?) AND EXISTS (
-					SELECT 1 FROM token_ownership_periods op
-					WHERE op.token_id::text = changes_journal.subject_id
-					AND op.owner_address IN ?
-					AND changes_journal.changed_at >= op.acquired_at
-					AND (op.released_at IS NULL OR changes_journal.changed_at < op.released_at)
-				)
-			)
-		`,
-			schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance,
-			filter.Addresses, filter.Addresses,
-			schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource, schema.SubjectTypeTokenViewability,
-			filter.Addresses,
-		)
-	}
-
-	// Apply ordering
-	// For backward compatibility: when using deprecated 'since' parameter, order by changed_at with configurable direction
-	// Otherwise, always order by ID ascending for sequential audit log
-	if filter.Anchor == nil && filter.Since != nil {
-		if filter.OrderDesc {
-			query = query.Order("changed_at DESC, id DESC")
-		} else {
-			query = query.Order("changed_at ASC, id ASC")
-		}
-	} else {
-		query = query.Order("changed_at ASC, id ASC")
-	}
-
-	// Apply pagination
-	// Offset is only applied when using deprecated 'since' parameter (offset-based pagination)
-	// When using 'anchor' for cursor-based pagination, offset is ignored (cursor continues from anchor ID)
-	if filter.Offset > 0 && filter.Since != nil && filter.Anchor == nil {
-		query = query.Offset(int(filter.Offset)) //nolint:gosec,G115
-	}
-	if filter.Limit > 0 {
-		query = query.Limit(filter.Limit)
-	}
-
-	// Execute the query
-	var changes []schema.ChangesJournal
-	if err := query.Find(&changes).Error; err != nil {
-		return nil, fmt.Errorf("failed to query changes: %w", err)
-	}
-
-	// Convert to pointers
-	var results []*schema.ChangesJournal
-	for i := range changes {
-		results = append(results, &changes[i])
-	}
-
-	return results, nil
 }
 
 // GetProvenanceEventByID retrieves a provenance event by ID
@@ -2159,8 +1663,27 @@ func (s *pgStore) GetProvenanceEventByID(ctx context.Context, id uint64) (*schem
 	return &event, nil
 }
 
-// updateOwnershipPeriods updates ownership periods after a provenance event
-// This is an internal method called within the same transaction as the provenance event creation
+// lastOwnershipTokenEventForOwner returns the most recent acquired/released token_event for a token-owner pair
+// by on-chain time (occurred_at), not insert order—id alone can mis-order if rows are committed out of chronological order.
+func lastOwnershipTokenEventForOwner(tx *gorm.DB, tokenID uint64, ownerAddress string) (schema.TokenEventType, bool, error) {
+	var ev schema.TokenEvent
+	err := tx.Model(&schema.TokenEvent{}).
+		Where("token_id = ? AND owner_address = ? AND event_type IN ?",
+			tokenID, ownerAddress,
+			[]string{string(schema.EventTypeAcquired), string(schema.EventTypeReleased)}).
+		Order("occurred_at DESC, id DESC").
+		First(&ev).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("failed to query last ownership token event: %w", err)
+	}
+	return ev.EventType, true, nil
+}
+
+// updateOwnershipPeriods records acquired/released token_events from a provenance event (same transaction).
+// Former token_ownership_periods rows are no longer used; deduplication uses existing token_events for the pair.
 func (s *pgStore) updateOwnershipPeriods(ctx context.Context, tx *gorm.DB, event *schema.ProvenanceEvent, tokenStandard domain.ChainStandard) error {
 	// Skip if not a transfer, mint, or burn event (metadata updates don't affect ownership)
 	if event.EventType != schema.ProvenanceEventTypeTransfer &&
@@ -2169,32 +1692,22 @@ func (s *pgStore) updateOwnershipPeriods(ctx context.Context, tx *gorm.DB, event
 		return nil
 	}
 
-	// Handle based on token standard
 	if tokenStandard == domain.StandardERC721 {
-		return s.updateERC721OwnershipPeriods(ctx, tx, event)
+		return s.emitERC721OwnershipTokenEvents(tx, event)
 	}
-	// ERC1155, FA2 - check balances
-	return s.updateMultiEditionOwnershipPeriods(ctx, tx, event)
+	return s.emitMultiEditionOwnershipTokenEvents(ctx, tx, event)
 }
 
-// updateERC721OwnershipPeriods handles ownership periods for ERC721 tokens (single owner)
-func (s *pgStore) updateERC721OwnershipPeriods(ctx context.Context, tx *gorm.DB, event *schema.ProvenanceEvent) error {
-	// For ERC721, it's simple: one owner at a time
-
-	// If event is not a mint, close their ownership period and create release event
+func (s *pgStore) emitERC721OwnershipTokenEvents(tx *gorm.DB, event *schema.ProvenanceEvent) error {
 	if event.EventType != schema.ProvenanceEventTypeMint {
-		result := tx.WithContext(ctx).
-			Model(&schema.TokenOwnershipPeriod{}).
-			Where("token_id = ? AND owner_address = ? AND released_at IS NULL",
-				event.TokenID, *event.FromAddress).
-			Update("released_at", event.Timestamp)
-
-		if result.Error != nil {
-			return fmt.Errorf("failed to close ownership period for from_address: %w", result.Error)
+		if event.FromAddress == nil {
+			return nil
 		}
-
-		// Create release token event if a period was actually closed
-		if result.RowsAffected > 0 {
+		lastType, hasLast, err := lastOwnershipTokenEventForOwner(tx, event.TokenID, *event.FromAddress)
+		if err != nil {
+			return err
+		}
+		if hasLast && lastType == schema.EventTypeAcquired {
 			releaseMetadata := schema.ReleaseMetadata{}
 			if event.TxHash != nil {
 				releaseMetadata.TxHash = *event.TxHash
@@ -2209,37 +1722,21 @@ func (s *pgStore) updateERC721OwnershipPeriods(ctx context.Context, tx *gorm.DB,
 			if err != nil {
 				return fmt.Errorf("failed to marshal release event metadata: %w", err)
 			}
-
 			if err := s.createTokenEvent(tx, event.TokenID, schema.EventTypeReleased, event.FromAddress, event.Timestamp, metadataJSON); err != nil {
 				return fmt.Errorf("failed to create release token event: %w", err)
 			}
 		}
 	}
 
-	// If event is not a burn, create new ownership period and acquisition event
 	if event.EventType != schema.ProvenanceEventTypeBurn {
-		ownershipPeriod := &schema.TokenOwnershipPeriod{
-			TokenID:      event.TokenID,
-			OwnerAddress: *event.ToAddress,
-			AcquiredAt:   event.Timestamp,
-			ReleasedAt:   nil,
+		if event.ToAddress == nil {
+			return nil
 		}
-
-		// Handle conflict: if an active period already exists, do nothing
-		// The partial unique index ensures only one active period exists per token-owner
-		err := tx.WithContext(ctx).
-			Clauses(clause.OnConflict{
-				DoNothing: true,
-			}).
-			Clauses(clause.Returning{Columns: []clause.Column{}}).
-			Create(ownershipPeriod).Error
-
+		lastType, hasLast, err := lastOwnershipTokenEventForOwner(tx, event.TokenID, *event.ToAddress)
 		if err != nil {
-			return fmt.Errorf("failed to create ownership period for to_address: %w", err)
+			return err
 		}
-
-		// Create acquisition token event (only if period was actually created, ID will be set)
-		if ownershipPeriod.ID > 0 {
+		if !hasLast || lastType == schema.EventTypeReleased {
 			acquisitionMetadata := schema.AcquisitionMetadata{}
 			if event.TxHash != nil {
 				acquisitionMetadata.TxHash = *event.TxHash
@@ -2251,7 +1748,6 @@ func (s *pgStore) updateERC721OwnershipPeriods(ctx context.Context, tx *gorm.DB,
 			if err != nil {
 				return fmt.Errorf("failed to marshal acquisition event metadata: %w", err)
 			}
-
 			if err := s.createTokenEvent(tx, event.TokenID, schema.EventTypeAcquired, event.ToAddress, event.Timestamp, metadataJSON); err != nil {
 				return fmt.Errorf("failed to create acquisition token event: %w", err)
 			}
@@ -2261,11 +1757,7 @@ func (s *pgStore) updateERC721OwnershipPeriods(ctx context.Context, tx *gorm.DB,
 	return nil
 }
 
-// updateMultiEditionOwnershipPeriods handles ownership periods for ERC1155/FA2 tokens (multiple owners, quantities)
-func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *gorm.DB, event *schema.ProvenanceEvent) error {
-	// For ERC1155/FA2, check actual balances after the event
-
-	// Check from_address balance (if exists and not zero address)
+func (s *pgStore) emitMultiEditionOwnershipTokenEvents(ctx context.Context, tx *gorm.DB, event *schema.ProvenanceEvent) error {
 	if event.FromAddress != nil && *event.FromAddress != "" && *event.FromAddress != domain.ETHEREUM_ZERO_ADDRESS {
 		var balance schema.Balance
 		err := tx.WithContext(ctx).
@@ -2273,20 +1765,12 @@ func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *go
 				event.TokenID, *event.FromAddress).
 			First(&balance).Error
 
-		// If balance is now 0 or doesn't exist, close ownership period and create release event
 		if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && balance.Quantity == "0") {
-			result := tx.WithContext(ctx).
-				Model(&schema.TokenOwnershipPeriod{}).
-				Where("token_id = ? AND owner_address = ? AND released_at IS NULL",
-					event.TokenID, *event.FromAddress).
-				Update("released_at", event.Timestamp)
-
-			if result.Error != nil {
-				return fmt.Errorf("failed to close ownership period for from_address: %w", result.Error)
+			lastType, hasLast, qerr := lastOwnershipTokenEventForOwner(tx, event.TokenID, *event.FromAddress)
+			if qerr != nil {
+				return qerr
 			}
-
-			// Create release token event if a period was actually closed
-			if result.RowsAffected > 0 {
+			if hasLast && lastType == schema.EventTypeAcquired {
 				releaseMetadata := schema.ReleaseMetadata{}
 				if event.TxHash != nil {
 					releaseMetadata.TxHash = *event.TxHash
@@ -2301,7 +1785,6 @@ func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *go
 				if err != nil {
 					return fmt.Errorf("failed to marshal release event metadata: %w", err)
 				}
-
 				if err := s.createTokenEvent(tx, event.TokenID, schema.EventTypeReleased, event.FromAddress, event.Timestamp, metadataJSON); err != nil {
 					return fmt.Errorf("failed to create release token event: %w", err)
 				}
@@ -2309,10 +1792,8 @@ func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *go
 		} else if err != nil {
 			return fmt.Errorf("failed to get balance for from_address: %w", err)
 		}
-		// If balance > 0, keep ownership period open
 	}
 
-	// Check to_address balance (if exists and not zero address)
 	if event.ToAddress != nil && *event.ToAddress != "" && *event.ToAddress != domain.ETHEREUM_ZERO_ADDRESS {
 		var balance schema.Balance
 		err := tx.WithContext(ctx).
@@ -2324,58 +1805,27 @@ func (s *pgStore) updateMultiEditionOwnershipPeriods(ctx context.Context, tx *go
 			return fmt.Errorf("failed to get balance for to_address: %w", err)
 		}
 
-		// If they have a balance > 0, ensure ownership period exists
 		if err == nil && balance.Quantity != "0" {
-			var existingPeriod schema.TokenOwnershipPeriod
-			err := tx.WithContext(ctx).
-				Where("token_id = ? AND owner_address = ? AND released_at IS NULL",
-					event.TokenID, *event.ToAddress).
-				First(&existingPeriod).Error
-
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				// Create new ownership period with conflict handling
-				ownershipPeriod := &schema.TokenOwnershipPeriod{
-					TokenID:      event.TokenID,
-					OwnerAddress: *event.ToAddress,
-					AcquiredAt:   event.Timestamp,
-					ReleasedAt:   nil,
-				}
-
-				// Handle conflict: if an active period already exists, do nothing
-				// The partial unique index ensures only one active period exists per token-owner
-				err := tx.WithContext(ctx).
-					Clauses(clause.OnConflict{
-						DoNothing: true,
-					}).
-					Clauses(clause.Returning{Columns: []clause.Column{}}).
-					Create(ownershipPeriod).Error
-
-				if err != nil {
-					return fmt.Errorf("failed to create ownership period for to_address: %w", err)
-				}
-
-				// Create acquisition token event (only if period was actually created, ID will be set)
-				if ownershipPeriod.ID > 0 {
-					acquisitionMetadata := schema.AcquisitionMetadata{}
-					if event.TxHash != nil {
-						acquisitionMetadata.TxHash = *event.TxHash
-					}
-					if event.Quantity != nil {
-						acquisitionMetadata.Quantity = *event.Quantity
-					}
-					metadataJSON, err := json.Marshal(acquisitionMetadata)
-					if err != nil {
-						return fmt.Errorf("failed to marshal acquisition event metadata: %w", err)
-					}
-
-					if err := s.createTokenEvent(tx, event.TokenID, schema.EventTypeAcquired, event.ToAddress, event.Timestamp, metadataJSON); err != nil {
-						return fmt.Errorf("failed to create acquisition token event: %w", err)
-					}
-				}
-			} else if err != nil {
-				return fmt.Errorf("failed to check existing ownership period: %w", err)
+			lastType, hasLast, qerr := lastOwnershipTokenEventForOwner(tx, event.TokenID, *event.ToAddress)
+			if qerr != nil {
+				return qerr
 			}
-			// If period already exists and is open, nothing to do
+			if !hasLast || lastType == schema.EventTypeReleased {
+				acquisitionMetadata := schema.AcquisitionMetadata{}
+				if event.TxHash != nil {
+					acquisitionMetadata.TxHash = *event.TxHash
+				}
+				if event.Quantity != nil {
+					acquisitionMetadata.Quantity = *event.Quantity
+				}
+				metadataJSON, err := json.Marshal(acquisitionMetadata)
+				if err != nil {
+					return fmt.Errorf("failed to marshal acquisition event metadata: %w", err)
+				}
+				if err := s.createTokenEvent(tx, event.TokenID, schema.EventTypeAcquired, event.ToAddress, event.Timestamp, metadataJSON); err != nil {
+					return fmt.Errorf("failed to create acquisition token event: %w", err)
+				}
+			}
 		}
 	}
 
@@ -2583,14 +2033,7 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 	sourceURLHash := types.MD5Hash(input.SourceURL)
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Get the old media asset (if it exists) for change tracking - BEFORE upsert
-		var oldMediaAsset *schema.MediaAsset
-		err := tx.Where("source_url_hash = ? AND provider = ?", sourceURLHash, input.Provider).First(&oldMediaAsset).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("failed to get old media asset: %w", err)
-		}
-
-		// 2. Upsert media asset
+		// Upsert media asset
 		newMediaAsset := schema.MediaAsset{
 			SourceURL:        input.SourceURL,
 			SourceURLHash:    sourceURLHash,
@@ -2603,7 +2046,7 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 		}
 
 		// Use ON CONFLICT to update all fields if duplicate exists
-		err = tx.Clauses(clause.OnConflict{
+		if err := tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "source_url_hash"}, {Name: "provider"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"source_url",
@@ -2613,76 +2056,11 @@ func (s *pgStore) CreateMediaAsset(ctx context.Context, input CreateMediaAssetIn
 				"provider_metadata",
 				"variant_urls",
 			}),
-		}).Create(&newMediaAsset).Error
-
-		if err != nil {
+		}).Create(&newMediaAsset).Error; err != nil {
 			return fmt.Errorf("failed to create media asset: %w", err)
 		}
 
 		mediaAsset = &newMediaAsset
-
-		// 3. Create change journal entry
-		// Convert provider metadata to string for meta
-		var providerMetadataStr *string
-		if len(input.ProviderMetadata) > 0 {
-			str := string(input.ProviderMetadata)
-			providerMetadataStr = &str
-		}
-
-		metaChanges := schema.MediaAssetChangeMeta{
-			New: schema.MediaAssetFields{
-				SourceURL:        input.SourceURL,
-				SourceURLHash:    sourceURLHash,
-				Provider:         string(input.Provider),
-				ProviderAssetID:  input.ProviderAssetID,
-				MimeType:         input.MimeType,
-				FileSizeBytes:    input.FileSizeBytes,
-				VariantURLs:      string(input.VariantURLs),
-				ProviderMetadata: providerMetadataStr,
-			},
-		}
-
-		// Add old media asset if it existed
-		if oldMediaAsset != nil {
-			var oldProviderMetadataStr *string
-			if len(oldMediaAsset.ProviderMetadata) > 0 {
-				str := string(oldMediaAsset.ProviderMetadata)
-				oldProviderMetadataStr = &str
-			}
-
-			metaChanges.Old = schema.MediaAssetFields{
-				SourceURL:        oldMediaAsset.SourceURL,
-				SourceURLHash:    oldMediaAsset.SourceURLHash,
-				Provider:         string(oldMediaAsset.Provider),
-				ProviderAssetID:  oldMediaAsset.ProviderAssetID,
-				MimeType:         oldMediaAsset.MimeType,
-				FileSizeBytes:    oldMediaAsset.FileSizeBytes,
-				VariantURLs:      string(oldMediaAsset.VariantURLs),
-				ProviderMetadata: oldProviderMetadataStr,
-			}
-		}
-
-		metaJSON, err := json.Marshal(metaChanges)
-		if err != nil {
-			return fmt.Errorf("failed to marshal change journal meta: %w", err)
-		}
-
-		changeJournal := schema.ChangesJournal{
-			SubjectType: schema.SubjectTypeMediaAsset,
-			SubjectID:   fmt.Sprintf("%d", newMediaAsset.ID),
-			ChangedAt:   time.Now(),
-			Meta:        metaJSON,
-		}
-
-		// Use ON CONFLICT DO NOTHING to skip duplicates based on unique constraint
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-			DoNothing: true,
-		}).
-			Clauses(clause.Returning{Columns: []clause.Column{}}).
-			Create(&changeJournal).Error; err != nil {
-			return fmt.Errorf("failed to create change journal: %w", err)
-		}
 
 		return nil
 	})
@@ -3306,7 +2684,7 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 // BatchUpdateTokensViewability computes and updates is_viewable for multiple tokens
 // Returns a list of tokens whose viewability actually changed
-// Creates change journal entries for all changes within the same transaction
+// Emits token_events for viewability changes within the same transaction
 func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityChange, error) {
 	if len(tokenIDs) == 0 {
 		return nil, nil
@@ -3388,32 +2766,12 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 			return fmt.Errorf("failed to update tokens viewability: %w", err)
 		}
 
-		// Step 2: Bulk insert change journal entries and token events for all changed tokens
+		// Step 2: Bulk insert token events for all changed tokens
 		if len(changes) > 0 {
 			now := time.Now()
-			journalEntries := make([]schema.ChangesJournal, len(changes))
 			tokenEvents := make([]schema.TokenEvent, len(changes))
 
 			for i, change := range changes {
-				meta := schema.TokenViewabilityChangeMeta{
-					TokenID:    change.TokenID,
-					TokenCID:   change.TokenCID,
-					IsViewable: change.NewViewable,
-				}
-
-				metaJSON, err := json.Marshal(meta)
-				if err != nil {
-					return fmt.Errorf("failed to marshal viewability change meta: %w", err)
-				}
-
-				journalEntries[i] = schema.ChangesJournal{
-					SubjectType: schema.SubjectTypeTokenViewability,
-					SubjectID:   fmt.Sprintf("%d", change.TokenID),
-					ChangedAt:   now,
-					Meta:        metaJSON,
-				}
-
-				// Prepare token event for viewability change (broadcast to all owners)
 				viewabilityMeta := schema.ViewabilityChangeMetadata{
 					IsViewable: change.NewViewable,
 				}
@@ -3431,15 +2789,6 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 				}
 			}
 
-			// Bulk insert all change journal entries
-			if err := tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "subject_type"}, {Name: "subject_id"}, {Name: "changed_at"}},
-				DoNothing: true,
-			}).Create(&journalEntries).Error; err != nil {
-				return fmt.Errorf("failed to create change journal entries: %w", err)
-			}
-
-			// Bulk insert all token events
 			if err := tx.Create(&tokenEvents).Error; err != nil {
 				return fmt.Errorf("failed to create token events: %w", err)
 			}

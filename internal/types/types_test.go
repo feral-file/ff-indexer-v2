@@ -452,65 +452,6 @@ func TestTransferEventTypeToProvenanceEventType(t *testing.T) {
 	}
 }
 
-func TestProvenanceEventTypeToSubjectType(t *testing.T) {
-	tests := []struct {
-		name                string
-		provenanceEventType schema.ProvenanceEventType
-		standard            domain.ChainStandard
-		expected            schema.SubjectType
-	}{
-		{
-			name:                "mint event",
-			provenanceEventType: schema.ProvenanceEventTypeMint,
-			standard:            domain.StandardERC721,
-			expected:            schema.SubjectTypeToken,
-		},
-		{
-			name:                "burn event",
-			provenanceEventType: schema.ProvenanceEventTypeBurn,
-			standard:            domain.StandardERC721,
-			expected:            schema.SubjectTypeToken,
-		},
-		{
-			name:                "transfer event ERC721",
-			provenanceEventType: schema.ProvenanceEventTypeTransfer,
-			standard:            domain.StandardERC721,
-			expected:            schema.SubjectTypeOwner,
-		},
-		{
-			name:                "transfer event ERC1155",
-			provenanceEventType: schema.ProvenanceEventTypeTransfer,
-			standard:            domain.StandardERC1155,
-			expected:            schema.SubjectTypeBalance,
-		},
-		{
-			name:                "transfer event FA2",
-			provenanceEventType: schema.ProvenanceEventTypeTransfer,
-			standard:            domain.StandardFA2,
-			expected:            schema.SubjectTypeBalance,
-		},
-		{
-			name:                "metadata_update event",
-			provenanceEventType: schema.ProvenanceEventTypeMetadataUpdate,
-			standard:            domain.StandardERC721,
-			expected:            schema.SubjectTypeMetadata,
-		},
-		{
-			name:                "unknown event type defaults to token",
-			provenanceEventType: schema.ProvenanceEventType("unknown"),
-			standard:            domain.StandardERC721,
-			expected:            schema.SubjectTypeToken,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ProvenanceEventTypeToSubjectType(tt.provenanceEventType, tt.standard)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestAddressToBlockchain(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -45,11 +45,6 @@ const (
 	ExpansionMediaAsset       Expansion = "media_asset"
 	ExpansionOwnerProvenances Expansion = "owner_provenances"
 	ExpansionDisplay          Expansion = "display"
-	// Deprecated: Use ExpansionMediaAsset instead
-	ExpansionMetadataMediaAsset Expansion = "metadata_media_asset"
-	// Deprecated: Use ExpansionMediaAsset instead
-	ExpansionEnrichmentSourceMediaAsset Expansion = "enrichment_source_media_asset"
-	ExpansionSubject                    Expansion = "subject"
 )
 
 type MediaAssetVariantKey string

@@ -27,13 +27,6 @@ type Handler interface {
 	// GET /api/v1/tokens?owner=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_number=<number1>,<number2>&token_id=<id1>,<id2>&token_cid=<cid1>,<cid2>&limit=<limit>&offset=<offset>&expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	ListTokens(c *gin.Context)
 
-	// GetChanges retrieves changes with optional filters
-	// GET /api/v1/changes?token_cid=<cid>&address=<address>&anchor=<id>&limit=<limit>&offset=<offset>&order=<order>&expand=<expand>
-	// Returns changes in ascending order by ID (sequential audit log)
-	// Note: 'order' parameter only applies when using deprecated 'since' parameter
-	// Deprecated parameter: since=<timestamp> (use anchor instead for reliable pagination)
-	GetChanges(c *gin.Context)
-
 	// TriggerTokenIndexing triggers indexing for tokens by CIDs (open, no authentication required)
 	// POST /api/v1/tokens/index
 	TriggerTokenIndexing(c *gin.Context)
@@ -164,20 +157,13 @@ func (h *handler) ListTokens(c *gin.Context) {
 		return
 	}
 
-	// Convert query parameters to executor parameters
 	limit := &queryParams.Limit
 	offset := &queryParams.Offset
 	expansions := queryParams.Expansions
-	ownersLimit := &queryParams.OwnerLimit
-	ownersOffset := &queryParams.OwnerOffset
-	provenanceEventsLimit := &queryParams.ProvenanceEventLimit
-	provenanceEventsOffset := &queryParams.ProvenanceEventOffset
-	provenanceEventsOrder := &queryParams.ProvenanceEventOrder
 	includeUnviewable := &queryParams.IncludeUnviewable
 	sortBy := &queryParams.SortBy
 	sortOrder := &queryParams.SortOrder
 
-	// Call executor's GetTokens method
 	response, err := h.executor.GetTokens(
 		c.Request.Context(),
 		queryParams.Owners,
@@ -192,61 +178,10 @@ func (h *handler) ListTokens(c *gin.Context) {
 		sortBy,
 		sortOrder,
 		expansions,
-		ownersLimit,
-		ownersOffset,
-		provenanceEventsLimit,
-		provenanceEventsOffset,
-		provenanceEventsOrder,
 	)
 
 	if err != nil {
 		respondInternalError(c, err, "Failed to list tokens")
-		return
-	}
-
-	c.JSON(http.StatusOK, response)
-}
-
-// GetChanges retrieves changes with filtering and pagination
-func (h *handler) GetChanges(c *gin.Context) {
-	// Parse query parameters
-	queryParams, err := ParseGetChangesQuery(c)
-	if err != nil {
-		respondValidationError(c, err.Error())
-		return
-	}
-
-	// Validate query parameters
-	err = queryParams.Validate()
-	if err != nil {
-		respondValidationError(c, err.Error())
-		return
-	}
-
-	// Convert query parameters to executor parameters
-	limit := &queryParams.Limit
-	offset := &queryParams.Offset
-	order := &queryParams.Order
-	expansions := queryParams.Expand
-
-	// Call executor's GetChanges method
-	response, err := h.executor.GetChanges(
-		c.Request.Context(),
-		queryParams.TokenIDs,
-		queryParams.TokenCIDs,
-		queryParams.Addresses,
-		queryParams.SubjectTypes,
-		queryParams.SubjectIDs,
-		queryParams.Anchor,
-		queryParams.Since, // Deprecated but supported for backward compatibility
-		limit,
-		offset,
-		order,
-		expansions,
-	)
-
-	if err != nil {
-		respondInternalError(c, err, "Failed to get changes")
 		return
 	}
 

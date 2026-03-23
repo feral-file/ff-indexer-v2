@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"go.temporal.io/sdk/client"
@@ -32,14 +31,8 @@ type Executor interface {
 	// GetToken retrieves a single token by its CID with optional expansions
 	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
-	// GetTokens retrieves tokens with optional filters and expansions
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
-
-	// GetChanges retrieves changes with optional filters and expansions
-	// Returns changes in ascending order by ID (sequential audit log)
-	// Note: 'order' parameter only applies when using deprecated 'since' parameter
-	// Deprecated parameter: since, offset, order (use anchor instead for reliable pagination)
-	GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expansions []types.Expansion) (*dto.ChangeListResponse, error)
+	// GetTokens retrieves tokens with optional filters and expansions (bulk: fixed sub-page sizes for owners/provenance per token).
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens by their CIDs
 	// Returns a workflow ID and run ID for tracking the indexing progress
@@ -156,9 +149,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 					return nil, err
 				}
 			}
-		case types.ExpansionMediaAsset,
-			types.ExpansionMetadataMediaAsset,         //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			types.ExpansionEnrichmentSourceMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+		case types.ExpansionMediaAsset:
 			if err := e.expandMediaAssets(ctx, tokenDTO, expansions); err != nil {
 				return nil, err
 			}
@@ -189,7 +180,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -310,15 +301,15 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 			if err != nil {
 				return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get owner provenances: %v", err))
 			}
-		case types.ExpansionMetadata, types.ExpansionMetadataMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			if bulkMetadata == nil { // Avoid fetching multiple times if multiple metadata-related expansions are requested
+		case types.ExpansionMetadata:
+			if bulkMetadata == nil {
 				bulkMetadata, err = e.store.GetTokenMetadataByTokenIDs(ctx, tokenIDsForBulk)
 				if err != nil {
 					return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token metadata: %v", err))
 				}
 			}
-		case types.ExpansionEnrichmentSource, types.ExpansionEnrichmentSourceMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			if bulkEnrichmentSources == nil { // Avoid fetching multiple times if multiple enrichment-related expansions are requested
+		case types.ExpansionEnrichmentSource:
+			if bulkEnrichmentSources == nil {
 				bulkEnrichmentSources, err = e.store.GetEnrichmentSourcesByTokenIDs(ctx, tokenIDsForBulk)
 				if err != nil {
 					return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get enrichment sources: %v", err))
@@ -344,11 +335,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		expansionMap[exp] = true
 	}
 
-	// Collect metadata media source URLs
-	// Include if:
-	// - metadata_media_asset expansion (deprecated)
-	// - media_asset expansion AND (metadata OR display expansion)
-	if expansionMap[types.ExpansionMetadataMediaAsset] || (expansionMap[types.ExpansionMediaAsset] && (expansionMap[types.ExpansionMetadata] || expansionMap[types.ExpansionDisplay])) { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+	// Collect metadata media source URLs when media_asset is requested with metadata or display
+	if expansionMap[types.ExpansionMediaAsset] && (expansionMap[types.ExpansionMetadata] || expansionMap[types.ExpansionDisplay]) {
 		for _, token := range tokens {
 			metadata, ok := bulkMetadata[token.ID]
 			if !ok || metadata == nil {
@@ -358,11 +346,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		}
 	}
 
-	// Collect enrichment source media URLs
-	// Include if:
-	// - enrichment_source_media_asset expansion (deprecated)
-	// - media_asset expansion AND (enrichment_source OR display expansion)
-	if expansionMap[types.ExpansionEnrichmentSourceMediaAsset] || (expansionMap[types.ExpansionMediaAsset] && (expansionMap[types.ExpansionEnrichmentSource] || expansionMap[types.ExpansionDisplay])) { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+	// Collect enrichment source media URLs when media_asset is requested with enrichment_source or display
+	if expansionMap[types.ExpansionMediaAsset] && (expansionMap[types.ExpansionEnrichmentSource] || expansionMap[types.ExpansionDisplay]) {
 		for _, token := range tokens {
 			enrichment, ok := bulkEnrichmentSources[token.ID]
 			if !ok || enrichment == nil {
@@ -459,23 +444,6 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 					}
 				}
 
-			case types.ExpansionMetadataMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-				// Deprecated: maintained for backward compatibility
-				if expansionMap[types.ExpansionMetadata] && metadata != nil {
-					urls := metadata.MediaURLs()
-					for _, url := range urls {
-						mediaURLsMap[url] = true
-					}
-				}
-
-			case types.ExpansionEnrichmentSourceMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-				// Deprecated: maintained for backward compatibility
-				if expansionMap[types.ExpansionEnrichmentSource] && enrichment != nil {
-					urls := enrichment.MediaURLs()
-					for _, url := range urls {
-						mediaURLsMap[url] = true
-					}
-				}
 			case types.ExpansionDisplay:
 				// Display will be populated after all expansions
 			}
@@ -514,18 +482,6 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		}
 		tokenDTO.MediaAssets = collectMediaAssetDTOsFromMap(mediaURLs, mediaAssetsMap)
 
-		// Collect metadata media assets if requested (deprecated)
-		// Only populate if metadata was also explicitly requested
-		if expansionMap[types.ExpansionMetadataMediaAsset] && expansionMap[types.ExpansionMetadata] && metadata != nil { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			tokenDTO.MetadataMediaAssets = collectMediaAssetDTOsFromMap(metadata.MediaURLs(), mediaAssetsMap) //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-		}
-
-		// Collect enrichment source media assets if requested (deprecated)
-		// Only populate if enrichment_source was also explicitly requested
-		if expansionMap[types.ExpansionEnrichmentSourceMediaAsset] && expansionMap[types.ExpansionEnrichmentSource] && enrichment != nil { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			tokenDTO.EnrichmentSourceMediaAssets = collectMediaAssetDTOsFromMap(enrichment.MediaURLs(), mediaAssetsMap) //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-		}
-
 		tokenDTOs[i] = *tokenDTO
 	}
 
@@ -547,120 +503,6 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		Tokens: tokenDTOs,
 		Offset: nextOffset,
 		Total:  0, // Deprecated: use the offset as the indicator for next page
-	}, nil
-}
-
-func (e *executor) GetChanges(ctx context.Context, tokenIDs []uint64, tokenCIDs []string, addresses []string, subjectTypes []schema.SubjectType, subjectIDs []string, anchor *uint64, since *time.Time, limit *uint8, offset *uint64, order *types.Order, expansions []types.Expansion) (*dto.ChangeListResponse, error) {
-	// Use defaults if not provided
-	if limit == nil {
-		defaultLimit := constants.DEFAULT_CHANGES_LIMIT
-		limit = &defaultLimit
-	}
-	if offset == nil {
-		defaultOffset := constants.DEFAULT_OFFSET
-		offset = &defaultOffset
-	}
-
-	// Determine ordering: 'order' only applies when using deprecated 'since' parameter
-	// When using 'anchor' or neither, always ascending by ID
-	orderDesc := anchor == nil && since != nil && order != nil && order.Desc()
-
-	// Determine offset: only applies when using deprecated 'since' parameter
-	// When using 'anchor' for cursor-based pagination, offset is not used (cursor continues from anchor ID)
-	var offsetValue uint64
-	if anchor == nil && since != nil {
-		offsetValue = *offset
-	}
-
-	// Normalize token CIDs
-	if len(tokenCIDs) > 0 {
-		normalizedTokenCIDs := make([]string, len(tokenCIDs))
-		for i, tokenCID := range tokenCIDs {
-			normalizedTokenCIDs[i] = domain.TokenCID(tokenCID).Normalized().String()
-		}
-		tokenCIDs = normalizedTokenCIDs
-	}
-
-	// Normalize addresses
-	if len(addresses) > 0 {
-		normalizedAddresses := domain.NormalizeAddresses(addresses)
-		addresses = normalizedAddresses
-	}
-
-	// Build filter
-	filter := store.ChangesQueryFilter{
-		TokenIDs:     tokenIDs,
-		TokenCIDs:    tokenCIDs,
-		Addresses:    addresses,
-		SubjectTypes: subjectTypes,
-		SubjectIDs:   subjectIDs,
-		Anchor:       anchor,
-		Since:        since,           // Deprecated: kept for backward compatibility
-		Limit:        int(*limit) + 1, // limit+1 to detect whether there are more results
-		Offset:       offsetValue,     // Deprecated: only applies when using 'since' parameter
-		OrderDesc:    orderDesc,       // Deprecated: only applies when using 'since' parameter
-	}
-
-	// Get changes
-	results, err := e.store.GetChanges(ctx, filter)
-	if err != nil {
-		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get changes: %v", err))
-	}
-
-	// Check if there are more results and truncate to original limit
-	limitInt := int(*limit)
-	hasMore := len(results) > limitInt
-	if hasMore {
-		results = results[:limitInt]
-	}
-
-	// Map to DTOs
-	changeDTOs := make([]dto.ChangeResponse, len(results))
-	for i, change := range results {
-		changeDTO := dto.MapChangeToDTO(change)
-
-		// Handle subject expansion
-		for _, exp := range expansions {
-			if exp == types.ExpansionSubject {
-				subject, err := e.expandSubject(ctx, change)
-				if err != nil {
-					return nil, err
-				}
-				changeDTO.Subject = subject
-			}
-		}
-
-		changeDTOs[i] = *changeDTO
-	}
-
-	// Build response with pagination
-	var nextOffset *uint64
-	var nextAnchor *uint64
-
-	// Calculate next offset only when using deprecated 'since' parameter (offset-based pagination)
-	// For cursor-based pagination with 'anchor', use next_anchor instead
-	if anchor == nil && since != nil && hasMore {
-		offsetVal := offsetValue + uint64(len(results))
-		nextOffset = &offsetVal
-	}
-
-	// Set next anchor for cursor-based pagination
-	// Always provide next_anchor when results are present for clients to continue from this point
-	if (anchor != nil || since == nil) && hasMore {
-		maxID := results[0].ID
-		for _, change := range results {
-			if change.ID > maxID {
-				maxID = change.ID
-			}
-		}
-		nextAnchor = &maxID
-	}
-
-	return &dto.ChangeListResponse{
-		Changes:    changeDTOs,
-		Offset:     nextOffset,
-		NextAnchor: nextAnchor,
-		Total:      0, // Deprecated: use the offset as the indicator for next page
 	}, nil
 }
 
@@ -1038,81 +880,6 @@ func (e *executor) expandEnrichmentSource(ctx context.Context, tokenDTO *dto.Tok
 	return nil
 }
 
-// expandSubject expands the subject of a change journal entry
-func (e *executor) expandSubject(ctx context.Context, change *schema.ChangesJournal) (interface{}, error) {
-	switch change.SubjectType {
-	case schema.SubjectTypeToken, schema.SubjectTypeOwner, schema.SubjectTypeBalance:
-		// For token and owner changes, the subject is a provenance event
-		provenanceEventID, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id: %v", err))
-		}
-		event, err := e.store.GetProvenanceEventByID(ctx, provenanceEventID)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get provenance event: %v", err))
-		}
-		if event == nil {
-			return nil, nil
-		}
-		return dto.MapProvenanceEventToDTO(event), nil
-
-	case schema.SubjectTypeMetadata, schema.SubjectTypeEnrichSource:
-		// For metadata and enrichment source changes,
-		// the subject ID is token_id for metadata and enrichment_source
-		tokenID, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for metadata: %v", err))
-		}
-
-		token, err := e.store.GetTokenByID(ctx, tokenID)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token: %v", err))
-		}
-		if token == nil {
-			return nil, nil
-		}
-
-		return dto.MapTokenToDTO(token), nil
-
-	case schema.SubjectTypeMediaAsset:
-		// For media asset changes, the subject ID is media_asset_id
-		mediaAssetID, err := strconv.ParseInt(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for media asset: %v", err))
-		}
-
-		mediaAsset, err := e.store.GetMediaAssetByID(ctx, mediaAssetID)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get media asset: %v", err))
-		}
-		if mediaAsset == nil {
-			return nil, nil
-		}
-
-		return dto.MapMediaAssetToDTO(mediaAsset), nil
-
-	case schema.SubjectTypeTokenViewability:
-		// For token viewability changes, the subject ID is token_id
-		tokenID, err := strconv.ParseUint(change.SubjectID, 10, 64)
-		if err != nil {
-			return nil, apierrors.NewInternalError(fmt.Sprintf("Invalid subject_id for token viewability: %v", err))
-		}
-
-		token, err := e.store.GetTokenByID(ctx, tokenID)
-		if err != nil {
-			return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token: %v", err))
-		}
-		if token == nil {
-			return nil, nil
-		}
-
-		return dto.MapTokenToDTO(token), nil
-
-	default:
-		return nil, nil
-	}
-}
-
 // collectMediaAssetDTOsFromMap collects media asset DTOs by looking up URLs in the provided map
 func collectMediaAssetDTOsFromMap(urls []string, mediaAssetsMap map[string]schema.MediaAsset) []dto.MediaAssetResponse {
 	if len(urls) == 0 {
@@ -1152,11 +919,7 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 	// Collect source URLs used to fetch media assets
 	var sourceURLs []string
 
-	// Collect metadata media source URLs if requested
-	// Include if:
-	// - metadata_media_asset expansion (deprecated)
-	// - media_asset expansion AND (metadata OR display expansion)
-	if expansionMap[types.ExpansionMetadataMediaAsset] || (expansionMap[types.ExpansionMediaAsset] && (expansionMap[types.ExpansionMetadata] || expansionMap[types.ExpansionDisplay])) { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+	if expansionMap[types.ExpansionMediaAsset] && (expansionMap[types.ExpansionMetadata] || expansionMap[types.ExpansionDisplay]) {
 		// Get metadata if not already present
 		if tokenDTO.Metadata == nil {
 			metadata, err := e.store.GetTokenMetadataByTokenID(ctx, tokenDTO.ID)
@@ -1173,11 +936,7 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 		}
 	}
 
-	// Collect enrichment source media URLs if requested
-	// Include if:
-	// - enrichment_source_media_asset expansion (deprecated)
-	// - media_asset expansion AND (enrichment_source OR display expansion)
-	if expansionMap[types.ExpansionEnrichmentSourceMediaAsset] || (expansionMap[types.ExpansionMediaAsset] && (expansionMap[types.ExpansionEnrichmentSource] || expansionMap[types.ExpansionDisplay])) { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+	if expansionMap[types.ExpansionMediaAsset] && (expansionMap[types.ExpansionEnrichmentSource] || expansionMap[types.ExpansionDisplay]) {
 		// Get enrichment source if not already present
 		if tokenDTO.EnrichmentSource == nil {
 			enrichment, err := e.store.GetEnrichmentSourceByTokenID(ctx, tokenDTO.ID)
@@ -1248,23 +1007,6 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 				}
 			}
 
-		case types.ExpansionMetadataMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			// Deprecated: maintained for backward compatibility
-			if expansionMap[types.ExpansionMetadata] && tokenDTO.Metadata != nil {
-				urls := tokenDTO.Metadata.MediaURLs()
-				for _, url := range urls {
-					mediaURLsMap[url] = true
-				}
-			}
-
-		case types.ExpansionEnrichmentSourceMediaAsset: //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			// Deprecated: maintained for backward compatibility
-			if expansionMap[types.ExpansionEnrichmentSource] && tokenDTO.EnrichmentSource != nil {
-				urls := tokenDTO.EnrichmentSource.MediaURLs()
-				for _, url := range urls {
-					mediaURLsMap[url] = true
-				}
-			}
 		}
 	}
 
@@ -1284,18 +1026,6 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 		mediaURLs = append(mediaURLs, url)
 	}
 	tokenDTO.MediaAssets = collectMediaAssetDTOsFromMap(mediaURLs, mediaAssetsMap)
-
-	// Collect metadata media assets if requested (deprecated)
-	// Only populate if metadata was also explicitly requested
-	if expansionMap[types.ExpansionMetadataMediaAsset] && expansionMap[types.ExpansionMetadata] && tokenDTO.Metadata != nil { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-		tokenDTO.MetadataMediaAssets = collectMediaAssetDTOsFromMap(tokenDTO.Metadata.MediaURLs(), mediaAssetsMap) //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-	}
-
-	// Collect enrichment source media assets if requested (deprecated)
-	// Only populate if enrichment_source was also explicitly requested
-	if expansionMap[types.ExpansionEnrichmentSourceMediaAsset] && expansionMap[types.ExpansionEnrichmentSource] && tokenDTO.EnrichmentSource != nil { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-		tokenDTO.EnrichmentSourceMediaAssets = collectMediaAssetDTOsFromMap(tokenDTO.EnrichmentSource.MediaURLs(), mediaAssetsMap) //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-	}
 
 	return nil
 }

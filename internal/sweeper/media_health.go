@@ -414,7 +414,7 @@ func (s *mediaHealthSweeper) flushViewabilityUpdates(ctx context.Context, tokenI
 		zap.Int("num_changed", len(changes)),
 	)
 
-	// Trigger webhooks and change journal only for tokens that actually changed
+	// Trigger webhooks only for tokens that actually changed
 	for _, change := range changes {
 		logger.InfoCtx(ctx, "Token viewability changed",
 			zap.String("token_cid", change.TokenCID),

@@ -41,8 +41,6 @@ type Config struct {
 }
 
 type ResolverRoot interface {
-	Change() ChangeResolver
-	ChangeList() ChangeListResolver
 	EnrichmentSource() EnrichmentSourceResolver
 	IndexingJob() IndexingJobResolver
 	MediaAsset() MediaAssetResolver
@@ -73,24 +71,6 @@ type ComplexityRoot struct {
 	Artist struct {
 		DID  func(childComplexity int) int
 		Name func(childComplexity int) int
-	}
-
-	Change struct {
-		ChangedAt   func(childComplexity int) int
-		CreatedAt   func(childComplexity int) int
-		ID          func(childComplexity int) int
-		Meta        func(childComplexity int) int
-		Subject     func(childComplexity int) int
-		SubjectID   func(childComplexity int) int
-		SubjectType func(childComplexity int) int
-		UpdatedAt   func(childComplexity int) int
-	}
-
-	ChangeList struct {
-		Changes    func(childComplexity int) int
-		NextAnchor func(childComplexity int) int
-		Offset     func(childComplexity int) int
-		Total      func(childComplexity int) int
 	}
 
 	EnrichmentSource struct {
@@ -135,7 +115,6 @@ type ComplexityRoot struct {
 		ProviderMetadata func(childComplexity int) int
 		SourceURL        func(childComplexity int) int
 		UpdatedAt        func(childComplexity int) int
-		VariantURLs      func(childComplexity int) int
 		Variants         func(childComplexity int, keys []types.MediaAssetVariantKey) int
 	}
 
@@ -204,11 +183,10 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		Changes        func(childComplexity int, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, anchor *Uint64, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) int
 		IndexingJob    func(childComplexity int, workflowID string) int
 		SyncCollection func(childComplexity int, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) int
-		Token          func(childComplexity int, cid string, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
-		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID string) int
 	}
 
@@ -224,27 +202,25 @@ type ComplexityRoot struct {
 	}
 
 	Token struct {
-		Burned                      func(childComplexity int) int
-		Chain                       func(childComplexity int) int
-		ContractAddress             func(childComplexity int) int
-		CreatedAt                   func(childComplexity int) int
-		CurrentOwner                func(childComplexity int) int
-		Display                     func(childComplexity int) int
-		EnrichmentSource            func(childComplexity int) int
-		EnrichmentSourceMediaAssets func(childComplexity int) int
-		ID                          func(childComplexity int) int
-		LastProvenanceTimestamp     func(childComplexity int) int
-		MediaAssets                 func(childComplexity int) int
-		Metadata                    func(childComplexity int) int
-		MetadataMediaAssets         func(childComplexity int) int
-		OwnerProvenances            func(childComplexity int) int
-		Owners                      func(childComplexity int) int
-		ProvenanceEvents            func(childComplexity int) int
-		Standard                    func(childComplexity int) int
-		TokenCID                    func(childComplexity int) int
-		TokenNumber                 func(childComplexity int) int
-		UpdatedAt                   func(childComplexity int) int
-		Viewable                    func(childComplexity int) int
+		Burned                  func(childComplexity int) int
+		Chain                   func(childComplexity int) int
+		ContractAddress         func(childComplexity int) int
+		CreatedAt               func(childComplexity int) int
+		CurrentOwner            func(childComplexity int) int
+		Display                 func(childComplexity int) int
+		EnrichmentSource        func(childComplexity int) int
+		ID                      func(childComplexity int) int
+		LastProvenanceTimestamp func(childComplexity int) int
+		MediaAssets             func(childComplexity int) int
+		Metadata                func(childComplexity int) int
+		OwnerProvenances        func(childComplexity int) int
+		Owners                  func(childComplexity int) int
+		ProvenanceEvents        func(childComplexity int) int
+		Standard                func(childComplexity int) int
+		TokenCID                func(childComplexity int) int
+		TokenNumber             func(childComplexity int) int
+		UpdatedAt               func(childComplexity int) int
+		Viewable                func(childComplexity int) int
 	}
 
 	TokenDisplay struct {
@@ -320,18 +296,6 @@ type ComplexityRoot struct {
 	}
 }
 
-type ChangeResolver interface {
-	ID(ctx context.Context, obj *dto.ChangeResponse) (Uint64, error)
-	SubjectType(ctx context.Context, obj *dto.ChangeResponse) (string, error)
-
-	Meta(ctx context.Context, obj *dto.ChangeResponse) (JSON, error)
-	Subject(ctx context.Context, obj *dto.ChangeResponse) (JSON, error)
-}
-type ChangeListResolver interface {
-	Offset(ctx context.Context, obj *dto.ChangeListResponse) (*Uint64, error)
-	NextAnchor(ctx context.Context, obj *dto.ChangeListResponse) (*Uint64, error)
-	Total(ctx context.Context, obj *dto.ChangeListResponse) (Uint64, error)
-}
 type EnrichmentSourceResolver interface {
 	TokenID(ctx context.Context, obj *dto.EnrichmentSourceResponse) (Uint64, error)
 
@@ -343,7 +307,6 @@ type IndexingJobResolver interface {
 }
 type MediaAssetResolver interface {
 	ProviderMetadata(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
-	VariantURLs(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
 	Variants(ctx context.Context, obj *dto.MediaAssetResponse, keys []types.MediaAssetVariantKey) (JSON, error)
 }
 type MutationResolver interface {
@@ -379,9 +342,8 @@ type ProvenanceEventResolver interface {
 	Raw(ctx context.Context, obj *dto.ProvenanceEventResponse) (JSON, error)
 }
 type QueryResolver interface {
-	Token(ctx context.Context, cid string, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
-	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
-	Changes(ctx context.Context, tokenIds []Uint64, tokenCids []string, addresses []string, subjectTypes []string, subjectIds []string, anchor *Uint64, since *string, limit *Uint8, offset *Uint64, order *types.Order, expand []string) (*dto.ChangeListResponse, error)
+	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
+	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
 	WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error)
 	IndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error)
 	SyncCollection(ctx context.Context, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) (*dto.SyncCollectionResponse, error)
@@ -458,80 +420,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Artist.Name(childComplexity), true
-
-	case "Change.changed_at":
-		if e.complexity.Change.ChangedAt == nil {
-			break
-		}
-
-		return e.complexity.Change.ChangedAt(childComplexity), true
-	case "Change.created_at":
-		if e.complexity.Change.CreatedAt == nil {
-			break
-		}
-
-		return e.complexity.Change.CreatedAt(childComplexity), true
-	case "Change.id":
-		if e.complexity.Change.ID == nil {
-			break
-		}
-
-		return e.complexity.Change.ID(childComplexity), true
-	case "Change.meta":
-		if e.complexity.Change.Meta == nil {
-			break
-		}
-
-		return e.complexity.Change.Meta(childComplexity), true
-	case "Change.subject":
-		if e.complexity.Change.Subject == nil {
-			break
-		}
-
-		return e.complexity.Change.Subject(childComplexity), true
-	case "Change.subject_id":
-		if e.complexity.Change.SubjectID == nil {
-			break
-		}
-
-		return e.complexity.Change.SubjectID(childComplexity), true
-	case "Change.subject_type":
-		if e.complexity.Change.SubjectType == nil {
-			break
-		}
-
-		return e.complexity.Change.SubjectType(childComplexity), true
-	case "Change.updated_at":
-		if e.complexity.Change.UpdatedAt == nil {
-			break
-		}
-
-		return e.complexity.Change.UpdatedAt(childComplexity), true
-
-	case "ChangeList.items":
-		if e.complexity.ChangeList.Changes == nil {
-			break
-		}
-
-		return e.complexity.ChangeList.Changes(childComplexity), true
-	case "ChangeList.next_anchor":
-		if e.complexity.ChangeList.NextAnchor == nil {
-			break
-		}
-
-		return e.complexity.ChangeList.NextAnchor(childComplexity), true
-	case "ChangeList.offset":
-		if e.complexity.ChangeList.Offset == nil {
-			break
-		}
-
-		return e.complexity.ChangeList.Offset(childComplexity), true
-	case "ChangeList.total":
-		if e.complexity.ChangeList.Total == nil {
-			break
-		}
-
-		return e.complexity.ChangeList.Total(childComplexity), true
 
 	case "EnrichmentSource.animation_url":
 		if e.complexity.EnrichmentSource.AnimationURL == nil {
@@ -745,12 +633,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.MediaAsset.UpdatedAt(childComplexity), true
-	case "MediaAsset.variant_urls":
-		if e.complexity.MediaAsset.VariantURLs == nil {
-			break
-		}
-
-		return e.complexity.MediaAsset.VariantURLs(childComplexity), true
 	case "MediaAsset.variants":
 		if e.complexity.MediaAsset.Variants == nil {
 			break
@@ -1036,17 +918,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.Publisher.URL(childComplexity), true
 
-	case "Query.changes":
-		if e.complexity.Query.Changes == nil {
-			break
-		}
-
-		args, err := ec.field_Query_changes_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.complexity.Query.Changes(childComplexity, args["token_ids"].([]Uint64), args["token_cids"].([]string), args["addresses"].([]string), args["subject_types"].([]string), args["subject_ids"].([]string), args["anchor"].(*Uint64), args["since"].(*string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["order"].(*types.Order), args["expand"].([]string)), true
 	case "Query.indexingJob":
 		if e.complexity.Query.IndexingJob == nil {
 			break
@@ -1079,7 +950,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["expands"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
 	case "Query.tokens":
 		if e.complexity.Query.Tokens == nil {
 			break
@@ -1090,7 +961,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order), args["expands"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
 	case "Query.workflowStatus":
 		if e.complexity.Query.WorkflowStatus == nil {
 			break
@@ -1177,12 +1048,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.EnrichmentSource(childComplexity), true
-	case "Token.enrichment_source_media_assets":
-		if e.complexity.Token.EnrichmentSourceMediaAssets == nil {
-			break
-		}
-
-		return e.complexity.Token.EnrichmentSourceMediaAssets(childComplexity), true
 	case "Token.id":
 		if e.complexity.Token.ID == nil {
 			break
@@ -1207,12 +1072,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.Metadata(childComplexity), true
-	case "Token.metadata_media_assets":
-		if e.complexity.Token.MetadataMediaAssets == nil {
-			break
-		}
-
-		return e.complexity.Token.MetadataMediaAssets(childComplexity), true
 	case "Token.owner_provenances":
 		if e.complexity.Token.OwnerProvenances == nil {
 			break
@@ -1809,7 +1668,6 @@ type MediaAsset {
   provider: String!
   provider_asset_id: String
   provider_metadata: JSON
-  variant_urls: JSON! @deprecated(reason: "Use 'variants' field instead for selective querying with type-safe keys")
   variants(keys: [MediaAssetVariantKey!]!): JSON!
   created_at: Time!
   updated_at: Time!
@@ -1846,8 +1704,6 @@ type Token {
   provenance_events: PaginatedProvenanceEvents
   owner_provenances: PaginatedOwnerProvenances
   enrichment_source: EnrichmentSource
-  metadata_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
-  enrichment_source_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
   media_assets: [MediaAsset!]
 }
 
@@ -1856,26 +1712,6 @@ type TokenList {
   items: [Token!]!
   offset: Uint64
   total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
-}
-
-# Change journal entry
-type Change {
-  id: Uint64!
-  subject_type: String!
-  subject_id: String!
-  changed_at: Time!
-  meta: JSON
-  subject: JSON
-  created_at: Time!
-  updated_at: Time!
-}
-
-# Paginated changes list
-type ChangeList {
-  items: [Change!]!
-  offset: Uint64 @deprecated(reason: "Use the next_anchor as the indicator for next page")
-  next_anchor: Uint64
-  total: Uint64! @deprecated(reason: "Use the next_anchor as the indicator for next page")
 }
 
 # Result of triggering indexing
@@ -1909,10 +1745,9 @@ type WorkflowStatus {
 type Query {
   # Get a single token by CID
   # Equivalent to: GET /api/v1/tokens/:cid
-  # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
+  # Expansions are inferred from requested fields (metadata, owners, provenance_events, etc.).
   token(
     cid: String!
-    expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
     provenance_events_limit: Uint8 = 10
@@ -1922,10 +1757,8 @@ type Query {
 
   # List tokens with filters
   # Equivalent to: GET /api/v1/tokens
-  # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
-  # Important: When querying multiple tokens, owners and provenance_events expansions return a fixed number of items (first 20 items per token).
-  # Pagination parameters (owners_limit, owners_offset, provenance_events_limit, provenance_events_offset, provenance_events_order) are NOT supported for bulk token queries.
-  # Use the single token query (token) for paginated owners and provenance_events.
+  # Expansions are inferred from requested fields on each token.
+  # For list queries, owners and provenance_events return a fixed number of items per token (first 20); use ` + "`" + `token` + "`" + ` for full pagination.
   tokens(
     owners: [String!]
     chains: [String!]
@@ -1938,34 +1771,7 @@ type Query {
     include_unviewable: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
-    expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
-    owners_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
-    owners_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
-    provenance_events_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
-    provenance_events_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
-    provenance_events_order: Order = desc @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
   ): TokenList
-
-  # Get changes with filters
-  # Equivalent to: GET /api/v1/changes
-  # DEPRECATED: Use syncCollection mutation for better performance and simpler client logic
-  # Returns changes in ascending order by ID (sequential audit log)
-  # Recommended: Use 'anchor' with 'next_anchor' from previous response for cursor-based pagination
-  # Deprecated parameters: 'since', 'offset', 'order' - use 'anchor' instead
-  # Note: The 'subject' field expansion is auto-detected from your query. The 'expand' parameter is optional for backward compatibility.
-  changes(
-    token_ids: [Uint64!]
-    token_cids: [String!]
-    addresses: [String!]
-    subject_types: [String!]
-    subject_ids: [String!]
-    anchor: Uint64
-    since: String @deprecated(reason: "Use 'anchor' for reliable ID-based pagination. Different subject types use different timestamp semantics.")
-    limit: Uint8 = 20
-    offset: Uint64 = 0 @deprecated(reason: "Use 'anchor' for 1-based pagination instead. Offset only applies with 'since' parameter.")
-    order: Order = asc @deprecated(reason: "Order parameter only applies when using deprecated 'since' parameter. Always ascending with 'anchor'.")
-    expand: [String!] @deprecated(reason: "Expansion is now auto-detected from your GraphQL query fields (subject). Explicitly specifying expand is no longer necessary.")
-  ): ChangeList @deprecated(reason: "Use syncCollection for better performance and simpler client logic")
 
   # Get workflow status by workflow ID and run ID
   # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id
@@ -1984,9 +1790,9 @@ type Query {
   # Returns token events (acquisitions, releases, attribute updates) since the checkpoint
   # Equivalent to: GET /api/v1/collection/:address/sync?checkpoint_timestamp=<timestamp>&checkpoint_event_id=<id>
   # 
-  # For initial sync, omit both checkpoint parameters (or pass null)
-  # For pagination, provide next_checkpoint from previous response
-  # If only one checkpoint parameter is provided, the other defaults to zero (epoch time for timestamp, 0 for event_id)
+  # For initial sync, omit checkpoint parameters (or pass null)
+  # For pagination, use the next_checkpoint from previous response
+  # When next_checkpoint is null and has_more is false, client has caught up
   syncCollection(
     address: String!
     checkpoint_timestamp: Time
@@ -2199,67 +2005,6 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 	return args, nil
 }
 
-func (ec *executionContext) field_Query_changes_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "token_ids", ec.unmarshalOUint642ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64ᚄ)
-	if err != nil {
-		return nil, err
-	}
-	args["token_ids"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "token_cids", ec.unmarshalOString2ᚕstringᚄ)
-	if err != nil {
-		return nil, err
-	}
-	args["token_cids"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "addresses", ec.unmarshalOString2ᚕstringᚄ)
-	if err != nil {
-		return nil, err
-	}
-	args["addresses"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "subject_types", ec.unmarshalOString2ᚕstringᚄ)
-	if err != nil {
-		return nil, err
-	}
-	args["subject_types"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "subject_ids", ec.unmarshalOString2ᚕstringᚄ)
-	if err != nil {
-		return nil, err
-	}
-	args["subject_ids"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "anchor", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
-	if err != nil {
-		return nil, err
-	}
-	args["anchor"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "since", ec.unmarshalOString2ᚖstring)
-	if err != nil {
-		return nil, err
-	}
-	args["since"] = arg6
-	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
-	if err != nil {
-		return nil, err
-	}
-	args["limit"] = arg7
-	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
-	if err != nil {
-		return nil, err
-	}
-	args["offset"] = arg8
-	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
-	if err != nil {
-		return nil, err
-	}
-	args["order"] = arg9
-	arg10, err := graphql.ProcessArgField(ctx, rawArgs, "expand", ec.unmarshalOString2ᚕstringᚄ)
-	if err != nil {
-		return nil, err
-	}
-	args["expand"] = arg10
-	return args, nil
-}
-
 func (ec *executionContext) field_Query_indexingJob_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -2305,36 +2050,31 @@ func (ec *executionContext) field_Query_token_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["cid"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "expands", ec.unmarshalOString2ᚕstringᚄ)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["expands"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["owners_limit"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "owners_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
 	if err != nil {
 		return nil, err
 	}
-	args["owners_limit"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "owners_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["owners_offset"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["owners_offset"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["provenance_events_limit"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
 	if err != nil {
 		return nil, err
 	}
-	args["provenance_events_limit"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["provenance_events_offset"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
 	if err != nil {
 		return nil, err
 	}
-	args["provenance_events_offset"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_order"] = arg6
+	args["provenance_events_order"] = arg5
 	return args, nil
 }
 
@@ -2396,36 +2136,6 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["sort_order"] = arg10
-	arg11, err := graphql.ProcessArgField(ctx, rawArgs, "expands", ec.unmarshalOString2ᚕstringᚄ)
-	if err != nil {
-		return nil, err
-	}
-	args["expands"] = arg11
-	arg12, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
-	if err != nil {
-		return nil, err
-	}
-	args["owners_limit"] = arg12
-	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "owners_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
-	if err != nil {
-		return nil, err
-	}
-	args["owners_offset"] = arg13
-	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_limit"] = arg14
-	arg15, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_offset"] = arg15
-	arg16, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_order"] = arg16
 	return args, nil
 }
 
@@ -2608,372 +2318,6 @@ func (ec *executionContext) fieldContext_Artist_name(_ context.Context, field gr
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Change_id(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_id,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.Change().ID(ctx, obj)
-		},
-		nil,
-		ec.marshalNUint642githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Uint64 does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Change_subject_type(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_subject_type,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.Change().SubjectType(ctx, obj)
-		},
-		nil,
-		ec.marshalNString2string,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_subject_type(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Change_subject_id(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_subject_id,
-		func(ctx context.Context) (any, error) {
-			return obj.SubjectID, nil
-		},
-		nil,
-		ec.marshalNString2string,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_subject_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Change_changed_at(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_changed_at,
-		func(ctx context.Context) (any, error) {
-			return obj.ChangedAt, nil
-		},
-		nil,
-		ec.marshalNTime2timeᚐTime,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_changed_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Time does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Change_meta(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_meta,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.Change().Meta(ctx, obj)
-		},
-		nil,
-		ec.marshalOJSON2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐJSON,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_meta(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type JSON does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Change_subject(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_subject,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.Change().Subject(ctx, obj)
-		},
-		nil,
-		ec.marshalOJSON2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐJSON,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_subject(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type JSON does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Change_created_at(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_created_at,
-		func(ctx context.Context) (any, error) {
-			return obj.CreatedAt, nil
-		},
-		nil,
-		ec.marshalNTime2timeᚐTime,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_created_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Time does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Change_updated_at(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Change_updated_at,
-		func(ctx context.Context) (any, error) {
-			return obj.UpdatedAt, nil
-		},
-		nil,
-		ec.marshalNTime2timeᚐTime,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_Change_updated_at(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Change",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Time does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _ChangeList_items(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeListResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_ChangeList_items,
-		func(ctx context.Context) (any, error) {
-			return obj.Changes, nil
-		},
-		nil,
-		ec.marshalNChange2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐChangeResponseᚄ,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_ChangeList_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "ChangeList",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "id":
-				return ec.fieldContext_Change_id(ctx, field)
-			case "subject_type":
-				return ec.fieldContext_Change_subject_type(ctx, field)
-			case "subject_id":
-				return ec.fieldContext_Change_subject_id(ctx, field)
-			case "changed_at":
-				return ec.fieldContext_Change_changed_at(ctx, field)
-			case "meta":
-				return ec.fieldContext_Change_meta(ctx, field)
-			case "subject":
-				return ec.fieldContext_Change_subject(ctx, field)
-			case "created_at":
-				return ec.fieldContext_Change_created_at(ctx, field)
-			case "updated_at":
-				return ec.fieldContext_Change_updated_at(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type Change", field.Name)
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _ChangeList_offset(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeListResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_ChangeList_offset,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.ChangeList().Offset(ctx, obj)
-		},
-		nil,
-		ec.marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_ChangeList_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "ChangeList",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Uint64 does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _ChangeList_next_anchor(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeListResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_ChangeList_next_anchor,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.ChangeList().NextAnchor(ctx, obj)
-		},
-		nil,
-		ec.marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_ChangeList_next_anchor(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "ChangeList",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Uint64 does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _ChangeList_total(ctx context.Context, field graphql.CollectedField, obj *dto.ChangeListResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_ChangeList_total,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.ChangeList().Total(ctx, obj)
-		},
-		nil,
-		ec.marshalNUint642githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_ChangeList_total(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "ChangeList",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Uint64 does not have child fields")
 		},
 	}
 	return fc, nil
@@ -3930,35 +3274,6 @@ func (ec *executionContext) _MediaAsset_provider_metadata(ctx context.Context, f
 }
 
 func (ec *executionContext) fieldContext_MediaAsset_provider_metadata(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "MediaAsset",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type JSON does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _MediaAsset_variant_urls(ctx context.Context, field graphql.CollectedField, obj *dto.MediaAssetResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_MediaAsset_variant_urls,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.MediaAsset().VariantURLs(ctx, obj)
-		},
-		nil,
-		ec.marshalNJSON2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐJSON,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_MediaAsset_variant_urls(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "MediaAsset",
 		Field:      field,
@@ -5392,7 +4707,7 @@ func (ec *executionContext) _Query_token(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_token,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["expands"].([]string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOToken2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenResponse,
@@ -5445,10 +4760,6 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_owner_provenances(ctx, field)
 			case "enrichment_source":
 				return ec.fieldContext_Token_enrichment_source(ctx, field)
-			case "metadata_media_assets":
-				return ec.fieldContext_Token_metadata_media_assets(ctx, field)
-			case "enrichment_source_media_assets":
-				return ec.fieldContext_Token_enrichment_source_media_assets(ctx, field)
 			case "media_assets":
 				return ec.fieldContext_Token_media_assets(ctx, field)
 			}
@@ -5477,7 +4788,7 @@ func (ec *executionContext) _Query_tokens(ctx context.Context, field graphql.Col
 		ec.fieldContext_Query_tokens,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order), fc.Args["expands"].([]string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,
@@ -5512,57 +4823,6 @@ func (ec *executionContext) fieldContext_Query_tokens(ctx context.Context, field
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Query_tokens_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
-		ec.Error(ctx, err)
-		return fc, err
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Query_changes(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Query_changes,
-		func(ctx context.Context) (any, error) {
-			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Changes(ctx, fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["addresses"].([]string), fc.Args["subject_types"].([]string), fc.Args["subject_ids"].([]string), fc.Args["anchor"].(*Uint64), fc.Args["since"].(*string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["order"].(*types.Order), fc.Args["expand"].([]string))
-		},
-		nil,
-		ec.marshalOChangeList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐChangeListResponse,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_Query_changes(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Query",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "items":
-				return ec.fieldContext_ChangeList_items(ctx, field)
-			case "offset":
-				return ec.fieldContext_ChangeList_offset(ctx, field)
-			case "next_anchor":
-				return ec.fieldContext_ChangeList_next_anchor(ctx, field)
-			case "total":
-				return ec.fieldContext_ChangeList_total(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type ChangeList", field.Name)
-		},
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = ec.Recover(ctx, r)
-			ec.Error(ctx, err)
-		}
-	}()
-	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_changes_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -6637,112 +5897,6 @@ func (ec *executionContext) fieldContext_Token_enrichment_source(_ context.Conte
 	return fc, nil
 }
 
-func (ec *executionContext) _Token_metadata_media_assets(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Token_metadata_media_assets,
-		func(ctx context.Context) (any, error) {
-			return obj.MetadataMediaAssets, nil
-		},
-		nil,
-		ec.marshalOMediaAsset2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐMediaAssetResponseᚄ,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_Token_metadata_media_assets(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Token",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "id":
-				return ec.fieldContext_MediaAsset_id(ctx, field)
-			case "source_url":
-				return ec.fieldContext_MediaAsset_source_url(ctx, field)
-			case "mime_type":
-				return ec.fieldContext_MediaAsset_mime_type(ctx, field)
-			case "file_size_bytes":
-				return ec.fieldContext_MediaAsset_file_size_bytes(ctx, field)
-			case "provider":
-				return ec.fieldContext_MediaAsset_provider(ctx, field)
-			case "provider_asset_id":
-				return ec.fieldContext_MediaAsset_provider_asset_id(ctx, field)
-			case "provider_metadata":
-				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
-			case "variant_urls":
-				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
-			case "variants":
-				return ec.fieldContext_MediaAsset_variants(ctx, field)
-			case "created_at":
-				return ec.fieldContext_MediaAsset_created_at(ctx, field)
-			case "updated_at":
-				return ec.fieldContext_MediaAsset_updated_at(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type MediaAsset", field.Name)
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Token_enrichment_source_media_assets(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Token_enrichment_source_media_assets,
-		func(ctx context.Context) (any, error) {
-			return obj.EnrichmentSourceMediaAssets, nil
-		},
-		nil,
-		ec.marshalOMediaAsset2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐMediaAssetResponseᚄ,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_Token_enrichment_source_media_assets(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Token",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "id":
-				return ec.fieldContext_MediaAsset_id(ctx, field)
-			case "source_url":
-				return ec.fieldContext_MediaAsset_source_url(ctx, field)
-			case "mime_type":
-				return ec.fieldContext_MediaAsset_mime_type(ctx, field)
-			case "file_size_bytes":
-				return ec.fieldContext_MediaAsset_file_size_bytes(ctx, field)
-			case "provider":
-				return ec.fieldContext_MediaAsset_provider(ctx, field)
-			case "provider_asset_id":
-				return ec.fieldContext_MediaAsset_provider_asset_id(ctx, field)
-			case "provider_metadata":
-				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
-			case "variant_urls":
-				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
-			case "variants":
-				return ec.fieldContext_MediaAsset_variants(ctx, field)
-			case "created_at":
-				return ec.fieldContext_MediaAsset_created_at(ctx, field)
-			case "updated_at":
-				return ec.fieldContext_MediaAsset_updated_at(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type MediaAsset", field.Name)
-		},
-	}
-	return fc, nil
-}
-
 func (ec *executionContext) _Token_media_assets(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6781,8 +5935,6 @@ func (ec *executionContext) fieldContext_Token_media_assets(_ context.Context, f
 				return ec.fieldContext_MediaAsset_provider_asset_id(ctx, field)
 			case "provider_metadata":
 				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
-			case "variant_urls":
-				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
 			case "variants":
 				return ec.fieldContext_MediaAsset_variants(ctx, field)
 			case "created_at":
@@ -7245,10 +6397,6 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_owner_provenances(ctx, field)
 			case "enrichment_source":
 				return ec.fieldContext_Token_enrichment_source(ctx, field)
-			case "metadata_media_assets":
-				return ec.fieldContext_Token_metadata_media_assets(ctx, field)
-			case "enrichment_source_media_assets":
-				return ec.fieldContext_Token_enrichment_source_media_assets(ctx, field)
 			case "media_assets":
 				return ec.fieldContext_Token_media_assets(ctx, field)
 			}
@@ -9804,339 +8952,6 @@ func (ec *executionContext) _Artist(ctx context.Context, sel ast.SelectionSet, o
 	return out
 }
 
-var changeImplementors = []string{"Change"}
-
-func (ec *executionContext) _Change(ctx context.Context, sel ast.SelectionSet, obj *dto.ChangeResponse) graphql.Marshaler {
-	fields := graphql.CollectFields(ec.OperationContext, sel, changeImplementors)
-
-	out := graphql.NewFieldSet(fields)
-	deferred := make(map[string]*graphql.FieldSet)
-	for i, field := range fields {
-		switch field.Name {
-		case "__typename":
-			out.Values[i] = graphql.MarshalString("Change")
-		case "id":
-			field := field
-
-			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._Change_id(ctx, field, obj)
-				if res == graphql.Null {
-					atomic.AddUint32(&fs.Invalids, 1)
-				}
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "subject_type":
-			field := field
-
-			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._Change_subject_type(ctx, field, obj)
-				if res == graphql.Null {
-					atomic.AddUint32(&fs.Invalids, 1)
-				}
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "subject_id":
-			out.Values[i] = ec._Change_subject_id(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
-		case "changed_at":
-			out.Values[i] = ec._Change_changed_at(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
-		case "meta":
-			field := field
-
-			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._Change_meta(ctx, field, obj)
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "subject":
-			field := field
-
-			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._Change_subject(ctx, field, obj)
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "created_at":
-			out.Values[i] = ec._Change_created_at(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
-		case "updated_at":
-			out.Values[i] = ec._Change_updated_at(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
-		default:
-			panic("unknown field " + strconv.Quote(field.Name))
-		}
-	}
-	out.Dispatch(ctx)
-	if out.Invalids > 0 {
-		return graphql.Null
-	}
-
-	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
-
-	for label, dfs := range deferred {
-		ec.processDeferredGroup(graphql.DeferredGroup{
-			Label:    label,
-			Path:     graphql.GetPath(ctx),
-			FieldSet: dfs,
-			Context:  ctx,
-		})
-	}
-
-	return out
-}
-
-var changeListImplementors = []string{"ChangeList"}
-
-func (ec *executionContext) _ChangeList(ctx context.Context, sel ast.SelectionSet, obj *dto.ChangeListResponse) graphql.Marshaler {
-	fields := graphql.CollectFields(ec.OperationContext, sel, changeListImplementors)
-
-	out := graphql.NewFieldSet(fields)
-	deferred := make(map[string]*graphql.FieldSet)
-	for i, field := range fields {
-		switch field.Name {
-		case "__typename":
-			out.Values[i] = graphql.MarshalString("ChangeList")
-		case "items":
-			out.Values[i] = ec._ChangeList_items(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
-		case "offset":
-			field := field
-
-			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._ChangeList_offset(ctx, field, obj)
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "next_anchor":
-			field := field
-
-			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._ChangeList_next_anchor(ctx, field, obj)
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "total":
-			field := field
-
-			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._ChangeList_total(ctx, field, obj)
-				if res == graphql.Null {
-					atomic.AddUint32(&fs.Invalids, 1)
-				}
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		default:
-			panic("unknown field " + strconv.Quote(field.Name))
-		}
-	}
-	out.Dispatch(ctx)
-	if out.Invalids > 0 {
-		return graphql.Null
-	}
-
-	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
-
-	for label, dfs := range deferred {
-		ec.processDeferredGroup(graphql.DeferredGroup{
-			Label:    label,
-			Path:     graphql.GetPath(ctx),
-			FieldSet: dfs,
-			Context:  ctx,
-		})
-	}
-
-	return out
-}
-
 var enrichmentSourceImplementors = []string{"EnrichmentSource"}
 
 func (ec *executionContext) _EnrichmentSource(ctx context.Context, sel ast.SelectionSet, obj *dto.EnrichmentSourceResponse) graphql.Marshaler {
@@ -10453,42 +9268,6 @@ func (ec *executionContext) _MediaAsset(ctx context.Context, sel ast.SelectionSe
 					}
 				}()
 				res = ec._MediaAsset_provider_metadata(ctx, field, obj)
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "variant_urls":
-			field := field
-
-			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._MediaAsset_variant_urls(ctx, field, obj)
-				if res == graphql.Null {
-					atomic.AddUint32(&fs.Invalids, 1)
-				}
 				return res
 			}
 
@@ -11480,25 +10259,6 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
-		case "changes":
-			field := field
-
-			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._Query_changes(ctx, field)
-				return res
-			}
-
-			rrm := func(ctx context.Context) graphql.Marshaler {
-				return ec.OperationContext.RootResolverMiddleware(ctx,
-					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "workflowStatus":
 			field := field
 
@@ -11878,10 +10638,6 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			out.Values[i] = ec._Token_owner_provenances(ctx, field, obj)
 		case "enrichment_source":
 			out.Values[i] = ec._Token_enrichment_source(ctx, field, obj)
-		case "metadata_media_assets":
-			out.Values[i] = ec._Token_metadata_media_assets(ctx, field, obj)
-		case "enrichment_source_media_assets":
-			out.Values[i] = ec._Token_enrichment_source_media_assets(ctx, field, obj)
 		case "media_assets":
 			out.Values[i] = ec._Token_media_assets(ctx, field, obj)
 		default:
@@ -13029,54 +11785,6 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 	return res
 }
 
-func (ec *executionContext) marshalNChange2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐChangeResponse(ctx context.Context, sel ast.SelectionSet, v dto.ChangeResponse) graphql.Marshaler {
-	return ec._Change(ctx, sel, &v)
-}
-
-func (ec *executionContext) marshalNChange2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐChangeResponseᚄ(ctx context.Context, sel ast.SelectionSet, v []dto.ChangeResponse) graphql.Marshaler {
-	ret := make(graphql.Array, len(v))
-	var wg sync.WaitGroup
-	isLen1 := len(v) == 1
-	if !isLen1 {
-		wg.Add(len(v))
-	}
-	for i := range v {
-		i := i
-		fc := &graphql.FieldContext{
-			Index:  &i,
-			Result: &v[i],
-		}
-		ctx := graphql.WithFieldContext(ctx, fc)
-		f := func(i int) {
-			defer func() {
-				if r := recover(); r != nil {
-					ec.Error(ctx, ec.Recover(ctx, r))
-					ret = nil
-				}
-			}()
-			if !isLen1 {
-				defer wg.Done()
-			}
-			ret[i] = ec.marshalNChange2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐChangeResponse(ctx, sel, v[i])
-		}
-		if isLen1 {
-			f(i)
-		} else {
-			go f(i)
-		}
-
-	}
-	wg.Wait()
-
-	for _, e := range ret {
-		if e == graphql.Null {
-			return graphql.Null
-		}
-	}
-
-	return ret
-}
-
 func (ec *executionContext) unmarshalNInt2int(ctx context.Context, v any) (int, error) {
 	res, err := graphql.UnmarshalInt(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -13845,13 +12553,6 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 	_ = ctx
 	res := graphql.MarshalBoolean(*v)
 	return res
-}
-
-func (ec *executionContext) marshalOChangeList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐChangeListResponse(ctx context.Context, sel ast.SelectionSet, v *dto.ChangeListResponse) graphql.Marshaler {
-	if v == nil {
-		return graphql.Null
-	}
-	return ec._ChangeList(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalOEnrichmentSource2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐEnrichmentSourceResponse(ctx context.Context, sel ast.SelectionSet, v *dto.EnrichmentSourceResponse) graphql.Marshaler {

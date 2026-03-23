@@ -8,7 +8,6 @@ The database uses PostgreSQL 15+ with the following design principles:
 - Normalized schema with foreign key relationships
 - JSONB columns for flexible metadata storage
 - Indexes optimized for common query patterns
-- Audit logging via changes_journal table
 - Support for multiple blockchains and token standards
 
 ## Core Tables
@@ -19,11 +18,10 @@ The database includes the following main tables:
 - `token_metadata` - NFT metadata (name, description, media, attributes, etc.)
 - `enrichment_sources` - Additional data sources enriching token information
 - `balances` - Current token ownership balances (multi-edition tokens)
-- `token_ownership_periods` - Historical ownership periods for efficient address-based queries
+- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability)
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
-- `changes_journal` - Change tracking for all entities
 - `watched_addresses` - Addresses being monitored for indexing
 - `address_indexing_jobs` - Address-level indexing job status tracking
 - `webhook_clients` - Registered webhook clients for event notifications
@@ -165,39 +163,6 @@ Tracks ownership quantities for multi-edition tokens (ERC1155, FA2).
 
 **Relationships**:
 - Many-to-one with `tokens`
-
----
-
-### token_ownership_periods
-
-Tracks historical ownership periods for tokens to efficiently query metadata and media changes that occurred during an address's ownership. This table pre-computes ownership time windows to optimize the `GetChanges` query when filtering by addresses.
-
-**Purpose:**
-- Enables fast address-based filtering for metadata/media changes
-- Avoids expensive subqueries with `provenance_events` table
-- Supports both single-owner (ERC721) and multi-edition (ERC1155/FA2) tokens
-
-**Schema:**
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGSERIAL | Primary key |
-| `token_id` | BIGINT | Reference to token (FK, CASCADE DELETE) |
-| `owner_address` | TEXT | Address that owned the token |
-| `acquired_at` | TIMESTAMPTZ | When the address first received the token |
-| `released_at` | TIMESTAMPTZ | When the address's balance became 0 (NULL if still owns) |
-| `created_at` | TIMESTAMPTZ | Record creation timestamp |
-| `updated_at` | TIMESTAMPTZ | Last update timestamp (auto-updated by trigger) |
-
-**Indexes:**
-- `unique_active_token_owner` (partial unique) on `(token_id, owner_address) WHERE released_at IS NULL`
-- `idx_token_ownership_token_owner_periods` on `(token_id, owner_address, acquired_at, released_at)`
-- `idx_token_ownership_owner_periods` on `(owner_address, acquired_at, released_at)`
-- `idx_token_ownership_token_id_text_periods` on `(CAST(token_id AS TEXT), owner_address, acquired_at, released_at)` - for text-based joins
-- `idx_token_ownership_current_owners` (partial) on `(token_id, owner_address) WHERE released_at IS NULL`
-
-**Relationships**:
-- Many-to-one with `tokens` (CASCADE DELETE)
 
 ---
 
@@ -347,37 +312,6 @@ Materialized view tracking the most recent provenance event per token-owner pair
 - Monotonic timestamp enforcement in UPSERT WHERE clause prevents out-of-order updates
 
 ---
-
-### changes_journal
-
-Audit log for tracking all changes to indexed data.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | BIGSERIAL | Primary key |
-| subject_type | subject_type | Type of change (token, owner, balance, metadata, enrich_source, media_asset) |
-| subject_id | TEXT | Polymorphic reference (provenance_event_id for token/owner/balance; token_id for metadata/enrich_source; media_asset_id for media_asset) |
-| changed_at | TIMESTAMPTZ | Change timestamp |
-| meta | JSONB | Change metadata (ProvenanceChangeMeta, MetadataChangeMeta, EnrichmentSourceChangeMeta, or MediaAssetChangeMeta) |
-| created_at | TIMESTAMPTZ | Record creation timestamp |
-| updated_at | TIMESTAMPTZ | Last update timestamp |
-
-**Note**: Token association is resolved through `subject_id` based on `subject_type`. For provenance changes (token/owner/balance), the token is found via the `provenance_events` table. For metadata/enrich_source changes, `subject_id` directly contains the token_id. Media asset changes don't have a direct token association.
-
-**Indexes**:
-- `idx_changes_journal_subject` on (subject_type, subject_id)
-- `idx_changes_journal_changed_at` on (changed_at)
-- `idx_changes_journal_subject_type` on (subject_type)
-- `idx_changes_journal_subject_id` on (subject_id)
-- `idx_changes_journal_subject_type_changed_at_id` on (subject_type, changed_at, id)
-- `idx_changes_journal_changed_at_id` on (changed_at, id)
-- `idx_changes_journal_meta_gin` GIN on (meta)
-
-**Unique Constraints**:
-- `(subject_type, subject_id, changed_at)` (unique)
-
-**Relationships**:
-- Indirect relationship to `tokens` through `subject_id` (resolved based on `subject_type`)
 
 ### watched_addresses
 
@@ -566,14 +500,6 @@ Audit log of webhook delivery attempts with status tracking and response details
 - `cloudflare` - Cloudflare Images/Stream
 - `s3` - Amazon S3
 
-### subject_type
-- `token` - Token changes
-- `owner` - Owner changes
-- `balance` - Balance changes
-- `metadata` - Metadata changes
-- `enrich_source` - Enrichment source changes
-- `media_asset` - Media asset changes
-
 ### event_type
 - `mint` - Token mint event
 - `transfer` - Token transfer event
@@ -599,14 +525,12 @@ tokens (1)
   ├── (1) token_metadata
   ├── (N) balances
   ├── (N) provenance_events
-  ├── (N) token_ownership_periods
+  ├── (N) token_events
   ├── (N) enrichment_sources
   └── (N) token_media_health
 
 webhook_clients (1)
   └── (N) webhook_deliveries
-
-changes_journal (standalone, references other entities via subject_id)
 
 media_assets (standalone)
 
@@ -617,11 +541,6 @@ key_value_store (standalone)
 address_indexing_jobs (standalone, references workflows via workflow_id)
 ```
 
-**Note on changes_journal relationships**: The changes_journal table doesn't have a direct foreign key to tokens. Instead, it uses a polymorphic pattern where the token association is resolved through `subject_id` based on `subject_type`:
-- For `token`/`owner`/`balance`: Join via `provenance_events.id = subject_id`, then get token
-- For `metadata`/`enrich_source`: `subject_id` IS the token_id
-- For `media_asset`: No direct token association
-
 ## Triggers
 
 All tables with `updated_at` columns have triggers that automatically update the timestamp on row updates:
@@ -631,11 +550,9 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_token_metadata_updated_at`
 - `update_enrichment_sources_updated_at`
 - `update_media_assets_updated_at`
-- `update_changes_journal_updated_at`
 - `update_provenance_events_updated_at`
 - `update_watched_addresses_updated_at`
 - `update_key_value_store_updated_at`
-- `update_token_ownership_periods_updated_at`
 - `update_webhook_clients_updated_at`
 - `update_webhook_deliveries_updated_at`
 - `update_address_indexing_jobs_updated_at`
@@ -655,7 +572,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 ### Future Migrations
 
 Migrations should be placed in `db/migrations/` directory with sequential numbering:
-- `001.sql` - Add the `token_ownership_periods` table, migrate the existing data.
+- `001.sql` - Historical: introduced `token_ownership_periods` (removed in `015.sql`).
 - `002.sql` - Future changes
 - etc.
 
@@ -712,7 +629,6 @@ To handle potentially long URLs without exceeding PostgreSQL's B-tree index size
 ## Data Retention
 
 - **Provenance Events**: Optional, can be disabled for high-volume contracts
-- **Changes Journal**: Audit log, consider archiving old records
 - **Media Assets**: Keep indefinitely for reference
 - **Tokens**: Keep all indexed tokens
 

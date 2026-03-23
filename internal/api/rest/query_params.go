@@ -2,8 +2,6 @@ package rest
 
 import (
 	"fmt"
-	"slices"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,7 +9,6 @@ import (
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
@@ -38,9 +35,7 @@ func (p *GetTokenQueryParams) Validate() error {
 			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
-			expansion != types.ExpansionDisplay &&
-			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			expansion != types.ExpansionDisplay {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
@@ -74,20 +69,6 @@ type ListTokensQueryParams struct {
 
 	// Expansion
 	Expansions []types.Expansion `form:"expand"`
-
-	// Owners expansion parameters
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.
-	OwnerLimit uint8 `form:"owners.limit,default=10"`
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.
-	OwnerOffset uint64 `form:"owners.offset,default=0"`
-
-	// Provenance events expansion parameters
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
-	ProvenanceEventLimit uint8 `form:"provenance_events.limit,default=10"`
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
-	ProvenanceEventOffset uint64 `form:"provenance_events.offset,default=0"`
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
-	ProvenanceEventOrder types.Order `form:"provenance_events.order,default=desc"`
 }
 
 // Validate validates the query parameters for GET /tokens
@@ -128,8 +109,6 @@ func (p *ListTokensQueryParams) Validate() error {
 	}
 
 	// Validate expansions
-	hasOwnersExpansion := false
-	hasProvenanceExpansion := false
 	for _, expansion := range p.Expansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionOwnerProvenances &&
@@ -137,38 +116,9 @@ func (p *ListTokensQueryParams) Validate() error {
 			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
-			expansion != types.ExpansionDisplay &&
-			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			expansion != types.ExpansionDisplay {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
-		if expansion == types.ExpansionOwners {
-			hasOwnersExpansion = true
-		}
-		if expansion == types.ExpansionProvenanceEvents {
-			hasProvenanceExpansion = true
-		}
-	}
-
-	// BACKWARD COMPATIBILITY: Cap deprecated pagination parameters to default values for bulk queries
-	// These parameters are deprecated for bulk token queries but kept for backward compatibility.
-	// They are silently overridden to prevent N+1 query issues while not breaking existing clients.
-	// TODO: Remove this capping logic and add validation errors in a future major version after sufficient deprecation period.
-	if hasOwnersExpansion {
-		// Override to defaults to prevent N+1 queries
-		p.OwnerLimit = constants.DEFAULT_OWNERS_LIMIT
-		p.OwnerOffset = constants.DEFAULT_OFFSET
-	}
-	if hasProvenanceExpansion {
-		// Override to defaults to prevent N+1 queries
-		p.ProvenanceEventLimit = constants.DEFAULT_PROVENANCE_EVENTS_LIMIT
-		p.ProvenanceEventOffset = constants.DEFAULT_OFFSET
-		p.ProvenanceEventOrder = types.OrderDesc // Force DESC for consistent behavior
-	}
-
-	// Validate provenance event order
-	if !p.ProvenanceEventOrder.Valid() {
-		return apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", p.ProvenanceEventOrder))
 	}
 
 	// Validate sort_by
@@ -218,11 +168,6 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	params.Owners = domain.NormalizeAddresses(params.Owners)
 	params.ContractAddresses = domain.NormalizeAddresses(params.ContractAddresses)
 
-	// Validate order
-	if !params.ProvenanceEventOrder.Asc() && !params.ProvenanceEventOrder.Desc() {
-		params.ProvenanceEventOrder = types.OrderDesc
-	}
-
 	// Validate sort order
 	if !params.SortOrder.Asc() && !params.SortOrder.Desc() {
 		params.SortOrder = types.OrderDesc
@@ -234,90 +179,4 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	}
 
 	return &params, nil
-}
-
-// GetChangesQueryParams holds query parameters for GET /changes
-type GetChangesQueryParams struct {
-	// Filters
-	TokenIDs     []uint64             `form:"token_id"`
-	TokenCIDs    []string             `form:"token_cid"`
-	Addresses    []string             `form:"address"`
-	SubjectTypes []schema.SubjectType `form:"subject_type"`
-	SubjectIDs   []string             `form:"subject_id"`
-
-	// Cursor-based pagination
-	Anchor *uint64 `form:"anchor"` // ID-based cursor - show changes after this ID
-
-	// Timestamp filter - only show changes after this time
-	// Note: Different subject types use different timestamp semantics which may cause inconsistent results
-	// Deprecated: Use anchor instead for reliable pagination
-	Since *time.Time `form:"since" time_format:"2006-01-02T15:04:05.999999999Z07:00"`
-
-	// Pagination
-	Limit uint8 `form:"limit,default=20"`
-
-	// Offset only applies when using 'since' parameter - not used with 'anchor'
-	// Deprecated: Use anchor for cursor-based pagination instead
-	Offset uint64 `form:"offset,default=0"`
-
-	// Deprecated: Only applies when using 'since' parameter - always ascending with 'anchor' for sequential audit log
-	Order types.Order `form:"order,default=asc"`
-
-	Expand []types.Expansion `form:"expand"` // Expansion options: subject
-}
-
-// Validate validates the query parameters for GET /changes
-func (p *GetChangesQueryParams) Validate() error {
-	// Validate token CIDs
-	for _, tokenCID := range p.TokenCIDs {
-		if !domain.TokenCID(tokenCID).Valid() {
-			return apierrors.NewValidationError(fmt.Sprintf("Invalid token CID: %s. Must be a valid token CID", tokenCID))
-		}
-	}
-
-	// Validate addresses
-	for _, address := range p.Addresses {
-		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
-			return apierrors.NewValidationError(fmt.Sprintf("Invalid address: %s. Must be a valid Tezos or Ethereum address", address))
-		}
-	}
-
-	// Validate expansions
-	for _, expansion := range p.Expand {
-		if expansion != types.ExpansionSubject {
-			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
-		}
-	}
-
-	// Validate order
-	if !p.Order.Valid() {
-		return apierrors.NewValidationError(fmt.Sprintf("Invalid order: %s. Must be a valid order", p.Order))
-	}
-
-	return nil
-}
-
-// ParseGetChangesQuery parses query parameters for GET /changes
-func ParseGetChangesQuery(c *gin.Context) (*GetChangesQueryParams, error) {
-	var params GetChangesQueryParams
-	if err := c.ShouldBindQuery(&params); err != nil {
-		return nil, err
-	}
-
-	// Cap limit
-	if params.Limit > constants.MAX_PAGE_SIZE {
-		params.Limit = constants.MAX_PAGE_SIZE
-	}
-
-	// Validate order
-	if !params.Order.Asc() && !params.Order.Desc() {
-		params.Order = types.OrderAsc
-	}
-
-	return &params, nil
-}
-
-// ShouldExpandSubject returns true if subject expansion is requested
-func (p *GetChangesQueryParams) ShouldExpandSubject() bool {
-	return slices.Contains(p.Expand, types.ExpansionSubject)
 }

@@ -145,7 +145,6 @@ type MediaAsset {
   provider: String!
   provider_asset_id: String
   provider_metadata: JSON
-  variant_urls: JSON! @deprecated(reason: "Use 'variants' field instead for selective querying with type-safe keys")
   variants(keys: [MediaAssetVariantKey!]!): JSON!
   created_at: Time!
   updated_at: Time!
@@ -182,8 +181,6 @@ type Token {
   provenance_events: PaginatedProvenanceEvents
   owner_provenances: PaginatedOwnerProvenances
   enrichment_source: EnrichmentSource
-  metadata_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
-  enrichment_source_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
   media_assets: [MediaAsset!]
 }
 
@@ -192,26 +189,6 @@ type TokenList {
   items: [Token!]!
   offset: Uint64
   total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
-}
-
-# Change journal entry
-type Change {
-  id: Uint64!
-  subject_type: String!
-  subject_id: String!
-  changed_at: Time!
-  meta: JSON
-  subject: JSON
-  created_at: Time!
-  updated_at: Time!
-}
-
-# Paginated changes list
-type ChangeList {
-  items: [Change!]!
-  offset: Uint64 @deprecated(reason: "Use the next_anchor as the indicator for next page")
-  next_anchor: Uint64
-  total: Uint64! @deprecated(reason: "Use the next_anchor as the indicator for next page")
 }
 
 # Result of triggering indexing
@@ -245,10 +222,9 @@ type WorkflowStatus {
 type Query {
   # Get a single token by CID
   # Equivalent to: GET /api/v1/tokens/:cid
-  # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
+  # Expansions are inferred from requested fields (metadata, owners, provenance_events, etc.).
   token(
     cid: String!
-    expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
     provenance_events_limit: Uint8 = 10
@@ -258,10 +234,8 @@ type Query {
 
   # List tokens with filters
   # Equivalent to: GET /api/v1/tokens
-  # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
-  # Important: When querying multiple tokens, owners and provenance_events expansions return a fixed number of items (first 20 items per token).
-  # Pagination parameters (owners_limit, owners_offset, provenance_events_limit, provenance_events_offset, provenance_events_order) are NOT supported for bulk token queries.
-  # Use the single token query (token) for paginated owners and provenance_events.
+  # Expansions are inferred from requested fields on each token.
+  # For list queries, owners and provenance_events return a fixed number of items per token (first 20); use `token` for full pagination.
   tokens(
     owners: [String!]
     chains: [String!]
@@ -274,34 +248,7 @@ type Query {
     include_unviewable: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
-    expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
-    owners_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
-    owners_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
-    provenance_events_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
-    provenance_events_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
-    provenance_events_order: Order = desc @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
   ): TokenList
-
-  # Get changes with filters
-  # Equivalent to: GET /api/v1/changes
-  # DEPRECATED: Use syncCollection mutation for better performance and simpler client logic
-  # Returns changes in ascending order by ID (sequential audit log)
-  # Recommended: Use 'anchor' with 'next_anchor' from previous response for cursor-based pagination
-  # Deprecated parameters: 'since', 'offset', 'order' - use 'anchor' instead
-  # Note: The 'subject' field expansion is auto-detected from your query. The 'expand' parameter is optional for backward compatibility.
-  changes(
-    token_ids: [Uint64!]
-    token_cids: [String!]
-    addresses: [String!]
-    subject_types: [String!]
-    subject_ids: [String!]
-    anchor: Uint64
-    since: String @deprecated(reason: "Use 'anchor' for reliable ID-based pagination. Different subject types use different timestamp semantics.")
-    limit: Uint8 = 20
-    offset: Uint64 = 0 @deprecated(reason: "Use 'anchor' for 1-based pagination instead. Offset only applies with 'since' parameter.")
-    order: Order = asc @deprecated(reason: "Order parameter only applies when using deprecated 'since' parameter. Always ascending with 'anchor'.")
-    expand: [String!] @deprecated(reason: "Expansion is now auto-detected from your GraphQL query fields (subject). Explicitly specifying expand is no longer necessary.")
-  ): ChangeList @deprecated(reason: "Use syncCollection for better performance and simpler client logic")
 
   # Get workflow status by workflow ID and run ID
   # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id

@@ -144,18 +144,10 @@ query {
 }
 ```
 
-**Backward Compatibility**:
-- The `expands` parameter is still supported for backward compatibility but is now deprecated
-- Manual expansions specified via `expands` are merged with auto-detected expansions
-- REST API still requires explicit `expands` query parameter as it cannot auto-detect field selections
-
-**Field to Expansion Mapping**:
+**Field to Expansion Mapping** (GraphQL auto-detects requested fields; REST uses `expand`):
 - `owners` → `ExpansionOwners`
 - `provenance_events` → `ExpansionProvenanceEvents`
 - `enrichment_source` → `ExpansionEnrichmentSource`
-- `metadata_media_assets` → `ExpansionMetadataMediaAsset`
-- `enrichment_source_media_assets` → `ExpansionEnrichmentSourceMediaAsset`
-- `subject` (in changes) → `ExpansionSubject`
 
 ### Sweeper
 
@@ -291,7 +283,6 @@ PostgreSQL (updated health status)
 - `token_media_health` - Media URL health status
 - `provenance_events` - Blockchain event history
 - `balances` - Multi-token ownership (ERC1155, FA2)
-- `changes_journal` - Audit log
 - `watched_addresses` - Owner-based indexing config
 - `key_value_store` - Configuration and cursors
 
@@ -359,8 +350,6 @@ tokens (1) ────┬── (1) token_metadata
                ├── (N) enrichment_sources
                │
                ├── (N) token_media_health
-               │
-               └── (N) changes_journal
 
 media_assets (standalone table)
 

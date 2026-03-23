@@ -243,21 +243,6 @@ func (mr *MockStoreMockRecorder) GetBlockCursor(ctx, chain interface{}) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBlockCursor", reflect.TypeOf((*MockStore)(nil).GetBlockCursor), ctx, chain)
 }
 
-// GetChanges mocks base method.
-func (m *MockStore) GetChanges(ctx context.Context, filter store.ChangesQueryFilter) ([]*schema.ChangesJournal, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetChanges", ctx, filter)
-	ret0, _ := ret[0].([]*schema.ChangesJournal)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetChanges indicates an expected call of GetChanges.
-func (mr *MockStoreMockRecorder) GetChanges(ctx, filter interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetChanges", reflect.TypeOf((*MockStore)(nil).GetChanges), ctx, filter)
-}
-
 // GetEnrichmentSourceByTokenCID mocks base method.
 func (m *MockStore) GetEnrichmentSourceByTokenCID(ctx context.Context, tokenCID string) (*schema.EnrichmentSource, error) {
 	m.ctrl.T.Helper()

@@ -8,7 +8,6 @@ CREATE TYPE blockchain_chain AS ENUM ('eip155:1', 'eip155:11155111', 'tezos:main
 CREATE TYPE enrichment_level AS ENUM ('none', 'vendor');
 CREATE TYPE vendor_type AS ENUM ('artblocks', 'fxhash', 'foundation', 'superrare', 'feralfile', 'objkt', 'opensea');
 CREATE TYPE storage_provider AS ENUM ('self_hosted', 'cloudflare', 's3');
-CREATE TYPE subject_type AS ENUM ('token', 'owner', 'balance', 'metadata', 'enrich_source', 'media_asset', 'token_viewability');
 CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
 CREATE TYPE indexing_job_status AS ENUM ('running', 'paused', 'failed', 'completed', 'canceled');
@@ -130,18 +129,6 @@ CREATE TABLE token_media_health (
     UNIQUE(token_id, media_url_hash, media_source)
 );
 
--- Changes Journal table - Audit log for tracking all changes to indexed data
-CREATE TABLE changes_journal (
-    id BIGSERIAL PRIMARY KEY,
-    subject_type subject_type NOT NULL,     -- token, owner, balance, metadata, enrich_source, media_asset
-    subject_id TEXT NOT NULL,               -- polymorphic ref: provenance_event_id for token/owner/balance; token_id for metadata/enrich_source; media_asset_id for media_asset
-    changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    meta JSONB,                             -- ProvenanceChangeMeta for token/owner/balance; MetadataChangeMeta for metadata; EnrichmentSourceChangeMeta for enrich_source; MediaAssetChangeMeta for media_asset
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (subject_type, subject_id, changed_at)
-);
-
 -- Provenance Events table - Optional audit trail of blockchain events
 CREATE TABLE provenance_events (
     id BIGSERIAL PRIMARY KEY,
@@ -174,24 +161,8 @@ ADD CONSTRAINT provenance_events_unique UNIQUE (
     event_type
 );
 
--- Token Ownership Periods table - Tracks when addresses owned tokens with quantity > 0
--- Used for efficiently querying ownership history and metadata changes during ownership
-CREATE TABLE token_ownership_periods (
-    id BIGSERIAL PRIMARY KEY,
-    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    owner_address TEXT NOT NULL,
-    acquired_at TIMESTAMPTZ NOT NULL,       -- When the address acquired the token (first transfer in)
-    released_at TIMESTAMPTZ,                -- When the address released the token (balance became 0); NULL means still owns it
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Create partial unique index to ensure only one active ownership period per token-owner combination
-CREATE UNIQUE INDEX unique_active_token_owner ON token_ownership_periods (token_id, owner_address) WHERE (released_at IS NULL);
-
 -- Token Events table - Unified event log for ownership and attribute changes
 -- Enables efficient collection sync with simple pagination
--- Replaces changes_journal for collection sync purposes
 CREATE TABLE token_events (
     id BIGSERIAL PRIMARY KEY,
     token_id BIGINT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
@@ -377,14 +348,6 @@ CREATE INDEX idx_token_media_health_url_hash ON token_media_health (media_url_ha
 CREATE INDEX idx_token_media_health_last_checked ON token_media_health (last_checked_at);
 CREATE INDEX idx_token_media_health_token_status_source ON token_media_health (token_id, health_status, media_source);
 
--- Changes Journal table indexes
-CREATE INDEX idx_changes_journal_subject ON changes_journal (subject_type, subject_id);
-CREATE INDEX idx_changes_journal_changed_at ON changes_journal (changed_at);
-CREATE INDEX idx_changes_journal_subject_type ON changes_journal (subject_type);
-CREATE INDEX idx_changes_journal_subject_id ON changes_journal (subject_id);
-CREATE INDEX idx_changes_journal_subject_type_changed_at_id ON changes_journal (subject_type, changed_at, id);
-CREATE INDEX idx_changes_journal_changed_at_id ON changes_journal (changed_at, id);
-
 -- Token Events table indexes
 -- Primary index for owner-scoped sync queries (uses created_at for consistent pagination)
 CREATE INDEX idx_token_events_owner_created ON token_events(owner_address, created_at ASC, id ASC) WHERE owner_address IS NOT NULL;
@@ -407,13 +370,6 @@ CREATE INDEX idx_provenance_events_token_id_from_address_timestamp ON provenance
 CREATE INDEX idx_provenance_events_token_id_to_address_timestamp ON provenance_events (token_id, to_address, timestamp);
 CREATE INDEX idx_provenance_events_id_text ON provenance_events (CAST(id AS TEXT));
 CREATE INDEX idx_provenance_events_token_id_timestamp_desc ON provenance_events (token_id, timestamp DESC, ((raw->>'tx_index')::bigint) DESC);
-
--- Token Ownership Periods table indexes
-CREATE INDEX idx_token_ownership_token_owner_periods ON token_ownership_periods (token_id, owner_address, acquired_at, released_at);
-CREATE INDEX idx_token_ownership_owner_periods ON token_ownership_periods (owner_address, acquired_at, released_at);
-CREATE INDEX idx_token_ownership_token_id_text_periods ON token_ownership_periods (CAST(token_id AS TEXT), owner_address, acquired_at, released_at);
-CREATE INDEX idx_token_ownership_current_owners ON token_ownership_periods (token_id, owner_address) WHERE released_at IS NULL;
-CREATE INDEX idx_token_ownership_periods_owner_released_token ON token_ownership_periods(owner_address, token_id) WHERE released_at IS NOT NULL;  -- For removal queries in watermark-based sync
 
 -- Token Ownership Provenance table indexes
 -- Index 1: For owner-filtered token queries (GetTokensByFilter with owner filter)
@@ -457,9 +413,6 @@ CREATE INDEX idx_enrichment_sources_vendor_json_gin ON enrichment_sources USING 
 -- JSONB indexes for media assets
 CREATE INDEX idx_media_assets_variant_urls_gin ON media_assets USING GIN (variant_urls);
 CREATE INDEX idx_media_assets_provider_metadata_gin ON media_assets USING GIN (provider_metadata) WHERE provider_metadata IS NOT NULL;
-
--- JSONB indexes for changes journal
-CREATE INDEX idx_changes_journal_meta_gin ON changes_journal USING GIN (meta);
 
 -- JSONB indexes for provenance events
 CREATE INDEX idx_provenance_events_raw_gin ON provenance_events USING GIN (raw);
@@ -507,11 +460,6 @@ CREATE TRIGGER update_token_media_health_updated_at
     BEFORE UPDATE ON token_media_health
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Apply updated_at trigger to changes_journal
-CREATE TRIGGER update_changes_journal_updated_at
-    BEFORE UPDATE ON changes_journal
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
 -- Apply updated_at trigger to provenance_events
 CREATE TRIGGER update_provenance_events_updated_at
     BEFORE UPDATE ON provenance_events
@@ -525,11 +473,6 @@ CREATE TRIGGER update_watched_addresses_updated_at
 -- Apply updated_at trigger to key_value_store
 CREATE TRIGGER update_key_value_store_updated_at 
     BEFORE UPDATE ON key_value_store 
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Apply updated_at trigger to token_ownership_periods
-CREATE TRIGGER update_token_ownership_periods_updated_at 
-    BEFORE UPDATE ON token_ownership_periods 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Apply updated_at trigger to token_ownership_provenance
@@ -575,9 +518,7 @@ COMMENT ON TABLE token_metadata IS 'Stores original and enriched metadata for to
 COMMENT ON TABLE enrichment_sources IS 'Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File) with both raw and normalized data';
 COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
 COMMENT ON TABLE token_media_health IS 'Tracks health check status for media URLs associated with tokens. Includes source information to distinguish between metadata/enrichment and image/animation URLs. Automatically synchronized when token_metadata or enrichment_sources are updated.';
-COMMENT ON TABLE changes_journal IS 'Audit log for tracking all changes to indexed data. subject_id is polymorphic: provenance_event_id (token/owner/balance), token_id (metadata/enrich_source), media_asset_id (media_asset). Token association is resolved through subject_id based on subject_type';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
-COMMENT ON TABLE token_ownership_periods IS 'Tracks when addresses owned tokens with quantity > 0. Used for efficiently querying ownership history and metadata changes during ownership. Automatically maintained by application logic on provenance event creation';
 COMMENT ON TABLE token_ownership_provenance IS 'Tracks the most recent provenance event per token-owner pair. Enables fast owner-filtered queries without LATERAL JOINs by denormalizing latest timestamp for each address that received tokens (to_address only, not from_address). Maintained by application code with monotonic timestamp enforcement in UPSERT WHERE clause.';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';
