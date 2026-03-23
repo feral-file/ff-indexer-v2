@@ -157,20 +157,13 @@ func (h *handler) ListTokens(c *gin.Context) {
 		return
 	}
 
-	// Convert query parameters to executor parameters
 	limit := &queryParams.Limit
 	offset := &queryParams.Offset
 	expansions := queryParams.Expansions
-	ownersLimit := &queryParams.OwnerLimit
-	ownersOffset := &queryParams.OwnerOffset
-	provenanceEventsLimit := &queryParams.ProvenanceEventLimit
-	provenanceEventsOffset := &queryParams.ProvenanceEventOffset
-	provenanceEventsOrder := &queryParams.ProvenanceEventOrder
 	includeUnviewable := &queryParams.IncludeUnviewable
 	sortBy := &queryParams.SortBy
 	sortOrder := &queryParams.SortOrder
 
-	// Call executor's GetTokens method
 	response, err := h.executor.GetTokens(
 		c.Request.Context(),
 		queryParams.Owners,
@@ -185,11 +178,6 @@ func (h *handler) ListTokens(c *gin.Context) {
 		sortBy,
 		sortOrder,
 		expansions,
-		ownersLimit,
-		ownersOffset,
-		provenanceEventsLimit,
-		provenanceEventsOffset,
-		provenanceEventsOrder,
 	)
 
 	if err != nil {

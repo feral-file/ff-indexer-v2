@@ -63,14 +63,6 @@ func (r *mediaAssetResolver) ProviderMetadata(ctx context.Context, obj *dto.Medi
 	return JSON(obj.ProviderMetadata), nil
 }
 
-// VariantURLs is the resolver for the variant_urls field.
-func (r *mediaAssetResolver) VariantURLs(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error) {
-	if obj.VariantURLs == nil {
-		return JSON("{}"), nil
-	}
-	return JSON(obj.VariantURLs), nil
-}
-
 // Variants is the resolver for the variants field.
 func (r *mediaAssetResolver) Variants(ctx context.Context, obj *dto.MediaAssetResponse, keys []types.MediaAssetVariantKey) (JSON, error) {
 	// If no variant URLs exist, return empty object
@@ -352,34 +344,13 @@ func (r *provenanceEventResolver) Raw(ctx context.Context, obj *dto.ProvenanceEv
 }
 
 // Token is the resolver for the token field.
-func (r *queryResolver) Token(ctx context.Context, cid string, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
 	// Validate token CID
 	if !domain.TokenCID(cid).Valid() {
 		return nil, apierrors.NewValidationError("Invalid token CID")
 	}
 
-	// Auto-detect expansions from GraphQL query fields
-	autoExpansions := autoDetectTokenExpansions(ctx)
-
-	// Convert manual expansions to domain.Expansion (for backward compatibility)
-	manualExpansions := convertExpansionStrings(expands)
-
-	// Validate manual expansions
-	for _, expansion := range manualExpansions {
-		if expansion != types.ExpansionOwners &&
-			expansion != types.ExpansionMetadata &&
-			expansion != types.ExpansionProvenanceEvents &&
-			expansion != types.ExpansionEnrichmentSource &&
-			expansion != types.ExpansionMediaAsset &&
-			expansion != types.ExpansionDisplay &&
-			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
-		}
-	}
-
-	// Merge manual and auto-detected expansions
-	expansions := mergeExpansions(manualExpansions, autoExpansions)
+	expansions := autoDetectTokenExpansions(ctx)
 
 	// Validate provenance event order
 	if provenanceEventsOrder != nil && !provenanceEventsOrder.Valid() {
@@ -400,12 +371,8 @@ func (r *queryResolver) Token(ctx context.Context, cid string, expands []string,
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error) {
-	// Auto-detect expansions from GraphQL query fields
-	autoExpansions := autoDetectTokenExpansions(ctx)
-
-	// Convert manual expansions to domain.Expansion (for backward compatibility)
-	manualExpansions := convertExpansionStrings(expands)
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
 	// Validate owners
@@ -443,24 +410,6 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		}
 	}
 
-	// Validate manual expansions
-	for _, expansion := range manualExpansions {
-		if expansion != types.ExpansionOwners &&
-			expansion != types.ExpansionProvenanceEvents &&
-			expansion != types.ExpansionMetadata &&
-			expansion != types.ExpansionOwnerProvenances &&
-			expansion != types.ExpansionEnrichmentSource &&
-			expansion != types.ExpansionMediaAsset &&
-			expansion != types.ExpansionDisplay &&
-			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
-		}
-	}
-
-	// Merge manual and auto-detected expansions
-	expansions := mergeExpansions(manualExpansions, autoExpansions)
-
 	// Validate sortBy
 	if sortBy != nil && !sortBy.Valid() {
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_by: %s. Must be a valid sort field", *sortBy))
@@ -471,30 +420,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", *sortOrder))
 	}
 
-	// Validate provenance event order
-	if provenanceEventsOrder != nil && !provenanceEventsOrder.Valid() {
-		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", *provenanceEventsOrder))
-	}
-
-	// BACKWARD COMPATIBILITY: Cap deprecated pagination parameters to default values for bulk queries
-	// These parameters are deprecated for bulk token queries but kept for backward compatibility.
-	// They are silently overridden to prevent N+1 query issues while not breaking existing clients.
-	// TODO: Remove these parameters entirely in a future major version after sufficient deprecation period.
-	for _, exp := range expansions {
-		if exp == types.ExpansionOwners {
-			// Override to nil to use defaults in executor (will use DEFAULT_OWNERS_LIMIT)
-			ownersLimit = nil
-			ownersOffset = nil
-		}
-		if exp == types.ExpansionProvenanceEvents {
-			// Override to nil to use defaults in executor (will use DEFAULT_PROVENANCE_EVENTS_LIMIT)
-			provenanceEventsLimit = nil
-			provenanceEventsOffset = nil
-			provenanceEventsOrder = nil
-		}
-	}
-
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
 }
 
 // WorkflowStatus is the resolver for the workflowStatus field.

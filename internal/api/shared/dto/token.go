@@ -29,12 +29,7 @@ type TokenResponse struct {
 	ProvenanceEvents *PaginatedProvenanceEvents `json:"provenance_events,omitempty"`
 	OwnerProvenances *PaginatedOwnerProvenances `json:"owner_provenances,omitempty"`
 	EnrichmentSource *EnrichmentSourceResponse  `json:"enrichment_source,omitempty"`
-	// Deprecated: Use MediaAssets instead
-	MetadataMediaAssets []MediaAssetResponse `json:"metadata_media_assets,omitempty"`
-	// Deprecated: Use MediaAssets instead
-	EnrichmentSourceMediaAssets []MediaAssetResponse `json:"enrichment_source_media_assets,omitempty"`
-	// MediaAssets contains all media assets from both metadata and enrichment sources
-	MediaAssets []MediaAssetResponse `json:"media_assets,omitempty"`
+	MediaAssets      []MediaAssetResponse       `json:"media_assets,omitempty"`
 }
 
 // OwnerResponse represents a token owner (balance record)

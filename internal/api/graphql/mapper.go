@@ -57,12 +57,6 @@ func processTokenFields(reqCtx *graphql.OperationContext, fields []graphql.Colle
 			expansion = types.ExpansionDisplay
 		case "media_assets":
 			expansion = types.ExpansionMediaAsset
-		case "metadata_media_assets":
-			// Deprecated: maintained for backward compatibility
-			expansion = types.ExpansionMetadataMediaAsset //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-		case "enrichment_source_media_assets":
-			// Deprecated: maintained for backward compatibility
-			expansion = types.ExpansionEnrichmentSourceMediaAsset //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
 		}
 
 		// Add to set if we found an expansion
@@ -76,49 +70,6 @@ func processTokenFields(reqCtx *graphql.OperationContext, fields []graphql.Colle
 			processTokenFields(reqCtx, nestedFields, expansionSet)
 		}
 	}
-}
-
-// mergeExpansions merges manual and auto-detected expansions, removing duplicates
-// Manual expansions take precedence and are listed first for backward compatibility
-func mergeExpansions(manual []types.Expansion, autoDetected []types.Expansion) []types.Expansion {
-	if len(manual) == 0 && len(autoDetected) == 0 {
-		return nil
-	}
-
-	expansionSet := make(map[types.Expansion]bool)
-	var result []types.Expansion
-
-	// Add manual expansions first (backward compatibility)
-	for _, exp := range manual {
-		if !expansionSet[exp] {
-			expansionSet[exp] = true
-			result = append(result, exp)
-		}
-	}
-
-	// Add auto-detected expansions
-	for _, exp := range autoDetected {
-		if !expansionSet[exp] {
-			expansionSet[exp] = true
-			result = append(result, exp)
-		}
-	}
-
-	return result
-}
-
-// convertExpansionStrings converts GraphQL expansion strings to shared types.Expansion
-// Deprecated: This is maintained for backward compatibility. Auto-detection is preferred.
-func convertExpansionStrings(gqlExpansions []string) []types.Expansion {
-	if gqlExpansions == nil {
-		return nil
-	}
-
-	expansions := make([]types.Expansion, len(gqlExpansions))
-	for i, exp := range gqlExpansions {
-		expansions[i] = types.Expansion(exp)
-	}
-	return expansions
 }
 
 // convertChainStrings converts GraphQL chain strings to domain.Chain

@@ -16,9 +16,10 @@ type MediaAssetResponse struct {
 	Provider         string          `json:"provider"`
 	ProviderAssetID  *string         `json:"provider_asset_id,omitempty"`
 	ProviderMetadata json.RawMessage `json:"provider_metadata,omitempty"`
-	VariantURLs      json.RawMessage `json:"variant_urls"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	// Populated from DB; omitted from JSON. GraphQL exposes variants via MediaAsset.variants(keys).
+	VariantURLs json.RawMessage `json:"-"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // MapMediaAssetToDTO maps a schema.MediaAsset to MediaAssetResponse

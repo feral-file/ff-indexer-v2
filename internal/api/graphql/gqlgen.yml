@@ -92,10 +92,6 @@ models:
         fieldName: ProvenanceEvents
       enrichment_source:
         fieldName: EnrichmentSource
-      metadata_media_assets:
-        fieldName: MetadataMediaAssets
-      enrichment_source_media_assets:
-        fieldName: EnrichmentSourceMediaAssets
       media_assets:
         fieldName: MediaAssets
 
@@ -267,8 +263,6 @@ models:
         fieldName: ProviderAssetID
       provider_metadata:
         fieldName: ProviderMetadata
-      variant_urls:
-        fieldName: VariantURLs
       created_at:
         fieldName: CreatedAt
       updated_at:

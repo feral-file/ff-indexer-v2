@@ -35,9 +35,7 @@ func (p *GetTokenQueryParams) Validate() error {
 			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
-			expansion != types.ExpansionDisplay &&
-			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			expansion != types.ExpansionDisplay {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
 	}
@@ -71,20 +69,6 @@ type ListTokensQueryParams struct {
 
 	// Expansion
 	Expansions []types.Expansion `form:"expand"`
-
-	// Owners expansion parameters
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.
-	OwnerLimit uint8 `form:"owners.limit,default=10"`
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.
-	OwnerOffset uint64 `form:"owners.offset,default=0"`
-
-	// Provenance events expansion parameters
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
-	ProvenanceEventLimit uint8 `form:"provenance_events.limit,default=10"`
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
-	ProvenanceEventOffset uint64 `form:"provenance_events.offset,default=0"`
-	// Deprecated: Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.
-	ProvenanceEventOrder types.Order `form:"provenance_events.order,default=desc"`
 }
 
 // Validate validates the query parameters for GET /tokens
@@ -125,8 +109,6 @@ func (p *ListTokensQueryParams) Validate() error {
 	}
 
 	// Validate expansions
-	hasOwnersExpansion := false
-	hasProvenanceExpansion := false
 	for _, expansion := range p.Expansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionOwnerProvenances &&
@@ -134,38 +116,9 @@ func (p *ListTokensQueryParams) Validate() error {
 			expansion != types.ExpansionMetadata &&
 			expansion != types.ExpansionEnrichmentSource &&
 			expansion != types.ExpansionMediaAsset &&
-			expansion != types.ExpansionDisplay &&
-			expansion != types.ExpansionMetadataMediaAsset && //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
-			expansion != types.ExpansionEnrichmentSourceMediaAsset { //nolint:staticcheck // SA1019: deprecated but needed for backward compatibility
+			expansion != types.ExpansionDisplay {
 			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
 		}
-		if expansion == types.ExpansionOwners {
-			hasOwnersExpansion = true
-		}
-		if expansion == types.ExpansionProvenanceEvents {
-			hasProvenanceExpansion = true
-		}
-	}
-
-	// BACKWARD COMPATIBILITY: Cap deprecated pagination parameters to default values for bulk queries
-	// These parameters are deprecated for bulk token queries but kept for backward compatibility.
-	// They are silently overridden to prevent N+1 query issues while not breaking existing clients.
-	// TODO: Remove this capping logic and add validation errors in a future major version after sufficient deprecation period.
-	if hasOwnersExpansion {
-		// Override to defaults to prevent N+1 queries
-		p.OwnerLimit = constants.DEFAULT_OWNERS_LIMIT
-		p.OwnerOffset = constants.DEFAULT_OFFSET
-	}
-	if hasProvenanceExpansion {
-		// Override to defaults to prevent N+1 queries
-		p.ProvenanceEventLimit = constants.DEFAULT_PROVENANCE_EVENTS_LIMIT
-		p.ProvenanceEventOffset = constants.DEFAULT_OFFSET
-		p.ProvenanceEventOrder = types.OrderDesc // Force DESC for consistent behavior
-	}
-
-	// Validate provenance event order
-	if !p.ProvenanceEventOrder.Valid() {
-		return apierrors.NewValidationError(fmt.Sprintf("Invalid provenance event order: %s. Must be a valid order", p.ProvenanceEventOrder))
 	}
 
 	// Validate sort_by
@@ -214,11 +167,6 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	// Normalize addresses
 	params.Owners = domain.NormalizeAddresses(params.Owners)
 	params.ContractAddresses = domain.NormalizeAddresses(params.ContractAddresses)
-
-	// Validate order
-	if !params.ProvenanceEventOrder.Asc() && !params.ProvenanceEventOrder.Desc() {
-		params.ProvenanceEventOrder = types.OrderDesc
-	}
 
 	// Validate sort order
 	if !params.SortOrder.Asc() && !params.SortOrder.Desc() {

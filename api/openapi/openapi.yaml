@@ -103,8 +103,6 @@ paths:
         - `enrichment_source` - Include vendor enrichment data
         - `display` - Include unified display field (merges metadata and enrichment source, with enrichment taking precedence)
         - `media_asset` - Include media assets based on requested expansions
-        - `metadata_media_assets` - (Deprecated) Include media assets for token metadata only
-        - `enrichment_source_media_assets` - (Deprecated) Include media assets for enrichment source only
         
         **Note**: The `media_asset` expansion behavior depends on other requested expansions:
         - With `metadata` only: includes media assets from metadata
@@ -140,7 +138,7 @@ paths:
             type: array
             items:
               type: string
-              enum: [metadata, owners, provenance_events, enrichment_source, display, media_asset, metadata_media_assets, enrichment_source_media_assets]
+              enum: [metadata, owners, provenance_events, enrichment_source, display, media_asset]
           style: form
           explode: false
           example: ["display", "media_asset"]
@@ -261,8 +259,7 @@ paths:
         - `enrichment_source` - Include vendor enrichment data
         - `display` - Include unified display field (merges metadata and enrichment source, with enrichment taking precedence)
         - `media_asset` - Include media assets based on requested expansions
-        - `metadata_media_assets` - (Deprecated) Include media assets for token metadata only
-        - `enrichment_source_media_assets` - (Deprecated) Include media assets for enrichment source only
+        - `owner_provenances` - Include owner provenance history (fixed page size per token; not available on GET /tokens/{cid})
         
         **Note**: The `media_asset` expansion behavior depends on other requested expansions:
         - With `metadata` only: includes media assets from metadata
@@ -272,9 +269,7 @@ paths:
         - With `metadata` + `display`: includes media from metadata + display merged URLs
         - Without any source expansion: returns empty array
         
-        **Important**: When querying multiple tokens, the `owners` and `provenance_events` expansions return a fixed number of items (first 20) per token.
-        Pagination parameters (`owners.limit`, `owners.offset`, `provenance_events.limit`, `provenance_events.offset`, `provenance_events.order`) are NOT supported for this endpoint.
-        Use `GET /api/v1/tokens/{cid}` for paginated owners and provenance events for individual tokens.
+        **Important**: For list queries, `owners` and `provenance_events` return a fixed cap of items per token. Use `GET /api/v1/tokens/{cid}` for paginated owners and provenance events.
       operationId: listTokens
       tags:
         - tokens
@@ -394,7 +389,7 @@ paths:
             type: array
             items:
               type: string
-              enum: [metadata, owners, provenance_events, enrichment_source, display, media_asset, metadata_media_assets, enrichment_source_media_assets]
+              enum: [metadata, owners, owner_provenances, provenance_events, enrichment_source, display, media_asset]
           style: form
           explode: false
           example: ["display", "media_asset"]
@@ -1370,20 +1365,6 @@ components:
             - With `metadata` + `enrichment_source`: includes media from both sources
             - With `metadata` + `display`: includes media from metadata + display merged URLs
             - Without any source expansion: returns empty array
-        metadata_media_assets:
-          anyOf:
-            - type: array
-              items:
-                $ref: '#/components/schemas/MediaAssetResponse'
-            - type: "null"
-          description: (Deprecated) Media assets for token metadata only (requires both metadata_media_assets AND metadata expansions). Use media_asset expansion instead.
-        enrichment_source_media_assets:
-          anyOf:
-            - type: array
-              items:
-                $ref: '#/components/schemas/MediaAssetResponse'
-            - type: "null"
-          description: (Deprecated) Media assets for enrichment source only (requires both enrichment_source_media_assets AND enrichment_source expansions). Use media_asset expansion instead.
 
     TokenMetadataResponse:
       type: object
@@ -1729,7 +1710,6 @@ components:
         - id
         - source_url
         - provider
-        - variant_urls
         - created_at
         - updated_at
       properties:
@@ -1763,10 +1743,6 @@ components:
           type: [object, "null"]
           description: Additional metadata from the provider
           example: {"account_id": "1234567890"}
-        variant_urls:
-          type: object
-          description: Different variants/sizes of the media asset
-          example: {"x": "https://cdn.example.com/thumb.jpg", "xl": "https://cdn.example.com/medium.jpg"}
         created_at:
           type: string
           format: date-time
@@ -1782,12 +1758,17 @@ components:
       type: object
       required:
         - items
+        - total
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/TokenResponse'
           description: List of tokens
+        total:
+          type: integer
+          format: uint64
+          description: Total number of tokens matching the filters (before limit/offset)
         offset:
           type: [integer, "null"]
           format: uint64

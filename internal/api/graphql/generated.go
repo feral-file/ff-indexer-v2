@@ -115,7 +115,6 @@ type ComplexityRoot struct {
 		ProviderMetadata func(childComplexity int) int
 		SourceURL        func(childComplexity int) int
 		UpdatedAt        func(childComplexity int) int
-		VariantURLs      func(childComplexity int) int
 		Variants         func(childComplexity int, keys []types.MediaAssetVariantKey) int
 	}
 
@@ -186,8 +185,8 @@ type ComplexityRoot struct {
 	Query struct {
 		IndexingJob    func(childComplexity int, workflowID string) int
 		SyncCollection func(childComplexity int, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) int
-		Token          func(childComplexity int, cid string, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
-		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID string) int
 	}
 
@@ -203,27 +202,25 @@ type ComplexityRoot struct {
 	}
 
 	Token struct {
-		Burned                      func(childComplexity int) int
-		Chain                       func(childComplexity int) int
-		ContractAddress             func(childComplexity int) int
-		CreatedAt                   func(childComplexity int) int
-		CurrentOwner                func(childComplexity int) int
-		Display                     func(childComplexity int) int
-		EnrichmentSource            func(childComplexity int) int
-		EnrichmentSourceMediaAssets func(childComplexity int) int
-		ID                          func(childComplexity int) int
-		LastProvenanceTimestamp     func(childComplexity int) int
-		MediaAssets                 func(childComplexity int) int
-		Metadata                    func(childComplexity int) int
-		MetadataMediaAssets         func(childComplexity int) int
-		OwnerProvenances            func(childComplexity int) int
-		Owners                      func(childComplexity int) int
-		ProvenanceEvents            func(childComplexity int) int
-		Standard                    func(childComplexity int) int
-		TokenCID                    func(childComplexity int) int
-		TokenNumber                 func(childComplexity int) int
-		UpdatedAt                   func(childComplexity int) int
-		Viewable                    func(childComplexity int) int
+		Burned                  func(childComplexity int) int
+		Chain                   func(childComplexity int) int
+		ContractAddress         func(childComplexity int) int
+		CreatedAt               func(childComplexity int) int
+		CurrentOwner            func(childComplexity int) int
+		Display                 func(childComplexity int) int
+		EnrichmentSource        func(childComplexity int) int
+		ID                      func(childComplexity int) int
+		LastProvenanceTimestamp func(childComplexity int) int
+		MediaAssets             func(childComplexity int) int
+		Metadata                func(childComplexity int) int
+		OwnerProvenances        func(childComplexity int) int
+		Owners                  func(childComplexity int) int
+		ProvenanceEvents        func(childComplexity int) int
+		Standard                func(childComplexity int) int
+		TokenCID                func(childComplexity int) int
+		TokenNumber             func(childComplexity int) int
+		UpdatedAt               func(childComplexity int) int
+		Viewable                func(childComplexity int) int
 	}
 
 	TokenDisplay struct {
@@ -310,7 +307,6 @@ type IndexingJobResolver interface {
 }
 type MediaAssetResolver interface {
 	ProviderMetadata(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
-	VariantURLs(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
 	Variants(ctx context.Context, obj *dto.MediaAssetResponse, keys []types.MediaAssetVariantKey) (JSON, error)
 }
 type MutationResolver interface {
@@ -346,8 +342,8 @@ type ProvenanceEventResolver interface {
 	Raw(ctx context.Context, obj *dto.ProvenanceEventResponse) (JSON, error)
 }
 type QueryResolver interface {
-	Token(ctx context.Context, cid string, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
-	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expands []string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenListResponse, error)
+	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
+	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
 	WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error)
 	IndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error)
 	SyncCollection(ctx context.Context, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) (*dto.SyncCollectionResponse, error)
@@ -637,12 +633,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.MediaAsset.UpdatedAt(childComplexity), true
-	case "MediaAsset.variant_urls":
-		if e.complexity.MediaAsset.VariantURLs == nil {
-			break
-		}
-
-		return e.complexity.MediaAsset.VariantURLs(childComplexity), true
 	case "MediaAsset.variants":
 		if e.complexity.MediaAsset.Variants == nil {
 			break
@@ -960,7 +950,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["expands"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
 	case "Query.tokens":
 		if e.complexity.Query.Tokens == nil {
 			break
@@ -971,7 +961,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order), args["expands"].([]string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
 	case "Query.workflowStatus":
 		if e.complexity.Query.WorkflowStatus == nil {
 			break
@@ -1058,12 +1048,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.EnrichmentSource(childComplexity), true
-	case "Token.enrichment_source_media_assets":
-		if e.complexity.Token.EnrichmentSourceMediaAssets == nil {
-			break
-		}
-
-		return e.complexity.Token.EnrichmentSourceMediaAssets(childComplexity), true
 	case "Token.id":
 		if e.complexity.Token.ID == nil {
 			break
@@ -1088,12 +1072,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.Metadata(childComplexity), true
-	case "Token.metadata_media_assets":
-		if e.complexity.Token.MetadataMediaAssets == nil {
-			break
-		}
-
-		return e.complexity.Token.MetadataMediaAssets(childComplexity), true
 	case "Token.owner_provenances":
 		if e.complexity.Token.OwnerProvenances == nil {
 			break
@@ -1690,7 +1668,6 @@ type MediaAsset {
   provider: String!
   provider_asset_id: String
   provider_metadata: JSON
-  variant_urls: JSON! @deprecated(reason: "Use 'variants' field instead for selective querying with type-safe keys")
   variants(keys: [MediaAssetVariantKey!]!): JSON!
   created_at: Time!
   updated_at: Time!
@@ -1727,8 +1704,6 @@ type Token {
   provenance_events: PaginatedProvenanceEvents
   owner_provenances: PaginatedOwnerProvenances
   enrichment_source: EnrichmentSource
-  metadata_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
-  enrichment_source_media_assets: [MediaAsset!] @deprecated(reason: "Use 'media_assets' instead. This field will be removed in a future version.")
   media_assets: [MediaAsset!]
 }
 
@@ -1770,10 +1745,9 @@ type WorkflowStatus {
 type Query {
   # Get a single token by CID
   # Equivalent to: GET /api/v1/tokens/:cid
-  # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
+  # Expansions are inferred from requested fields (metadata, owners, provenance_events, etc.).
   token(
     cid: String!
-    expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
     owners_limit: Uint8 = 10
     owners_offset: Uint64 = 0
     provenance_events_limit: Uint8 = 10
@@ -1783,10 +1757,8 @@ type Query {
 
   # List tokens with filters
   # Equivalent to: GET /api/v1/tokens
-  # Note: Expansions are auto-detected from your query fields. The 'expands' parameter is optional for backward compatibility.
-  # Important: When querying multiple tokens, owners and provenance_events expansions return a fixed number of items (first 20 items per token).
-  # Pagination parameters (owners_limit, owners_offset, provenance_events_limit, provenance_events_offset, provenance_events_order) are NOT supported for bulk token queries.
-  # Use the single token query (token) for paginated owners and provenance_events.
+  # Expansions are inferred from requested fields on each token.
+  # For list queries, owners and provenance_events return a fixed number of items per token (first 20); use ` + "`" + `token` + "`" + ` for full pagination.
   tokens(
     owners: [String!]
     chains: [String!]
@@ -1799,12 +1771,6 @@ type Query {
     include_unviewable: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
-    expands: [String!] @deprecated(reason: "Expansions are now auto-detected from your GraphQL query fields (owners, provenance_events, enrichment_source, metadata_media_assets, enrichment_source_media_assets). Explicitly specifying expands is no longer necessary.")
-    owners_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
-    owners_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated owners.")
-    provenance_events_limit: Uint8 = 10 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
-    provenance_events_offset: Uint64 = 0 @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
-    provenance_events_order: Order = desc @deprecated(reason: "Pagination parameters are not supported for bulk token queries. Use the single token query (token) for paginated provenance events.")
   ): TokenList
 
   # Get workflow status by workflow ID and run ID
@@ -2084,36 +2050,31 @@ func (ec *executionContext) field_Query_token_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["cid"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "expands", ec.unmarshalOString2ᚕstringᚄ)
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["expands"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["owners_limit"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "owners_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
 	if err != nil {
 		return nil, err
 	}
-	args["owners_limit"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "owners_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["owners_offset"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["owners_offset"] = arg3
-	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["provenance_events_limit"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
 	if err != nil {
 		return nil, err
 	}
-	args["provenance_events_limit"] = arg4
-	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["provenance_events_offset"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
 	if err != nil {
 		return nil, err
 	}
-	args["provenance_events_offset"] = arg5
-	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_order"] = arg6
+	args["provenance_events_order"] = arg5
 	return args, nil
 }
 
@@ -2175,36 +2136,6 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["sort_order"] = arg10
-	arg11, err := graphql.ProcessArgField(ctx, rawArgs, "expands", ec.unmarshalOString2ᚕstringᚄ)
-	if err != nil {
-		return nil, err
-	}
-	args["expands"] = arg11
-	arg12, err := graphql.ProcessArgField(ctx, rawArgs, "owners_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
-	if err != nil {
-		return nil, err
-	}
-	args["owners_limit"] = arg12
-	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "owners_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
-	if err != nil {
-		return nil, err
-	}
-	args["owners_offset"] = arg13
-	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_limit"] = arg14
-	arg15, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_offset"] = arg15
-	arg16, err := graphql.ProcessArgField(ctx, rawArgs, "provenance_events_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
-	if err != nil {
-		return nil, err
-	}
-	args["provenance_events_order"] = arg16
 	return args, nil
 }
 
@@ -3343,35 +3274,6 @@ func (ec *executionContext) _MediaAsset_provider_metadata(ctx context.Context, f
 }
 
 func (ec *executionContext) fieldContext_MediaAsset_provider_metadata(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "MediaAsset",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type JSON does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _MediaAsset_variant_urls(ctx context.Context, field graphql.CollectedField, obj *dto.MediaAssetResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_MediaAsset_variant_urls,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.MediaAsset().VariantURLs(ctx, obj)
-		},
-		nil,
-		ec.marshalNJSON2githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐJSON,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_MediaAsset_variant_urls(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "MediaAsset",
 		Field:      field,
@@ -4805,7 +4707,7 @@ func (ec *executionContext) _Query_token(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_token,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["expands"].([]string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOToken2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenResponse,
@@ -4858,10 +4760,6 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_owner_provenances(ctx, field)
 			case "enrichment_source":
 				return ec.fieldContext_Token_enrichment_source(ctx, field)
-			case "metadata_media_assets":
-				return ec.fieldContext_Token_metadata_media_assets(ctx, field)
-			case "enrichment_source_media_assets":
-				return ec.fieldContext_Token_enrichment_source_media_assets(ctx, field)
 			case "media_assets":
 				return ec.fieldContext_Token_media_assets(ctx, field)
 			}
@@ -4890,7 +4788,7 @@ func (ec *executionContext) _Query_tokens(ctx context.Context, field graphql.Col
 		ec.fieldContext_Query_tokens,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order), fc.Args["expands"].([]string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,
@@ -5999,112 +5897,6 @@ func (ec *executionContext) fieldContext_Token_enrichment_source(_ context.Conte
 	return fc, nil
 }
 
-func (ec *executionContext) _Token_metadata_media_assets(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Token_metadata_media_assets,
-		func(ctx context.Context) (any, error) {
-			return obj.MetadataMediaAssets, nil
-		},
-		nil,
-		ec.marshalOMediaAsset2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐMediaAssetResponseᚄ,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_Token_metadata_media_assets(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Token",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "id":
-				return ec.fieldContext_MediaAsset_id(ctx, field)
-			case "source_url":
-				return ec.fieldContext_MediaAsset_source_url(ctx, field)
-			case "mime_type":
-				return ec.fieldContext_MediaAsset_mime_type(ctx, field)
-			case "file_size_bytes":
-				return ec.fieldContext_MediaAsset_file_size_bytes(ctx, field)
-			case "provider":
-				return ec.fieldContext_MediaAsset_provider(ctx, field)
-			case "provider_asset_id":
-				return ec.fieldContext_MediaAsset_provider_asset_id(ctx, field)
-			case "provider_metadata":
-				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
-			case "variant_urls":
-				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
-			case "variants":
-				return ec.fieldContext_MediaAsset_variants(ctx, field)
-			case "created_at":
-				return ec.fieldContext_MediaAsset_created_at(ctx, field)
-			case "updated_at":
-				return ec.fieldContext_MediaAsset_updated_at(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type MediaAsset", field.Name)
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _Token_enrichment_source_media_assets(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_Token_enrichment_source_media_assets,
-		func(ctx context.Context) (any, error) {
-			return obj.EnrichmentSourceMediaAssets, nil
-		},
-		nil,
-		ec.marshalOMediaAsset2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐMediaAssetResponseᚄ,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_Token_enrichment_source_media_assets(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "Token",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			switch field.Name {
-			case "id":
-				return ec.fieldContext_MediaAsset_id(ctx, field)
-			case "source_url":
-				return ec.fieldContext_MediaAsset_source_url(ctx, field)
-			case "mime_type":
-				return ec.fieldContext_MediaAsset_mime_type(ctx, field)
-			case "file_size_bytes":
-				return ec.fieldContext_MediaAsset_file_size_bytes(ctx, field)
-			case "provider":
-				return ec.fieldContext_MediaAsset_provider(ctx, field)
-			case "provider_asset_id":
-				return ec.fieldContext_MediaAsset_provider_asset_id(ctx, field)
-			case "provider_metadata":
-				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
-			case "variant_urls":
-				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
-			case "variants":
-				return ec.fieldContext_MediaAsset_variants(ctx, field)
-			case "created_at":
-				return ec.fieldContext_MediaAsset_created_at(ctx, field)
-			case "updated_at":
-				return ec.fieldContext_MediaAsset_updated_at(ctx, field)
-			}
-			return nil, fmt.Errorf("no field named %q was found under type MediaAsset", field.Name)
-		},
-	}
-	return fc, nil
-}
-
 func (ec *executionContext) _Token_media_assets(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6143,8 +5935,6 @@ func (ec *executionContext) fieldContext_Token_media_assets(_ context.Context, f
 				return ec.fieldContext_MediaAsset_provider_asset_id(ctx, field)
 			case "provider_metadata":
 				return ec.fieldContext_MediaAsset_provider_metadata(ctx, field)
-			case "variant_urls":
-				return ec.fieldContext_MediaAsset_variant_urls(ctx, field)
 			case "variants":
 				return ec.fieldContext_MediaAsset_variants(ctx, field)
 			case "created_at":
@@ -6607,10 +6397,6 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_owner_provenances(ctx, field)
 			case "enrichment_source":
 				return ec.fieldContext_Token_enrichment_source(ctx, field)
-			case "metadata_media_assets":
-				return ec.fieldContext_Token_metadata_media_assets(ctx, field)
-			case "enrichment_source_media_assets":
-				return ec.fieldContext_Token_enrichment_source_media_assets(ctx, field)
 			case "media_assets":
 				return ec.fieldContext_Token_media_assets(ctx, field)
 			}
@@ -9505,42 +9291,6 @@ func (ec *executionContext) _MediaAsset(ctx context.Context, sel ast.SelectionSe
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "variant_urls":
-			field := field
-
-			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._MediaAsset_variant_urls(ctx, field, obj)
-				if res == graphql.Null {
-					atomic.AddUint32(&fs.Invalids, 1)
-				}
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "variants":
 			field := field
 
@@ -10888,10 +10638,6 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			out.Values[i] = ec._Token_owner_provenances(ctx, field, obj)
 		case "enrichment_source":
 			out.Values[i] = ec._Token_enrichment_source(ctx, field, obj)
-		case "metadata_media_assets":
-			out.Values[i] = ec._Token_metadata_media_assets(ctx, field, obj)
-		case "enrichment_source_media_assets":
-			out.Values[i] = ec._Token_enrichment_source_media_assets(ctx, field, obj)
 		case "media_assets":
 			out.Values[i] = ec._Token_media_assets(ctx, field, obj)
 		default:
