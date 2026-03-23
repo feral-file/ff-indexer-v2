@@ -29,3 +29,4 @@ Use these principles when evaluating proposals and implementations.
 - Do not invent requirements or future scale needs.
 - Push back on over-engineering.
 - Call out weak error handling, unclear failures, and poor observability.
+- Preserve important design context in code comments when that context would help future maintainers or agents amend the code safely.

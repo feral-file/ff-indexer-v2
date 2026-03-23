@@ -1,0 +1,29 @@
+---
+description: Go coding style and documentation-comment expectations for ff-indexer-v2
+alwaysApply: true
+---
+
+# Go Coding Style
+
+Follow standard Go style and Go documentation conventions.
+
+## Comments
+
+- Prefer comments more than usual when they preserve context that will help future agentic coding sessions amend the code safely.
+- Use Go doc style for exported packages, types, funcs, methods, constants, and variables when a comment adds meaning.
+- For non-obvious logic, store the design intent close to the code instead of assuming it will remain obvious later.
+
+Good comment content includes:
+
+- why this code exists
+- important invariants
+- design constraints
+- trade-offs and rejected alternatives
+- failure modes and operational caveats
+- coupling to schema, queue, API, or migration behavior
+
+Avoid comments that only restate syntax or narrate obvious control flow.
+
+## Preference
+
+When choosing between slightly more code comments and losing important context, prefer the comments.
