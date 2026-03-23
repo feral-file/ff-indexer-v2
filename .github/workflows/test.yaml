@@ -5,10 +5,26 @@ on:
     branches: [main, develop]
     paths:
       - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.golangci.yaml'
+      - 'Makefile'
+      - 'db/**'
+      - 'internal/api/graphql/**'
+      - '.github/workflows/**'
+      - '.github/actions/**'
   push:
     branches: [main, develop]
     paths:
       - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.golangci.yaml'
+      - 'Makefile'
+      - 'db/**'
+      - 'internal/api/graphql/**'
+      - '.github/workflows/**'
+      - '.github/actions/**'
 
   workflow_dispatch:
     inputs:
@@ -25,6 +41,11 @@ jobs:
   test:
     name: Test (Go)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: test-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     
     # PostgreSQL service for integration tests
     services:

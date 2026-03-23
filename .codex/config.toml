@@ -1,0 +1,5 @@
+# Repo-local Codex config. Project-scoped agents live in .codex/agents/.
+
+[agents]
+max_threads = 6
+max_depth = 1

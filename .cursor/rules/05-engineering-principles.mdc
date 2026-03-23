@@ -1,0 +1,31 @@
+---
+description: Engineering principles and evaluation posture for ff-indexer-v2
+alwaysApply: true
+---
+
+# Engineering Principles
+
+Use these principles when evaluating proposals and implementations.
+
+## Simplicity by default
+
+- Default to the simplest design that meets correctness and reliability for current production needs.
+- Treat added complexity as a last resort and justify it explicitly.
+
+## Reliable and transparent behavior
+
+- Prefer predictable behavior over cleverness.
+- Make degraded or missing state explicit.
+- Errors must be actionable.
+- Avoid silent failure paths.
+
+## Community contribution
+
+- Keep the project easy to run locally.
+- Keep setup and mental overhead low.
+
+## Review posture
+
+- Do not invent requirements or future scale needs.
+- Push back on over-engineering.
+- Call out weak error handling, unclear failures, and poor observability.

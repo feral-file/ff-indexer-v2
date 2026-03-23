@@ -1,0 +1,16 @@
+---
+description: Placeholder for repo-owner business requirements
+alwaysApply: true
+---
+
+# Business Requirements Placeholder
+
+Business requirements for this repository live in `docs/business_requirements.md`.
+
+That document is currently `TBD by repo owner`.
+
+Until it is filled in:
+
+- do not invent product requirements
+- do not broaden scope without explicit evidence from issues, docs, or user requests
+- call out when a change depends on missing business guidance

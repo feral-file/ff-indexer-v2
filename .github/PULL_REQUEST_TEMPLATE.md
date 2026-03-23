@@ -1,8 +1,12 @@
 # Pull Request
 
-## Description
+## Goal
 
-<!-- Provide a clear description of what this PR does and why it's needed -->
+<!-- What user/problem outcome is this PR trying to achieve? -->
+
+## Scope
+
+<!-- What files, modules, or systems are intentionally in scope? -->
 
 ## Type of Change
 
@@ -22,34 +26,40 @@
 Fixes #
 Related to #
 
-## Changes Made
+## Handoff For Review
 
-<!-- List the key changes made in this PR -->
+<!-- Keep this compact so humans and agent reviewers can use it directly -->
 
-- 
-- 
-- 
+- Files or modules changed:
+- Key decisions and trade-offs:
+- Tests added or updated:
+- Known limitations or follow-up risks:
 
 ## Testing
 
-<!-- Describe how you tested these changes -->
+<!-- Describe exactly what verification you ran -->
 
 - [ ] Unit tests added/updated
 - [ ] Integration tests added/updated
 - [ ] Manual testing performed
-- [ ] All existing tests pass
+- [ ] `make check` passed locally
+- [ ] Full expected verification could not be run locally and is explained below
 
-### Test Steps
+### Verification Output
 
-<!-- Provide steps to test the changes -->
+<!-- Paste or summarize the key commands/results -->
 
-1. 
-2. 
-3. 
+- Commands run:
+- Key results:
+- Anything not run and why:
 
-## Screenshots (if applicable)
+## Documentation
 
-<!-- Add screenshots for UI changes -->
+- [ ] No documentation updates were needed
+- [ ] Updated `docs/`
+- [ ] Updated `README.md` or `DEVELOPMENT.md`
+- [ ] Architecture guidance still `TBD by repo owner`
+- [ ] API design guidance still `TBD by repo owner`
 
 ## Checklist
 
@@ -62,11 +72,12 @@ Related to #
 - [ ] My changes generate no new warnings
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests pass locally with my changes
+- [ ] I have called out any missing local verification explicitly
+- [ ] I have considered whether schema, migration, or generated code updates were required
 - [ ] Any dependent changes have been merged and published
 
 ## Additional Notes
 
 <!-- Add any additional context, notes, or considerations for reviewers -->
-
 
 

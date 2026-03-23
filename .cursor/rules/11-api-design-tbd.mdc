@@ -1,0 +1,16 @@
+---
+description: Placeholder for repo-owner API design rules
+alwaysApply: true
+---
+
+# API Design Guidance Placeholder
+
+API design rules for this repository live in `docs/api_design.md`.
+
+That document is intentionally left as `TBD by repo owner`.
+
+Until this file is filled in:
+
+- do not invent repo-wide API style mandates
+- preserve existing API conventions unless a change is clearly needed
+- call out API contract changes, compatibility impacts, and missing documentation explicitly

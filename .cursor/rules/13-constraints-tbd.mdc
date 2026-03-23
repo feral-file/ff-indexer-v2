@@ -1,0 +1,16 @@
+---
+description: Placeholder for repo-owner constraints documentation
+alwaysApply: true
+---
+
+# Constraints Placeholder
+
+Repository constraints live in `docs/constraints.md`.
+
+That document is currently `TBD by repo owner`.
+
+Until it is filled in:
+
+- preserve existing behavior unless there is a clear reason to change it
+- call out assumptions about compatibility, performance, operations, or security
+- prefer explicit trade-off notes in handoffs and PR descriptions when constraints are unclear

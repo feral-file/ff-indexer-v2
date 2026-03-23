@@ -1,0 +1,14 @@
+---
+description: Placeholder for repo-owner architecture rules
+alwaysApply: true
+---
+
+# Architecture Guidance Placeholder
+
+Architecture boundaries for this repository are intentionally left as `TBD by repo owner`.
+
+Until this file is filled in:
+
+- avoid inventing new architecture doctrine
+- prefer existing code patterns unless they clearly violate reliability or simplicity
+- note architecture-affecting changes explicitly in handoffs and PR descriptions
