@@ -1,16 +1,14 @@
 ---
-description: Placeholder for repo-owner business requirements
+description: Business requirements source for ff-indexer-v2
 alwaysApply: true
 ---
 
-# Business Requirements Placeholder
+# Business Requirements
 
-Business requirements for this repository live in `docs/business_requirements.md`.
+**Product-level requirements and scope** live in `docs/business_requirements.md` (problem statement, users, jobs-to-be-done, in/out of scope, success criteria, risks).
 
-That document is currently `TBD by repo owner`.
+Rules:
 
-Until it is filled in:
-
-- do not invent product requirements
-- do not broaden scope without explicit evidence from issues, docs, or user requests
-- call out when a change depends on missing business guidance
+- Do **not** invent product requirements or expand scope beyond that document, **issues**, **explicit user requests**, or other **checked-in docs**.
+- If a change assumes motivation or scope that is not documented, **call that out** in the PR or handoff so owners can confirm.
+- When behavior materially shifts who the system serves or what it promises (e.g. new chain class, new trust claims), **update `docs/business_requirements.md`** in the same change when appropriate.

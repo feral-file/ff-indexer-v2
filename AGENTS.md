@@ -23,15 +23,14 @@ Tool-specific adapters live in `.cursor/`, `.codex/`, `opencode.json`, and `prom
 - Store important amendment context close to the code when that context would otherwise be lost in a later session.
 - Do not add filler comments that only restate obvious syntax or line-by-line behavior.
 
-## Owner-owned guidance
+## Product, API, and architecture guidance
 
-These files are placeholders and should not be treated as fully defined policy until the repo owner fills them in:
+Use these as the default sources of truth for scope and public contracts (keep them aligned when behavior changes):
 
-- `docs/business_requirements.md`
-- `docs/constraints.md`
-- `docs/api_design.md`
-
-Architecture boundaries are also still `TBD by repo owner`.
+- `docs/business_requirements.md` — product intent, users, in/out of scope
+- `docs/constraints.md` — guardrails (data, compatibility, ops, security)
+- `docs/api_design.md` — API conventions and evolution rules
+- `docs/architecture.md` — system components and data flow
 
 ## Workflow
 
@@ -41,7 +40,7 @@ Default sequence:
 
 For substantial changes such as major features, refactors, schema changes, API changes, or architecture-affecting work:
 
-1. Read the relevant docs and code, including the owner-owned docs above when available.
+1. Read the relevant docs and code, including the product/API/architecture sources listed above.
 2. Summarize the current behavior, constraints, and invariants.
 3. Write or update a short spec, design note, or implementation plan.
 4. Define expected behavior and verification.

@@ -1,16 +1,24 @@
 ---
-description: Placeholder for repo-owner API design rules
+description: API design rules and contract sources for ff-indexer-v2
 alwaysApply: true
 ---
 
-# API Design Guidance Placeholder
+# API Design Rules
 
-API design rules for this repository live in `docs/api_design.md`.
+**Conventions and evolution rules** live in `docs/api_design.md`.
 
-That document is intentionally left as `TBD by repo owner`.
+**Normative contracts** (must match implementation):
 
-Until this file is filled in:
+- REST: `api/openapi/openapi.yaml`
+- GraphQL: `api/graphql/schema.graphql`
 
-- do not invent repo-wide API style mandates
-- preserve existing API conventions unless a change is clearly needed
-- call out API contract changes, compatibility impacts, and missing documentation explicitly
+**Enforced limits and defaults** for shared HTTP/API behavior are defined in code as `internal/api/shared/constants/constants.go` (e.g. max batch sizes, default pagination, webhook retry bounds). When changing behavior:
+
+- Update **constants**, **handlers/resolvers/DTO validation**, **OpenAPI**, and **GraphQL** together so clients, docs, and enforcement do not drift.
+- After GraphQL schema edits, run gqlgen per `AGENTS.md`.
+
+Rules:
+
+- Preserve **snake_case** JSON, **`/api/v1`** REST prefix, **`APIError`** shape, and **auth split** (e.g. webhook client creation is API-key-only) unless a versioned migration is planned.
+- Treat **REST/GraphQL semantic parity** as a constraint for the same operations.
+- Call out **breaking** changes (paths, required fields, signing, checkpoint semantics) explicitly in PRs and release notes.

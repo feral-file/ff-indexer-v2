@@ -1,16 +1,14 @@
 ---
-description: Placeholder for repo-owner constraints documentation
+description: Repository constraints for ff-indexer-v2
 alwaysApply: true
 ---
 
-# Constraints Placeholder
+# Constraints
 
-Repository constraints live in `docs/constraints.md`.
+**Hard and soft constraints** (product boundary, data model, API compatibility, performance, operations, security, deployment, non-goals) live in `docs/constraints.md`.
 
-That document is currently `TBD by repo owner`.
+Rules:
 
-Until it is filled in:
-
-- preserve existing behavior unless there is a clear reason to change it
-- call out assumptions about compatibility, performance, operations, or security
-- prefer explicit trade-off notes in handoffs and PR descriptions when constraints are unclear
+- Prefer changes that **respect** those constraints; if a change **relaxes or tightens** a constraint (e.g. pagination caps, checkpoint semantics, auth policy), **update `docs/constraints.md`** and related API docs in the same effort.
+- When constraints and OpenAPI/GraphQL appear to **conflict**, treat it as a **bug or tech debt**—resolve deliberately rather than silently choosing one source.
+- If operational or security trade-offs are unclear, document them in the **PR description** even when `docs/constraints.md` does not yet mention that edge case.
