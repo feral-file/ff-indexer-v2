@@ -1,0 +1,16 @@
+---
+description: Top-level repo contract for ff-indexer-v2
+alwaysApply: true
+---
+
+# Repository Contract
+
+Follow `AGENTS.md` as the top-level contract for this repository.
+
+Default operating model:
+
+`spec -> design -> tasks -> tests -> implementation -> verification -> review -> merge`
+
+Use TDD as the default workflow for behavior changes.
+
+Do not skip required verification or the review loop unless the user explicitly accepts that risk.

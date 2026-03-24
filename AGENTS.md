@@ -1,97 +1,99 @@
-# Agent guidance
+# AGENTS.md - FF Indexer v2
 
-This document is for AI assistants and automation working on this repository. Apply it when reviewing, designing, or changing code.
+Top-level repo contract for coding agents.
 
-## Engineering principles
+Tool-specific adapters live in `.cursor/`, `.codex/`, `opencode.json`, and `prompts/`.
 
-Use these principles when evaluating designs, implementations, and questions.
+## Purpose
 
-**How to behave**
+`ff-indexer-v2` indexes blockchain activity and media/metadata state for Feral File services and exposes reliable downstream data and APIs.
 
-- Prefer the principles below when reviewing or proposing solutions.
-- When suggesting changes, explain how they align with or improve adherence to these principles.
-- If something appears to violate a principle, say so clearly and explain why.
-- If a request is vague and compliance with the principles is unclear, ask clarifying questions instead of assuming requirements.
-- Do not invent requirements or user needs. Question assumptions about scale, complexity, and necessity.
+## Coding defaults
 
-### Simplicity by default
+- Prefer the simplest change that preserves correctness, reliability, and debuggability.
+- Do not invent product, architecture, or API requirements that are not documented.
+- Avoid silent failure paths; errors and degraded states should be explicit and actionable.
+- Treat tests, generators, schema updates, and docs updates as part of the same change, not follow-up work.
 
-- Default to the simplest design that meets correctness and reliability for our current scale (around 3000 users), even in full production.
-- Treat added complexity as a last resort, justified only when simpler designs fail in practice and trade-offs are understood.
+## Coding style
 
-### Reliable and transparent behavior
+- Follow standard Go style and Go doc conventions.
+- Prefer comments more than usual when they add future maintenance value for later agentic coding sessions.
+- Use comments to preserve design intent, trade-offs, invariants, failure modes, operational constraints, and reasons a simpler-looking alternative was not chosen.
+- Store important amendment context close to the code when that context would otherwise be lost in a later session.
+- Do not add filler comments that only restate obvious syntax or line-by-line behavior.
 
-- Reliability comes first: the system may be slow or limited, but it should behave predictably.
-- Do not hide system state. If something is slow, missing, or unavailable, make that explicit.
-- Errors should be clear and actionable.
-- Avoid failing silently or leaving users without a clear next step.
+## Product, API, and architecture guidance
 
-### Community contribution
+Use these as the default sources of truth for scope and public contracts (keep them aligned when behavior changes):
 
-- Keep the project easy to run locally.
-- Keep setup, dependencies, and mental overhead low.
+- `docs/business_requirements.md` — product intent, users, in/out of scope
+- `docs/constraints.md` — guardrails (data, compatibility, ops, security)
+- `docs/api_design.md` — API conventions and evolution rules
+- `docs/architecture.md` — system components and data flow
 
-### Common pitfalls
+## Workflow
 
-**Over-engineering**
+Default sequence:
 
-- Complexity without a clear current need.
-- Designing for massive scale when the system only needs to support around 3000 users.
-- Features or abstractions no one has asked for.
-- Heavy infrastructure where simpler options suffice.
+`spec -> design -> tasks -> tests -> implementation -> verification -> review -> merge`
 
-**Reliability and quality**
+For substantial changes such as major features, refactors, schema changes, API changes, or architecture-affecting work:
 
-- Weak or missing error handling.
-- Errors that are not actionable or informative.
-- Too little logging or observability for debugging user issues.
-- Logs that are noisy, oversized, or costly.
+1. Read the relevant docs and code, including the product/API/architecture sources listed above.
+2. Summarize the current behavior, constraints, and invariants.
+3. Write or update a short spec, design note, or implementation plan.
+4. Define expected behavior and verification.
+5. Add or update tests before implementing behavior changes.
+6. Implement, verify, and review.
 
-## Development workflow
+If a substantial change has no spec or design note, do not jump straight to implementation.
 
-### Code generation
+## Repo-specific change rules
 
-**GraphQL schema**
-
-After the GraphQL schema changes:
+- After GraphQL schema changes:
 
 ```bash
 cd internal/api/graphql
 go run github.com/99designs/gqlgen generate
 ```
 
-**Mocks**
-
-When interfaces with a `//go:generate mockgen` directive are added, changed, or removed, regenerate mocks:
+- When interfaces with `//go:generate mockgen` are added, changed, or removed:
 
 ```bash
 go generate ./...
 ```
 
-Do not edit generated mocks by hand; always use `go generate`.
+- Do not edit generated mocks manually.
+- For DB schema changes, update both `db/migrations/` and `db/init_pg_db.sql`, and update `pg_test_data` when needed.
+- Update `docs/`, `README.md`, or `DEVELOPMENT.md` when behavior, setup, architecture, or operations materially change.
+- For non-trivial exported Go types and functions, prefer Go doc comments that help a future reader understand purpose and constraints.
 
-### Validation
+## Verification
 
-After substantive code changes, run:
+Primary verification command:
 
 ```bash
 make check
 ```
 
-This formats code, runs linting, and runs tests (including coverage). Local runs need tools such as `golangci-lint`.
+Run additional targeted generation or build checks when relevant. If you cannot run the full expected verification, say so explicitly.
 
-### Database schema changes
+## Review and done
 
-1. Add a migration under `db/migrations/` using sequential names (`001.sql`, `002.sql`, …). Use a suffix for special cases (e.g. `011_backfill.sql`).
-2. Mirror the same shape in `db/init_pg_db.sql` so fresh installs stay consistent.
-3. Update `pg_test_data` when tests need new or changed data.
+Use the review contract in `prompts/code-review.md`.
 
-### Documentation
+Before merge, commit finalization, or PR completion:
 
-- **Schema or architecture changes:** update `docs/` as appropriate.
-- **Major product or setup changes:** update `README.md` or `DEVELOPMENT.md` when features, architecture, setup, deployment, dependencies, or requirements change materially.
+1. Prepare a compact handoff with goal, scope, changed files/modules, decisions, tests, checks run, and known limitations.
+2. Run a fresh-context review.
+3. Address review findings, re-verify, and repeat until the reviewer returns `Verdict: accept`.
 
-## Pull requests and CI
+A change is done only when implementation, relevant tests, verification, documentation, and review are all complete.
 
-- Prefer waiting for CI status checks before considering a PR done.
-- If local `make check` (or full CI) cannot be run, state that explicitly in the PR description so reviewers know what was validated.
+## Commit style
+
+Use Conventional Commits:
+
+- `<type>(<optional-scope>): <description>`
+- Types: `feat`, `fix`, `refactor`, `test`, `chore`, `docs`, `build`, `ci`, `perf`, `style`

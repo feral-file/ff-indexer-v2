@@ -1,0 +1,20 @@
+---
+description: TDD-first testing expectations for ff-indexer-v2
+alwaysApply: true
+---
+
+# Testing And TDD
+
+TDD is the default discipline for behavior changes.
+
+- Write or update tests before implementation when behavior changes.
+- Use tests to define expected behavior and guard against regressions.
+- Treat missing or failing tests as part of the work, not follow-up work.
+
+Testing should fit the change:
+
+- unit tests for business logic
+- integration tests for DB, GraphQL, queue, and service boundaries
+- end-to-end or system checks for critical flows when appropriate
+
+If strict test-first sequencing is not practical, say so explicitly in the handoff or PR description.
