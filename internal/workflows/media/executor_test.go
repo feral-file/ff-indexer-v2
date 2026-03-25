@@ -14,6 +14,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/local"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
@@ -302,6 +303,30 @@ func TestIndexMediaFile_ProviderSelfHosted(t *testing.T) {
 		Return(nil, nil)
 
 	// Mock mediaProcessor.Process to succeed
+	mocks.mediaProcessor.EXPECT().
+		Process(ctx, url).
+		Return(nil)
+
+	err := mocks.executor.IndexMediaFile(ctx, url)
+
+	assert.NoError(t, err)
+}
+
+func TestIndexMediaFile_ProviderLocal(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	url := "https://example.com/image.png"
+
+	mocks.mediaProcessor.EXPECT().
+		Provider().
+		Return(local.LOCAL_PROVIDER_NAME)
+
+	mocks.store.EXPECT().
+		GetMediaAssetBySourceURL(ctx, url, schema.StorageProviderLocal).
+		Return(nil, nil)
+
 	mocks.mediaProcessor.EXPECT().
 		Process(ctx, url).
 		Return(nil)

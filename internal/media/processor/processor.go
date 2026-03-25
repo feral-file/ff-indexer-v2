@@ -22,6 +22,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/local"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
@@ -525,6 +526,8 @@ func (p *processor) toSchemaStorageProvider() schema.StorageProvider {
 	switch p.provider.Name() {
 	case cloudflare.CLOUDFLARE_PROVIDER_NAME:
 		return schema.StorageProviderCloudflare
+	case local.LOCAL_PROVIDER_NAME:
+		return schema.StorageProviderLocal
 	default:
 		return schema.StorageProviderSelfHosted
 	}

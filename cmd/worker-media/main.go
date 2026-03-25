@@ -4,10 +4,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,11 +28,14 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/downloader"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
+	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
 	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/local"
 	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
@@ -85,6 +92,15 @@ func main() {
 	// Initialize store
 	dataStore := store.NewPGStore(db)
 
+	if strings.ToLower(cfg.Media.Provider) == local.LOCAL_PROVIDER_NAME {
+		exists, err := dataStore.CheckStorageProviderEnum(ctx, schema.StorageProviderLocal)
+		if err != nil {
+			logger.WarnCtx(ctx, "Failed to check storage provider enum", zap.Error(err))
+		} else if !exists {
+			logger.WarnCtx(ctx, "Storage provider enum missing; run migration 013.sql", zap.String("provider", string(schema.StorageProviderLocal)))
+		}
+	}
+
 	// Initialize adapters
 	ioAdapter := adapter.NewIO()
 	jsonAdapter := adapter.NewJSON()
@@ -105,26 +121,41 @@ func main() {
 	}
 	uriResolver := uri.NewResolver(httpClient, uriResolverConfig)
 
-	// Initialize Cloudflare client
-	cfClient, err := adapter.NewCloudflareClient(cfg.Cloudflare.APIToken)
-	if err != nil {
-		logger.FatalCtx(ctx, "Failed to create Cloudflare client", zap.Error(err))
-	}
-
 	// Initialize downloader for media file downloads
 	mediaDownloaderHTTPClient := adapter.NewHTTPClient(15 * time.Minute)
 	mediaDownloader := downloader.NewDownloader(mediaDownloaderHTTPClient, fileSystem)
 
-	// Initialize Cloudflare media provider (handles both Images and Stream)
-	cloudflareConfig := &cloudflare.Config{
-		AccountID: cfg.Cloudflare.AccountID,
-		APIToken:  cfg.Cloudflare.APIToken,
-	}
-	mediaProvider := cloudflare.NewMediaProvider(cfClient, cloudflareConfig, mediaDownloader, fileSystem)
+	// Initialize media provider
+	var mediaProvider mediaprovider.Provider
+	switch strings.ToLower(cfg.Media.Provider) {
+	case local.LOCAL_PROVIDER_NAME:
+		mediaProvider = local.NewMediaProvider(&local.Config{
+			StorageDir: cfg.Media.Local.StorageDir,
+			BaseURL:    cfg.Media.Local.BaseURL,
+		}, mediaDownloader, fileSystem)
 
-	logger.InfoCtx(ctx, "Initialized Cloudflare media provider",
-		zap.String("accountID", cfg.Cloudflare.AccountID),
-	)
+		logger.InfoCtx(ctx, "Initialized local media provider",
+			zap.String("storageDir", cfg.Media.Local.StorageDir),
+			zap.String("baseURL", cfg.Media.Local.BaseURL),
+		)
+	case cloudflare.CLOUDFLARE_PROVIDER_NAME:
+		cfClient, err := adapter.NewCloudflareClient(cfg.Cloudflare.APIToken)
+		if err != nil {
+			logger.FatalCtx(ctx, "Failed to create Cloudflare client", zap.Error(err))
+		}
+
+		cloudflareConfig := &cloudflare.Config{
+			AccountID: cfg.Cloudflare.AccountID,
+			APIToken:  cfg.Cloudflare.APIToken,
+		}
+		mediaProvider = cloudflare.NewMediaProvider(cfClient, cloudflareConfig, mediaDownloader, fileSystem)
+
+		logger.InfoCtx(ctx, "Initialized Cloudflare media provider",
+			zap.String("accountID", cfg.Cloudflare.AccountID),
+		)
+	default:
+		logger.FatalCtx(ctx, "Unsupported media provider", zap.String("provider", cfg.Media.Provider))
+	}
 
 	// Initialize SVG rasterizer with adapters and config
 	browserRasterizer := rasterizer.NewBrowserRasterizer(
@@ -203,6 +234,16 @@ func main() {
 	temporalWorker.RegisterActivity(mediaExecutor.IndexMediaFile)
 	logger.InfoCtx(ctx, "Registered media processing activity")
 
+	// Start local media server (optional)
+	var localMediaServer *http.Server
+	if strings.ToLower(cfg.Media.Provider) == local.LOCAL_PROVIDER_NAME && cfg.Media.Local.Server.Enabled {
+		server, err := startLocalMediaServer(ctx, cfg.Media.Local)
+		if err != nil {
+			logger.FatalCtx(ctx, "Failed to start local media server", zap.Error(err))
+		}
+		localMediaServer = server
+	}
+
 	// Start the worker
 	err = temporalWorker.Start()
 	if err != nil {
@@ -228,5 +269,62 @@ func main() {
 		logger.ErrorCtx(ctx, err, zap.String("component", "transformer"))
 	}
 
+	if localMediaServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := localMediaServer.Shutdown(shutdownCtx); err != nil {
+			logger.WarnCtx(ctx, "Failed to stop local media server", zap.Error(err))
+		}
+		shutdownCancel()
+	}
+
 	logger.InfoCtx(ctx, "Worker Media stopped")
+}
+
+func startLocalMediaServer(ctx context.Context, cfg config.LocalMediaConfig) (*http.Server, error) {
+	storageDir := strings.TrimSpace(cfg.StorageDir)
+	if storageDir == "" {
+		return nil, fmt.Errorf("media.local.storage_dir is required")
+	}
+
+	basePath := strings.TrimSpace(cfg.Server.BasePath)
+	if basePath == "" {
+		basePath = "/media"
+	}
+	if !strings.HasPrefix(basePath, "/") {
+		basePath = "/" + basePath
+	}
+
+	host := cfg.Server.Host
+	if host == "" {
+		host = "0.0.0.0"
+	}
+	addr := fmt.Sprintf("%s:%d", host, cfg.Server.Port)
+
+	fileHandler := http.FileServer(http.Dir(storageDir))
+	stripPrefix := path.Clean(basePath)
+
+	mux := http.NewServeMux()
+	mux.Handle(basePath+"/", http.StripPrefix(stripPrefix, fileHandler))
+	mux.Handle(basePath, http.StripPrefix(stripPrefix, fileHandler))
+
+	server := &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		logger.InfoCtx(ctx, "Starting local media server",
+			zap.String("addr", addr),
+			zap.String("basePath", basePath),
+			zap.String("storageDir", storageDir),
+		)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.ErrorCtx(ctx, err, zap.String("component", "local-media-server"))
+		}
+	}()
+
+	return server, nil
 }

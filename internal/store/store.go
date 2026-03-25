@@ -342,6 +342,9 @@ type Store interface {
 	// Returns a map of tokenID -> provenances and a map of tokenID -> total count. Limit is applied per token.
 	GetTokenOwnerProvenancesBulk(ctx context.Context, tokenIDs []uint64, ownerAddresses []string, maxPerToken int) (map[uint64][]schema.TokenOwnershipProvenance, map[uint64]uint64, error)
 
+	// CheckStorageProviderEnum verifies the storage provider enum contains a value
+	CheckStorageProviderEnum(ctx context.Context, provider schema.StorageProvider) (bool, error)
+
 	// =============================================================================
 	// Provenance & Event Tracking
 	// =============================================================================

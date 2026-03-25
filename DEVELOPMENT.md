@@ -165,6 +165,21 @@ cd cmd/worker-media
 go run main.go
 ```
 
+Local media provider (default) writes files to `./tmp/media` and serves them via a small static server:
+- Config: `media.provider=local`, `media.local.storage_dir`, `media.local.base_url`
+- Static server: `media.local.server.enabled=true` (default `http://localhost:8082/media`)
+- Cloudflare remains available by setting `media.provider=cloudflare` and Cloudflare credentials
+
+To enqueue a local media indexing job (data URI or URL), use the media CLI:
+```bash
+go run cmd/media-cli/main.go
+
+# Or pass a specific URL or data URI
+go run cmd/media-cli/main.go -url "https://placehold.co/1x1.jpg"
+```
+
+If PNG data URIs fail with `vipspng` errors, your libvips build likely lacks PNG loaders. The default CLI sample uses JPEG to avoid that.
+
 ### Data URI Media Processing
 
 When metadata contains data URIs, the media worker decodes and transforms them server-side before upload:
