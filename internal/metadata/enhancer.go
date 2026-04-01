@@ -84,9 +84,9 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 	var err error
 	switch publisherName {
 	case registry.PublisherNameArtBlocks:
-		// Only enhance Ethereum mainnet tokens
-		if chain == domain.ChainEthereumMainnet {
-			enhancedMetadata, err = e.enhanceArtBlocks(ctx, contractAddress, tokenNumber, meta.Raw)
+		// Art Blocks Hasura resolves projects by (chain_id, id); only EVM chains are supported here.
+		if chain.IsEVM() {
+			enhancedMetadata, err = e.enhanceArtBlocks(ctx, chain, contractAddress, tokenNumber, meta.Raw)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance ArtBlocks metadata: %w", err)
 			}
@@ -129,8 +129,13 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 }
 
 // enhanceArtBlocks enhances metadata from ArtBlocks API
-func (e *enhancer) enhanceArtBlocks(ctx context.Context, contractAddress, tokenNumber string, rawMetadata map[string]interface{}) (*EnhancedMetadata, error) {
+func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, contractAddress, tokenNumber string, rawMetadata map[string]interface{}) (*EnhancedMetadata, error) {
 	logger.InfoCtx(ctx, "Enhancing ArtBlocks metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
+
+	evmChainID, ok := chain.EIP155NumericID()
+	if !ok {
+		return nil, fmt.Errorf("art blocks enhancement requires an eip155 chain, got %q", chain)
+	}
 
 	// Parse the token ID to get project ID and mint number
 	projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
@@ -141,8 +146,8 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, contractAddress, tokenN
 	// Build the project ID string in the format: contractAddress-projectID
 	projectIDStr := fmt.Sprintf("%s-%d", strings.ToLower(contractAddress), projectID)
 
-	// Fetch project metadata from ArtBlocks API
-	project, err := e.artblocksClient.GetProjectMetadata(ctx, projectIDStr)
+	// Fetch project metadata from ArtBlocks API (composite key: chain_id + id)
+	project, err := e.artblocksClient.GetProjectMetadata(ctx, evmChainID, projectIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch ArtBlocks project metadata: %w", err)
 	}
@@ -150,6 +155,7 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, contractAddress, tokenN
 	logger.InfoCtx(ctx, "Fetched ArtBlocks project metadata",
 		zap.String("contractAddress", contractAddress),
 		zap.String("tokenNumber", tokenNumber),
+		zap.Int("chainID", evmChainID),
 		zap.String("projectID", projectIDStr),
 		zap.String("projectName", project.Name),
 		zap.Int64("mintNumber", mintNumber))
@@ -174,9 +180,9 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, contractAddress, tokenN
 		enhanced.Description = project.Description
 	}
 
-	// Build artist information using DID
+	// Build artist information using DID on the same chain as the token
 	if project.ArtistAddress != "" {
-		artistDID := domain.NewDID(project.ArtistAddress, domain.ChainEthereumMainnet)
+		artistDID := domain.NewDID(project.ArtistAddress, chain)
 		enhanced.Artists = []Artist{
 			{
 				DID:  artistDID,
