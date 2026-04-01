@@ -1279,7 +1279,7 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	description := "A Bored Ape from OpenSea"
 	imageURL := "https://i.seadn.io/gae/1.png"
 	displayAnimationURL := "https://i.seadn.io/gae/1.mp4"
-	resolvedImageURL := fmt.Sprintf("%s?w=3840", imageURL)
+	resolvedImageURL := fmt.Sprintf("%s?w=1000", imageURL)
 
 	nftMetadata := &opensea.NFTMetadata{
 		Identifier:          "1",
@@ -1529,7 +1529,7 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 		Return(vendorJSON, nil)
 
 	// Mock for MIME type detection
-	resolvedImageURL := fmt.Sprintf("%s?w=3840", imageURL)
+	resolvedImageURL := fmt.Sprintf("%s?w=1000", imageURL)
 	mocks.uriResolver.
 		EXPECT().
 		Resolve(gomock.Any(), resolvedImageURL).

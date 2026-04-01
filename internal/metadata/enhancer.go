@@ -410,9 +410,9 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 		// OpenSea CDN uses image resizing on the fly, we pick the 4k version as higher quality
 		imageURL := *nft.ImageURL
 		if strings.Contains(imageURL, "?") {
-			imageURL = fmt.Sprintf("%s&w=3840", imageURL)
+			imageURL = fmt.Sprintf("%s&w=1000", imageURL)
 		} else {
-			imageURL = fmt.Sprintf("%s?w=3840", imageURL)
+			imageURL = fmt.Sprintf("%s?w=1000", imageURL)
 		}
 		enhanced.ImageURL = &imageURL
 	}
