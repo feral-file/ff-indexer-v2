@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24-alpine3.23 AS builder
 
 # Set working directory
 WORKDIR /build
@@ -18,7 +18,7 @@ COPY . .
 RUN go build -ldflags="-w -s" -o /build/bin/api ./cmd/api
 
 # Runtime stage
-FROM alpine:latest
+FROM alpine:3.23
 
 # Install runtime dependencies (ca-certificates for HTTPS)
 RUN apk --no-cache add ca-certificates

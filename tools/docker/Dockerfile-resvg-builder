@@ -13,7 +13,7 @@
 #     -t feralfile/resvg-builder:latest \
 #     --push .
 
-FROM alpine:3.19 AS builder
+FROM alpine:3.23 AS builder
 
 # Install build dependencies for Rust/Cargo and C compilation
 RUN apk add --no-cache \
@@ -35,7 +35,7 @@ RUN git clone --depth 1 --branch v0.45.1 https://github.com/linebender/resvg.git
     rm -rf /tmp/resvg ~/.cargo
 
 # Final stage - minimal image with just the built artifacts
-FROM alpine:3.19
+FROM alpine:3.23
 
 # Copy built library and headers
 COPY --from=builder /output/lib/libresvg.a /usr/local/lib/
