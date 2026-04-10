@@ -37,9 +37,8 @@ make setup
 
 # Configure your settings (choose one or both):
 # Option 1: Edit config/.env.local with your credentials
-# Option 2: Copy config.yaml.sample files and customize
-#   cp cmd/api/config.yaml.sample cmd/api/config.yaml
-#   # Edit cmd/api/config.yaml, cmd/worker-core/config.yaml, etc.
+# Option 2: Copy the sample config and customize
+#   cp cmd/ff-indexer/config.yaml.sample config/config.yaml
 
 # Build and start all services
 make quickstart
@@ -51,26 +50,21 @@ This will start:
 - PostgreSQL (port 5432)
 - Temporal server (ports 7233-7235) and UI (port 8080)
 - NATS JetStream (ports 4222, 8222)
-- All application services (event emitters, workers, API)
+- Redis
+- **ff-indexer** — single container running the HTTP API, chain emitters, NATS event bridge, Temporal workers (token + media when built with CGO), and media health sweeper
 
 The API will be available at `http://localhost:8081`
 
 ### Local Development
 
-For local development, you can run infrastructure in Docker and services locally:
+For local development, you can run infrastructure in Docker and the application locally:
 
 ```bash
-# Start only infrastructure (PostgreSQL, Temporal, NATS)
+# Start only infrastructure (PostgreSQL, Temporal, NATS, Redis)
 make dev
 
-# Run services locally with Go
-cd cmd/ethereum-event-emitter && go run main.go
-cd cmd/tezos-event-emitter && go run main.go
-cd cmd/event-bridge && go run main.go
-cd cmd/worker-core && go run main.go
-cd cmd/worker-media && go run main.go
-cd cmd/api && go run main.go
-cd cmd/sweeper && go run main.go
+# Run the binary (CGO optional; without CGO the media worker is disabled)
+go run ./cmd/ff-indexer -config cmd/ff-indexer/config.yaml
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
@@ -85,12 +79,14 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 ## Components
 
-- **Event Emitters** (`ethereum-event-emitter`, `tezos-event-emitter`) - Subscribe to blockchain events and publish to NATS
-- **Event Bridge** (`event-bridge`) - Consumes events from NATS and triggers Temporal workflows
-- **Worker Core** (`worker-core`) - Executes Temporal workflows for token indexing, metadata resolution, and enrichment
-- **Worker Media** (`worker-media`) - Processes and uploads media files to Cloudflare
-- **API Server** (`api`) - Provides REST and GraphQL APIs for querying indexed data
-- **Sweeper** (`sweeper`) - Continuously monitors media URL health and updates status
+All of the following run inside the **`ff-indexer`** process (goroutines) by default:
+
+- **Event emitters** — Ethereum and Tezos chain listeners publishing to NATS
+- **Event bridge** — NATS consumer that starts Temporal workflows
+- **Worker core** — Temporal worker on `token-indexing`
+- **Worker media** — Temporal worker on `media-indexing` (requires CGO / full Docker image)
+- **API server** — REST and GraphQL
+- **Sweeper** — Media URL health checks
 
 ## Requirements
 

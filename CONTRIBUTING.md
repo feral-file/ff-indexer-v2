@@ -29,13 +29,11 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    This creates `config/.env` and `config/.env.local` from templates.
    Edit `config/.env.local` with your local settings.
 
-   **Option B: YAML Config Files**:
+   **Option B: YAML Config File**:
    ```bash
-   cp cmd/api/config.yaml.sample cmd/api/config.yaml
-   cp cmd/worker-core/config.yaml.sample cmd/worker-core/config.yaml
-   # ... repeat for other services
+   cp cmd/ff-indexer/config.yaml.sample config/config.yaml
    ```
-   Edit the config files with your settings.
+   Edit `config/config.yaml` with your settings.
 
 3. **Required configuration** (in env vars or YAML):
    - Database credentials
@@ -51,42 +49,27 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    ```bash
    make dev
    ```
-   This starts PostgreSQL, Temporal, and NATS in Docker.
+   This starts PostgreSQL, Temporal, NATS, and Redis in Docker.
 
 5. **Verify setup**:
    - PostgreSQL: `psql -h localhost -U postgres -d ff_indexer`
    - Temporal UI: `http://localhost:8080`
    - NATS: `http://localhost:8222`
+   - Redis: `redis-cli -h localhost -a redis_password ping` (password from compose/env)
 
 ## Development Workflow
 
-### Running Services Locally
+### Running Locally
 
-After starting infrastructure with `make dev`, run services locally:
+After starting infrastructure with `make dev`, run the binary:
 
 ```bash
-# Terminal 1: Ethereum Event Emitter
-cd cmd/ethereum-event-emitter && go run main.go
-
-# Terminal 2: Tezos Event Emitter
-cd cmd/tezos-event-emitter && go run main.go
-
-# Terminal 3: Event Bridge
-cd cmd/event-bridge && go run main.go
-
-# Terminal 4: Worker Core
-cd cmd/worker-core && go run main.go
-
-# Terminal 5: Worker Media
-cd cmd/worker-media && go run main.go
-
-# Terminal 6: API Server
-cd cmd/api && go run main.go
+go run ./cmd/ff-indexer -config config/config.yaml
 ```
 
 ### Code Structure
 
-- `cmd/` - Application entry points
+- `cmd/ff-indexer` - Single application entrypoint (HTTP API, emitters, bridge, Temporal workers, sweeper)
 - `internal/` - Internal packages (not exported)
   - `adapter/` - External service adapters
   - `api/` - API handlers (REST, GraphQL)

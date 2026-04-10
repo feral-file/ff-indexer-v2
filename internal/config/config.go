@@ -117,34 +117,6 @@ type WorkerConfig struct {
 	WorkerQueueSize int `mapstructure:"queue_size"`
 }
 
-// EthereumEmitterConfig holds configuration for ethereum-event-emitter
-type EthereumEmitterConfig struct {
-	BaseConfig `mapstructure:",squash"`
-	Worker     WorkerConfig   `mapstructure:"worker"`
-	Database   DatabaseConfig `mapstructure:"database"`
-	NATS       NATSConfig     `mapstructure:"nats"`
-	Ethereum   EthereumConfig `mapstructure:"ethereum"`
-}
-
-// TezosEmitterConfig holds configuration for tezos-event-emitter
-type TezosEmitterConfig struct {
-	BaseConfig  `mapstructure:",squash"`
-	Worker      WorkerConfig      `mapstructure:"worker"`
-	Database    DatabaseConfig    `mapstructure:"database"`
-	NATS        NATSConfig        `mapstructure:"nats"`
-	Tezos       TezosConfig       `mapstructure:"tezos"`
-	RateLimiter RateLimiterConfig `mapstructure:"rate_limiter"`
-}
-
-// EventBridgeConfig holds configuration for event-bridge
-type EventBridgeConfig struct {
-	BaseConfig    `mapstructure:",squash"`
-	Database      DatabaseConfig `mapstructure:"database"`
-	NATS          NATSConfig     `mapstructure:"nats"`
-	Temporal      TemporalConfig `mapstructure:"temporal"`
-	BlacklistPath string         `mapstructure:"blacklist_path"`
-}
-
 // WorkerCoreConfig holds configuration for worker-core
 type WorkerCoreConfig struct {
 	BaseConfig                   `mapstructure:",squash"`
@@ -236,7 +208,6 @@ type RateLimiterConfig struct {
 	Providers map[string]RateLimitConfig `mapstructure:"providers"`
 }
 
-// WorkerMediaConfig holds configuration for worker-media
 // RasterizerConfig holds SVG rasterizer configuration
 type RasterizerConfig struct {
 	// Width is the target width for SVG rasterization (0 = use SVG natural size)
@@ -279,6 +250,7 @@ type TransformConfig struct {
 	WorkerConcurrency int `mapstructure:"worker_concurrency"`
 }
 
+// WorkerMediaConfig holds configuration for the media-indexing Temporal worker.
 type WorkerMediaConfig struct {
 	BaseConfig   `mapstructure:",squash"`
 	Database     DatabaseConfig   `mapstructure:"database"`
@@ -308,142 +280,241 @@ type SweeperConfig struct {
 	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
 }
 
-// LoadEthereumEmitterConfig loads configuration for ethereum-event-emitter
-func LoadEthereumEmitterConfig(configFile string, envPath string) (*EthereumEmitterConfig, error) {
-	v := configureViper("ethereum-event-emitter", configFile, envPath)
-
-	// Set defaults
-	v.SetDefault("database.port", 5432)
-	v.SetDefault("database.sslmode", "disable")
-	v.SetDefault("nats.max_reconnects", 10)
-	v.SetDefault("nats.reconnect_wait", "2s")
-	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
-	v.SetDefault("ethereum.chain_id", "eip155:1")
-	v.SetDefault("ethereum.block_head_ttl", 12)
-	v.SetDefault("ethereum.block_head_stale_window", 60)
-	v.SetDefault("worker.pool_size", 20)
-	v.SetDefault("worker.queue_size", 2048)
-
-	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
-	}
-
-	var config EthereumEmitterConfig
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	return &config, nil
+// MediaWorkerTemporalConfig holds Temporal worker pool settings for the media-indexing queue.
+// HostPort, Namespace, and MediaTaskQueue come from Temporal.
+type MediaWorkerTemporalConfig struct {
+	MaxConcurrentActivityExecutionSize int     `mapstructure:"max_concurrent_activity_execution_size"`
+	WorkerActivitiesPerSecond          float64 `mapstructure:"worker_activities_per_second"`
+	MaxConcurrentActivityTaskPollers   int     `mapstructure:"max_concurrent_activity_task_pollers"`
 }
 
-// LoadTezosEmitterConfig loads configuration for tezos-event-emitter
-func LoadTezosEmitterConfig(configFile string, envPath string) (*TezosEmitterConfig, error) {
-	v := configureViper("tezos-event-emitter", configFile, envPath)
+// AppConfig is the configuration for the single-process ff-indexer binary.
+// It composes all former per-service configuration sections.
+type AppConfig struct {
+	BaseConfig `mapstructure:",squash"`
+	Server     ServerConfig   `mapstructure:"server"`
+	Database   DatabaseConfig `mapstructure:"database"`
+	Auth       AuthConfig     `mapstructure:"auth"`
+	Temporal   TemporalConfig `mapstructure:"temporal"`
+	// MediaWorkerTemporal configures the media Temporal worker pool (separate from token-indexing limits).
+	MediaWorkerTemporal MediaWorkerTemporalConfig `mapstructure:"media_worker_temporal"`
+	NATS                NATSConfig                `mapstructure:"nats"`
+	Ethereum            EthereumConfig            `mapstructure:"ethereum"`
+	Tezos               TezosConfig               `mapstructure:"tezos"`
+	Vendors             VendorsConfig             `mapstructure:"vendors"`
+	URI                 URIConfig                 `mapstructure:"uri"`
+	RateLimiter         RateLimiterConfig         `mapstructure:"rate_limiter"`
+	Cloudflare          CloudflareConfig          `mapstructure:"cloudflare"`
+	Rasterizer          RasterizerConfig          `mapstructure:"rasterizer"`
+	Transform           TransformConfig           `mapstructure:"transform"`
+	MediaHealthSweeper  MediaHealthSweeperConfig  `mapstructure:"media_health_sweeper"`
+	Worker              WorkerConfig              `mapstructure:"worker"`
 
-	// Set defaults
-	v.SetDefault("database.port", 5432)
-	v.SetDefault("database.sslmode", "disable")
-	v.SetDefault("nats.max_reconnects", 10)
-	v.SetDefault("nats.reconnect_wait", "2s")
-	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
-	v.SetDefault("tezos.chain_id", "tezos:mainnet")
-	v.SetDefault("tezos.block_head_ttl", 10)
-	v.SetDefault("tezos.block_head_stale_window", 60)
-	v.SetDefault("worker.pool_size", 20)
-	v.SetDefault("worker.queue_size", 2048)
-	v.SetDefault("rate_limiter.redis_addr", "localhost:6379")
-	v.SetDefault("rate_limiter.redis_db", 0)
-	v.SetDefault("rate_limiter.redis_key_prefix", "ff:indexer:limiter:")
-	v.SetDefault("rate_limiter.max_workers", 10)
-	v.SetDefault("rate_limiter.max_queue_size", 10000)
-	v.SetDefault("rate_limiter.enable_local_fallback", true)
-	v.SetDefault("rate_limiter.local_fallback_multiplier", 0.5)
-	v.SetDefault("rate_limiter.providers.tzkt.requests_per_second", 10)
-	v.SetDefault("rate_limiter.providers.tzkt.burst", 10)
-	v.SetDefault("rate_limiter.providers.tzkt.max_queue_time", "15m")
+	EthereumTokenSweepStartBlock uint64 `mapstructure:"ethereum_token_sweep_start_block"`
+	TezosTokenSweepStartBlock    uint64 `mapstructure:"tezos_token_sweep_start_block"`
+	PublisherRegistryPath        string `mapstructure:"publisher_registry_path"`
+	BlacklistPath                string `mapstructure:"blacklist_path"`
+	MaxImageSize                 int64  `mapstructure:"max_image_size"`
+	MaxVideoSize                 int64  `mapstructure:"max_video_size"`
+
+	BudgetedIndexingEnabled           bool `mapstructure:"budgeted_indexing_enabled"`
+	BudgetedIndexingDefaultDailyQuota int  `mapstructure:"budgeted_indexing_default_daily_quota"`
+
+	EthereumOwnerFirstBatchTarget      int `mapstructure:"ethereum_owner_first_batch_target"`
+	EthereumOwnerSubsequentBatchTarget int `mapstructure:"ethereum_owner_subsequent_batch_target"`
+	TezosOwnerFirstBatchTarget         int `mapstructure:"tezos_owner_first_batch_target"`
+	TezosOwnerSubsequentBatchTarget    int `mapstructure:"tezos_owner_subsequent_batch_target"`
+}
+
+// LoadAppConfig loads unified configuration for cmd/ff-indexer.
+func LoadAppConfig(configFile string, envPath string) (*AppConfig, error) {
+	v := configureViper("ff-indexer", configFile, envPath)
+	applyAppConfigDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
-		var error viper.ConfigFileNotFoundError
-		if errors.As(err, &error) {
-			// Config file not found, use environment variables
-		} else {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
 			return nil, fmt.Errorf("failed to read config: %w", err)
 		}
 	}
 
-	var config TezosEmitterConfig
-	if err := v.Unmarshal(&config); err != nil {
+	var cfg AppConfig
+	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
-
-	return &config, nil
+	if cfg.Database.Host == "" {
+		return nil, errors.New("database.host is required")
+	}
+	if cfg.Database.DBName == "" {
+		return nil, errors.New("database.dbname is required")
+	}
+	return &cfg, nil
 }
 
-// LoadEventBridgeConfig loads configuration for event-bridge
-func LoadEventBridgeConfig(configFile string, envPath string) (*EventBridgeConfig, error) {
-	v := configureViper("event-bridge", configFile, envPath)
+// ToAPIConfig maps AppConfig to the shape expected by the HTTP API server.
+func (a *AppConfig) ToAPIConfig() *APIConfig {
+	return &APIConfig{
+		BaseConfig:    a.BaseConfig,
+		Server:        a.Server,
+		Database:      a.Database,
+		Temporal:      a.Temporal,
+		Auth:          a.Auth,
+		BlacklistPath: a.BlacklistPath,
+		Tezos:         a.Tezos,
+		Ethereum:      a.Ethereum,
+	}
+}
 
-	// Set defaults
+// ToWorkerCoreConfig maps AppConfig for the token-indexing Temporal worker.
+func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
+	return &WorkerCoreConfig{
+		BaseConfig:                         a.BaseConfig,
+		Database:                           a.Database,
+		Temporal:                           a.Temporal,
+		Ethereum:                           a.Ethereum,
+		Tezos:                              a.Tezos,
+		Vendors:                            a.Vendors,
+		URI:                                a.URI,
+		RateLimiter:                        a.RateLimiter,
+		EthereumTokenSweepStartBlock:       a.EthereumTokenSweepStartBlock,
+		TezosTokenSweepStartBlock:          a.TezosTokenSweepStartBlock,
+		PublisherRegistryPath:              a.PublisherRegistryPath,
+		BlacklistPath:                      a.BlacklistPath,
+		BudgetedIndexingEnabled:            a.BudgetedIndexingEnabled,
+		BudgetedIndexingDefaultDailyQuota:  a.BudgetedIndexingDefaultDailyQuota,
+		EthereumOwnerFirstBatchTarget:      a.EthereumOwnerFirstBatchTarget,
+		EthereumOwnerSubsequentBatchTarget: a.EthereumOwnerSubsequentBatchTarget,
+		TezosOwnerFirstBatchTarget:         a.TezosOwnerFirstBatchTarget,
+		TezosOwnerSubsequentBatchTarget:    a.TezosOwnerSubsequentBatchTarget,
+	}
+}
+
+// ToWorkerMediaConfig maps AppConfig for the media-indexing Temporal worker.
+func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
+	return &WorkerMediaConfig{
+		BaseConfig: a.BaseConfig,
+		Database:   a.Database,
+		Temporal: TemporalConfig{
+			HostPort:                           a.Temporal.HostPort,
+			Namespace:                          a.Temporal.Namespace,
+			TokenTaskQueue:                     a.Temporal.TokenTaskQueue,
+			MediaTaskQueue:                     a.Temporal.MediaTaskQueue,
+			MaxConcurrentActivityExecutionSize: a.MediaWorkerTemporal.MaxConcurrentActivityExecutionSize,
+			WorkerActivitiesPerSecond:          a.MediaWorkerTemporal.WorkerActivitiesPerSecond,
+			MaxConcurrentActivityTaskPollers:   a.MediaWorkerTemporal.MaxConcurrentActivityTaskPollers,
+		},
+		URI:          a.URI,
+		Cloudflare:   a.Cloudflare,
+		Rasterizer:   a.Rasterizer,
+		Transform:    a.Transform,
+		MaxImageSize: a.MaxImageSize,
+		MaxVideoSize: a.MaxVideoSize,
+	}
+}
+
+// ToSweeperConfig maps AppConfig for the media health sweeper.
+func (a *AppConfig) ToSweeperConfig() *SweeperConfig {
+	return &SweeperConfig{
+		BaseConfig:         a.BaseConfig,
+		Database:           a.Database,
+		Temporal:           a.Temporal,
+		MediaHealthSweeper: a.MediaHealthSweeper,
+	}
+}
+
+func applyAppConfigDefaults(v *viper.Viper) {
+	// Base / API
+	v.SetDefault("debug", false)
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.read_timeout", 10)
+	v.SetDefault("server.write_timeout", 10)
+	v.SetDefault("server.idle_timeout", 120)
+
+	// Database (single process: prefer a larger shared pool)
 	v.SetDefault("database.port", 5432)
 	v.SetDefault("database.sslmode", "disable")
+	v.SetDefault("database.max_open_conns", 80)
+	v.SetDefault("database.max_idle_conns", 16)
+	v.SetDefault("database.conn_max_lifetime", "5m")
+	v.SetDefault("database.conn_max_idle_time", "10m")
+
+	// NATS
 	v.SetDefault("nats.max_reconnects", 10)
 	v.SetDefault("nats.reconnect_wait", "2s")
 	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
 	v.SetDefault("nats.consumer_name", "event-bridge")
 	v.SetDefault("nats.ack_wait", "30s")
 	v.SetDefault("nats.max_deliver", 3)
+	v.SetDefault("nats.connection_name", "ff-indexer")
+
+	// Temporal
 	v.SetDefault("temporal.host_port", "localhost:7233")
 	v.SetDefault("temporal.namespace", "default")
 	v.SetDefault("temporal.token_task_queue", "token-indexing")
-	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
-	v.SetDefault("temporal.worker_activities_per_second", 50)
-
-	if err := v.ReadInConfig(); err != nil {
-		var error viper.ConfigFileNotFoundError
-		if errors.As(err, &error) {
-			// Config file not found, use environment variables
-		} else {
-			return nil, fmt.Errorf("failed to read config: %w", err)
-		}
-	}
-
-	var config EventBridgeConfig
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	return &config, nil
-}
-
-// LoadWorkerCoreConfig loads configuration for worker-core
-func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig, error) {
-	v := configureViper("worker-core", configFile, envPath)
-
-	// Set defaults
-	v.SetDefault("database.port", 5432)
-	v.SetDefault("database.sslmode", "disable")
-	v.SetDefault("temporal.host_port", "localhost:7233")
-	v.SetDefault("temporal.namespace", "default")
-	v.SetDefault("temporal.token_task_queue", "token-indexing")
+	v.SetDefault("temporal.media_task_queue", "media-indexing")
 	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
 	v.SetDefault("temporal.worker_activities_per_second", 50)
 	v.SetDefault("temporal.max_concurrent_activity_task_pollers", 10)
+
+	// Media worker Temporal pool (former worker-media defaults)
+	v.SetDefault("media_worker_temporal.max_concurrent_activity_execution_size", 10)
+	v.SetDefault("media_worker_temporal.worker_activities_per_second", 10)
+	v.SetDefault("media_worker_temporal.max_concurrent_activity_task_pollers", 2)
+
+	// Chains
+	v.SetDefault("ethereum.chain_id", "eip155:1")
 	v.SetDefault("ethereum.block_head_ttl", 12)
 	v.SetDefault("ethereum.block_head_stale_window", 60)
+	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("tezos.block_head_ttl", 10)
 	v.SetDefault("tezos.block_head_stale_window", 60)
+
+	// Vendors
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 	v.SetDefault("vendors.feralfile_url", "https://feralfile.com/api")
 	v.SetDefault("vendors.objkt_url", "https://data.objkt.com/v3/graphql")
 	v.SetDefault("vendors.opensea_url", "https://api.opensea.io/api/v2")
+
+	// URI
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
+
+	// Worker pool (emitters)
+	v.SetDefault("worker.pool_size", 20)
+	v.SetDefault("worker.queue_size", 2048)
+
+	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
+	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
+	v.SetDefault("rasterizer.width", 2048)
+	v.SetDefault("rasterizer.timeout_ms", 15000)
+	v.SetDefault("rasterizer.browser_fallback_enabled", false)
+	v.SetDefault("max_image_size", 10*1024*1024)
+	v.SetDefault("max_video_size", 300*1024*1024)
+	v.SetDefault("transform.target_image_size", int64(float64(10*1024*1024)*0.9))
+	v.SetDefault("transform.target_image_pixels", int64(float64(50000000*0.9)))
+	v.SetDefault("transform.max_image_dimension", 3840)
+	v.SetDefault("transform.max_animated_image_dimension", 2048)
+	v.SetDefault("transform.min_image_dimension", 1280)
+	v.SetDefault("transform.min_animated_image_dimension", 640)
+	v.SetDefault("transform.resize_step_percentage", 25)
+	v.SetDefault("transform.initial_quality", 100)
+	v.SetDefault("transform.min_quality", 60)
+	v.SetDefault("transform.quality_step", 10)
+	v.SetDefault("transform.max_input_bytes", 100*1024*1024)
+	v.SetDefault("transform.max_decoded_pixels", int64(100000000))
+	v.SetDefault("transform.transform_timeout", 60*time.Second)
+	v.SetDefault("transform.worker_concurrency", 4)
+
+	// Worker-core flat keys
 	v.SetDefault("budgeted_indexing_enabled", false)
 	v.SetDefault("budgeted_indexing_default_daily_quota", 1000)
 	v.SetDefault("ethereum_owner_first_batch_target", 20)
 	v.SetDefault("ethereum_owner_subsequent_batch_target", 3)
 	v.SetDefault("tezos_owner_first_batch_target", 20)
 	v.SetDefault("tezos_owner_subsequent_batch_target", 1)
+
+	// Rate limiter
 	v.SetDefault("rate_limiter.redis_addr", "localhost:6379")
 	v.SetDefault("rate_limiter.redis_db", 0)
 	v.SetDefault("rate_limiter.redis_key_prefix", "ff:indexer:limiter:")
@@ -461,152 +532,12 @@ func LoadWorkerCoreConfig(configFile string, envPath string) (*WorkerCoreConfig,
 	v.SetDefault("rate_limiter.providers.objkt.burst", 2)
 	v.SetDefault("rate_limiter.providers.objkt.max_queue_time", "15m")
 
-	if err := v.ReadInConfig(); err != nil {
-		var error viper.ConfigFileNotFoundError
-		if errors.As(err, &error) {
-			// Config file not found, use environment variables
-		} else {
-			return nil, fmt.Errorf("failed to read config: %w", err)
-		}
-	}
-
-	var config WorkerCoreConfig
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	return &config, nil
-}
-
-// LoadAPIConfig loads configuration for API server
-func LoadAPIConfig(configFile string, envPath string) (*APIConfig, error) {
-	v := configureViper("api", configFile, envPath)
-
-	// Set defaults
-	v.SetDefault("debug", false)
-	v.SetDefault("server.host", "0.0.0.0")
-	v.SetDefault("server.port", 8080)
-	v.SetDefault("server.read_timeout", 10)
-	v.SetDefault("server.write_timeout", 10)
-	v.SetDefault("server.idle_timeout", 120)
-	v.SetDefault("database.port", 5432)
-	v.SetDefault("database.sslmode", "disable")
-	v.SetDefault("temporal.host_port", "localhost:7233")
-	v.SetDefault("temporal.namespace", "default")
-	v.SetDefault("temporal.token_task_queue", "token-indexing")
-	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
-	v.SetDefault("temporal.worker_activities_per_second", 50)
-	v.SetDefault("tezos.chain_id", "tezos:mainnet")
-	v.SetDefault("ethereum.chain_id", "eip155:1")
-
-	if err := v.ReadInConfig(); err != nil {
-		var error viper.ConfigFileNotFoundError
-		if errors.As(err, &error) {
-			// Config file not found, use environment variables
-		} else {
-			return nil, fmt.Errorf("failed to read config: %w", err)
-		}
-	}
-
-	var config APIConfig
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	return &config, nil
-}
-
-// LoadWorkerMediaConfig loads configuration for worker-media
-func LoadWorkerMediaConfig(configFile string, envPath string) (*WorkerMediaConfig, error) {
-	v := configureViper("worker-media", configFile, envPath)
-
-	// Set defaults
-	v.SetDefault("database.port", 5432)
-	v.SetDefault("database.sslmode", "disable")
-	v.SetDefault("temporal.media_task_queue", "media-indexing")
-	v.SetDefault("temporal.max_concurrent_activity_execution_size", 10)
-	v.SetDefault("temporal.worker_activities_per_second", 10)
-	v.SetDefault("temporal.max_concurrent_activity_task_pollers", 2)
-	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
-	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
-	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
-	v.SetDefault("rasterizer.width", 2048)
-	v.SetDefault("rasterizer.timeout_ms", 15000) // 15 seconds
-	v.SetDefault("rasterizer.browser_fallback_enabled", false)
-	v.SetDefault("max_image_size", 10*1024*1024)  // 10MB
-	v.SetDefault("max_video_size", 300*1024*1024) // 300MB
-
-	// Transform defaults (90% of max for safety margin)
-	v.SetDefault("transform.target_image_size", int64(float64(10*1024*1024)*0.9)) // 9MB
-	v.SetDefault("transform.target_image_pixels", int64(float64(50000000*0.9)))   // 45 megapixels total (for animations: width * height * frames)
-	v.SetDefault("transform.max_image_dimension", 3840)
-	v.SetDefault("transform.max_animated_image_dimension", 2048)
-	v.SetDefault("transform.min_image_dimension", 1280)
-	v.SetDefault("transform.min_animated_image_dimension", 640)
-	v.SetDefault("transform.resize_step_percentage", 25)
-	v.SetDefault("transform.initial_quality", 100)
-	v.SetDefault("transform.min_quality", 60)
-	v.SetDefault("transform.quality_step", 10)
-	v.SetDefault("transform.max_input_bytes", 100*1024*1024)       // 100MB
-	v.SetDefault("transform.max_decoded_pixels", int64(100000000)) // 100 megapixels
-	v.SetDefault("transform.transform_timeout", 60*time.Second)
-	v.SetDefault("transform.worker_concurrency", 4)
-
-	if err := v.ReadInConfig(); err != nil {
-		var error viper.ConfigFileNotFoundError
-		if errors.As(err, &error) {
-			// Config file not found, use environment variables
-		} else {
-			return nil, fmt.Errorf("failed to read config: %w", err)
-		}
-	}
-
-	var config WorkerMediaConfig
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	return &config, nil
-}
-
-// LoadSweeperConfig loads configuration for the sweeper program
-func LoadSweeperConfig(configFile string, envPath string) (*SweeperConfig, error) {
-	v := configureViper("sweeper", configFile, envPath)
-
-	// Set defaults
-	v.SetDefault("database.port", 5432)
-	v.SetDefault("database.sslmode", "disable")
-	v.SetDefault("database.max_open_conns", 5)
-	v.SetDefault("database.max_idle_conns", 2)
-	v.SetDefault("database.conn_max_lifetime", "1h")
-	v.SetDefault("database.conn_max_idle_time", "10m")
+	// Media health sweeper
 	v.SetDefault("media_health_sweeper.http_timeout", "30s")
 	v.SetDefault("media_health_sweeper.batch_size", 100)
 	v.SetDefault("media_health_sweeper.worker.pool_size", 5)
 	v.SetDefault("media_health_sweeper.worker.queue_size", 100)
-	v.SetDefault("media_health_sweeper.recheck_after", "24h") // 1 day
-	v.SetDefault("temporal.host_port", "localhost:7233")
-	v.SetDefault("temporal.namespace", "default")
-	v.SetDefault("temporal.token_task_queue", "token-indexer-task-queue")
-
-	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
-	}
-
-	var cfg SweeperConfig
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	// Validate required fields
-	if cfg.Database.Host == "" {
-		return nil, errors.New("database.host is required")
-	}
-	if cfg.Database.DBName == "" {
-		return nil, errors.New("database.dbname is required")
-	}
-
-	return &cfg, nil
+	v.SetDefault("media_health_sweeper.recheck_after", "24h")
 }
 
 // configureViper returns a viper instance with the config file and environment variables set
@@ -625,7 +556,7 @@ func configureViper(service string, configFile string, envPath string) *viper.Vi
 		// Search for config.yaml in multiple locations:
 		// 1. Current directory
 		v.AddConfigPath(".")
-		// 2. Service-specific directory (e.g., cmd/sweeper/, cmd/api/)
+		// 2. Service-specific directory (e.g., cmd/ff-indexer/)
 		v.AddConfigPath(fmt.Sprintf("cmd/%s/", service))
 		// 3. Config directory
 		v.AddConfigPath("config/")
@@ -696,8 +627,12 @@ func bindAllEnvVars(v *viper.Viper) {
 		"vendors.artblocks_url",
 		"vendors.feralfile_url",
 		"vendors.objkt_url",
+		"vendors.objkt_api_key",
 		"vendors.opensea_url",
 		"vendors.opensea_api_key",
+		"media_worker_temporal.max_concurrent_activity_execution_size",
+		"media_worker_temporal.worker_activities_per_second",
+		"media_worker_temporal.max_concurrent_activity_task_pollers",
 		// Server
 		"server.host",
 		"server.port",

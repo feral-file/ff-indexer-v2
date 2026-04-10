@@ -1,7 +1,6 @@
-.PHONY: help build build-api build-ethereum-event-emitter build-tezos-event-emitter build-event-bridge build-worker-core build-worker-media build-sweeper \
+.PHONY: help build build-full rebuild rebuild-full run run-full quickstart quickstart-full \
 	up down start stop restart logs ps clean config \
-	up-infra up-emitters up-workers up-api up-sweeper \
-	build-all rebuild
+	up-infra up-app dev
 
 # Docker Compose settings
 # Use clean environment to ensure .env files take precedence over host shell variables
@@ -10,17 +9,17 @@ DOCKER_COMPOSE := env -i \
 	PATH="$$PATH" \
 	HOME="$$HOME" \
 	USER="$$USER" \
-	docker compose -f tools/docker/docker-compose.yaml \
+	docker compose -f tools/docker/Docker-compose.yaml \
 	--env-file config/.env \
 	--env-file config/.env.local
 DOCKER_COMPOSE_FLAGS := 
+# Drop containers from removed compose services (e.g. old per-worker images).
+DOCKER_COMPOSE_UP := $(DOCKER_COMPOSE) up -d --remove-orphans
 
 # Service names
 INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui nats redis
-EMITTER_SERVICES := ethereum-event-emitter tezos-event-emitter
-WORKER_SERVICES := worker-core worker-media
-APP_SERVICES := event-bridge api sweeper
-ALL_APP_SERVICES := $(EMITTER_SERVICES) $(WORKER_SERVICES) $(APP_SERVICES)
+APP_SERVICE := ff-indexer
+ALL_APP_SERVICES := $(APP_SERVICE)
 
 # Colors for output
 COLOR_RESET := \033[0m
@@ -38,125 +37,66 @@ help: ## Display this help message
 
 ##@ Build Commands
 
-build-all: ## Build all application services in sequence
-	@echo "$(COLOR_GREEN)Building all services...$(COLOR_RESET)"
-	@$(MAKE) build-ethereum-event-emitter
-	@$(MAKE) build-tezos-event-emitter
-	@$(MAKE) build-event-bridge
-	@$(MAKE) build-worker-core
-	@$(MAKE) build-worker-media
-	@$(MAKE) build-api
-	@$(MAKE) build-sweeper
-	@echo "$(COLOR_GREEN)✓ All services built successfully$(COLOR_RESET)"
+build: ## Build lightweight image (default, no media processing)
+	@echo "$(COLOR_YELLOW)Building ff-indexer (lightweight mode)...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) build $(APP_SERVICE)
+	@echo "$(COLOR_GREEN)✓ ff-indexer built (lightweight: ~112MB)$(COLOR_RESET)"
 
-build: build-all ## Alias for build-all
-
-build-api: ## Build API service
-	@echo "$(COLOR_YELLOW)Building API service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) build api
-
-build-ethereum-event-emitter: ## Build Ethereum event emitter service
-	@echo "$(COLOR_YELLOW)Building Ethereum event emitter...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) build ethereum-event-emitter
-
-build-tezos-event-emitter: ## Build Tezos event emitter service
-	@echo "$(COLOR_YELLOW)Building Tezos event emitter...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) build tezos-event-emitter
-
-build-event-bridge: ## Build event bridge service
-	@echo "$(COLOR_YELLOW)Building event bridge...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) build event-bridge
-
-build-worker-core: ## Build worker-core service
-	@echo "$(COLOR_YELLOW)Building worker-core...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) build worker-core
-
-build-worker-media: ## Build worker-media service
-	@echo "$(COLOR_YELLOW)Building worker-media...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) build worker-media
-
-build-sweeper: ## Build sweeper service
-	@echo "$(COLOR_YELLOW)Building sweeper...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) build sweeper
-
-rebuild: ## Rebuild all services (no cache)
-	@echo "$(COLOR_GREEN)Rebuilding all services (no cache)...$(COLOR_RESET)"
+rebuild: ## Rebuild lightweight image (no cache)
+	@echo "$(COLOR_YELLOW)Rebuilding ff-indexer (lightweight mode, no cache)...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) build --no-cache $(ALL_APP_SERVICES)
+	@echo "$(COLOR_GREEN)✓ ff-indexer rebuilt (lightweight)$(COLOR_RESET)"
+
+build-full: ## Build full image with media processing (CGO + vips + chromium)
+	@echo "$(COLOR_YELLOW)Building ff-indexer (full mode with media processing)...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) build --build-arg CGO_ENABLED=1 $(APP_SERVICE)
+	@echo "$(COLOR_GREEN)✓ ff-indexer built (full: ~730MB, media enabled)$(COLOR_RESET)"
+
+rebuild-full: ## Rebuild full image with media processing (no cache)
+	@echo "$(COLOR_YELLOW)Rebuilding ff-indexer (full mode with media, no cache)...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) build --no-cache --build-arg CGO_ENABLED=1 $(APP_SERVICE)
+	@echo "$(COLOR_GREEN)✓ ff-indexer rebuilt (full, media enabled)$(COLOR_RESET)"
 
 ##@ Run Commands
 
 up: ## Start all services
 	@echo "$(COLOR_GREEN)Starting all services...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) up -d
+	@$(DOCKER_COMPOSE_UP)
 	@echo "$(COLOR_GREEN)✓ All services started$(COLOR_RESET)"
 	@$(MAKE) ps
 
 up-infra: ## Start only infrastructure services (postgres, temporal, nats, redis)
 	@echo "$(COLOR_GREEN)Starting infrastructure services...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) up -d $(INFRA_SERVICES)
+	@$(DOCKER_COMPOSE_UP) $(INFRA_SERVICES)
 	@echo "$(COLOR_GREEN)✓ Infrastructure services started$(COLOR_RESET)"
 	@$(MAKE) ps
 
-up-emitters: up-infra ## Start event emitters (requires infrastructure)
-	@echo "$(COLOR_GREEN)Starting event emitters...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) up -d nats-setup
-	@$(DOCKER_COMPOSE) up -d $(EMITTER_SERVICES)
-	@echo "$(COLOR_GREEN)✓ Event emitters started$(COLOR_RESET)"
-	@$(MAKE) ps
-
-up-workers: up-infra ## Start worker services (requires infrastructure)
-	@echo "$(COLOR_GREEN)Starting worker services...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) up -d $(WORKER_SERVICES)
-	@echo "$(COLOR_GREEN)✓ Worker services started$(COLOR_RESET)"
-	@$(MAKE) ps
-
-up-api: up-infra up-workers ## Start API service (requires infrastructure and workers)
-	@echo "$(COLOR_GREEN)Starting API service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) up -d api
-	@echo "$(COLOR_GREEN)✓ API service started$(COLOR_RESET)"
-	@$(MAKE) ps
-
-up-bridge: up-infra up-emitters ## Start event bridge service (requires infrastructure and emitters)
-	@echo "$(COLOR_GREEN)Starting event bridge service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) up -d event-bridge
-	@echo "$(COLOR_GREEN)✓ Event bridge service started$(COLOR_RESET)"
-	@$(MAKE) ps
-
-up-sweeper: up-infra ## Start sweeper service (requires infrastructure)
-	@echo "$(COLOR_GREEN)Starting sweeper service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) up -d sweeper
-	@echo "$(COLOR_GREEN)✓ Sweeper service started$(COLOR_RESET)"
+up-app: up-infra ## Start NATS stream setup + ff-indexer application
+	@echo "$(COLOR_GREEN)Starting ff-indexer...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE_UP) nats-setup
+	@$(DOCKER_COMPOSE_UP) $(APP_SERVICE)
+	@echo "$(COLOR_GREEN)✓ ff-indexer started$(COLOR_RESET)"
 	@$(MAKE) ps
 
 start: up ## Alias for up
 
-run: build-all up ## Build and start all services
+run: build up ## Build and start (lightweight mode)
+	@echo ""
+	@echo "$(COLOR_GREEN)✓ ff-indexer running in lightweight mode$(COLOR_RESET)"
+
+run-full: build-full up ## Build and start (full mode with media processing)
+	@echo ""
+	@echo "$(COLOR_GREEN)✓ ff-indexer running in full mode (media processing enabled)$(COLOR_RESET)"
 
 ##@ Control Commands
 
 down: ## Stop and remove all services
 	@echo "$(COLOR_YELLOW)Stopping all services...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) down
+	@$(DOCKER_COMPOSE) down --remove-orphans
 
-down-api: ## Stop and remove API service
-	@echo "$(COLOR_YELLOW)Stopping API service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) down api
-
-down-workers: ## Stop and remove worker services
-	@echo "$(COLOR_YELLOW)Stopping worker services...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) down $(WORKER_SERVICES)
-
-down-emitters: ## Stop and remove event emitters
-	@echo "$(COLOR_YELLOW)Stopping event emitters...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) down $(EMITTER_SERVICES)
-
-down-bridge: ## Stop and remove event bridge service
-	@echo "$(COLOR_YELLOW)Stopping event bridge service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) down event-bridge
-
-down-sweeper: ## Stop and remove sweeper service
-	@echo "$(COLOR_YELLOW)Stopping sweeper service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) down sweeper
+down-app: ## Stop and remove ff-indexer application container
+	@echo "$(COLOR_YELLOW)Stopping ff-indexer...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) down $(APP_SERVICE)
 
 down-infra: ## Stop and remove infrastructure services
 	@echo "$(COLOR_YELLOW)Stopping infrastructure services...$(COLOR_RESET)"
@@ -166,25 +106,9 @@ stop: ## Stop all services (keep containers)
 	@echo "$(COLOR_YELLOW)Stopping all services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) stop
 
-stop-api: ## Stop API service
-	@echo "$(COLOR_YELLOW)Stopping API service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) stop api
-
-stop-workers: ## Stop worker services
-	@echo "$(COLOR_YELLOW)Stopping worker services...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) stop $(WORKER_SERVICES)
-
-stop-emitters: ## Stop event emitters
-	@echo "$(COLOR_YELLOW)Stopping event emitters...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) stop $(EMITTER_SERVICES)
-
-stop-bridge: ## Stop event bridge service
-	@echo "$(COLOR_YELLOW)Stopping event bridge service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) stop event-bridge
-
-stop-sweeper: ## Stop sweeper service
-	@echo "$(COLOR_YELLOW)Stopping sweeper service...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) stop sweeper
+stop-app: ## Stop ff-indexer container (keep infra)
+	@echo "$(COLOR_YELLOW)Stopping ff-indexer...$(COLOR_RESET)"
+	@$(DOCKER_COMPOSE) stop $(APP_SERVICE)
 
 stop-infra: ## Stop infrastructure services
 	@echo "$(COLOR_YELLOW)Stopping infrastructure services...$(COLOR_RESET)"
@@ -194,20 +118,8 @@ restart: ## Restart all services
 	@echo "$(COLOR_YELLOW)Restarting all services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) restart
 
-restart-api: ## Restart only API service
-	@$(DOCKER_COMPOSE) restart api
-
-restart-workers: ## Restart worker services
-	@$(DOCKER_COMPOSE) restart $(WORKER_SERVICES)
-
-restart-emitters: ## Restart event emitters
-	@$(DOCKER_COMPOSE) restart $(EMITTER_SERVICES)
-
-restart-bridge: ## Restart event bridge service
-	@$(DOCKER_COMPOSE) restart event-bridge
-
-restart-sweeper: ## Restart sweeper service
-	@$(DOCKER_COMPOSE) restart sweeper
+restart-app: ## Restart ff-indexer container
+	@$(DOCKER_COMPOSE) restart $(APP_SERVICE)
 
 restart-infra: ## Restart infrastructure services
 	@$(DOCKER_COMPOSE) restart $(INFRA_SERVICES)
@@ -217,17 +129,8 @@ restart-infra: ## Restart infrastructure services
 logs: ## Show logs for all services (follow mode)
 	@$(DOCKER_COMPOSE) logs -f
 
-logs-api: ## Show logs for API service
-	@$(DOCKER_COMPOSE) logs -f api
-
-logs-workers: ## Show logs for worker services
-	@$(DOCKER_COMPOSE) logs -f $(WORKER_SERVICES)
-
-logs-emitters: ## Show logs for event emitters
-	@$(DOCKER_COMPOSE) logs -f $(EMITTER_SERVICES)
-
-logs-bridge: ## Show logs for event bridge service
-	@$(DOCKER_COMPOSE) logs -f event-bridge
+logs-app: ## Show logs for ff-indexer
+	@$(DOCKER_COMPOSE) logs -f $(APP_SERVICE)
 
 logs-infra: ## Show logs for infrastructure services
 	@$(DOCKER_COMPOSE) logs -f $(INFRA_SERVICES)
@@ -237,50 +140,14 @@ ps: ## Show status of all services
 
 ##@ Development Commands
 
-shell-api: ## Open shell in API container
-	@$(DOCKER_COMPOSE) exec api sh
-
-shell-worker-core: ## Open shell in worker-core container
-	@$(DOCKER_COMPOSE) exec worker-core sh
-
-shell-worker-media: ## Open shell in worker-media container
-	@$(DOCKER_COMPOSE) exec worker-media sh
-
-shell-ethereum-event-emitter: ## Open shell in ethereum-event-emitter container
-	@$(DOCKER_COMPOSE) exec ethereum-event-emitter sh
-
-shell-tezos-event-emitter: ## Open shell in tezos-event-emitter container
-	@$(DOCKER_COMPOSE) exec tezos-event-emitter sh
-
-shell-event-bridge: ## Open shell in event-bridge container
-	@$(DOCKER_COMPOSE) exec event-bridge sh
-
-shell-sweeper: ## Open shell in sweeper container
-	@$(DOCKER_COMPOSE) exec sweeper sh
+shell-app: ## Open shell in ff-indexer container
+	@$(DOCKER_COMPOSE) exec $(APP_SERVICE) sh
 
 config: ## Validate and view docker-compose configuration
 	@$(DOCKER_COMPOSE) config
 
-env-api: ## Show environment variables for API service
-	@$(DOCKER_COMPOSE) exec api env | grep FF_INDEXER | sort
-
-env-worker-core: ## Show environment variables for worker-core service
-	@$(DOCKER_COMPOSE) exec worker-core env | grep FF_INDEXER | sort
-
-env-worker-media: ## Show environment variables for worker-media service
-	@$(DOCKER_COMPOSE) exec worker-media env | grep FF_INDEXER | sort
-
-env-ethereum-event-emitter: ## Show environment variables for ethereum-event-emitter service
-	@$(DOCKER_COMPOSE) exec ethereum-event-emitter env | grep FF_INDEXER | sort
-
-env-tezos-event-emitter: ## Show environment variables for tezos-event-emitter service
-	@$(DOCKER_COMPOSE) exec tezos-event-emitter env | grep FF_INDEXER | sort
-
-env-event-bridge: ## Show environment variables for event-bridge service
-	@$(DOCKER_COMPOSE) exec event-bridge env | grep FF_INDEXER | sort
-
-env-sweeper: ## Show environment variables for sweeper service
-	@$(DOCKER_COMPOSE) exec sweeper env | grep FF_INDEXER | sort
+env-app: ## Show FF_INDEXER environment variables in ff-indexer container
+	@$(DOCKER_COMPOSE) exec $(APP_SERVICE) env | grep FF_INDEXER | sort
 
 ##@ Cleanup Commands
 
@@ -363,15 +230,40 @@ check: imports lint-local test ## Run linters, format imports, and tests
 
 ##@ Quick Start
 
-quickstart: setup build-all up ## Complete setup, build, and start (first time setup)
+quickstart: setup build up ## Complete setup and start (lightweight mode, recommended)
 	@echo ""
 	@echo "$(COLOR_GREEN)╔════════════════════════════════════════════════════════╗$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  🎉  FF-Indexer v2 is running!                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  Mode:         Lightweight (~112MB)                    ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  API:          http://localhost:8081                   ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Temporal UI:  http://localhost:8080                   ║$(COLOR_RESET)"
-	@echo "$(COLOR_GREEN)║  NATS Monitor: http://localhost:8222                   ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  NATS Monitor: http://localhost:18222                  ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  Run 'make logs' to view logs                         ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  Run 'make ps' to view service status                 ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  Note: Media processing disabled in lightweight mode   ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  Use 'make quickstart-full' for media support         ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)╚════════════════════════════════════════════════════════╝$(COLOR_RESET)"
+	@echo ""
+
+quickstart-full: setup build-full up ## Complete setup and start (full mode with media processing)
+	@echo ""
+	@echo "$(COLOR_GREEN)╔════════════════════════════════════════════════════════╗$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  🎉  FF-Indexer v2 is running (Full Mode)!            ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  Mode:         Full with Media (~730MB)                ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  API:          http://localhost:8081                   ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  Temporal UI:  http://localhost:8080                   ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  NATS Monitor: http://localhost:18222                  ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  Media Processing: ✓ ENABLED                           ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║    - libvips 8.18.2 (image processing)                 ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║    - Chromium (HTML rendering)                         ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Run 'make logs' to view logs                         ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Run 'make ps' to view service status                 ║$(COLOR_RESET)"
@@ -379,15 +271,16 @@ quickstart: setup build-all up ## Complete setup, build, and start (first time s
 	@echo "$(COLOR_GREEN)╚════════════════════════════════════════════════════════╝$(COLOR_RESET)"
 	@echo ""
 
-dev: up-infra ## Start development mode (only infrastructure, run services locally)
+dev: up-infra ## Start development mode (only infrastructure; run ff-indexer locally)
 	@echo "$(COLOR_GREEN)Development mode: Infrastructure running$(COLOR_RESET)"
-	@echo "$(COLOR_YELLOW)Run services locally with Go:$(COLOR_RESET)"
-	@echo "  cd cmd/api && go run main.go"
-	@echo "  cd cmd/worker-core && go run main.go"
+	@echo "$(COLOR_YELLOW)Run the binary:$(COLOR_RESET)"
+	@echo "  go run ./cmd/ff-indexer -config cmd/ff-indexer/config.yaml"
 	@echo ""
 	@echo "$(COLOR_BLUE)Available services:$(COLOR_RESET)"
 	@echo "  PostgreSQL: localhost:5432"
 	@echo "  Temporal:   localhost:7233"
-	@echo "  NATS:       localhost:4222"
+	@echo "  NATS:       localhost:14222 (mapped from container's 4222)"
 	@echo "  Redis:      localhost:6379"
+	@echo ""
+	@echo "$(COLOR_YELLOW)Note: Update config to use nats://localhost:14222$(COLOR_RESET)"
 
