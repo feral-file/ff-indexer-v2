@@ -1,0 +1,185 @@
+# Feral File Indexer configuration (single-process ff-indexer binary)
+#
+# Copy to config/config.yaml or pass -config path. Environment overrides: FF_INDEXER_* (see internal/config).
+
+debug: true
+sentry_dsn: ""
+
+server:
+  host: 0.0.0.0
+  port: 8081
+  read_timeout: 15
+  write_timeout: 15
+  idle_timeout: 120
+
+auth:
+  jwt_public_key: |
+    -----BEGIN PUBLIC KEY-----
+    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Z7hf+bJN8jTXuXa1234
+    CHANGE_ME_WITH_YOUR_ACTUAL_RSA_PUBLIC_KEY_IN_PEM_FORMAT_HERE_THIS
+    IS_JUST_A_PLACEHOLDER_AND_WILL_NOT_WORK_FOR_ACTUAL_AUTHENTICATION
+    5678+abcd/efgh==
+    -----END PUBLIC KEY-----
+  api_keys:
+    - "api-key-1"
+    - "api-key-2"
+
+database:
+  host: localhost
+  port: 5432
+  read_host: ""
+  read_port: 0
+  user: postgres
+  password: postgres
+  dbname: ff_indexer
+  sslmode: disable
+  max_open_conns: 80
+  max_idle_conns: 16
+  conn_max_lifetime: 5m
+  conn_max_idle_time: 10m
+
+nats:
+  url: nats://localhost:4222
+  stream_name: BLOCKCHAIN_EVENTS
+  consumer_name: event-bridge
+  connection_name: ff-indexer
+  max_reconnects: 10
+  reconnect_wait: 2s
+  ack_wait: 30s
+  max_deliver: 3
+
+temporal:
+  host_port: localhost:7233
+  namespace: default
+  token_task_queue: token-indexing
+  media_task_queue: media-indexing
+  max_concurrent_activity_execution_size: 50
+  worker_activities_per_second: 50
+  max_concurrent_activity_task_pollers: 10
+
+# Overrides for the media-indexing Temporal worker (CPU-heavy activities)
+media_worker_temporal:
+  max_concurrent_activity_execution_size: 10
+  worker_activities_per_second: 10
+  max_concurrent_activity_task_pollers: 2
+
+ethereum:
+  websocket_url: ""
+  rpc_url: ""
+  chain_id: eip155:1
+  start_block: 0
+  block_head_ttl: 12
+  block_head_stale_window: 60
+
+tezos:
+  api_url: https://api.tzkt.io
+  websocket_url: https://api.tzkt.io/v1/ws
+  chain_id: tezos:mainnet
+  start_level: 0
+  block_head_ttl: 10
+  block_head_stale_window: 60
+
+vendors:
+  artblocks_url: https://artblocks-mainnet.hasura.app/v1/graphql
+  feralfile_url: https://feralfile.com/api
+  objkt_url: https://data.objkt.com/v3/graphql
+  objkt_api_key: ""
+  opensea_url: https://api.opensea.io/api/v2
+  opensea_api_key: ""
+
+ethereum_token_sweep_start_block: 10000000
+tezos_token_sweep_start_block: 5000000
+ethereum_owner_first_batch_target: 20
+ethereum_owner_subsequent_batch_target: 3
+tezos_owner_first_batch_target: 20
+tezos_owner_subsequent_batch_target: 1
+publisher_registry_path: tools/registry/publisher.json
+blacklist_path: tools/registry/blacklist.json
+budgeted_indexing_enabled: true
+budgeted_indexing_default_daily_quota: 10
+
+uri:
+  ipfs_gateways:
+    - https://ipfs.io
+    - https://cloudflare-ipfs.com
+    - https://ipfs.feralfile.com
+    - https://dweb.link
+    - https://ipfs.filebase.io
+  arweave_gateways:
+    - https://arweave.net
+  onchfs_gateways:
+    - https://onchfs.fxhash2.xyz
+
+rate_limiter:
+  redis_addr: localhost:6379
+  redis_password: ""
+  redis_db: 0
+  redis_key_prefix: "ff:indexer:limiter:"
+  max_workers: 10
+  max_queue_size: 10000
+  enable_local_fallback: true
+  local_fallback_multiplier: 0.5
+  providers:
+    tzkt:
+      requests_per_second: 10
+      burst: 10
+      max_queue_time: 5m
+    opensea:
+      requests_per_second: 4
+      burst: 4
+      max_queue_time: 5m
+    objkt:
+      requests_per_second: 2
+      burst: 2
+      max_queue_time: 5m
+
+worker:
+  pool_size: 20
+  queue_size: 2048
+
+media_health_sweeper:
+  http_timeout: 30s
+  batch_size: 1000
+  worker:
+    pool_size: 50
+    queue_size: 100
+  recheck_after: 24h
+  uri:
+    ipfs_gateways:
+      - https://ipfs.io
+      - https://cloudflare-ipfs.com
+      - https://ipfs.feralfile.com
+      - https://dweb.link
+      - https://ipfs.filebase.io
+    arweave_gateways:
+      - https://arweave.net
+    onchfs_gateways:
+      - https://onchfs.fxhash2.xyz
+
+cloudflare:
+  account_id: ""
+  api_token: ""
+
+rasterizer:
+  width: 2048
+  timeout_ms: 15000
+  browser_fallback_enabled: false
+
+transform:
+  target_image_size: 9437184
+  target_image_pixels: 20000000
+  max_image_dimension: 3840
+  max_animated_image_dimension: 2048
+  min_image_dimension: 1280
+  min_animated_image_dimension: 640
+  resize_step_percentage: 25
+  initial_quality: 100
+  min_quality: 60
+  quality_step: 10
+  max_input_bytes: 104857600
+  max_decoded_pixels: 100000000
+  transform_timeout: 60s
+  worker_concurrency: 4
+
+max_image_size: 10485760
+max_video_size: 314572800

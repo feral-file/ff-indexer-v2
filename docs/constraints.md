@@ -52,7 +52,7 @@ Hard and soft constraints for **FF Indexer v2**. Agents and engineers should tre
 ## Deployment constraints
 
 - **Runtime versions** — Target versions in **README** (Go, PostgreSQL, Temporal, Redis, NATS) are **supported baselines** for development and CI. Upgrades should be validated with **`make check`** and integration tests.
-- **Multi-process topology** — The design assumes **multiple binaries** (emitters, bridge, workers, API, sweeper). Single-container “API only” deploys **do not index** without the rest of the stack or external workers.
+- **Single-process application** — The default deployment runs **`ff-indexer`** as one OS process (API, emitters, bridge, Temporal workers, sweeper). An “API only” build **does not index** unless emitters, bridge, and workers are also running (e.g., full binary or external workers).
 - **Cloudflare** — **Worker media** integration assumes **Cloudflare Images/Stream** (or configured equivalents) for processed media URLs; swapping providers is a **cross-cutting** change (workers, config, URL shapes).
 - **Observability** — Production operation expects **logs and metrics** suitable for diagnosing **stuck workflows**, **NATS backlog**, and **RPC errors**. New components should emit **actionable** errors rather than swallowing failures.
 
