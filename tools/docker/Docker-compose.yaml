@@ -126,7 +126,7 @@ services:
       - "-sd"
       - "/data"
     ports:
-      - "14222:4222"  # Client connections
+      - "4222:4222"  # Client connections
       - "18222:8222"  # HTTP monitoring
       - "16222:6222"  # Clustering
     volumes:
@@ -169,7 +169,7 @@ services:
   ff-indexer:
     build:
       context: ../..
-      dockerfile: tools/docker/Dockerfile-ff-indexer
+      dockerfile: tools/docker/Dockerfile
       # CGO=1 enables media worker (vips/chromium)
       # Default 0 for reliable builds; override: docker compose build --build-arg CGO_ENABLED=1 ff-indexer
       args:

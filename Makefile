@@ -279,8 +279,8 @@ dev: up-infra ## Start development mode (only infrastructure; run ff-indexer loc
 	@echo "$(COLOR_BLUE)Available services:$(COLOR_RESET)"
 	@echo "  PostgreSQL: localhost:5432"
 	@echo "  Temporal:   localhost:7233"
-	@echo "  NATS:       localhost:14222 (mapped from container's 4222)"
+	@echo "  NATS:       localhost:4222"
 	@echo "  Redis:      localhost:6379"
 	@echo ""
-	@echo "$(COLOR_YELLOW)Note: Update config to use nats://localhost:14222$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Note: Update config to use nats://localhost:4222$(COLOR_RESET)"
 
