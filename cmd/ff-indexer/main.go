@@ -216,21 +216,25 @@ func main() {
 	g, ctx := errgroup.WithContext(rootCtx)
 
 	g.Go(func() error {
-		return runHTTPServer(ctx, srv)
+		componentCtx := logger.WithComponent(ctx, "http-server")
+		return runHTTPServer(componentCtx, srv)
 	})
 
 	g.Go(func() error {
-		return runEthereumEmitter(ctx, cfg, dataStore, ethNatsPub)
+		componentCtx := logger.WithComponent(ctx, "ethereum-emitter")
+		return runEthereumEmitter(componentCtx, cfg, dataStore, ethNatsPub)
 	})
 
 	g.Go(func() error {
-		return runTezosEmitter(ctx, cfg, dataStore, tezNatsPub, rateLimitProxy)
+		componentCtx := logger.WithComponent(ctx, "tezos-emitter")
+		return runTezosEmitter(componentCtx, cfg, dataStore, tezNatsPub, rateLimitProxy)
 	})
 
 	g.Go(func() error {
+		componentCtx := logger.WithComponent(ctx, "event-bridge")
 		errCh := make(chan error, 1)
 		go func() {
-			err := eventBridge.Run(ctx)
+			err := eventBridge.Run(componentCtx)
 			errCh <- err
 		}()
 		select {
@@ -245,15 +249,18 @@ func main() {
 	})
 
 	g.Go(func() error {
-		return runWorkerCore(ctx)
+		componentCtx := logger.WithComponent(ctx, "worker-core")
+		return runWorkerCore(componentCtx)
 	})
 
 	g.Go(func() error {
-		return runWorkerMedia(ctx)
+		componentCtx := logger.WithComponent(ctx, "worker-media")
+		return runWorkerMedia(componentCtx)
 	})
 
 	g.Go(func() error {
-		return runSweeper(ctx, mediaSweeper)
+		componentCtx := logger.WithComponent(ctx, "sweeper")
+		return runSweeper(componentCtx, mediaSweeper)
 	})
 
 	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {

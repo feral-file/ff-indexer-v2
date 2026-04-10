@@ -17,6 +17,14 @@ var (
 	sentryClient *sentry.Client
 )
 
+// componentKey is the context key type for storing component names
+type componentKey struct{}
+
+// WithComponent returns a new context with the component name attached
+func WithComponent(ctx context.Context, component string) context.Context {
+	return context.WithValue(ctx, componentKey{}, component)
+}
+
 // Config holds logger configuration
 type Config struct {
 	Debug           bool
@@ -96,23 +104,35 @@ func Flush(timeout time.Duration) {
 	}
 }
 
-// FromContext returns a logger with sentry scope from context
-// This should be used when you have a context with sentry hub
+// FromContext returns a logger with sentry scope and component field from context
+// This should be used when you have a context with sentry hub or component information
 func FromContext(ctx context.Context) *zap.Logger {
 	if ctx == nil {
 		return log
 	}
 
+	// Extract component from context
+	component, _ := ctx.Value(componentKey{}).(string)
+
 	// Extract Sentry hub from context (if present)
 	hub := sentry.GetHubFromContext(ctx)
+
+	var logger *zap.Logger
 	if hub != nil {
 		// Attach the hub's scope directly to the logger
 		// This ensures breadcrumbs and events use the correct scope from the context
-		return log.With(zapsentry.NewScopeFromScope(hub.Scope()))
+		logger = log.With(zapsentry.NewScopeFromScope(hub.Scope()))
+	} else {
+		// Fallback: use zapsentry.Context for trace linking (even if no hub in context)
+		logger = log.With(zapsentry.Context(ctx))
 	}
 
-	// Fallback: use zapsentry.Context for trace linking (even if no hub in context)
-	return log.With(zapsentry.Context(ctx))
+	// Add component field for service identification
+	if component != "" {
+		logger = logger.With(zap.String("component", component))
+	}
+
+	return logger
 }
 
 // Default returns the global logger (without context scope)
