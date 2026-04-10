@@ -2,19 +2,12 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -36,59 +29,17 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
-var (
-	configFile = flag.String("config", "", "Path to configuration file")
-	envPath    = flag.String("env", "config/", "Path to environment files")
-)
-
-func main() {
-	flag.Parse()
-
-	// Load configuration
-	config.ChdirRepoRoot()
-	cfg, err := config.LoadWorkerCoreConfig(*configFile, *envPath)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to load config: %v", err))
-	}
-
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Initialize logger with sentry integration
-	err = logger.Initialize(logger.Config{
-		Debug:           cfg.Debug,
-		SentryDSN:       cfg.SentryDSN,
-		BreadcrumbLevel: zapcore.InfoLevel,
-		Tags: map[string]string{
-			"service": "worker-core",
-		},
-	})
-	if err != nil {
-		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
-	}
-	defer logger.Flush(2 * time.Second)
-	logger.InfoCtx(ctx, "Starting Worker Core")
-
-	// Connect to database
-	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
-	if err != nil {
-		logger.FatalCtx(ctx, "Failed to connect to database", zap.Error(err), zap.String("dsn", cfg.Database.DSN()))
-	}
-
-	// Configure connection pool
-	if err := store.ConfigureConnectionPool(db, cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns, cfg.Database.ConnMaxLifetime, cfg.Database.ConnMaxIdleTime); err != nil {
-		logger.FatalCtx(ctx, "Failed to configure connection pool", zap.Error(err))
-	}
-	logger.InfoCtx(ctx, "Connected to database",
-		zap.Int("max_open_conns", cfg.Database.MaxOpenConns),
-		zap.Int("max_idle_conns", cfg.Database.MaxIdleConns),
-	)
-
-	// Initialize store
+// registerWorkerCore wires the token-indexing Temporal worker (worker-core / token task queue).
+func registerWorkerCore(
+	ctx context.Context,
+	cfg *config.WorkerCoreConfig,
+	db *gorm.DB,
+	temporalClient client.Client,
+	rateLimitProxy ratelimit.Proxy,
+) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
+	// Store and shared adapters.
 	dataStore := store.NewPGStore(db)
 
-	// Initialize adapters
 	jsonAdapter := adapter.NewJSON()
 	jcsAdapter := adapter.NewJCS()
 	clockAdapter := adapter.NewClock()
@@ -97,116 +48,89 @@ func main() {
 	ioAdapter := adapter.NewIO()
 	temporalActivityAdapter := adapter.NewActivity()
 	temporalWorkflowAdapter := adapter.NewWorkflow()
-	redisAdapter := adapter.NewRedisClient(cfg.RateLimiter.RedisAddr, cfg.RateLimiter.RedisPassword, cfg.RateLimiter.RedisDB)
 
-	// Initialize ethereum client
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
+
+	// Chain clients (Ethereum RPC + Tezos TzKT) and vendor APIs.
 	ethDialer := adapter.NewEthClientDialer()
 	adapterEthClient, err := ethDialer.Dial(ctx, cfg.Ethereum.RPCURL)
 	if err != nil {
-		logger.FatalCtx(ctx, "Failed to dial Ethereum RPC", zap.Error(err), zap.String("rpc_url", cfg.Ethereum.RPCURL))
-	}
-	defer adapterEthClient.Close()
-
-	// Rate limit proxy
-	rateLimitProxy, err := ratelimit.NewProxy(cfg.RateLimiter, redisAdapter, clockAdapter)
-	if err != nil {
-		logger.FatalCtx(ctx, "Failed to initialize rate limit proxy", zap.Error(err))
+		return nil, nil, err
 	}
 
-	// Create Ethereum block provider with appropriate TTL
 	ethBlockFetcher := ethereum.NewEthereumBlockFetcher(adapterEthClient)
 	ethBlockProvider := block.NewBlockProvider(ethBlockFetcher,
 		block.Config{
 			TTL:               cfg.Ethereum.BlockHeadTTL * time.Second,
 			StaleWindow:       cfg.Ethereum.BlockHeadStaleWindow * time.Second,
-			BlockTimestampTTL: 0, // Cache block timestamps forever (they are immutable)
+			BlockTimestampTTL: 0,
 		}, clockAdapter)
-
 	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
 
-	logger.InfoCtx(ctx, "Connected to Ethereum RPC", zap.String("rpc_url", cfg.Ethereum.RPCURL))
-
-	// Create Tezos block provider with appropriate TTL
 	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient, clockAdapter)
 	tzBlockProvider := block.NewBlockProvider(tzBlockFetcher,
 		block.Config{
 			TTL:               cfg.Tezos.BlockHeadTTL * time.Second,
 			StaleWindow:       cfg.Tezos.BlockHeadStaleWindow * time.Second,
-			BlockTimestampTTL: 0, // Cache block timestamps forever (they are immutable)
+			BlockTimestampTTL: 0,
 		}, clockAdapter)
-
-	// Initialize Tezos client
 	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, rateLimitProxy, clockAdapter, tzBlockProvider)
 
-	// Initialize vendors
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
 	objktClient := objkt.NewClient(httpClient, rateLimitProxy, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
 	openseaClient := opensea.NewClient(httpClient, rateLimitProxy, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
 
-	// Initialize registry loaders
 	publisherLoader := registry.NewPublisherRegistryLoader(fs, jsonAdapter)
 	blacklistLoader := registry.NewBlacklistRegistryLoader(fs, jsonAdapter)
 
-	// Load publisher registry
 	var publisherRegistry registry.PublisherRegistry
 	if cfg.PublisherRegistryPath != "" {
 		publisherRegistry, err = publisherLoader.Load(cfg.PublisherRegistryPath)
 		if err != nil {
-			logger.FatalCtx(ctx, "Failed to load publisher registry",
-				zap.Error(err),
-				zap.String("path", cfg.PublisherRegistryPath))
+			adapterEthClient.Close()
+			return nil, nil, err
 		}
 		logger.InfoCtx(ctx, "Loaded publisher registry", zap.String("path", cfg.PublisherRegistryPath))
 	} else {
 		logger.WarnCtx(ctx, "Publisher registry path not configured, publisher resolution will be disabled")
 	}
 
-	// Load blacklist registry
 	var blacklistRegistry registry.BlacklistRegistry
 	if cfg.BlacklistPath != "" {
 		blacklistRegistry, err = blacklistLoader.Load(cfg.BlacklistPath)
 		if err != nil {
-			logger.FatalCtx(ctx, "Failed to load blacklist registry",
-				zap.Error(err),
-				zap.String("path", cfg.BlacklistPath))
+			adapterEthClient.Close()
+			return nil, nil, err
 		}
 		logger.InfoCtx(ctx, "Loaded blacklist registry", zap.String("path", cfg.BlacklistPath))
 	} else {
 		logger.WarnCtx(ctx, "Blacklist registry path not configured, all contracts will be allowed")
 	}
 
-	// Initialize URI resolver
+	// Metadata pipeline and workflow executor.
 	uriResolver := uri.NewResolver(httpClient, &uri.Config{
 		IPFSGateways:    cfg.URI.IPFSGateways,
 		ArweaveGateways: cfg.URI.ArweaveGateways,
 		OnChFSGateways:  cfg.URI.OnchfsGateways,
 	})
-
-	// Initialize URI config for URL checker
 	uriConfig := &uri.Config{
 		IPFSGateways:    cfg.URI.IPFSGateways,
 		ArweaveGateways: cfg.URI.ArweaveGateways,
 		OnChFSGateways:  cfg.URI.OnchfsGateways,
 	}
-
-	// Initialize URL checker for media health checks
 	urlChecker := uri.NewURLChecker(httpClient, ioAdapter, uriConfig)
 	dataURIChecker := uri.NewDataURIChecker()
 
-	// Initialize metadata enhancer and resolver
 	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, objktClient, openseaClient, jsonAdapter, jcsAdapter)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, jcsAdapter, base64Adapter, dataStore, publisherRegistry)
 
-	// Load deployer cache from DB if resolver has store and registry
 	if publisherRegistry != nil {
 		if err := metadataResolver.LoadDeployerCacheFromDB(ctx); err != nil {
 			logger.WarnCtx(ctx, "Failed to load deployer cache from DB", zap.Error(err))
 		}
 	}
 
-	// Initialize executor for activities
 	executor := workflows.NewExecutor(
 		dataStore,
 		metadataResolver,
@@ -222,20 +146,7 @@ func main() {
 		urlChecker,
 		dataURIChecker)
 
-	// Connect to Temporal with logger integration
-	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
-	temporalClient, err := client.Dial(client.Options{
-		HostPort:  cfg.Temporal.HostPort,
-		Namespace: cfg.Temporal.Namespace,
-		Logger:    temporalLogger, // Use zap logger adapter for Temporal client
-	})
-	if err != nil {
-		logger.FatalCtx(ctx, "Failed to connect to Temporal", zap.Error(err), zap.String("host_port", cfg.Temporal.HostPort))
-	}
-	defer temporalClient.Close()
-	logger.InfoCtx(ctx, "Connected to Temporal", zap.String("namespace", cfg.Temporal.Namespace))
-
-	// Create Temporal worker with logger and Sentry interceptor
+	// Temporal worker: register workflows and activities on the token task queue.
 	sentryInterceptor := temporal.NewSentryActivityInterceptor()
 	temporalWorker := worker.New(
 		temporalClient,
@@ -248,9 +159,7 @@ func main() {
 				sentryInterceptor,
 			},
 		})
-	logger.InfoCtx(ctx, "Created Temporal worker", zap.String("taskQueue", cfg.Temporal.TokenTaskQueue))
 
-	// Create worker core instance
 	workerCore := workflows.NewWorkerCore(executor,
 		workflows.WorkerCoreConfig{
 			EthereumTokenSweepStartBlock:       cfg.EthereumTokenSweepStartBlock,
@@ -266,7 +175,6 @@ func main() {
 			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
 		}, blacklistRegistry, temporalWorkflowAdapter)
 
-	// Register workflows
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMint)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenTransfer)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenBurn)
@@ -282,10 +190,7 @@ func main() {
 	temporalWorker.RegisterWorkflow(workerCore.IndexMultipleTokensMetadata)
 	temporalWorker.RegisterWorkflow(workerCore.NotifyWebhookClients)
 	temporalWorker.RegisterWorkflow(workerCore.DeliverWebhook)
-	logger.InfoCtx(ctx, "Registered workflows")
 
-	// Register activities
-	// Activities will be called by workflows
 	temporalWorker.RegisterActivity(executor.CreateTokenMint)
 	temporalWorker.RegisterActivity(executor.ResolveTokenMetadata)
 	temporalWorker.RegisterActivity(executor.EnhanceTokenMetadata)
@@ -313,21 +218,25 @@ func main() {
 	temporalWorker.RegisterActivity(executor.UpdateIndexingJobStatus)
 	temporalWorker.RegisterActivity(executor.UpdateIndexingJobProgress)
 	temporalWorker.RegisterActivity(executor.CheckMediaURLsHealthAndUpdateViewability)
-	logger.InfoCtx(ctx, "Registered activities")
 
-	// Start worker
-	err = temporalWorker.Start()
-	if err != nil {
-		logger.FatalCtx(ctx, "Failed to start worker", zap.Error(err))
+	// Run blocks until worker exits or ctx is canceled; cleanup closes the Ethereum RPC client.
+	run = func(ctx context.Context) error {
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- temporalWorker.Start()
+		}()
+		select {
+		case err := <-errCh:
+			return err
+		case <-ctx.Done():
+			temporalWorker.Stop()
+			<-errCh
+			return ctx.Err()
+		}
 	}
-	logger.InfoCtx(ctx, "Worker started and listening for tasks")
-
-	// Wait for interrupt signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-
-	logger.InfoCtx(ctx, "Shutting down worker...")
-	temporalWorker.Stop()
-	logger.InfoCtx(ctx, "Worker stopped")
+	cleanup = func(context.Context) error {
+		adapterEthClient.Close()
+		return nil
+	}
+	return run, cleanup, nil
 }

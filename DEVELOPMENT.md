@@ -12,6 +12,7 @@ The development stack uses Docker Compose for infrastructure services:
 - **Temporal** (ports 7233-7235) - Workflow orchestration
 - **Temporal UI** (port 8080) - Temporal web interface
 - **NATS JetStream** (ports 4222, 8222) - Event streaming
+- **Redis** (port 6379) - Rate limiting for vendor / TzKT clients
 
 ### Starting Infrastructure
 
@@ -48,28 +49,20 @@ The system supports **dual configuration**: YAML config files and environment va
 **Configuration Priority** (highest to lowest):
 1. Environment variables (with `FF_INDEXER_` prefix)
 2. `.env.local` files
-3. YAML config files (`config.yaml` in each `cmd/*/` directory)
+3. YAML config files
 
 #### Option 1: YAML Config Files
 
-Each service can use a `config.yaml` file in its directory:
+The binary loads a single config (defaults search `cmd/ff-indexer/`, current directory, and `config/`):
 
 ```bash
-# Copy sample configs
-cp cmd/api/config.yaml.sample cmd/api/config.yaml
-cp cmd/worker-core/config.yaml.sample cmd/worker-core/config.yaml
-cp cmd/worker-media/config.yaml.sample cmd/worker-media/config.yaml
-cp cmd/event-bridge/config.yaml.sample cmd/event-bridge/config.yaml
-cp cmd/ethereum-event-emitter/config.yaml.sample cmd/ethereum-event-emitter/config.yaml
-cp cmd/tezos-event-emitter/config.yaml.sample cmd/tezos-event-emitter/config.yaml
-cp cmd/sweeper/config.yaml.sample cmd/sweeper/config.yaml
-
-# Edit config files with your settings
+cp cmd/ff-indexer/config.yaml.sample config/config.yaml
+# Edit config/config.yaml with your settings
 ```
 
 **Config file location**:
-- Default: `cmd/{service}/config.yaml` (relative to service directory)
-- Can be overridden with `--config` flag: `go run main.go --config /path/to/config.yaml`
+- Default search paths include `config/config.yaml` and `cmd/ff-indexer/config.yaml`
+- Override with `-config /path/to/config.yaml`
 
 #### Option 2: Environment Variables
 
@@ -83,7 +76,7 @@ Dots in config keys become underscores in env vars.
 **Environment variable files** (loaded in order, later files override earlier):
 1. `config/.env` - Base configuration (version controlled)
 2. `config/.env.local` - Local overrides (git ignored)
-3. `config/.env.{service}.local` - Service-specific overrides (git ignored)
+3. `config/.env.ff-indexer.local` - Optional overrides for the binary (git ignored)
 
 #### Required Configuration
 
@@ -131,39 +124,16 @@ export FF_INDEXER_TEMPORAL_NAMESPACE=default
 export FF_INDEXER_TEMPORAL_TASK_QUEUE=token-indexing
 ```
 
-## Running Services Locally
+## Running Locally
 
-After starting infrastructure, run services with Go:
+After starting infrastructure, run the binary:
 
-### Ethereum Event Emitter
 ```bash
-cd cmd/ethereum-event-emitter
-go run main.go
+go run ./cmd/ff-indexer -config config/config.yaml
 ```
 
-### Tezos Event Emitter
-```bash
-cd cmd/tezos-event-emitter
-go run main.go
-```
-
-### Event Bridge
-```bash
-cd cmd/event-bridge
-go run main.go
-```
-
-### Worker Core
-```bash
-cd cmd/worker-core
-go run main.go
-```
-
-### Worker Media
-```bash
-cd cmd/worker-media
-go run main.go
-```
+- **Without CGO** (`CGO_ENABLED=0`): the media Temporal worker is not started; other subsystems run.
+- **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including `media-indexing` worker.
 
 ### Data URI Media Processing
 
@@ -174,19 +144,7 @@ When metadata contains data URIs, the media worker decodes and transforms them s
   - `source_url` stores the raw URL (including data URIs) for consistency.
 - API expansions resolve media assets by hashing incoming URLs for lookup.
 
-### API Server
-```bash
-cd cmd/api
-go run main.go
-```
-API available at: http://localhost:8081
-
-### Sweeper
-```bash
-cd cmd/sweeper
-go run main.go
-```
-Continuously checks media URL health and updates database
+HTTP API (same process): http://localhost:8081 (port from `server.port` in config).
 
 ## Database Setup
 

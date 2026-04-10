@@ -4,7 +4,9 @@ This document describes the system architecture, components, data flow, and comm
 
 ## Overview
 
-FF-Indexer v2 is a distributed system that indexes NFT data from multiple blockchain networks. It uses an event-driven architecture with Temporal for workflow orchestration and NATS JetStream for event streaming.
+FF-Indexer v2 indexes NFT data from multiple blockchain networks. It uses an event-driven architecture with Temporal for workflow orchestration and NATS JetStream for event streaming.
+
+**Deployment model**: A single OS process (`cmd/ff-indexer`) runs the application subsystems concurrently (HTTP API, chain emitters, NATS bridge, Temporal workers, sweeper). External infrastructure remains **PostgreSQL**, **Temporal**, **NATS JetStream**, and **Redis** (rate limiting).
 
 ## System Components
 
@@ -13,13 +15,14 @@ FF-Indexer v2 is a distributed system that indexes NFT data from multiple blockc
 1. **PostgreSQL** - Primary database for all indexed data
 2. **Temporal** - Workflow orchestration engine
 3. **NATS JetStream** - Event streaming and message queue
+4. **Redis** - Distributed rate limiting for vendor / TzKT traffic
 
-### Application Services
+### Application Subsystems (within `ff-indexer`)
 
 1. **Event Emitters** - Subscribe to blockchain events and publish to NATS
 2. **Event Bridge** - Consumes events from NATS and triggers Temporal workflows
 3. **Worker Core** - Executes Temporal workflows for token indexing
-4. **Worker Media** - Processes and uploads media files
+4. **Worker Media** - Processes and uploads media files (requires CGO when run locally; enabled in the default Docker image)
 5. **API Server** - Provides REST and GraphQL APIs
 6. **Sweeper** - Continuously monitors media URL health (can be extended for multiple purposes)
 
@@ -30,8 +33,8 @@ FF-Indexer v2 is a distributed system that indexes NFT data from multiple blockc
 **Purpose**: Monitor blockchain networks and emit events for token mints, transfers, burns, and metadata updates.
 
 **Components**:
-- `ethereum-event-emitter`: Subscribes to Ethereum WebSocket events
-- `tezos-event-emitter`: Subscribes to Tezos events via TzKT WebSocket
+- Ethereum emitter goroutine: Subscribes to Ethereum WebSocket events
+- Tezos emitter goroutine: Subscribes to Tezos events via TzKT WebSocket
 
 **Responsibilities**:
 - Connect to blockchain RPC endpoints
@@ -252,10 +255,10 @@ PostgreSQL (updated health status)
 - **Replicas**: 1 (configurable)
 
 **Publishers**:
-- Event Emitters (ethereum-event-emitter, tezos-event-emitter)
+- Both chain emitters share one JetStream publisher backed by the same NATS connection
 
 **Consumers**:
-- Event Bridge (consumer: `event-bridge`)
+- Event Bridge (consumer name from config, default `event-bridge`)
 
 ### Workflow Orchestration (Temporal)
 
@@ -270,9 +273,8 @@ PostgreSQL (updated health status)
 
 ### Database (PostgreSQL)
 
-**Shared Connection**:
-- All services connect to the same PostgreSQL instance
-- Connection pooling per service
+**Shared database**:
+- The `ff-indexer` process uses one connection pool to PostgreSQL (with optional read replica for API reads)
 - GORM for ORM operations
 
 **Key Tables**:
@@ -362,12 +364,9 @@ key_value_store (standalone table)
 
 ### Horizontal Scaling
 
-- **Event Emitters**: Can run multiple instances per chain (different start blocks)
-- **Event Bridge**: Can run multiple instances (NATS consumer groups)
-- **Worker Core**: Can run multiple instances (Temporal task queue)
-- **Worker Media**: Can run multiple instances (Temporal task queue)
-- **API Server**: Can run multiple instances (stateless)
-- **Sweeper**: Should run single instance
+The default deployment is **one full `ff-indexer` replica**. Running multiple full replicas will duplicate emitters and bridge consumers unless operators partition work (e.g., separate deployments per chain or custom config). Temporal workers and the stateless API can still scale with multiple processes when using **separate** binaries or deliberately duplicated queues—evaluate NATS consumer semantics and cursor ownership before scaling out.
+
+- **Sweeper**: Should run as a single instance per deployment (duplicate sweepers waste work)
 
 ### Vertical Scaling
 
@@ -401,7 +400,7 @@ The system supports flexible configuration through YAML files and environment va
 
 ### Configuration Sources
 
-1. **YAML Config Files**: Each service can use a `config.yaml` file in its `cmd/{service}/` directory
+1. **YAML Config File**: Unified `config.yaml` for `ff-indexer` (search paths include `cmd/ff-indexer/` and `config/`)
 2. **Environment Variables**: Variables with `FF_INDEXER_` prefix override config file values
 3. **Environment Files**: `.env` files in `config/` directory (loaded automatically)
 
@@ -422,7 +421,7 @@ Dots in YAML keys become underscores in environment variables.
 
 ### Example Configuration
 
-**YAML config** (`cmd/api/config.yaml`):
+**YAML config** (e.g. `config/config.yaml`):
 ```yaml
 database:
   host: localhost

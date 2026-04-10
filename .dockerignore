@@ -11,7 +11,7 @@ docs/
 # Docker files (exclude other Dockerfiles and compose files)
 tools/docker/docker-compose.yaml
 tools/docker/Dockerfile-*
-!tools/docker/Dockerfile-${DOCKERFILE_TARGET}
+# Primary ff-indexer recipe is tools/docker/Dockerfile (not matched by Dockerfile-*); keep it in context.
 
 # CI/CD
 .github/
