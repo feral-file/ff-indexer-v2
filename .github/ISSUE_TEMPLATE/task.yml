@@ -1,0 +1,54 @@
+name: Task
+description: Track a counted task with a clear owner, agent plan, and delivery link
+title: "[Task] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      placeholder: What needs to be done?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why_it_matters
+    attributes:
+      label: Why It Matters
+      placeholder: Why is this worth doing now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_checks
+    attributes:
+      label: 1-3 Acceptance Checks
+      placeholder: |
+        1. Check 1
+        2. Check 2
+        3. Check 3
+    validations:
+      required: true
+
+  - type: input
+    id: human_owner
+    attributes:
+      label: Human Owner
+      placeholder: Who owns the task outcome?
+    validations:
+      required: true
+
+  - type: textarea
+    id: agent_usage
+    attributes:
+      label: How The Agent Will Be Used
+      placeholder: What should the agent draft, automate, verify, or ship?
+    validations:
+      required: true
+
+  - type: input
+    id: pr_or_deploy_link
+    attributes:
+      label: PR or Deploy Link
+      placeholder: Add the PR URL or deployed artifact when available.
+    validations:
+      required: false
