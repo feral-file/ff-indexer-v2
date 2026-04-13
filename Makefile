@@ -358,6 +358,10 @@ test: ## Run tests
 	@go test -cover ./...
 	@echo "$(COLOR_GREEN)✓ Tests passed$(COLOR_RESET)"
 
+post-implementation-check: ## Run the canonical local verification flow for current changes
+	@./tools/scripts/post_implementation_check.sh
+	@echo "$(COLOR_GREEN)✓ Post-implementation checks passed$(COLOR_RESET)"
+
 check: imports lint-local test ## Run linters, format imports, and tests
 	@echo "$(COLOR_GREEN)✓ All checks passed$(COLOR_RESET)"
 
@@ -390,4 +394,3 @@ dev: up-infra ## Start development mode (only infrastructure, run services local
 	@echo "  Temporal:   localhost:7233"
 	@echo "  NATS:       localhost:4222"
 	@echo "  Redis:      localhost:6379"
-

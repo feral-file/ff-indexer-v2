@@ -77,6 +77,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 ## Documentation
 
+- **[Agent Guide](AGENTS.md)** - Repository workflow, canonical verification, and PR/review contract for agents and contributors
 - **[Architecture](docs/architecture.md)** - System design, components, and data flow diagrams
 - **[Database Schema](docs/schema.md)** - Complete database schema and migration notes
 - **[Development Guide](DEVELOPMENT.md)** - Local development setup, seed data, and scripts

@@ -1,0 +1,92 @@
+version: "2"
+
+run:
+  go: "1.24"
+  timeout: 10m
+  concurrency: 4
+
+linters:
+  default: none
+  enable:
+    - cyclop
+    - govet
+    - errname
+    - errcheck
+    - errorlint
+    - funlen
+    - gocognit
+    - gocyclo
+    - godoclint
+    - godot
+    - gosec
+    - ineffassign
+    - misspell
+    - nestif
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+  settings:
+    cyclop:
+      max-complexity: 10
+    gocognit:
+      min-complexity: 10
+    gocyclo:
+      min-complexity: 10
+    funlen:
+      lines: 40
+      statements: 25
+      ignore-comments: true
+    godoclint:
+      default: all
+      options:
+        max-len:
+          length: 100
+        require-doc:
+          ignore-exported: false
+          ignore-unexported: false
+        start-with-name:
+          include-unexported: true
+    godot:
+      scope: all
+      capital: true
+      period: true
+    misspell:
+      locale: US
+      ignore-rules:
+        - MONITORD
+    nestif:
+      min-complexity: 3
+    revive:
+      confidence: 0.8
+      rules:
+        - name: comment-spacings
+        - name: early-return
+        - name: exported
+        - name: empty-block
+        - name: file-length-limit
+          arguments:
+            - max: 350
+              skip-comments: true
+              skip-blank-lines: true
+        - name: function-length
+          arguments: [40, 25]
+        - name: if-return
+        - name: indent-error-flow
+          arguments:
+            - preserve-scope
+        - name: max-control-nesting
+          arguments: [3]
+        - name: package-comments
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: unused-parameter
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  formats:
+    text:
+      print-issued-lines: true
