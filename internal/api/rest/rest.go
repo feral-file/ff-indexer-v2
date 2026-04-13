@@ -21,10 +21,6 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 		// Token indexing by CIDs (open, no authentication required)
 		v1.POST("/tokens/index", handler.TriggerTokenIndexing)
 
-		// Token indexing by owner addresses (requires authentication)
-		// Deprecated: Use /tokens/addresses/index instead
-		v1.POST("/tokens/owners/index", middleware.Auth(authCfg), handler.TriggerOwnerIndexing)
-
 		// Token indexing by owner addresses with job tracking (requires authentication)
 		v1.POST("/tokens/addresses/index", middleware.Auth(authCfg), handler.TriggerAddressIndexing)
 

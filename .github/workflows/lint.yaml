@@ -5,9 +5,25 @@ on:
     branches: [main, develop]
     paths:
       - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.golangci.yaml'
+      - 'Makefile'
+      - 'db/**'
+      - 'internal/api/graphql/**'
+      - '.github/workflows/**'
+      - '.github/actions/**'
   pull_request:
     paths:
       - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.golangci.yaml'
+      - 'Makefile'
+      - 'db/**'
+      - 'internal/api/graphql/**'
+      - '.github/workflows/**'
+      - '.github/actions/**'
 
   workflow_dispatch:
     inputs:
@@ -24,6 +40,11 @@ jobs:
   lint:
     name: Lint (Go)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: lint-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     defaults:
       run:
         working-directory: ./

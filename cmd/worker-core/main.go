@@ -276,7 +276,6 @@ func main() {
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenProvenances)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokens)
 	temporalWorker.RegisterWorkflow(workerCore.IndexToken)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenOwners)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTokenOwner)
 	temporalWorker.RegisterWorkflow(workerCore.IndexTezosTokenOwner)
 	temporalWorker.RegisterWorkflow(workerCore.IndexEthereumTokenOwner)

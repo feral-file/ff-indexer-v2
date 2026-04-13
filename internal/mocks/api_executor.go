@@ -159,21 +159,6 @@ func (mr *MockAPIExecutorMockRecorder) TriggerMetadataIndexing(ctx, tokenIDs, to
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerMetadataIndexing", reflect.TypeOf((*MockAPIExecutor)(nil).TriggerMetadataIndexing), ctx, tokenIDs, tokenCIDs)
 }
 
-// TriggerOwnerIndexing mocks base method.
-func (m *MockAPIExecutor) TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TriggerOwnerIndexing", ctx, addresses)
-	ret0, _ := ret[0].(*dto.TriggerIndexingResponse)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// TriggerOwnerIndexing indicates an expected call of TriggerOwnerIndexing.
-func (mr *MockAPIExecutorMockRecorder) TriggerOwnerIndexing(ctx, addresses interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerOwnerIndexing", reflect.TypeOf((*MockAPIExecutor)(nil).TriggerOwnerIndexing), ctx, addresses)
-}
-
 // TriggerTokenIndexing mocks base method.
 func (m *MockAPIExecutor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error) {
 	m.ctrl.T.Helper()

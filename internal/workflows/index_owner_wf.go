@@ -20,49 +20,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
-// IndexTokenOwners indexes tokens for multiple addresses sequentially
-func (w *workerCore) IndexTokenOwners(ctx workflow.Context, addresses []string) error {
-	logger.InfoWf(ctx, "Starting token owners indexing",
-		zap.Strings("addresses", addresses),
-		zap.Int("addressCount", len(addresses)),
-	)
-
-	// Process each address sequentially and wait for completion
-	for _, address := range addresses {
-		logger.InfoWf(ctx, "Processing address", zap.String("address", address))
-
-		// Configure child workflow options
-		childWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowID:               fmt.Sprintf("index-token-owner-%s", address),
-			WorkflowExecutionTimeout: 30 * (24*time.Hour + 30*time.Minute), // 30 days + buffer for each day
-			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_TERMINATE,
-		}
-		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
-		// Execute child workflow and wait for completion
-		err := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenOwner, address).Get(ctx, nil)
-		if err != nil {
-			logger.ErrorWf(ctx,
-				fmt.Errorf("failed to index tokens for address"),
-				zap.Error(err),
-				zap.String("address", address),
-			)
-			return err
-		}
-
-		logger.InfoWf(ctx, "Completed indexing tokens for address",
-			zap.String("address", address),
-		)
-	}
-
-	logger.InfoWf(ctx, "Token owners indexing completed",
-		zap.Int("addressCount", len(addresses)),
-	)
-
-	return nil
-}
-
 // IndexTokenOwner indexes all tokens held by a single address
 // This is the parent workflow that delegates to blockchain-specific child workflows
 // It manages the job lifecycle (creation, completion, failure, cancellation)

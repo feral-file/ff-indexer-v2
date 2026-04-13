@@ -371,7 +371,7 @@ curl -X POST http://localhost:8081/api/v1/tokens/index \
   -d '{"token_cids": ["eip155:1:erc721:0x123...:1", "eip155:1:erc721:0x123...:2"]}'
 
 # Index tokens by owner addresses (requires authentication)
-curl -X POST http://localhost:8081/api/v1/tokens/owners/index \
+curl -X POST http://localhost:8081/api/v1/tokens/addresses/index \
   -H "Authorization: ApiKey test-api-key" \
   -H "Content-Type: application/json" \
   -d '{"addresses": ["0xowner123", "tz1abc123"]}'

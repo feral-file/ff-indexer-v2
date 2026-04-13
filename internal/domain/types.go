@@ -29,6 +29,20 @@ const (
 	ChainTezosGhostnet   Chain = "tezos:ghostnet"
 )
 
+// EIP155NumericID returns the numeric chain ID for CAIP-2 eip155 chains (e.g. eip155:1 → 1).
+func (c Chain) EIP155NumericID() (int, bool) {
+	const prefix = "eip155:"
+	s := string(c)
+	if !strings.HasPrefix(s, prefix) {
+		return 0, false
+	}
+	id, err := strconv.Atoi(strings.TrimPrefix(s, prefix))
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
 // IsEVM checks if a chain is an EVM chain
 func (c Chain) IsEVM() bool {
 	return c == ChainEthereumMainnet || c == ChainEthereumSepolia

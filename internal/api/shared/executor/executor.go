@@ -38,15 +38,8 @@ type Executor interface {
 	// Returns a workflow ID and run ID for tracking the indexing progress
 	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error)
 
-	// TriggerOwnerIndexing triggers indexing for all tokens owned by one or more addresses (backward compatible)
-	// Creates a single parent workflow that processes all addresses
-	// Returns workflow_id and run_id for tracking
-	// Deprecated: Use TriggerAddressIndexing instead
-	TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error)
-
-	// TriggerAddressIndexing triggers indexing for tokens by owner addresses (new enhanced version)
-	// Pre-creates jobs with predictable workflow IDs and returns job information for each address
-	// Clients can immediately use the returned workflow IDs to track progress
+	// TriggerAddressIndexing triggers indexing for tokens by owner addresses
+	// Creates per-address workflows and job records; returns workflow IDs for tracking
 	TriggerAddressIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error)
 
 	// TriggerMetadataIndexing triggers metadata refresh for one or more tokens by IDs or CIDs
@@ -539,31 +532,7 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 	}, nil
 }
 
-// TriggerOwnerIndexing triggers indexing for tokens by owner addresses (backward compatible)
-// This method maintains backward compatibility by starting a single parent workflow
-func (e *executor) TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error) {
-	// Normalize addresses
-	normalizedAddresses := domain.NormalizeAddresses(addresses)
-
-	// Start the parent IndexTokenOwners workflow (old behavior)
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
-	options := client.StartWorkflowOptions{
-		TaskQueue:                e.orchestratorTaskQueue,
-		WorkflowExecutionTimeout: 30 * (24*time.Hour + 30*time.Minute), // 30 days + buffer
-	}
-
-	workflowRun, err := e.orchestrator.ExecuteWorkflow(ctx, options, w.IndexTokenOwners, normalizedAddresses)
-	if err != nil {
-		return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger token indexing: %v", err))
-	}
-
-	return &dto.TriggerIndexingResponse{
-		WorkflowID: workflowRun.GetID(),
-		RunID:      workflowRun.GetRunID(),
-	}, nil
-}
-
-// TriggerAddressIndexing triggers indexing for tokens by owner addresses (new enhanced version)
+// TriggerAddressIndexing triggers indexing for tokens by owner addresses.
 // Creates individual workflows for each address with job tracking
 // If an active job already exists for an address, returns the existing job info instead of creating a new one
 func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error) {

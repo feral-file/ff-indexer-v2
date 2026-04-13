@@ -21,9 +21,7 @@ info:
     
     ## Authentication
     Some endpoints require authentication:
-    - REST: `POST /api/v1/tokens/owners/index` (deprecated, use `/api/v1/tokens/addresses/index` instead)
     - REST: `POST /api/v1/tokens/addresses/index` (trigger token indexing by owner addresses with job tracking)
-    - GraphQL: `triggerOwnerIndexing` mutation (deprecated, use `triggerAddressIndexing` instead)
     - GraphQL: `triggerAddressIndexing` mutation (queries, `triggerTokenIndexing`, and `triggerMetadataIndexing` mutations are public)
     
     Two authentication methods are supported:
@@ -553,64 +551,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
 
-  /api/v1/tokens/owners/index:
-    post:
-      summary: Trigger token indexing by owner addresses (deprecated)
-      deprecated: true
-      description: |
-        **DEPRECATED**: Use `/api/v1/tokens/addresses/index` instead for better job tracking.
-        
-        Triggers indexing workflows for all tokens owned by one or more addresses.
-
-        This endpoint accepts a list of owner addresses (up to 5) and creates a single parent
-        workflow that processes all addresses sequentially.
-
-        **This endpoint requires authentication** - use JWT Bearer token or API Key.
-
-        ## Response
-        Returns a single workflow ID and run ID for tracking the entire indexing operation.
-        
-        ## Migration Guide
-        For better tracking of individual address progress, use the new `/api/v1/tokens/addresses/index` endpoint instead,
-        which provides separate workflow IDs for each address.
-      operationId: triggerOwnerIndexing
-      tags:
-        - tokens
-      security:
-        - BearerAuth: []
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TriggerOwnerIndexingRequest'
-      responses:
-        '401':
-          description: Unauthorized - Missing or invalid authentication
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-        '202':
-          description: Indexing triggered successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TriggerIndexingResponse'
-        '422':
-          description: Validation error - Invalid request body
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-
   /api/v1/tokens/addresses/index:
     post:
       summary: Trigger token indexing by owner addresses with job tracking
@@ -644,7 +584,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TriggerOwnerIndexingRequest'
+              $ref: '#/components/schemas/TriggerAddressIndexingRequest'
       responses:
         '401':
           description: Unauthorized - Missing or invalid authentication
@@ -1789,7 +1729,7 @@ components:
           maxItems: 20
           example: ["eip155:1:erc721:0xabc123:1234", "eip155:1:erc721:0xabc123:5678"]
 
-    TriggerOwnerIndexingRequest:
+    TriggerAddressIndexingRequest:
       type: object
       required:
         - addresses

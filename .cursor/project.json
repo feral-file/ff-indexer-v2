@@ -1,8 +1,13 @@
 {
-  "name": "FF Indexer",
-  "description": "Indexer for ERC721/1155 and FA2 tokens with ownership, provenance, and metadata enrichment",
+  "name": "FF Indexer v2",
+  "description": "Blockchain indexer and downstream service backend for ownership, provenance, metadata, and media processing.",
   "knowledgeFiles": [
+    "AGENTS.md",
+    "docs/business_requirements.md",
+    "docs/constraints.md",
+    "docs/api_design.md",
     "docs/schema.md",
-    "docs/architecture.md"
+    "docs/architecture.md",
+    "prompts/code-review.md"
   ]
 }

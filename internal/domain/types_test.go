@@ -58,6 +58,22 @@ func TestIsValidChain(t *testing.T) {
 	}
 }
 
+func TestChain_EIP155NumericID(t *testing.T) {
+	id, ok := ChainEthereumMainnet.EIP155NumericID()
+	assert.True(t, ok)
+	assert.Equal(t, 1, id)
+
+	id, ok = ChainEthereumSepolia.EIP155NumericID()
+	assert.True(t, ok)
+	assert.Equal(t, 11155111, id)
+
+	_, ok = ChainTezosMainnet.EIP155NumericID()
+	assert.False(t, ok)
+
+	_, ok = Chain("").EIP155NumericID()
+	assert.False(t, ok)
+}
+
 func TestBlockchainEvent_Valid(t *testing.T) {
 	// Use known valid Ethereum addresses (42 chars including 0x)
 	validEthereumAddress := "0x396343362be2A4dA1cE0C1C210945346fb82Aa49"

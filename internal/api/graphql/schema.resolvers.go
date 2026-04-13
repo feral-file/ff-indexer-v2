@@ -123,33 +123,6 @@ func (r *mutationResolver) TriggerTokenIndexing(ctx context.Context, tokenCids [
 	return wr, nil
 }
 
-// TriggerOwnerIndexing is the resolver for the triggerOwnerIndexing field.
-func (r *mutationResolver) TriggerOwnerIndexing(ctx context.Context, addresses []string) (*dto.TriggerIndexingResponse, error) {
-	// Validate: addresses must be provided
-	if len(addresses) == 0 {
-		return nil, apierrors.NewValidationError("addresses is required")
-	}
-
-	// Validate: maximum number of addresses allowed
-	if len(addresses) > constants.MAX_ADDRESSES_PER_REQUEST {
-		return nil, apierrors.NewValidationError(fmt.Sprintf("maximum %d addresses allowed", constants.MAX_ADDRESSES_PER_REQUEST))
-	}
-
-	// Validate: addresses must be valid
-	for _, address := range addresses {
-		if !internalTypes.IsTezosAddress(address) && !internalTypes.IsEthereumAddress(address) {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid address: %s. Must be a valid Tezos or Ethereum address", address))
-		}
-	}
-
-	// Trigger indexing with only addresses
-	wr, err := r.executor.TriggerOwnerIndexing(ctx, addresses)
-	if err != nil {
-		return nil, err
-	}
-	return wr, nil
-}
-
 // TriggerAddressIndexing is the resolver for the triggerAddressIndexing field.
 func (r *mutationResolver) TriggerAddressIndexing(ctx context.Context, addresses []string) (*dto.TriggerAddressIndexingResponse, error) {
 	// Validate: addresses must be provided

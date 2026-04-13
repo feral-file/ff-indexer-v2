@@ -42,8 +42,9 @@ type GraphQLResponse struct {
 //
 //go:generate mockgen -source=client.go -destination=../../../mocks/artblocks_client.go -package=mocks -mock_names=Client=MockArtBlocksClient
 type Client interface {
-	// GetProjectMetadata fetches project metadata from ArtBlocks GraphQL API
-	GetProjectMetadata(ctx context.Context, projectID string) (*ProjectMetadata, error)
+	// GetProjectMetadata fetches project metadata from ArtBlocks GraphQL API.
+	// chainID is the EVM numeric chain ID (e.g. 1 for Ethereum mainnet) required by projects_metadata_by_pk.
+	GetProjectMetadata(ctx context.Context, chainID int, projectID string) (*ProjectMetadata, error)
 }
 
 // ArtBlocksClient implements ArtBlocks client
@@ -63,9 +64,9 @@ func NewClient(httpClient adapter.HTTPClient, graphqlURL string, json adapter.JS
 }
 
 // GetProjectMetadata fetches project metadata from ArtBlocks GraphQL API
-func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, projectID string) (*ProjectMetadata, error) {
-	query := `query GetABProject($id: String!) {
-		projects_metadata_by_pk(id: $id) {
+func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, chainID int, projectID string) (*ProjectMetadata, error) {
+	query := `query GetABProject($chain_id: Int!, $id: String!) {
+		projects_metadata_by_pk(chain_id: $chain_id, id: $id) {
 			name
 			artist_name
 			artist_address
@@ -76,7 +77,8 @@ func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, projectID stri
 	request := GraphQLRequest{
 		Query: query,
 		Variables: map[string]interface{}{
-			"id": projectID,
+			"chain_id": chainID,
+			"id":       projectID,
 		},
 	}
 
@@ -103,7 +105,7 @@ func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, projectID stri
 	}
 
 	if response.Data.ProjectsMetadata == nil {
-		return nil, fmt.Errorf("project not found: %s", projectID)
+		return nil, fmt.Errorf("project not found: chain_id=%d id=%s", chainID, projectID)
 	}
 
 	return response.Data.ProjectsMetadata, nil

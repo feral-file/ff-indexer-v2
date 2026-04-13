@@ -1,0 +1,19 @@
+---
+description: In-repo architecture guidance and boundaries
+alwaysApply: true
+---
+
+# Architecture Guidance
+
+**System design** for this repository lives in `docs/architecture.md` (components, data flow, NATS/Temporal/Postgres roles, API server behavior).
+
+**Product, API, and guardrails** intersect with:
+
+- `docs/constraints.md` — deployment topology, dependencies, consistency expectations
+- `docs/business_requirements.md` — what this service is for and what is out of scope
+- `docs/api_design.md` — how the public surface evolves
+
+Rules:
+
+- Prefer **existing patterns** in `cmd/*`, workers, and `internal/` unless a change is justified by reliability, simplicity, or documented requirements.
+- **Architecture-affecting** changes (new processes, new infrastructure dependencies, new cross-service contracts) need an explicit note in the PR/handoff and updates to `docs/architecture.md` when behavior or topology changes.

@@ -37,13 +37,13 @@ func (r *TriggerTokenIndexingRequest) Validate() error {
 	return nil
 }
 
-// TriggerOwnerIndexingRequest represents the request body for triggering token indexing by owner addresses
-type TriggerOwnerIndexingRequest struct {
+// TriggerAddressIndexingRequest represents the request body for POST /api/v1/tokens/addresses/index
+type TriggerAddressIndexingRequest struct {
 	Addresses []string `json:"addresses"`
 }
 
 // Validate validates the request body
-func (r *TriggerOwnerIndexingRequest) Validate() error {
+func (r *TriggerAddressIndexingRequest) Validate() error {
 	// Validate: addresses must be provided
 	if len(r.Addresses) == 0 {
 		return apierrors.NewValidationError("addresses is required")

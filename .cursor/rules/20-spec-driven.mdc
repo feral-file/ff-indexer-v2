@@ -1,0 +1,20 @@
+---
+description: Spec-driven workflow for substantial changes
+alwaysApply: true
+---
+
+# Spec-Driven Workflow
+
+Apply this workflow for major features, refactors, schema changes, API changes, or architecture-affecting work.
+
+Required sequence:
+
+1. Read relevant docs and code, including `docs/business_requirements.md` and `docs/constraints.md` when they contain owner guidance.
+2. Summarize current behavior, constraints, and invariants.
+3. Write or update a short spec, design note, or implementation plan.
+4. Break work into concrete tasks.
+5. Define expected behavior and verification.
+6. Add or update tests before implementation where behavior changes.
+7. Then implement and verify.
+
+If a substantial change lacks a relevant spec or design note, do not proceed directly to implementation.

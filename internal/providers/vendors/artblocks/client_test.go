@@ -71,7 +71,7 @@ func TestClient_GetProjectMetadata_Success(t *testing.T) {
 		}).
 		Times(1)
 
-	metadata, err := client.GetProjectMetadata(ctx, projectID)
+	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 	require.NoError(t, err)
 	assert.NotNil(t, metadata)
@@ -101,7 +101,7 @@ func TestClient_GetProjectMetadata_HTTPError(t *testing.T) {
 		Return(nil, expectedError).
 		Times(1)
 
-	metadata, err := client.GetProjectMetadata(ctx, projectID)
+	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 	assert.Error(t, err)
 	assert.Nil(t, metadata)
@@ -126,7 +126,7 @@ func TestClient_GetProjectMetadata_InvalidJSON(t *testing.T) {
 		Return([]byte("invalid json"), nil).
 		Times(1)
 
-	metadata, err := client.GetProjectMetadata(ctx, projectID)
+	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 	assert.Error(t, err)
 	assert.Nil(t, metadata)
@@ -163,7 +163,7 @@ func TestClient_GetProjectMetadata_GraphQLError(t *testing.T) {
 		}).
 		Times(1)
 
-	metadata, err := client.GetProjectMetadata(ctx, projectID)
+	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 	assert.Error(t, err)
 	assert.Nil(t, metadata)
@@ -199,11 +199,12 @@ func TestClient_GetProjectMetadata_ProjectNotFound(t *testing.T) {
 		}).
 		Times(1)
 
-	metadata, err := client.GetProjectMetadata(ctx, projectID)
+	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 	assert.Error(t, err)
 	assert.Nil(t, metadata)
 	assert.Contains(t, err.Error(), "project not found")
+	assert.Contains(t, err.Error(), "chain_id=1")
 }
 
 // TestParseArtBlocksTokenID tests the token ID parsing utility function
@@ -323,7 +324,7 @@ func TestClient_GetProjectMetadata_Integration(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			metadata, err := client.GetProjectMetadata(ctx, tc.projectID)
+			metadata, err := client.GetProjectMetadata(ctx, 1, tc.projectID)
 
 			if !tc.expectOk {
 				// We expect this to fail
@@ -417,7 +418,7 @@ func TestClient_GetProjectMetadata_Integration_TokenIDParsing(t *testing.T) {
 			t.Logf("Token ID %s -> Project ID: %s, Mint: %d", tc.tokenID, fullProjectID, mintNumber)
 
 			// Fetch project metadata
-			metadata, err := client.GetProjectMetadata(ctx, fullProjectID)
+			metadata, err := client.GetProjectMetadata(ctx, 1, fullProjectID)
 
 			if !tc.expectedProjectFound {
 				assert.Error(t, err)
@@ -456,7 +457,7 @@ func TestClient_GetProjectMetadata_Integration_InvalidID(t *testing.T) {
 
 	for _, projectID := range invalidIDs {
 		t.Run("invalid_id_"+projectID, func(t *testing.T) {
-			metadata, err := client.GetProjectMetadata(ctx, projectID)
+			metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 			// Should return an error (project not found)
 			assert.Error(t, err)
@@ -478,7 +479,7 @@ func TestClient_GetProjectMetadata_Integration_ContextCancellation(t *testing.T)
 
 	projectID := "1"
 
-	metadata, err := client.GetProjectMetadata(ctx, projectID)
+	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 	// Should return an error due to context cancellation
 	assert.Error(t, err)
@@ -497,7 +498,7 @@ func TestClient_GetProjectMetadata_Integration_EdgeCases(t *testing.T) {
 	t.Run("EmptyProjectID", func(t *testing.T) {
 		projectID := ""
 
-		metadata, err := client.GetProjectMetadata(ctx, projectID)
+		metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 		// Should return an error
 		assert.Error(t, err)
@@ -508,7 +509,7 @@ func TestClient_GetProjectMetadata_Integration_EdgeCases(t *testing.T) {
 	t.Run("NegativeProjectID", func(t *testing.T) {
 		projectID := "-1"
 
-		metadata, err := client.GetProjectMetadata(ctx, projectID)
+		metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 		// Should return an error
 		assert.Error(t, err)
@@ -520,7 +521,7 @@ func TestClient_GetProjectMetadata_Integration_EdgeCases(t *testing.T) {
 		// GraphQL accepts string IDs, so this might work depending on API implementation
 		projectID := "abc"
 
-		metadata, err := client.GetProjectMetadata(ctx, projectID)
+		metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
 
 		// Should return an error
 		assert.Error(t, err)

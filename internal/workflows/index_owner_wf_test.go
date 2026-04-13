@@ -72,49 +72,6 @@ func TestIndexOwnerWorkflowTestSuite(t *testing.T) {
 }
 
 // ====================================================================================
-// IndexTokenOwners Tests
-// ====================================================================================
-
-func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwners_Success() {
-	addresses := []string{
-		"0x1234567890123456789012345678901234567890",
-		"0xabcdef1234567890123456789012345678901234",
-	}
-
-	// Mock child workflows for each address
-	for _, address := range addresses {
-		s.env.OnWorkflow(s.workerCore.IndexTokenOwner, mock.Anything, address).Return(nil)
-	}
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwners, addresses)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwners_OneAddressFails() {
-	addresses := []string{
-		"0x1234567890123456789012345678901234567890",
-		"0xabcdef1234567890123456789012345678901234",
-		"0xfedcba0987654321098765432109876543210987",
-	}
-
-	// Mock child workflows - second one fails
-	s.env.OnWorkflow(s.workerCore.IndexTokenOwner, mock.Anything, addresses[0]).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexTokenOwner, mock.Anything, addresses[1]).Return(errors.New("indexing failed"))
-	// Third one should not be called due to sequential processing
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwners, addresses)
-
-	// Verify workflow completed with error (stops at first failure)
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
-}
-
-// ====================================================================================
 // IndexTokenOwner Tests
 // ====================================================================================
 

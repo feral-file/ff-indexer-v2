@@ -1,0 +1,48 @@
+---
+description: Repo workflow, generators, and verification commands
+alwaysApply: true
+---
+
+# Development Workflow
+
+## Code generation
+
+### GraphQL schema updates
+
+When the GraphQL schema changes:
+
+```bash
+cd internal/api/graphql
+go run github.com/99designs/gqlgen generate
+```
+
+### Mock generation
+
+When interfaces with `//go:generate mockgen` are added, changed, or removed:
+
+```bash
+go generate ./...
+```
+
+Do not edit generated mocks manually.
+
+## Database schema changes
+
+1. Add a migration under `db/migrations/` with sequential naming.
+2. Mirror the change in `db/init_pg_db.sql`.
+3. Update `pg_test_data` when test fixtures need to change.
+
+## Documentation updates
+
+- Update `docs/` for schema, architecture, or operational changes.
+- Update `README.md` or `DEVELOPMENT.md` for setup, workflow, or major behavior changes.
+
+## Verification
+
+Primary verification command:
+
+```bash
+make check
+```
+
+If the full verification path cannot be run, state that clearly and report what was run instead.

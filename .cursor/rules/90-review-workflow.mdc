@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+
+# Review Workflow
+
+After implementation and verification, run a review loop before merge, commit, or PR finalization.
+
+1. Produce a compact handoff with goal, scope, changed files/modules, decisions, tests, checks run, and known limitations.
+2. Invoke the reviewer sub-agent with fresh context.
+3. If the reviewer returns `Verdict: revise`, address findings, re-run verification, update the handoff, and review again.
+4. Only proceed once the reviewer returns `Verdict: accept`.
+
+The authoritative review contract is `prompts/code-review.md`.

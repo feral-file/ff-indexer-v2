@@ -100,7 +100,7 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	}
 	mocks.artblocksClient.
 		EXPECT().
-		GetProjectMetadata(gomock.Any(), "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
+		GetProjectMetadata(gomock.Any(), 1, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
 		Return(projectMetadata, nil)
 
 	// Mock JSON marshal for project metadata
@@ -174,7 +174,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
 	}
 	mocks.artblocksClient.
 		EXPECT().
-		GetProjectMetadata(gomock.Any(), "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
+		GetProjectMetadata(gomock.Any(), 1, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
 		Return(projectMetadata, nil)
 
 	// Mock JSON marshal for project metadata
@@ -236,7 +236,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {
 	}
 	mocks.artblocksClient.
 		EXPECT().
-		GetProjectMetadata(gomock.Any(), "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
+		GetProjectMetadata(gomock.Any(), 1, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
 		Return(projectMetadata, nil)
 
 	// Mock JSON marshal for project metadata
@@ -428,7 +428,7 @@ func TestEnhancer_Enhance_ArtBlocks_APIError(t *testing.T) {
 	// Mock ArtBlocks client to return an error
 	mocks.artblocksClient.
 		EXPECT().
-		GetProjectMetadata(gomock.Any(), "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
+		GetProjectMetadata(gomock.Any(), 1, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
 		Return(nil, assert.AnError)
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
@@ -464,7 +464,7 @@ func TestEnhancer_Enhance_ArtBlocks_MarshalError(t *testing.T) {
 	}
 	mocks.artblocksClient.
 		EXPECT().
-		GetProjectMetadata(gomock.Any(), "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
+		GetProjectMetadata(gomock.Any(), 1, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
 		Return(projectMetadata, nil)
 
 	// Mock JSON marshal to return an error
@@ -1279,7 +1279,7 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	description := "A Bored Ape from OpenSea"
 	imageURL := "https://i.seadn.io/gae/1.png"
 	displayAnimationURL := "https://i.seadn.io/gae/1.mp4"
-	resolvedImageURL := fmt.Sprintf("%s?w=3840", imageURL)
+	resolvedImageURL := fmt.Sprintf("%s?w=1000", imageURL)
 
 	nftMetadata := &opensea.NFTMetadata{
 		Identifier:          "1",
@@ -1529,7 +1529,7 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 		Return(vendorJSON, nil)
 
 	// Mock for MIME type detection
-	resolvedImageURL := fmt.Sprintf("%s?w=3840", imageURL)
+	resolvedImageURL := fmt.Sprintf("%s?w=1000", imageURL)
 	mocks.uriResolver.
 		EXPECT().
 		Resolve(gomock.Any(), resolvedImageURL).

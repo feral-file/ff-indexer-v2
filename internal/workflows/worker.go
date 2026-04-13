@@ -40,9 +40,6 @@ type WorkerCore interface {
 	// IndexToken indexes a single token (metadata and provenances)
 	IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error
 
-	// IndexTokenOwners indexes tokens for multiple addresses
-	IndexTokenOwners(ctx workflow.Context, addresses []string) error
-
 	// IndexTokenOwner indexes all tokens held by a single address
 	IndexTokenOwner(ctx workflow.Context, address string) error
 
