@@ -42,7 +42,20 @@ Do not edit generated mocks manually.
 Primary verification command:
 
 ```bash
-make check
+make post-implementation-check
 ```
 
-If the full verification path cannot be run, state that clearly and report what was run instead.
+This is the canonical local verification entrypoint.
+
+It is the default gate for substantive changes and is expected to mirror the repo's CI-shaped Go verification flow.
+
+Use `make check` only when you intentionally want the broader maintenance pass across imports, local linting, and the repo-wide test command.
+
+If the full verification path cannot be run, state that clearly, explain the blocker, and report what was run instead.
+
+## Definition of done
+
+- Keep coverage non-regressing versus the base branch unless the PR explicitly documents the exception and why it is necessary.
+- Update docs when behavior, setup, architecture, or verification contracts change.
+- Review the full diff before handoff or re-review.
+- Keep the PR body aligned with `.github/PULL_REQUEST_TEMPLATE.md`.
