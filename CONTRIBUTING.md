@@ -106,6 +106,24 @@ cd cmd/api && go run main.go
 
 ### Testing
 
+The canonical pre-review verification command is:
+
+```bash
+make post-implementation-check
+```
+
+This command lints Go files changed versus `main` with whole-file readability and simplicity rules, then runs the CI-aligned Go test suite with coverage output.
+
+The strict lint profile now checks:
+
+- cyclomatic and cognitive complexity
+- function and file length
+- Go doc quality for changed functions and packages
+
+Coverage policy is non-regression versus the base branch. If coverage drops, explain why in the PR body and call out any follow-up work.
+
+For narrower debugging loops, you can still run tests directly:
+
 Run tests:
 ```bash
 go test ./...
@@ -123,7 +141,9 @@ go test ./internal/store/...
 
 ### Linting
 
-This project uses standard Go tooling. Check your code:
+`make post-implementation-check` is the authoritative lint-and-test gate for substantive changes.
+
+For narrower maintenance work, this project also uses standard Go tooling:
 
 ```bash
 # Format code
@@ -160,14 +180,17 @@ make build-worker-core
 
 2. **Make your changes**:
    - Follow Go conventions and style
+   - Prefer extracting helpers or simplifying control flow before accepting a large function
    - Add tests for new functionality
    - Update documentation as needed
-   - Ensure all tests pass
+   - Add doc comments to changed Go functions
+   - For non-trivial changed functions, use the doc comment to record the reason, trade-offs, and constraints behind the implementation
+   - Run `make post-implementation-check`
 
 3. **Commit your changes**:
    - Use clear, descriptive commit messages
    - Reference issue numbers if applicable
-   - Follow conventional commits format when possible
+   - Follow conventional commits format
 
 4. **Push to your fork**:
    ```bash
@@ -186,7 +209,7 @@ make build-worker-core
 3. **Link to Issue**: Reference related issues
 
 4. **Checklist**: 
-   - [ ] Tests pass locally
+   - [ ] `make post-implementation-check` passes locally, or the blocker is documented
    - [ ] Code is formatted
    - [ ] Documentation updated
    - [ ] No breaking changes (or documented)
@@ -195,10 +218,12 @@ make build-worker-core
 
 When creating a PR, use the template at [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md). Fill out all relevant sections:
 
-- **Description**: What and why
-- **Type of Change**: Bug fix, feature, refactor, etc.
-- **Testing**: How to verify changes
-- **Checklist**: Pre-submission checklist
+- **Problem**: What is changing
+- **Why It Matters**: Why the work should land now
+- **Acceptance Checks**: 1-3 concrete checks reviewers can use
+- **Human Owner**: Who owns the outcome
+- **How The Agent Will Be Used**: What the agent did for implementation, review, or follow-up
+- **PR or Deploy Link**: The relevant PR, deploy, or release reference
 
 ### Code Review
 
@@ -206,6 +231,8 @@ When creating a PR, use the template at [.github/PULL_REQUEST_TEMPLATE.md](.gith
 - Address review comments promptly
 - Keep PRs focused and reasonably sized
 - Rebase on main if needed before merging
+- Review the full diff before requesting review and again after addressing feedback
+- Rerun `make post-implementation-check` after each substantive review update
 
 ## Coding Standards
 
@@ -259,4 +286,3 @@ When creating a PR, use the template at [.github/PULL_REQUEST_TEMPLATE.md](.gith
 - Review the codebase and documentation
 
 Thank you for contributing!
-

@@ -10,8 +10,10 @@ Follow standard Go style and Go documentation conventions.
 ## Comments
 
 - Prefer comments more than usual when they preserve context that will help future agentic coding sessions amend the code safely.
+- Add doc comments for changed Go functions and packages.
 - Use Go doc style for exported packages, types, funcs, methods, constants, and variables when a comment adds meaning.
 - For non-obvious logic, store the design intent close to the code instead of assuming it will remain obvious later.
+- For non-trivial changed functions, use the doc comment to capture reason, trade-offs, and constraints so future sessions do not re-open already-rejected paths.
 
 Good comment content includes:
 
@@ -27,3 +29,8 @@ Avoid comments that only restate syntax or narrate obvious control flow.
 ## Preference
 
 When choosing between slightly more code comments and losing important context, prefer the comments.
+
+## Simplicity
+
+- Prefer reducing branching, nesting, and function length over explaining avoidable complexity.
+- Treat the strict lint profile as a real design constraint: cyclomatic complexity, cognitive complexity, function length, file length, and missing doc comments are expected review concerns.

@@ -439,6 +439,32 @@ make clean-images
 
 ## Testing
 
+### Canonical Verification
+
+Use this command before handing off a substantive change:
+
+```bash
+make post-implementation-check
+```
+
+It is the repo's canonical local verification entrypoint and intentionally mirrors the required CI shape:
+
+- strict whole-file linting for Go files changed versus `main`
+- the CI test package set, not `go test ./...`
+- `coverage.out` generation followed by the same generated-file filtering used in CI
+
+The strict lint profile is intentionally opinionated:
+
+- cyclomatic complexity and cognitive complexity are capped at strict thresholds
+- functions and files are kept short enough to stay readable
+- changed Go functions and packages must have proper doc comments
+
+For non-trivial changed functions, use the doc comment to capture the reason, trade-offs, and constraints behind the implementation so later contributors do not reopen already-rejected paths by accident.
+
+By default the script expects PostgreSQL at `localhost:5432` with the same test credentials used in CI. Start local dependencies first with `make dev`, or override `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, and `TEST_DB_NAME` when needed.
+
+Coverage policy is non-regression versus the base branch. If a change must lower coverage, document the reason in the PR description and call out the gap for reviewers.
+
 ```bash
 # Run all media-related tests (requires CGO)
 CGO_ENABLED=1 go test ./internal/media/... -v
@@ -464,4 +490,5 @@ Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environm
 
 - Read [Architecture](docs/architecture.md) for system design details
 - Read [Schema](docs/schema.md) for database structure
+- Read [AGENTS](AGENTS.md) for the repo contract and review loop
 - Read [Contributing](CONTRIBUTING.md) for PR guidelines

@@ -8,12 +8,50 @@ Tool-specific adapters live in `.cursor/`, `.codex/`, `opencode.json`, and `prom
 
 `ff-indexer-v2` indexes blockchain activity and media/metadata state for Feral File services and exposes reliable downstream data and APIs.
 
+## Authoritative read order
+
+Read these files before making changes in the matching area:
+
+1. `AGENTS.md` - repository workflow, definition of done, review loop, and documentation obligations
+2. `README.md` - repo overview, component map, and documentation index
+3. `DEVELOPMENT.md` - local setup, canonical verification command, and service-backed testing requirements
+4. `docs/business_requirements.md` - product intent, users, and scope
+5. `docs/constraints.md` - compatibility, operational, and security guardrails
+6. `docs/api_design.md` - API conventions and contract evolution rules
+7. `docs/architecture.md` - system boundaries, component responsibilities, and data flow
+8. `docs/schema.md` - persistence contract, migration shape, and test data implications
+9. `.github/workflows/lint.yaml` and `.github/workflows/test.yaml` - CI source of truth when changing verification behavior
+10. `.github/PULL_REQUEST_TEMPLATE.md` - required PR structure before opening or updating a pull request
+
+If requirements are ambiguous or these sources conflict, stop and ask instead of choosing a new contract silently.
+
 ## Coding defaults
 
 - Prefer the simplest change that preserves correctness, reliability, and debuggability.
 - Do not invent product, architecture, or API requirements that are not documented.
 - Avoid silent failure paths; errors and degraded states should be explicit and actionable.
 - Treat tests, generators, schema updates, and docs updates as part of the same change, not follow-up work.
+
+## Engineering principles
+
+Use these principles when evaluating designs, implementations, and questions.
+
+### Simplicity by default
+
+- Default to the simplest design that meets correctness and reliability for our current scale (around 3000 users), even in full production.
+- Treat added complexity as a last resort, justified only when simpler designs fail in practice and trade-offs are understood.
+
+### Reliable and transparent behavior
+
+- Reliability comes first: the system may be slow or limited, but it should behave predictably.
+- Do not hide system state. If something is slow, missing, or unavailable, make that explicit.
+- Errors should be clear and actionable.
+- Avoid failing silently or leaving users without a clear next step.
+
+### Community contribution
+
+- Keep the project easy to run locally.
+- Keep setup, dependencies, and mental overhead low.
 
 ## Coding style
 
@@ -25,12 +63,12 @@ Tool-specific adapters live in `.cursor/`, `.codex/`, `opencode.json`, and `prom
 
 ## Product, API, and architecture guidance
 
-Use these as the default sources of truth for scope and public contracts (keep them aligned when behavior changes):
+Use these as the default sources of truth for scope and public contracts. Keep them aligned when behavior changes:
 
-- `docs/business_requirements.md` — product intent, users, in/out of scope
-- `docs/constraints.md` — guardrails (data, compatibility, ops, security)
-- `docs/api_design.md` — API conventions and evolution rules
-- `docs/architecture.md` — system components and data flow
+- `docs/business_requirements.md` - product intent, users, and in/out of scope
+- `docs/constraints.md` - data, compatibility, operational, and security guardrails
+- `docs/api_design.md` - API conventions and evolution rules
+- `docs/architecture.md` - system components and data flow
 
 ## Workflow
 
@@ -48,6 +86,17 @@ For substantial changes such as major features, refactors, schema changes, API c
 6. Implement, verify, and review.
 
 If a substantial change has no spec or design note, do not jump straight to implementation.
+
+## Definition of done
+
+- Run `make post-implementation-check` after substantive code changes. If you cannot run it, say exactly what blocked verification.
+- Keep coverage non-regressing versus the base branch. If a necessary change lowers coverage, call it out in the PR and explain why.
+- Update `README.md`, `DEVELOPMENT.md`, `docs/`, or other authoritative docs when behavior, architecture, setup, or verification contracts change.
+- Reduce branching and nesting before accepting a large function. The strict lint profile treats cyclomatic and cognitive complexity as first-class review concerns.
+- Keep changed functions and files small. Add doc comments for changed Go functions so the intent stays readable in future sessions.
+- For non-trivial changed Go functions, use the doc comment to capture `Reason:`, `Trade-offs:`, and `Constraints:` so future agents can understand why the current shape exists. This is instruction, not a special lint-only format.
+- Review the full diff before handing off work or re-requesting review.
+- Keep the PR description aligned with `.github/PULL_REQUEST_TEMPLATE.md`, including validation status and any remaining gaps.
 
 ## Repo-specific change rules
 
@@ -67,17 +116,25 @@ go generate ./...
 - Do not edit generated mocks manually.
 - For DB schema changes, update both `db/migrations/` and `db/init_pg_db.sql`, and update `pg_test_data` when needed.
 - Update `docs/`, `README.md`, or `DEVELOPMENT.md` when behavior, setup, architecture, or operations materially change.
-- For non-trivial exported Go types and functions, prefer Go doc comments that help a future reader understand purpose and constraints.
+- Add doc comments for changed Go functions. For non-trivial functions, prefer doc comments that help a future reader understand purpose, reason, trade-offs, and constraints.
 
 ## Verification
 
 Primary verification command:
 
 ```bash
-make check
+make post-implementation-check
 ```
 
-Run additional targeted generation or build checks when relevant. If you cannot run the full expected verification, say so explicitly.
+This is the canonical local verification entrypoint. It runs strict whole-file linting for Go files changed versus `main`, then runs the CI-aligned Go test package set with coverage output filtered the same way as CI.
+
+The strict lint profile enforces:
+
+- cyclomatic and cognitive complexity limits
+- function and file length limits
+- function and package doc comments
+
+Use `make check` when you intentionally want a broader maintenance pass across imports, local linting, and the repo-wide test command. Run additional targeted generation or build checks when relevant. If you cannot run the full expected verification, say so explicitly.
 
 ## Review and done
 
@@ -90,6 +147,13 @@ Before merge, commit finalization, or PR completion:
 3. Address review findings, re-verify, and repeat until the reviewer returns `Verdict: accept`.
 
 A change is done only when implementation, relevant tests, verification, documentation, and review are all complete.
+
+- Prefer waiting for CI status checks before considering a PR done.
+- If local `make post-implementation-check` or full CI cannot be run, state that explicitly in the PR description so reviewers know what was validated.
+- When creating a GitHub issue, use the repository issue templates in `.github/ISSUE_TEMPLATE/` and complete every requested section.
+- When creating a PR, use `.github/PULL_REQUEST_TEMPLATE.md` and keep the description aligned with the template fields.
+- Do not replace the template structure with ad hoc prose; add extra context only after the required sections are complete.
+- Before requesting review and after addressing review feedback, review the full diff, rerun `make post-implementation-check`, and summarize any remaining unverified risk.
 
 ## Commit style
 

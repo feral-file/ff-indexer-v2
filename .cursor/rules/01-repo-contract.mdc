@@ -7,6 +7,14 @@ alwaysApply: true
 
 Follow `AGENTS.md` as the top-level contract for this repository.
 
+Use `AGENTS.md` as the source of truth for:
+
+- authoritative read order
+- definition of done
+- verification expectations
+- review loop and completion criteria
+- commit and PR conventions
+
 Default operating model:
 
 `spec -> design -> tasks -> tests -> implementation -> verification -> review -> merge`
