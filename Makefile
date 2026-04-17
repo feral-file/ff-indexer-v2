@@ -68,12 +68,12 @@ up: ## Start all services
 up-infra: ## Start only infrastructure services (postgres, temporal, nats, redis)
 	@echo "$(COLOR_GREEN)Starting infrastructure services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE_UP) $(INFRA_SERVICES)
+	@$(DOCKER_COMPOSE_UP) nats-setup
 	@echo "$(COLOR_GREEN)✓ Infrastructure services started$(COLOR_RESET)"
 	@$(MAKE) ps
 
 up-app: up-infra ## Start NATS stream setup + ff-indexer application
 	@echo "$(COLOR_GREEN)Starting ff-indexer...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE_UP) nats-setup
 	@$(DOCKER_COMPOSE_UP) $(APP_SERVICE)
 	@echo "$(COLOR_GREEN)✓ ff-indexer started$(COLOR_RESET)"
 	@$(MAKE) ps
@@ -283,7 +283,7 @@ dev: up-infra ## Start development mode (only infrastructure; run ff-indexer loc
 	@echo "$(COLOR_BLUE)Available services:$(COLOR_RESET)"
 	@echo "  PostgreSQL: localhost:5432"
 	@echo "  Temporal:   localhost:7233"
-	@echo "  NATS:       localhost:14222 (mapped from container's 4222)"
+	@echo "  NATS:       localhost:4222"
 	@echo "  Redis:      localhost:6379"
 	@echo ""
-	@echo "$(COLOR_YELLOW)Note: Update config to use nats://localhost:14222$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Note: Update config to use nats://localhost:4222$(COLOR_RESET)"

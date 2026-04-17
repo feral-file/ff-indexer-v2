@@ -8,7 +8,7 @@
 #   1. builder — compile static or CGO-linked binary from repo root.
 #   2. runtime — minimal Alpine + certs (+ vips/chromium when CGO=1).
 
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.4
 
 FROM golang:1.25-alpine AS builder
 
@@ -33,20 +33,26 @@ RUN if [ "$CGO_ENABLED" = "1" ]; then \
         vips-dev ; \
     fi
 
-COPY --from=feralfile/resvg-builder:v0.45.1 /usr/local/lib/libresvg.a /usr/local/lib/
-COPY --from=feralfile/resvg-builder:v0.45.1 /usr/local/include/resvg.h /usr/local/include/
-
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-ENV CGO_LDFLAGS="-L/usr/local/lib"
-ENV CGO_CFLAGS="-I/usr/local/include"
+# resvg static lib + headers: only needed when linking the CGO media worker (skipped for CGO_ENABLED=0).
+RUN --mount=type=bind,from=feralfile/resvg-builder:v0.45.1,source=/usr/local/lib/libresvg.a,target=/mnt/libresvg.a,readonly \
+    --mount=type=bind,from=feralfile/resvg-builder:v0.45.1,source=/usr/local/include/resvg.h,target=/mnt/resvg.h,readonly \
+    if [ "$CGO_ENABLED" = "1" ]; then \
+      mkdir -p /usr/local/lib /usr/local/include && \
+      cp /mnt/libresvg.a /usr/local/lib/libresvg.a && \
+      cp /mnt/resvg.h /usr/local/include/resvg.h ; \
+    fi
 
-# Step: compile ff-indexer (CGO or pure Go)
+# Step: compile ff-indexer (CGO or pure Go).
+# CGO_LDFLAGS/CGO_CFLAGS apply only when linking CGO code; setting them globally can confuse tooling when CGO_ENABLED=0.
 RUN if [ "$CGO_ENABLED" = "1" ]; then \
       export CGO_ENABLED=1 && \
+      export CGO_LDFLAGS="-L/usr/local/lib" && \
+      export CGO_CFLAGS="-I/usr/local/include" && \
       go build -ldflags="-w -s" -o /build/bin/ff-indexer ./cmd/ff-indexer ; \
     else \
       CGO_ENABLED=0 go build -ldflags="-w -s" -o /build/bin/ff-indexer ./cmd/ff-indexer ; \
@@ -72,8 +78,7 @@ RUN if [ "$CGO_ENABLED" = "1" ]; then \
       apk add --no-cache ca-certificates libgcc ; \
     fi
 
-ENV CHROME_BIN=/usr/bin/chromium-browser \
-    CHROME_PATH=/usr/lib/chromium/
+# Chromium is on PATH when the CGO media stack is installed; avoid CHROME_* pointing at missing paths on stub images.
 
 RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser
