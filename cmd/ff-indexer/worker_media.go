@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -34,14 +35,17 @@ func registerWorkerMedia(
 	temporalClient client.Client,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
 	wcfg := cfg.ToWorkerMediaConfig()
-	if wcfg.Cloudflare.AccountID == "" {
-		logger.Warn("Cloudflare account ID is empty: media Temporal worker is not started")
+	if !wcfg.MediaEnabled {
+		logger.Warn("Media Temporal worker disabled by config (FF_INDEXER_MEDIA_ENABLED=false)")
 		run = func(ctx context.Context) error {
 			<-ctx.Done()
 			return ctx.Err()
 		}
 		cleanup = func(context.Context) error { return nil }
 		return run, cleanup, nil
+	}
+	if wcfg.Cloudflare.AccountID == "" {
+		return nil, nil, errors.New("cloudflare.account_id is required when media worker is enabled")
 	}
 
 	// Store and I/O adapters.

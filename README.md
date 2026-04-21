@@ -67,6 +67,9 @@ make dev
 go run ./cmd/ff-indexer -config cmd/ff-indexer/config.yaml
 ```
 
+- Lightweight mode: `CGO_ENABLED=0`, media worker stub only.
+- Full media mode: `CGO_ENABLED=1` and `FF_INDEXER_MEDIA_ENABLED=true`, plus Cloudflare media config.
+
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 ## Documentation
@@ -85,7 +88,7 @@ All of the following run inside the **`ff-indexer`** process (goroutines) by def
 - **Event emitters** — Ethereum and Tezos chain listeners publishing to NATS
 - **Event bridge** — NATS consumer that starts Temporal workflows
 - **Worker core** — Temporal worker on `token-indexing`
-- **Worker media** — Temporal worker on `media-indexing` (requires CGO / full Docker image)
+- **Worker media** — Temporal worker on `media-indexing` (requires CGO / full Docker image and can be explicitly disabled with `FF_INDEXER_MEDIA_ENABLED=false`)
 - **API server** — REST and GraphQL
 - **Sweeper** — Media URL health checks
 

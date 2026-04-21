@@ -150,3 +150,25 @@ database:
 	assert.Equal(t, "env-db", cfg.Database.DBName)
 	assert.Equal(t, "require", cfg.Database.SSLMode)
 }
+
+func TestLoadAppConfig_MediaEnabledFromEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	envDir := filepath.Join(tmpDir, "env")
+	require.NoError(t, os.MkdirAll(envDir, 0750))
+
+	envContent := `FF_INDEXER_MEDIA_ENABLED=false
+FF_INDEXER_DATABASE_HOST=env-host
+FF_INDEXER_DATABASE_USER=env-user
+FF_INDEXER_DATABASE_PASSWORD=env-pass
+FF_INDEXER_DATABASE_DBNAME=env-db
+`
+	require.NoError(t, os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0600))
+
+	cfg, err := LoadAppConfig("", envDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.False(t, cfg.MediaEnabled)
+	assert.False(t, cfg.ToWorkerMediaConfig().MediaEnabled)
+}

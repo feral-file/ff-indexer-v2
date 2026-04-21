@@ -38,6 +38,10 @@ var (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	flag.Parse()
 	config.ChdirRepoRoot()
 
@@ -263,9 +267,25 @@ func main() {
 		return runSweeper(componentCtx, mediaSweeper)
 	})
 
-	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	if err := waitForSubsystems(rootCtx, g, cleanupWorkerMedia, cleanupWorkerCore); err != nil {
 		logger.ErrorCtx(rootCtx, errors.New("ff-indexer stopped with error"), zap.Error(err))
+		return 1
 	}
+
+	return 0
+}
+
+type waitGroup interface {
+	Wait() error
+}
+
+func waitForSubsystems(
+	rootCtx context.Context,
+	g waitGroup,
+	cleanupWorkerMedia func(context.Context) error,
+	cleanupWorkerCore func(context.Context) error,
+) error {
+	err := g.Wait()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -276,7 +296,12 @@ func main() {
 		logger.WarnCtx(rootCtx, "worker-core cleanup", zap.Error(err))
 	}
 
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+
 	logger.Info("ff-indexer stopped")
+	return nil
 }
 
 func newAPIServer(

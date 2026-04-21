@@ -89,6 +89,9 @@ jobs:
       - name: Verify lightweight app build
         run: CGO_ENABLED=0 go build ./cmd/ff-indexer
 
+      - name: Verify full media Docker build
+        run: docker build -f tools/docker/Dockerfile --build-arg CGO_ENABLED=1 .
+
       - name: Wait for PostgreSQL to be ready
         run: |
           until pg_isready -h localhost -p 5432 -U postgres; do

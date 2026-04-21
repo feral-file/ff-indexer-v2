@@ -94,6 +94,7 @@ FF_INDEXER_ETHEREUM_WEBSOCKET_URL=YOUR_ETHEREUM_WEBSOCKET_URL
 # Cloudflare (for worker-media)
 FF_INDEXER_CLOUDFLARE_ACCOUNT_ID=YOUR_ACCOUNT_ID
 FF_INDEXER_CLOUDFLARE_API_TOKEN=YOUR_API_TOKEN
+FF_INDEXER_MEDIA_ENABLED=true
 
 # API authentication
 FF_INDEXER_AUTH_JWT_PUBLIC_KEY=YOUR_JWT_PUBKEY_PEM
@@ -121,7 +122,7 @@ export FF_INDEXER_ETHEREUM_CHAIN_ID=eip155:1
 # Temporal
 export FF_INDEXER_TEMPORAL_HOST_PORT=localhost:7233
 export FF_INDEXER_TEMPORAL_NAMESPACE=default
-export FF_INDEXER_TEMPORAL_TASK_QUEUE=token-indexing
+export FF_INDEXER_TEMPORAL_TOKEN_TASK_QUEUE=token-indexing
 ```
 
 ## Running Locally
@@ -134,6 +135,9 @@ go run ./cmd/ff-indexer -config config/config.yaml
 
 - **Without CGO** (`CGO_ENABLED=0`): the media Temporal worker is not started; other subsystems run.
 - **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including `media-indexing` worker.
+- **With `FF_INDEXER_MEDIA_ENABLED=false`**: the media Temporal worker is intentionally disabled even in CGO/full builds.
+
+Media worker-specific Temporal concurrency is configured under `media_worker_temporal` in [cmd/ff-indexer/config.yaml.sample](cmd/ff-indexer/config.yaml.sample).
 
 ### Data URI Media Processing
 

@@ -255,6 +255,7 @@ type WorkerMediaConfig struct {
 	BaseConfig   `mapstructure:",squash"`
 	Database     DatabaseConfig   `mapstructure:"database"`
 	Temporal     TemporalConfig   `mapstructure:"temporal"`
+	MediaEnabled bool             `mapstructure:"media_enabled"`
 	URI          URIConfig        `mapstructure:"uri"`
 	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
 	Rasterizer   RasterizerConfig `mapstructure:"rasterizer"`
@@ -291,11 +292,12 @@ type MediaWorkerTemporalConfig struct {
 // AppConfig is the configuration for the single-process ff-indexer binary.
 // It composes all former per-service configuration sections.
 type AppConfig struct {
-	BaseConfig `mapstructure:",squash"`
-	Server     ServerConfig   `mapstructure:"server"`
-	Database   DatabaseConfig `mapstructure:"database"`
-	Auth       AuthConfig     `mapstructure:"auth"`
-	Temporal   TemporalConfig `mapstructure:"temporal"`
+	BaseConfig   `mapstructure:",squash"`
+	Server       ServerConfig   `mapstructure:"server"`
+	Database     DatabaseConfig `mapstructure:"database"`
+	Auth         AuthConfig     `mapstructure:"auth"`
+	Temporal     TemporalConfig `mapstructure:"temporal"`
+	MediaEnabled bool           `mapstructure:"media_enabled"`
 	// MediaWorkerTemporal configures the media Temporal worker pool (separate from token-indexing limits).
 	MediaWorkerTemporal MediaWorkerTemporalConfig `mapstructure:"media_worker_temporal"`
 	NATS                NATSConfig                `mapstructure:"nats"`
@@ -403,6 +405,7 @@ func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
 			WorkerActivitiesPerSecond:          a.MediaWorkerTemporal.WorkerActivitiesPerSecond,
 			MaxConcurrentActivityTaskPollers:   a.MediaWorkerTemporal.MaxConcurrentActivityTaskPollers,
 		},
+		MediaEnabled: a.MediaEnabled,
 		URI:          a.URI,
 		Cloudflare:   a.Cloudflare,
 		Rasterizer:   a.Rasterizer,
@@ -458,6 +461,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("temporal.max_concurrent_activity_task_pollers", 10)
 
 	// Media worker Temporal pool (former worker-media defaults)
+	v.SetDefault("media_enabled", true)
 	v.SetDefault("media_worker_temporal.max_concurrent_activity_execution_size", 10)
 	v.SetDefault("media_worker_temporal.worker_activities_per_second", 10)
 	v.SetDefault("media_worker_temporal.max_concurrent_activity_task_pollers", 2)
@@ -623,6 +627,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"temporal.max_concurrent_activity_execution_size",
 		"temporal.worker_activities_per_second",
 		"temporal.max_concurrent_activity_task_pollers",
+		"media_enabled",
 		// Vendors
 		"vendors.artblocks_url",
 		"vendors.feralfile_url",

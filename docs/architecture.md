@@ -22,7 +22,7 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. It uses an eve
 1. **Event Emitters** - Subscribe to blockchain events and publish to NATS
 2. **Event Bridge** - Consumes events from NATS and triggers Temporal workflows
 3. **Worker Core** - Executes Temporal workflows for token indexing
-4. **Worker Media** - Processes and uploads media files (requires CGO; disabled in the default lightweight Docker image unless `CGO_ENABLED=1` is set at build time)
+4. **Worker Media** - Processes and uploads media files (requires CGO; disabled in the default lightweight Docker image unless `CGO_ENABLED=1` is set at build time, and can also be explicitly disabled with `FF_INDEXER_MEDIA_ENABLED=false`)
 5. **API Server** - Provides REST and GraphQL APIs
 6. **Sweeper** - Continuously monitors media URL health (can be extended for multiple purposes)
 
@@ -441,4 +441,3 @@ export FF_INDEXER_SERVER_PORT=8080
 **Result**: Database host and server port use environment variable values, other settings use YAML defaults.
 
 See [DEVELOPMENT.md](../DEVELOPMENT.md) for detailed configuration examples.
-
