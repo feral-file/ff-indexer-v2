@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/downloader"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
@@ -33,6 +34,9 @@ func registerWorkerMedia(
 	temporalClient client.Client,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
 	wcfg := cfg.ToWorkerMediaConfig()
+	if wcfg.Cloudflare.AccountID == "" {
+		return noOpMediaWorker("Cloudflare account ID is empty: media Temporal worker is not started")
+	}
 
 	// Store and I/O adapters.
 	dataStore := store.NewPGStore(db)
@@ -134,5 +138,15 @@ func registerWorkerMedia(
 		return nil
 	}
 
+	return run, cleanup, nil
+}
+
+func noOpMediaWorker(reason string) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
+	logger.Warn(reason)
+	run = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	cleanup = func(context.Context) error { return nil }
 	return run, cleanup, nil
 }
