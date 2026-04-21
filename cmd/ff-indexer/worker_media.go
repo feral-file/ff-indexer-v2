@@ -35,7 +35,13 @@ func registerWorkerMedia(
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
 	wcfg := cfg.ToWorkerMediaConfig()
 	if wcfg.Cloudflare.AccountID == "" {
-		return noOpMediaWorker("Cloudflare account ID is empty: media Temporal worker is not started")
+		logger.Warn("Cloudflare account ID is empty: media Temporal worker is not started")
+		run = func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		cleanup = func(context.Context) error { return nil }
+		return run, cleanup, nil
 	}
 
 	// Store and I/O adapters.
@@ -138,15 +144,5 @@ func registerWorkerMedia(
 		return nil
 	}
 
-	return run, cleanup, nil
-}
-
-func noOpMediaWorker(reason string) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
-	logger.Warn(reason)
-	run = func(ctx context.Context) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
-	cleanup = func(context.Context) error { return nil }
 	return run, cleanup, nil
 }
