@@ -101,8 +101,11 @@ jobs:
         env:
           PGPASSWORD: postgres
 
+      - name: Run cmd package tests
+        run: go test -v ./cmd/ff-indexer/...
+
       - name: Run tests with coverage
-        run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|cmd|internal/store/schema|tools")
+        run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|internal/store/schema|tools")
         env:
           TEST_DB_HOST: localhost
           TEST_DB_PORT: 5432

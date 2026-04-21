@@ -96,7 +96,7 @@ down: ## Stop and remove all services
 
 down-app: ## Stop and remove ff-indexer application container
 	@echo "$(COLOR_YELLOW)Stopping ff-indexer...$(COLOR_RESET)"
-	@$(DOCKER_COMPOSE) down $(APP_SERVICE)
+	@$(DOCKER_COMPOSE) rm -f -s $(APP_SERVICE)
 
 down-infra: ## Stop and remove infrastructure services
 	@echo "$(COLOR_YELLOW)Stopping infrastructure services...$(COLOR_RESET)"
@@ -247,7 +247,7 @@ quickstart: setup build up ## Complete setup and start (lightweight mode, recomm
 	@echo "$(COLOR_GREEN)║  Mode:         Lightweight (~112MB)                    ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  API:          http://localhost:8081                   ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Temporal UI:  http://localhost:8080                   ║$(COLOR_RESET)"
-	@echo "$(COLOR_GREEN)║  NATS Monitor: http://localhost:18222                  ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  NATS Monitor: http://localhost:8222                   ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Run 'make logs' to view logs                         ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Run 'make ps' to view service status                 ║$(COLOR_RESET)"

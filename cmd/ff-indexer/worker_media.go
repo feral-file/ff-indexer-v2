@@ -142,10 +142,10 @@ func registerWorkerMedia(
 
 	cleanup = func(ctx context.Context) error {
 		_ = ctx
-		if err := imageTransformer.Close(); err != nil {
-			return err
-		}
-		return nil
+		return errors.Join(
+			imageTransformer.Close(),
+			browserRasterizer.Close(),
+		)
 	}
 
 	return run, cleanup, nil

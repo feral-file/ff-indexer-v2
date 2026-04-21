@@ -64,7 +64,7 @@ For local development, you can run infrastructure in Docker and the application 
 make dev
 
 # Run the binary (CGO optional; without CGO the media worker is disabled)
-go run ./cmd/ff-indexer -config cmd/ff-indexer/config.yaml
+go run ./cmd/ff-indexer -config config/config.yaml
 ```
 
 - Lightweight mode: `CGO_ENABLED=0`, media worker stub only.

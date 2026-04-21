@@ -181,7 +181,11 @@ func (b *bridge) Run(ctx context.Context) error {
 			logger.InfoCtx(ctx, "Shutting down event bridge")
 			return ctx.Err()
 		case msg := <-msgChan:
-			// Spawn goroutine to handle message asynchronously
+			// Spawn goroutine to handle message asynchronously.
+			// TODO(ff-indexer): this JetStream bridge path does not drain in-flight handlers on
+			// shutdown. That can race ACK/NAK/TERM with client teardown during process exit. We
+			// are not deepening the fix here because this NATS-based bridge is transitional and
+			// planned for replacement by a database-backed queue before production rollout.
 			go b.handleMessage(ctx, msg)
 		}
 	}
