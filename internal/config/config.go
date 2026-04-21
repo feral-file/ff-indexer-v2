@@ -461,7 +461,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("temporal.max_concurrent_activity_task_pollers", 10)
 
 	// Media worker Temporal pool (former worker-media defaults)
-	v.SetDefault("media_enabled", true)
+	v.SetDefault("media_enabled", false)
 	v.SetDefault("media_worker_temporal.max_concurrent_activity_execution_size", 10)
 	v.SetDefault("media_worker_temporal.worker_activities_per_second", 10)
 	v.SetDefault("media_worker_temporal.max_concurrent_activity_task_pollers", 2)

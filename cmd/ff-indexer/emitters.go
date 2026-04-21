@@ -81,18 +81,7 @@ func runEthereumEmitter(
 		errCh <- eventEmitter.Run(ctx)
 	}()
 
-	select {
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, context.Canceled) {
-			logger.ErrorCtx(ctx, errors.New("ethereum emitter error"), zap.Error(err))
-		}
-		return err
-	case <-natsPub.CloseChan():
-		logger.ErrorCtx(ctx, errors.New("NATS closed (ethereum emitter)"), zap.Error(err))
-		return errors.New("nats publisher closed")
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return waitForEmitterShutdown(ctx, errCh, natsPub.CloseChan(), "ethereum")
 }
 
 // runTezosEmitter runs the Tezos chain → NATS emitter until ctx is done.
@@ -142,16 +131,29 @@ func runTezosEmitter(
 		errCh <- eventEmitter.Run(ctx)
 	}()
 
+	return waitForEmitterShutdown(ctx, errCh, natsPub.CloseChan(), "tezos")
+}
+
+func waitForEmitterShutdown(ctx context.Context, errCh <-chan error, natsClosed <-chan struct{}, component string) error {
 	select {
 	case err := <-errCh:
-		if err != nil && !errors.Is(err, context.Canceled) {
-			logger.ErrorCtx(ctx, errors.New("tezos emitter error"), zap.Error(err))
-		}
+		logEmitterError(ctx, component, err)
 		return err
-	case <-natsPub.CloseChan():
-		logger.ErrorCtx(ctx, errors.New("NATS closed (tezos emitter)"), zap.Error(err))
+	case <-natsClosed:
+		logger.ErrorCtx(ctx, errors.New("NATS closed ("+component+" emitter)"))
 		return errors.New("nats publisher closed")
 	case <-ctx.Done():
+		err := <-errCh
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logEmitterError(ctx, component, err)
+			return err
+		}
 		return ctx.Err()
+	}
+}
+
+func logEmitterError(ctx context.Context, component string, err error) {
+	if err != nil && !errors.Is(err, context.Canceled) {
+		logger.ErrorCtx(ctx, errors.New(component+" emitter error"), zap.Error(err))
 	}
 }

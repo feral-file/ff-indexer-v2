@@ -61,7 +61,7 @@ cp cmd/ff-indexer/config.yaml.sample config/config.yaml
 ```
 
 **Config file location**:
-- Default search paths include `config/config.yaml` and `cmd/ff-indexer/config.yaml`
+- Default search paths include `config/config.yaml`, the repo root, and `cmd/ff-indexer/`
 - Override with `-config /path/to/config.yaml`
 
 #### Option 2: Environment Variables
@@ -87,14 +87,14 @@ FF_INDEXER_DATABASE_USER=YOUR_DB_USER
 FF_INDEXER_DATABASE_PASSWORD=YOUR_DB_PASSWORD
 FF_INDEXER_DATABASE_DBNAME=ff_indexer
 
-# Ethereum (for ethereum-event-emitter and worker-core)
+# Ethereum (for ff-indexer emitters and token worker)
 FF_INDEXER_ETHEREUM_RPC_URL=YOUR_ETHEREUM_RPC_URL
 FF_INDEXER_ETHEREUM_WEBSOCKET_URL=YOUR_ETHEREUM_WEBSOCKET_URL
 
-# Cloudflare (for worker-media)
+# Cloudflare (only required when FF_INDEXER_MEDIA_ENABLED=true)
 FF_INDEXER_CLOUDFLARE_ACCOUNT_ID=YOUR_ACCOUNT_ID
 FF_INDEXER_CLOUDFLARE_API_TOKEN=YOUR_API_TOKEN
-FF_INDEXER_MEDIA_ENABLED=true
+FF_INDEXER_MEDIA_ENABLED=false
 
 # API authentication
 FF_INDEXER_AUTH_JWT_PUBLIC_KEY=YOUR_JWT_PUBKEY_PEM
@@ -134,7 +134,7 @@ go run ./cmd/ff-indexer -config config/config.yaml
 ```
 
 - **Without CGO** (`CGO_ENABLED=0`): the media Temporal worker is not started; other subsystems run.
-- **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including `media-indexing` worker.
+- **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including `media-indexing` worker when `FF_INDEXER_MEDIA_ENABLED=true`.
 - **With `FF_INDEXER_MEDIA_ENABLED=false`**: the media Temporal worker is intentionally disabled even in CGO/full builds.
 
 Media worker-specific Temporal concurrency is configured under `media_worker_temporal` in [cmd/ff-indexer/config.yaml.sample](cmd/ff-indexer/config.yaml.sample).

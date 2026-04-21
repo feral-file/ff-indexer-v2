@@ -6,7 +6,7 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
 
 ### Prerequisites
 
-- Go 1.24 or later
+- Go 1.25.0 or later
 - Docker and Docker Compose
 - PostgreSQL 15+ (for local development)
 - Access to Ethereum and/or Tezos RPC endpoints
@@ -40,7 +40,7 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    - NATS URL
    - Temporal connection
    - Ethereum/Tezos RPC endpoints
-   - Cloudflare credentials (for media worker)
+   - Cloudflare credentials (only when `FF_INDEXER_MEDIA_ENABLED=true`)
    - API authentication (JWT public key or API keys)
 
    **Note**: Environment variables (with `FF_INDEXER_` prefix) override YAML config values. See [DEVELOPMENT.md](DEVELOPMENT.md) for configuration details.
@@ -141,15 +141,14 @@ docker run --rm -v $(pwd):/app -w /app golangci/golangci-lint:v2.1.6 golangci-li
 
 ### Building
 
-Build all services:
+Build the default lightweight image:
 ```bash
-make build-all
+make build
 ```
 
-Build a specific service:
+Build the full image with media processing:
 ```bash
-make build-api
-make build-worker-core
+make build-full
 ```
 
 ## Pull Request Process

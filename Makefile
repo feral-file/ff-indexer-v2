@@ -282,7 +282,7 @@ quickstart-full: setup build-full up ## Complete setup and start (full mode with
 dev: up-infra ## Start development mode (only infrastructure; run ff-indexer locally)
 	@echo "$(COLOR_GREEN)Development mode: Infrastructure running$(COLOR_RESET)"
 	@echo "$(COLOR_YELLOW)Run the binary:$(COLOR_RESET)"
-	@echo "  go run ./cmd/ff-indexer -config cmd/ff-indexer/config.yaml"
+	@echo "  go run ./cmd/ff-indexer -config config/config.yaml"
 	@echo ""
 	@echo "$(COLOR_BLUE)Available services:$(COLOR_RESET)"
 	@echo "  PostgreSQL: localhost:5432"
