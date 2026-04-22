@@ -8,7 +8,7 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
 
 - Go 1.25.0 or later
 - Docker and Docker Compose
-- PostgreSQL 15+ (for local development)
+- PostgreSQL 18+ (for local development)
 - Access to Ethereum and/or Tezos RPC endpoints
 - Git
 

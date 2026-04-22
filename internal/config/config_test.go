@@ -88,6 +88,16 @@ database:
   dbname: db
 nats:
   url: nats://127.0.0.1:4222
+temporal:
+  host_port: localhost:7233
+  token_task_queue: token-indexing
+rate_limiter:
+  redis_addr: localhost:6379
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  websocket_url: wss://ws.tzkt.io
 `
 	require.NoError(t, os.WriteFile(configPath, []byte(yaml), 0600))
 
@@ -108,6 +118,92 @@ func TestLoadAppConfig_requiresDatabase(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestValidateRequiredConfigValues(t *testing.T) {
+	cfg := &AppConfig{
+		Database: DatabaseConfig{
+			Host:   "localhost",
+			DBName: "ff_indexer",
+		},
+		NATS: NATSConfig{
+			URL: "nats://127.0.0.1:4222",
+		},
+		Temporal: TemporalConfig{
+			HostPort:       "localhost:7233",
+			TokenTaskQueue: "token-indexing",
+		},
+		RateLimiter: RateLimiterConfig{
+			RedisAddr: "localhost:6379",
+		},
+		Ethereum: EthereumConfig{
+			RPCURL:       "https://rpc.example.com",
+			WebSocketURL: "wss://ws.example.com",
+		},
+		Tezos: TezosConfig{
+			APIURL:       "https://api.tzkt.io",
+			WebSocketURL: "wss://ws.tzkt.io",
+		},
+	}
+
+	require.NoError(t, ValidateRequiredConfigValues(cfg))
+}
+
+func TestValidateRequiredConfigValues_MissingFields(t *testing.T) {
+	cfg := &AppConfig{
+		Database: DatabaseConfig{
+			Host: "localhost",
+		},
+		Temporal: TemporalConfig{
+			HostPort:       "localhost:7233",
+			TokenTaskQueue: "token-indexing",
+		},
+		RateLimiter: RateLimiterConfig{
+			RedisAddr: "localhost:6379",
+		},
+		Ethereum: EthereumConfig{
+			RPCURL: "https://rpc.example.com",
+		},
+		Tezos: TezosConfig{
+			APIURL: "https://api.tzkt.io",
+		},
+	}
+
+	err := ValidateRequiredConfigValues(cfg)
+	require.Error(t, err)
+	assert.EqualError(t, err, "missing required config values: database.dbname, nats.url, ethereum.websocket_url, tezos.websocket_url")
+}
+
+func TestValidateRequiredConfigValues_RequiresMediaTaskQueueWhenMediaEnabled(t *testing.T) {
+	cfg := &AppConfig{
+		MediaEnabled: true,
+		Database: DatabaseConfig{
+			Host:   "localhost",
+			DBName: "ff_indexer",
+		},
+		NATS: NATSConfig{
+			URL: "nats://127.0.0.1:4222",
+		},
+		Temporal: TemporalConfig{
+			HostPort:       "localhost:7233",
+			TokenTaskQueue: "token-indexing",
+		},
+		RateLimiter: RateLimiterConfig{
+			RedisAddr: "localhost:6379",
+		},
+		Ethereum: EthereumConfig{
+			RPCURL:       "https://rpc.example.com",
+			WebSocketURL: "wss://ws.example.com",
+		},
+		Tezos: TezosConfig{
+			APIURL:       "https://api.tzkt.io",
+			WebSocketURL: "wss://ws.tzkt.io",
+		},
+	}
+
+	err := ValidateRequiredConfigValues(cfg)
+	require.Error(t, err)
+	assert.EqualError(t, err, "missing required config values: temporal.media_task_queue")
+}
+
 func TestConfigWithEnvironmentVariables(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -122,6 +218,10 @@ FF_INDEXER_DATABASE_USER=env-user
 FF_INDEXER_DATABASE_PASSWORD=env-pass
 FF_INDEXER_DATABASE_DBNAME=env-db
 FF_INDEXER_DATABASE_SSLMODE=require
+FF_INDEXER_NATS_URL=nats://127.0.0.1:4222
+FF_INDEXER_ETHEREUM_RPC_URL=https://rpc.example.com
+FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://ws.example.com
+FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 `
 	require.NoError(t, os.WriteFile(envFile, []byte(envContent), 0600))
 
@@ -162,6 +262,10 @@ FF_INDEXER_DATABASE_HOST=env-host
 FF_INDEXER_DATABASE_USER=env-user
 FF_INDEXER_DATABASE_PASSWORD=env-pass
 FF_INDEXER_DATABASE_DBNAME=env-db
+FF_INDEXER_NATS_URL=nats://127.0.0.1:4222
+FF_INDEXER_ETHEREUM_RPC_URL=https://rpc.example.com
+FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://ws.example.com
+FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 `
 	require.NoError(t, os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0600))
 

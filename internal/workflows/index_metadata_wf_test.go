@@ -54,6 +54,7 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
 		TezosTokenSweepStartBlock:    0,
+		MediaEnabled:                 true,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist, s.temporalWorkflow)
 	s.workerMedia = workflowsmedia.NewWorker(mocks.NewMockMediaExecutor(s.ctrl))
@@ -211,6 +212,54 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutE
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
+}
+
+func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaDisabled_DoesNotTriggerMediaWorkflow() {
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	normalizedMetadata := &metadata.NormalizedMetadata{
+		Name:        "Test Token",
+		Description: "Test Description",
+		Image:       "https://example.com/image.jpg",
+	}
+
+	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+		TezosChainID:                 domain.ChainTezosMainnet,
+		EthereumChainID:              domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock: 0,
+		TezosTokenSweepStartBlock:    0,
+		MediaEnabled:                 false,
+		MediaTaskQueue:               "media-task-queue",
+	}, s.blacklist, s.temporalWorkflow)
+
+	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
+	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
+	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
+		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
+			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
+		})).Return(&workflows.MediaHealthCheckResult{
+		IsViewable:  true,
+		HealthyURLs: []string{normalizedMetadata.Image},
+	}, nil)
+	s.env.OnWorkflow(workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
+			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
+		}
+		return false
+	})).Return(nil)
+
+	mediaWorkflowTriggered := false
+	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, normalizedMetadata.Image).Return(
+		func(ctx workflow.Context, url string) error {
+			mediaWorkflowTriggered = true
+			return nil
+		},
+	).Maybe()
+
+	s.env.ExecuteWorkflow(workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.False(mediaWorkflowTriggered, "media workflow should not be triggered when media is disabled")
 }
 
 func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnhancement() {

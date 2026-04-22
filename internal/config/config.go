@@ -127,6 +127,7 @@ type WorkerCoreConfig struct {
 	Vendors                      VendorsConfig     `mapstructure:"vendors"`
 	URI                          URIConfig         `mapstructure:"uri"`
 	RateLimiter                  RateLimiterConfig `mapstructure:"rate_limiter"`
+	MediaEnabled                 bool              `mapstructure:"media_enabled"`
 	EthereumTokenSweepStartBlock uint64            `mapstructure:"ethereum_token_sweep_start_block"`
 	TezosTokenSweepStartBlock    uint64            `mapstructure:"tezos_token_sweep_start_block"`
 	PublisherRegistryPath        string            `mapstructure:"publisher_registry_path"`
@@ -344,13 +345,54 @@ func LoadAppConfig(configFile string, envPath string) (*AppConfig, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
-	if cfg.Database.Host == "" {
-		return nil, errors.New("database.host is required")
-	}
-	if cfg.Database.DBName == "" {
-		return nil, errors.New("database.dbname is required")
+	if err := ValidateRequiredConfigValues(&cfg); err != nil {
+		return nil, err
 	}
 	return &cfg, nil
+}
+
+// ValidateRequiredConfigValues verifies that the unified ff-indexer process has
+// the minimum required config values present before startup initializes shared
+// dependencies.
+func ValidateRequiredConfigValues(cfg *AppConfig) error {
+	requiredFields := []struct {
+		name  string
+		value string
+	}{
+		{name: "database.host", value: cfg.Database.Host},
+		{name: "database.dbname", value: cfg.Database.DBName},
+		{name: "nats.url", value: cfg.NATS.URL},
+		{name: "temporal.host_port", value: cfg.Temporal.HostPort},
+		{name: "temporal.token_task_queue", value: cfg.Temporal.TokenTaskQueue},
+		{name: "rate_limiter.redis_addr", value: cfg.RateLimiter.RedisAddr},
+		{name: "ethereum.rpc_url", value: cfg.Ethereum.RPCURL},
+		{name: "ethereum.websocket_url", value: cfg.Ethereum.WebSocketURL},
+		{name: "tezos.api_url", value: cfg.Tezos.APIURL},
+		{name: "tezos.websocket_url", value: cfg.Tezos.WebSocketURL},
+	}
+
+	if cfg.MediaEnabled {
+		requiredFields = append(requiredFields, struct {
+			name  string
+			value string
+		}{
+			name:  "temporal.media_task_queue",
+			value: cfg.Temporal.MediaTaskQueue,
+		})
+	}
+
+	missingFields := make([]string, 0)
+	for _, field := range requiredFields {
+		if strings.TrimSpace(field.value) == "" {
+			missingFields = append(missingFields, field.name)
+		}
+	}
+
+	if len(missingFields) > 0 {
+		return fmt.Errorf("missing required config values: %s", strings.Join(missingFields, ", "))
+	}
+
+	return nil
 }
 
 // ToAPIConfig maps AppConfig to the shape expected by the HTTP API server.
@@ -378,6 +420,7 @@ func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
 		Vendors:                            a.Vendors,
 		URI:                                a.URI,
 		RateLimiter:                        a.RateLimiter,
+		MediaEnabled:                       a.MediaEnabled,
 		EthereumTokenSweepStartBlock:       a.EthereumTokenSweepStartBlock,
 		TezosTokenSweepStartBlock:          a.TezosTokenSweepStartBlock,
 		PublisherRegistryPath:              a.PublisherRegistryPath,

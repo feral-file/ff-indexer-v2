@@ -181,8 +181,14 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	}
 
 	// Step 4: Trigger media indexing workflow (fire and forget) - only for healthy URLs
-	// This should not fail the parent workflow
-	if len(result.HealthyURLs) > 0 {
+	// This should not fail the parent workflow.
+	// When media indexing is disabled for the deployment, skip creating child workflows
+	// so token-indexing does not enqueue work onto an unserved task queue.
+	if !w.config.MediaEnabled {
+		logger.InfoWf(ctx, "Skipping media indexing workflow because media is disabled",
+			zap.String("tokenCID", tokenCID.String()),
+		)
+	} else if len(result.HealthyURLs) > 0 {
 		logger.InfoWf(ctx, "Triggering media indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Int("mediaCount", len(result.HealthyURLs)),

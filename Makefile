@@ -267,7 +267,7 @@ quickstart-full: setup build-full up ## Complete setup and start (full mode with
 	@echo "$(COLOR_GREEN)║  Mode:         Full with Media (~730MB)                ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  API:          http://localhost:8081                   ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Temporal UI:  http://localhost:8080                   ║$(COLOR_RESET)"
-	@echo "$(COLOR_GREEN)║  NATS Monitor: http://localhost:18222                  ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  NATS Monitor: http://localhost:8222                   ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Media Processing: ✓ ENABLED                           ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║    - libvips 8.18.2 (image processing)                 ║$(COLOR_RESET)"

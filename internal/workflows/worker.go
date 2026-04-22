@@ -78,6 +78,8 @@ type WorkerCoreConfig struct {
 	TezosOwnerFirstBatchTarget int
 	// TezosOwnerSubsequentBatchTarget is the subsequent-run batch target (token count) for Tezos owner indexing.
 	TezosOwnerSubsequentBatchTarget int
+	// MediaEnabled controls whether token metadata indexing should enqueue media-indexing child workflows.
+	MediaEnabled bool
 	// MediaTaskQueue is the task queue for the media worker
 	MediaTaskQueue string
 	// BudgetedIndexingModeEnabled enables quota-based token indexing
