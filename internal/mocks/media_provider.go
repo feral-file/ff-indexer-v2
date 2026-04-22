@@ -9,9 +9,8 @@ import (
 	io "io"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockMediaProvider is a mock of Provider interface.

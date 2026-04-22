@@ -43,18 +43,6 @@ type DatabaseConfig struct {
 	ConnMaxIdleTime time.Duration `mapstructure:"conn_max_idle_time"` // Maximum amount of time a connection may be idle (e.g., "10m", "30m")
 }
 
-// NATSConfig holds NATS JetStream configuration
-type NATSConfig struct {
-	URL            string        `mapstructure:"url"`
-	StreamName     string        `mapstructure:"stream_name"`
-	ConsumerName   string        `mapstructure:"consumer_name"`
-	MaxReconnects  int           `mapstructure:"max_reconnects"`
-	ReconnectWait  time.Duration `mapstructure:"reconnect_wait"`
-	ConnectionName string        `mapstructure:"connection_name"`
-	AckWait        time.Duration `mapstructure:"ack_wait"`
-	MaxDeliver     int           `mapstructure:"max_deliver"`
-}
-
 // EthereumConfig holds Ethereum-specific configuration
 type EthereumConfig struct {
 	WebSocketURL         string        `mapstructure:"websocket_url"`
@@ -111,7 +99,7 @@ type AuthConfig struct {
 	APIKeys      []string `mapstructure:"api_keys"`
 }
 
-// WorkerConfig holds worker configuration
+// WorkerConfig holds worker configuration.
 type WorkerConfig struct {
 	WorkerPoolSize  int `mapstructure:"pool_size"`
 	WorkerQueueSize int `mapstructure:"queue_size"`
@@ -273,7 +261,6 @@ type MediaWorkerTemporalConfig struct {
 }
 
 // AppConfig is the configuration for the single-process ff-indexer binary.
-// It composes all former per-service configuration sections.
 type AppConfig struct {
 	BaseConfig   `mapstructure:",squash"`
 	Server       ServerConfig   `mapstructure:"server"`
@@ -283,7 +270,6 @@ type AppConfig struct {
 	MediaEnabled bool           `mapstructure:"media_enabled"`
 	// MediaWorkerTemporal configures the media Temporal worker pool (separate from token-indexing limits).
 	MediaWorkerTemporal MediaWorkerTemporalConfig `mapstructure:"media_worker_temporal"`
-	NATS                NATSConfig                `mapstructure:"nats"`
 	Ethereum            EthereumConfig            `mapstructure:"ethereum"`
 	Tezos               TezosConfig               `mapstructure:"tezos"`
 	Vendors             VendorsConfig             `mapstructure:"vendors"`
@@ -293,7 +279,6 @@ type AppConfig struct {
 	Rasterizer          RasterizerConfig          `mapstructure:"rasterizer"`
 	Transform           TransformConfig           `mapstructure:"transform"`
 	MediaHealthSweeper  MediaHealthSweeperConfig  `mapstructure:"media_health_sweeper"`
-	Worker              WorkerConfig              `mapstructure:"worker"`
 
 	EthereumTokenSweepStartBlock uint64 `mapstructure:"ethereum_token_sweep_start_block"`
 	TezosTokenSweepStartBlock    uint64 `mapstructure:"tezos_token_sweep_start_block"`
@@ -343,7 +328,6 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	}{
 		{name: "database.host", value: cfg.Database.Host},
 		{name: "database.dbname", value: cfg.Database.DBName},
-		{name: "nats.url", value: cfg.NATS.URL},
 		{name: "temporal.host_port", value: cfg.Temporal.HostPort},
 		{name: "temporal.token_task_queue", value: cfg.Temporal.TokenTaskQueue},
 		{name: "ethereum.rpc_url", value: cfg.Ethereum.RPCURL},
@@ -466,15 +450,6 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("database.conn_max_lifetime", "5m")
 	v.SetDefault("database.conn_max_idle_time", "10m")
 
-	// NATS
-	v.SetDefault("nats.max_reconnects", 10)
-	v.SetDefault("nats.reconnect_wait", "2s")
-	v.SetDefault("nats.stream_name", "BLOCKCHAIN_EVENTS")
-	v.SetDefault("nats.consumer_name", "event-bridge")
-	v.SetDefault("nats.ack_wait", "30s")
-	v.SetDefault("nats.max_deliver", 3)
-	v.SetDefault("nats.connection_name", "ff-indexer")
-
 	// Temporal
 	v.SetDefault("temporal.host_port", "localhost:7233")
 	v.SetDefault("temporal.namespace", "default")
@@ -507,10 +482,6 @@ func applyAppConfigDefaults(v *viper.Viper) {
 
 	// URI
 	v.SetDefault("uri.onchfs_gateways", []string{"https://onchfs.fxhash2.xyz"})
-
-	// Worker pool (emitters)
-	v.SetDefault("worker.pool_size", 20)
-	v.SetDefault("worker.queue_size", 2048)
 
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
@@ -615,15 +586,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		"database.max_idle_conns",
 		"database.conn_max_lifetime",
 		"database.conn_max_idle_time",
-		// NATS
-		"nats.url",
-		"nats.stream_name",
-		"nats.consumer_name",
-		"nats.max_reconnects",
-		"nats.reconnect_wait",
-		"nats.connection_name",
-		"nats.ack_wait",
-		"nats.max_deliver",
 		// Ethereum
 		"ethereum.websocket_url",
 		"ethereum.rpc_url",
@@ -690,9 +652,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		"rasterizer.width",
 		"rasterizer.timeout_ms",
 		"rasterizer.browser_fallback_enabled",
-		// Internal Worker config
-		"worker.pool_size",
-		"worker.queue_size",
 		// Media Health Sweeper config
 		"media_health_sweeper.http_timeout",
 		"media_health_sweeper.batch_size",

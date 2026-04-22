@@ -24,13 +24,13 @@ body:
       description: Mark all relevant components
       options:
         - label: API Server (REST/GraphQL)
-        - label: Ethereum Event Emitter
-        - label: Tezos Event Emitter
-        - label: Event Bridge
+        - label: Ethereum Chain Listener
+        - label: Tezos Chain Listener
+        - label: Workflow Dispatcher
         - label: Worker Core
         - label: Worker Media
         - label: Database/Storage
-        - label: Infrastructure (PostgreSQL, NATS, Temporal)
+        - label: Infrastructure (PostgreSQL, Temporal)
         - label: Other
 
   - type: textarea

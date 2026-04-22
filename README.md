@@ -19,7 +19,7 @@ FF-Indexer v2 is a production-ready indexing service designed to capture and ind
 - **Provenance tracking** with full blockchain event history
 - **Owner-based indexing** for wallet-based queries
 
-The system is built with scalability and reliability in mind, using Temporal for workflow orchestration, NATS JetStream for event streaming, and PostgreSQL for persistent storage.
+The system is built with reliability and operational clarity in mind, using Temporal for workflow orchestration and PostgreSQL for persistent storage while chain ingestion runs in-process.
 
 ## Quick Start
 
@@ -49,8 +49,7 @@ make quickstart
 This will start:
 - PostgreSQL (port 5432)
 - Temporal server (ports 7233-7235) and UI (port 8080)
-- NATS JetStream (ports 4222, 8222)
-- **ff-indexer** — single container running the HTTP API, chain emitters, NATS event bridge, Temporal workers (token by default, media only when built with CGO), and media health sweeper
+- **ff-indexer** - single container running the HTTP API, chain ingestion, Temporal workers (token by default, media only when built with CGO), and media health sweeper
 
 The API will be available at `http://localhost:8081`
 
@@ -59,7 +58,7 @@ The API will be available at `http://localhost:8081`
 For local development, you can run infrastructure in Docker and the application locally:
 
 ```bash
-# Start only infrastructure (PostgreSQL, Temporal, NATS)
+# Start only infrastructure (PostgreSQL, Temporal)
 make dev
 
 # Run the binary (CGO optional; without CGO the media worker is disabled)
@@ -84,8 +83,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 All of the following run inside the **`ff-indexer`** process (goroutines) by default:
 
-- **Event emitters** — Ethereum and Tezos chain listeners publishing to NATS
-- **Event bridge** — NATS consumer that starts Temporal workflows
+- **Chain ingestion** - Ethereum and Tezos event subscriptions plus ordered in-memory flush queues that start workflows and advance durable cursors
 - **Worker core** — Temporal worker on `token-indexing`
 - **Worker media** — Temporal worker on `media-indexing` (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
 - **API server** — REST and GraphQL
@@ -97,7 +95,6 @@ All of the following run inside the **`ff-indexer`** process (goroutines) by def
 - Docker and Docker Compose
 - PostgreSQL 18+
 - Temporal 1.29.0+
-- NATs Jetstream 2.12.1+
 - Access to Ethereum RPC endpoints
 
 ## License

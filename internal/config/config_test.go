@@ -86,17 +86,14 @@ database:
   user: u
   password: p
   dbname: db
-nats:
-  url: nats://127.0.0.1:4222
 temporal:
   host_port: localhost:7233
   token_task_queue: token-indexing
-rate_limiter:
-  redis_addr: localhost:6379
 ethereum:
   rpc_url: https://rpc.example.com
   websocket_url: wss://ws.example.com
 tezos:
+  api_url: https://api.tzkt.io
   websocket_url: wss://ws.tzkt.io
 `
 	require.NoError(t, os.WriteFile(configPath, []byte(yaml), 0600))
@@ -106,7 +103,6 @@ tezos:
 	require.NotNil(t, cfg)
 	assert.Equal(t, "localhost", cfg.Database.Host)
 	assert.Equal(t, "db", cfg.Database.DBName)
-	assert.Equal(t, "nats://127.0.0.1:4222", cfg.NATS.URL)
 }
 
 func TestLoadAppConfig_requiresDatabase(t *testing.T) {
@@ -123,9 +119,6 @@ func TestValidateRequiredConfigValues(t *testing.T) {
 		Database: DatabaseConfig{
 			Host:   "localhost",
 			DBName: "ff_indexer",
-		},
-		NATS: NATSConfig{
-			URL: "nats://127.0.0.1:4222",
 		},
 		Temporal: TemporalConfig{
 			HostPort:       "localhost:7233",
@@ -163,7 +156,7 @@ func TestValidateRequiredConfigValues_MissingFields(t *testing.T) {
 
 	err := ValidateRequiredConfigValues(cfg)
 	require.Error(t, err)
-	assert.EqualError(t, err, "missing required config values: database.dbname, nats.url, ethereum.websocket_url, tezos.websocket_url")
+	assert.EqualError(t, err, "missing required config values: database.dbname, ethereum.websocket_url, tezos.websocket_url")
 }
 
 func TestValidateRequiredConfigValues_RequiresMediaTaskQueueWhenMediaEnabled(t *testing.T) {
@@ -172,9 +165,6 @@ func TestValidateRequiredConfigValues_RequiresMediaTaskQueueWhenMediaEnabled(t *
 		Database: DatabaseConfig{
 			Host:   "localhost",
 			DBName: "ff_indexer",
-		},
-		NATS: NATSConfig{
-			URL: "nats://127.0.0.1:4222",
 		},
 		Temporal: TemporalConfig{
 			HostPort:       "localhost:7233",
@@ -209,9 +199,9 @@ FF_INDEXER_DATABASE_USER=env-user
 FF_INDEXER_DATABASE_PASSWORD=env-pass
 FF_INDEXER_DATABASE_DBNAME=env-db
 FF_INDEXER_DATABASE_SSLMODE=require
-FF_INDEXER_NATS_URL=nats://127.0.0.1:4222
 FF_INDEXER_ETHEREUM_RPC_URL=https://rpc.example.com
 FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://ws.example.com
+FF_INDEXER_TEZOS_API_URL=https://api.tzkt.io
 FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 `
 	require.NoError(t, os.WriteFile(envFile, []byte(envContent), 0600))
@@ -240,6 +230,8 @@ database:
 	assert.Equal(t, "env-pass", cfg.Database.Password)
 	assert.Equal(t, "env-db", cfg.Database.DBName)
 	assert.Equal(t, "require", cfg.Database.SSLMode)
+	assert.Equal(t, "https://api.tzkt.io", cfg.Tezos.APIURL)
+	assert.Equal(t, "wss://ws.tzkt.io", cfg.Tezos.WebSocketURL)
 }
 
 func TestLoadAppConfig_MediaEnabledFromEnv(t *testing.T) {
@@ -253,9 +245,9 @@ FF_INDEXER_DATABASE_HOST=env-host
 FF_INDEXER_DATABASE_USER=env-user
 FF_INDEXER_DATABASE_PASSWORD=env-pass
 FF_INDEXER_DATABASE_DBNAME=env-db
-FF_INDEXER_NATS_URL=nats://127.0.0.1:4222
 FF_INDEXER_ETHEREUM_RPC_URL=https://rpc.example.com
 FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://ws.example.com
+FF_INDEXER_TEZOS_API_URL=https://api.tzkt.io
 FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 `
 	require.NoError(t, os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0600))

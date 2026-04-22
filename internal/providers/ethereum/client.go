@@ -1713,8 +1713,8 @@ func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 	case batchMetadataUpdateEventSignature:
 		// EIP-4906 BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId)
 		// _fromTokenId and _toTokenId are not indexed, so they're in the data field
-		// Emit a single range event to avoid flooding NATS queue
-		// The event-bridge will handle expanding this into individual token updates
+		// Emit a single range event to avoid flooding the ingestion pipeline.
+		// Range handling stays explicit at ingestion time.
 		if len(vLog.Topics) != 1 {
 			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: expected 1 topic, got %d", len(vLog.Topics))
 		}

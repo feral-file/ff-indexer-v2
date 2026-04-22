@@ -11,7 +11,6 @@ The development stack uses Docker Compose for infrastructure services:
 - **PostgreSQL** (port 5432) - Main database
 - **Temporal** (ports 7233-7235) - Workflow orchestration
 - **Temporal UI** (port 8080) - Temporal web interface
-- **NATS JetStream** (ports 4222, 8222) - Event streaming
 
 ### Starting Infrastructure
 
@@ -36,10 +35,6 @@ psql -h localhost -U postgres -d ff_indexer
 **Temporal UI**:
 - URL: http://localhost:8080
 - View workflows, executions, and history
-
-**NATS Monitoring**:
-- URL: http://localhost:8222
-- View streams, consumers, and messages
 
 ### Configuration
 
@@ -86,7 +81,7 @@ FF_INDEXER_DATABASE_USER=YOUR_DB_USER
 FF_INDEXER_DATABASE_PASSWORD=YOUR_DB_PASSWORD
 FF_INDEXER_DATABASE_DBNAME=ff_indexer
 
-# Ethereum (for ff-indexer emitters and token worker)
+# Ethereum (for ff-indexer chain ingestion and token worker)
 FF_INDEXER_ETHEREUM_RPC_URL=YOUR_ETHEREUM_RPC_URL
 FF_INDEXER_ETHEREUM_WEBSOCKET_URL=YOUR_ETHEREUM_WEBSOCKET_URL
 
@@ -183,19 +178,6 @@ make dev
 
 ## Scripts
 
-### NATS Stream Setup
-
-Setup NATS stream manually:
-```bash
-./tools/scripts/setup_nats.sh
-```
-
-Or using Docker:
-```bash
-make up
-# The nats-setup container runs automatically
-```
-
 ### Database Utilities
 
 **Check database connection**:
@@ -256,9 +238,8 @@ View service logs:
 make logs
 
 # Specific service
-make logs-api
-make logs-workers
-make logs-emitters
+make logs-app
+make logs-infra
 ```
 
 ### Database Debugging
@@ -282,15 +263,6 @@ LIMIT 10;
 SELECT * FROM provenance_events ORDER BY timestamp DESC LIMIT 10;
 ```
 
-**Check NATS messages**:
-```bash
-# View stream info
-nats stream info BLOCKCHAIN_EVENTS
-
-# View consumer info
-nats consumer info BLOCKCHAIN_EVENTS event-bridge
-```
-
 ### Common Issues
 
 **Database connection errors**:
@@ -303,12 +275,7 @@ nats consumer info BLOCKCHAIN_EVENTS event-bridge
 - Check Temporal UI: http://localhost:8080
 - Verify namespace and task queue names
 
-**NATS connection errors**:
-- Check NATS is running: `docker ps`
-- Verify stream exists: `nats stream info BLOCKCHAIN_EVENTS`
-- Check NATS monitoring: http://localhost:8222
-
-**Event emitter not receiving events**:
+**Chain ingestion not receiving events**:
 - Verify WebSocket connection to blockchain RPC
 - Check block cursor in database
 - Verify contract addresses are correct
@@ -441,7 +408,7 @@ Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environm
 ## Tips
 
 1. **Use Temporal UI** for workflow debugging and monitoring
-2. **Check NATS monitoring** for event flow issues
+2. **Check Temporal workflow history** for event ingestion and execution progress
 3. **Use database transactions** when testing data changes
 4. **Monitor logs** in real-time with `make logs`
 5. **Use GraphQL Playground** at http://localhost:8081/graphql for API testing

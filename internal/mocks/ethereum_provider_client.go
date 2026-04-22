@@ -10,10 +10,9 @@ import (
 
 	ethereum "github.com/ethereum/go-ethereum"
 	types "github.com/ethereum/go-ethereum/core/types"
-	gomock "github.com/golang/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	registry "github.com/feral-file/ff-indexer-v2/internal/registry"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockEthereumProviderClient is a mock of EthereumClient interface.

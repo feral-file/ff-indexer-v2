@@ -8,12 +8,11 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	dto "github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	executor "github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	types "github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockAPIExecutor is a mock of Executor interface.

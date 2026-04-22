@@ -21,7 +21,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/api/middleware"
 	"github.com/feral-file/ff-indexer-v2/internal/api/server"
-	"github.com/feral-file/ff-indexer-v2/internal/bridge"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
@@ -105,7 +104,7 @@ func run() int {
 
 	dataStore := store.NewPGStore(db)
 
-	// Temporal client (shared by API, bridge, workers, sweeper).
+	// Temporal client (shared by API, chain listeners, workers, sweeper).
 	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.HostPort,
@@ -126,19 +125,6 @@ func run() int {
 
 	jsonAdapter := adapter.NewJSON()
 
-	// NATS JetStream publishers (emitters) and consumer bridge — one connection each.
-	ethNatsPub, err := newEmitterNATSPublisher(rootCtx, cfg, jsonAdapter, "-ethereum-emitter")
-	if err != nil {
-		logger.FatalCtx(rootCtx, "Failed to create Ethereum NATS publisher", zap.Error(err))
-	}
-	defer ethNatsPub.Close()
-
-	tezNatsPub, err := newEmitterNATSPublisher(rootCtx, cfg, jsonAdapter, "-tezos-emitter")
-	if err != nil {
-		logger.FatalCtx(rootCtx, "Failed to create Tezos NATS publisher", zap.Error(err))
-	}
-	defer tezNatsPub.Close()
-
 	fs := adapter.NewFileSystem()
 	var blacklistRegistry registry.BlacklistRegistry
 	if cfg.BlacklistPath != "" {
@@ -151,30 +137,6 @@ func run() int {
 	} else {
 		logger.WarnCtx(rootCtx, "Blacklist registry path not configured, all contracts will be allowed")
 	}
-
-	eventBridge, err := bridge.NewBridge(
-		rootCtx,
-		bridge.Config{
-			URL:               cfg.NATS.URL,
-			StreamName:        cfg.NATS.StreamName,
-			ConsumerName:      cfg.NATS.ConsumerName,
-			MaxReconnects:     cfg.NATS.MaxReconnects,
-			ReconnectWait:     cfg.NATS.ReconnectWait,
-			ConnectionName:    cfg.NATS.ConnectionName + "-event-bridge",
-			AckWaitTimeout:    cfg.NATS.AckWait,
-			MaxDeliver:        cfg.NATS.MaxDeliver,
-			TemporalTaskQueue: cfg.Temporal.TokenTaskQueue,
-		},
-		adapter.NewNatsJetStream(),
-		dataStore,
-		temporalClient,
-		jsonAdapter,
-		blacklistRegistry,
-	)
-	if err != nil {
-		logger.FatalCtx(rootCtx, "Failed to create event bridge", zap.Error(err))
-	}
-	defer eventBridge.Close()
 
 	// Worker-core: token task queue + dedicated Ethereum RPC client for activities.
 	wCoreCfg := cfg.ToWorkerCoreConfig()
@@ -212,7 +174,7 @@ func run() int {
 		logger.FatalCtx(rootCtx, "Failed to init worker-media", zap.Error(err))
 	}
 
-	// Subsystems: HTTP, chain emitters, bridge, Temporal workers, sweeper.
+	// Subsystems: HTTP, chain listeners, Temporal workers, sweeper.
 	g, ctx := errgroup.WithContext(rootCtx)
 
 	g.Go(func() error {
@@ -221,31 +183,13 @@ func run() int {
 	})
 
 	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "ethereum-emitter")
-		return runEthereumEmitter(componentCtx, cfg, dataStore, ethNatsPub)
+		componentCtx := logger.WithComponent(ctx, "ethereum-ingestion")
+		return runEthereumIngestion(componentCtx, cfg, dataStore, temporalClient, blacklistRegistry)
 	})
 
 	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "tezos-emitter")
-		return runTezosEmitter(componentCtx, cfg, dataStore, tezNatsPub, rateLimiter)
-	})
-
-	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "event-bridge")
-		errCh := make(chan error, 1)
-		go func() {
-			err := eventBridge.Run(componentCtx)
-			errCh <- err
-		}()
-		select {
-		case err := <-errCh:
-			if err != nil && !errors.Is(err, context.Canceled) {
-				return err
-			}
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		componentCtx := logger.WithComponent(ctx, "tezos-ingestion")
+		return runTezosIngestion(componentCtx, cfg, dataStore, temporalClient, blacklistRegistry, rateLimiter)
 	})
 
 	g.Go(func() error {

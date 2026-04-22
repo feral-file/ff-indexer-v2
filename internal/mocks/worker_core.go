@@ -7,11 +7,10 @@ package mocks
 import (
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-	workflow "go.temporal.io/sdk/workflow"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
+	gomock "github.com/golang/mock/gomock"
+	workflow "go.temporal.io/sdk/workflow"
 )
 
 // MockCoreWorker is a mock of WorkerCore interface.
