@@ -86,8 +86,10 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Verify lightweight app build
-        run: CGO_ENABLED=0 go build ./cmd/ff-indexer
+      - name: Verify lightweight app build and stub tests
+        run: |
+          CGO_ENABLED=0 go build ./cmd/ff-indexer
+          CGO_ENABLED=0 go test ./cmd/ff-indexer/...
 
       - name: Verify full media Docker build
         run: docker build -f tools/docker/Dockerfile --build-arg CGO_ENABLED=1 .

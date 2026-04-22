@@ -228,9 +228,10 @@ test: ## Run tests
 post-implementation-check: ## Run the canonical local verification flow for current changes
 	@./tools/scripts/post_implementation_check.sh
 	@echo "$(COLOR_GREEN)✓ Post-implementation checks passed$(COLOR_RESET)"
-test-lightweight-build: ## Verify the default CGO_ENABLED=0 app build used by lightweight Docker mode
-	@echo "$(COLOR_BLUE)Verifying lightweight app build (CGO_ENABLED=0)...$(COLOR_RESET)"
+test-lightweight-build: ## Verify the default CGO_ENABLED=0 app build and stub tests used by lightweight Docker mode
+	@echo "$(COLOR_BLUE)Verifying lightweight app build and stub tests (CGO_ENABLED=0)...$(COLOR_RESET)"
 	@CGO_ENABLED=0 go build ./cmd/ff-indexer
+	@CGO_ENABLED=0 go test ./cmd/ff-indexer/...
 	@echo "$(COLOR_GREEN)✓ Lightweight build passed$(COLOR_RESET)"
 
 check: imports lint-local test-lightweight-build test ## Run linters, format imports, lightweight build check, and tests
