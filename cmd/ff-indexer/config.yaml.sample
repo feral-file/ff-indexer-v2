@@ -114,14 +114,8 @@ uri:
     - https://onchfs.fxhash2.xyz
 
 rate_limiter:
-  redis_addr: localhost:6379
-  redis_password: ""
-  redis_db: 0
-  redis_key_prefix: "ff:indexer:limiter:"
   max_workers: 10
   max_queue_size: 10000
-  enable_local_fallback: true
-  local_fallback_multiplier: 0.5
   providers:
     tzkt:
       requests_per_second: 10

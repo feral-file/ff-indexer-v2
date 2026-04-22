@@ -35,7 +35,7 @@ func registerWorkerCore(
 	cfg *config.WorkerCoreConfig,
 	db *gorm.DB,
 	temporalClient client.Client,
-	rateLimitProxy ratelimit.Proxy,
+	rateLimiter ratelimit.Limiter,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
 	// Store and shared adapters.
 	dataStore := store.NewPGStore(db)
@@ -74,12 +74,12 @@ func registerWorkerCore(
 			StaleWindow:       cfg.Tezos.BlockHeadStaleWindow * time.Second,
 			BlockTimestampTTL: 0,
 		}, clockAdapter)
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, rateLimitProxy, clockAdapter, tzBlockProvider)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, rateLimiter, clockAdapter, tzBlockProvider)
 
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
-	objktClient := objkt.NewClient(httpClient, rateLimitProxy, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
-	openseaClient := opensea.NewClient(httpClient, rateLimitProxy, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
+	objktClient := objkt.NewClient(httpClient, rateLimiter, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
+	openseaClient := opensea.NewClient(httpClient, rateLimiter, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
 
 	publisherLoader := registry.NewPublisherRegistryLoader(fs, jsonAdapter)
 	blacklistLoader := registry.NewBlacklistRegistryLoader(fs, jsonAdapter)

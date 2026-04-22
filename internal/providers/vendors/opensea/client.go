@@ -51,21 +51,21 @@ type Client interface {
 
 // OpenSeaClient implements OpenSea client
 type OpenSeaClient struct {
-	httpClient     adapter.HTTPClient
-	rateLimitProxy ratelimit.Proxy
-	apiURL         string
-	apiKey         string
-	json           adapter.JSON
+	httpClient  adapter.HTTPClient
+	rateLimiter ratelimit.Limiter
+	apiURL      string
+	apiKey      string
+	json        adapter.JSON
 }
 
 // NewClient creates a new OpenSea client
-func NewClient(httpClient adapter.HTTPClient, rateLimitProxy ratelimit.Proxy, apiURL string, apiKey string, json adapter.JSON) Client {
+func NewClient(httpClient adapter.HTTPClient, rateLimiter ratelimit.Limiter, apiURL string, apiKey string, json adapter.JSON) Client {
 	return &OpenSeaClient{
-		httpClient:     httpClient,
-		rateLimitProxy: rateLimitProxy,
-		apiURL:         apiURL,
-		apiKey:         apiKey,
-		json:           json,
+		httpClient:  httpClient,
+		rateLimiter: rateLimiter,
+		apiURL:      apiURL,
+		apiKey:      apiKey,
+		json:        json,
 	}
 }
 
@@ -88,7 +88,7 @@ func (c *OpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID str
 		"X-API-KEY": c.apiKey,
 	}
 
-	respBody, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
+	respBody, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
 		return c.httpClient.GetBytes(ctx, url, headers)
 	})
 	if err != nil {

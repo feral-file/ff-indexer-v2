@@ -50,7 +50,6 @@ This will start:
 - PostgreSQL (port 5432)
 - Temporal server (ports 7233-7235) and UI (port 8080)
 - NATS JetStream (ports 4222, 8222)
-- Redis
 - **ff-indexer** — single container running the HTTP API, chain emitters, NATS event bridge, Temporal workers (token by default, media only when built with CGO), and media health sweeper
 
 The API will be available at `http://localhost:8081`
@@ -60,7 +59,7 @@ The API will be available at `http://localhost:8081`
 For local development, you can run infrastructure in Docker and the application locally:
 
 ```bash
-# Start only infrastructure (PostgreSQL, Temporal, NATS, Redis)
+# Start only infrastructure (PostgreSQL, Temporal, NATS)
 make dev
 
 # Run the binary (CGO optional; without CGO the media worker is disabled)
@@ -98,7 +97,6 @@ All of the following run inside the **`ff-indexer`** process (goroutines) by def
 - Docker and Docker Compose
 - PostgreSQL 18+
 - Temporal 1.29.0+
-- Redis 8.2.2+
 - NATs Jetstream 2.12.1+
 - Access to Ethereum RPC endpoints
 

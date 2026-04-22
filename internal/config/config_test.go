@@ -131,9 +131,6 @@ func TestValidateRequiredConfigValues(t *testing.T) {
 			HostPort:       "localhost:7233",
 			TokenTaskQueue: "token-indexing",
 		},
-		RateLimiter: RateLimiterConfig{
-			RedisAddr: "localhost:6379",
-		},
 		Ethereum: EthereumConfig{
 			RPCURL:       "https://rpc.example.com",
 			WebSocketURL: "wss://ws.example.com",
@@ -155,9 +152,6 @@ func TestValidateRequiredConfigValues_MissingFields(t *testing.T) {
 		Temporal: TemporalConfig{
 			HostPort:       "localhost:7233",
 			TokenTaskQueue: "token-indexing",
-		},
-		RateLimiter: RateLimiterConfig{
-			RedisAddr: "localhost:6379",
 		},
 		Ethereum: EthereumConfig{
 			RPCURL: "https://rpc.example.com",
@@ -185,9 +179,6 @@ func TestValidateRequiredConfigValues_RequiresMediaTaskQueueWhenMediaEnabled(t *
 		Temporal: TemporalConfig{
 			HostPort:       "localhost:7233",
 			TokenTaskQueue: "token-indexing",
-		},
-		RateLimiter: RateLimiterConfig{
-			RedisAddr: "localhost:6379",
 		},
 		Ethereum: EthereumConfig{
 			RPCURL:       "https://rpc.example.com",

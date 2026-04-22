@@ -17,7 +17,7 @@ DOCKER_COMPOSE_FLAGS :=
 DOCKER_COMPOSE_UP := $(DOCKER_COMPOSE) up -d --remove-orphans
 
 # Service names
-INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui nats redis
+INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui nats
 APP_SERVICE := ff-indexer
 ALL_APP_SERVICES := $(APP_SERVICE)
 
@@ -65,7 +65,7 @@ up: ## Start all services
 	@echo "$(COLOR_GREEN)✓ All services started$(COLOR_RESET)"
 	@$(MAKE) ps
 
-up-infra: ## Start only infrastructure services (postgres, temporal, nats, redis)
+up-infra: ## Start only infrastructure services (postgres, temporal, nats)
 	@echo "$(COLOR_GREEN)Starting infrastructure services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE_UP) $(INFRA_SERVICES)
 	@$(DOCKER_COMPOSE_UP) nats-setup
@@ -289,6 +289,5 @@ dev: up-infra ## Start development mode (only infrastructure; run ff-indexer loc
 	@echo "  PostgreSQL: localhost:5432"
 	@echo "  Temporal:   localhost:7233"
 	@echo "  NATS:       localhost:4222"
-	@echo "  Redis:      localhost:6379"
 	@echo ""
 	@echo "$(COLOR_YELLOW)Note: Update config to use nats://localhost:4222$(COLOR_RESET)"

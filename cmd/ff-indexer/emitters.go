@@ -90,7 +90,7 @@ func runTezosEmitter(
 	cfg *config.AppConfig,
 	dataStore store.Store,
 	natsPub messaging.Publisher,
-	rateLimitProxy ratelimit.Proxy,
+	rateLimiter ratelimit.Limiter,
 ) error {
 	// TzKT + SignalR subscriber, then emitter loop until shutdown or NATS closes.
 	clockAdapter := adapter.NewClock()
@@ -104,7 +104,7 @@ func runTezosEmitter(
 			StaleWindow:       cfg.Tezos.BlockHeadStaleWindow * time.Second,
 			BlockTimestampTTL: 0,
 		}, clockAdapter)
-	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, rateLimitProxy, clockAdapter, tzBlockProvider)
+	tzktClient := tezos.NewTzKTClient(cfg.Tezos.ChainID, cfg.Tezos.APIURL, httpClient, rateLimiter, clockAdapter, tzBlockProvider)
 
 	tezosSubscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL:    cfg.Tezos.WebSocketURL,

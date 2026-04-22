@@ -117,16 +117,12 @@ func run() int {
 	}
 	defer temporalClient.Close()
 
-	// Redis-backed rate limiter (vendor APIs, Tezos paths, worker-core).
-	clockAdapter := adapter.NewClock()
-	redisAdapter := adapter.NewRedisClient(cfg.RateLimiter.RedisAddr, cfg.RateLimiter.RedisPassword, cfg.RateLimiter.RedisDB)
-	defer func() { _ = redisAdapter.Close() }()
-
-	rateLimitProxy, err := ratelimit.NewProxy(cfg.RateLimiter, redisAdapter, clockAdapter)
+	// Process-local rate limiter for vendor APIs and Tezos paths.
+	rateLimiter, err := ratelimit.NewLimiter(cfg.RateLimiter)
 	if err != nil {
-		logger.FatalCtx(rootCtx, "Failed to initialize rate limit proxy", zap.Error(err))
+		logger.FatalCtx(rootCtx, "Failed to initialize rate limiter", zap.Error(err))
 	}
-	defer func() { _ = rateLimitProxy.Close() }()
+	defer func() { _ = rateLimiter.Close() }()
 
 	jsonAdapter := adapter.NewJSON()
 
@@ -182,7 +178,7 @@ func run() int {
 
 	// Worker-core: token task queue + dedicated Ethereum RPC client for activities.
 	wCoreCfg := cfg.ToWorkerCoreConfig()
-	runWorkerCore, cleanupWorkerCore, err := registerWorkerCore(rootCtx, wCoreCfg, db, temporalClient, rateLimitProxy)
+	runWorkerCore, cleanupWorkerCore, err := registerWorkerCore(rootCtx, wCoreCfg, db, temporalClient, rateLimiter)
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Failed to init worker-core", zap.Error(err))
 	}
@@ -231,7 +227,7 @@ func run() int {
 
 	g.Go(func() error {
 		componentCtx := logger.WithComponent(ctx, "tezos-emitter")
-		return runTezosEmitter(componentCtx, cfg, dataStore, tezNatsPub, rateLimitProxy)
+		return runTezosEmitter(componentCtx, cfg, dataStore, tezNatsPub, rateLimiter)
 	})
 
 	g.Go(func() error {
