@@ -170,12 +170,12 @@ type TzKTClient interface {
 
 // tzktClient is the concrete implementation of TzKTClient
 type tzktClient struct {
-	chainID        domain.Chain
-	baseURL        string
-	httpClient     adapter.HTTPClient
-	rateLimitProxy ratelimit.Proxy
-	clock          adapter.Clock
-	blockProvider  block.BlockProvider
+	chainID       domain.Chain
+	baseURL       string
+	httpClient    adapter.HTTPClient
+	rateLimiter   ratelimit.Limiter
+	clock         adapter.Clock
+	blockProvider block.BlockProvider
 }
 
 // NewTzKTClient creates a new TzKT API client with the provided dependencies
@@ -183,23 +183,23 @@ func NewTzKTClient(
 	chainID domain.Chain,
 	baseURL string,
 	httpClient adapter.HTTPClient,
-	rateLimitProxy ratelimit.Proxy,
+	rateLimiter ratelimit.Limiter,
 	clock adapter.Clock,
 	blockProvider block.BlockProvider,
 ) TzKTClient {
 	return &tzktClient{
-		chainID:        chainID,
-		baseURL:        baseURL,
-		httpClient:     httpClient,
-		rateLimitProxy: rateLimitProxy,
-		clock:          clock,
-		blockProvider:  blockProvider,
+		chainID:       chainID,
+		baseURL:       baseURL,
+		httpClient:    httpClient,
+		rateLimiter:   rateLimiter,
+		clock:         clock,
+		blockProvider: blockProvider,
 	}
 }
 
 // GetTransactionsByID retrieves transactions by its TzKT operation ID (internal database ID)
 func (c *tzktClient) GetTransactionsByID(ctx context.Context, txID uint64) ([]TzKTTransaction, error) {
-	return ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTransaction, error) {
+	return ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTransaction, error) {
 		url := fmt.Sprintf("%s/v1/operations/transactions?id=%d", c.baseURL, txID)
 
 		var txs []TzKTTransaction
@@ -238,7 +238,7 @@ func (c *tzktClient) getTransactionHashesByIDs(ctx context.Context, txIDs []uint
 		}
 
 		// Fetch transactions for this chunk
-		txs, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTransaction, error) {
+		txs, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTransaction, error) {
 			// Use select parameter to fetch only the fields we need (id and hash)
 			url := fmt.Sprintf("%s/v1/operations/transactions?id.in=%s&select=id,hash&limit=10000", c.baseURL, idsParam)
 
@@ -285,7 +285,7 @@ func (c *tzktClient) GetTokenOwnerBalance(ctx context.Context, contractAddress s
 // GetTokenBalances retrieves token balances for a specific token
 // Returns list of holders with their balances
 func (c *tzktClient) GetTokenBalances(ctx context.Context, contractAddress string, tokenID string) ([]TzKTTokenBalance, error) {
-	return ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTokenBalance, error) {
+	return ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTokenBalance, error) {
 		// TzKT API: GET /v1/tokens/balances?token.contract={address}&token.tokenId={id}&limit=10000
 		url := fmt.Sprintf("%s/v1/tokens/balances?token.contract=%s&token.tokenId=%s&limit=10000", c.baseURL, contractAddress, tokenID)
 
@@ -300,7 +300,7 @@ func (c *tzktClient) GetTokenBalances(ctx context.Context, contractAddress strin
 
 // GetTokenMetadata retrieves token metadata for a specific token
 func (c *tzktClient) GetTokenMetadata(ctx context.Context, contractAddress string, tokenID string) (map[string]interface{}, error) {
-	tokens, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTToken, error) {
+	tokens, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTToken, error) {
 		// TzKT API: GET /v1/tokens?contract={address}&tokenId={id}
 		url := fmt.Sprintf("%s/v1/tokens?contract=%s&tokenId=%s", c.baseURL, contractAddress, tokenID)
 
@@ -324,7 +324,7 @@ func (c *tzktClient) GetTokenMetadata(ctx context.Context, contractAddress strin
 
 // GetTokenTransfers retrieves all token transfers for a specific token in ascending order of block number (level)
 func (c *tzktClient) GetTokenTransfers(ctx context.Context, contractAddress string, tokenID string) ([]TzKTTokenTransfer, error) {
-	return ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTokenTransfer, error) {
+	return ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTokenTransfer, error) {
 		// TzKT API: GET /v1/tokens/transfers?token.contract={address}&token.tokenId={id}&sort.{order}=level&limit={limit}
 		// FIXME handle pagination
 		url := fmt.Sprintf("%s/v1/tokens/transfers?token.contract=%s&token.tokenId=%s&sort.asc=level&limit=10000", c.baseURL, contractAddress, tokenID)
@@ -341,7 +341,7 @@ func (c *tzktClient) GetTokenTransfers(ctx context.Context, contractAddress stri
 // GetTokenMetadataUpdates retrieves all metadata update events for a specific token
 func (c *tzktClient) GetTokenMetadataUpdates(ctx context.Context, contractAddress string, tokenID string) ([]TzKTBigMapUpdate, error) {
 	// Step 1: Get the bigmap pointer for token_metadata
-	bigMaps, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTBigMap, error) {
+	bigMaps, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTBigMap, error) {
 		bigMapsURL := fmt.Sprintf("%s/v1/contracts/%s/bigmaps?tags.any=token_metadata", c.baseURL, contractAddress)
 
 		var bigMaps []TzKTBigMap
@@ -376,7 +376,7 @@ func (c *tzktClient) GetTokenMetadataUpdates(ctx context.Context, contractAddres
 	}
 
 	// Step 2: Get updates for this bigmap with specified order and limit
-	updates, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTBigMapUpdate, error) {
+	updates, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTBigMapUpdate, error) {
 		updatesURL := fmt.Sprintf("%s/v1/bigmaps/updates?bigmap=%d&sort.asc=id&limit=10000", c.baseURL, tokenMetadataBigMapPtr)
 
 		var updates []TzKTBigMapUpdate
@@ -508,7 +508,7 @@ func (c *tzktClient) GetTokenEvents(ctx context.Context, contractAddress string,
 // GetTokenBalancesByAccountWithinBlockRange retrieves token balances for an account within a block range
 // This is used for chunk-based sweeping, supporting pagination with offset
 func (c *tzktClient) GetTokenBalancesByAccountWithinBlockRange(ctx context.Context, accountAddress string, fromBlock, toBlock uint64, limit int, offset int) ([]TzKTTokenBalance, error) {
-	return ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTokenBalance, error) {
+	return ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTokenBalance, error) {
 		// TzKT API: GET /v1/tokens/balances?account={address}&balance.ne=0&lastLevel.ge={fromBlock}&lastLevel.le={toBlock}&sort.asc=lastLevel&limit={limit}&offset={offset}
 		url := fmt.Sprintf("%s/v1/tokens/balances?account=%s&balance.ne=0&lastLevel.ge=%d&lastLevel.le=%d&sort.asc=lastLevel&limit=%d&offset=%d",
 			c.baseURL, accountAddress, fromBlock, toBlock, limit, offset)
@@ -649,7 +649,7 @@ func (c *tzktClient) ParseBigMapUpdate(ctx context.Context, update *TzKTBigMapUp
 
 // getTransactionFromBitmapUpdate gets the transaction from the bitmap update
 func (c *tzktClient) getTransactionFromBitmapUpdate(ctx context.Context, updates *TzKTBigMapUpdate) (*TzKTTransaction, error) {
-	transactions, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTransaction, error) {
+	transactions, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTransaction, error) {
 		txURL := fmt.Sprintf("%s/v1/operations/transactions?target=%s&level.in=%d&select=id,hash,level,timestamp,diffs&limit=10000",
 			c.baseURL, updates.Contract.Address, updates.Level)
 
@@ -698,7 +698,7 @@ type TzKTOrigination struct {
 
 // GetContractDeployer retrieves the deployer address for a contract
 func (c *tzktClient) GetContractDeployer(ctx context.Context, contractAddress string) (string, error) {
-	originations, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]TzKTOrigination, error) {
+	originations, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTOrigination, error) {
 		// TzKT API: GET /v1/operations/originations?originatedContract={address}&limit=1
 		// This returns the origination operation that created the contract
 		// We need to get both sender and initiator fields to handle factory contract patterns

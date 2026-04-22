@@ -6,7 +6,7 @@ This document describes the system architecture, components, data flow, and comm
 
 FF-Indexer v2 indexes NFT data from multiple blockchain networks. It uses an event-driven architecture with Temporal for workflow orchestration and NATS JetStream for event streaming.
 
-**Deployment model**: A single OS process (`cmd/ff-indexer`) runs the application subsystems concurrently (HTTP API, chain emitters, NATS bridge, Temporal workers, sweeper). External infrastructure remains **PostgreSQL**, **Temporal**, **NATS JetStream**, and **Redis** (rate limiting).
+**Deployment model**: A single OS process (`cmd/ff-indexer`) runs the application subsystems concurrently (HTTP API, chain emitters, NATS bridge, Temporal workers, sweeper). External infrastructure remains **PostgreSQL**, **Temporal**, and **NATS JetStream**. Outbound vendor and TzKT traffic is rate limited in-process.
 
 ## System Components
 
@@ -15,7 +15,6 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. It uses an eve
 1. **PostgreSQL** - Primary database for all indexed data
 2. **Temporal** - Workflow orchestration engine
 3. **NATS JetStream** - Event streaming and message queue
-4. **Redis** - Distributed rate limiting for vendor / TzKT traffic
 
 ### Application Subsystems (within `ff-indexer`)
 

@@ -49,13 +49,12 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    ```bash
    make dev
    ```
-   This starts PostgreSQL, Temporal, NATS, and Redis in Docker.
+   This starts PostgreSQL, Temporal, and NATS in Docker.
 
 5. **Verify setup**:
    - PostgreSQL: `psql -h localhost -U postgres -d ff_indexer`
    - Temporal UI: `http://localhost:8080`
    - NATS: `http://localhost:8222`
-   - Redis: `redis-cli -h localhost -a redis_password ping` (password from compose/env)
 
 ## Development Workflow
 

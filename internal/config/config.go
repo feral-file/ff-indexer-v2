@@ -177,17 +177,8 @@ type RateLimitConfig struct {
 	MaxQueueTime time.Duration `mapstructure:"max_queue_time"`
 }
 
-// RateLimiterConfig holds global rate limiter proxy configuration
+// RateLimiterConfig holds process-local rate limiter configuration.
 type RateLimiterConfig struct {
-	// Redis configuration
-	RedisAddr     string `mapstructure:"redis_addr"`
-	RedisPassword string `mapstructure:"redis_password"`
-	RedisDB       int    `mapstructure:"redis_db"`
-
-	// RedisKeyPrefix is the prefix for all Redis keys used by the rate limiter
-	// Default: "ff:indexer:limiter:"
-	RedisKeyPrefix string `mapstructure:"redis_key_prefix"`
-
 	// MaxWorkers is the maximum number of concurrent worker goroutines
 	// Default: runtime.NumCPU() * 10
 	MaxWorkers int `mapstructure:"max_workers"`
@@ -195,15 +186,6 @@ type RateLimiterConfig struct {
 	// MaxQueueSize is the maximum number of tasks that can be queued
 	// Default: 10000
 	MaxQueueSize int `mapstructure:"max_queue_size"`
-
-	// EnableLocalFallback enables local in-memory rate limiting when Redis is unavailable
-	// WARNING: When multiple instances run with local fallback, the aggregate RPS
-	// will be multiplied by the number of instances
-	EnableLocalFallback bool `mapstructure:"enable_local_fallback"`
-
-	// LocalFallbackMultiplier reduces the RPS limit when falling back to local limiting
-	// Default: 0.5 (50% of configured RPS per instance)
-	LocalFallbackMultiplier float64 `mapstructure:"local_fallback_multiplier"`
 
 	// Provider-specific rate limits
 	Providers map[string]RateLimitConfig `mapstructure:"providers"`
@@ -364,7 +346,6 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 		{name: "nats.url", value: cfg.NATS.URL},
 		{name: "temporal.host_port", value: cfg.Temporal.HostPort},
 		{name: "temporal.token_task_queue", value: cfg.Temporal.TokenTaskQueue},
-		{name: "rate_limiter.redis_addr", value: cfg.RateLimiter.RedisAddr},
 		{name: "ethereum.rpc_url", value: cfg.Ethereum.RPCURL},
 		{name: "ethereum.websocket_url", value: cfg.Ethereum.WebSocketURL},
 		{name: "tezos.api_url", value: cfg.Tezos.APIURL},
@@ -562,13 +543,8 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("tezos_owner_subsequent_batch_target", 1)
 
 	// Rate limiter
-	v.SetDefault("rate_limiter.redis_addr", "localhost:6379")
-	v.SetDefault("rate_limiter.redis_db", 0)
-	v.SetDefault("rate_limiter.redis_key_prefix", "ff:indexer:limiter:")
 	v.SetDefault("rate_limiter.max_workers", 10)
 	v.SetDefault("rate_limiter.max_queue_size", 10000)
-	v.SetDefault("rate_limiter.enable_local_fallback", true)
-	v.SetDefault("rate_limiter.local_fallback_multiplier", 0.5)
 	v.SetDefault("rate_limiter.providers.tzkt.requests_per_second", 10)
 	v.SetDefault("rate_limiter.providers.tzkt.burst", 10)
 	v.SetDefault("rate_limiter.providers.tzkt.max_queue_time", "15m")
@@ -727,14 +703,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.uri.arweave_gateways",
 		"media_health_sweeper.uri.onchfs_gateways",
 		// Rate Limiter
-		"rate_limiter.redis_addr",
-		"rate_limiter.redis_password",
-		"rate_limiter.redis_db",
-		"rate_limiter.redis_key_prefix",
 		"rate_limiter.max_workers",
 		"rate_limiter.max_queue_size",
-		"rate_limiter.enable_local_fallback",
-		"rate_limiter.local_fallback_multiplier",
 		"rate_limiter.providers.tzkt.requests_per_second",
 		"rate_limiter.providers.tzkt.burst",
 		"rate_limiter.providers.tzkt.max_queue_time",

@@ -7,7 +7,6 @@ require (
 	github.com/TheZeroSlave/zapsentry v1.23.0
 	github.com/alitto/pond/v2 v2.5.0
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudflare/cloudflare-go v0.116.0
 	github.com/ethereum/go-ethereum v1.16.5
 	github.com/gabriel-vasile/mimetype v1.4.9
@@ -23,7 +22,6 @@ require (
 	github.com/nats-io/nats.go v1.47.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/philippseith/signalr v0.8.0
-	github.com/redis/go-redis/v9 v9.7.0
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.39.0
@@ -44,7 +42,6 @@ require (
 require (
 	github.com/chromedp/chromedp v0.14.2
 	github.com/cshum/vipsgen v1.3.9
-	github.com/go-redis/redis_rate/v10 v10.0.1
 	golang.org/x/sync v0.20.0
 )
 
@@ -72,7 +69,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/docker v28.3.3+incompatible // indirect
 	github.com/docker/go-connections v0.6.0 // indirect

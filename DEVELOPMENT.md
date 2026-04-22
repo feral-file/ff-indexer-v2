@@ -12,7 +12,6 @@ The development stack uses Docker Compose for infrastructure services:
 - **Temporal** (ports 7233-7235) - Workflow orchestration
 - **Temporal UI** (port 8080) - Temporal web interface
 - **NATS JetStream** (ports 4222, 8222) - Event streaming
-- **Redis** (port 6379) - Rate limiting for vendor / TzKT clients
 
 ### Starting Infrastructure
 

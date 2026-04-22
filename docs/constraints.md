@@ -36,7 +36,7 @@ Hard and soft constraints for **FF Indexer v2**. Agents and engineers should tre
 
 ## Operational constraints
 
-- **Critical dependencies** — A functioning indexing pipeline requires **PostgreSQL**, **Temporal**, **NATS JetStream**, **Redis** (per current stack), **Ethereum (and Tezos) RPC** (and Tezos indexer connectivity as deployed), and **running workers** (core, media, emitters, bridge, sweeper as applicable). Missing any of these degrades specific paths predictably rather than “half working” without visibility.
+- **Critical dependencies** — A functioning indexing pipeline requires **PostgreSQL**, **Temporal**, **NATS JetStream**, **Ethereum (and Tezos) RPC** (and Tezos indexer connectivity as deployed), and **running workers** (core, media, emitters, bridge, sweeper as applicable). Missing any of these degrades specific paths predictably rather than “half working” without visibility.
 - **Workflow observability** — Long-running work is **Temporal workflow–backed**; operators and integrators use **workflow and job APIs** for status. New async features should expose **trackable IDs** and documented polling patterns.
 - **Configuration** — Runtime config uses **YAML plus `FF_INDEXER_*` environment overrides** as documented in **DEVELOPMENT.md**. Secrets (RPC URLs, API keys, Cloudflare, webhook signing) must not be committed.
 - **Blacklist / abuse** — Indexing requests are subject to **blacklist validation** (see architecture). Changes to filtering rules affect **fair use and cost**; document operator impact when adjusting.
@@ -51,7 +51,7 @@ Hard and soft constraints for **FF Indexer v2**. Agents and engineers should tre
 
 ## Deployment constraints
 
-- **Runtime versions** — Target versions in **README** (Go, PostgreSQL, Temporal, Redis, NATS) are **supported baselines** for development and CI. Upgrades should be validated with **`make check`** and integration tests.
+- **Runtime versions** — Target versions in **README** (Go, PostgreSQL, Temporal, NATS) are **supported baselines** for development and CI. Upgrades should be validated with **`make check`** and integration tests.
 - **Single-process application** — The default deployment runs **`ff-indexer`** as one OS process (API, emitters, bridge, Temporal workers, sweeper). An “API only” build **does not index** unless emitters, bridge, and workers are also running (e.g., full binary or external workers).
 - **Cloudflare** — **Worker media** integration assumes **Cloudflare Images/Stream** (or configured equivalents) for processed media URLs; swapping providers is a **cross-cutting** change (workers, config, URL shapes).
 - **Observability** — Production operation expects **logs and metrics** suitable for diagnosing **stuck workflows**, **NATS backlog**, and **RPC errors**. New components should emit **actionable** errors rather than swallowing failures.
