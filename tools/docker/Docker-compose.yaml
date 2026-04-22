@@ -92,55 +92,8 @@ services:
       - ff-indexer-network
     restart: unless-stopped
 
-  # NATS JetStream for event streaming
-  nats:
-    image: nats:2.12.1-alpine
-    container_name: ff-indexer-nats
-    command:
-      - "-js"
-      - "-m"
-      - "8222"
-      - "-sd"
-      - "/data"
-    ports:
-      - "4222:4222"  # Client connections
-      - "8222:8222"  # HTTP monitoring
-      - "6222:6222"  # Clustering
-    volumes:
-      - nats_data:/data
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
-  # NATS Stream Setup - Creates the BLOCKCHAIN_EVENTS stream
-  nats-setup:
-    image: natsio/nats-box:latest
-    container_name: ff-indexer-nats-setup
-    depends_on:
-      nats:
-        condition: service_healthy
-    volumes:
-      - ../../tools/nats/stream.json:/config/stream.json:ro
-    command:
-      - sh
-      - -c
-      - |
-        echo 'Creating BLOCKCHAIN_EVENTS stream from config...'
-        nats --server nats://nats:4222 stream add --config /config/stream.json --defaults || echo 'Stream might already exist'
-        echo 'Verifying stream...'
-        nats --server nats://nats:4222 stream info BLOCKCHAIN_EVENTS
-        echo 'Stream setup complete!'
-    networks:
-      - ff-indexer-network
-    restart: "no"
-
   # ====================================
-  # Application (single process: API + emitters + bridge + workers + sweeper)
+  # Application (single process: API + chain ingestion + workers + sweeper)
   # ====================================
 
   ff-indexer:
@@ -156,10 +109,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      nats:
-        condition: service_healthy
-      nats-setup:
-        condition: service_completed_successfully
       temporal:
         condition: service_healthy
     volumes:
@@ -170,7 +119,6 @@ services:
       - ../../config/.env.local
     environment:
       - FF_INDEXER_DATABASE_HOST=postgres
-      - FF_INDEXER_NATS_URL=nats://nats:4222
       - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
     ports:
       - "${API_PORT:-8081}:8081"
@@ -196,8 +144,6 @@ volumes:
   temporal_postgres_data:
     driver: local
   temporal_data:
-    driver: local
-  nats_data:
     driver: local
 
 networks:

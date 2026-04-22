@@ -8,9 +8,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	feralfile "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockFeralFileClient is a mock of Client interface.

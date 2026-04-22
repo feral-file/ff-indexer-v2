@@ -10,9 +10,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	transformer "github.com/feral-file/ff-indexer-v2/internal/media/transformer"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockTransformer is a mock of Transformer interface.

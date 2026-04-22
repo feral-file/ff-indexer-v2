@@ -8,9 +8,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	downloader "github.com/feral-file/ff-indexer-v2/internal/downloader"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockDownloader is a mock of Downloader interface.

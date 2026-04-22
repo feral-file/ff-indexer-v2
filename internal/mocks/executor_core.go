@@ -9,14 +9,13 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "github.com/golang/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
 	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
 	workflows "github.com/feral-file/ff-indexer-v2/internal/workflows"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockCoreExecutor is a mock of Executor interface.

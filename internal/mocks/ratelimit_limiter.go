@@ -8,9 +8,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	ratelimit "github.com/feral-file/ff-indexer-v2/internal/ratelimit"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockLimiter is a mock of Limiter interface.

@@ -7,10 +7,9 @@ package mocks
 import (
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	registry "github.com/feral-file/ff-indexer-v2/internal/registry"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockBlacklistRegistry is a mock of BlacklistRegistry interface.

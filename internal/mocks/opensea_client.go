@@ -8,9 +8,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
-
 	opensea "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
+	gomock "github.com/golang/mock/gomock"
 )
 
 // MockOpenSeaClient is a mock of Client interface.

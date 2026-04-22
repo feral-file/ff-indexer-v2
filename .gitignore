@@ -16,7 +16,7 @@ worker-core
 worker-media
 api
 sweeper
-ff-indexer
+/ff-indexer
 bin/
 
 # Directories to keep

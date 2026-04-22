@@ -7,27 +7,23 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	"github.com/feral-file/ff-indexer-v2/internal/messaging"
 )
 
 const (
-	SUBSCRIBE_TIMEOUT         = 15 * time.Second
-	DEFAULT_WORKER_POOL_SIZE  = 20
-	DEFAULT_WORKER_QUEUE_SIZE = 2048
+	SUBSCRIBE_TIMEOUT      = 15 * time.Second
+	defaultEventBufferSize = 2048
 )
 
 // Config holds the configuration for Tezos/TzKT subscription
 type Config struct {
-	WebSocketURL    string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
-	ChainID         domain.Chain // e.g., "tezos:mainnet"
-	WorkerPoolSize  int          // Number of concurrent workers
-	WorkerQueueSize int          // Size of the task queue
+	WebSocketURL string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
+	ChainID      domain.Chain // e.g., "tezos:mainnet"
 }
 
 // MessageType - TzKT message type
@@ -49,20 +45,27 @@ type TzKTMessage struct {
 
 type tzSubscriber struct {
 	ctx        context.Context
+	cancel     context.CancelFunc
 	wsURL      string
 	chainID    domain.Chain
 	client     adapter.SignalRClient
 	connected  bool
-	handler    messaging.EventHandler
+	handler    blockchain.EventHandler
 	signalR    adapter.SignalR
 	clock      adapter.Clock
 	tzktClient TzKTClient
 	config     Config
-	pool       pond.Pool
+	streamCh   chan streamMessage
+	errCh      chan error
+}
+
+type streamMessage struct {
+	transfers []TzKTTokenTransfer
+	updates   []TzKTBigMapUpdate
 }
 
 // NewSubscriber creates a new Tezos/TzKT event subscriber
-func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzktClient TzKTClient) (messaging.Subscriber, error) {
+func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzktClient TzKTClient) (blockchain.EventSource, error) {
 	return &tzSubscriber{
 		wsURL:      cfg.WebSocketURL,
 		chainID:    cfg.ChainID,
@@ -73,88 +76,37 @@ func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzk
 	}, nil
 }
 
-// SubscribeEvents subscribes to FA2 transfer events and metadata updates via TzKT SignalR
-// Note: fromLevel parameter is ignored for Tezos as TzKT always subscribes from current
-func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler messaging.EventHandler) error {
+// SubscribeEvents subscribes to FA2 transfer events and metadata updates via TzKT SignalR.
+func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler blockchain.EventHandler) error {
 	if c.connected {
 		logger.WarnCtx(ctx, "Already connected to TzKT SignalR")
 		return nil
 	}
 
-	// Store context for cancellation
-	c.ctx = ctx
-
-	// Get worker pool configuration
-	workerPoolSize := c.config.WorkerPoolSize
-	if workerPoolSize == 0 {
-		workerPoolSize = DEFAULT_WORKER_POOL_SIZE
-	}
-	workerQueueSize := c.config.WorkerQueueSize
-	if workerQueueSize == 0 {
-		workerQueueSize = DEFAULT_WORKER_QUEUE_SIZE
-	}
-
-	// Create worker pool for concurrent event processing
-	c.pool = pond.NewPool(
-		workerPoolSize,
-		pond.WithQueueSize(workerQueueSize),
-		pond.WithContext(ctx),
-	)
-
-	logger.InfoCtx(ctx, "Tezos worker pool created",
-		zap.Int("workers", workerPoolSize),
-		zap.Int("queue_size", workerQueueSize),
-		zap.String("chain", string(c.chainID)))
-
-	// Ensure graceful shutdown of worker pool
-	defer func() {
-		if c.pool != nil {
-			logger.InfoCtx(ctx, "Shutting down tezos worker pool",
-				zap.Uint64("submitted", c.pool.SubmittedTasks()),
-				zap.Uint64("waiting", c.pool.WaitingTasks()),
-				zap.Uint64("successful", c.pool.SuccessfulTasks()),
-				zap.Uint64("failed", c.pool.FailedTasks()))
-
-			c.pool.StopAndWait()
-
-			logger.InfoCtx(ctx, "Tezos worker pool shutdown complete",
-				zap.Uint64("total_submitted", c.pool.SubmittedTasks()),
-				zap.Uint64("total_completed", c.pool.CompletedTasks()),
-				zap.Uint64("total_failed", c.pool.FailedTasks()))
-		}
-	}()
-
-	// Start periodic metrics logging
-	metricsTicker := c.clock.NewTicker(30 * time.Second)
-	defer metricsTicker.Stop()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-metricsTicker.C:
-				if c.pool != nil {
-					logger.InfoCtx(ctx, "Tezos worker pool metrics",
-						zap.Int64("running_workers", c.pool.RunningWorkers()),
-						zap.Uint64("waiting_tasks", c.pool.WaitingTasks()),
-						zap.Uint64("completed_tasks", c.pool.CompletedTasks()),
-						zap.Uint64("failed_tasks", c.pool.FailedTasks()))
-				}
-			}
-		}
-	}()
+	subscriptionCtx, cancel := context.WithCancel(ctx)
+	c.ctx = subscriptionCtx
+	c.cancel = cancel
 
 	// Store handler for callback
 	c.handler = handler
+	c.streamCh = make(chan streamMessage, defaultEventBufferSize)
+	c.errCh = make(chan error, 1)
 
 	// Create SignalR client with connection
-	client, err := c.signalR.NewClient(ctx, c.wsURL, c)
+	client, err := c.signalR.NewClient(subscriptionCtx, c.wsURL, c)
 	if err != nil {
+		cancel()
+		c.cancel = nil
 		return fmt.Errorf("failed to create SignalR client: %w", err)
 	}
 
 	c.client = client
+
+	defer func() {
+		if !c.connected && c.client != nil {
+			c.Close()
+		}
+	}()
 
 	// Connect to SignalR hub
 	client.Start()
@@ -163,6 +115,8 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	c.clock.Sleep(time.Second)
 
 	// Subscribe to token transfers
+	// TODO(tezos-resume): Resume from fromLevel by backfilling missed events and
+	// establishing a no-gap handoff into the live SignalR feeds.
 	sendErrChan := client.Send("SubscribeToTokenTransfers", map[string]interface{}{})
 	select {
 	case err := <-sendErrChan:
@@ -176,6 +130,10 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 
 	// Subscribe to big map updates for metadata changes
 	// Filter for token_metadata path to get only metadata-related updates
+	// TODO(tezos-feed-ordering): Preserve a stable cross-feed order between
+	// transfers and bigmaps before advancing the durable cursor. Without a
+	// merged ordering strategy, a later bigmap event can flush before an earlier
+	// transfer event and move the cursor past unfinished work.
 	sendErrChan = client.Send("SubscribeToBigMaps", map[string]interface{}{
 		"path": "token_metadata",
 	})
@@ -189,13 +147,18 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		return fmt.Errorf("timeout waiting for big maps subscription: %w", domain.ErrSubscriptionFailed)
 	}
 
+	go c.processStream(subscriptionCtx)
 	c.connected = true
 
-	// Keep connection alive and handle events
-	<-ctx.Done()
-
-	logger.InfoCtx(ctx, "TzKT WebSocket connection closed due to context done")
-	return ctx.Err()
+	select {
+	case err := <-c.errCh:
+		c.Close()
+		return err
+	case <-ctx.Done():
+		c.Close()
+		logger.InfoCtx(ctx, "TzKT WebSocket connection closed due to context done")
+		return ctx.Err()
+	}
 }
 
 // Transfers handles incoming transfer events from TzKT SignalR
@@ -240,42 +203,7 @@ func (c *tzSubscriber) Transfers(data interface{}) {
 		return
 	}
 
-	for i := range transfers {
-		transfer := transfers[i]
-		if transfer.Token.Standard != domain.StandardFA2 {
-			logger.DebugCtx(c.ctx, "Skipping token is not fa2",
-				zap.String("standard", string(transfer.Token.Standard)),
-				zap.String("contract", transfer.Token.Contract.Address),
-				zap.String("tokenId", transfer.Token.TokenID))
-			continue
-		}
-
-		// Call handler if set
-		if c.handler != nil && c.pool != nil {
-			// Submit event processing to worker pool instead of spawning unbounded goroutines
-			c.pool.SubmitErr(func() error {
-				// Parse the transfer to event
-				event, err := c.tzktClient.ParseTransfer(c.ctx, &transfer)
-				if err != nil {
-					logger.ErrorCtx(c.ctx, errors.New("error parsing transfer"), zap.Error(err))
-					return nil
-				}
-
-				if event == nil {
-					return nil
-				}
-
-				if err := c.handler(event); err != nil {
-					logger.ErrorCtx(c.ctx, errors.New("error handling transfer event"), zap.Error(err),
-						zap.Error(err),
-						zap.String("tx_hash", event.TxHash),
-						zap.Uint64("block", event.BlockNumber))
-					return err
-				}
-				return nil
-			})
-		}
-	}
+	c.enqueueStream(streamMessage{transfers: transfers})
 }
 
 // Bigmaps handles incoming big map update events from TzKT SignalR
@@ -320,57 +248,114 @@ func (c *tzSubscriber) Bigmaps(data interface{}) {
 		return
 	}
 
-	for i := range updates {
-		update := updates[i]
-
-		// Only handle token_metadata updates
-		if update.Path != "token_metadata" {
-			continue
-		}
-
-		// Call handler if set
-		if c.handler != nil && c.pool != nil {
-			// Submit event processing to worker pool for consistency with Transfers
-			c.pool.SubmitErr(func() error {
-				// Parse the big map update to event
-				event, err := c.tzktClient.ParseBigMapUpdate(c.ctx, &update)
-				if err != nil {
-					logger.ErrorCtx(c.ctx, errors.New("error parsing big map update"), zap.Error(err))
-					return nil
-				}
-
-				if event == nil {
-					return nil
-				}
-
-				if err := c.handler(event); err != nil {
-					logger.ErrorCtx(c.ctx, errors.New("error handling metadata update event"), zap.Error(err),
-						zap.Error(err),
-						zap.String("tx_hash", event.TxHash),
-						zap.Uint64("block", event.BlockNumber))
-					return err
-				}
-				return nil
-			})
-		}
-	}
+	c.enqueueStream(streamMessage{updates: updates})
 }
 
 // GetLatestBlock returns the latest block level from TzKT API
 func (c *tzSubscriber) GetLatestBlock(ctx context.Context) (uint64, error) {
-	// This would require HTTP client to call TzKT API
-	// Simplified implementation - would need actual HTTP request
-	// For now, return 0 to indicate we should start from current
-	return 0, nil
+	return c.tzktClient.GetLatestBlock(ctx)
 }
 
 // Close closes the SignalR connection
 func (c *tzSubscriber) Close() {
-	if c.client == nil || !c.connected {
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
+
+	if c.client != nil {
+		c.client.Stop()
+		c.client = nil
+	}
+
+	c.connected = false
+	logger.InfoCtx(c.ctx, "TzKT WebSocket connection closed")
+}
+
+func (c *tzSubscriber) enqueueStream(msg streamMessage) {
+	if c.streamCh == nil {
 		return
 	}
 
-	c.client.Stop()
-	c.connected = false
-	logger.InfoCtx(c.ctx, "TzKT WebSocket connection closed")
+	select {
+	case <-c.ctx.Done():
+	case c.streamCh <- msg:
+	}
+}
+
+func (c *tzSubscriber) processStream(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-c.streamCh:
+			if err := c.handleTransfers(ctx, msg.transfers); err != nil {
+				c.reportError(err)
+				return
+			}
+			if err := c.handleBigMapUpdates(ctx, msg.updates); err != nil {
+				c.reportError(err)
+				return
+			}
+		}
+	}
+}
+
+func (c *tzSubscriber) handleTransfers(ctx context.Context, transfers []TzKTTokenTransfer) error {
+	for i := range transfers {
+		transfer := transfers[i]
+		if transfer.Token.Standard != domain.StandardFA2 {
+			logger.DebugCtx(ctx, "Skipping token is not fa2",
+				zap.String("standard", string(transfer.Token.Standard)),
+				zap.String("contract", transfer.Token.Contract.Address),
+				zap.String("tokenId", transfer.Token.TokenID))
+			continue
+		}
+
+		event, err := c.tzktClient.ParseTransfer(ctx, &transfer)
+		if err != nil {
+			logger.ErrorCtx(ctx, errors.New("error parsing transfer"), zap.Error(err))
+			continue
+		}
+		if event == nil || c.handler == nil {
+			continue
+		}
+
+		if err := c.handler(event); err != nil {
+			return fmt.Errorf("failed to handle tezos transfer event %s at block %d: %w", event.TxHash, event.BlockNumber, err)
+		}
+	}
+
+	return nil
+}
+
+func (c *tzSubscriber) handleBigMapUpdates(ctx context.Context, updates []TzKTBigMapUpdate) error {
+	for i := range updates {
+		update := updates[i]
+		if update.Path != "token_metadata" {
+			continue
+		}
+
+		event, err := c.tzktClient.ParseBigMapUpdate(ctx, &update)
+		if err != nil {
+			logger.ErrorCtx(ctx, errors.New("error parsing big map update"), zap.Error(err))
+			continue
+		}
+		if event == nil || c.handler == nil {
+			continue
+		}
+
+		if err := c.handler(event); err != nil {
+			return fmt.Errorf("failed to handle tezos metadata event %s at block %d: %w", event.TxHash, event.BlockNumber, err)
+		}
+	}
+
+	return nil
+}
+
+func (c *tzSubscriber) reportError(err error) {
+	select {
+	case c.errCh <- err:
+	default:
+	}
 }
