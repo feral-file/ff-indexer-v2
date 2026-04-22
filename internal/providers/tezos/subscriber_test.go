@@ -3,6 +3,7 @@ package tezos_test
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -10,9 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 )
+
+func TestMain(m *testing.M) {
+	if err := logger.Initialize(logger.Config{Debug: false}); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
 
 func TestSubscribeEvents_StopsClientWhenSubscriptionFails(t *testing.T) {
 	ctrl := gomock.NewController(t)

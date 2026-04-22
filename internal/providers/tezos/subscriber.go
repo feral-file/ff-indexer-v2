@@ -45,6 +45,7 @@ type TzKTMessage struct {
 
 type tzSubscriber struct {
 	ctx        context.Context
+	cancel     context.CancelFunc
 	wsURL      string
 	chainID    domain.Chain
 	client     adapter.SignalRClient
@@ -82,18 +83,20 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		return nil
 	}
 
-	// Store context for cancellation
-	c.ctx = ctx
+	subscriptionCtx, cancel := context.WithCancel(ctx)
+	c.ctx = subscriptionCtx
+	c.cancel = cancel
 
 	// Store handler for callback
 	c.handler = handler
 	c.streamCh = make(chan streamMessage, defaultEventBufferSize)
 	c.errCh = make(chan error, 1)
-	go c.processStream(ctx)
 
 	// Create SignalR client with connection
-	client, err := c.signalR.NewClient(ctx, c.wsURL, c)
+	client, err := c.signalR.NewClient(subscriptionCtx, c.wsURL, c)
 	if err != nil {
+		cancel()
+		c.cancel = nil
 		return fmt.Errorf("failed to create SignalR client: %w", err)
 	}
 
@@ -101,8 +104,7 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 
 	defer func() {
 		if !c.connected && c.client != nil {
-			c.client.Stop()
-			c.client = nil
+			c.Close()
 		}
 	}()
 
@@ -145,12 +147,15 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		return fmt.Errorf("timeout waiting for big maps subscription: %w", domain.ErrSubscriptionFailed)
 	}
 
+	go c.processStream(subscriptionCtx)
 	c.connected = true
 
 	select {
 	case err := <-c.errCh:
+		c.Close()
 		return err
 	case <-ctx.Done():
+		c.Close()
 		logger.InfoCtx(ctx, "TzKT WebSocket connection closed due to context done")
 		return ctx.Err()
 	}
@@ -253,12 +258,16 @@ func (c *tzSubscriber) GetLatestBlock(ctx context.Context) (uint64, error) {
 
 // Close closes the SignalR connection
 func (c *tzSubscriber) Close() {
-	if c.client == nil {
-		return
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
 	}
 
-	c.client.Stop()
-	c.client = nil
+	if c.client != nil {
+		c.client.Stop()
+		c.client = nil
+	}
+
 	c.connected = false
 	logger.InfoCtx(c.ctx, "TzKT WebSocket connection closed")
 }
