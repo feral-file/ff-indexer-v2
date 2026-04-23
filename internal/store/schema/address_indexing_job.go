@@ -36,6 +36,8 @@ type AddressIndexingJob struct {
 	WorkflowID string `gorm:"column:workflow_id;not null"`
 	// WorkflowRunID is the orchestrator workflow run ID for this workflow execution
 	WorkflowRunID *string `gorm:"column:workflow_run_id"`
+	// JobID is the postgres jobs.id row when this address job is driven by the job queue; null for legacy Temporal-only rows
+	JobID *int64 `gorm:"column:job_id"`
 	// TokensProcessed is the number of tokens processed by this job
 	TokensProcessed int `gorm:"column:tokens_processed;default:0"`
 	// CurrentMinBlock is the current minimum block being indexed
