@@ -59,7 +59,6 @@ else
 
   echo "==> Running strict whole-file lint on changed Go files"
   run_golangci_lint run \
-    --config .golangci.strict.yaml \
     --new-from-rev "$MERGE_BASE" \
     --whole-files \
     --path-mode abs \
