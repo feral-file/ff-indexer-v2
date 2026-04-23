@@ -1,6 +1,6 @@
 //go:build cgo
 
-package workflowsmedia
+package workflows
 
 import (
 	"context"
@@ -18,33 +18,33 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
-// Executor defines the interface for executing media-related activities
+// MediaExecutor defines the interface for executing media-related activities.
 //
-//go:generate mockgen -source=executor.go -destination=../../mocks/executor_media.go -package=mocks -mock_names=Executor=MockMediaExecutor
-type Executor interface {
+//go:generate mockgen -source=media_executor.go -destination=../mocks/executor_media.go -package=mocks -mock_names=MediaExecutor=MockMediaExecutor
+type MediaExecutor interface {
 	// IndexMediaFile processes a media file by downloading, uploading to storage, and storing metadata
 	IndexMediaFile(ctx context.Context, url string) error
 }
 
-// executor implements the media Executor interface
-type executor struct {
+// mediaExecutor implements the MediaExecutor interface.
+type mediaExecutor struct {
 	store          store.Store
 	mediaProcessor mediaprocessor.Processor
 }
 
-// NewExecutor creates a new media executor instance
-func NewExecutor(
+// NewMediaExecutor creates a new media executor instance.
+func NewMediaExecutor(
 	st store.Store,
 	mediaProc mediaprocessor.Processor,
-) Executor {
-	return &executor{
+) MediaExecutor {
+	return &mediaExecutor{
 		store:          st,
 		mediaProcessor: mediaProc,
 	}
 }
 
 // IndexMediaFile processes a media file by downloading, uploading to storage, and storing metadata
-func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
+func (e *mediaExecutor) IndexMediaFile(ctx context.Context, url string) error {
 	if url == "" {
 		return fmt.Errorf("media URL is empty")
 	}
@@ -80,7 +80,7 @@ func (e *executor) IndexMediaFile(ctx context.Context, url string) error {
 }
 
 // toSchemaStorageProvider converts the provider name to a schema storage provider
-func (e *executor) toSchemaStorageProvider() schema.StorageProvider {
+func (e *mediaExecutor) toSchemaStorageProvider() schema.StorageProvider {
 	switch e.mediaProcessor.Provider() {
 	case cloudflare.CLOUDFLARE_PROVIDER_NAME:
 		return schema.StorageProviderCloudflare

@@ -31,7 +31,7 @@ type IndexOwnerWorkflowTestSuite struct {
 	executor         *mocks.MockCoreExecutor
 	blacklist        *mocks.MockBlacklistRegistry
 	temporalWorkflow *mocks.MockWorkflow
-	workerCore       workflows.WorkerCore
+	coreWorkflows    workflows.CoreWorkflows
 }
 
 // SetupTest is called before each test
@@ -46,7 +46,7 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
-	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                       domain.ChainTezosMainnet,
 		EthereumChainID:                    domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock:       1000,
@@ -90,10 +90,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_EthereumAddress() {
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCompleted, mock.Anything).Return(nil).Once()
 
 	// Mock Ethereum child workflow
-	s.env.OnWorkflow(s.workerCore.IndexEthereumTokenOwner, mock.Anything, address, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, mock.Anything, address, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -115,10 +115,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_TezosAddress() {
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCompleted, mock.Anything).Return(nil).Once()
 
 	// Mock Tezos child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTezosTokenOwner, mock.Anything, address, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTezosTokenOwner, mock.Anything, address, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -132,7 +132,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_UnknownAddress() {
 	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -156,10 +156,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_JobCreationFails_Workf
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCompleted, mock.Anything).Return(nil).Once()
 
 	// Mock Ethereum child workflow to succeed
-	s.env.OnWorkflow(s.workerCore.IndexEthereumTokenOwner, mock.Anything, address, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, mock.Anything, address, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
 	// Verify workflow completed successfully despite job creation failure
 	s.True(s.env.IsWorkflowCompleted())
@@ -182,10 +182,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_JobStatusUpdateFails_W
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCompleted, mock.Anything).Return(errors.New("status update error")).Twice()
 
 	// Mock Tezos child workflow to succeed
-	s.env.OnWorkflow(s.workerCore.IndexTezosTokenOwner, mock.Anything, address, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTezosTokenOwner, mock.Anything, address, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
 	// Verify workflow completed successfully despite status update failures
 	s.True(s.env.IsWorkflowCompleted())
@@ -208,10 +208,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_ChildWorkflowFails_Job
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusFailed, mock.Anything).Return(nil).Once()
 
 	// Mock Ethereum child workflow to fail
-	s.env.OnWorkflow(s.workerCore.IndexEthereumTokenOwner, mock.Anything, address, mock.Anything).Return(expectedError)
+	s.env.OnWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, mock.Anything, address, mock.Anything).Return(expectedError)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
 	// Verify workflow completed with error and job status was updated to failed
 	s.True(s.env.IsWorkflowCompleted())
@@ -234,10 +234,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_Cancellation_JobMarked
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusCanceled, mock.Anything).Return(nil).Once()
 
 	// Mock Ethereum child workflow to be canceled
-	s.env.OnWorkflow(s.workerCore.IndexEthereumTokenOwner, mock.Anything, address, mock.Anything).Return(workflow.ErrCanceled)
+	s.env.OnWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, mock.Anything, address, mock.Anything).Return(workflow.ErrCanceled)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
 	// Verify workflow was canceled
 	s.True(s.env.IsWorkflowCompleted())
@@ -261,10 +261,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_FailedStatusUpdateAfte
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusFailed, mock.Anything).Return(errors.New("status update error")).Twice()
 
 	// Mock Tezos child workflow to fail
-	s.env.OnWorkflow(s.workerCore.IndexTezosTokenOwner, mock.Anything, address, mock.Anything).Return(childError)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTezosTokenOwner, mock.Anything, address, mock.Anything).Return(childError)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenOwner, address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
 	// Verify workflow completed with child error, even though status update failed
 	s.True(s.env.IsWorkflowCompleted())
@@ -321,7 +321,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_WithToke
 
 	// Track IndexTokens child workflow calls to verify chunking
 	var indexTokensCalls [][]domain.TokenCID
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
 		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 			indexTokensCalls = append(indexTokensCalls, tokenCIDs)
 			return nil
@@ -329,7 +329,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_WithToke
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -379,7 +379,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_JobProgressTracki
 	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
 	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Track progress updates
 	var progressUpdates []int
@@ -391,7 +391,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_JobProgressTracki
 	)
 
 	// Execute the workflow with a jobID to enable progress tracking
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, &jobID)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, &jobID)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -427,10 +427,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_JobTrackingGracef
 	s.env.OnActivity(s.executor.GetLatestTezosBlock, mock.Anything).Return(latestBlock, nil)
 	s.env.OnActivity(s.executor.GetTezosTokenCIDsByAccountWithinBlockRange, mock.Anything, address, startBlock, latestBlock).Return(tokens, nil)
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow with a jobID to test job tracking failure handling
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, &jobID)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, &jobID)
 
 	// Verify workflow completed successfully despite job tracking failures
 	s.True(s.env.IsWorkflowCompleted())
@@ -454,7 +454,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_FirstRun_NoTokens
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -502,10 +502,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_Bac
 	)
 
 	// Mock IndexTokens child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -564,10 +564,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_For
 	)
 
 	// Mock IndexTokens child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -640,7 +640,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_Bot
 
 	// Track IndexTokens child workflow calls - should be 2 (backward + forward)
 	var indexTokensCalls int
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
 		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 			indexTokensCalls++
 			return nil
@@ -648,7 +648,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_SubsequentRun_Bot
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -679,7 +679,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_EnsureWatchedAddr
 	s.env.OnActivity(s.executor.EnsureWatchedAddressExists, mock.Anything, address, chainID, mock.Anything).Return(expectedError)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -706,7 +706,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_GetLatestBlockErr
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -722,7 +722,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_GetLatestBlockErr
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_QuotaExhausted() {
 	// Setup worker core with budgeted mode enabled and low quota
-	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	coreWorkflows := workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                       domain.ChainTezosMainnet,
 		EthereumChainID:                    domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock:       1000,
@@ -766,7 +766,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Quot
 	}, nil).Once()
 
 	// Mock IndexTokens for first chunk (50 tokens)
-	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+	s.env.OnWorkflow(coreWorkflows.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
 		return len(cids) == 50 // First chunk limited by quota
 	}), mock.Anything).Return(nil).Once()
 
@@ -786,7 +786,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Quot
 	}, nil).Once()
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Should complete with continue-as-new error (special case - not a real failure)
 	s.True(s.env.IsWorkflowCompleted())
@@ -797,7 +797,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Quot
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Normal() {
 	// Setup worker core with budgeted mode enabled and sufficient quota
-	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	coreWorkflows := workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                       domain.ChainTezosMainnet,
 		EthereumChainID:                    domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock:       1000,
@@ -841,7 +841,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Norm
 	}, nil)
 
 	// Mock IndexTokens for single chunk (15 tokens)
-	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+	s.env.OnWorkflow(coreWorkflows.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
 		return len(cids) == 15
 	}), mock.Anything).Return(nil)
 
@@ -852,7 +852,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Norm
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Should complete successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -861,7 +861,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Norm
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_PartialQuota() {
 	// Setup worker core with budgeted mode enabled
-	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	coreWorkflows := workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                       domain.ChainTezosMainnet,
 		EthereumChainID:                    domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock:       1000,
@@ -905,7 +905,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Part
 	}, nil).Once()
 
 	// Mock IndexTokens - should only process 30 tokens (limited by remaining quota)
-	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+	s.env.OnWorkflow(coreWorkflows.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
 		return len(cids) == 30 // Limited to remaining quota
 	}), mock.Anything).Return(nil).Once()
 
@@ -925,7 +925,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Part
 	}, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(workerCore.IndexTezosTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(coreWorkflows.IndexTezosTokenOwner, address, (*string)(nil))
 
 	// Should complete
 	s.True(s.env.IsWorkflowCompleted())
@@ -987,10 +987,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_FirstRun_WithT
 	)
 
 	// Mock IndexTokens child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -1042,7 +1042,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_JobProgressTra
 		EffectiveToBlock:   latestBlock,
 	}, nil)
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Track progress updates
 	var progressUpdates []int
@@ -1054,7 +1054,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_JobProgressTra
 	)
 
 	// Execute the workflow with a jobID to enable progress tracking
-	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address, &jobID)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, address, &jobID)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -1102,10 +1102,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_JobTrackingGra
 		EffectiveToBlock:   latestBlock,
 	}, nil)
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow with a jobID to test job tracking failure handling
-	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address, &jobID)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, address, &jobID)
 
 	// Verify workflow completed successfully despite job tracking failures
 	s.True(s.env.IsWorkflowCompleted())
@@ -1166,7 +1166,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 
 	// Track IndexTokens calls to verify chunking (21 tokens -> 2 chunks)
 	var indexTokensCalls int
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(
 		func(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 			indexTokensCalls++
 			return nil
@@ -1174,7 +1174,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -1225,10 +1225,10 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_IndexTokenChun
 	).Return(domain.TokenWithBlockRangeResult{Tokens: tokens}, nil)
 
 	// Mock IndexTokens child workflow to fail
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("indexing failed"))
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("indexing failed"))
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -1265,13 +1265,13 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_UpdateBlockRan
 	).Return(domain.TokenWithBlockRangeResult{Tokens: tokens}, nil)
 
 	// Mock IndexTokens child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokens, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Mock UpdateIndexingBlockRangeForAddress to fail
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("database error"))
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -1294,7 +1294,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 	// No fetching or indexing should occur
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexEthereumTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexEthereumTokenOwner, address, (*string)(nil))
 
 	// Verify workflow completed successfully (no-op)
 	s.True(s.env.IsWorkflowCompleted())
@@ -1307,7 +1307,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_SubsequentRun_
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_QuotaExhausted() {
 	// Setup worker core with budgeted mode enabled and low quota
-	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	coreWorkflows := workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                       domain.ChainTezosMainnet,
 		EthereumChainID:                    domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock:       1000,
@@ -1362,7 +1362,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Q
 	}, nil).Once()
 
 	// Mock IndexTokens for first chunk (50 tokens)
-	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+	s.env.OnWorkflow(coreWorkflows.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
 		return len(cids) == 50
 	}), mock.Anything).Return(nil).Once()
 
@@ -1382,7 +1382,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Q
 	}, nil).Once()
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(workerCore.IndexEthereumTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(coreWorkflows.IndexEthereumTokenOwner, address, (*string)(nil))
 
 	// Should complete with continue-as-new error (special case - not a real failure)
 	s.True(s.env.IsWorkflowCompleted())
@@ -1393,7 +1393,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Q
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Normal() {
 	// Setup worker core with budgeted mode enabled and sufficient quota
-	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	coreWorkflows := workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                       domain.ChainTezosMainnet,
 		EthereumChainID:                    domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock:       1000,
@@ -1448,7 +1448,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_N
 	}, nil)
 
 	// Mock IndexTokens
-	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+	s.env.OnWorkflow(coreWorkflows.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
 		return len(cids) == 15
 	}), mock.Anything).Return(nil)
 
@@ -1459,7 +1459,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_N
 	s.env.OnActivity(s.executor.UpdateIndexingBlockRangeForAddress, mock.Anything, address, chainID, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(workerCore.IndexEthereumTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(coreWorkflows.IndexEthereumTokenOwner, address, (*string)(nil))
 
 	// Should complete successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -1468,7 +1468,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_N
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_PartialQuota() {
 	// Setup worker core with budgeted mode enabled
-	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	coreWorkflows := workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                       domain.ChainTezosMainnet,
 		EthereumChainID:                    domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock:       1000,
@@ -1523,7 +1523,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_P
 	}, nil).Once()
 
 	// Mock IndexTokens - should only process 30 tokens
-	s.env.OnWorkflow(workerCore.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
+	s.env.OnWorkflow(coreWorkflows.IndexTokens, mock.Anything, mock.MatchedBy(func(cids []domain.TokenCID) bool {
 		return len(cids) == 30
 	}), mock.Anything).Return(nil).Once()
 
@@ -1543,7 +1543,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_P
 	}, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(workerCore.IndexEthereumTokenOwner, address, (*string)(nil))
+	s.env.ExecuteWorkflow(coreWorkflows.IndexEthereumTokenOwner, address, (*string)(nil))
 
 	// Should complete
 	s.True(s.env.IsWorkflowCompleted())

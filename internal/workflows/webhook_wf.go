@@ -20,7 +20,7 @@ import (
 // NotifyWebhookClients is the orchestration workflow that:
 // 1. Queries active webhook clients matching the event type
 // 2. Triggers a delivery workflow for each client (fire-and-forget)
-func (w *workerCore) NotifyWebhookClients(ctx workflow.Context, event webhook.WebhookEvent) error {
+func (w *coreWorkflows) NotifyWebhookClients(ctx workflow.Context, event webhook.WebhookEvent) error {
 	logger.InfoWf(ctx, "Starting webhook notification orchestration",
 		zap.String("eventID", event.EventID),
 		zap.String("eventType", event.EventType))
@@ -88,7 +88,7 @@ func (w *workerCore) NotifyWebhookClients(ctx workflow.Context, event webhook.We
 
 // DeliverWebhook handles webhook delivery to a single client
 // Uses Temporal's retry policy for automatic retry with exponential backoff
-func (w *workerCore) DeliverWebhook(ctx workflow.Context, clientID string, event webhook.WebhookEvent) error {
+func (w *coreWorkflows) DeliverWebhook(ctx workflow.Context, clientID string, event webhook.WebhookEvent) error {
 	logger.InfoWf(ctx, "Starting webhook delivery",
 		zap.String("clientID", clientID),
 		zap.String("eventID", event.EventID),
@@ -175,7 +175,7 @@ func (w *workerCore) DeliverWebhook(ctx workflow.Context, clientID string, event
 // from is the address of the sender
 // to is the address of the receiver
 // quantity is the number of tokens transferred
-func (w *workerCore) triggerWebhookTokenOwnershipNotification(ctx workflow.Context, tokenCID domain.TokenCID, eventType string, from *string, to *string, quantity string) {
+func (w *coreWorkflows) triggerWebhookTokenOwnershipNotification(ctx workflow.Context, tokenCID domain.TokenCID, eventType string, from *string, to *string, quantity string) {
 	// Parse token CID to get components
 	chain, standard, contract, tokenNumber := tokenCID.Parse()
 
@@ -214,7 +214,7 @@ func (w *workerCore) triggerWebhookTokenOwnershipNotification(ctx workflow.Conte
 // eventType is the type of event (e.g., "token.indexing.queryable", "token.indexing.viewable", "token.indexing.provenance_completed")
 // address is the address that triggered the indexing operation
 // If nil, the indexing operation was not triggered by a specific address
-func (w *workerCore) triggerWebhookTokenIndexingNotification(ctx workflow.Context, tokenCID domain.TokenCID, eventType string, address *string) {
+func (w *coreWorkflows) triggerWebhookTokenIndexingNotification(ctx workflow.Context, tokenCID domain.TokenCID, eventType string, address *string) {
 	// Parse token CID to get components
 	chain, standard, contract, tokenNumber := tokenCID.Parse()
 
@@ -248,7 +248,7 @@ func (w *workerCore) triggerWebhookTokenIndexingNotification(ctx workflow.Contex
 }
 
 // triggerWebhookNotification triggers a webhook notification workflow (fire-and-forget)
-func (w *workerCore) triggerWebhookNotification(ctx workflow.Context, event webhook.WebhookEvent) {
+func (w *coreWorkflows) triggerWebhookNotification(ctx workflow.Context, event webhook.WebhookEvent) {
 	// Configure child workflow options (fire-and-forget)
 	childWorkflowOptions := workflow.ChildWorkflowOptions{
 		WorkflowID:            fmt.Sprintf("webhook-notify-%s-%s", event.EventType, event.EventID),

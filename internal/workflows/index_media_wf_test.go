@@ -1,6 +1,6 @@
 //go:build cgo
 
-package workflowsmedia_test
+package workflows_test
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
-	workflows_media "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
+	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
 // WorkflowTestSuite is the test suite for media workflow tests
@@ -23,10 +23,10 @@ type WorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
-	env      *testsuite.TestWorkflowEnvironment
-	ctrl     *gomock.Controller
-	executor *mocks.MockMediaExecutor
-	worker   workflows_media.Worker
+	env            *testsuite.TestWorkflowEnvironment
+	ctrl           *gomock.Controller
+	executor       *mocks.MockMediaExecutor
+	mediaWorkflows workflows.MediaWorkflows
 }
 
 // SetupTest is called before each test
@@ -39,7 +39,7 @@ func (s *WorkflowTestSuite) SetupTest() {
 	s.env = s.NewTestWorkflowEnvironment()
 	s.ctrl = gomock.NewController(s.T())
 	s.executor = mocks.NewMockMediaExecutor(s.ctrl)
-	s.worker = workflows_media.NewWorker(s.executor)
+	s.mediaWorkflows = workflows.NewMediaWorkflows(s.executor)
 
 	// Register the activity with the test environment
 	s.env.RegisterActivity(s.executor.IndexMediaFile)
@@ -67,7 +67,7 @@ func (s *WorkflowTestSuite) TestIndexMediaWorkflow_Success() {
 	s.env.OnActivity(s.executor.IndexMediaFile, mock.Anything, url).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMediaWorkflow, url)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMediaWorkflow, url)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -91,7 +91,7 @@ func (s *WorkflowTestSuite) TestIndexMediaWorkflow_ActivityError() {
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMediaWorkflow, url)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMediaWorkflow, url)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -115,11 +115,11 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_Success() {
 
 	// Mock child workflow executions
 	for _, url := range urls {
-		s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, url).Return(nil)
+		s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(nil)
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -130,7 +130,7 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_EmptyList() {
 	urls := []string{}
 
 	// Execute the workflow with empty list
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify workflow completed successfully (no-op)
 	s.True(s.env.IsWorkflowCompleted())
@@ -151,11 +151,11 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_DuplicateURLs() {
 		"https://example.com/media2.jpg",
 	}
 	for _, url := range uniqueURLs {
-		s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, url).Return(nil).Once()
+		s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(nil).Once()
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -173,7 +173,7 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_InvalidURLs() {
 	// No child workflows should be started since all URLs are invalid
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify workflow completed successfully (no-op for invalid URLs)
 	s.True(s.env.IsWorkflowCompleted())
@@ -196,11 +196,11 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_MixedValidInvalidURLs
 		"https://example.com/media3.jpg",
 	}
 	for _, url := range validURLs {
-		s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, url).Return(nil)
+		s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(nil)
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -214,10 +214,10 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_DataURI() {
 	}
 
 	// Mock child workflow executions - only for valid media sources
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -232,12 +232,12 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowStartFai
 	}
 
 	// Mock child workflow start - simulate that starting one child workflow fails
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[1]).Return(testsuite.ErrMockStartChildWorkflowFailed)
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[2]).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[1]).Return(testsuite.ErrMockStartChildWorkflowFailed)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[2]).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify parent workflow completed successfully
 	// When GetChildWorkflowExecution() fails (workflow fails to start),
@@ -254,12 +254,12 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowComplete
 	}
 
 	// Mock child workflow executions - one completes with error, others succeed
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[1]).Return(errors.New("child workflow execution error"))
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[2]).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[1]).Return(errors.New("child workflow execution error"))
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[2]).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify parent workflow completed successfully
 	// The parent workflow uses fire-and-forget pattern with ParentClosePolicy_ABANDON,
@@ -279,7 +279,7 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowRetryPol
 
 	// Mock child workflow to fail and count retries
 	// The retry policy is configured with MaximumAttempts: 2
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, url).Return(
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(
 		func(ctx workflow.Context, url string) error {
 			childWorkflowCallCount++
 			return expectedError
@@ -287,7 +287,7 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowRetryPol
 	)
 
 	// Execute the parent workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify parent workflow completed successfully (fire-and-forget pattern)
 	s.True(s.env.IsWorkflowCompleted())
@@ -306,10 +306,10 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_WorkflowIDReusePolicy
 	}
 
 	// Mock child workflow execution for first batch
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
 
 	// Execute the workflow first time
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
 
@@ -318,10 +318,10 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_WorkflowIDReusePolicy
 	s.SetupTest()
 
 	// Mock child workflow execution for second batch with same URL
-	s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
 
 	// Execute the workflow again with the same URL
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify second execution also completed successfully
 	// This demonstrates that:
@@ -343,12 +343,12 @@ func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_LargeNumberOfURLs() {
 	for _, url := range urls {
 		if !seen[url] {
 			seen[url] = true
-			s.env.OnWorkflow(s.worker.IndexMediaWorkflow, mock.Anything, url).Return(nil)
+			s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(nil)
 		}
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.worker.IndexMultipleMediaWorkflow, urls)
+	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())

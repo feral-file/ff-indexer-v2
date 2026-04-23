@@ -27,7 +27,7 @@ type IndexProvenanceWorkflowTestSuite struct {
 	executor         *mocks.MockCoreExecutor
 	blacklist        *mocks.MockBlacklistRegistry
 	temporalWorkflow *mocks.MockWorkflow
-	workerCore       workflows.WorkerCore
+	coreWorkflows    workflows.CoreWorkflows
 }
 
 // SetupTest is called before each test
@@ -41,7 +41,7 @@ func (s *IndexProvenanceWorkflowTestSuite) SetupTest() {
 	s.ctrl = gomock.NewController(s.T())
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
-	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
@@ -72,7 +72,7 @@ func (s *IndexProvenanceWorkflowTestSuite) TestIndexTokenProvenances_Success() {
 	s.env.OnActivity(s.executor.IndexTokenWithFullProvenancesByTokenCID, mock.Anything, tokenCID).Return(nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.provenance_completed event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingProvenanceCompleted
 		}
@@ -80,7 +80,7 @@ func (s *IndexProvenanceWorkflowTestSuite) TestIndexTokenProvenances_Success() {
 	})).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenProvenances, tokenCID, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenProvenances, tokenCID, nil)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -101,7 +101,7 @@ func (s *IndexProvenanceWorkflowTestSuite) TestIndexTokenProvenances_ActivityErr
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenProvenances, tokenCID, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenProvenances, tokenCID, nil)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())

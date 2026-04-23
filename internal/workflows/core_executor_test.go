@@ -46,7 +46,7 @@ type testExecutorMocks struct {
 	blacklist        *mocks.MockBlacklistRegistry
 	urlChecker       *mocks.MockURLChecker
 	dataURIChecker   *mocks.MockDataURIChecker
-	executor         workflows.Executor
+	executor         workflows.CoreExecutor
 }
 
 // setupTestExecutor creates all the mocks and executor for testing
@@ -78,7 +78,7 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		dataURIChecker:   mocks.NewMockDataURIChecker(ctrl),
 	}
 
-	tm.executor = workflows.NewExecutor(
+	tm.executor = workflows.NewCoreExecutor(
 		tm.store,
 		tm.metadataResolver,
 		tm.metadataEnhancer,

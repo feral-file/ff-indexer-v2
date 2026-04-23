@@ -516,7 +516,7 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 	}
 
 	// Trigger IndexTokens workflow
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
+	w := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, nil)
 	options := client.StartWorkflowOptions{
 		TaskQueue:                e.orchestratorTaskQueue,
 		WorkflowExecutionTimeout: 5 * time.Hour,
@@ -548,7 +548,7 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 	}
 
 	// Start IndexTokenOwner workflow for each address individually
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
+	w := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, nil)
 	jobs := make([]dto.AddressIndexingJobInfo, 0, len(uniqueAddresses))
 
 	for _, address := range uniqueAddresses {
@@ -629,7 +629,7 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 }
 
 func (e *executor) TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint64, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error) {
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
+	w := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, nil)
 	var workflowID string
 	var runID string
 

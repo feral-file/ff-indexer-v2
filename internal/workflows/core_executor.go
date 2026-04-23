@@ -28,10 +28,10 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
-// Executor defines the interface for executing activities
+// CoreExecutor defines the interface for executing activities
 //
-//go:generate mockgen -source=executor.go -destination=../mocks/executor_core.go -package=mocks -mock_names=Executor=MockCoreExecutor
-type Executor interface {
+//go:generate mockgen -source=core_executor.go -destination=../mocks/executor_core.go -package=mocks -mock_names=CoreExecutor=MockCoreExecutor
+type CoreExecutor interface {
 	// CheckTokenExists checks if a token exists in the database
 	CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error)
 
@@ -159,8 +159,8 @@ type MediaHealthCheckResult struct {
 	HealthyURLs []string `json:"healthy_urls"`
 }
 
-// executor is the concrete implementation of Executor
-type executor struct {
+// coreExecutor is the concrete implementation of CoreExecutor.
+type coreExecutor struct {
 	store            store.Store
 	metadataResolver metadata.Resolver
 	metadataEnhancer metadata.Enhancer
@@ -176,8 +176,8 @@ type executor struct {
 	dataURIChecker   uri.DataURIChecker
 }
 
-// NewExecutor creates a new executor instance
-func NewExecutor(
+// NewCoreExecutor creates a new core executor instance.
+func NewCoreExecutor(
 	store store.Store,
 	metadataResolver metadata.Resolver,
 	metadataEnhancer metadata.Enhancer,
@@ -192,8 +192,8 @@ func NewExecutor(
 	urlChecker uri.URLChecker,
 	dataURIChecker uri.DataURIChecker,
 
-) Executor {
-	return &executor{
+) CoreExecutor {
+	return &coreExecutor{
 		store:            store,
 		metadataResolver: metadataResolver,
 		metadataEnhancer: metadataEnhancer,
@@ -211,7 +211,7 @@ func NewExecutor(
 }
 
 // CheckTokenExists checks if a token exists in the database
-func (e *executor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+func (e *coreExecutor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
 	if !tokenCID.Valid() {
 		return false, domain.ErrInvalidTokenCID
 	}
@@ -226,7 +226,7 @@ func (e *executor) CheckTokenExists(ctx context.Context, tokenCID domain.TokenCI
 
 // verifyTokenExistsOnChain verifies if a token exists on the blockchain
 // This is an internal method used to validate token existence before indexing
-func (e *executor) verifyTokenExistsOnChain(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
+func (e *coreExecutor) verifyTokenExistsOnChain(ctx context.Context, tokenCID domain.TokenCID) (bool, error) {
 	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
 	switch chain {
@@ -262,7 +262,7 @@ func (e *executor) verifyTokenExistsOnChain(ctx context.Context, tokenCID domain
 }
 
 // CreateTokenMint creates a new token and related provenance data for mint event
-func (e *executor) CreateTokenMint(ctx context.Context, event *domain.BlockchainEvent) error {
+func (e *coreExecutor) CreateTokenMint(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Validate event
 	if !event.Valid() {
 		return domain.ErrInvalidBlockchainEvent
@@ -339,7 +339,7 @@ func (e *executor) CreateTokenMint(ctx context.Context, event *domain.Blockchain
 }
 
 // UpdateTokenTransfer updates a token and related provenance data for a transfer event
-func (e *executor) UpdateTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error {
+func (e *coreExecutor) UpdateTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Validate event
 	if !event.Valid() {
 		return domain.ErrInvalidBlockchainEvent
@@ -400,7 +400,7 @@ func (e *executor) UpdateTokenTransfer(ctx context.Context, event *domain.Blockc
 }
 
 // ResolveTokenMetadata resolves token metadata from blockchain and store metadata in the database
-func (e *executor) ResolveTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
+func (e *coreExecutor) ResolveTokenMetadata(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
 	// Validate token CID
 	if !tokenCID.Valid() {
 		return nil, domain.ErrInvalidTokenCID
@@ -488,7 +488,7 @@ func (e *executor) ResolveTokenMetadata(ctx context.Context, tokenCID domain.Tok
 }
 
 // EnhanceTokenMetadata enhances token metadata from vendor APIs and stores enrichment source
-func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
+func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, normalizedMetadata *metadata.NormalizedMetadata) (*metadata.EnhancedMetadata, error) {
 	// Validate token CID
 	if !tokenCID.Valid() {
 		return nil, domain.ErrInvalidTokenCID
@@ -560,7 +560,7 @@ func (e *executor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain.Tok
 // CheckMediaURLsHealthAndUpdateViewability checks media URLs in parallel and updates token viewability
 // This combines URL health checking with viewability computation and DB update
 // Returns a result struct containing viewability status and list of healthy URLs
-func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (*MediaHealthCheckResult, error) {
+func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (*MediaHealthCheckResult, error) {
 	logger.InfoCtx(ctx, "Checking media health and updating viewability",
 		zap.String("token_cid", tokenCID),
 		zap.Strings("urls", mediaURLs),
@@ -687,7 +687,7 @@ func (e *executor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context,
 }
 
 // UpdateTokenBurn updates a token and related provenance data for burn event
-func (e *executor) UpdateTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error {
+func (e *coreExecutor) UpdateTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Validate event
 	if !event.Valid() {
 		return domain.ErrInvalidBlockchainEvent
@@ -735,7 +735,7 @@ func (e *executor) UpdateTokenBurn(ctx context.Context, event *domain.Blockchain
 }
 
 // CreateMetadataUpdate creates a metadata update provenance event
-func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
+func (e *coreExecutor) CreateMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Validate event
 	if !event.Valid() {
 		return domain.ErrInvalidBlockchainEvent
@@ -774,7 +774,7 @@ func (e *executor) CreateMetadataUpdate(ctx context.Context, event *domain.Block
 
 // IndexTokenWithMinimalProvenancesByBlockchainEvent index token with minimal provenance data
 // Minimal provenance data includes balances for from/to addresses, provenance event related to the event
-func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error {
+func (e *coreExecutor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context.Context, event *domain.BlockchainEvent) error {
 	// Validate event
 	if !event.Valid() {
 		return domain.ErrInvalidBlockchainEvent
@@ -840,7 +840,7 @@ func (e *executor) IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx context
 }
 
 // addOwnerBalanceAndEvents fetches and adds balance and events for a specific owner to the input
-func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, address *string, input *store.CreateTokenWithProvenancesInput) error {
+func (e *coreExecutor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, address *string, input *store.CreateTokenWithProvenancesInput) error {
 	// Skip if address is nil or zero address
 	if types.StringNilOrEmpty(address) || *address == domain.ETHEREUM_ZERO_ADDRESS {
 		return nil
@@ -890,7 +890,7 @@ func (e *executor) addOwnerBalanceAndEvents(ctx context.Context, event *domain.B
 }
 
 // fetchOwnerBalanceAndEvents fetches balance and events for an owner based on token standard
-func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, address string) (string, []domain.BlockchainEvent, error) {
+func (e *coreExecutor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain.BlockchainEvent, address string) (string, []domain.BlockchainEvent, error) {
 	switch event.Standard {
 	case domain.StandardFA2:
 		balance, err := e.tzktClient.GetTokenOwnerBalance(ctx, event.ContractAddress, event.TokenNumber, address)
@@ -913,7 +913,7 @@ func (e *executor) fetchOwnerBalanceAndEvents(ctx context.Context, event *domain
 // The provenance events are not included for full indexing,
 // but ARE included for owner-specific indexing.
 // If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
-func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
+func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
 	// If address is not provided, verify the token exists in the database and on-chain before indexing
 	// Without address, the event logs would be huge and the indexing is inefficient for ERC1155 tokens.
 	// Otherwise, we can skip the existence check and index the token with minimal provenances, the indexing with
@@ -1173,14 +1173,14 @@ func (e *executor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Contex
 }
 
 // GetTokenCIDsByOwner retrieves all token CIDs owned by an address
-func (e *executor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]domain.TokenCID, error) {
+func (e *coreExecutor) GetTokenCIDsByOwner(ctx context.Context, address string) ([]domain.TokenCID, error) {
 	return e.store.GetTokenCIDsByOwner(ctx, address)
 }
 
 // GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves all token CIDs for an owner within a block range
 // This is used to sweep tokens by block ranges for incremental indexing
 // Filters out blacklisted tokens before returning
-func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(
+func (e *coreExecutor) GetEthereumTokenCIDsByOwnerWithinBlockRange(
 	ctx context.Context,
 	address string,
 	requestedFromBlock uint64,
@@ -1206,7 +1206,7 @@ func (e *executor) GetEthereumTokenCIDsByOwnerWithinBlockRange(
 
 // IndexTokenWithFullProvenancesByTokenCID indexes token with full provenances using token CID
 // Full provenance data includes balances for all addresses, provenance events related to the token
-func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
+func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID) error {
 	chain, standard, contractAddress, tokenNumber := tokenCID.Parse()
 
 	// Fetch all events based on chain
@@ -1371,7 +1371,7 @@ func (e *executor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Context, 
 // Handles pagination automatically by fetching all results within the range
 // Returns tokens with their last interaction block number (lastLevel from TzKT)
 // Filters out blacklisted tokens before returning
-func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
+func (e *coreExecutor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Context, address string, fromBlock, toBlock uint64) ([]domain.TokenWithBlock, error) {
 	var allTokensWithBlocks []domain.TokenWithBlock
 	limit := tezos.MAX_PAGE_SIZE
 	offset := 0
@@ -1415,7 +1415,7 @@ func (e *executor) GetTezosTokenCIDsByAccountWithinBlockRange(ctx context.Contex
 }
 
 // GetLatestEthereumBlock retrieves the latest block number from the Ethereum blockchain using caching
-func (e *executor) GetLatestEthereumBlock(ctx context.Context) (uint64, error) {
+func (e *coreExecutor) GetLatestEthereumBlock(ctx context.Context) (uint64, error) {
 	blockNum, err := e.ethClient.GetLatestBlock(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get latest block: %w", err)
@@ -1424,7 +1424,7 @@ func (e *executor) GetLatestEthereumBlock(ctx context.Context) (uint64, error) {
 }
 
 // GetLatestTezosBlock retrieves the latest block number from the Tezos blockchain via TzKT using caching
-func (e *executor) GetLatestTezosBlock(ctx context.Context) (uint64, error) {
+func (e *coreExecutor) GetLatestTezosBlock(ctx context.Context) (uint64, error) {
 	latestBlock, err := e.tzktClient.GetLatestBlock(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get latest Tezos block: %w", err)
@@ -1437,19 +1437,19 @@ func (e *executor) GetLatestTezosBlock(ctx context.Context) (uint64, error) {
 // =============================================================================
 
 // GetQuotaInfo retrieves quota information for an address (auto-resets if expired)
-func (e *executor) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error) {
+func (e *coreExecutor) GetQuotaInfo(ctx context.Context, address string, chain domain.Chain) (*store.QuotaInfo, error) {
 	return e.store.GetQuotaInfo(ctx, address, chain)
 }
 
 // IncrementTokensIndexed increments the token counter after successful indexing
-func (e *executor) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
+func (e *coreExecutor) IncrementTokensIndexed(ctx context.Context, address string, chain domain.Chain, count int) error {
 	return e.store.IncrementTokensIndexed(ctx, address, chain, count)
 }
 
 // =============================================================================
 // Webhook Activities
 // =============================================================================
-func (e *executor) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (*BlockRangeResult, error) {
+func (e *coreExecutor) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (*BlockRangeResult, error) {
 	minBlock, maxBlock, err := e.store.GetIndexingBlockRangeForAddress(ctx, address, chainID)
 	if err != nil {
 		return nil, err
@@ -1461,12 +1461,12 @@ func (e *executor) GetIndexingBlockRangeForAddress(ctx context.Context, address 
 }
 
 // UpdateIndexingBlockRangeForAddress updates the indexing block range for an address and chain
-func (e *executor) UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error {
+func (e *coreExecutor) UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock uint64, maxBlock uint64) error {
 	return e.store.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, minBlock, maxBlock)
 }
 
 // EnsureWatchedAddressExists creates a watched address record if it doesn't exist
-func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
+func (e *coreExecutor) EnsureWatchedAddressExists(ctx context.Context, address string, chain domain.Chain, dailyQuota int) error {
 	return e.store.EnsureWatchedAddressExists(ctx, address, chain, dailyQuota)
 }
 
@@ -1475,17 +1475,17 @@ func (e *executor) EnsureWatchedAddressExists(ctx context.Context, address strin
 // =============================================================================
 
 // GetActiveWebhookClientsByEventType retrieves active webhook clients matching the event type
-func (e *executor) GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error) {
+func (e *coreExecutor) GetActiveWebhookClientsByEventType(ctx context.Context, eventType string) ([]*schema.WebhookClient, error) {
 	return e.store.GetActiveWebhookClientsByEventType(ctx, eventType)
 }
 
 // GetWebhookClientByID retrieves a webhook client by client ID
-func (e *executor) GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error) {
+func (e *coreExecutor) GetWebhookClientByID(ctx context.Context, clientID string) (*schema.WebhookClient, error) {
 	return e.store.GetWebhookClientByID(ctx, clientID)
 }
 
 // CreateWebhookDeliveryRecord creates a new webhook delivery record
-func (e *executor) CreateWebhookDeliveryRecord(ctx context.Context, delivery *schema.WebhookDelivery, event webhook.WebhookEvent) (uint64, error) {
+func (e *coreExecutor) CreateWebhookDeliveryRecord(ctx context.Context, delivery *schema.WebhookDelivery, event webhook.WebhookEvent) (uint64, error) {
 	// Marshal event to JSON for the Payload field
 	eventJSON, err := e.json.Marshal(event)
 	if err != nil {
@@ -1501,7 +1501,7 @@ func (e *executor) CreateWebhookDeliveryRecord(ctx context.Context, delivery *sc
 
 // DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with HMAC signature
 // This activity will be automatically retried by Temporal with exponential backoff
-func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error) {
+func (e *coreExecutor) DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error) {
 	// Get attempt number from Temporal activity info
 	attempt := e.temporalActivity.GetInfo(ctx).Attempt
 
@@ -1600,7 +1600,7 @@ func (e *executor) DeliverWebhookHTTP(ctx context.Context, client *schema.Webhoo
 // =============================================================================
 
 // CreateIndexingJob creates a new indexing job record
-func (e *executor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error {
+func (e *coreExecutor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error {
 	input := store.CreateAddressIndexingJobInput{
 		Address:       address,
 		Chain:         chain,
@@ -1613,11 +1613,11 @@ func (e *executor) CreateIndexingJob(ctx context.Context, address string, chain 
 }
 
 // UpdateIndexingJobStatus updates the job status with appropriate timestamp
-func (e *executor) UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+func (e *coreExecutor) UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
 	return e.store.UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp)
 }
 
 // UpdateIndexingJobProgress updates job progress metrics
-func (e *executor) UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+func (e *coreExecutor) UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
 	return e.store.UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock)
 }

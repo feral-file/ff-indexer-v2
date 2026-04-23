@@ -463,7 +463,7 @@ func (s *mediaHealthSweeper) triggerWebhook(ctx context.Context, tokenCID string
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 	}
 
-	w := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
+	w := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, nil)
 	workflowRun, err := s.orchestrator.ExecuteWorkflow(ctx, workflowOptions, w.NotifyWebhookClients, webhookEvent)
 	if err != nil {
 		logger.ErrorCtx(ctx, err,

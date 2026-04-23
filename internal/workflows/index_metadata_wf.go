@@ -19,7 +19,7 @@ import (
 )
 
 // IndexMetadataUpdate processes a metadata update event
-func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (w *coreWorkflows) IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error {
 	logger.InfoWf(ctx, "Processing metadata update event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
@@ -75,7 +75,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 }
 
 // IndexTokenMetadata indexes token metadata
-func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
+func (w *coreWorkflows) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoWf(ctx, "Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
 
 	// Configure activity options with longer timeout for metadata fetching
@@ -246,7 +246,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 }
 
 // IndexMultipleTokensMetadata indexes metadata for multiple tokens by triggering child workflows
-func (w *workerCore) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+func (w *coreWorkflows) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
 	logger.InfoWf(ctx, "Indexing multiple tokens metadata", zap.Int("count", len(tokenCIDs)))
 
 	if len(tokenCIDs) == 0 {

@@ -9,10 +9,10 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
-// WorkerCore defines the interface for processing blockchain events
+// CoreWorkflows defines the interface for processing blockchain events.
 //
-//go:generate mockgen -source=worker.go -destination=../mocks/worker_core.go -package=mocks -mock_names=WorkerCore=MockCoreWorker
-type WorkerCore interface {
+//go:generate mockgen -source=core_workflow.go -destination=../mocks/worker_core.go -package=mocks -mock_names=CoreWorkflows=MockCoreWorkflows
+type CoreWorkflows interface {
 	// IndexTokenMint processes a token mint event
 	IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error
 
@@ -61,7 +61,7 @@ type WorkerCore interface {
 	DeliverWebhook(ctx workflow.Context, clientID string, event webhook.WebhookEvent) error
 }
 
-type WorkerCoreConfig struct {
+type CoreWorkflowsConfig struct {
 	// TezosChainID is the chain ID for the Tezos blockchain
 	TezosChainID domain.Chain
 	// EthereumChainID is the chain ID for the Ethereum blockchain
@@ -88,17 +88,17 @@ type WorkerCoreConfig struct {
 	BudgetedIndexingDefaultDailyQuota int
 }
 
-// workerCore is the concrete implementation of WorkerCore
-type workerCore struct {
-	config           WorkerCoreConfig
-	executor         Executor
+// coreWorkflows is the concrete implementation of CoreWorkflows.
+type coreWorkflows struct {
+	config           CoreWorkflowsConfig
+	executor         CoreExecutor
 	blacklist        registry.BlacklistRegistry
 	temporalWorkflow adapter.Workflow
 }
 
-// NewWorkerCore creates a new worker core instance
-func NewWorkerCore(executor Executor, config WorkerCoreConfig, blacklist registry.BlacklistRegistry, temporalWorkflow adapter.Workflow) WorkerCore {
-	return &workerCore{
+// NewCoreWorkflows creates a new core workflows instance.
+func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blacklist registry.BlacklistRegistry, temporalWorkflow adapter.Workflow) CoreWorkflows {
+	return &coreWorkflows{
 		executor:         executor,
 		config:           config,
 		blacklist:        blacklist,

@@ -32,7 +32,7 @@ type WebhookWorkflowTestSuite struct {
 	executor         *mocks.MockCoreExecutor
 	blacklist        *mocks.MockBlacklistRegistry
 	temporalWorkflow *mocks.MockWorkflow
-	workerCore       workflows.WorkerCore
+	coreWorkflows    workflows.CoreWorkflows
 }
 
 // webhookEventMatcher returns a function that matches webhook events
@@ -87,7 +87,7 @@ func (s *WebhookWorkflowTestSuite) SetupTest() {
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
-	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
@@ -130,7 +130,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_NoClients() {
 		Return([]*schema.WebhookClient{}, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.NotifyWebhookClients, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.NotifyWebhookClients, event)
 
 	// Verify workflow completed successfully (even with no clients)
 	s.True(s.env.IsWorkflowCompleted())
@@ -156,7 +156,7 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_GetClientsError() {
 		Return(nil, errors.New("database error"))
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.NotifyWebhookClients, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.NotifyWebhookClients, event)
 
 	// Verify workflow failed
 	s.True(s.env.IsWorkflowCompleted())
@@ -194,10 +194,10 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_SingleClient() {
 		Return(clients, nil)
 
 	// Mock DeliverWebhook child workflow
-	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-123", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.DeliverWebhook, mock.Anything, "client-123", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.NotifyWebhookClients, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.NotifyWebhookClients, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -244,11 +244,11 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_MultipleClients() {
 		Return(clients, nil)
 
 	// Mock DeliverWebhook child workflows for both clients
-	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-123", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
-	s.env.OnWorkflow(s.workerCore.DeliverWebhook, mock.Anything, "client-456", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.DeliverWebhook, mock.Anything, "client-123", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.DeliverWebhook, mock.Anything, "client-456", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.NotifyWebhookClients, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.NotifyWebhookClients, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -301,7 +301,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_Success() {
 		Return(webhook.DeliveryResult{Success: true, StatusCode: 200, Body: `{"status":"received"}`}, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.DeliverWebhook, clientID, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -328,7 +328,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotFound() {
 		Return(nil, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.DeliverWebhook, clientID, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
 
 	// Verify workflow completed successfully (even with no client)
 	s.True(s.env.IsWorkflowCompleted())
@@ -365,7 +365,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotActive() {
 		Return(client, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.DeliverWebhook, clientID, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
 
 	// Verify workflow completed successfully (even with inactive client)
 	s.True(s.env.IsWorkflowCompleted())
@@ -392,7 +392,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_GetClientError() {
 		Return(nil, errors.New("database error"))
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.DeliverWebhook, clientID, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
 
 	// Verify workflow failed
 	s.True(s.env.IsWorkflowCompleted())
@@ -437,7 +437,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_CreateDeliveryRecordError(
 		Return(uint64(0), errors.New("database error"))
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.DeliverWebhook, clientID, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
 
 	// Verify workflow failed
 	s.True(s.env.IsWorkflowCompleted())
@@ -491,7 +491,7 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
 		}, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.DeliverWebhook, clientID, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
 
 	// Verify workflow failed (after retries)
 	s.True(s.env.IsWorkflowCompleted())

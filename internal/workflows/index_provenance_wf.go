@@ -17,7 +17,7 @@ import (
 // IndexTokenProvenances indexes all provenances (balances and events) for a token
 // address is the address that triggered the indexing operation
 // If nil, the indexing operation was not triggered by a specific address
-func (w *workerCore) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
+func (w *coreWorkflows) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoWf(ctx, "Starting token provenances indexing",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.String("address", types.SafeString(address)),

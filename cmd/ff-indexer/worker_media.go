@@ -24,7 +24,7 @@ import (
 	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
-	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
+	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
 // registerWorkerMedia wires the media-indexing Temporal worker (worker-media).
@@ -104,7 +104,7 @@ func registerWorkerMedia(
 
 	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, dataURIChecker, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, imageTransformer, wcfg.MaxImageSize, wcfg.MaxVideoSize)
 
-	mediaExecutor := workflowsmedia.NewExecutor(dataStore, mediaProcessor)
+	mediaExecutor := workflows.NewMediaExecutor(dataStore, mediaProcessor)
 
 	sentryInterceptor := temporal.NewSentryActivityInterceptor()
 	temporalWorker := worker.New(temporalClient,
@@ -118,10 +118,10 @@ func registerWorkerMedia(
 			},
 		})
 
-	mediaWorker := workflowsmedia.NewWorker(mediaExecutor)
+	mediaWorkflows := workflows.NewMediaWorkflows(mediaExecutor)
 
-	temporalWorker.RegisterWorkflow(mediaWorker.IndexMediaWorkflow)
-	temporalWorker.RegisterWorkflow(mediaWorker.IndexMultipleMediaWorkflow)
+	temporalWorker.RegisterWorkflow(mediaWorkflows.IndexMediaWorkflow)
+	temporalWorker.RegisterWorkflow(mediaWorkflows.IndexMultipleMediaWorkflow)
 	temporalWorker.RegisterActivity(mediaExecutor.IndexMediaFile)
 
 	// Run until worker stops or ctx is canceled; cleanup closes transform resources.

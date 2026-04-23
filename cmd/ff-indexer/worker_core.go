@@ -131,7 +131,7 @@ func registerWorkerCore(
 		}
 	}
 
-	executor := workflows.NewExecutor(
+	executor := workflows.NewCoreExecutor(
 		dataStore,
 		metadataResolver,
 		metadataEnhancer,
@@ -160,8 +160,8 @@ func registerWorkerCore(
 			},
 		})
 
-	workerCore := workflows.NewWorkerCore(executor,
-		workflows.WorkerCoreConfig{
+	coreWorkflows := workflows.NewCoreWorkflows(executor,
+		workflows.CoreWorkflowsConfig{
 			EthereumTokenSweepStartBlock:       cfg.EthereumTokenSweepStartBlock,
 			TezosTokenSweepStartBlock:          cfg.TezosTokenSweepStartBlock,
 			EthereumChainID:                    cfg.Ethereum.ChainID,
@@ -176,21 +176,21 @@ func registerWorkerCore(
 			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
 		}, blacklistRegistry, temporalWorkflowAdapter)
 
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMint)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenTransfer)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenBurn)
-	temporalWorker.RegisterWorkflow(workerCore.IndexMetadataUpdate)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMetadata)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenFromEvent)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenProvenances)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokens)
-	temporalWorker.RegisterWorkflow(workerCore.IndexToken)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenOwner)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTezosTokenOwner)
-	temporalWorker.RegisterWorkflow(workerCore.IndexEthereumTokenOwner)
-	temporalWorker.RegisterWorkflow(workerCore.IndexMultipleTokensMetadata)
-	temporalWorker.RegisterWorkflow(workerCore.NotifyWebhookClients)
-	temporalWorker.RegisterWorkflow(workerCore.DeliverWebhook)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenMint)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenTransfer)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenBurn)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexMetadataUpdate)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenMetadata)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenFromEvent)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenProvenances)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokens)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexToken)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenOwner)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTezosTokenOwner)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexEthereumTokenOwner)
+	temporalWorker.RegisterWorkflow(coreWorkflows.IndexMultipleTokensMetadata)
+	temporalWorker.RegisterWorkflow(coreWorkflows.NotifyWebhookClients)
+	temporalWorker.RegisterWorkflow(coreWorkflows.DeliverWebhook)
 
 	temporalWorker.RegisterActivity(executor.CreateTokenMint)
 	temporalWorker.RegisterActivity(executor.ResolveTokenMetadata)

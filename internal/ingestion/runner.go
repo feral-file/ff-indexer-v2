@@ -317,18 +317,18 @@ func (r *runner) shouldProcessEvent(ctx context.Context, event *domain.Blockchai
 }
 
 func (r *runner) startWorkflow(ctx context.Context, event *domain.BlockchainEvent) (flushOutcome, error) {
-	workerCore := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
+	coreWorkflows := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, nil)
 
 	var workflowFunc interface{}
 	switch event.EventType {
 	case domain.EventTypeMint:
-		workflowFunc = workerCore.IndexTokenMint
+		workflowFunc = coreWorkflows.IndexTokenMint
 	case domain.EventTypeTransfer:
-		workflowFunc = workerCore.IndexTokenTransfer
+		workflowFunc = coreWorkflows.IndexTokenTransfer
 	case domain.EventTypeBurn:
-		workflowFunc = workerCore.IndexTokenBurn
+		workflowFunc = coreWorkflows.IndexTokenBurn
 	case domain.EventTypeMetadataUpdate:
-		workflowFunc = workerCore.IndexMetadataUpdate
+		workflowFunc = coreWorkflows.IndexMetadataUpdate
 	case domain.EventTypeMetadataUpdateRange:
 		logger.WarnCtx(ctx, "Ignoring unsupported metadata range event",
 			zap.String("chain", string(event.Chain)),

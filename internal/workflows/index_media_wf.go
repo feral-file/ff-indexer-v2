@@ -1,6 +1,6 @@
 //go:build cgo
 
-package workflowsmedia
+package workflows
 
 import (
 	"crypto/sha256"
@@ -19,7 +19,7 @@ import (
 
 // IndexMultipleMediaWorkflow handles the media processing for a list of URLs
 // It triggers child workflows concurrently (fire and forget) for each URL
-func (w *worker) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string) error {
+func (w *mediaWorkflows) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string) error {
 	logger.InfoWf(ctx, "Starting multiple media indexing", zap.Int("count", len(urls)))
 
 	// Remove duplicate URLs
@@ -86,7 +86,7 @@ func (w *worker) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string)
 
 // IndexMediaWorkflow handles the media processing for a single URL
 // This workflow uses a separate task queue with higher execution time
-func (w *worker) IndexMediaWorkflow(ctx workflow.Context, url string) error {
+func (w *mediaWorkflows) IndexMediaWorkflow(ctx workflow.Context, url string) error {
 	logger.InfoWf(ctx, "Starting media indexing", zap.String("url", url))
 
 	// Configure activity options with longer timeout for media processing

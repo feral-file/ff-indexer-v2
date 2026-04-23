@@ -28,7 +28,7 @@ type IndexTokenWorkflowTestSuite struct {
 	executor         *mocks.MockCoreExecutor
 	blacklist        *mocks.MockBlacklistRegistry
 	temporalWorkflow *mocks.MockWorkflow
-	workerCore       workflows.WorkerCore
+	coreWorkflows    workflows.CoreWorkflows
 }
 
 // SetupTest is called before each test
@@ -43,7 +43,7 @@ func (s *IndexTokenWorkflowTestSuite) SetupTest() {
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
-	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
@@ -88,10 +88,10 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_Success() {
 	s.env.OnActivity(s.executor.CreateTokenMint, mock.Anything, event).Return(nil)
 
 	// Mock child workflow IndexTokenMetadata
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(func(ctx workflow.Context, evt webhook.WebhookEvent) error {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(func(ctx workflow.Context, evt webhook.WebhookEvent) error {
 		s.Equal(webhook.EventTypeTokenOwnershipMinted, evt.EventType)
 		s.IsType(map[string]interface{}{}, evt.Data)
 		data := evt.Data.(map[string]interface{})
@@ -102,7 +102,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_Success() {
 	}, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMint, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMint, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -127,7 +127,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_Blacklisted() {
 	// No other activities should be called
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMint, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMint, event)
 
 	// Verify workflow completed successfully (skipped due to blacklist)
 	s.True(s.env.IsWorkflowCompleted())
@@ -160,7 +160,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_CreateTokenMintError() 
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMint, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMint, event)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -191,7 +191,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_ChildWorkflowStartFailu
 	// Mock child workflow to fail at start
 	// Note: ErrMockStartChildWorkflowFailed is special and prevents workflow invocation
 	var childWorkflowCallCount int
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
 		func(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 			childWorkflowCallCount++
 			return testsuite.ErrMockStartChildWorkflowFailed
@@ -199,7 +199,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenMint_ChildWorkflowStartFailu
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMint, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMint, event)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -238,7 +238,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_TokenExists() {
 	s.env.OnActivity(s.executor.UpdateTokenTransfer, mock.Anything, event).Return(nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(func(ctx workflow.Context, evt webhook.WebhookEvent) error {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(func(ctx workflow.Context, evt webhook.WebhookEvent) error {
 		s.Equal(webhook.EventTypeTokenOwnershipTransferred, evt.EventType)
 		s.IsType(map[string]interface{}{}, evt.Data)
 		data := evt.Data.(map[string]interface{})
@@ -249,7 +249,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_TokenExists() {
 	}, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenTransfer, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -277,10 +277,10 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_TokenDoesNotExist()
 	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(false, nil)
 
 	// Mock child workflow IndexTokenFromEvent
-	s.env.OnWorkflow(s.workerCore.IndexTokenFromEvent, mock.Anything, event).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenFromEvent, mock.Anything, event).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenTransfer, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -307,7 +307,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_Blacklisted() {
 	// No other activities should be called
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenTransfer, event)
 
 	// Verify workflow completed successfully (skipped due to blacklist)
 	s.True(s.env.IsWorkflowCompleted())
@@ -342,7 +342,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_CheckTokenExistsErr
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenTransfer, event)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -371,7 +371,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_IndexTokenFromEvent
 
 	// Mock IndexTokenFromEvent activity - returns error
 	var workflowCallCount int
-	s.env.OnWorkflow(s.workerCore.IndexTokenFromEvent, mock.Anything, event).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenFromEvent, mock.Anything, event).Return(
 		func(ctx workflow.Context, event *domain.BlockchainEvent) error {
 			workflowCallCount++
 			return expectedError
@@ -379,7 +379,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenTransfer_IndexTokenFromEvent
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenTransfer, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenTransfer, event)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -418,7 +418,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_Success() {
 	s.env.OnActivity(s.executor.UpdateTokenBurn, mock.Anything, event).Return(nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(func(ctx workflow.Context, event webhook.WebhookEvent) error {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(func(ctx workflow.Context, event webhook.WebhookEvent) error {
 		s.Equal(webhook.EventTypeTokenOwnershipBurned, event.EventType)
 		s.IsType(map[string]interface{}{}, event.Data)
 		data := event.Data.(map[string]interface{})
@@ -429,7 +429,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_Success() {
 	}, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenBurn, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -456,7 +456,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_TokenDoesNotExist() {
 	s.env.OnActivity(s.executor.CheckTokenExists, mock.Anything, tokenCID).Return(false, nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenBurn, event)
 
 	// Verify workflow completed with error (token doesn't exist)
 	s.True(s.env.IsWorkflowCompleted())
@@ -481,7 +481,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_Blacklisted() {
 	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenBurn, event)
 
 	// Verify workflow completed successfully (skipped due to blacklist)
 	s.True(s.env.IsWorkflowCompleted())
@@ -513,7 +513,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_CheckTokenExistsError()
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenBurn, event)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -551,7 +551,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenBurn_UpdateTokenBurnError() 
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenBurn, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenBurn, event)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -585,16 +585,16 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_Success() {
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, mock.Anything, event).Return(nil)
 
 	// Mock metadata child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock provenance child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenFromEvent, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -617,7 +617,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_Blacklisted() {
 	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenFromEvent, event)
 
 	// Verify workflow completed successfully (skipped due to blacklist)
 	s.True(s.env.IsWorkflowCompleted())
@@ -650,7 +650,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ActivityError() {
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenFromEvent, event)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -680,7 +680,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_MetadataWorkflowSt
 
 	// Mock metadata child workflow to fail - should not fail parent workflow
 	var workflowCallCount int
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
 		func(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 			workflowCallCount++
 			return testsuite.ErrMockStartChildWorkflowFailed
@@ -688,13 +688,13 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_MetadataWorkflowSt
 	)
 
 	// Mock provenance child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenFromEvent, event)
 
 	// Verify workflow completed successfully (metadata failure is non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -721,11 +721,11 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ProvenanceWorkflow
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, mock.Anything, event).Return(nil)
 
 	// Mock metadata child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock provenance child workflow to fail - should not fail parent workflow
 	var workflowCallCount int
-	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(
 		func(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 			workflowCallCount++
 			return testsuite.ErrMockStartChildWorkflowFailed
@@ -733,9 +733,9 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ProvenanceWorkflow
 	)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenFromEvent, event)
 
 	// Verify workflow completed successfully (provenance failure is non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -762,13 +762,13 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokenFromEvent_ERC1155_WithOwner_
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, mock.Anything, event).Return(nil)
 
 	// Mock metadata child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenFromEvent, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenFromEvent, event)
 
 	// There is NO IndexTokenProvenances workflow call for ERC1155
 
@@ -790,11 +790,11 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_Success() {
 
 	// Mock child workflows for each token
 	for _, tokenCID := range tokenCIDs {
-		s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCID, mock.Anything).Return(nil)
+		s.env.OnWorkflow(s.coreWorkflows.IndexToken, mock.Anything, tokenCID, mock.Anything).Return(nil)
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokens, tokenCIDs, nil)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -809,12 +809,12 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexTokens_OneChildWorkflowFails() {
 	}
 
 	// Mock child workflows - one fails
-	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[0], mock.Anything).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[1], mock.Anything).Return(errors.New("child workflow error"))
-	s.env.OnWorkflow(s.workerCore.IndexToken, mock.Anything, tokenCIDs[2], mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexToken, mock.Anything, tokenCIDs[0], mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexToken, mock.Anything, tokenCIDs[1], mock.Anything).Return(errors.New("child workflow error"))
+	s.env.OnWorkflow(s.coreWorkflows.IndexToken, mock.Anything, tokenCIDs[2], mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokens, tokenCIDs, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokens, tokenCIDs, nil)
 
 	// Verify workflow completed with error (fails when any child workflow fails)
 	s.True(s.env.IsWorkflowCompleted())
@@ -836,7 +836,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Success() {
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.queryable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		// Verify it's a webhook event with correct event type
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingQueryable
@@ -845,13 +845,13 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Success() {
 	})).Return(nil)
 
 	// Mock metadata child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock provenance child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -865,7 +865,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_Blacklisted() {
 	s.blacklist.EXPECT().IsTokenCIDBlacklisted(tokenCID).Return(true)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully (skipped due to blacklist)
 	s.True(s.env.IsWorkflowCompleted())
@@ -889,7 +889,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ActivityError() {
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -910,7 +910,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ChildWorkflowStartFailure_N
 
 	// Mock metadata child workflow to fail - should not fail parent workflow
 	var workflowCallCount int
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
 		func(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 			workflowCallCount++
 			return testsuite.ErrMockStartChildWorkflowFailed
@@ -918,13 +918,13 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ChildWorkflowStartFailure_N
 	)
 
 	// Mock provenance child workflow to fail - should not fail parent workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(testsuite.ErrMockStartChildWorkflowFailed)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(testsuite.ErrMockStartChildWorkflowFailed)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully (child workflow failures are non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -944,7 +944,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFail
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		// Verify it's a webhook event with correct event type
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingQueryable
@@ -953,11 +953,11 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFail
 	})).Return(nil)
 
 	// Mock metadata child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock provenance child workflow to fail - should not fail parent workflow
 	var workflowCallCount int
-	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(
 		func(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 			workflowCallCount++
 			return testsuite.ErrMockStartChildWorkflowFailed
@@ -965,7 +965,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ProvenanceWorkflowStartFail
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully (provenance failure is non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -986,15 +986,15 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_WithOwner_SkipsFull
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, &address).Return(nil)
 
 	// Mock metadata child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, &address).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, &address).Return(nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// DO NOT mock IndexTokenProvenances - it should not be called for ERC1155 with owner
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, &address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, &address)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -1011,16 +1011,16 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_WithoutOwner_RunsFu
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, mock.Anything).Return(nil)
 
 	// Mock metadata child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock provenance child workflow - should be called for ERC1155 without owner
-	s.env.OnWorkflow(s.workerCore.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenProvenances, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, nil)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, nil)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -1038,7 +1038,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_TokenNotFoundOnChain_Gracef
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, &address).Return(domain.ErrTokenNotFoundOnChain)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, &address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, &address)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -1056,7 +1056,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_ContractUnreachable
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, &address).Return(domain.ErrContractUnreachable)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, &address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, &address)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -1074,7 +1074,7 @@ func (s *IndexTokenWorkflowTestSuite) TestIndexToken_ERC1155_BalanceIsNotAPositi
 	s.env.OnActivity(s.executor.IndexTokenWithMinimalProvenancesByTokenCID, mock.Anything, tokenCID, &address).Return(domain.ErrBalanceIsNotAPositiveNumericValue)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexToken, tokenCID, &address)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexToken, tokenCID, &address)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())

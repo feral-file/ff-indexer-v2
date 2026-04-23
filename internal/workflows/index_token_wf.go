@@ -17,7 +17,7 @@ import (
 )
 
 // IndexTokenMint processes a token mint event
-func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (w *coreWorkflows) IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error {
 	logger.InfoWf(ctx, "Processing token mint event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
@@ -86,7 +86,7 @@ func (w *workerCore) IndexTokenMint(ctx workflow.Context, event *domain.Blockcha
 }
 
 // IndexTokenTransfer processes a token transfer event
-func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (w *coreWorkflows) IndexTokenTransfer(ctx workflow.Context, event *domain.BlockchainEvent) error {
 	logger.InfoWf(ctx, "Processing token transfer event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
@@ -183,7 +183,7 @@ func (w *workerCore) IndexTokenTransfer(ctx workflow.Context, event *domain.Bloc
 }
 
 // IndexTokenBurn processes a token burn event
-func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (w *coreWorkflows) IndexTokenBurn(ctx workflow.Context, event *domain.BlockchainEvent) error {
 	logger.InfoWf(ctx, "Processing token burn event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
@@ -248,7 +248,7 @@ func (w *workerCore) IndexTokenBurn(ctx workflow.Context, event *domain.Blockcha
 }
 
 // IndexTokenFromEvent indexes metadata and full provenances (provenance events and balances) for a token
-func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (w *coreWorkflows) IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error {
 	logger.InfoWf(ctx, "Starting full token indexing",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
@@ -341,7 +341,7 @@ func (w *workerCore) IndexTokenFromEvent(ctx workflow.Context, event *domain.Blo
 
 // IndexTokens indexes multiple tokens in chunks
 // If address is provided, uses address-specific indexing for ERC1155 tokens
-func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
+func (w *coreWorkflows) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 	logger.InfoWf(ctx, "Starting batch token indexing",
 		zap.Int("count", len(tokenCIDs)),
 		zap.String("address", types.SafeString(address)),
@@ -451,7 +451,7 @@ func (w *workerCore) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenC
 // IndexToken indexes a single token (metadata and provenances)
 // address is the address that triggered the indexing operation
 // If nil, the indexing operation was not triggered by a specific address
-func (w *workerCore) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
+func (w *coreWorkflows) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 	logger.InfoWf(ctx, "Starting token indexing",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.String("address", types.SafeString(address)),

@@ -20,7 +20,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
-	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
 
 // IndexMetadataWorkflowTestSuite is the test suite for metadata workflow tests
@@ -33,8 +32,8 @@ type IndexMetadataWorkflowTestSuite struct {
 	executor         *mocks.MockCoreExecutor
 	blacklist        *mocks.MockBlacklistRegistry
 	temporalWorkflow *mocks.MockWorkflow
-	workerCore       workflows.WorkerCore
-	workerMedia      workflowsmedia.Worker
+	coreWorkflows    workflows.CoreWorkflows
+	mediaWorkflows   workflows.MediaWorkflows
 }
 
 // SetupTest is called before each test
@@ -49,7 +48,7 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
 	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
-	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
@@ -57,7 +56,7 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 		MediaEnabled:                 true,
 		MediaTaskQueue:               "media-task-queue",
 	}, s.blacklist, s.temporalWorkflow)
-	s.workerMedia = workflowsmedia.NewWorker(mocks.NewMockMediaExecutor(s.ctrl))
+	s.mediaWorkflows = workflows.NewMediaWorkflows(mocks.NewMockMediaExecutor(s.ctrl))
 }
 
 // TearDownTest is called after each test
@@ -91,10 +90,10 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_Success() {
 	s.env.OnActivity(s.executor.CreateMetadataUpdate, mock.Anything, event).Return(nil)
 
 	// Mock child workflow IndexTokenMetadata
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMetadataUpdate, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexMetadataUpdate, event)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -123,7 +122,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_CreateMetadataU
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMetadataUpdate, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexMetadataUpdate, event)
 
 	// Verify workflow completed with error
 	s.True(s.env.IsWorkflowCompleted())
@@ -150,7 +149,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_ChildWorkflowSt
 	s.env.OnActivity(s.executor.CreateMetadataUpdate, mock.Anything, event).Return(nil)
 
 	// Mock child workflow to fail at start
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
 		func(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
 			childWorkflowCallCount++
 			return testsuite.ErrMockStartChildWorkflowFailed
@@ -158,7 +157,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_ChildWorkflowSt
 	)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMetadataUpdate, event)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexMetadataUpdate, event)
 
 	// Verify workflow completed with error (it returns the error)
 	s.True(s.env.IsWorkflowCompleted())
@@ -195,7 +194,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutE
 	}, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		// Verify it's a webhook event with correct event type
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
@@ -204,10 +203,10 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutE
 	})).Return(nil)
 
 	// Mock media indexing child workflow - one per URL
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, "https://example.com/image.jpg").Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, "https://example.com/image.jpg").Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -222,7 +221,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaDisabled_Do
 		Image:       "https://example.com/image.jpg",
 	}
 
-	workerCore := workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+	coreWorkflows := workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
@@ -240,7 +239,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaDisabled_Do
 		IsViewable:  true,
 		HealthyURLs: []string{normalizedMetadata.Image},
 	}, nil)
-	s.env.OnWorkflow(workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
 		}
@@ -248,14 +247,14 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaDisabled_Do
 	})).Return(nil)
 
 	mediaWorkflowTriggered := false
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, normalizedMetadata.Image).Return(
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, normalizedMetadata.Image).Return(
 		func(ctx workflow.Context, url string) error {
 			mediaWorkflowTriggered = true
 			return nil
 		},
 	).Maybe()
 
-	s.env.ExecuteWorkflow(workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
@@ -291,7 +290,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnha
 	}, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
 		}
@@ -299,11 +298,11 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnha
 	})).Return(nil)
 
 	// Mock media indexing child workflow - one per URL
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, metadataImageURL).Return(nil)
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, enhancedImageURL).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, metadataImageURL).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, enhancedImageURL).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -336,7 +335,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataErr
 	}, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
 		}
@@ -344,7 +343,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataErr
 	})).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed without error
 	s.True(s.env.IsWorkflowCompleted())
@@ -379,13 +378,13 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_EnhancementError
 	}, nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Mock media indexing child workflow - one per URL
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully despite enhancement error (non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -416,13 +415,13 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaWorkflowSta
 	}, nil)
 
 	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
 
 	// Mock media indexing child workflow to fail at start - should not fail parent workflow
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, mock.Anything).Return(testsuite.ErrMockStartChildWorkflowFailed)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, mock.Anything).Return(testsuite.ErrMockStartChildWorkflowFailed)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully despite media workflow start failure (non-fatal)
 	s.True(s.env.IsWorkflowCompleted())
@@ -460,7 +459,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsHealthy
 	}, nil)
 
 	// Mock webhook notification workflow - should be triggered because animation is healthy
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
 		}
@@ -468,11 +467,11 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsHealthy
 	})).Return(nil)
 
 	// Mock media indexing child workflow - one per URL
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, imageURL).Return(nil)
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, animationURL).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, imageURL).Return(nil)
+	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, animationURL).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -506,7 +505,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsBroken_
 	}, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
 		}
@@ -516,7 +515,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsBroken_
 	// No media indexing workflow should be triggered since there are no healthy URLs
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully with unviewable webhook triggered
 	s.True(s.env.IsWorkflowCompleted())
@@ -544,7 +543,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NoMediaURLs() {
 		})).Return(false, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
 		}
@@ -554,7 +553,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NoMediaURLs() {
 	// No media workflow should be triggered
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -577,7 +576,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NilMetadata() {
 		})).Return(false, nil)
 
 	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
 		}
@@ -585,7 +584,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NilMetadata() {
 	})).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully (gracefully handles nil metadata)
 	s.True(s.env.IsWorkflowCompleted())
@@ -618,7 +617,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_UnviewableEvent_
 
 	// Mock webhook notification workflow - should be triggered with token.indexing.unviewable event
 	var webhookTriggered bool
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
+	s.env.OnWorkflow(s.coreWorkflows.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
 		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
 			if webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable {
 				webhookTriggered = true
@@ -631,7 +630,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_UnviewableEvent_
 	// No media indexing workflow should be triggered since there are no healthy URLs
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenMetadata, tokenCID, (*string)(nil))
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -654,11 +653,11 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_Success
 
 	// Mock child workflows for each token
 	for _, tokenCID := range tokenCIDs {
-		s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+		s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexMultipleTokensMetadata, tokenCIDs)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -669,7 +668,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_EmptyLi
 	tokenCIDs := []domain.TokenCID{}
 
 	// Execute the workflow with empty list
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexMultipleTokensMetadata, tokenCIDs)
 
 	// Verify workflow completed successfully (no-op)
 	s.True(s.env.IsWorkflowCompleted())
@@ -684,12 +683,12 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_ChildWo
 	}
 
 	// Mock child workflows - first one fails to start
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[0], (*string)(nil)).Return(testsuite.ErrMockStartChildWorkflowFailed)
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[1], (*string)(nil)).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[2], (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCIDs[0], (*string)(nil)).Return(testsuite.ErrMockStartChildWorkflowFailed)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCIDs[1], (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCIDs[2], (*string)(nil)).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexMultipleTokensMetadata, tokenCIDs)
 
 	// Verify workflow completed with error
 	// The current implementation returns error when child workflow fails to start
@@ -703,10 +702,10 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_SingleT
 	}
 
 	// Mock child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[0], (*string)(nil)).Return(nil)
+	s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCIDs[0], (*string)(nil)).Return(nil)
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexMultipleTokensMetadata, tokenCIDs)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())
@@ -727,11 +726,11 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_LargeNu
 
 	// Mock child workflows for each token
 	for _, tokenCID := range tokenCIDs {
-		s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
+		s.env.OnWorkflow(s.coreWorkflows.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
 	}
 
 	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
+	s.env.ExecuteWorkflow(s.coreWorkflows.IndexMultipleTokensMetadata, tokenCIDs)
 
 	// Verify workflow completed successfully
 	s.True(s.env.IsWorkflowCompleted())

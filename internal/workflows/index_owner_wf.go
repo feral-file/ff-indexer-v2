@@ -23,7 +23,7 @@ import (
 // IndexTokenOwner indexes all tokens held by a single address
 // This is the parent workflow that delegates to blockchain-specific child workflows
 // It manages the job lifecycle (creation, completion, failure, cancellation)
-func (w *workerCore) IndexTokenOwner(ctx workflow.Context, address string) error {
+func (w *coreWorkflows) IndexTokenOwner(ctx workflow.Context, address string) error {
 	logger.InfoWf(ctx, "Starting token owner indexing",
 		zap.String("address", address),
 	)
@@ -325,7 +325,7 @@ func findLastCompleteBlockIndexByTarget(tokens []domain.TokenWithBlock, targetCo
 // IndexTezosTokenOwner indexes all tokens held by a Tezos address
 // Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
 // jobID is optional and used for job status tracking during quota pauses
-func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string, jobID *string) error {
+func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address string, jobID *string) error {
 	logger.InfoWf(ctx, "Starting Tezos token owner indexing",
 		zap.String("address", address),
 		zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
@@ -734,7 +734,7 @@ func (w *workerCore) IndexTezosTokenOwner(ctx workflow.Context, address string, 
 
 // IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
 // Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
-func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address string, jobID *string) error {
+func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address string, jobID *string) error {
 	logger.InfoWf(ctx, "Starting Ethereum token owner indexing",
 		zap.String("address", address),
 		zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
@@ -1170,7 +1170,7 @@ func (w *workerCore) IndexEthereumTokenOwner(ctx workflow.Context, address strin
 
 // indexTokenChunk indexes a chunk of tokens using the IndexTokens workflow
 // For owner-specific indexing, pass the address to enable efficient ERC1155 indexing
-func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
+func (w *coreWorkflows) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
 	if len(tokenCIDs) == 0 {
 		return nil
 	}
@@ -1198,7 +1198,7 @@ func (w *workerCore) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.To
 // - shouldContinue=false means quota exhausted, need to sleep+continue-as-new
 // - actualMinBlock/actualMaxBlock indicate the actual block range of tokens that were indexed, nil means nothing was indexed
 // - quotaResetAt is the time when quota will reset (only valid when shouldContinue=false)
-func (w *workerCore) processChunkWithQuota(
+func (w *coreWorkflows) processChunkWithQuota(
 	ctx workflow.Context,
 	address string,
 	chainID domain.Chain,
@@ -1345,7 +1345,7 @@ func (w *workerCore) processChunkWithQuota(
 // handleQuotaExhausted sleeps until quota reset and returns error to trigger continue-as-new
 // Returns temporal.NewContinueAsNewError to signal the workflow should restart
 // jobID is optional and used for updating job status during quota pauses
-func (w *workerCore) handleQuotaExhausted(ctx workflow.Context, address string, quotaResetAt time.Time, jobID *string) error {
+func (w *coreWorkflows) handleQuotaExhausted(ctx workflow.Context, address string, quotaResetAt time.Time, jobID *string) error {
 	if !w.config.BudgetedIndexingModeEnabled {
 		return nil // No quota management if budgeted mode is disabled
 	}
