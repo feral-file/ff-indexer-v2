@@ -5901,9 +5901,138 @@ func testGetTokenChangesByOwnerSinceCheckpoint(t *testing.T, store Store) {
 }
 
 // =============================================================================
+// Test: Job queue
+// =============================================================================
+
+func testJobQueue(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("enqueue and get", func(t *testing.T) {
+		j, created, err := store.EnqueueJob(ctx, EnqueueJobInput{
+			Queue:   "token_index",
+			Kind:    "IndexToken",
+			Payload: []byte(`[1,2]`),
+		})
+		require.NoError(t, err)
+		require.True(t, created)
+		assert.Equal(t, schema.JobStatusPending, j.Status)
+		loaded, err := store.GetJob(ctx, j.ID)
+		require.NoError(t, err)
+		assert.Equal(t, j.ID, loaded.ID)
+		assert.Equal(t, "IndexToken", loaded.Kind)
+	})
+
+	t.Run("unique key dedup", func(t *testing.T) {
+		uk := "dedup-key-1"
+		a, c1, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: "q1", Kind: "K1", UniqueKey: &uk, Payload: []byte(`[]`)})
+		require.NoError(t, err)
+		require.True(t, c1)
+		b, c2, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: "q1", Kind: "K1", UniqueKey: &uk, Payload: []byte(`[]`)})
+		require.NoError(t, err)
+		require.False(t, c2)
+		assert.Equal(t, a.ID, b.ID)
+	})
+
+	t.Run("run_after blocks claim until due", func(t *testing.T) {
+		future := time.Now().UTC().Add(2 * time.Hour)
+		_, created, err := store.EnqueueJob(ctx, EnqueueJobInput{
+			Queue:    "q_delay",
+			Kind:     "K",
+			Payload:  []byte(`{}`),
+			RunAfter: &future,
+		})
+		require.NoError(t, err)
+		require.True(t, created)
+		claimed, err := store.ClaimJobs(ctx, "q_delay", 5)
+		require.NoError(t, err)
+		assert.Empty(t, claimed)
+	})
+
+	t.Run("reschedule running job to pending with new run_after", func(t *testing.T) {
+		_, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: "q_rs", Kind: "K", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		claimed, err := store.ClaimJobs(ctx, "q_rs", 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		assert.Equal(t, schema.JobStatusRunning, claimed[0].Status)
+		next := time.Now().UTC().Add(5 * time.Minute)
+		require.NoError(t, store.RescheduleJob(ctx, claimed[0].ID, next))
+		after, err := store.GetJob(ctx, claimed[0].ID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.JobStatusPending, after.Status)
+		assert.Nil(t, after.StartedAt)
+		assert.WithinDuration(t, next, after.RunAfter, time.Second)
+	})
+
+	t.Run("sweep returns orphaned running to pending", func(t *testing.T) {
+		job, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: "q_sweep", Kind: "K", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		claimed, err := store.ClaimJobs(ctx, "q_sweep", 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		assert.Equal(t, schema.JobStatusRunning, claimed[0].Status)
+		n, err := store.SweepOrphanedJobs(ctx, "q_sweep")
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), n)
+		after, err := store.GetJob(ctx, job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.JobStatusPending, after.Status)
+	})
+
+	t.Run("request cancel and list in-flight with cancel flag", func(t *testing.T) {
+		_, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: "q_x", Kind: "K", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		claimed, err := store.ClaimJobs(ctx, "q_x", 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		id := claimed[0].ID
+		require.NoError(t, store.RequestJobCancel(ctx, id))
+		list, err := store.ListInFlightJobsWithCancelRequest(ctx, "q_x", []int64{id, 99999})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, id, list[0].ID)
+		assert.True(t, list[0].CancelRequested)
+	})
+
+	t.Run("claim multiple pending in one batch", func(t *testing.T) {
+		queue := "q_claim_multi_" + t.Name()
+		_, c1, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: queue, Kind: "A", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		require.True(t, c1)
+		_, c2, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: queue, Kind: "B", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		require.True(t, c2)
+		claimed, err := store.ClaimJobs(ctx, queue, 2)
+		require.NoError(t, err)
+		require.Len(t, claimed, 2)
+		assert.NotEqual(t, claimed[0].ID, claimed[1].ID)
+		assert.Equal(t, schema.JobStatusRunning, claimed[0].Status)
+		assert.Equal(t, schema.JobStatusRunning, claimed[1].Status)
+	})
+
+	t.Run("advisory lock rejected on second connection while first holds lock", func(t *testing.T) {
+		queue := "job_lock_" + t.Name()
+		acq1, rel1, err := store.AcquireJobQueueLock(ctx, queue)
+		require.NoError(t, err)
+		require.True(t, acq1)
+		require.NotNil(t, rel1)
+		acq2, rel2, err := store.AcquireJobQueueLock(ctx, queue)
+		require.NoError(t, err)
+		assert.False(t, acq2)
+		rel2()
+		rel1()
+		acq3, rel3, err := store.AcquireJobQueueLock(ctx, queue)
+		require.NoError(t, err)
+		assert.True(t, acq3)
+		rel3()
+	})
+}
+
+// =============================================================================
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
 
+// RunStoreTests runs all store contract subtests against initDB.
 func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func(t *testing.T)) {
 	tests := []struct {
 		name string
@@ -5936,6 +6065,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"AddressIndexingJobs", testAddressIndexingJobs},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
+		{"JobQueue", testJobQueue},
 	}
 
 	for _, tt := range tests {

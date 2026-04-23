@@ -215,6 +215,18 @@ type CreateAddressIndexingJobInput struct {
 	WorkflowRunID *string // Optional, may be nil initially
 }
 
+// EnqueueJobInput is the data required to create a `jobs` row (postgres-backed work queue).
+// Payload is JSON (typically a JSON array of raw handler arguments) and is stored in `payload` JSONB.
+// If UniqueKey is non-nil, an active duplicate (same queue, kind, and key while status is pending or running)
+// causes EnqueueJob to return the existing row and created=false.
+type EnqueueJobInput struct {
+	Queue     string
+	Kind      string
+	Payload   []byte
+	UniqueKey *string
+	RunAfter  *time.Time
+}
+
 // QuotaInfo represents the current quota status for an address
 type QuotaInfo struct {
 	RemainingQuota     int       // Tokens remaining in current quota period
@@ -436,4 +448,52 @@ type Store interface {
 	// GetTokenCountsByAddress retrieves total token counts for an address
 	// Returns both total tokens indexed and total tokens viewable (with metadata or enrichment)
 	GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*TokenCountsByAddress, error)
+
+	// =============================================================================
+	// Job queue (Postgres)
+	// =============================================================================
+
+	// EnqueueJob inserts a new `jobs` row, or when UniqueKey is set and a matching active job exists, returns
+	// the existing row with created=false. The partial unique index enforces at most one active job per
+	// (queue, kind, unique_key). Created is true when a new row was inserted.
+	EnqueueJob(ctx context.Context, input EnqueueJobInput) (job *schema.Job, created bool, err error)
+	// GetJob loads a `jobs` row by primary key.
+	GetJob(ctx context.Context, id int64) (*schema.Job, error)
+	// ClaimJobs claims up to `limit` pending work items for a queue, ordered by run_after then id, using
+	// FOR UPDATE SKIP LOCKED in a CTE, then flips their status to running and sets started_at.
+	//
+	// Reason: Concurrency safety without a lease table—each worker only sees unclaimed rows.
+	// Trade-offs: Claim latency is periodic (poll) rather than push; v1 keeps this for simplicity.
+	// Constraints: Only rows with status=pending and run_after <= now() are eligible. limit <= 0 returns none.
+	ClaimJobs(ctx context.Context, queue string, limit int) ([]*schema.Job, error)
+	// MarkJobSucceeded marks a running job as succeeded and sets finished_at.
+	MarkJobSucceeded(ctx context.Context, id int64) error
+	// MarkJobFailed marks a running job as failed with a terminal last_error and sets finished_at.
+	MarkJobFailed(ctx context.Context, id int64, lastErr string) error
+	// RescheduleJob returns a running job to pending, clears started_at, and sets run_after (e.g. quota reset).
+	// Only rows still in status=running are updated.
+	RescheduleJob(ctx context.Context, id int64, runAfter time.Time) error
+	// RequestJobCancel sets cancel_requested for operators or API-initiated stop; the worker applies it to in-flight work.
+	RequestJobCancel(ctx context.Context, id int64) error
+	// MarkJobCanceled sets status=canceled and finished_at when the handler observes cancelation.
+	MarkJobCanceled(ctx context.Context, id int64) error
+	// SweepOrphanedJobs returns running jobs in a queue to pending at worker startup (crash recovery) when no
+	// per-job heartbeat/lease is stored.
+	//
+	// Reason: A running row without a live worker must not block the queue.
+	// Trade-offs: A slow shutdown can briefly duplicate work if a new worker starts before the old one exits, but
+	// v1 uses unique keys and idempotent flows where that matters; otherwise duplicate execution is a known ops edge.
+	// Constraints: Only rows with the given queue and status=running are updated. Returns the number of rows changed.
+	SweepOrphanedJobs(ctx context.Context, queue string) (int64, error)
+	// AcquireJobQueueLock tries to take a session-level advisory lock for this queue on a single dedicated connection.
+	// If acquired, the returned release function unlocks and closes the connection. If not acquired, callers
+	// should not run another worker for the same queue in this process.
+	//
+	// Reason: Excludes duplicate worker processes on the same queue while allowing multiple queues across connections.
+	// Trade-offs: Lock is per-database cluster and process-cooperative (not a cross-datacenter global mutex).
+	// Constraints: The release function must be called exactly once; lock scope matches hashtext('jobs_worker:'||queue) in SQL.
+	AcquireJobQueueLock(ctx context.Context, queue string) (acquired bool, release func(), err error)
+	// ListInFlightJobsWithCancelRequest returns running jobs in the given queue, limited to the provided ids, that
+	// have cancel_requested=true. Used to cancel in-flight handler contexts in the worker.
+	ListInFlightJobsWithCancelRequest(ctx context.Context, queue string, ids []int64) ([]*schema.Job, error)
 }

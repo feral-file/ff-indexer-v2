@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"

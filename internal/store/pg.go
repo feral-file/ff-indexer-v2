@@ -8,9 +8,11 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/plugin/dbresolver"
@@ -2944,4 +2946,297 @@ func getEnrichmentChangedFields(old, new *schema.EnrichmentSource) []string {
 		changed = append(changed, "artists")
 	}
 	return changed
+}
+
+// =============================================================================
+// Job queue (Postgres)
+// =============================================================================
+
+// isPostgresUniqueViolation reports whether err is a PostgreSQL unique-violation (SQLSTATE 23505), including
+// wrapped driver errors, with a string fallback for rare wrap shapes.
+func isPostgresUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pe *pq.Error
+	if errors.As(err, &pe) && pe.Code == "23505" {
+		return true
+	}
+	return strings.Contains(err.Error(), "SQLSTATE 23505")
+}
+
+func (s *pgStore) fetchActiveJobByUniqueKey(ctx context.Context, queue, kind, uniqueKey string) (*schema.Job, error) {
+	var j schema.Job
+	err := s.db.WithContext(ctx).
+		Where("queue = ? AND kind = ? AND unique_key = ? AND status IN ?",
+			queue, kind, uniqueKey, []schema.JobStatus{schema.JobStatusPending, schema.JobStatusRunning}).
+		First(&j).Error
+	if err != nil {
+		return nil, err
+	}
+	return &j, nil
+}
+
+// EnqueueJob inserts a new row or returns the existing active row when a unique key collides.
+func (s *pgStore) EnqueueJob(ctx context.Context, input EnqueueJobInput) (*schema.Job, bool, error) {
+	if input.Queue == "" || input.Kind == "" {
+		return nil, false, fmt.Errorf("enqueue job: queue and kind are required")
+	}
+	payload := input.Payload
+	if len(payload) == 0 {
+		payload = []byte("{}")
+	}
+	var uniqueKey *string
+	if input.UniqueKey != nil && *input.UniqueKey != "" {
+		uniqueKey = input.UniqueKey
+	}
+	runAfter := time.Now().UTC()
+	if input.RunAfter != nil {
+		runAfter = input.RunAfter.UTC()
+	}
+	job := &schema.Job{
+		Queue:     input.Queue,
+		Kind:      input.Kind,
+		Payload:   datatypes.JSON(payload),
+		Status:    schema.JobStatusPending,
+		UniqueKey: uniqueKey,
+		RunAfter:  runAfter,
+	}
+	// A failed INSERT in an outer GORM/Postgres transaction would abort the whole transaction. When a
+	// unique key is present, use gorm's nested transaction (savepoint) so a duplicate is isolated and we
+	// can load the pre-existing row without leaving the store's session aborted.
+	if uniqueKey != nil {
+		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return tx.Create(job).Error
+		})
+		if err == nil {
+			return job, true, nil
+		}
+		if isPostgresUniqueViolation(err) {
+			existing, fe := s.fetchActiveJobByUniqueKey(ctx, input.Queue, input.Kind, *uniqueKey)
+			if fe != nil {
+				return nil, false, fe
+			}
+			return existing, false, nil
+		}
+		return nil, false, err
+	}
+	if err := s.db.WithContext(ctx).Create(job).Error; err != nil {
+		return nil, false, err
+	}
+	return job, true, nil
+}
+
+// GetJob loads a job by id.
+func (s *pgStore) GetJob(ctx context.Context, id int64) (*schema.Job, error) {
+	var j schema.Job
+	err := s.db.WithContext(ctx).First(&j, "id = ?", id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return nil, err
+	}
+	return &j, nil
+}
+
+// ClaimJobs claims pending, due jobs and marks them running.
+func (s *pgStore) ClaimJobs(ctx context.Context, queue string, limit int) ([]*schema.Job, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	const claimSQL = `
+WITH picked AS (
+	SELECT id
+	FROM jobs
+	WHERE queue = ?
+	  AND status = 'pending'
+	  AND run_after <= ?
+	ORDER BY run_after ASC, id ASC
+	FOR UPDATE SKIP LOCKED
+	LIMIT ?
+)
+UPDATE jobs
+SET
+	status = 'running',
+	started_at = ?,
+	updated_at = ?
+FROM picked
+WHERE jobs.id = picked.id
+RETURNING jobs.id, jobs.queue, jobs.kind, jobs.payload, jobs.status, jobs.unique_key, jobs.run_after, jobs.last_error, jobs.cancel_requested, jobs.created_at, jobs.updated_at, jobs.started_at, jobs.finished_at
+`
+	var rows []schema.Job
+	if err := s.db.WithContext(ctx).Raw(claimSQL, queue, now, limit, now, now).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("claim jobs: %w", err)
+	}
+	out := make([]*schema.Job, 0, len(rows))
+	for i := range rows {
+		out = append(out, &rows[i])
+	}
+	return out, nil
+}
+
+// MarkJobSucceeded marks a running job as terminal success.
+func (s *pgStore) MarkJobSucceeded(ctx context.Context, id int64) error {
+	now := time.Now().UTC()
+	result := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
+		Updates(map[string]any{
+			"status":      schema.JobStatusSucceeded,
+			"finished_at": now,
+			"updated_at":  now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// MarkJobFailed marks a running job as failed with a message.
+func (s *pgStore) MarkJobFailed(ctx context.Context, id int64, lastErr string) error {
+	now := time.Now().UTC()
+	result := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
+		Updates(map[string]any{
+			"status":      schema.JobStatusFailed,
+			"last_error":  lastErr,
+			"finished_at": now,
+			"updated_at":  now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// RescheduleJob moves a running job back to pending with a new run_after.
+func (s *pgStore) RescheduleJob(ctx context.Context, id int64, runAfter time.Time) error {
+	runAfter = runAfter.UTC()
+	now := time.Now().UTC()
+	result := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
+		Updates(map[string]any{
+			"status":     schema.JobStatusPending,
+			"run_after":  runAfter,
+			"started_at": gorm.Expr("NULL"),
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// RequestJobCancel sets cancel_requested for a job row.
+func (s *pgStore) RequestJobCancel(ctx context.Context, id int64) error {
+	now := time.Now().UTC()
+	result := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("id = ? AND status IN ?", id, []schema.JobStatus{schema.JobStatusPending, schema.JobStatusRunning}).
+		Updates(map[string]any{
+			"cancel_requested": true,
+			"updated_at":       now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// MarkJobCanceled sets status=canceled for a still-running job.
+func (s *pgStore) MarkJobCanceled(ctx context.Context, id int64) error {
+	now := time.Now().UTC()
+	result := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
+		Updates(map[string]any{
+			"status":      schema.JobStatusCanceled,
+			"finished_at": now,
+			"updated_at":  now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// SweepOrphanedJobs resets running jobs in a queue to pending (crash recovery).
+func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string) (int64, error) {
+	now := time.Now().UTC()
+	result := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("queue = ? AND status = ?", queue, schema.JobStatusRunning).
+		Updates(map[string]any{
+			"status":     schema.JobStatusPending,
+			"started_at": gorm.Expr("NULL"),
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
+// AcquireJobQueueLock tries a session advisory lock (one worker per process per queue) on a dedicated connection.
+func (s *pgStore) AcquireJobQueueLock(ctx context.Context, queue string) (bool, func(), error) {
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return false, nil, err
+	}
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+	noop := func() {}
+	var locked bool
+	err = conn.QueryRowContext(ctx,
+		`SELECT pg_try_advisory_lock((hashtext('jobs_worker:' || $1::text))::bigint)`,
+		queue,
+	).Scan(&locked)
+	if err != nil {
+		_ = conn.Close() //nolint:errcheck // best-effort close after error
+		return false, noop, err
+	}
+	if !locked {
+		_ = conn.Close() //nolint:errcheck // best-effort after try-lock
+		return false, noop, nil
+	}
+	release := func() {
+		unlockCtx := context.WithoutCancel(ctx)
+		var ok bool
+		_ = conn.QueryRowContext(unlockCtx,
+			`SELECT pg_advisory_unlock((hashtext('jobs_worker:' || $1::text))::bigint)`,
+			queue,
+		).Scan(&ok) //nolint:errcheck // best-effort unlock at shutdown
+		_ = conn.Close() //nolint:errcheck
+	}
+	return true, release, nil
+}
+
+// ListInFlightJobsWithCancelRequest returns running jobs in the set that are flagged for cancel.
+func (s *pgStore) ListInFlightJobsWithCancelRequest(ctx context.Context, queue string, ids []int64) ([]*schema.Job, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var jobs []*schema.Job
+	err := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("queue = ? AND status = ? AND cancel_requested = ? AND id IN ?", queue, schema.JobStatusRunning, true, ids).
+		Find(&jobs).Error
+	if err != nil {
+		return nil, err
+	}
+	return jobs, nil
 }

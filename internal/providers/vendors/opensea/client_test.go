@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
