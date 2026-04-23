@@ -1,0 +1,267 @@
+package jobs_test
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+
+	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+)
+
+func TestNewWorker_Panics(t *testing.T) {
+	t.Parallel()
+	st := mocks.NewMockStore(gomock.NewController(t))
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	require.Panics(t, func() { jobs.NewWorker(nil, reg, jobs.WorkerConfig{Queue: "q"}) })
+	require.Panics(t, func() { jobs.NewWorker(st, nil, jobs.WorkerConfig{Queue: "q"}) })
+	require.Panics(t, func() { jobs.NewWorker(st, reg, jobs.WorkerConfig{}) })
+}
+
+func TestWorker_Run_NilContext(t *testing.T) {
+	t.Parallel()
+	st := mocks.NewMockStore(gomock.NewController(t))
+	w := jobs.NewWorker(st, jobs.NewRegistry(adapter.NewJSON()), jobs.WorkerConfig{Queue: "q"})
+	require.Error(t, w.Run(nil)) //nolint:staticcheck // intentional: exercise early ctx validation
+}
+
+func TestWorker_Run_LockNotAcquired(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	ctx := context.Background()
+	st.EXPECT().AcquireJobQueueLock(ctx, "tok").Return(false, func() {}, nil)
+	// Sweep must not run when the lock is not held.
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), gomock.Any()).Times(0)
+
+	w := jobs.NewWorker(st, jobs.NewRegistry(adapter.NewJSON()), jobs.WorkerConfig{Queue: "tok"})
+	require.NoError(t, w.Run(ctx))
+}
+
+func TestWorker_Run_AcquireError(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	ctx := context.Background()
+	want := errors.New("lock err")
+	st.EXPECT().AcquireJobQueueLock(ctx, "tok").Return(false, nil, want)
+	w := jobs.NewWorker(st, jobs.NewRegistry(adapter.NewJSON()), jobs.WorkerConfig{Queue: "tok"})
+	require.ErrorIs(t, w.Run(ctx), want)
+}
+
+func TestWorker_Run_SweepError(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	ctx := context.Background()
+	want := errors.New("sweep")
+	st.EXPECT().AcquireJobQueueLock(ctx, "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(ctx, "tok").Return(int64(0), want)
+	w := jobs.NewWorker(st, jobs.NewRegistry(adapter.NewJSON()), jobs.WorkerConfig{Queue: "tok"})
+	require.ErrorIs(t, w.Run(ctx), want)
+}
+
+func TestWorker_Run_ClaimsJobAndMarksSucceeded(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	reg.Register("H", func(ctx context.Context) error { return nil })
+
+	j := &schema.Job{ID: 1, Kind: "H", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	done := make(chan struct{})
+	st.EXPECT().MarkJobSucceeded(gomock.Any(), int64(1)).Return(nil).Do(func(context.Context, int64) { close(done) })
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: 50 * time.Millisecond, BatchSize: 4, CancelInterval: time.Hour})
+	errC := goRun(w, ctx)
+	<-done
+	cancel()
+	require.NoError(t, <-errC)
+}
+
+// TestWorker_Run_HandlerReschedules covers ErrReschedule → RescheduleJob on the public Run path.
+func TestWorker_Run_HandlerReschedules(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	when := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	reg.Register("R", func(context.Context) error { return jobs.ErrReschedule(when) })
+
+	j := &schema.Job{ID: 2, Kind: "R", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	done := make(chan struct{})
+	st.EXPECT().RescheduleJob(gomock.Any(), int64(2), gomock.Any()).Return(nil).Do(func(context.Context, int64, time.Time) { close(done) })
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: 50 * time.Millisecond, BatchSize: 4, CancelInterval: time.Hour})
+	errC := goRun(w, ctx)
+	<-done
+	cancel()
+	require.NoError(t, <-errC)
+}
+
+// TestWorker_Run_HandlerFails covers non-reschedule errors → MarkJobFailed.
+func TestWorker_Run_HandlerFails(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	reg.Register("E", func(context.Context) error { return errors.New("handler boom") })
+
+	j := &schema.Job{ID: 3, Kind: "E", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	done := make(chan struct{})
+	st.EXPECT().MarkJobFailed(gomock.Any(), int64(3), "handler boom").Return(nil).Do(func(context.Context, int64, string) { close(done) })
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: 50 * time.Millisecond, BatchSize: 4, CancelInterval: time.Hour})
+	errC := goRun(w, ctx)
+	<-done
+	cancel()
+	require.NoError(t, <-errC)
+}
+
+// TestWorker_Run_CancelObserverMarksCanceled exercises cancel tick + ListInFlight with cancel_requested → context cancel → MarkJobCanceled.
+func TestWorker_Run_CancelObserverMarksCanceled(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	started := make(chan struct{})
+	reg.Register("B", func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+
+	j := &schema.Job{ID: 4, Kind: "B", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, ids []int64) ([]*schema.Job, error) {
+			if len(ids) == 0 {
+				return nil, nil
+			}
+			// In-flight: report cancel so the worker cancels handler ctx.
+			return []*schema.Job{{ID: ids[0], CancelRequested: true}}, nil
+		},
+	)
+	out := make(chan struct{})
+	st.EXPECT().GetJob(gomock.Any(), int64(4)).Return(&schema.Job{ID: 4, CancelRequested: true}, nil).AnyTimes()
+	st.EXPECT().MarkJobCanceled(gomock.Any(), int64(4)).Return(nil).Do(func(context.Context, int64) { close(out) })
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: time.Hour, BatchSize: 4, CancelInterval: 20 * time.Millisecond})
+	errC := goRun(w, ctx)
+	<-started
+	<-out
+	cancel()
+	require.NoError(t, <-errC)
+}
+
+// TestWorker_Run_OnShutdownReschedules covers handler seeing context.Canceled from Run stopping → RescheduleJob.
+func TestWorker_Run_OnShutdownReschedules(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	started := make(chan struct{})
+	reg.Register("S", func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return context.Canceled
+	})
+
+	j := &schema.Job{ID: 5, Kind: "S", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	// ListInFlight: never return cancel for this test (user-initiated path not taken).
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	sched := make(chan struct{})
+	st.EXPECT().RescheduleJob(gomock.Any(), int64(5), gomock.Any()).Return(nil).Do(func(context.Context, int64, time.Time) { close(sched) })
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: time.Hour, BatchSize: 4, CancelInterval: time.Hour})
+	errC := goRun(w, ctx)
+	<-started
+	cancel()
+	<-sched
+	require.NoError(t, <-errC)
+}
+
+func goRun(w *jobs.Worker, ctx context.Context) <-chan error {
+	ch := make(chan error, 1)
+	go func() { ch <- w.Run(ctx) }()
+	return ch
+}
