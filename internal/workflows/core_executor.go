@@ -30,7 +30,7 @@ import (
 
 // CoreExecutor defines the interface for executing activities
 //
-//go:generate mockgen -source=core_executor.go -destination=../mocks/executor_core.go -package=mocks -mock_names=CoreExecutor=MockCoreExecutor
+//go:generate mockgen -source=core_executor.go -destination=../mocks/core_executor.go -package=mocks -mock_names=CoreExecutor=MockCoreExecutor
 type CoreExecutor interface {
 	// CheckTokenExists checks if a token exists in the database
 	CheckTokenExists(ctx context.Context, tokenCID domain.TokenCID) (bool, error)

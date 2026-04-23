@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
@@ -47,7 +48,6 @@ func registerWorkerCore(
 	base64Adapter := adapter.NewBase64()
 	ioAdapter := adapter.NewIO()
 	temporalActivityAdapter := adapter.NewActivity()
-	temporalWorkflowAdapter := adapter.NewWorkflow()
 
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
 
@@ -146,6 +146,8 @@ func registerWorkerCore(
 		urlChecker,
 		dataURIChecker)
 
+	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)
+
 	// Temporal worker: register workflows and activities on the token task queue.
 	sentryInterceptor := temporal.NewSentryActivityInterceptor()
 	temporalWorker := worker.New(
@@ -174,7 +176,7 @@ func registerWorkerCore(
 			MediaTaskQueue:                     cfg.Temporal.MediaTaskQueue,
 			BudgetedIndexingModeEnabled:        cfg.BudgetedIndexingEnabled,
 			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
-		}, blacklistRegistry, temporalWorkflowAdapter)
+		}, blacklistRegistry, jobQueue)
 
 	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenMint)
 	temporalWorker.RegisterWorkflow(coreWorkflows.IndexTokenTransfer)

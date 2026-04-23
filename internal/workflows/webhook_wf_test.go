@@ -27,12 +27,11 @@ type WebhookWorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
-	env              *testsuite.TestWorkflowEnvironment
-	ctrl             *gomock.Controller
-	executor         *mocks.MockCoreExecutor
-	blacklist        *mocks.MockBlacklistRegistry
-	temporalWorkflow *mocks.MockWorkflow
-	coreWorkflows    workflows.CoreWorkflows
+	env           *testsuite.TestWorkflowEnvironment
+	ctrl          *gomock.Controller
+	executor      *mocks.MockCoreExecutor
+	blacklist     *mocks.MockBlacklistRegistry
+	coreWorkflows workflows.CoreWorkflows
 }
 
 // webhookEventMatcher returns a function that matches webhook events
@@ -86,14 +85,13 @@ func (s *WebhookWorkflowTestSuite) SetupTest() {
 	s.ctrl = gomock.NewController(s.T())
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
-	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
 	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
 		TezosTokenSweepStartBlock:    0,
 		MediaTaskQueue:               "media-task-queue",
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 }
 
 // TearDownTest is called after each test
@@ -288,10 +286,6 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_Success() {
 	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
 		Return(client, nil)
 
-	// Mock GetExecutionID and GetRunID activities
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-	s.temporalWorkflow.EXPECT().GetRunID(gomock.Any()).Return("run-456")
-
 	// Mock CreateWebhookDeliveryRecord activity
 	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).
 		Return(uint64(1), nil)
@@ -428,10 +422,6 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_CreateDeliveryRecordError(
 	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
 		Return(client, nil)
 
-	// Mock GetExecutionID and GetRunID activities
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-	s.temporalWorkflow.EXPECT().GetRunID(gomock.Any()).Return("run-456")
-
 	// Mock CreateWebhookDeliveryRecord activity - database error
 	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).
 		Return(uint64(0), errors.New("database error"))
@@ -473,10 +463,6 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
 	// Mock GetWebhookClientByID activity
 	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
 		Return(client, nil)
-
-	// Mock GetExecutionID and GetRunID activities
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-	s.temporalWorkflow.EXPECT().GetRunID(gomock.Any()).Return("run-456")
 
 	// Mock CreateWebhookDeliveryRecord activity
 	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).

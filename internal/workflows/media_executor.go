@@ -20,7 +20,7 @@ import (
 
 // MediaExecutor defines the interface for executing media-related activities.
 //
-//go:generate mockgen -source=media_executor.go -destination=../mocks/executor_media.go -package=mocks -mock_names=MediaExecutor=MockMediaExecutor
+//go:generate mockgen -source=media_executor.go -destination=../mocks/media_executor.go -package=mocks -mock_names=MediaExecutor=MockMediaExecutor
 type MediaExecutor interface {
 	// IndexMediaFile processes a media file by downloading, uploading to storage, and storing metadata
 	IndexMediaFile(ctx context.Context, url string) error

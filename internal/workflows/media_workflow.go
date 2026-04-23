@@ -4,11 +4,13 @@ package workflows
 
 import (
 	"go.temporal.io/sdk/workflow"
+
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 )
 
 // MediaWorkflows defines the interface for processing media workflows.
 //
-//go:generate mockgen -source=media_workflow.go -destination=../mocks/worker_media.go -package=mocks -mock_names=MediaWorkflows=MockMediaWorkflows
+//go:generate mockgen -source=media_workflow.go -destination=../mocks/media_workflows.go -package=mocks -mock_names=MediaWorkflows=MockMediaWorkflows
 type MediaWorkflows interface {
 	// IndexMediaWorkflow indexes a single media file
 	IndexMediaWorkflow(ctx workflow.Context, url string) error
@@ -20,11 +22,14 @@ type MediaWorkflows interface {
 // mediaWorkflows is the concrete implementation of MediaWorkflows.
 type mediaWorkflows struct {
 	executor MediaExecutor
+	jobQueue jobs.JobQueue
 }
 
 // NewMediaWorkflows creates a new media workflows instance.
-func NewMediaWorkflows(executor MediaExecutor) MediaWorkflows {
+// jobQueue may be nil when no enqueues are performed from this workflow.
+func NewMediaWorkflows(executor MediaExecutor, jobQueue jobs.JobQueue) MediaWorkflows {
 	return &mediaWorkflows{
 		executor: executor,
+		jobQueue: jobQueue,
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -105,6 +106,7 @@ func registerWorkerMedia(
 	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, dataURIChecker, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, imageTransformer, wcfg.MaxImageSize, wcfg.MaxVideoSize)
 
 	mediaExecutor := workflows.NewMediaExecutor(dataStore, mediaProcessor)
+	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)
 
 	sentryInterceptor := temporal.NewSentryActivityInterceptor()
 	temporalWorker := worker.New(temporalClient,
@@ -118,7 +120,7 @@ func registerWorkerMedia(
 			},
 		})
 
-	mediaWorkflows := workflows.NewMediaWorkflows(mediaExecutor)
+	mediaWorkflows := workflows.NewMediaWorkflows(mediaExecutor, jobQueue)
 
 	temporalWorker.RegisterWorkflow(mediaWorkflows.IndexMediaWorkflow)
 	temporalWorker.RegisterWorkflow(mediaWorkflows.IndexMultipleMediaWorkflow)

@@ -26,12 +26,11 @@ type IndexOwnerWorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
-	env              *testsuite.TestWorkflowEnvironment
-	ctrl             *gomock.Controller
-	executor         *mocks.MockCoreExecutor
-	blacklist        *mocks.MockBlacklistRegistry
-	temporalWorkflow *mocks.MockWorkflow
-	coreWorkflows    workflows.CoreWorkflows
+	env           *testsuite.TestWorkflowEnvironment
+	ctrl          *gomock.Controller
+	executor      *mocks.MockCoreExecutor
+	blacklist     *mocks.MockBlacklistRegistry
+	coreWorkflows workflows.CoreWorkflows
 }
 
 // SetupTest is called before each test
@@ -45,7 +44,6 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 	s.ctrl = gomock.NewController(s.T())
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
-	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
 	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                       domain.ChainTezosMainnet,
 		EthereumChainID:                    domain.ChainEthereumMainnet,
@@ -57,7 +55,7 @@ func (s *IndexOwnerWorkflowTestSuite) SetupTest() {
 		TezosOwnerSubsequentBatchTarget:    50,
 		MediaTaskQueue:                     "media-task-queue",
 		BudgetedIndexingDefaultDailyQuota:  1000,
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 }
 
 // TearDownTest is called after each test
@@ -78,12 +76,6 @@ func TestIndexOwnerWorkflowTestSuite(t *testing.T) {
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_EthereumAddress() {
 	address := "0x1234567890123456789012345678901234567890"
 
-	// Mock GetExecutionID activity
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-
-	// Mock GetCurrentHistoryLength activity
-	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
-
 	// Mock job tracking activities
 	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainEthereumMainnet, mock.Anything, mock.Anything).Return(nil).Once()
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(nil).Once()
@@ -102,12 +94,6 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_EthereumAddress() {
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_TezosAddress() {
 	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
-
-	// Mock GetExecutionID activity
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-
-	// Mock GetCurrentHistoryLength activity
-	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
 
 	// Mock job tracking activities
 	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainTezosMainnet, mock.Anything, mock.Anything).Return(nil).Once()
@@ -128,9 +114,6 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_TezosAddress() {
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_UnknownAddress() {
 	address := "someaddress"
 
-	// Mock GetExecutionID activity
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-
 	// Execute the workflow
 	s.env.ExecuteWorkflow(s.coreWorkflows.IndexTokenOwner, address)
 
@@ -142,12 +125,6 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_UnknownAddress() {
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_JobCreationFails_WorkflowContinues() {
 	address := "0x1234567890123456789012345678901234567890"
-
-	// Mock GetExecutionID activity
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-
-	// Mock GetCurrentHistoryLength activity
-	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
 
 	// Mock job tracking activities - CreateIndexingJob fails but workflow should continue
 	// Activity will retry twice due to MaximumAttempts: 2
@@ -168,12 +145,6 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_JobCreationFails_Workf
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_JobStatusUpdateFails_WorkflowContinues() {
 	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
-
-	// Mock GetExecutionID activity
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-
-	// Mock GetCurrentHistoryLength activity
-	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
 
 	// Mock job tracking activities - status updates fail but workflow should continue
 	// Activities will retry twice due to MaximumAttempts: 2
@@ -196,12 +167,6 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_ChildWorkflowFails_Job
 	address := "0x1234567890123456789012345678901234567890"
 	expectedError := errors.New("child workflow failed")
 
-	// Mock GetExecutionID activity
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-
-	// Mock GetCurrentHistoryLength activity
-	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
-
 	// Mock job tracking activities
 	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainEthereumMainnet, mock.Anything, mock.Anything).Return(nil).Once()
 	s.env.OnActivity(s.executor.UpdateIndexingJobStatus, mock.Anything, mock.Anything, schema.IndexingJobStatusRunning, mock.Anything).Return(nil).Once()
@@ -221,12 +186,6 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_ChildWorkflowFails_Job
 
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_Cancellation_JobMarkedAsCanceled() {
 	address := "0x1234567890123456789012345678901234567890"
-
-	// Mock GetExecutionID activity
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-
-	// Mock GetCurrentHistoryLength activity - return > 0 to enable defer logic
-	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(5).AnyTimes()
 
 	// Mock job tracking activities
 	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainEthereumMainnet, mock.Anything, mock.Anything).Return(nil).Once()
@@ -248,12 +207,6 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_Cancellation_JobMarked
 func (s *IndexOwnerWorkflowTestSuite) TestIndexTokenOwner_FailedStatusUpdateAfterChildFailure_WorkflowStillFails() {
 	address := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
 	childError := errors.New("child workflow failed")
-
-	// Mock GetExecutionID activity
-	s.temporalWorkflow.EXPECT().GetExecutionID(gomock.Any()).Return("workflow-123")
-
-	// Mock GetCurrentHistoryLength activity
-	s.temporalWorkflow.EXPECT().GetCurrentHistoryLength(gomock.Any()).Return(1).AnyTimes()
 
 	// Mock job tracking activities - status update to 'failed' also fails (retries twice)
 	s.env.OnActivity(s.executor.CreateIndexingJob, mock.Anything, address, domain.ChainTezosMainnet, mock.Anything, mock.Anything).Return(nil).Once()
@@ -734,7 +687,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Quot
 		MediaTaskQueue:                     "media-task-queue",
 		BudgetedIndexingModeEnabled:        true, // Enabled
 		BudgetedIndexingDefaultDailyQuota:  50,   // Low quota
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 
 	address := "tz1abc123def456"
 	chainID := domain.ChainTezosMainnet
@@ -809,7 +762,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Norm
 		MediaTaskQueue:                     "media-task-queue",
 		BudgetedIndexingModeEnabled:        true,
 		BudgetedIndexingDefaultDailyQuota:  1000, // High quota
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 
 	address := "tz1xyz789"
 	chainID := domain.ChainTezosMainnet
@@ -873,7 +826,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexTezosTokenOwner_BudgetedMode_Part
 		MediaTaskQueue:                     "media-task-queue",
 		BudgetedIndexingModeEnabled:        true,
 		BudgetedIndexingDefaultDailyQuota:  1000,
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 
 	address := "tz1partial"
 	chainID := domain.ChainTezosMainnet
@@ -1319,7 +1272,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_Q
 		MediaTaskQueue:                     "media-task-queue",
 		BudgetedIndexingModeEnabled:        true,
 		BudgetedIndexingDefaultDailyQuota:  50,
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 
 	address := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
@@ -1405,7 +1358,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_N
 		MediaTaskQueue:                     "media-task-queue",
 		BudgetedIndexingModeEnabled:        true,
 		BudgetedIndexingDefaultDailyQuota:  1000,
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 
 	address := "0xabcdef1234567890123456789012345678901234"
 	chainID := domain.ChainEthereumMainnet
@@ -1480,7 +1433,7 @@ func (s *IndexOwnerWorkflowTestSuite) TestIndexEthereumTokenOwner_BudgetedMode_P
 		MediaTaskQueue:                     "media-task-queue",
 		BudgetedIndexingModeEnabled:        true,
 		BudgetedIndexingDefaultDailyQuota:  1000,
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 
 	address := "0xfedcba9876543210987654321098765432109876"
 	chainID := domain.ChainEthereumMainnet

@@ -27,13 +27,12 @@ type IndexMetadataWorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
-	env              *testsuite.TestWorkflowEnvironment
-	ctrl             *gomock.Controller
-	executor         *mocks.MockCoreExecutor
-	blacklist        *mocks.MockBlacklistRegistry
-	temporalWorkflow *mocks.MockWorkflow
-	coreWorkflows    workflows.CoreWorkflows
-	mediaWorkflows   workflows.MediaWorkflows
+	env            *testsuite.TestWorkflowEnvironment
+	ctrl           *gomock.Controller
+	executor       *mocks.MockCoreExecutor
+	blacklist      *mocks.MockBlacklistRegistry
+	coreWorkflows  workflows.CoreWorkflows
+	mediaWorkflows workflows.MediaWorkflows
 }
 
 // SetupTest is called before each test
@@ -47,7 +46,6 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 	s.ctrl = gomock.NewController(s.T())
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
-	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
 	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
@@ -55,8 +53,8 @@ func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
 		TezosTokenSweepStartBlock:    0,
 		MediaEnabled:                 true,
 		MediaTaskQueue:               "media-task-queue",
-	}, s.blacklist, s.temporalWorkflow)
-	s.mediaWorkflows = workflows.NewMediaWorkflows(mocks.NewMockMediaExecutor(s.ctrl))
+	}, s.blacklist, nil)
+	s.mediaWorkflows = workflows.NewMediaWorkflows(mocks.NewMockMediaExecutor(s.ctrl), nil)
 }
 
 // TearDownTest is called after each test
@@ -228,7 +226,7 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaDisabled_Do
 		TezosTokenSweepStartBlock:    0,
 		MediaEnabled:                 false,
 		MediaTaskQueue:               "media-task-queue",
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 
 	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
 	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)

@@ -3,15 +3,15 @@ package workflows
 import (
 	"go.temporal.io/sdk/workflow"
 
-	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // CoreWorkflows defines the interface for processing blockchain events.
 //
-//go:generate mockgen -source=core_workflow.go -destination=../mocks/worker_core.go -package=mocks -mock_names=CoreWorkflows=MockCoreWorkflows
+//go:generate mockgen -source=core_workflow.go -destination=../mocks/core_workflows.go -package=mocks -mock_names=CoreWorkflows=MockCoreWorkflows
 type CoreWorkflows interface {
 	// IndexTokenMint processes a token mint event
 	IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error
@@ -90,18 +90,19 @@ type CoreWorkflowsConfig struct {
 
 // coreWorkflows is the concrete implementation of CoreWorkflows.
 type coreWorkflows struct {
-	config           CoreWorkflowsConfig
-	executor         CoreExecutor
-	blacklist        registry.BlacklistRegistry
-	temporalWorkflow adapter.Workflow
+	config    CoreWorkflowsConfig
+	executor  CoreExecutor
+	blacklist registry.BlacklistRegistry
+	jobQueue  jobs.JobQueue
 }
 
 // NewCoreWorkflows creates a new core workflows instance.
-func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blacklist registry.BlacklistRegistry, temporalWorkflow adapter.Workflow) CoreWorkflows {
+// jobQueue may be nil where no cross-queue or follow-up enqueues are required (e.g. tests, partial wiring).
+func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blacklist registry.BlacklistRegistry, jobQueue jobs.JobQueue) CoreWorkflows {
 	return &coreWorkflows{
-		executor:         executor,
-		config:           config,
-		blacklist:        blacklist,
-		temporalWorkflow: temporalWorkflow,
+		executor:  executor,
+		config:    config,
+		blacklist: blacklist,
+		jobQueue:  jobQueue,
 	}
 }

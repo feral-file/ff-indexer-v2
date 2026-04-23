@@ -124,8 +124,8 @@ func (w *coreWorkflows) DeliverWebhook(ctx workflow.Context, clientID string, ev
 
 	// Create delivery record
 	var deliveryID uint64
-	workflowExecutionID := w.temporalWorkflow.GetExecutionID(ctx)
-	workflowRunID := w.temporalWorkflow.GetRunID(ctx)
+	workflowExecutionID := workflow.GetInfo(ctx).WorkflowExecution.ID
+	workflowRunID := workflow.GetInfo(ctx).WorkflowExecution.RunID
 	delivery := &schema.WebhookDelivery{
 		ClientID:      client.ClientID,
 		EventID:       event.EventID,

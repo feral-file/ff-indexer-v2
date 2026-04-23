@@ -39,7 +39,7 @@ func (s *WorkflowTestSuite) SetupTest() {
 	s.env = s.NewTestWorkflowEnvironment()
 	s.ctrl = gomock.NewController(s.T())
 	s.executor = mocks.NewMockMediaExecutor(s.ctrl)
-	s.mediaWorkflows = workflows.NewMediaWorkflows(s.executor)
+	s.mediaWorkflows = workflows.NewMediaWorkflows(s.executor, nil)
 
 	// Register the activity with the test environment
 	s.env.RegisterActivity(s.executor.IndexMediaFile)

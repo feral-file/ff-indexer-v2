@@ -29,7 +29,7 @@ func (w *coreWorkflows) IndexTokenOwner(ctx workflow.Context, address string) er
 	)
 
 	// Get workflow ID for job tracking
-	workflowID := w.temporalWorkflow.GetExecutionID(ctx)
+	workflowID := workflow.GetInfo(ctx).WorkflowExecution.ID
 
 	// Determine blockchain from address format
 	blockchain := types.AddressToBlockchain(address)
@@ -57,7 +57,7 @@ func (w *coreWorkflows) IndexTokenOwner(ctx workflow.Context, address string) er
 
 	// Defer to handle cancellation gracefully
 	defer func() {
-		if w.temporalWorkflow.GetCurrentHistoryLength(ctx) > 0 {
+		if workflow.GetInfo(ctx).GetCurrentHistoryLength() > 0 {
 			// Check if workflow is being canceled
 			if ctx.Err() != nil && (errors.Is(ctx.Err(), workflow.ErrCanceled) || strings.Contains(ctx.Err().Error(), "canceled")) {
 				logger.InfoWf(ctx, "Workflow canceled, updating job status",

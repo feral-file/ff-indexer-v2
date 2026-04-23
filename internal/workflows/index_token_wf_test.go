@@ -23,12 +23,11 @@ type IndexTokenWorkflowTestSuite struct {
 	suite.Suite
 	testsuite.WorkflowTestSuite
 
-	env              *testsuite.TestWorkflowEnvironment
-	ctrl             *gomock.Controller
-	executor         *mocks.MockCoreExecutor
-	blacklist        *mocks.MockBlacklistRegistry
-	temporalWorkflow *mocks.MockWorkflow
-	coreWorkflows    workflows.CoreWorkflows
+	env           *testsuite.TestWorkflowEnvironment
+	ctrl          *gomock.Controller
+	executor      *mocks.MockCoreExecutor
+	blacklist     *mocks.MockBlacklistRegistry
+	coreWorkflows workflows.CoreWorkflows
 }
 
 // SetupTest is called before each test
@@ -42,14 +41,13 @@ func (s *IndexTokenWorkflowTestSuite) SetupTest() {
 	s.ctrl = gomock.NewController(s.T())
 	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
 	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
-	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
 	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
 		TezosTokenSweepStartBlock:    0,
 		MediaTaskQueue:               "media-task-queue",
-	}, s.blacklist, s.temporalWorkflow)
+	}, s.blacklist, nil)
 }
 
 // TearDownTest is called after each test
