@@ -1902,6 +1902,7 @@ components:
       required:
         - address
         - job_id
+        - workflow_id
       properties:
         address:
           type: string
@@ -1910,8 +1911,21 @@ components:
         job_id:
           type: integer
           format: int64
-          description: Postgres job id
+          description: Postgres job id (`jobs.id`)
           example: 1
+        workflow_id:
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            **Deprecated** — use `job_id` for new clients. This value is the decimal string of `job_id` for
+            backward-compatible clients only.
+          example: "1"
+        workflow_run_id:
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            **Deprecated** — always null for postgres-queue jobs; kept for legacy response shape.
+          example: null
 
     TriggerAddressIndexingResponse:
       type: object
@@ -1926,8 +1940,12 @@ components:
           example:
             - address: "tz1abc123..."
               job_id: 1
+              workflow_id: "1"
+              workflow_run_id: null
             - address: "0x1234..."
               job_id: 2
+              workflow_id: "2"
+              workflow_run_id: null
 
     JobStatusResponse:
       type: object
@@ -1947,8 +1965,7 @@ components:
             for canonical values.
           example: "completed"
         last_error:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Error message if the job failed
         start_time:
           type: string
@@ -1968,6 +1985,7 @@ components:
       type: object
       required:
         - job_id
+        - workflow_id
         - address
         - chain
         - status
@@ -1978,6 +1996,17 @@ components:
           type: integer
           format: int64
           description: Postgres queue job id for this address indexing work unit
+        workflow_id:
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            **Deprecated** — use `job_id` for new clients. This value is the decimal string of `job_id` for
+            backward-compatible clients only.
+        workflow_run_id:
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            **Deprecated** — always null for postgres-queue jobs; kept for legacy response shape. null if not applicable.
         address:
           type: string
           description: Blockchain address being indexed

@@ -294,6 +294,8 @@ models:
         fieldName: Address
       workflow_id:
         fieldName: WorkflowID
+      workflow_run_id:
+        fieldName: WorkflowRunID
       job_id:
         fieldName: JobID
 
@@ -350,6 +352,8 @@ models:
         fieldName: JobID
       workflow_id:
         fieldName: WorkflowID
+      workflow_run_id:
+        fieldName: WorkflowRunID
       address:
         fieldName: Address
       chain:

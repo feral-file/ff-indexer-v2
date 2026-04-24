@@ -105,8 +105,8 @@ Design rules:
 ## Async operations and job tracking
 
 - **Trigger responses** return **`job_id`** (`TriggerIndexingResult` / GraphQL `TriggerIndexingResult`) for token and metadata indexing; use it with the job status query.
-- **Address indexing** returns **per-address jobs** with **`job_id`** each (`TriggerAddressIndexingResult` / OpenAPI equivalent).
-- **Status endpoints:** `GET /api/v1/jobs/{job_id}` (queue job lifecycle) and `GET /api/v1/indexing/jobs/{job_id}` (address indexing detail: progress, blocks, optional counts) are the supported way to poll progress.
+- **Address indexing** returns **per-address jobs** with **`job_id`**, and **deprecated** **`workflow_id`** / **`workflow_run_id`** (nullable) for legacy clients (`TriggerAddressIndexingResult` / OpenAPI / GraphQL). New integrations should use only **`job_id`**. The deprecated string fields are derived in the API (not stored in the DB); `workflow_id` is the decimal string of `job_id`, and `workflow_run_id` is always null for queue-backed jobs. GraphQL and OpenAPI mark these as deprecated; prefer the canonical `job_id` field.
+- **Status endpoints:** `GET /api/v1/jobs/{job_id}` (queue job lifecycle) and `GET /api/v1/indexing/jobs/{job_id}` (address indexing detail: progress, blocks, optional counts) are the supported way to poll progress. Indexing job JSON mirrors the same deprecated workflow fields as the trigger response for backward compatibility.
 - **Optional expensive fields:** Use explicit query flags (e.g. `include_total_indexed`) for costly aggregates; defaults should favor low latency.
 
 ## Webhooks

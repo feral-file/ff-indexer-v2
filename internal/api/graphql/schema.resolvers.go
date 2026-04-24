@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -414,9 +415,31 @@ func (r *queryResolver) JobStatus(ctx context.Context, jobID int) (*dto.JobStatu
 }
 
 // IndexingJob is the resolver for the indexingJob field.
-func (r *queryResolver) IndexingJob(ctx context.Context, jobID int) (*dto.AddressIndexingJobResponse, error) {
-	if jobID < 1 {
-		return nil, apierrors.NewValidationError("job_id must be positive")
+func (r *queryResolver) IndexingJob(ctx context.Context, jobID *int, workflowID *string) (*dto.AddressIndexingJobResponse, error) {
+	hasJob := jobID != nil
+	hasWF := workflowID != nil && strings.TrimSpace(*workflowID) != ""
+	if hasJob && hasWF {
+		return nil, apierrors.NewValidationError("provide only one of job_id or workflow_id")
+	}
+	if !hasJob && !hasWF {
+		return nil, apierrors.NewValidationError("job_id or workflow_id is required")
+	}
+
+	var resolvedID int64
+	if hasJob {
+		if *jobID < 1 {
+			return nil, apierrors.NewValidationError("job_id must be positive")
+		}
+		resolvedID = int64(*jobID)
+	} else {
+		parsed, err := internalTypes.Int64FromUnsignedDecimalString(*workflowID)
+		if err != nil {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid workflow_id: %v", err))
+		}
+		if parsed < 1 {
+			return nil, apierrors.NewValidationError("workflow_id must resolve to a positive job id")
+		}
+		resolvedID = parsed
 	}
 
 	opts := executor.GetAddressIndexingJobOptions{}
@@ -433,7 +456,7 @@ func (r *queryResolver) IndexingJob(ctx context.Context, jobID int) (*dto.Addres
 		}
 	}
 
-	return r.executor.GetAddressIndexingJob(ctx, int64(jobID), opts)
+	return r.executor.GetAddressIndexingJob(ctx, resolvedID, opts)
 }
 
 // SyncCollection is the resolver for the syncCollection field.

@@ -200,6 +200,10 @@ type TriggerIndexingResult {
 type AddressIndexingJobInfo {
   address: String!
   job_id: Int!
+  # Deprecated: same as str(job_id); prefer job_id for new clients.
+  workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
+  # Deprecated: always null for postgres-queue jobs; reserved for legacy API shape.
+  workflow_run_id: String @deprecated(reason: "Unused for queue-backed jobs; always null.")
 }
 
 # Result of triggering address indexing (returns array of jobs)
@@ -253,10 +257,12 @@ type Query {
   # Equivalent to: GET /api/v1/jobs/:job_id
   jobStatus(job_id: Int!): JobStatus
 
-  # Get address indexing job by queue job id
+  # Get address indexing job by queue job id or by workflow_id (decimal string of job_id, legacy alias)
   # Equivalent to: GET /api/v1/indexing/jobs/:job_id
   indexingJob(
-    job_id: Int!
+    job_id: Int
+    # Deprecated: use job_id; accepts the decimal string of jobs.id (legacy only).
+    workflow_id: String @deprecated(reason: "Use job_id instead; workflow_id is only a decimal string alias.")
   ): IndexingJob
 
   # Sync collection state for an address using checkpoint-based pagination (open, no authentication required)
@@ -356,6 +362,10 @@ type WebhookClientResult {
 # Address indexing job
 type IndexingJob {
   job_id: Int!
+  # Deprecated: same as str(job_id); prefer job_id for new clients.
+  workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
+  # Deprecated: always null for postgres-queue jobs; reserved for legacy API shape.
+  workflow_run_id: String @deprecated(reason: "Unused for queue-backed jobs; always null.")
   address: String!
   chain: String!
   status: String!

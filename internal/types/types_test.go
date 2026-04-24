@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -19,17 +20,17 @@ func TestStringPtr(t *testing.T) {
 		{
 			name:     "empty string",
 			input:    "",
-			expected: stringPtr(""),
+			expected: StringPtr(""),
 		},
 		{
 			name:     "non-empty string",
 			input:    "test",
-			expected: stringPtr("test"),
+			expected: StringPtr("test"),
 		},
 		{
 			name:     "unicode string",
 			input:    "测试",
-			expected: stringPtr("测试"),
+			expected: StringPtr("测试"),
 		},
 	}
 
@@ -56,12 +57,12 @@ func TestStringNilOrEmpty(t *testing.T) {
 		},
 		{
 			name:     "empty string",
-			input:    stringPtr(""),
+			input:    StringPtr(""),
 			expected: true,
 		},
 		{
 			name:     "non-empty string",
-			input:    stringPtr("test"),
+			input:    StringPtr("test"),
 			expected: false,
 		},
 	}
@@ -87,12 +88,12 @@ func TestSafeString(t *testing.T) {
 		},
 		{
 			name:     "empty string",
-			input:    stringPtr(""),
+			input:    StringPtr(""),
 			expected: "",
 		},
 		{
 			name:     "non-empty string",
-			input:    stringPtr("test"),
+			input:    StringPtr("test"),
 			expected: "test",
 		},
 	}
@@ -1272,7 +1273,18 @@ func TestIsDataURI(t *testing.T) {
 	}
 }
 
-// Helper function for tests
-func stringPtr(s string) *string {
-	return &s
+func TestInt64FromUnsignedDecimalString(t *testing.T) {
+	t.Parallel()
+	id, err := Int64FromUnsignedDecimalString("  99  ")
+	require.NoError(t, err)
+	assert.Equal(t, int64(99), id)
+
+	_, err = Int64FromUnsignedDecimalString("")
+	require.Error(t, err)
+	_, err = Int64FromUnsignedDecimalString("-1")
+	require.Error(t, err)
+	_, err = Int64FromUnsignedDecimalString("12a")
+	require.Error(t, err)
+	_, err = Int64FromUnsignedDecimalString("3.14")
+	require.Error(t, err)
 }
