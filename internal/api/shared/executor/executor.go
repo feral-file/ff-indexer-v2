@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"go.uber.org/zap"
@@ -569,18 +568,18 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 		}
 
 		if existingJob != nil {
-			if existingJob.JobID == nil {
+			if existingJob.JobID == 0 {
 				return nil, apierrors.NewServiceError(
 					fmt.Sprintf("active indexing job for %s is missing job_id; cannot report progress", address))
 			}
 			outJobs = append(outJobs, dto.AddressIndexingJobInfo{
 				Address: address,
-				JobID:   *existingJob.JobID,
+				JobID:   existingJob.JobID,
 			})
 
 			logger.Info(fmt.Sprintf("Found existing %s job for address", existingJob.Status),
 				zap.String("address", address),
-				zap.Int64("job_id", *existingJob.JobID),
+				zap.Int64("job_id", existingJob.JobID),
 				zap.String("status", string(existingJob.Status)),
 			)
 			continue
@@ -599,20 +598,16 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 		if pj == nil {
 			return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger indexing for address %s: empty job", address))
 		}
-		workflowID := strconv.FormatInt(pj.ID, 10)
-		jid := pj.ID
 		err = e.store.CreateAddressIndexingJob(ctx, store.CreateAddressIndexingJobInput{
-			Address:       address,
-			Chain:         chainID,
-			Status:        schema.IndexingJobStatusRunning,
-			WorkflowID:    workflowID,
-			WorkflowRunID: nil,
-			JobID:         &jid,
+			Address: address,
+			Chain:   chainID,
+			Status:  schema.IndexingJobStatusRunning,
+			JobID:   pj.ID,
 		})
 		if err != nil {
 			logger.Warn(fmt.Sprintf("Failed to create indexing job: %v", err),
 				zap.String("address", address),
-				zap.String("workflowID", workflowID))
+				zap.Int64("job_id", pj.ID))
 		}
 
 		outJobs = append(outJobs, dto.AddressIndexingJobInfo{
@@ -1089,15 +1084,8 @@ func (e *executor) GetAddressIndexingJob(ctx context.Context, jobID int64, opts 
 		return nil, apierrors.NewNotFoundError(fmt.Sprintf("Indexing job not found: %v", err))
 	}
 
-	var outJobID int64
-	if job.JobID != nil {
-		outJobID = *job.JobID
-	} else {
-		outJobID = jobID
-	}
-
 	response := &dto.AddressIndexingJobResponse{
-		JobID:           outJobID,
+		JobID:           job.JobID,
 		Address:         job.Address,
 		Chain:           string(job.Chain),
 		Status:          string(job.Status),

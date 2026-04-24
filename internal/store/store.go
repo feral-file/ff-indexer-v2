@@ -208,14 +208,11 @@ type CreateWebhookClientInput struct {
 
 // CreateAddressIndexingJobInput represents input for creating an address indexing job
 type CreateAddressIndexingJobInput struct {
-	Address    string
-	Chain      domain.Chain
-	Status     schema.IndexingJobStatus
-	WorkflowID string
-	// WorkflowRunID is only populated for old Temporal-backed rows; new queue-driven jobs omit it.
-	WorkflowRunID *string
-	// JobID is set when the work unit is a postgres jobs.id row (job queue). Optional for legacy rows.
-	JobID *int64
+	Address string
+	Chain   domain.Chain
+	Status  schema.IndexingJobStatus
+	// JobID is the postgres jobs.id row; required (FK to jobs).
+	JobID int64
 }
 
 // EnqueueJobInput is the data required to create a `jobs` row (postgres-backed work queue).
@@ -445,9 +442,9 @@ type Store interface {
 	// Returns nil if no active job is found (not an error)
 	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)
 	// UpdateAddressIndexingJobStatus updates job status with timestamp
-	UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
+	UpdateAddressIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error
 	// UpdateAddressIndexingJobProgress updates job progress metrics
-	UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error
+	UpdateAddressIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error
 	// GetTokenCountsByAddress retrieves total token counts for an address
 	// Returns both total tokens indexed and total tokens viewable (with metadata or enrichment)
 	GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*TokenCountsByAddress, error)

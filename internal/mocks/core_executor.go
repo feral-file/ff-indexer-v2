@@ -79,17 +79,17 @@ func (mr *MockCoreExecutorMockRecorder) CheckTokenExists(ctx, tokenCID any) *gom
 }
 
 // CreateIndexingJob mocks base method.
-func (m *MockCoreExecutor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error {
+func (m *MockCoreExecutor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, jobID int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateIndexingJob", ctx, address, chain, workflowID, workflowRunID)
+	ret := m.ctrl.Call(m, "CreateIndexingJob", ctx, address, chain, jobID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateIndexingJob indicates an expected call of CreateIndexingJob.
-func (mr *MockCoreExecutorMockRecorder) CreateIndexingJob(ctx, address, chain, workflowID, workflowRunID any) *gomock.Call {
+func (mr *MockCoreExecutorMockRecorder) CreateIndexingJob(ctx, address, chain, jobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIndexingJob", reflect.TypeOf((*MockCoreExecutor)(nil).CreateIndexingJob), ctx, address, chain, workflowID, workflowRunID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateIndexingJob", reflect.TypeOf((*MockCoreExecutor)(nil).CreateIndexingJob), ctx, address, chain, jobID)
 }
 
 // CreateMetadataUpdate mocks base method.
@@ -385,31 +385,31 @@ func (mr *MockCoreExecutorMockRecorder) UpdateIndexingBlockRangeForAddress(ctx, 
 }
 
 // UpdateIndexingJobProgress mocks base method.
-func (m *MockCoreExecutor) UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+func (m *MockCoreExecutor) UpdateIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateIndexingJobProgress", ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+	ret := m.ctrl.Call(m, "UpdateIndexingJobProgress", ctx, jobID, tokensProcessed, minBlock, maxBlock)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateIndexingJobProgress indicates an expected call of UpdateIndexingJobProgress.
-func (mr *MockCoreExecutorMockRecorder) UpdateIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock any) *gomock.Call {
+func (mr *MockCoreExecutorMockRecorder) UpdateIndexingJobProgress(ctx, jobID, tokensProcessed, minBlock, maxBlock any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingJobProgress", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingJobProgress), ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingJobProgress", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingJobProgress), ctx, jobID, tokensProcessed, minBlock, maxBlock)
 }
 
 // UpdateIndexingJobStatus mocks base method.
-func (m *MockCoreExecutor) UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+func (m *MockCoreExecutor) UpdateIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateIndexingJobStatus", ctx, workflowID, status, timestamp)
+	ret := m.ctrl.Call(m, "UpdateIndexingJobStatus", ctx, jobID, status, timestamp)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateIndexingJobStatus indicates an expected call of UpdateIndexingJobStatus.
-func (mr *MockCoreExecutorMockRecorder) UpdateIndexingJobStatus(ctx, workflowID, status, timestamp any) *gomock.Call {
+func (mr *MockCoreExecutorMockRecorder) UpdateIndexingJobStatus(ctx, jobID, status, timestamp any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingJobStatus", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingJobStatus), ctx, workflowID, status, timestamp)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateIndexingJobStatus", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateIndexingJobStatus), ctx, jobID, status, timestamp)
 }
 
 // UpdateTokenBurn mocks base method.

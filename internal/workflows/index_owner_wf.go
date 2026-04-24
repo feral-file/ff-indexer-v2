@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,9 +26,11 @@ func (w *coreWorkflows) IndexTokenOwner(ctx context.Context, address string) err
 		zap.String("address", address),
 	)
 
-	workflowID := ""
+	var queueJobID int64
+	var haveQueueJobID bool
 	if id, ok := jobs.JobIDFromContext(ctx); ok {
-		workflowID = strconv.FormatInt(id, 10)
+		queueJobID = id
+		haveQueueJobID = true
 	}
 
 	// Determine blockchain from address format
@@ -49,48 +50,55 @@ func (w *coreWorkflows) IndexTokenOwner(ctx context.Context, address string) err
 	// Defer to handle cancellation gracefully
 	defer func() {
 		if ctx.Err() != nil && (errors.Is(ctx.Err(), context.Canceled) || strings.Contains(ctx.Err().Error(), "canceled")) {
-			logger.InfoCtx(ctx, "Workflow canceled, updating job status",
+			if !haveQueueJobID {
+				return
+			}
+			logger.InfoCtx(ctx, "Job canceled, updating indexing status",
 				zap.String("address", address),
-				zap.String("workflowID", workflowID))
+				zap.Int64("job_id", queueJobID))
 
 			sticky := context.WithoutCancel(ctx)
 			if err := w.executor.UpdateIndexingJobStatus(sticky,
-				workflowID, schema.IndexingJobStatusCanceled, time.Now().UTC()); err != nil {
+				queueJobID, schema.IndexingJobStatusCanceled, time.Now().UTC()); err != nil {
 				logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
 			}
 		}
 	}()
 
-	// Create or update job status to 'running' at start
-	err := w.executor.CreateIndexingJob(ctx, address, chainID, workflowID, nil)
-	if err != nil {
-		logger.ErrorCtx(ctx, fmt.Errorf("failed to create/update job"), zap.Error(err))
-		// Don't fail workflow if job tracking fails
+	if haveQueueJobID {
+		if err := w.executor.CreateIndexingJob(ctx, address, chainID, queueJobID); err != nil {
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to create/update job record"), zap.Error(err))
+		}
+		if err := w.executor.UpdateIndexingJobStatus(ctx,
+			queueJobID, schema.IndexingJobStatusRunning, time.Now().UTC()); err != nil {
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to running"), zap.Error(err))
+		}
 	}
 
-	// Update job status to 'running'
-	if err := w.executor.UpdateIndexingJobStatus(ctx,
-		workflowID, schema.IndexingJobStatusRunning, time.Now().UTC()); err != nil {
-		logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to running"), zap.Error(err))
+	var childJobID *int64
+	if haveQueueJobID {
+		x := queueJobID
+		childJobID = &x
 	}
-
-	wid := workflowID
+	var err error
 	// Execute child workflow based on blockchain
 	switch blockchain {
 	case domain.BlockchainTezos:
-		err = w.IndexTezosTokenOwner(ctx, address, &wid)
+		err = w.IndexTezosTokenOwner(ctx, address, childJobID)
 	case domain.BlockchainEthereum:
-		err = w.IndexEthereumTokenOwner(ctx, address, &wid)
+		err = w.IndexEthereumTokenOwner(ctx, address, childJobID)
 	default:
 		err = fmt.Errorf("unsupported blockchain for address: %s", address)
 	}
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "canceled") {
-			sticky := context.WithoutCancel(ctx)
-			if err := w.executor.UpdateIndexingJobStatus(sticky,
-				workflowID, schema.IndexingJobStatusCanceled, time.Now().UTC()); err != nil {
-				logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
+			if haveQueueJobID {
+				sticky := context.WithoutCancel(ctx)
+				if uerr := w.executor.UpdateIndexingJobStatus(sticky,
+					queueJobID, schema.IndexingJobStatusCanceled, time.Now().UTC()); uerr != nil {
+					logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(uerr))
+				}
 			}
 			return err
 		}
@@ -107,10 +115,11 @@ func (w *coreWorkflows) IndexTokenOwner(ctx context.Context, address string) err
 			zap.String("blockchain", string(blockchain)),
 		)
 
-		// Update job status to 'failed'
-		if err := w.executor.UpdateIndexingJobStatus(ctx,
-			workflowID, schema.IndexingJobStatusFailed, time.Now().UTC()); err != nil {
-			logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to failed"), zap.Error(err))
+		if haveQueueJobID {
+			if uerr := w.executor.UpdateIndexingJobStatus(ctx,
+				queueJobID, schema.IndexingJobStatusFailed, time.Now().UTC()); uerr != nil {
+				logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to failed"), zap.Error(uerr))
+			}
 		}
 		return err
 	}
@@ -120,11 +129,11 @@ func (w *coreWorkflows) IndexTokenOwner(ctx context.Context, address string) err
 		zap.String("blockchain", string(blockchain)),
 	)
 
-	// Update job status to 'completed'
-	if err := w.executor.UpdateIndexingJobStatus(ctx,
-		workflowID, schema.IndexingJobStatusCompleted, time.Now().UTC()); err != nil {
-		logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to completed"), zap.Error(err))
-		// Don't fail workflow
+	if haveQueueJobID {
+		if uerr := w.executor.UpdateIndexingJobStatus(ctx,
+			queueJobID, schema.IndexingJobStatusCompleted, time.Now().UTC()); uerr != nil {
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to completed"), zap.Error(uerr))
+		}
 	}
 
 	return nil
@@ -301,7 +310,7 @@ func findLastCompleteBlockIndexByTarget(tokens []domain.TokenWithBlock, targetCo
 // IndexTezosTokenOwner indexes all tokens held by a Tezos address
 // Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
 // jobID is optional and used for job status tracking during quota pauses
-func (w *coreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string, jobID *string) error {
+func (w *coreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string, jobID *int64) error {
 	logger.InfoCtx(ctx, "Starting Tezos token owner indexing",
 		zap.String("address", address),
 		zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
@@ -676,7 +685,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string
 
 // IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
 // Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
-func (w *coreWorkflows) IndexEthereumTokenOwner(ctx context.Context, address string, jobID *string) error {
+func (w *coreWorkflows) IndexEthereumTokenOwner(ctx context.Context, address string, jobID *int64) error {
 	logger.InfoCtx(ctx, "Starting Ethereum token owner indexing",
 		zap.String("address", address),
 		zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
@@ -1091,7 +1100,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 	chainID domain.Chain,
 	tokens []domain.TokenWithBlock,
 	chunkInfo string, // e.g., "forward chunk 1/5" for logging
-	jobID *string, // optional job ID for progress tracking
+	jobID *int64, // optional jobs.id for progress tracking
 ) (bool, *uint64, *uint64, time.Time, error) {
 
 	requestedCount := len(tokens)
@@ -1189,7 +1198,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 	if jobID != nil {
 		chunkSize := len(actualInfo.tokenCIDs)
 		logger.InfoCtx(ctx, "Updating job progress (incremental)",
-			zap.String("jobID", *jobID),
+			zap.Int64("job_id", *jobID),
 			zap.Int("chunkTokens", chunkSize),
 			zap.Uint64("minBlock", actualInfo.minBlock),
 			zap.Uint64("maxBlock", actualInfo.maxBlock),
@@ -1200,7 +1209,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 		if err != nil {
 			logger.ErrorCtx(ctx, fmt.Errorf("failed to update job progress"),
 				zap.Error(err),
-				zap.String("jobID", *jobID),
+				zap.Int64("job_id", *jobID),
 				zap.Int("chunkTokens", chunkSize))
 			// Don't fail workflow if progress tracking fails
 		}
@@ -1222,7 +1231,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 
 // returnQuotaReschedule records paused status when a job id is available and returns ErrReschedule
 // so the worker re-queues this job after the quota reset time (no in-process sleep in v1).
-func (w *coreWorkflows) returnQuotaReschedule(ctx context.Context, jobID *string, quotaResetAt time.Time) error {
+func (w *coreWorkflows) returnQuotaReschedule(ctx context.Context, jobID *int64, quotaResetAt time.Time) error {
 	if jobID != nil {
 		_ = w.executor.UpdateIndexingJobStatus(context.WithoutCancel(ctx), *jobID, schema.IndexingJobStatusPaused, time.Now().UTC())
 	}

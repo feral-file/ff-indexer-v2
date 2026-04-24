@@ -2311,23 +2311,35 @@ func (s *pgStore) IncrementTokensIndexed(ctx context.Context, address string, ch
 // Address Indexing Job Operations
 // =============================================================================
 
-// CreateAddressIndexingJob creates a new address indexing job record
+// CreateAddressIndexingJob creates a new address indexing job record.
+// It is a no-op when an active (running or paused) job already exists for the same address+chain
+// (unique partial index), including concurrent races (duplicate key → ignored).
 func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error {
+	if input.JobID < 1 {
+		return fmt.Errorf("job_id is required and must be positive")
+	}
+	var n int64
+	err := s.db.WithContext(ctx).Model(&schema.AddressIndexingJob{}).
+		Where("address = ? AND chain = ? AND status IN ?",
+			input.Address, input.Chain,
+			[]schema.IndexingJobStatus{schema.IndexingJobStatusRunning, schema.IndexingJobStatusPaused}).
+		Count(&n).Error
+	if err != nil {
+		return fmt.Errorf("failed to check address indexing job: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
 	now := time.Now()
 	job := &schema.AddressIndexingJob{
-		Address:       input.Address,
-		Chain:         input.Chain,
-		Status:        input.Status,
-		WorkflowID:    input.WorkflowID,
-		WorkflowRunID: input.WorkflowRunID,
-		JobID:         input.JobID,
-		StartedAt:     now, // Always set started_at since we only track running workflows
+		Address:   input.Address,
+		Chain:     input.Chain,
+		Status:    input.Status,
+		JobID:     input.JobID,
+		StartedAt: now,
 	}
-
-	// Set appropriate timestamp field based on status
 	switch input.Status {
 	case schema.IndexingJobStatusRunning:
-		// StartedAt already set above
 	case schema.IndexingJobStatusPaused:
 		job.PausedAt = &now
 	case schema.IndexingJobStatusCompleted:
@@ -2337,16 +2349,15 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 	case schema.IndexingJobStatusCanceled:
 		job.CanceledAt = &now
 	}
-
-	err := s.db.WithContext(ctx).
-		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(job).Error
-
-	if err != nil {
-		return fmt.Errorf("failed to create address indexing job: %w", err)
+	err = s.db.WithContext(ctx).Create(job).Error
+	if err == nil {
+		return nil
 	}
-
-	return nil
+	// Another worker may have inserted the active row; treat as idempotent
+	if isPostgresUniqueViolation(err) {
+		return nil
+	}
+	return fmt.Errorf("failed to create address indexing job: %w", err)
 }
 
 // GetAddressIndexingJobByJobID retrieves a job by postgres jobs.id (address_indexing_jobs.job_id).
@@ -2418,7 +2429,7 @@ func (s *pgStore) GetActiveIndexingJobForAddress(ctx context.Context, address st
 }
 
 // UpdateAddressIndexingJobStatus updates job status with timestamp
-func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error {
 	updates := make(map[string]interface{})
 	updates["status"] = status
 
@@ -2437,8 +2448,7 @@ func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID
 
 	err := s.db.WithContext(ctx).
 		Model(&schema.AddressIndexingJob{}).
-		Clauses(clause.OnConflict{DoNothing: true}).
-		Where("workflow_id = ?", workflowID).
+		Where("job_id = ?", jobID).
 		Updates(updates).Error
 	if err != nil {
 		return fmt.Errorf("failed to update address indexing job status: %w", err)
@@ -2449,7 +2459,7 @@ func (s *pgStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID
 
 // UpdateAddressIndexingJobProgress updates job progress metrics
 // Note: This method accumulates tokens_processed by incrementing the existing value
-func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error {
 	updates := map[string]interface{}{
 		"tokens_processed":  gorm.Expr("tokens_processed + ?", tokensProcessed),
 		"current_min_block": minBlock,
@@ -2458,8 +2468,7 @@ func (s *pgStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflow
 
 	err := s.db.WithContext(ctx).
 		Model(&schema.AddressIndexingJob{}).
-		Clauses(clause.OnConflict{UpdateAll: true}).
-		Where("workflow_id = ?", workflowID).
+		Where("job_id = ?", jobID).
 		Updates(updates).Error
 	if err != nil {
 		return fmt.Errorf("failed to update address indexing job progress: %w", err)

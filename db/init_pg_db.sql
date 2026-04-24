@@ -297,11 +297,8 @@ CREATE TABLE address_indexing_jobs (
     address TEXT NOT NULL,
     chain blockchain_chain NOT NULL,
     status indexing_job_status NOT NULL,
-    
-    -- Orchestrator workflow references
-    workflow_id TEXT NOT NULL,
-    workflow_run_id TEXT,
-    job_id BIGINT REFERENCES jobs (id) ON DELETE SET NULL,
+    -- Queue work unit: required FK to jobs (see migration 016)
+    job_id BIGINT NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
     
     -- Progress tracking
     tokens_processed INTEGER DEFAULT 0,
@@ -417,7 +414,6 @@ CREATE UNIQUE INDEX jobs_unique_key_active ON jobs (queue, kind, unique_key) WHE
 CREATE INDEX jobs_poll ON jobs (queue, run_after) WHERE status = 'pending';
 
 -- Address Indexing Jobs table indexes
-CREATE UNIQUE INDEX idx_address_indexing_job_workflow_id ON address_indexing_jobs(workflow_id) WHERE status IN ('running', 'paused');
 CREATE UNIQUE INDEX idx_address_indexing_jobs_address_chain_active ON address_indexing_jobs(address, chain) WHERE status IN ('running', 'paused');
 CREATE INDEX idx_address_indexing_jobs_address_chain_created ON address_indexing_jobs(address, chain, created_at DESC);
 CREATE INDEX idx_address_indexing_jobs_status_created ON address_indexing_jobs(status, created_at DESC);
@@ -552,7 +548,7 @@ COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';
 COMMENT ON TABLE webhook_clients IS 'Registered webhook clients for event notifications with HTTPS endpoints and event filtering';
 COMMENT ON TABLE webhook_deliveries IS 'Audit log of webhook delivery attempts with status tracking and response details';
-COMMENT ON TABLE address_indexing_jobs IS 'Tracks address-level indexing job status independent of Temporal workflows. Decouples job status from Temporal for easier querying via REST/GraphQL APIs.';
+COMMENT ON TABLE address_indexing_jobs IS 'Tracks address-level indexing job status; linked to the postgres job queue via job_id (jobs.id).';
 COMMENT ON TYPE job_status IS 'Status of a row in the postgres-backed job queue';
 COMMENT ON TABLE jobs IS 'Durable work queue: one row per unit of work (replaces Temporal workflow/activity for orchestration where wired)';
 COMMENT ON COLUMN jobs.queue IS 'Logical queue name (e.g. token_index, media_index) consumed by a worker pool';
@@ -562,4 +558,4 @@ COMMENT ON COLUMN jobs.unique_key IS 'When set, enforces at most one active (pen
 COMMENT ON COLUMN jobs.run_after IS 'Do not run this job before this time (used for scheduling and manual reschedule)';
 COMMENT ON COLUMN jobs.last_error IS 'Terminal or latest failure message when status is failed';
 COMMENT ON COLUMN jobs.cancel_requested IS 'When true, worker should cancel the in-flight handler context';
-COMMENT ON COLUMN address_indexing_jobs.job_id IS 'Postgres job queue id when the address job is driven by the jobs table; null for legacy Temporal-only rows';
+COMMENT ON COLUMN address_indexing_jobs.job_id IS 'Postgres job queue id (jobs.id) for this address indexing work unit';

@@ -131,14 +131,14 @@ type CoreExecutor interface {
 	// Address Indexing Job Activities
 	// =============================================================================
 
-	// CreateIndexingJob creates a new indexing job record (handles race conditions)
-	CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error
+	// CreateIndexingJob creates a new address_indexing_jobs row for the given jobs.id (idempotent if active exists)
+	CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, jobID int64) error
 
 	// UpdateIndexingJobStatus updates the job status with appropriate timestamp
-	UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
+	UpdateIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error
 
 	// UpdateIndexingJobProgress updates job progress metrics
-	UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error
+	UpdateIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error
 }
 
 // BlockRangeResult represents the result of getting an indexing block range
@@ -1600,24 +1600,21 @@ func (e *coreExecutor) DeliverWebhookHTTP(ctx context.Context, client *schema.We
 // =============================================================================
 
 // CreateIndexingJob creates a new indexing job record
-func (e *coreExecutor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, workflowID string, workflowRunID *string) error {
-	input := store.CreateAddressIndexingJobInput{
-		Address:       address,
-		Chain:         chain,
-		Status:        schema.IndexingJobStatusRunning, // Workflow is starting, set to running
-		WorkflowID:    workflowID,
-		WorkflowRunID: workflowRunID,
-	}
-
-	return e.store.CreateAddressIndexingJob(ctx, input)
+func (e *coreExecutor) CreateIndexingJob(ctx context.Context, address string, chain domain.Chain, jobID int64) error {
+	return e.store.CreateAddressIndexingJob(ctx, store.CreateAddressIndexingJobInput{
+		Address: address,
+		Chain:   chain,
+		Status:  schema.IndexingJobStatusRunning,
+		JobID:   jobID,
+	})
 }
 
 // UpdateIndexingJobStatus updates the job status with appropriate timestamp
-func (e *coreExecutor) UpdateIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
-	return e.store.UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp)
+func (e *coreExecutor) UpdateIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error {
+	return e.store.UpdateAddressIndexingJobStatus(ctx, jobID, status, timestamp)
 }
 
 // UpdateIndexingJobProgress updates job progress metrics
-func (e *coreExecutor) UpdateIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
-	return e.store.UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+func (e *coreExecutor) UpdateIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error {
+	return e.store.UpdateAddressIndexingJobProgress(ctx, jobID, tokensProcessed, minBlock, maxBlock)
 }

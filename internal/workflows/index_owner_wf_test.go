@@ -80,11 +80,12 @@ func TestIndexTokenOwner_Ethereum_EmptyFirstRun(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
-	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	ctx := jobs.WithJobID(d.Ctx, 1001)
+	exec, wf := d.Exec, d.Wf
 	addr := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
 	latest := uint64(5000)
-	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).Return(nil)
+	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -106,11 +107,12 @@ func TestIndexTokenOwner_Tezos_EmptyFirstRun(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
-	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	ctx := jobs.WithJobID(d.Ctx, 1002)
+	exec, wf := d.Exec, d.Wf
 	addr := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
 	chainID := domain.ChainTezosMainnet
 	latest := uint64(5000)
-	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).Return(nil)
+	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -126,11 +128,12 @@ func TestIndexTokenOwner_JobCreateFailure_StillIndexes(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
-	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	ctx := jobs.WithJobID(d.Ctx, 1003)
+	exec, wf := d.Exec, d.Wf
 	addr := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
 	latest := uint64(5000)
-	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).Return(errors.New("db error"))
+	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(errors.New("db error"))
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -150,12 +153,13 @@ func TestIndexTokenOwner_IndexingError_MarksJobFailed(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
-	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	ctx := jobs.WithJobID(d.Ctx, 1004)
+	exec, wf := d.Exec, d.Wf
 	addr := "0x1234567890123456789012345678901234567890"
 	chainID := domain.ChainEthereumMainnet
 	latest := uint64(5000)
 	innerErr := errors.New("indexing failed")
-	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).Return(nil)
+	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -390,11 +394,12 @@ func TestIndexTokenOwner_JobStatusUpdateFailures_NonFatal(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
-	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	ctx := jobs.WithJobID(d.Ctx, 1005)
+	exec, wf := d.Exec, d.Wf
 	addr := "tz1JobStatusFails"
 	chainID := domain.ChainTezosMainnet
 	latest := uint64(5000)
-	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).Return(nil)
+	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).
 		Return(errors.New("status update error"))
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
@@ -413,12 +418,13 @@ func TestIndexTokenOwner_CanceledError_UpdatesJobCanceled(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
-	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	ctx := jobs.WithJobID(d.Ctx, 1006)
+	exec, wf := d.Exec, d.Wf
 	addr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	chainID := domain.ChainEthereumMainnet
 	latest := uint64(5000)
 	canceledLike := errors.New("operation canceled by user")
-	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).Return(nil)
+	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -443,12 +449,13 @@ func TestIndexTokenOwner_IndexingError_StatusFailedUpdateFails_StillReturnsIndex
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
 	defer d.Ctrl.Finish()
-	ctx, exec, wf := d.Ctx, d.Exec, d.Wf
+	ctx := jobs.WithJobID(d.Ctx, 1007)
+	exec, wf := d.Exec, d.Wf
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	chainID := domain.ChainEthereumMainnet
 	latest := uint64(5000)
 	inner := errors.New("indexing child failed")
-	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any(), gomock.Any()).Return(nil)
+	exec.EXPECT().CreateIndexingJob(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().UpdateIndexingJobStatus(gomock.Any(), gomock.Any(), schema.IndexingJobStatusRunning, gomock.Any()).Return(nil)
 	exec.EXPECT().EnsureWatchedAddressExists(gomock.Any(), addr, chainID, gomock.Any()).Return(nil)
 	exec.EXPECT().GetIndexingBlockRangeForAddress(gomock.Any(), addr, chainID).Return(&workflows.BlockRangeResult{MinBlock: 0, MaxBlock: 0}, nil)
@@ -507,7 +514,7 @@ func TestIndexTezosTokenOwner_JobProgressTracking(t *testing.T) {
 	addr := "tz1Progress"
 	chainID := domain.ChainTezosMainnet
 	latest := uint64(10000)
-	jobID := "test-job-123"
+	jobID := int64(123)
 	tokens := make([]domain.TokenWithBlock, 100)
 	for i := range 100 {
 		tokens[i] = domain.TokenWithBlock{
@@ -535,7 +542,7 @@ func TestIndexTezosTokenOwner_JobProgressUpdateFailure_NonFatal(t *testing.T) {
 	addr := "tz1ProgFail"
 	chainID := domain.ChainTezosMainnet
 	latest := uint64(5000)
-	jobID := "test-job-123"
+	jobID := int64(123)
 	tokens := make([]domain.TokenWithBlock, 10)
 	for i := range 10 {
 		tokens[i] = domain.TokenWithBlock{

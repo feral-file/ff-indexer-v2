@@ -45,11 +45,11 @@ type CoreWorkflows interface {
 
 	// IndexTezosTokenOwner indexes all tokens held by a Tezos address
 	// jobID is optional and used for job status tracking during quota pauses
-	IndexTezosTokenOwner(ctx context.Context, address string, jobID *string) error
+	IndexTezosTokenOwner(ctx context.Context, address string, jobID *int64) error
 
 	// IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
 	// jobID is optional and used for job status tracking during quota pauses
-	IndexEthereumTokenOwner(ctx context.Context, address string, jobID *string) error
+	IndexEthereumTokenOwner(ctx context.Context, address string, jobID *int64) error
 
 	// IndexTokenProvenances indexes all provenances (balances and events) for a token
 	IndexTokenProvenances(ctx context.Context, tokenCID domain.TokenCID, address *string) error

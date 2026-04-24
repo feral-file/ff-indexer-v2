@@ -58,7 +58,7 @@ func (mr *MockCoreWorkflowsMockRecorder) DeliverWebhook(ctx, clientID, event any
 }
 
 // IndexEthereumTokenOwner mocks base method.
-func (m *MockCoreWorkflows) IndexEthereumTokenOwner(ctx context.Context, address string, jobID *string) error {
+func (m *MockCoreWorkflows) IndexEthereumTokenOwner(ctx context.Context, address string, jobID *int64) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexEthereumTokenOwner", ctx, address, jobID)
 	ret0, _ := ret[0].(error)
@@ -100,7 +100,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexMultipleTokensMetadata(ctx, tokenC
 }
 
 // IndexTezosTokenOwner mocks base method.
-func (m *MockCoreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string, jobID *string) error {
+func (m *MockCoreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string, jobID *int64) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTezosTokenOwner", ctx, address, jobID)
 	ret0, _ := ret[0].(error)

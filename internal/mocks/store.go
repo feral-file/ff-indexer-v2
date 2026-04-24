@@ -940,31 +940,31 @@ func (mr *MockStoreMockRecorder) SweepOrphanedJobs(ctx, queue any) *gomock.Call 
 }
 
 // UpdateAddressIndexingJobProgress mocks base method.
-func (m *MockStore) UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error {
+func (m *MockStore) UpdateAddressIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateAddressIndexingJobProgress", ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+	ret := m.ctrl.Call(m, "UpdateAddressIndexingJobProgress", ctx, jobID, tokensProcessed, minBlock, maxBlock)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateAddressIndexingJobProgress indicates an expected call of UpdateAddressIndexingJobProgress.
-func (mr *MockStoreMockRecorder) UpdateAddressIndexingJobProgress(ctx, workflowID, tokensProcessed, minBlock, maxBlock any) *gomock.Call {
+func (mr *MockStoreMockRecorder) UpdateAddressIndexingJobProgress(ctx, jobID, tokensProcessed, minBlock, maxBlock any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAddressIndexingJobProgress", reflect.TypeOf((*MockStore)(nil).UpdateAddressIndexingJobProgress), ctx, workflowID, tokensProcessed, minBlock, maxBlock)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAddressIndexingJobProgress", reflect.TypeOf((*MockStore)(nil).UpdateAddressIndexingJobProgress), ctx, jobID, tokensProcessed, minBlock, maxBlock)
 }
 
 // UpdateAddressIndexingJobStatus mocks base method.
-func (m *MockStore) UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error {
+func (m *MockStore) UpdateAddressIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateAddressIndexingJobStatus", ctx, workflowID, status, timestamp)
+	ret := m.ctrl.Call(m, "UpdateAddressIndexingJobStatus", ctx, jobID, status, timestamp)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateAddressIndexingJobStatus indicates an expected call of UpdateAddressIndexingJobStatus.
-func (mr *MockStoreMockRecorder) UpdateAddressIndexingJobStatus(ctx, workflowID, status, timestamp any) *gomock.Call {
+func (mr *MockStoreMockRecorder) UpdateAddressIndexingJobStatus(ctx, jobID, status, timestamp any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAddressIndexingJobStatus", reflect.TypeOf((*MockStore)(nil).UpdateAddressIndexingJobStatus), ctx, workflowID, status, timestamp)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAddressIndexingJobStatus", reflect.TypeOf((*MockStore)(nil).UpdateAddressIndexingJobStatus), ctx, jobID, status, timestamp)
 }
 
 // UpdateIndexingBlockRangeForAddress mocks base method.
