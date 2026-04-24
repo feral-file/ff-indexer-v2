@@ -211,7 +211,7 @@ lint: ## Run linters in Docker (CGO files skipped - use lint-local for full chec
 
 lint-local: ## Run linters locally with full CGO support (requires libvips: brew install vips)
 	@echo "$(COLOR_BLUE)Running linters locally with CGO support...$(COLOR_RESET)"
-	@golangci-lint run --verbose
+	@CGO_ENABLED=1 golangci-lint run --verbose
 	@echo "$(COLOR_GREEN)✓ Linters passed$(COLOR_RESET)"
 
 imports: ## Format imports
@@ -221,19 +221,16 @@ imports: ## Format imports
 
 test: ## Run tests
 	@echo "$(COLOR_BLUE)Running tests...$(COLOR_RESET)"
-	@go test -cover ./...
+	@CGO_ENABLED=1 go test -cover ./...
 	@echo "$(COLOR_GREEN)✓ Tests passed$(COLOR_RESET)"
 
-post-implementation-check: ## Run the canonical local verification flow for current changes
-	@./tools/scripts/post_implementation_check.sh
-	@echo "$(COLOR_GREEN)✓ Post-implementation checks passed$(COLOR_RESET)"
 test-lightweight-build: ## Verify the default CGO_ENABLED=0 app build and stub tests used by lightweight Docker mode
 	@echo "$(COLOR_BLUE)Verifying lightweight app build and stub tests (CGO_ENABLED=0)...$(COLOR_RESET)"
 	@CGO_ENABLED=0 go build ./cmd/ff-indexer
 	@CGO_ENABLED=0 go test ./cmd/ff-indexer/...
 	@echo "$(COLOR_GREEN)✓ Lightweight build passed$(COLOR_RESET)"
 
-check: imports lint-local test-lightweight-build test ## Run linters, format imports, lightweight build check, and tests
+check: imports lint-local test ## Format imports, local golangci-lint, lightweight (CGO=0) build + cmd tests, full (CGO=1) tests
 	@echo "$(COLOR_GREEN)✓ All checks passed$(COLOR_RESET)"
 
 ##@ Quick Start

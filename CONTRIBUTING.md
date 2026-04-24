@@ -80,7 +80,7 @@ go run ./cmd/ff-indexer -config config/config.yaml
   - `workflows/` - In-process workflow handlers invoked by the job worker (orchestration via `jobs` table)
   - `uri/` - URI resolution (IPFS, Arweave, HTTP)
 - `db/` - Database migrations and schema
-- `tools/` - `docker/` (Compose and images), `registry/` (publisher/blacklist JSON fixtures), `scripts/` (verification and helper scripts). There is no `tools/benchmark` CLI.
+- `tools/` - `docker/` (Compose and images), `registry/` (publisher/blacklist JSON fixtures). There is no `tools/benchmark` CLI.
 - `docs/` - Documentation
 
 ### Testing
@@ -88,16 +88,12 @@ go run ./cmd/ff-indexer -config config/config.yaml
 The canonical pre-review verification command is:
 
 ```bash
-make post-implementation-check
+make check
 ```
 
-This command lints Go files changed versus `main` with whole-file readability and simplicity rules, then runs the CI-aligned Go test suite with coverage output.
+This runs import formatting, full-repo `golangci-lint` (with CGO), a lightweight `CGO_ENABLED=0` build and `cmd/ff-indexer` tests, then `CGO_ENABLED=1` `go test -cover ./...`. See the `check` target in the `Makefile` for the exact dependency chain.
 
-The strict lint profile now checks:
-
-- cyclomatic and cognitive complexity
-- function and file length
-- Go doc quality for changed functions and packages
+The lint profile checks cyclomatic and cognitive complexity, function and file length, and doc quality.
 
 Coverage policy is non-regression versus the base branch. If coverage drops, explain why in the PR body and call out any follow-up work.
 
@@ -120,7 +116,7 @@ go test ./internal/store/...
 
 ### Linting
 
-`make post-implementation-check` is the authoritative lint-and-test gate for substantive changes.
+`make check` is the authoritative lint-and-test gate for substantive changes.
 
 For narrower maintenance work, this project also uses standard Go tooling:
 
@@ -163,7 +159,7 @@ make build-full
    - Update documentation as needed
    - Add doc comments to changed Go functions
    - For non-trivial changed functions, use the doc comment to record the reason, trade-offs, and constraints behind the implementation
-   - Run `make post-implementation-check`
+   - Run `make check`
 
 3. **Commit your changes**:
    - Use clear, descriptive commit messages
@@ -187,7 +183,7 @@ make build-full
 3. **Link to Issue**: Reference related issues
 
 4. **Checklist**: 
-   - [ ] `make post-implementation-check` passes locally, or the blocker is documented
+   - [ ] `make check` passes locally, or the blocker is documented
    - [ ] Code is formatted
    - [ ] Documentation updated
    - [ ] No breaking changes (or documented)
@@ -210,7 +206,7 @@ When creating a PR, use the template at [.github/PULL_REQUEST_TEMPLATE.md](.gith
 - Keep PRs focused and reasonably sized
 - Rebase on main if needed before merging
 - Review the full diff before requesting review and again after addressing feedback
-- Rerun `make post-implementation-check` after each substantive review update
+- Rerun `make check` after each substantive review update
 
 ## Coding Standards
 

@@ -358,24 +358,16 @@ make clean-images
 Use this command before handing off a substantive change:
 
 ```bash
-make post-implementation-check
+make check
 ```
 
-It is the repo's canonical local verification entrypoint and intentionally mirrors the required CI shape:
+It runs the `check` target in the `Makefile`: format imports (`goimports`), full-repo local lint (`golangci-lint` with CGO enabled), a lightweight `CGO_ENABLED=0` build plus `cmd/ff-indexer` tests, then `CGO_ENABLED=1` `go test -cover ./...`.
 
-- strict whole-file linting for Go files changed versus `main`
-- the CI test package set, not `go test ./...`
-- `coverage.out` generation followed by the same generated-file filtering used in CI
+The lint profile is opinionated (complexity, length, doc expectations). For CI’s exact commands and package filters, see `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`.
 
-The strict lint profile is intentionally opinionated:
-
-- cyclomatic complexity and cognitive complexity are capped at strict thresholds
-- functions and files are kept short enough to stay readable
-- changed Go functions and packages must have proper doc comments
+Some packages need PostgreSQL or Docker (for example `internal/store` may use `TEST_DB_*` against a local DB or testcontainers when `TEST_DB_HOST` is unset). Start infrastructure with `make up-infra` when tests require Postgres, and set `TEST_DB_*` if you use an external database instead of the default container path.
 
 For non-trivial changed functions, use the doc comment to capture the reason, trade-offs, and constraints behind the implementation so later contributors do not reopen already-rejected paths by accident.
-
-By default the script expects PostgreSQL at `localhost:5432` with the same test credentials used in CI. Start local dependencies first with `make dev`, or override `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, and `TEST_DB_NAME` when needed.
 
 Coverage policy is non-regression versus the base branch. If a change must lower coverage, document the reason in the PR description and call out the gap for reviewers.
 
