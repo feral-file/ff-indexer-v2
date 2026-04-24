@@ -1,14 +1,3 @@
-// Package workflows_test: plain Go tests for owner/index workflows (no Temporal testsuite).
-//
-// Contract (migrated from the pre–v1 Temporal suite on main, branch-agnostic):
-//   - IndexTokenOwner: address parsing, non-fatal job-lifecycle / status-update store errors, forwarding of
-//     Ethereum vs Tezos owner logic, "canceled" string / context cancel semantics, and surfacing the primary
-//     indexing error when the “failed” status write also fails.
-//   - IndexTezosTokenOwner / IndexEthereumTokenOwner: first-run empty vs token-bearing paths, per-chunk
-//     [UpdateIndexingBlockRangeForAddress] / quota reschedule ([jobs.RescheduleError]), block-range store errors,
-//     budgeted mode, and optional job progress updates when a job id is supplied.
-//
-// Exact legacy test names are not preserved; each test’s doc comment or name notes the old suite case when useful.
 package workflows_test
 
 import (
@@ -148,7 +137,7 @@ func TestIndexTokenOwner_JobCreateFailure_StillIndexes(t *testing.T) {
 }
 
 // TestIndexTokenOwner_IndexingError_MarksJobFailed matches the “child/owner path failed and job is marked failed”
-// contract (legacy: TestIndexTokenOwner_ChildWorkflowFails_JobMarkedAsFailed on Temporal main).
+// contract (legacy: TestIndexTokenOwner_ChildWorkflowFails_JobMarkedAsFailed on pre-jobs-queue main).
 func TestIndexTokenOwner_IndexingError_MarksJobFailed(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
@@ -194,7 +183,7 @@ func TestIndexTezosTokenOwner_EnsureWatchedError(t *testing.T) {
 	require.ErrorIs(t, err, e)
 }
 
-// TestIndexTezosTokenOwner_GetLatestError (legacy suite retried the Temporal activity; v1 calls get-latest once).
+// TestIndexTezosTokenOwner_GetLatestError (legacy suite retried the activity; v1 calls get-latest once).
 func TestIndexTezosTokenOwner_GetLatestError(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())
@@ -505,7 +494,7 @@ func TestIndexTezosTokenOwner_FirstRun_55Tokens_TwoChunks(t *testing.T) {
 	require.NoError(t, wf.IndexTezosTokenOwner(ctx, addr, nil))
 }
 
-// TestIndexTezosTokenOwner_JobProgressTracking (legacy: same name in Temporal suite).
+// TestIndexTezosTokenOwner_JobProgressTracking (legacy: same name in older suite).
 func TestIndexTezosTokenOwner_JobProgressTracking(t *testing.T) {
 	t.Parallel()
 	d := newOwnerWf(t, ownerCfg())

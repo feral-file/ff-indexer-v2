@@ -11,7 +11,7 @@ import (
 // Cancel is a no-op.
 //
 // Rationale: API handlers, ingestion, and similar production code construct CoreWorkflows only to obtain
-// workflow method values (e.g. w.IndexTokenMint) for Temporal's client.ExecuteWorkflow. That stub is never
+// handler method values (e.g. w.IndexTokenMint) for registration-only call sites. That stub is never
 // used to run workflow logic or enqueue work—the worker runs the real process with a real queue. Unit tests
 // should use a gomock-generated JobQueue mock instead; NopQueue is not a substitute for mocking in tests.
 type NopQueue struct{}

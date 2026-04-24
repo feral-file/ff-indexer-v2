@@ -1,4 +1,3 @@
-// Package workflows_test: gomock tests for token workflows (no Temporal testsuite).
 package workflows_test
 
 import (

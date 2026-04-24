@@ -26,8 +26,7 @@ type mediaWorkflows struct {
 }
 
 // NewMediaWorkflows creates a new media workflows instance.
-// jobQueue is required. Non-test call sites (Temporal client) that only need method values may use [jobs.NopQueue];
-// unit tests should use a mock [jobs.JobQueue].
+// jobQueue is required. Non-test call sites that only need method values may use [jobs.NopQueue];
 func NewMediaWorkflows(executor MediaExecutor, jobQueue jobs.JobQueue) MediaWorkflows {
 	if jobQueue == nil {
 		panic("workflows: NewMediaWorkflows requires a non-nil jobQueue (see NewMediaWorkflows doc for NopQueue vs mocks)")

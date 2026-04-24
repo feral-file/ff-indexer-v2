@@ -18,7 +18,7 @@ func ContextWithSentryHub(ctx context.Context) context.Context {
 }
 
 // ContextWithSentryJobHandler returns a context with an isolated Sentry hub and job-scoped
-// tags and context, for postgres job workers (analogous to per-workflow scope under Temporal).
+// tags and context, for postgres job workers (per-job / per-handler scope).
 // It must be used before job dispatch so handlers and logging see only this job in Sentry.
 func ContextWithSentryJobHandler(ctx context.Context, jobID int64, jobKind, queue string) context.Context {
 	ctx = ContextWithSentryHub(ctx)

@@ -97,8 +97,7 @@ type coreWorkflows struct {
 }
 
 // NewCoreWorkflows creates a new core workflows instance.
-// jobQueue is required. Non-test call sites (Temporal client) that only need method values for ExecuteWorkflow
-// may pass [jobs.NopQueue]; unit tests should use a gomock [jobs.JobQueue] implementation instead.
+// jobQueue is required. Call sites that only need handler method values (e.g. to register with [jobs.Registry]) may pass
 func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blacklist registry.BlacklistRegistry, jobQueue jobs.JobQueue) CoreWorkflows {
 	if jobQueue == nil {
 		panic("workflows: NewCoreWorkflows requires a non-nil jobQueue (see NewCoreWorkflows doc for NopQueue vs mocks)")

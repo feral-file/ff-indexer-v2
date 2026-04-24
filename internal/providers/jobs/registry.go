@@ -15,9 +15,9 @@ import (
 // (a JSON array) into handler parameters.
 //
 // Reason: The same string kinds are enqueued in the database and used at run time, matching
-// the Temporal workflow name model without an extra code generator.
+// stable handler names as job kinds without an extra code generator.
 // Trade-offs: Reflective dispatch is slower than hand-written switches; v1 keeps this for
-// registration symmetry with existing workflow names. Constraints: Register must run on fully
+// registration symmetry with existing handler names. Constraints: Register must run on fully
 // typed functions; payload must be a JSON array matching the number of non-context parameters.
 type Registry struct {
 	codec    adapter.JSON

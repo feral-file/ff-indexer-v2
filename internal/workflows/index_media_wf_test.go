@@ -1,8 +1,5 @@
 //go:build cgo
 
-// Package workflows_test: plain Go tests for media workflows. IndexMultipleMediaWorkflow requires
-// a non-nil JobQueue (v1); Temporal child-workflow retry/id-reuse tests are not applicable and
-// were replaced with enqueue-level assertions or removed (see file comment in parent task).
 package workflows_test
 
 import (

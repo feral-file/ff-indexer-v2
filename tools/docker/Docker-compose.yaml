@@ -25,73 +25,6 @@ services:
       - ff-indexer-network
     restart: unless-stopped
 
-  # PostgreSQL database for Temporal
-  temporal-postgres:
-    image: postgres:18-alpine
-    container_name: temporal-postgres
-    environment:
-      POSTGRES_USER: temporal
-      POSTGRES_PASSWORD: temporal
-      POSTGRES_DB: temporal
-    ports:
-      - "5433:5432"
-    volumes:
-      - temporal_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U temporal"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
-  # Temporal server
-  temporal:
-    image: temporalio/auto-setup:1.29.0
-    container_name: temporal
-    depends_on:
-      temporal-postgres:
-        condition: service_healthy
-    environment:
-      - DB=postgres12
-      - DB_PORT=5432
-      - POSTGRES_USER=temporal
-      - POSTGRES_PWD=temporal
-      - POSTGRES_SEEDS=temporal-postgres
-    ports:
-      - "7233:7233"
-      - "7234:7234"
-      - "7235:7235"
-      - "7239:7239"
-    volumes:
-      - temporal_data:/etc/temporal
-    healthcheck:
-      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
-  # Temporal Web UI
-  temporal-ui:
-    image: temporalio/ui:2.42.1
-    container_name: temporal-ui
-    depends_on:
-      temporal:
-        condition: service_healthy
-    environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
-    ports:
-      - "8080:8080"
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
   # ====================================
   # Application (single process: API + chain ingestion + workers + sweeper)
   # ====================================
@@ -109,8 +42,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      temporal:
-        condition: service_healthy
     volumes:
       - ../../cmd/ff-indexer/config.yaml.sample:/app/config.yaml:ro
       - ../../tools/registry:/app/tools/registry:ro
@@ -119,7 +50,6 @@ services:
       - ../../config/.env.local
     environment:
       - FF_INDEXER_DATABASE_HOST=postgres
-      - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
     ports:
       - "${API_PORT:-8081}:8081"
     shm_size: "1g"
@@ -140,10 +70,6 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
-  temporal_postgres_data:
-    driver: local
-  temporal_data:
     driver: local
 
 networks:

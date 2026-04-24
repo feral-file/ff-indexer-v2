@@ -1,7 +1,3 @@
-// Package workflows_test contains plain Go tests for webhook workflows (v1: no Temporal testsuite).
-//
-// Temporal-only cases (e.g. ErrMockStartChildWorkflowFailed) are not applicable; v1 DeliverWebhook
-// performs a single HTTP delivery attempt (no activity retry loop).
 package workflows_test
 
 import (

@@ -14,7 +14,7 @@ Rules for designing and evolving the FF Indexer v2 API surface. **Normative cont
 | --- | --- |
 | `tokens` | Token reads, expansions, and indexing triggers |
 | `collections` | Owner collection sync (checkpointed event stream) |
-| `workflows` | Temporal workflow run status |
+| `workflows` | Async workflow / job correlation (e.g. `workflow_id` from API triggers; backed by `jobs` where applicable) |
 | `indexing` | Address indexing job status |
 | `webhooks` | Webhook client registration (outbound delivery is documented under `webhooks` in OpenAPI) |
 | `health` | Service health |

@@ -137,7 +137,7 @@ func run() int {
 	apiCfg := cfg.ToAPIConfig()
 	srv := newAPIServer(apiCfg, dataStore, jobQueue, blacklistRegistry)
 
-	// Media URL health sweeper (Temporal-driven batch checks).
+	// Media URL health sweeper (scheduled batch checks; may enqueue jobs).
 	sweeperCfg := cfg.ToSweeperConfig()
 	httpClient := adapter.NewHTTPClient(sweeperCfg.MediaHealthSweeper.HTTPTimeout)
 	ioAdapter := adapter.NewIO()
@@ -162,7 +162,7 @@ func run() int {
 		logger.FatalCtx(rootCtx, "Failed to init worker-media", zap.Error(err))
 	}
 
-	// Subsystems: HTTP, chain listeners, Temporal workers, sweeper.
+	// Subsystems: HTTP, chain listeners, postgres job workers, sweeper.
 	g, ctx := errgroup.WithContext(rootCtx)
 
 	g.Go(func() error {

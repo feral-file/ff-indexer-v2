@@ -177,7 +177,7 @@ func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.
 		// oversized data URI cannot cause the entire batch to fail, and failures
 		// are isolated to individual URLs.
 		// FIXME: This is a temporary solution to avoid the entire batch failing due to a single oversized data URI.
-		// The better approach for data URI could be Claim Check Pattern to ensure the data URI bypass the Temporal params size limit.
+		// The better approach for data URI could be Claim Check Pattern to avoid oversized job payloads.
 		for _, u := range validURLs {
 			uk := types.StringPtr("media-" + types.MD5Hash(u))
 			_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{

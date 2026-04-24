@@ -36,10 +36,8 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    Edit `config/config.yaml` with your settings.
 
 3. **Required configuration** (in env vars or YAML):
-   - Database credentials
-   - NATS URL
-   - Temporal connection
-   - Ethereum/Tezos RPC endpoints
+   - Database credentials (PostgreSQL; the app also uses the **`jobs` table** as its work queue)
+   - Ethereum RPC (and Tezos indexer/RPC as needed for your chains)
    - Cloudflare credentials (only when `FF_INDEXER_MEDIA_ENABLED=true`)
    - API authentication (JWT public key or API keys)
 
@@ -49,12 +47,11 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    ```bash
    make dev
    ```
-   This starts PostgreSQL, Temporal, and NATS in Docker.
+   This brings up Docker Compose from [`tools/docker/Docker-compose.yaml`](tools/docker/Docker-compose.yaml) (PostgreSQL for the app database and `jobs` queue, plus `ff-indexer` when using `make up` / `make quickstart`).
 
 5. **Verify setup**:
    - PostgreSQL: `psql -h localhost -U postgres -d ff_indexer`
-   - Temporal UI: `http://localhost:8080`
-   - NATS: `http://localhost:8222`
+   - After `go run ./cmd/ff-indexer`, API: `http://localhost:8081` (port from config)
 
 ## Development Workflow
 
@@ -68,7 +65,7 @@ go run ./cmd/ff-indexer -config config/config.yaml
 
 ### Code Structure
 
-- `cmd/ff-indexer` - Single application entrypoint (HTTP API, emitters, bridge, Temporal workers, sweeper)
+- `cmd/ff-indexer` - Single application entrypoint (HTTP API, chain ingestion, postgres-backed job workers, sweeper)
 - `internal/` - Internal packages (not exported)
   - `adapter/` - External service adapters
   - `api/` - API handlers (REST, GraphQL)
@@ -80,10 +77,10 @@ go run ./cmd/ff-indexer -config config/config.yaml
   - `providers/` - Blockchain and external service providers
   - `registry/` - Blacklist and publisher registries
   - `store/` - Database layer
-  - `workflows/` - Temporal workflows and activities
+  - `workflows/` - In-process workflow handlers invoked by the job worker (orchestration via `jobs` table)
   - `uri/` - URI resolution (IPFS, Arweave, HTTP)
 - `db/` - Database migrations and schema
-- `tools/` - Development tools and scripts
+- `tools/` - `docker/` (Compose and images), `registry/` (publisher/blacklist JSON fixtures), `scripts/` (verification and helper scripts). There is no `tools/benchmark` CLI.
 - `docs/` - Documentation
 
 ### Testing
@@ -230,7 +227,7 @@ When creating a PR, use the template at [.github/PULL_REQUEST_TEMPLATE.md](.gith
 - Always handle errors explicitly
 - Use `fmt.Errorf` with `%w` for error wrapping
 - Return errors, don't log and ignore
-- Use `temporal.NewNonRetryableApplicationError` for non-retryable errors in workflows
+- Return wrapped errors from handlers; the v1 job worker does not distinguish retryable types (failed jobs stay `failed` with `last_error`)
 
 ### Logging
 

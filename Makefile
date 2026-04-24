@@ -17,7 +17,7 @@ DOCKER_COMPOSE_FLAGS :=
 DOCKER_COMPOSE_UP := $(DOCKER_COMPOSE) up -d --remove-orphans
 
 # Service names
-INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui
+INFRA_SERVICES := postgres
 APP_SERVICE := ff-indexer
 ALL_APP_SERVICES := $(APP_SERVICE)
 
@@ -65,7 +65,7 @@ up: ## Start all services
 	@echo "$(COLOR_GREEN)✓ All services started$(COLOR_RESET)"
 	@$(MAKE) ps
 
-up-infra: ## Start only infrastructure services (postgres, temporal)
+up-infra: ## Start only infrastructure services (PostgreSQL)
 	@echo "$(COLOR_GREEN)Starting infrastructure services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE_UP) $(INFRA_SERVICES)
 	@echo "$(COLOR_GREEN)✓ Infrastructure services started$(COLOR_RESET)"
@@ -246,7 +246,7 @@ quickstart: setup build up ## Complete setup and start (lightweight mode, recomm
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Mode:         Lightweight (~112MB)                    ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  API:          http://localhost:8081                   ║$(COLOR_RESET)"
-	@echo "$(COLOR_GREEN)║  Temporal UI:  http://localhost:8080                   ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  GraphQL:      http://localhost:8081/graphql           ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Run 'make logs' to view logs                         ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Run 'make ps' to view service status                 ║$(COLOR_RESET)"
@@ -265,7 +265,7 @@ quickstart-full: setup build-full up ## Complete setup and start (full mode with
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Mode:         Full with Media (~730MB)                ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  API:          http://localhost:8081                   ║$(COLOR_RESET)"
-	@echo "$(COLOR_GREEN)║  Temporal UI:  http://localhost:8080                   ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  GraphQL:      http://localhost:8081/graphql           ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Media Processing: ✓ ENABLED                           ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║    - libvips 8.18.2 (image processing)                 ║$(COLOR_RESET)"
@@ -284,5 +284,4 @@ dev: up-infra ## Start development mode (only infrastructure; run ff-indexer loc
 	@echo ""
 	@echo "$(COLOR_BLUE)Available services:$(COLOR_RESET)"
 	@echo "  PostgreSQL: localhost:5432"
-	@echo "  Temporal:   localhost:7233"
 	@echo ""

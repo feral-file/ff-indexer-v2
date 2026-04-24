@@ -262,8 +262,8 @@ CREATE TABLE webhook_deliveries (
     event_id VARCHAR(255) NOT NULL,           -- Unique event ID (ULID for time-sortable)
     event_type VARCHAR(50) NOT NULL,          -- e.g., "token.indexing.queryable", "token.indexing.viewable"
     payload JSONB NOT NULL,                   -- Full event payload
-    workflow_id VARCHAR(255) NOT NULL,        -- Temporal workflow ID for tracking
-    workflow_run_id VARCHAR(255),             -- Temporal run ID
+    workflow_id VARCHAR(255) NOT NULL,        -- Correlation ID for tracking (historical column name)
+    workflow_run_id VARCHAR(255),             -- Optional second correlation ID (historical column name)
     delivery_status webhook_delivery_status NOT NULL DEFAULT 'pending', -- pending, success, failed
     attempts INTEGER NOT NULL DEFAULT 0,      -- Number of delivery attempts
     last_attempt_at TIMESTAMPTZ,              -- Timestamp of last attempt
@@ -274,7 +274,7 @@ CREATE TABLE webhook_deliveries (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Jobs queue - durable work items for the postgres-backed job worker (replaces Temporal orchestration for these units)
+-- Jobs queue - durable work items for the postgres-backed job worker
 CREATE TABLE jobs (
     id BIGSERIAL PRIMARY KEY,
     queue TEXT NOT NULL,
@@ -550,7 +550,7 @@ COMMENT ON TABLE webhook_clients IS 'Registered webhook clients for event notifi
 COMMENT ON TABLE webhook_deliveries IS 'Audit log of webhook delivery attempts with status tracking and response details';
 COMMENT ON TABLE address_indexing_jobs IS 'Tracks address-level indexing job status; linked to the postgres job queue via job_id (jobs.id).';
 COMMENT ON TYPE job_status IS 'Status of a row in the postgres-backed job queue';
-COMMENT ON TABLE jobs IS 'Durable work queue: one row per unit of work (replaces Temporal workflow/activity for orchestration where wired)';
+COMMENT ON TABLE jobs IS 'Durable work queue: one row per unit of work for in-process handler dispatch';
 COMMENT ON COLUMN jobs.queue IS 'Logical queue name (e.g. token_index, media_index) consumed by a worker pool';
 COMMENT ON COLUMN jobs.kind IS 'Handler name registered with the job registry (workflow name successor)';
 COMMENT ON COLUMN jobs.payload IS 'JSON arguments for the handler (wire format: array of raw JSON values)';

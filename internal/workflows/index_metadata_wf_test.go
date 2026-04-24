@@ -1,6 +1,5 @@
 //go:build cgo
 
-// Package workflows_test: plain Go tests for metadata workflows (no Temporal testsuite).
 package workflows_test
 
 import (
