@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -170,7 +169,6 @@ type coreExecutor struct {
 	clock            adapter.Clock
 	httpClient       adapter.HTTPClient
 	io               adapter.IO
-	temporalActivity adapter.Activity
 	blacklist        registry.BlacklistRegistry
 	urlChecker       uri.URLChecker
 	dataURIChecker   uri.DataURIChecker
@@ -187,7 +185,6 @@ func NewCoreExecutor(
 	clock adapter.Clock,
 	httpClient adapter.HTTPClient,
 	io adapter.IO,
-	temporalActivity adapter.Activity,
 	blacklist registry.BlacklistRegistry,
 	urlChecker uri.URLChecker,
 	dataURIChecker uri.DataURIChecker,
@@ -203,7 +200,6 @@ func NewCoreExecutor(
 		clock:            clock,
 		httpClient:       httpClient,
 		io:               io,
-		temporalActivity: temporalActivity,
 		blacklist:        blacklist,
 		urlChecker:       urlChecker,
 		dataURIChecker:   dataURIChecker,
@@ -933,11 +929,7 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 				return fmt.Errorf("failed to verify token existence on-chain: %w", err)
 			}
 			if !existsOnChain {
-				return temporal.NewNonRetryableApplicationError(
-					"token not found on chain",
-					"TokenNotFoundOnChain",
-					domain.ErrTokenNotFoundOnChain,
-				)
+				return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 			}
 		}
 	}
@@ -983,23 +975,13 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 			if err != nil {
 				if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
 					strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
-					// It's likely that the token is not found on chain (burned or contract has been self-destructed),
-					// so we return a non-retryable error
-					return temporal.NewNonRetryableApplicationError(
-						"token not found on chain",
-						"TokenNotFoundOnChain",
-						domain.ErrTokenNotFoundOnChain,
-					)
+					// Token not found on chain (burned or contract self-destructed).
+					return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 				}
 				if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
-					// It's likely that the contract is unreachable (e.g. contract exists but function is not callable),
-					// so we return a non-retryable error
+					// Contract unreachable (e.g. exists but function is not callable).
 					// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
-					return temporal.NewNonRetryableApplicationError(
-						"contract is unreachable",
-						"ContractUnreachable",
-						domain.ErrContractUnreachable,
-					)
+					return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
 				}
 
 				return fmt.Errorf("failed to get ERC721 owner: %w", err)
@@ -1022,36 +1004,19 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 				if err != nil {
 					if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
 						strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
-						// It's likely that the token is not found on chain (burned or contract has been self-destructed),
-						// so we return a non-retryable error
-						return temporal.NewNonRetryableApplicationError(
-							"token not found on chain",
-							"TokenNotFoundOnChain",
-							domain.ErrTokenNotFoundOnChain,
-						)
+						return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 					}
 
 					if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
-						// It's likely that the contract is unreachable (e.g. contract exists but function is not callable),
-						// so we return a non-retryable error
 						// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
-						return temporal.NewNonRetryableApplicationError(
-							"contract is unreachable",
-							"ContractUnreachable",
-							domain.ErrContractUnreachable,
-						)
+						return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
 					}
 
 					return fmt.Errorf("failed to get ERC1155 balance and events for owner: %w", err)
 				}
 
-				// If balance is not a positive numeric value, return a non-retryable error
 				if !types.IsPositiveNumeric(balance) {
-					return temporal.NewNonRetryableApplicationError(
-						"balance is not a positive numeric value",
-						"InvalidBalance",
-						domain.ErrBalanceIsNotAPositiveNumericValue,
-					)
+					return fmt.Errorf("balance is not a positive numeric value: %w", domain.ErrBalanceIsNotAPositiveNumericValue)
 				}
 
 				logger.InfoCtx(ctx, "Indexing ERC1155 token for specific owner",
@@ -1115,26 +1080,14 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 				// This means we may get partial/incomplete balances for high-activity contracts
 				balances, err := e.ethClient.ERC1155Balances(ctx, contractAddress, tokenNumber)
 				if err != nil {
-					// It's likely that the token is not found on chain (burned or contract has been self-destructed),
-					// so we return a non-retryable error
 					if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
 						strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
-						return temporal.NewNonRetryableApplicationError(
-							"token not found on chain",
-							"TokenNotFoundOnChain",
-							domain.ErrTokenNotFoundOnChain,
-						)
+						return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 					}
 
 					if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
-						// It's likely that the contract is unreachable (e.g. contract exists but function is not callable),
-						// so we return a non-retryable error
 						// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
-						return temporal.NewNonRetryableApplicationError(
-							"contract is unreachable",
-							"ContractUnreachable",
-							domain.ErrContractUnreachable,
-						)
+						return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
 					}
 
 					return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
@@ -1499,16 +1452,17 @@ func (e *coreExecutor) CreateWebhookDeliveryRecord(ctx context.Context, delivery
 	return delivery.ID, nil
 }
 
-// DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with HMAC signature
-// This activity will be automatically retried by Temporal with exponential backoff
+// DeliverWebhookHTTP performs the actual HTTP delivery of a webhook with HMAC signature.
 func (e *coreExecutor) DeliverWebhookHTTP(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error) {
-	// Get attempt number from Temporal activity info
-	attempt := e.temporalActivity.GetInfo(ctx).Attempt
+	// The v1 postgres-backed job worker does not retry webhook HTTP inside the same job: one enqueue
+	// runs one delivery try, and the job ends failed or succeeded. We still persist attempt_number on
+	// the delivery row for API/schema compatibility; it is always 1 (no multi-attempt replay).
+	const deliveryAttempt = 1
 
 	logger.InfoCtx(ctx, "Attempting webhook delivery",
 		zap.String("clientID", client.ClientID),
 		zap.String("eventID", event.EventID),
-		zap.Int32("attempt", attempt))
+		zap.Int("attempt", deliveryAttempt))
 
 	// Generate signed payload with HMAC-SHA256
 	payload, signature, timestamp, err := webhook.GenerateSignedPayload(client.WebhookSecret, event)
@@ -1516,14 +1470,13 @@ func (e *coreExecutor) DeliverWebhookHTTP(ctx context.Context, client *schema.We
 		logger.ErrorCtx(ctx, errors.New("failed to generate signed payload"),
 			zap.Error(err), zap.String("clientID", client.ClientID))
 
-		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), nil, "", err.Error()); ierr != nil {
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, deliveryAttempt, nil, "", err.Error()); ierr != nil {
 			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
 				zap.Error(ierr),
 				zap.String("clientID", client.ClientID))
 		}
 
-		// Return non-retryable error to stop Temporal retry
-		return webhook.DeliveryResult{Success: false, Error: err.Error()}, temporal.NewNonRetryableApplicationError(err.Error(), "failed to generate signed payload", err)
+		return webhook.DeliveryResult{Success: false, Error: err.Error()}, fmt.Errorf("failed to generate signed payload: %w", err)
 	}
 
 	// Build headers for webhook delivery
@@ -1542,13 +1495,12 @@ func (e *coreExecutor) DeliverWebhookHTTP(ctx context.Context, client *schema.We
 		logger.ErrorCtx(ctx, errors.New("failed to post webhook HTTP request"),
 			zap.Error(err), zap.String("clientID", client.ClientID))
 
-		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), nil, "", err.Error()); ierr != nil {
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, deliveryAttempt, nil, "", err.Error()); ierr != nil {
 			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
 				zap.Error(ierr),
 				zap.String("clientID", client.ClientID))
 		}
 
-		// Return error to trigger Temporal retry
 		return webhook.DeliveryResult{Success: false, Error: err.Error()}, err
 	}
 	defer func() {
@@ -1576,18 +1528,17 @@ func (e *coreExecutor) DeliverWebhookHTTP(ctx context.Context, client *schema.We
 			zap.String("clientID", client.ClientID))
 
 		err := fmt.Errorf("HTTP %d", resp.StatusCode)
-		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, int(attempt), &resp.StatusCode, string(respBody), err.Error()); ierr != nil {
+		if ierr := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusFailed, deliveryAttempt, &resp.StatusCode, string(respBody), err.Error()); ierr != nil {
 			logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
 				zap.Error(ierr),
 				zap.String("clientID", client.ClientID))
 		}
 
-		// Return error to trigger Temporal retry
 		return webhook.DeliveryResult{Success: false, StatusCode: resp.StatusCode, Body: string(respBody)}, err
 	}
 
 	// Update webhook delivery status
-	if err := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusSuccess, int(attempt), &resp.StatusCode, string(respBody), ""); err != nil {
+	if err := e.store.UpdateWebhookDeliveryStatus(ctx, deliveryID, schema.WebhookDeliveryStatusSuccess, deliveryAttempt, &resp.StatusCode, string(respBody), ""); err != nil {
 		logger.ErrorCtx(ctx, errors.New("failed to update webhook delivery status"),
 			zap.Error(err), zap.String("clientID", client.ClientID))
 	}

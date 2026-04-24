@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"go.temporal.io/sdk/activity"
-	"go.temporal.io/sdk/temporal"
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -42,7 +40,6 @@ type testExecutorMocks struct {
 	clock            *mocks.MockClock
 	httpClient       *mocks.MockHTTPClient
 	io               *mocks.MockIO
-	temporalActivity *mocks.MockActivity
 	blacklist        *mocks.MockBlacklistRegistry
 	urlChecker       *mocks.MockURLChecker
 	dataURIChecker   *mocks.MockDataURIChecker
@@ -72,7 +69,6 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		clock:            mocks.NewMockClock(ctrl),
 		httpClient:       mocks.NewMockHTTPClient(ctrl),
 		io:               mocks.NewMockIO(ctrl),
-		temporalActivity: mocks.NewMockActivity(ctrl),
 		blacklist:        mocks.NewMockBlacklistRegistry(ctrl),
 		urlChecker:       mocks.NewMockURLChecker(ctrl),
 		dataURIChecker:   mocks.NewMockDataURIChecker(ctrl),
@@ -88,7 +84,6 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 		tm.clock,
 		tm.httpClient,
 		tm.io,
-		tm.temporalActivity,
 		tm.blacklist,
 		tm.urlChecker,
 		tm.dataURIChecker,
@@ -2789,11 +2784,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_TokenNotFoundOnChain(t *test
 	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, nil)
 
 	assert.Error(t, err)
-	assert.IsType(t, &temporal.ApplicationError{}, err)
-	var appErr *temporal.ApplicationError
-	errOk := errors.As(err, &appErr)
-	assert.True(t, errOk)
-	assert.True(t, appErr.NonRetryable())
+	assert.True(t, errors.Is(err, domain.ErrTokenNotFoundOnChain))
 	assert.Contains(t, err.Error(), "token not found on chain")
 }
 
@@ -3013,11 +3004,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_Ze
 	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
 
 	assert.Error(t, err)
-	assert.IsType(t, &temporal.ApplicationError{}, err)
-	var appErr *temporal.ApplicationError
-	errOk := errors.As(err, &appErr)
-	assert.True(t, errOk)
-	assert.True(t, appErr.NonRetryable())
+	assert.True(t, errors.Is(err, domain.ErrBalanceIsNotAPositiveNumericValue))
 	assert.Contains(t, err.Error(), "balance is not a positive numeric value")
 }
 
@@ -3088,11 +3075,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_WithOwner_TokenNotFoundOnCha
 	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
 
 	assert.Error(t, err)
-	assert.IsType(t, &temporal.ApplicationError{}, err)
-	var appErr *temporal.ApplicationError
-	errOk := errors.As(err, &appErr)
-	assert.True(t, errOk)
-	assert.True(t, appErr.NonRetryable())
+	assert.True(t, errors.Is(err, domain.ErrTokenNotFoundOnChain))
 	assert.Contains(t, err.Error(), "token not found on chain")
 }
 
@@ -3111,11 +3094,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_WithOwner_ContractUnreachabl
 	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)
 
 	assert.Error(t, err)
-	assert.IsType(t, &temporal.ApplicationError{}, err)
-	var appErr *temporal.ApplicationError
-	errOk := errors.As(err, &appErr)
-	assert.True(t, errOk)
-	assert.True(t, appErr.NonRetryable())
+	assert.True(t, errors.Is(err, domain.ErrContractUnreachable))
 	assert.Contains(t, err.Error(), "contract is unreachable")
 }
 
@@ -3733,11 +3712,6 @@ func TestDeliverWebhookHTTP_Success(t *testing.T) {
 	}
 	deliveryID := uint64(789)
 
-	// Mock GetInfo from temporal activity
-	mocks.temporalActivity.EXPECT().
-		GetInfo(ctx).
-		Return(activity.Info{Attempt: 1})
-
 	// Mock successful HTTP response
 	statusCode := 200
 	mockResponse := &http.Response{
@@ -3797,11 +3771,6 @@ func TestDeliverWebhookHTTP_HTTPError(t *testing.T) {
 	deliveryID := uint64(789)
 	expectedError := errors.New("connection refused")
 
-	// Mock GetInfo from temporal activity
-	mocks.temporalActivity.EXPECT().
-		GetInfo(ctx).
-		Return(activity.Info{Attempt: 1})
-
 	// Mock failed HTTP response
 	mocks.httpClient.EXPECT().
 		PostNoRetry(ctx, client.WebhookURL, gomock.Any(), gomock.Any()).
@@ -3838,11 +3807,6 @@ func TestDeliverWebhookHTTP_Non2xxStatusCode(t *testing.T) {
 		},
 	}
 	deliveryID := uint64(789)
-
-	// Mock GetInfo from temporal activity
-	mocks.temporalActivity.EXPECT().
-		GetInfo(ctx).
-		Return(activity.Info{Attempt: 1})
 
 	// Mock 500 error response
 	statusCode := 500
@@ -3893,11 +3857,6 @@ func TestDeliverWebhookHTTP_ReadBodyError(t *testing.T) {
 	}
 	deliveryID := uint64(789)
 	readError := errors.New("failed to read body")
-
-	// Mock GetInfo from temporal activity
-	mocks.temporalActivity.EXPECT().
-		GetInfo(ctx).
-		Return(activity.Info{Attempt: 1})
 
 	// Mock successful HTTP response but body read fails
 	mockResponse := &http.Response{
@@ -3952,11 +3911,6 @@ func TestDeliverWebhookHTTP_UpdateStatusError(t *testing.T) {
 	}
 	deliveryID := uint64(789)
 	updateError := errors.New("failed to update status")
-
-	// Mock GetInfo from temporal activity
-	mocks.temporalActivity.EXPECT().
-		GetInfo(ctx).
-		Return(activity.Info{Attempt: 1})
 
 	// Mock successful HTTP response
 	mockResponse := &http.Response{

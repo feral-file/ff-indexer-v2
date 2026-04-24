@@ -42,7 +42,6 @@ func registerWorkerCore(
 	fs := adapter.NewFileSystem()
 	base64Adapter := adapter.NewBase64()
 	ioAdapter := adapter.NewIO()
-	temporalActivityAdapter := adapter.NewActivity()
 
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
 
@@ -136,7 +135,6 @@ func registerWorkerCore(
 		clockAdapter,
 		httpClient,
 		ioAdapter,
-		temporalActivityAdapter,
 		blacklistRegistry,
 		urlChecker,
 		dataURIChecker)
