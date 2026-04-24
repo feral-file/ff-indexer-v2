@@ -1,5 +1,7 @@
 .PHONY: help build build-full rebuild rebuild-full run run-full quickstart quickstart-full \
-	up down start stop restart logs ps clean config \
+	up down start stop restart logs logs-component \
+	logs-api logs-ethereum-ingestion logs-tezos-ingestion logs-worker-core logs-worker-media logs-sweeper \
+	ps clean config \
 	up-infra up-app dev
 
 # Docker Compose settings
@@ -125,6 +127,11 @@ restart-infra: ## Restart infrastructure services
 
 ##@ Monitoring Commands
 
+# $(1) = logger component (cmd/ff-indexer/main.go WithComponent). Matches compact or spaced JSON from zap.
+define run_ff_indexer_component_logs
+	@$(DOCKER_COMPOSE) logs -f --no-log-prefix $(APP_SERVICE) 2>&1 | grep -E '"component":[[:space:]]*"$(1)"'
+endef
+
 logs: ## Show logs for all services (follow mode)
 	@$(DOCKER_COMPOSE) logs -f
 
@@ -133,6 +140,36 @@ logs-app: ## Show logs for ff-indexer
 
 logs-infra: ## Show logs for infrastructure services
 	@$(DOCKER_COMPOSE) logs -f $(INFRA_SERVICES)
+
+# COMPONENT names match logger.WithComponent in cmd/ff-indexer/main.go.
+# Matches zap's JSON field with optional space after the colon: "component":"x" or "component": "x"
+# Or use shortcuts: make logs-api, make logs-ethereum-ingestion, etc.
+logs-component: ## Stream ff-indexer logs for one component (COMPONENT=name, e.g. worker-core)
+	@if [ -z "$(COMPONENT)" ]; then \
+		echo "$(COLOR_YELLOW)Usage: make logs-component COMPONENT=<name>$(COLOR_RESET)"; \
+		echo "  Or: make logs-api / make logs-ethereum-ingestion / ... (see make help)"; \
+		echo "  http-server, ethereum-ingestion, tezos-ingestion, worker-core, worker-media, sweeper"; \
+		exit 1; \
+	fi
+	$(call run_ff_indexer_component_logs,$(COMPONENT))
+
+logs-api: ## Stream ff-indexer logs for the HTTP server (component http-server)
+	$(call run_ff_indexer_component_logs,http-server)
+
+logs-ethereum-ingestion: ## Stream logs for Ethereum chain ingestion
+	$(call run_ff_indexer_component_logs,ethereum-ingestion)
+
+logs-tezos-ingestion: ## Stream logs for Tezos chain ingestion
+	$(call run_ff_indexer_component_logs,tezos-ingestion)
+
+logs-worker-core: ## Stream logs for the core postgres job worker
+	$(call run_ff_indexer_component_logs,worker-core)
+
+logs-worker-media: ## Stream logs for the media job worker
+	$(call run_ff_indexer_component_logs,worker-media)
+
+logs-sweeper: ## Stream logs for the media health sweeper
+	$(call run_ff_indexer_component_logs,sweeper)
 
 ps: ## Show status of all services
 	@$(DOCKER_COMPOSE) ps
