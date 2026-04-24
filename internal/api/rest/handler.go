@@ -44,6 +44,12 @@ type Handler interface {
 	// GET /api/v1/jobs/:job_id
 	GetJobStatus(c *gin.Context)
 
+	// GetWorkflowRun retrieves job status by legacy workflow paths (workflow_id is decimal jobs.id; optional
+	// /runs/:run_id is ignored for queue-backed jobs)
+	// GET /api/v1/workflows/:workflow_id
+	// GET /api/v1/workflows/:workflow_id/runs/:run_id
+	GetWorkflowRun(c *gin.Context)
+
 	// CreateWebhookClient creates a new webhook client (requires authentication via API key)
 	// POST /api/v1/webhooks/clients
 	CreateWebhookClient(c *gin.Context)
@@ -283,6 +289,29 @@ func (h *handler) GetJobStatus(c *gin.Context) {
 	jobID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || jobID < 1 {
 		respondBadRequest(c, "job_id must be a positive integer")
+		return
+	}
+
+	status, err := h.executor.GetJobStatus(c.Request.Context(), jobID)
+	if err != nil {
+		respondInternalError(c, err, "Failed to get job status")
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// GetWorkflowRun returns the same payload as GetJobStatus for the job whose id matches workflow_id.
+// An optional /runs/:run_id suffix is accepted for legacy URL shape only; it is not used.
+func (h *handler) GetWorkflowRun(c *gin.Context) {
+	wf := c.Param("workflow_id")
+	if wf == "" {
+		respondBadRequest(c, "workflow_id is required")
+		return
+	}
+	jobID, err := internalTypes.Int64FromUnsignedDecimalString(wf)
+	if err != nil || jobID < 1 {
+		respondBadRequest(c, "workflow_id must be a positive decimal integer (jobs.id)")
 		return
 	}
 

@@ -33,6 +33,10 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 		// Job status (public read access)
 		v1.GET("/jobs/:job_id", handler.GetJobStatus)
 
+		// Legacy workflow URL shapes; workflow_id is decimal jobs.id; optional /runs/:run_id is ignored
+		v1.GET("/workflows/:workflow_id/runs/:run_id", handler.GetWorkflowRun)
+		v1.GET("/workflows/:workflow_id", handler.GetWorkflowRun)
+
 		// Indexing job endpoints (public read access)
 		v1.GET("/indexing/jobs/:job_id", handler.GetAddressIndexingJob)
 

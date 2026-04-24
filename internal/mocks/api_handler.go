@@ -88,6 +88,18 @@ func (mr *MockAPIHandlerMockRecorder) GetToken(c any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetToken", reflect.TypeOf((*MockAPIHandler)(nil).GetToken), c)
 }
 
+// GetWorkflowRun mocks base method.
+func (m *MockAPIHandler) GetWorkflowRun(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "GetWorkflowRun", c)
+}
+
+// GetWorkflowRun indicates an expected call of GetWorkflowRun.
+func (mr *MockAPIHandlerMockRecorder) GetWorkflowRun(c any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkflowRun", reflect.TypeOf((*MockAPIHandler)(nil).GetWorkflowRun), c)
+}
+
 // HealthCheck mocks base method.
 func (m *MockAPIHandler) HealthCheck(c *gin.Context) {
 	m.ctrl.T.Helper()
