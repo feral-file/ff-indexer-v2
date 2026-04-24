@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -317,7 +318,7 @@ func (r *runner) shouldProcessEvent(ctx context.Context, event *domain.Blockchai
 }
 
 func (r *runner) startWorkflow(ctx context.Context, event *domain.BlockchainEvent) (flushOutcome, error) {
-	coreWorkflows := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, nil)
+	coreWorkflows := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, jobs.NopQueue{})
 
 	var workflowFunc interface{}
 	switch event.EventType {

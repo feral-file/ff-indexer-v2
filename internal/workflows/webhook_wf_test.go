@@ -1,3 +1,7 @@
+// Package workflows_test contains plain Go tests for webhook workflows (v1: no Temporal testsuite).
+//
+// Temporal-only cases (e.g. ErrMockStartChildWorkflowFailed) are not applicable; v1 DeliverWebhook
+// performs a single HTTP delivery attempt (no activity retry loop).
 package workflows_test
 
 import (
@@ -8,108 +12,61 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
-	"go.temporal.io/sdk/testsuite"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"gorm.io/datatypes"
 
-	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
-	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
-// WebhookWorkflowTestSuite is the test suite for webhook workflow tests
-type WebhookWorkflowTestSuite struct {
-	suite.Suite
-	testsuite.WorkflowTestSuite
-
-	env           *testsuite.TestWorkflowEnvironment
-	ctrl          *gomock.Controller
-	executor      *mocks.MockCoreExecutor
-	blacklist     *mocks.MockBlacklistRegistry
-	coreWorkflows workflows.CoreWorkflows
+func newWebhookWf(t *testing.T) *coreWfDeps {
+	t.Helper()
+	return newCoreWfDeps(t, defaultCompactCoreWfConfig(), nil)
 }
 
-// webhookEventMatcher returns a function that matches webhook events
-// accounting for the fact that Data can be either a struct or map[string]interface{}
-// after JSON serialization/deserialization
-func webhookEventMatcher(expected webhook.WebhookEvent) func(webhook.WebhookEvent) bool {
-	return func(actual webhook.WebhookEvent) bool {
-		// Compare non-Data fields
-		if actual.EventID != expected.EventID ||
-			actual.EventType != expected.EventType ||
-			!actual.Timestamp.Equal(expected.Timestamp) {
+// webhookEventMatcher returns a gomock Matcher for webhook event payload shape.
+func webhookEventMatcher(expected webhook.WebhookEvent) gomock.Matcher {
+	return gomock.Cond(func(actual any) bool {
+		ev, ok := actual.(webhook.WebhookEvent)
+		if !ok {
 			return false
 		}
-
-		// Handle Data field - can be struct or map
+		if ev.EventID != expected.EventID ||
+			ev.EventType != expected.EventType ||
+			!ev.Timestamp.Equal(expected.Timestamp) {
+			return false
+		}
 		expectedData, expectedOK := expected.Data.(webhook.EventData)
 		if !expectedOK {
-			// If expected is not EventData, do regular comparison
-			return reflect.DeepEqual(actual.Data, expected.Data)
+			return reflect.DeepEqual(ev.Data, expected.Data)
 		}
-
-		// Check if actual.Data is a map (after deserialization)
-		actualMap, isMap := actual.Data.(map[string]interface{})
-		if isMap {
-			// Compare map fields with struct fields
+		if actualMap, isMap := ev.Data.(map[string]interface{}); isMap {
 			return actualMap["token_cid"] == expectedData.TokenCID &&
 				actualMap["chain"] == expectedData.Chain &&
 				actualMap["standard"] == expectedData.Standard &&
 				actualMap["contract"] == expectedData.Contract &&
 				actualMap["token_number"] == expectedData.TokenNumber
 		}
-
-		// Check if actual.Data is EventData struct
-		actualData, isStruct := actual.Data.(webhook.EventData)
-		if isStruct {
+		if actualData, isStruct := ev.Data.(webhook.EventData); isStruct {
 			return actualData == expectedData
 		}
-
 		return false
-	}
-}
-
-// SetupTest is called before each test
-func (s *WebhookWorkflowTestSuite) SetupTest() {
-	// Initialize logger for tests
-	_ = logger.Initialize(logger.Config{
-		Debug: true,
 	})
-
-	s.env = s.NewTestWorkflowEnvironment()
-	s.ctrl = gomock.NewController(s.T())
-	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
-	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
-	s.coreWorkflows = workflows.NewCoreWorkflows(s.executor, workflows.CoreWorkflowsConfig{
-		TezosChainID:                 domain.ChainTezosMainnet,
-		EthereumChainID:              domain.ChainEthereumMainnet,
-		EthereumTokenSweepStartBlock: 0,
-		TezosTokenSweepStartBlock:    0,
-		MediaTaskQueue:               "media-task-queue",
-	}, s.blacklist, nil)
-}
-
-// TearDownTest is called after each test
-func (s *WebhookWorkflowTestSuite) TearDownTest() {
-	s.env.AssertExpectations(s.T())
-	s.ctrl.Finish()
-}
-
-// TestWebhookWorkflowTestSuite runs the test suite
-func TestWebhookWorkflowTestSuite(t *testing.T) {
-	suite.Run(t, new(WebhookWorkflowTestSuite))
 }
 
 // ====================================================================================
 // NotifyWebhookClients Tests
 // ====================================================================================
 
-func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_NoClients() {
+func TestNotifyWebhookClients_NoClients(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, _, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
 		EventType: webhook.EventTypeTokenIndexingQueryable,
@@ -123,19 +80,19 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_NoClients() {
 		},
 	}
 
-	// Mock GetActiveWebhookClientsByEventType activity - no clients
-	s.env.OnActivity(s.executor.GetActiveWebhookClientsByEventType, mock.Anything, event.EventType).
-		Return([]*schema.WebhookClient{}, nil)
+	exec.EXPECT().GetActiveWebhookClientsByEventType(gomock.Any(), event.EventType).Return([]*schema.WebhookClient{}, nil)
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.NotifyWebhookClients, event)
-
-	// Verify workflow completed successfully (even with no clients)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := wf.NotifyWebhookClients(ctx, event)
+	require.NoError(t, err)
 }
 
-func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_GetClientsError() {
+func TestNotifyWebhookClients_GetClientsError(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, _, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
 		EventType: webhook.EventTypeTokenIndexingQueryable,
@@ -149,19 +106,19 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_GetClientsError() {
 		},
 	}
 
-	// Mock GetActiveWebhookClientsByEventType activity - database error
-	s.env.OnActivity(s.executor.GetActiveWebhookClientsByEventType, mock.Anything, event.EventType).
-		Return(nil, errors.New("database error"))
+	exec.EXPECT().GetActiveWebhookClientsByEventType(gomock.Any(), event.EventType).Return(nil, errors.New("database error"))
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.NotifyWebhookClients, event)
-
-	// Verify workflow failed
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
+	err := wf.NotifyWebhookClients(ctx, event)
+	require.Error(t, err)
 }
 
-func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_SingleClient() {
+func TestNotifyWebhookClients_SingleClient(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, jq, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
 		EventType: webhook.EventTypeTokenIndexingQueryable,
@@ -187,22 +144,26 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_SingleClient() {
 		},
 	}
 
-	// Mock GetActiveWebhookClientsByEventType activity
-	s.env.OnActivity(s.executor.GetActiveWebhookClientsByEventType, mock.Anything, event.EventType).
-		Return(clients, nil)
+	exec.EXPECT().GetActiveWebhookClientsByEventType(gomock.Any(), event.EventType).Return(clients, nil)
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Do(func(_ context.Context, opts jobs.EnqueueOptions) {
+			require.Equal(t, "DeliverWebhook", opts.Kind)
+			require.Len(t, opts.Args, 2)
+			require.Equal(t, "client-123", opts.Args[0])
+		}).
+		Return(nil, true, nil).Times(1)
 
-	// Mock DeliverWebhook child workflow
-	s.env.OnWorkflow(s.coreWorkflows.DeliverWebhook, mock.Anything, "client-123", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.NotifyWebhookClients, event)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := wf.NotifyWebhookClients(ctx, event)
+	require.NoError(t, err)
 }
 
-func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_MultipleClients() {
+func TestNotifyWebhookClients_MultipleClients(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, jq, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
 		EventType: webhook.EventTypeTokenIndexingViewable,
@@ -237,27 +198,25 @@ func (s *WebhookWorkflowTestSuite) TestNotifyWebhookClients_MultipleClients() {
 		},
 	}
 
-	// Mock GetActiveWebhookClientsByEventType activity
-	s.env.OnActivity(s.executor.GetActiveWebhookClientsByEventType, mock.Anything, event.EventType).
-		Return(clients, nil)
+	exec.EXPECT().GetActiveWebhookClientsByEventType(gomock.Any(), event.EventType).Return(clients, nil)
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(nil, true, nil).Times(2)
 
-	// Mock DeliverWebhook child workflows for both clients
-	s.env.OnWorkflow(s.coreWorkflows.DeliverWebhook, mock.Anything, "client-123", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
-	s.env.OnWorkflow(s.coreWorkflows.DeliverWebhook, mock.Anything, "client-456", mock.MatchedBy(webhookEventMatcher(event))).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.NotifyWebhookClients, event)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := wf.NotifyWebhookClients(ctx, event)
+	require.NoError(t, err)
 }
 
 // ====================================================================================
 // DeliverWebhook Tests
 // ====================================================================================
 
-func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_Success() {
+func TestDeliverWebhook_Success(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, _, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
@@ -282,27 +241,22 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_Success() {
 		RetryMaxAttempts: 5,
 	}
 
-	// Mock GetWebhookClientByID activity
-	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
-		Return(client, nil)
-
-	// Mock CreateWebhookDeliveryRecord activity
-	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).
-		Return(uint64(1), nil)
-
-	// Mock DeliverWebhookHTTP activity - successful delivery
-	s.env.OnActivity(s.executor.DeliverWebhookHTTP, mock.Anything, client, mock.MatchedBy(webhookEventMatcher(event)), uint64(1)).
+	exec.EXPECT().GetWebhookClientByID(gomock.Any(), clientID).Return(client, nil)
+	exec.EXPECT().CreateWebhookDeliveryRecord(gomock.Any(), gomock.Any(), webhookEventMatcher(event)).Return(uint64(1), nil)
+	exec.EXPECT().DeliverWebhookHTTP(gomock.Any(), client, webhookEventMatcher(event), uint64(1)).
 		Return(webhook.DeliveryResult{Success: true, StatusCode: 200, Body: `{"status":"received"}`}, nil)
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := wf.DeliverWebhook(ctx, clientID, event)
+	require.NoError(t, err)
 }
 
-func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotFound() {
+func TestDeliverWebhook_ClientNotFound(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, _, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	clientID := "non-existent-client"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
@@ -317,19 +271,19 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotFound() {
 		},
 	}
 
-	// Mock GetWebhookClientByID activity - client not found
-	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
-		Return(nil, nil)
+	exec.EXPECT().GetWebhookClientByID(gomock.Any(), clientID).Return(nil, nil)
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
-
-	// Verify workflow completed successfully (even with no client)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := wf.DeliverWebhook(ctx, clientID, event)
+	require.NoError(t, err)
 }
 
-func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotActive() {
+func TestDeliverWebhook_ClientNotActive(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, _, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
@@ -354,19 +308,19 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_ClientNotActive() {
 		RetryMaxAttempts: 5,
 	}
 
-	// Mock GetWebhookClientByID activity
-	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
-		Return(client, nil)
+	exec.EXPECT().GetWebhookClientByID(gomock.Any(), clientID).Return(client, nil)
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
-
-	// Verify workflow completed successfully (even with inactive client)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := wf.DeliverWebhook(ctx, clientID, event)
+	require.NoError(t, err)
 }
 
-func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_GetClientError() {
+func TestDeliverWebhook_GetClientError(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, _, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
@@ -381,19 +335,19 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_GetClientError() {
 		},
 	}
 
-	// Mock GetWebhookClientByID activity - database error
-	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
-		Return(nil, errors.New("database error"))
+	exec.EXPECT().GetWebhookClientByID(gomock.Any(), clientID).Return(nil, errors.New("database error"))
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
-
-	// Verify workflow failed
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
+	err := wf.DeliverWebhook(ctx, clientID, event)
+	require.Error(t, err)
 }
 
-func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_CreateDeliveryRecordError() {
+func TestDeliverWebhook_CreateDeliveryRecordError(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, _, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
@@ -418,23 +372,20 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_CreateDeliveryRecordError(
 		RetryMaxAttempts: 5,
 	}
 
-	// Mock GetWebhookClientByID activity
-	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
-		Return(client, nil)
+	exec.EXPECT().GetWebhookClientByID(gomock.Any(), clientID).Return(client, nil)
+	exec.EXPECT().CreateWebhookDeliveryRecord(gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0), errors.New("database error")).Times(1)
 
-	// Mock CreateWebhookDeliveryRecord activity - database error
-	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).
-		Return(uint64(0), errors.New("database error"))
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
-
-	// Verify workflow failed
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
+	err := wf.DeliverWebhook(ctx, clientID, event)
+	require.Error(t, err)
 }
 
-func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
+func TestDeliverWebhook_DeliveryFailed(t *testing.T) {
+	t.Parallel()
+	d := newWebhookWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, _, wf := d.Ctx, d.Exec, d.MockJQ, d.Wf
+	_ = d.BlMock
+
 	clientID := "client-123"
 	event := webhook.WebhookEvent{
 		EventID:   "01JG8XAMPLE1234567890123456",
@@ -450,37 +401,21 @@ func (s *WebhookWorkflowTestSuite) TestDeliverWebhook_DeliveryFailed() {
 	}
 
 	eventFilters, _ := json.Marshal([]string{"*"})
-	maxRetries := 3
 	client := &schema.WebhookClient{
 		ClientID:         clientID,
 		WebhookURL:       "https://webhook.example.com/endpoint",
 		WebhookSecret:    "736563726574313233",
 		EventFilters:     datatypes.JSON(eventFilters),
 		IsActive:         true,
-		RetryMaxAttempts: maxRetries,
+		RetryMaxAttempts: 3,
 	}
 
-	// Mock GetWebhookClientByID activity
-	s.env.OnActivity(s.executor.GetWebhookClientByID, mock.Anything, clientID).
-		Return(client, nil)
+	exec.EXPECT().GetWebhookClientByID(gomock.Any(), clientID).Return(client, nil)
+	exec.EXPECT().CreateWebhookDeliveryRecord(gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(1), nil)
+	exec.EXPECT().DeliverWebhookHTTP(gomock.Any(), client, gomock.Any(), uint64(1)).
+		Return(webhook.DeliveryResult{Success: false, StatusCode: 500, Body: `{"error":"internal server error"}`}, errors.New("HTTP 500")).
+		Times(1)
 
-	// Mock CreateWebhookDeliveryRecord activity
-	s.env.OnActivity(s.executor.CreateWebhookDeliveryRecord, mock.Anything, mock.AnythingOfType("*schema.WebhookDelivery"), mock.MatchedBy(webhookEventMatcher(event))).
-		Return(uint64(1), nil)
-
-	// Mock DeliverWebhookHTTP activity - delivery failed (will retry with Temporal's retry policy)
-	var activityCallCount int
-	s.env.OnActivity(s.executor.DeliverWebhookHTTP, mock.Anything, client, mock.MatchedBy(webhookEventMatcher(event)), uint64(1)).
-		Return(func(ctx context.Context, client *schema.WebhookClient, event webhook.WebhookEvent, deliveryID uint64) (webhook.DeliveryResult, error) {
-			activityCallCount++
-			return webhook.DeliveryResult{Success: false, StatusCode: 500, Body: `{"error":"internal server error"}`}, errors.New("HTTP 500")
-		}, nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.coreWorkflows.DeliverWebhook, clientID, event)
-
-	// Verify workflow failed (after retries)
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
-	s.Equal(maxRetries+1, activityCallCount, "Activity should be attempted the expected number of times") // includes the initial attempt
+	err := wf.DeliverWebhook(ctx, clientID, event)
+	require.Error(t, err)
 }

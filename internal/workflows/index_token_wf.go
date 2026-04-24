@@ -1,24 +1,25 @@
 package workflows
 
 import (
+	"context"
 	"fmt"
 	"strings"
-	"time"
 
-	"go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/temporal"
-	"go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
+const tokenIndexJobQueue = "token_index"
+
 // IndexTokenMint processes a token mint event
-func (w *coreWorkflows) IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.InfoWf(ctx, "Processing token mint event",
+func (w *coreWorkflows) IndexTokenMint(ctx context.Context, event *domain.BlockchainEvent) error {
+	logger.InfoCtx(ctx, "Processing token mint event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 		zap.String("txHash", event.TxHash),
@@ -26,26 +27,16 @@ func (w *coreWorkflows) IndexTokenMint(ctx workflow.Context, event *domain.Block
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.InfoWf(ctx, "Skipping blacklisted contract",
+		logger.InfoCtx(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return nil
 	}
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 2,
-			InitialInterval: 10 * time.Second,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
-
 	// Step 1: Create the token mint in the database
-	err := workflow.ExecuteActivity(ctx, w.executor.CreateTokenMint, event).Get(ctx, nil)
+	err := w.executor.CreateTokenMint(ctx, event)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to create token mint"),
 			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -56,29 +47,12 @@ func (w *coreWorkflows) IndexTokenMint(ctx workflow.Context, event *domain.Block
 	// Step 2: Start child workflow to index token metadata
 	// This runs asynchronously without waiting for the result
 	// FIXME: This should be optional of the token already minted
-	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
-		WorkflowExecutionTimeout: time.Hour,
-		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-	}
-	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
-	// Execute the child workflow without waiting for the result
-	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID(), nil).GetChildWorkflowExecution()
-	if err := childWorkflowExec.Get(ctx, nil); err != nil {
-		logger.ErrorWf(ctx,
-			fmt.Errorf("failed to execute child workflow IndexTokenMetadata"),
-			zap.Error(err),
-			zap.String("tokenCID", event.TokenCID().String()),
-		)
-		return err
-	}
+	w.startIndexTokenMetadataAsync(ctx, event.TokenCID(), nil)
 
 	// WEBHOOK: Trigger ownership minted event notification (fire-and-forget)
 	w.triggerWebhookTokenOwnershipNotification(ctx, event.TokenCID(), webhook.EventTypeTokenOwnershipMinted, event.FromAddress, event.ToAddress, event.Quantity)
 
-	logger.InfoWf(ctx, "Token mint processed successfully and metadata indexing started",
+	logger.InfoCtx(ctx, "Token mint processed successfully and metadata indexing started",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -86,8 +60,8 @@ func (w *coreWorkflows) IndexTokenMint(ctx workflow.Context, event *domain.Block
 }
 
 // IndexTokenTransfer processes a token transfer event
-func (w *coreWorkflows) IndexTokenTransfer(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.InfoWf(ctx, "Processing token transfer event",
+func (w *coreWorkflows) IndexTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error {
+	logger.InfoCtx(ctx, "Processing token transfer event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 		zap.String("from", types.SafeString(event.FromAddress)),
@@ -97,27 +71,16 @@ func (w *coreWorkflows) IndexTokenTransfer(ctx workflow.Context, event *domain.B
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.InfoWf(ctx, "Skipping blacklisted contract",
+		logger.InfoCtx(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return nil
 	}
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 2,
-			InitialInterval: 10 * time.Second,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
-
 	// Step 1: Check if token exists
-	var tokenExists bool
-	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
+	tokenExists, err := w.executor.CheckTokenExists(ctx, event.TokenCID())
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to check if token exists"),
 			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -127,22 +90,13 @@ func (w *coreWorkflows) IndexTokenTransfer(ctx workflow.Context, event *domain.B
 
 	// Step 2: If token doesn't exist, trigger full token indexing workflow
 	if !tokenExists {
-		logger.InfoWf(ctx, "Token doesn't exist, starting full token indexing",
+		logger.InfoCtx(ctx, "Token doesn't exist, starting full token indexing",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 
-		childWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowID:               "index-full-token-" + event.TokenCID().String(),
-			WorkflowExecutionTimeout: time.Hour,
-			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		}
-		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
 		// Execute the child workflow and waiting for the result
-		childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenFromEvent, event)
-		if err := childWorkflowExec.Get(ctx, nil); err != nil {
-			logger.ErrorWf(ctx,
+		if err := w.IndexTokenFromEvent(ctx, event); err != nil {
+			logger.ErrorCtx(ctx,
 				fmt.Errorf("failed to execute child workflow IndexFullToken"),
 				zap.Error(err),
 				zap.String("tokenCID", event.TokenCID().String()),
@@ -150,32 +104,31 @@ func (w *coreWorkflows) IndexTokenTransfer(ctx workflow.Context, event *domain.B
 			return err
 		}
 
-		logger.InfoWf(ctx, "Full token indexing workflow started",
+		logger.InfoCtx(ctx, "Full token indexing workflow started",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 
 		return nil
-	} else {
-		// Step 3: Token exists, update the token transfer
-		logger.InfoWf(ctx, "Token exists, updating token transfer",
+	}
+	// Step 3: Token exists, update the token transfer
+	logger.InfoCtx(ctx, "Token exists, updating token transfer",
+		zap.String("tokenCID", event.TokenCID().String()),
+	)
+
+	err = w.executor.UpdateTokenTransfer(ctx, event)
+	if err != nil {
+		logger.ErrorCtx(ctx,
+			fmt.Errorf("failed to update token transfer"),
+			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
-
-		err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenTransfer, event).Get(ctx, nil)
-		if err != nil {
-			logger.ErrorWf(ctx,
-				fmt.Errorf("failed to update token transfer"),
-				zap.Error(err),
-				zap.String("tokenCID", event.TokenCID().String()),
-			)
-			return err
-		}
+		return err
 	}
 
 	// WEBHOOK: Trigger ownership transferred event notification (fire-and-forget)
 	w.triggerWebhookTokenOwnershipNotification(ctx, event.TokenCID(), webhook.EventTypeTokenOwnershipTransferred, event.FromAddress, event.ToAddress, event.Quantity)
 
-	logger.InfoWf(ctx, "Token transfer processed successfully",
+	logger.InfoCtx(ctx, "Token transfer processed successfully",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -183,8 +136,8 @@ func (w *coreWorkflows) IndexTokenTransfer(ctx workflow.Context, event *domain.B
 }
 
 // IndexTokenBurn processes a token burn event
-func (w *coreWorkflows) IndexTokenBurn(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.InfoWf(ctx, "Processing token burn event",
+func (w *coreWorkflows) IndexTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error {
+	logger.InfoCtx(ctx, "Processing token burn event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 		zap.String("from", types.SafeString(event.FromAddress)),
@@ -193,27 +146,16 @@ func (w *coreWorkflows) IndexTokenBurn(ctx workflow.Context, event *domain.Block
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.InfoWf(ctx, "Skipping blacklisted contract",
+		logger.InfoCtx(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return nil
 	}
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 2,
-			InitialInterval: 10 * time.Second,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
-
 	// Step 1: Check if token exists
-	var tokenExists bool
-	err := workflow.ExecuteActivity(ctx, w.executor.CheckTokenExists, event.TokenCID()).Get(ctx, &tokenExists)
+	tokenExists, err := w.executor.CheckTokenExists(ctx, event.TokenCID())
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to check if token exists"),
 			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -227,9 +169,9 @@ func (w *coreWorkflows) IndexTokenBurn(ctx workflow.Context, event *domain.Block
 	}
 
 	// Step 3: Token exists, update the token burn
-	err = workflow.ExecuteActivity(ctx, w.executor.UpdateTokenBurn, event).Get(ctx, nil)
+	err = w.executor.UpdateTokenBurn(ctx, event)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to update token burn"),
 			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -240,7 +182,7 @@ func (w *coreWorkflows) IndexTokenBurn(ctx workflow.Context, event *domain.Block
 	// WEBHOOK: Trigger ownership burned event notification (fire-and-forget)
 	w.triggerWebhookTokenOwnershipNotification(ctx, event.TokenCID(), webhook.EventTypeTokenOwnershipBurned, event.FromAddress, event.ToAddress, event.Quantity)
 
-	logger.InfoWf(ctx, "Token burn processed successfully",
+	logger.InfoCtx(ctx, "Token burn processed successfully",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -248,34 +190,24 @@ func (w *coreWorkflows) IndexTokenBurn(ctx workflow.Context, event *domain.Block
 }
 
 // IndexTokenFromEvent indexes metadata and full provenances (provenance events and balances) for a token
-func (w *coreWorkflows) IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.InfoWf(ctx, "Starting full token indexing",
+func (w *coreWorkflows) IndexTokenFromEvent(ctx context.Context, event *domain.BlockchainEvent) error {
+	logger.InfoCtx(ctx, "Starting full token indexing",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 	)
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(event.TokenCID()) {
-		logger.InfoWf(ctx, "Skipping blacklisted contract",
+		logger.InfoCtx(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", event.TokenCID().String()),
 		)
 		return nil
 	}
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 15 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 2,
-			InitialInterval: 10 * time.Second,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
-
 	// Step 1: Create token with minimal provenance (from/to balances only) for speed
-	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent, event).Get(ctx, nil)
+	err := w.executor.IndexTokenWithMinimalProvenancesByBlockchainEvent(ctx, event)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to create token with minimal provenances"),
 			zap.Error(err),
 			zap.String("tokenCID", event.TokenCID().String()),
@@ -283,7 +215,7 @@ func (w *coreWorkflows) IndexTokenFromEvent(ctx workflow.Context, event *domain.
 		return err
 	}
 
-	logger.InfoWf(ctx, "Token indexed with minimal provenances",
+	logger.InfoCtx(ctx, "Token indexed with minimal provenances",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -292,47 +224,15 @@ func (w *coreWorkflows) IndexTokenFromEvent(ctx workflow.Context, event *domain.
 
 	// Step 2: Start child workflow to index token metadata (fire and forget)
 	// FIXME: This should be optional of the token already minted
-	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
-		WorkflowExecutionTimeout: time.Hour,
-		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-	}
-	metadataCtx := workflow.WithChildOptions(ctx, metadataWorkflowOptions)
-
-	// Execute the metadata workflow without waiting for the result
-	metadataWorkflowExec := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, event.TokenCID(), nil).GetChildWorkflowExecution()
-	if err := metadataWorkflowExec.Get(ctx, nil); err != nil {
-		logger.WarnWf(ctx, "Failed to start metadata indexing workflow",
-			zap.String("tokenCID", event.TokenCID().String()),
-			zap.Error(err),
-		)
-		// Don't fail the whole workflow, just log the warning
-	}
+	w.startIndexTokenMetadataAsync(ctx, event.TokenCID(), nil)
 
 	// Step 3: Start child workflow to index full provenance (fire and forget)
 	// If the token is an ERC1155 token, skip the full provenance indexing workflow
 	if event.Standard != domain.StandardERC1155 {
-		provenanceWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowID:               "index-full-provenance-" + event.TokenCID().String(),
-			WorkflowExecutionTimeout: time.Hour,
-			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-		}
-		provenanceCtx := workflow.WithChildOptions(ctx, provenanceWorkflowOptions)
-
-		// Execute the full provenance workflow without waiting for the result
-		provenanceWorkflowExec := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, event.TokenCID(), nil).GetChildWorkflowExecution()
-		if err := provenanceWorkflowExec.Get(ctx, nil); err != nil {
-			logger.WarnWf(ctx, "Failed to start full provenance indexing workflow",
-				zap.String("tokenCID", event.TokenCID().String()),
-				zap.Error(err),
-			)
-			// Don't fail the whole workflow, just log the warning
-		}
+		w.startIndexTokenProvenancesAsync(ctx, event.TokenCID(), nil)
 	}
 
-	logger.InfoWf(ctx, "Token indexing completed, metadata and provenances workflows started",
+	logger.InfoCtx(ctx, "Token indexing completed, metadata and provenances workflows started",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -341,8 +241,8 @@ func (w *coreWorkflows) IndexTokenFromEvent(ctx workflow.Context, event *domain.
 
 // IndexTokens indexes multiple tokens in chunks
 // If address is provided, uses address-specific indexing for ERC1155 tokens
-func (w *coreWorkflows) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
-	logger.InfoWf(ctx, "Starting batch token indexing",
+func (w *coreWorkflows) IndexTokens(ctx context.Context, tokenCIDs []domain.TokenCID, address *string) error {
+	logger.InfoCtx(ctx, "Starting batch token indexing",
 		zap.Int("count", len(tokenCIDs)),
 		zap.String("address", types.SafeString(address)),
 	)
@@ -353,95 +253,24 @@ func (w *coreWorkflows) IndexTokens(ctx workflow.Context, tokenCIDs []domain.Tok
 
 	// Hard cap to prevent flooding the task queue when a chunk contains a very large number of tokens
 	// (e.g., thousands of tokens minted in the same block).
-	const maxParallel = 5
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(5)
 
-	// Configure child workflow options
-	baseChildWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowExecutionTimeout: time.Hour,
-		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
-	}
-
-	runCtx, cancel := workflow.WithCancel(ctx)
-	defer cancel()
-
-	startChild := func(workerCtx workflow.Context, tokenCID domain.TokenCID) error {
-		workflowID := fmt.Sprintf("index-token-%s", tokenCID.String())
-		childWorkflowOptions := baseChildWorkflowOptions
-		childWorkflowOptions.WorkflowID = workflowID
-		childCtx := workflow.WithChildOptions(workerCtx, childWorkflowOptions)
-
-		// Execute child workflow and wait for completion.
-		childFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexToken, tokenCID, address)
-		logger.InfoWf(ctx, "Triggered token indexing workflow",
-			zap.String("tokenCID", tokenCID.String()),
-			zap.String("workflowID", workflowID),
-		)
-
-		return childFuture.Get(workerCtx, nil)
-	}
-
-	// Worker-pool: cap concurrency regardless of how large tokenCIDs is.
-	workerCount := min(maxParallel, len(tokenCIDs))
-	nextTokenIndex := 0
-	nextTokenMu := workflow.NewMutex(runCtx)
-
-	errCh := workflow.NewNamedBufferedChannel(runCtx, "index-tokens-err", 1)
-	doneCh := workflow.NewNamedBufferedChannel(runCtx, "index-tokens-done", workerCount)
-
-	for i := 0; i < workerCount; i++ {
-		workflow.Go(runCtx, func(workerCtx workflow.Context) {
-			defer doneCh.Send(workerCtx, struct{}{})
-
-			for {
-				var tokenCID domain.TokenCID
-
-				if err := nextTokenMu.Lock(workerCtx); err != nil {
-					// Context canceled (likely due to another worker error); stop this worker.
-					return
-				}
-				if nextTokenIndex >= len(tokenCIDs) {
-					nextTokenMu.Unlock()
-					return
-				}
-				tokenCID = tokenCIDs[nextTokenIndex]
-				nextTokenIndex++
-				nextTokenMu.Unlock()
-
-				if err := startChild(workerCtx, tokenCID); err != nil {
-					_ = errCh.SendAsync(err)
-					cancel()
-					return
-				}
-			}
+	for _, tc := range tokenCIDs {
+		tid := tc
+		g.Go(func() error {
+			logger.InfoCtx(gctx, "Triggered token indexing workflow",
+				zap.String("tokenCID", tid.String()),
+			)
+			return w.IndexToken(gctx, tid, address)
 		})
 	}
 
-	completed := 0
-	for completed < workerCount {
-		var firstErr error
-
-		selector := workflow.NewSelector(runCtx)
-		selector.AddReceive(errCh, func(c workflow.ReceiveChannel, more bool) {
-			if more {
-				c.Receive(runCtx, &firstErr)
-			}
-		})
-		selector.AddReceive(doneCh, func(c workflow.ReceiveChannel, more bool) {
-			if more {
-				var v struct{}
-				c.Receive(runCtx, &v)
-				completed++
-			}
-		})
-		selector.Select(runCtx)
-
-		if firstErr != nil {
-			return firstErr
-		}
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
-	logger.InfoWf(ctx, "Batch token indexing completed successfully",
+	logger.InfoCtx(ctx, "Batch token indexing completed successfully",
 		zap.Int("count", len(tokenCIDs)),
 	)
 
@@ -451,37 +280,27 @@ func (w *coreWorkflows) IndexTokens(ctx workflow.Context, tokenCIDs []domain.Tok
 // IndexToken indexes a single token (metadata and provenances)
 // address is the address that triggered the indexing operation
 // If nil, the indexing operation was not triggered by a specific address
-func (w *coreWorkflows) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
-	logger.InfoWf(ctx, "Starting token indexing",
+func (w *coreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
+	logger.InfoCtx(ctx, "Starting token indexing",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.String("address", types.SafeString(address)),
 	)
 
 	// Check if contract is blacklisted
 	if w.blacklist != nil && w.blacklist.IsTokenCIDBlacklisted(tokenCID) {
-		logger.InfoWf(ctx, "Skipping blacklisted contract",
+		logger.InfoCtx(ctx, "Skipping blacklisted contract",
 			zap.String("tokenCID", tokenCID.String()),
 		)
 		return nil
 	}
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 2,
-			InitialInterval: 10 * time.Second,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
-
 	// Step 1: Index token with minimal provenances (from blockchain query)
-	err := workflow.ExecuteActivity(ctx, w.executor.IndexTokenWithMinimalProvenancesByTokenCID, tokenCID, address).Get(ctx, nil)
+	err := w.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, address)
 	if err != nil {
 		// Check if this is a "token not found on chain" error (or execution reverted)
 		// In this case, we want to skip this token and continue the workflow
 		if strings.Contains(err.Error(), "execution reverted") || strings.Contains(err.Error(), domain.ErrTokenNotFoundOnChain.Error()) {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to index token with minimal provenances due to token not found on chain"),
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to index token with minimal provenances due to token not found on chain"),
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
@@ -490,7 +309,7 @@ func (w *coreWorkflows) IndexToken(ctx workflow.Context, tokenCID domain.TokenCI
 
 		// Check if this is a "contract is unreachable" error
 		if strings.Contains(err.Error(), domain.ErrContractUnreachable.Error()) {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to index token with minimal provenances due to contract is unreachable"),
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to index token with minimal provenances due to contract is unreachable"),
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
@@ -499,14 +318,14 @@ func (w *coreWorkflows) IndexToken(ctx workflow.Context, tokenCID domain.TokenCI
 
 		// Check if this is a "balance is not a positive numeric value" error
 		if strings.Contains(err.Error(), domain.ErrBalanceIsNotAPositiveNumericValue.Error()) {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to index token with minimal provenances due to balance is not a positive numeric value, skipping token"),
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to index token with minimal provenances due to balance is not a positive numeric value, skipping token"),
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
 			return nil
 		}
 
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to index token with minimal provenances"),
 			zap.Error(err),
 			zap.String("tokenCID", tokenCID.String()),
@@ -514,7 +333,7 @@ func (w *coreWorkflows) IndexToken(ctx workflow.Context, tokenCID domain.TokenCI
 		return err
 	}
 
-	logger.InfoWf(ctx, "Token indexed with minimal provenances",
+	logger.InfoCtx(ctx, "Token indexed with minimal provenances",
 		zap.String("tokenCID", tokenCID.String()),
 	)
 
@@ -526,16 +345,8 @@ func (w *coreWorkflows) IndexToken(ctx workflow.Context, tokenCID domain.TokenCI
 	// NOTE: This workflow is used by owner-indexing, which can enqueue a large number of tokens.
 	// Waiting here provides backpressure so we don't flood the system with metadata/provenance
 	// workflows across chunks (and across many owners).
-	metadataWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:               "index-metadata-" + tokenCID.String(),
-		WorkflowExecutionTimeout: time.Hour,
-		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
-	}
-	metadataCtx := workflow.WithChildOptions(ctx, metadataWorkflowOptions)
-
-	if err := workflow.ExecuteChildWorkflow(metadataCtx, w.IndexTokenMetadata, tokenCID, address).Get(ctx, nil); err != nil {
-		logger.WarnWf(ctx, "Metadata indexing workflow failed",
+	if err := w.IndexTokenMetadata(ctx, tokenCID, address); err != nil {
+		logger.WarnCtx(ctx, "Metadata indexing workflow failed",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
@@ -545,27 +356,49 @@ func (w *coreWorkflows) IndexToken(ctx workflow.Context, tokenCID domain.TokenCI
 	// If the token is an ERC1155 token and address is provided, skip the full provenance indexing workflow
 	_, standard, _, _ := tokenCID.Parse()
 	if standard == domain.StandardERC1155 && address != nil {
-		logger.InfoWf(ctx, "Skipping full provenance indexing for owner-specific ERC1155 token", zap.String("tokenCID", tokenCID.String()))
+		logger.InfoCtx(ctx, "Skipping full provenance indexing for owner-specific ERC1155 token", zap.String("tokenCID", tokenCID.String()))
 	} else {
-		provenanceWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowID:               "index-full-provenance-" + tokenCID.String(),
-			WorkflowExecutionTimeout: time.Hour,
-			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
-		}
-		provenanceCtx := workflow.WithChildOptions(ctx, provenanceWorkflowOptions)
-
-		if err := workflow.ExecuteChildWorkflow(provenanceCtx, w.IndexTokenProvenances, tokenCID, address).Get(ctx, nil); err != nil {
-			logger.WarnWf(ctx, "Full provenance indexing workflow failed",
+		if err := w.IndexTokenProvenances(ctx, tokenCID, address); err != nil {
+			logger.WarnCtx(ctx, "Full provenance indexing workflow failed",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
 		}
 	}
 
-	logger.InfoWf(ctx, "Token indexing completed, metadata and provenances workflows started",
+	logger.InfoCtx(ctx, "Token indexing completed, metadata and provenances workflows started",
 		zap.String("tokenCID", tokenCID.String()),
 	)
 
 	return nil
+}
+
+func (w *coreWorkflows) startIndexTokenMetadataAsync(ctx context.Context, tokenCID domain.TokenCID, address *string) {
+	_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+		Queue:     tokenIndexJobQueue,
+		Kind:      "IndexTokenMetadata",
+		Args:      []any{tokenCID, address},
+		UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", tokenCID.String())),
+	})
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to enqueue IndexTokenMetadata",
+			zap.String("tokenCID", tokenCID.String()),
+			zap.Error(err),
+		)
+	}
+}
+
+func (w *coreWorkflows) startIndexTokenProvenancesAsync(ctx context.Context, tokenCID domain.TokenCID, address *string) {
+	_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+		Queue:     tokenIndexJobQueue,
+		Kind:      "IndexTokenProvenances",
+		Args:      []any{tokenCID, address},
+		UniqueKey: types.StringPtr(fmt.Sprintf("index-provenance-%s", tokenCID.String())),
+	})
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to enqueue IndexTokenProvenances",
+			zap.String("tokenCID", tokenCID.String()),
+			zap.Error(err),
+		)
+	}
 }

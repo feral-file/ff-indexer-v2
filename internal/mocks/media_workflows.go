@@ -10,9 +10,9 @@
 package mocks
 
 import (
+	context "context"
 	reflect "reflect"
 
-	workflow "go.temporal.io/sdk/workflow"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -41,7 +41,7 @@ func (m *MockMediaWorkflows) EXPECT() *MockMediaWorkflowsMockRecorder {
 }
 
 // IndexMediaWorkflow mocks base method.
-func (m *MockMediaWorkflows) IndexMediaWorkflow(ctx workflow.Context, url string) error {
+func (m *MockMediaWorkflows) IndexMediaWorkflow(ctx context.Context, url string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexMediaWorkflow", ctx, url)
 	ret0, _ := ret[0].(error)
@@ -55,7 +55,7 @@ func (mr *MockMediaWorkflowsMockRecorder) IndexMediaWorkflow(ctx, url any) *gomo
 }
 
 // IndexMultipleMediaWorkflow mocks base method.
-func (m *MockMediaWorkflows) IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string) error {
+func (m *MockMediaWorkflows) IndexMultipleMediaWorkflow(ctx context.Context, urls []string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexMultipleMediaWorkflow", ctx, urls)
 	ret0, _ := ret[0].(error)

@@ -1,7 +1,7 @@
 package workflows
 
 import (
-	"go.temporal.io/sdk/workflow"
+	"context"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
@@ -14,51 +14,51 @@ import (
 //go:generate mockgen -source=core_workflow.go -destination=../mocks/core_workflows.go -package=mocks -mock_names=CoreWorkflows=MockCoreWorkflows
 type CoreWorkflows interface {
 	// IndexTokenMint processes a token mint event
-	IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error
+	IndexTokenMint(ctx context.Context, event *domain.BlockchainEvent) error
 
 	// IndexTokenTransfer processes a token transfer event
-	IndexTokenTransfer(ctx workflow.Context, event *domain.BlockchainEvent) error
+	IndexTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error
 
 	// IndexTokenBurn processes a token burn event
-	IndexTokenBurn(ctx workflow.Context, event *domain.BlockchainEvent) error
+	IndexTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error
 
 	// IndexMetadataUpdate processes a metadata update event
-	IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error
+	IndexMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error
 
 	// IndexTokenMetadata index token metadata
-	IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error
+	IndexTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, address *string) error
 
 	// IndexMultipleTokensMetadata indexes metadata for multiple tokens by triggering child workflows
-	IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error
+	IndexMultipleTokensMetadata(ctx context.Context, tokenCIDs []domain.TokenCID) error
 
 	// IndexTokenFromEvent indexes metadata and full provenances (provenance events and balances) for a token
-	IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error
+	IndexTokenFromEvent(ctx context.Context, event *domain.BlockchainEvent) error
 
 	// IndexTokens indexes multiple tokens in parallel
-	IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error
+	IndexTokens(ctx context.Context, tokenCIDs []domain.TokenCID, address *string) error
 
 	// IndexToken indexes a single token (metadata and provenances)
-	IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error
+	IndexToken(ctx context.Context, tokenCID domain.TokenCID, address *string) error
 
 	// IndexTokenOwner indexes all tokens held by a single address
-	IndexTokenOwner(ctx workflow.Context, address string) error
+	IndexTokenOwner(ctx context.Context, address string) error
 
 	// IndexTezosTokenOwner indexes all tokens held by a Tezos address
 	// jobID is optional and used for job status tracking during quota pauses
-	IndexTezosTokenOwner(ctx workflow.Context, address string, jobID *string) error
+	IndexTezosTokenOwner(ctx context.Context, address string, jobID *string) error
 
 	// IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
 	// jobID is optional and used for job status tracking during quota pauses
-	IndexEthereumTokenOwner(ctx workflow.Context, address string, jobID *string) error
+	IndexEthereumTokenOwner(ctx context.Context, address string, jobID *string) error
 
 	// IndexTokenProvenances indexes all provenances (balances and events) for a token
-	IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error
+	IndexTokenProvenances(ctx context.Context, tokenCID domain.TokenCID, address *string) error
 
 	// NotifyWebhookClients orchestrates webhook notifications to all matching clients
-	NotifyWebhookClients(ctx workflow.Context, event webhook.WebhookEvent) error
+	NotifyWebhookClients(ctx context.Context, event webhook.WebhookEvent) error
 
 	// DeliverWebhook handles webhook delivery to a single client with retry logic
-	DeliverWebhook(ctx workflow.Context, clientID string, event webhook.WebhookEvent) error
+	DeliverWebhook(ctx context.Context, clientID string, event webhook.WebhookEvent) error
 }
 
 type CoreWorkflowsConfig struct {
@@ -97,8 +97,12 @@ type coreWorkflows struct {
 }
 
 // NewCoreWorkflows creates a new core workflows instance.
-// jobQueue may be nil where no cross-queue or follow-up enqueues are required (e.g. tests, partial wiring).
+// jobQueue is required. Non-test call sites (Temporal client) that only need method values for ExecuteWorkflow
+// may pass [jobs.NopQueue]; unit tests should use a gomock [jobs.JobQueue] implementation instead.
 func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blacklist registry.BlacklistRegistry, jobQueue jobs.JobQueue) CoreWorkflows {
+	if jobQueue == nil {
+		panic("workflows: NewCoreWorkflows requires a non-nil jobQueue (see NewCoreWorkflows doc for NopQueue vs mocks)")
+	}
 	return &coreWorkflows{
 		executor:  executor,
 		config:    config,

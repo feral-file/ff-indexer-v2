@@ -1,356 +1,269 @@
 //go:build cgo
 
+// Package workflows_test: plain Go tests for media workflows. IndexMultipleMediaWorkflow requires
+// a non-nil JobQueue (v1); Temporal child-workflow retry/id-reuse tests are not applicable and
+// were replaced with enqueue-level assertions or removed (see file comment in parent task).
 package workflows_test
 
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
-	"go.temporal.io/sdk/testsuite"
-	"go.temporal.io/sdk/workflow"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	"github.com/feral-file/ff-indexer-v2/internal/mocks"
-	"github.com/feral-file/ff-indexer-v2/internal/workflows"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
-
-// WorkflowTestSuite is the test suite for media workflow tests
-type WorkflowTestSuite struct {
-	suite.Suite
-	testsuite.WorkflowTestSuite
-
-	env            *testsuite.TestWorkflowEnvironment
-	ctrl           *gomock.Controller
-	executor       *mocks.MockMediaExecutor
-	mediaWorkflows workflows.MediaWorkflows
-}
-
-// SetupTest is called before each test
-func (s *WorkflowTestSuite) SetupTest() {
-	// Initialize logger for tests
-	_ = logger.Initialize(logger.Config{
-		Debug: true,
-	})
-
-	s.env = s.NewTestWorkflowEnvironment()
-	s.ctrl = gomock.NewController(s.T())
-	s.executor = mocks.NewMockMediaExecutor(s.ctrl)
-	s.mediaWorkflows = workflows.NewMediaWorkflows(s.executor, nil)
-
-	// Register the activity with the test environment
-	s.env.RegisterActivity(s.executor.IndexMediaFile)
-}
-
-// TearDownTest is called after each test
-func (s *WorkflowTestSuite) TearDownTest() {
-	s.env.AssertExpectations(s.T())
-	s.ctrl.Finish()
-}
-
-// TestWorkflowTestSuite runs the test suite
-func TestWorkflowTestSuite(t *testing.T) {
-	suite.Run(t, new(WorkflowTestSuite))
-}
 
 // ====================================================================================
 // IndexMediaWorkflow Tests
 // ====================================================================================
 
-func (s *WorkflowTestSuite) TestIndexMediaWorkflow_Success() {
+func TestIndexMediaWorkflow_Success(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, mw := d.Ctx, d.Exec, d.Mw
 	url := "https://example.com/media.jpg"
-
-	// Mock the IndexMediaFile activity to return success
-	s.env.OnActivity(s.executor.IndexMediaFile, mock.Anything, url).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMediaWorkflow, url)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	exec.EXPECT().IndexMediaFile(gomock.Any(), url).Return(nil).Times(1)
+	err := mw.IndexMediaWorkflow(ctx, url)
+	require.NoError(t, err)
 }
 
-func (s *WorkflowTestSuite) TestIndexMediaWorkflow_ActivityError() {
-	url := "https://example.com/media.jpg"
+func TestIndexMediaWorkflow_ActivityError(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, mw := d.Ctx, d.Exec, d.Mw
 	expectedError := errors.New("failed to process media")
-
-	// Track the number of retry attempts
-	var activityCallCount int
-
-	// Mock the IndexMediaFile activity to return an error and count retries
-	// The retry policy is configured with MaximumAttempts: 2
-	s.env.OnActivity(s.executor.IndexMediaFile, mock.Anything, url).Return(
-		func(ctx context.Context, url string) error {
-			activityCallCount++
-			return expectedError
-		},
-	)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMediaWorkflow, url)
-
-	// Verify workflow completed with error
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
-	s.Contains(s.env.GetWorkflowError().Error(), "failed to process media")
-
-	// Verify the activity was retried the expected number of times (MaximumAttempts: 2)
-	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
+	url := "https://example.com/media.jpg"
+	exec.EXPECT().IndexMediaFile(gomock.Any(), url).Return(expectedError).Times(1)
+	err := mw.IndexMediaWorkflow(ctx, url)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to process media")
 }
 
 // ====================================================================================
 // IndexMultipleMediaWorkflow Tests
 // ====================================================================================
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_Success() {
+func TestIndexMultipleMediaWorkflow_Success(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, jq, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	urls := []string{
 		"https://example.com/media1.jpg",
 		"https://example.com/media2.jpg",
 		"https://example.com/media3.jpg",
 	}
 
-	// Mock child workflow executions
-	for _, url := range urls {
-		s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(nil)
-	}
+	var n int32
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.Equal(t, "IndexMediaWorkflow", opts.Kind)
+			atomic.AddInt32(&n, 1)
+			return nil, true, nil
+		}).
+		AnyTimes()
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err)
+	require.Equal(t, int32(3), atomic.LoadInt32(&n), "one enqueue per unique valid URL")
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_EmptyList() {
-	urls := []string{}
-
-	// Execute the workflow with empty list
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify workflow completed successfully (no-op)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+func TestIndexMultipleMediaWorkflow_EmptyList(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, _, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
+	err := mw.IndexMultipleMediaWorkflow(ctx, []string{})
+	require.NoError(t, err)
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_DuplicateURLs() {
+func TestIndexMultipleMediaWorkflow_DuplicateURLs(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, jq, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	urls := []string{
 		"https://example.com/media1.jpg",
-		"https://example.com/media1.jpg", // duplicate
-		"https://example.com/media2.jpg",
-		"https://example.com/media2.jpg", // duplicate
-	}
-
-	// Mock child workflow executions - should only be called once per unique URL
-	uniqueURLs := []string{
 		"https://example.com/media1.jpg",
 		"https://example.com/media2.jpg",
-	}
-	for _, url := range uniqueURLs {
-		s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(nil).Once()
+		"https://example.com/media2.jpg",
 	}
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
+	var n int32
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			atomic.AddInt32(&n, 1)
+			return nil, true, nil
+		}).
+		AnyTimes()
 
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), atomic.LoadInt32(&n), "deduplicated to two unique URLs")
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_InvalidURLs() {
+func TestIndexMultipleMediaWorkflow_InvalidURLs(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, _, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	urls := []string{
 		"not-a-url",
 		"",
 		"just-text",
-		"https://", // incomplete URL
+		"https://",
 	}
 
-	// No child workflows should be started since all URLs are invalid
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify workflow completed successfully (no-op for invalid URLs)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err)
+	// no Enqueue: invalid URLs are filtered
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_MixedValidInvalidURLs() {
+func TestIndexMultipleMediaWorkflow_MixedValidInvalidURLs(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, jq, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	urls := []string{
-		"https://example.com/media1.jpg", // valid
-		"not-a-url",                      // invalid
-		"https://example.com/media2.jpg", // valid
-		"",                               // invalid
-		"https://example.com/media3.jpg", // valid
-	}
-
-	// Mock child workflow executions - only for valid URLs
-	validURLs := []string{
 		"https://example.com/media1.jpg",
+		"not-a-url",
 		"https://example.com/media2.jpg",
+		"",
 		"https://example.com/media3.jpg",
 	}
-	for _, url := range validURLs {
-		s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(nil)
-	}
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
+	var n int32
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			atomic.AddInt32(&n, 1)
+			return nil, true, nil
+		}).
+		AnyTimes()
 
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err)
+	require.Equal(t, int32(3), atomic.LoadInt32(&n))
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_DataURI() {
+func TestIndexMultipleMediaWorkflow_DataURI(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, jq, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	urls := []string{
 		"data:image/png;base64,iVBORw0KGgo=",
 		"not-a-url",
 	}
 
-	// Mock child workflow executions - only for valid media sources
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
+	var seen bool
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.Len(t, opts.Args, 1)
+			require.Equal(t, urls[0], opts.Args[0])
+			seen = true
+			return nil, true, nil
+		}).
+		Times(1)
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err)
+	require.True(t, seen)
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowStartFailure() {
+func TestIndexMultipleMediaWorkflow_EnqueueErrorNonFatal(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, jq, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	urls := []string{
 		"https://example.com/media1.jpg",
 		"https://example.com/media2.jpg",
 		"https://example.com/media3.jpg",
 	}
 
-	// Mock child workflow start - simulate that starting one child workflow fails
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[1]).Return(testsuite.ErrMockStartChildWorkflowFailed)
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[2]).Return(nil)
+	first := true
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			if first {
+				first = false
+				return nil, false, errors.New("enqueue failed")
+			}
+			return nil, true, nil
+		}).
+		AnyTimes()
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify parent workflow completed successfully
-	// When GetChildWorkflowExecution() fails (workflow fails to start),
-	// the parent logs a warning and continues processing other URLs
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err, "per-URL enqueue failure is non-fatal (warn + continue)")
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowCompleteWithError() {
+func TestIndexMultipleMediaWorkflow_ChildExecutionNotObserved(t *testing.T) {
+	t.Parallel()
+	// v1 only enqueues media jobs; actual IndexMediaFile runs in a worker. A downstream failure
+	// in that worker is not propagated to this workflow. This test kept as a no-op success path
+	// when all enqueues succeed.
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, jq, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	urls := []string{
 		"https://example.com/media1.jpg",
 		"https://example.com/media2.jpg",
-		"https://example.com/media3.jpg",
 	}
-
-	// Mock child workflow executions - one completes with error, others succeed
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[1]).Return(errors.New("child workflow execution error"))
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[2]).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify parent workflow completed successfully
-	// The parent workflow uses fire-and-forget pattern with ParentClosePolicy_ABANDON,
-	// so it completes successfully even if child workflows fail during execution
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, true, nil).Times(2)
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err)
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_ChildWorkflowRetryPolicy() {
-	// Test that verifies child workflows retry according to the configured retry policy
+func TestIndexMultipleMediaWorkflow_SingleURLOneEnqueue(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, jq, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	url := "https://example.com/media1.jpg"
 	urls := []string{url}
 
-	// Track the number of retry attempts for the child workflow
-	var childWorkflowCallCount int
-	expectedError := errors.New("child workflow execution error")
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.Equal(t, "IndexMediaWorkflow", opts.Kind)
+			return nil, true, nil
+		}).
+		Times(1)
 
-	// Mock child workflow to fail and count retries
-	// The retry policy is configured with MaximumAttempts: 2
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(
-		func(ctx workflow.Context, url string) error {
-			childWorkflowCallCount++
-			return expectedError
-		},
-	)
-
-	// Execute the parent workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify parent workflow completed successfully (fire-and-forget pattern)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-
-	// Verify the child workflow was retried the expected number of times (MaximumAttempts: 2)
-	s.Equal(2, childWorkflowCallCount, "Child workflow should be attempted 2 times (initial + 1 retry)")
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err)
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_WorkflowIDReusePolicy() {
-	// Test that the workflow can be called multiple times with the same URLs
-	// The workflow generates deterministic IDs using SHA-256 hash of the URL
-	// and uses WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE to allow multiple executions
-	urls := []string{
-		"https://example.com/media1.jpg",
+func TestIndexMultipleMediaWorkflow_RepeatInvocationSameURL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	urls := []string{"https://example.com/media1.jpg"}
+	for range 2 {
+		d := newMediaWf(t)
+		d.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, true, nil).Times(1)
+		err := d.Mw.IndexMultipleMediaWorkflow(ctx, urls)
+		require.NoError(t, err)
+		d.Ctrl.Finish()
 	}
-
-	// Mock child workflow execution for first batch
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
-
-	// Execute the workflow first time
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-
-	// Setup new test environment for second execution (simulates running again later)
-	s.TearDownTest()
-	s.SetupTest()
-
-	// Mock child workflow execution for second batch with same URL
-	s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, urls[0]).Return(nil)
-
-	// Execute the workflow again with the same URL
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify second execution also completed successfully
-	// This demonstrates that:
-	// 1. The same URL generates the same deterministic workflow ID (SHA-256 hash)
-	// 2. WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE allows the workflow to run again
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
 }
 
-func (s *WorkflowTestSuite) TestIndexMultipleMediaWorkflow_LargeNumberOfURLs() {
-	// Test with a larger number of URLs to ensure concurrent processing works
+func TestIndexMultipleMediaWorkflow_LargeNumberOfURLs(t *testing.T) {
+	t.Parallel()
+	d := newMediaWf(t)
+	defer d.Ctrl.Finish()
+	ctx, _, jq, mw := d.Ctx, d.Exec, d.MockJQ, d.Mw
 	urls := make([]string, 50)
 	for i := range 50 {
 		urls[i] = "https://example.com/media" + string(rune('0'+i%10)) + ".jpg"
 	}
 
-	// Mock child workflow executions for unique URLs
-	seen := make(map[string]bool)
-	for _, url := range urls {
-		if !seen[url] {
-			seen[url] = true
-			s.env.OnWorkflow(s.mediaWorkflows.IndexMediaWorkflow, mock.Anything, url).Return(nil)
-		}
-	}
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, true, nil).MinTimes(1)
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.mediaWorkflows.IndexMultipleMediaWorkflow, urls)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := mw.IndexMultipleMediaWorkflow(ctx, urls)
+	require.NoError(t, err)
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -463,7 +464,7 @@ func (s *mediaHealthSweeper) triggerWebhook(ctx context.Context, tokenCID string
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 	}
 
-	w := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, nil)
+	w := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, jobs.NopQueue{})
 	workflowRun, err := s.orchestrator.ExecuteWorkflow(ctx, workflowOptions, w.NotifyWebhookClients, webhookEvent)
 	if err != nil {
 		logger.ErrorCtx(ctx, err,

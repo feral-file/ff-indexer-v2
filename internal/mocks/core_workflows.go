@@ -10,9 +10,9 @@
 package mocks
 
 import (
+	context "context"
 	reflect "reflect"
 
-	workflow "go.temporal.io/sdk/workflow"
 	gomock "go.uber.org/mock/gomock"
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -44,7 +44,7 @@ func (m *MockCoreWorkflows) EXPECT() *MockCoreWorkflowsMockRecorder {
 }
 
 // DeliverWebhook mocks base method.
-func (m *MockCoreWorkflows) DeliverWebhook(ctx workflow.Context, clientID string, event webhook.WebhookEvent) error {
+func (m *MockCoreWorkflows) DeliverWebhook(ctx context.Context, clientID string, event webhook.WebhookEvent) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "DeliverWebhook", ctx, clientID, event)
 	ret0, _ := ret[0].(error)
@@ -58,7 +58,7 @@ func (mr *MockCoreWorkflowsMockRecorder) DeliverWebhook(ctx, clientID, event any
 }
 
 // IndexEthereumTokenOwner mocks base method.
-func (m *MockCoreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address string, jobID *string) error {
+func (m *MockCoreWorkflows) IndexEthereumTokenOwner(ctx context.Context, address string, jobID *string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexEthereumTokenOwner", ctx, address, jobID)
 	ret0, _ := ret[0].(error)
@@ -72,7 +72,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexEthereumTokenOwner(ctx, address, j
 }
 
 // IndexMetadataUpdate mocks base method.
-func (m *MockCoreWorkflows) IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (m *MockCoreWorkflows) IndexMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexMetadataUpdate", ctx, event)
 	ret0, _ := ret[0].(error)
@@ -86,7 +86,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexMetadataUpdate(ctx, event any) *go
 }
 
 // IndexMultipleTokensMetadata mocks base method.
-func (m *MockCoreWorkflows) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
+func (m *MockCoreWorkflows) IndexMultipleTokensMetadata(ctx context.Context, tokenCIDs []domain.TokenCID) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexMultipleTokensMetadata", ctx, tokenCIDs)
 	ret0, _ := ret[0].(error)
@@ -100,7 +100,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexMultipleTokensMetadata(ctx, tokenC
 }
 
 // IndexTezosTokenOwner mocks base method.
-func (m *MockCoreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address string, jobID *string) error {
+func (m *MockCoreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string, jobID *string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTezosTokenOwner", ctx, address, jobID)
 	ret0, _ := ret[0].(error)
@@ -114,7 +114,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTezosTokenOwner(ctx, address, jobI
 }
 
 // IndexToken mocks base method.
-func (m *MockCoreWorkflows) IndexToken(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
+func (m *MockCoreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexToken", ctx, tokenCID, address)
 	ret0, _ := ret[0].(error)
@@ -128,7 +128,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexToken(ctx, tokenCID, address any) 
 }
 
 // IndexTokenBurn mocks base method.
-func (m *MockCoreWorkflows) IndexTokenBurn(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (m *MockCoreWorkflows) IndexTokenBurn(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTokenBurn", ctx, event)
 	ret0, _ := ret[0].(error)
@@ -142,7 +142,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTokenBurn(ctx, event any) *gomock.
 }
 
 // IndexTokenFromEvent mocks base method.
-func (m *MockCoreWorkflows) IndexTokenFromEvent(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (m *MockCoreWorkflows) IndexTokenFromEvent(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTokenFromEvent", ctx, event)
 	ret0, _ := ret[0].(error)
@@ -156,7 +156,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTokenFromEvent(ctx, event any) *go
 }
 
 // IndexTokenMetadata mocks base method.
-func (m *MockCoreWorkflows) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
+func (m *MockCoreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTokenMetadata", ctx, tokenCID, address)
 	ret0, _ := ret[0].(error)
@@ -170,7 +170,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTokenMetadata(ctx, tokenCID, addre
 }
 
 // IndexTokenMint mocks base method.
-func (m *MockCoreWorkflows) IndexTokenMint(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (m *MockCoreWorkflows) IndexTokenMint(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTokenMint", ctx, event)
 	ret0, _ := ret[0].(error)
@@ -184,7 +184,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTokenMint(ctx, event any) *gomock.
 }
 
 // IndexTokenOwner mocks base method.
-func (m *MockCoreWorkflows) IndexTokenOwner(ctx workflow.Context, address string) error {
+func (m *MockCoreWorkflows) IndexTokenOwner(ctx context.Context, address string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTokenOwner", ctx, address)
 	ret0, _ := ret[0].(error)
@@ -198,7 +198,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTokenOwner(ctx, address any) *gomo
 }
 
 // IndexTokenProvenances mocks base method.
-func (m *MockCoreWorkflows) IndexTokenProvenances(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
+func (m *MockCoreWorkflows) IndexTokenProvenances(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTokenProvenances", ctx, tokenCID, address)
 	ret0, _ := ret[0].(error)
@@ -212,7 +212,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTokenProvenances(ctx, tokenCID, ad
 }
 
 // IndexTokenTransfer mocks base method.
-func (m *MockCoreWorkflows) IndexTokenTransfer(ctx workflow.Context, event *domain.BlockchainEvent) error {
+func (m *MockCoreWorkflows) IndexTokenTransfer(ctx context.Context, event *domain.BlockchainEvent) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTokenTransfer", ctx, event)
 	ret0, _ := ret[0].(error)
@@ -226,7 +226,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTokenTransfer(ctx, event any) *gom
 }
 
 // IndexTokens mocks base method.
-func (m *MockCoreWorkflows) IndexTokens(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
+func (m *MockCoreWorkflows) IndexTokens(ctx context.Context, tokenCIDs []domain.TokenCID, address *string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IndexTokens", ctx, tokenCIDs, address)
 	ret0, _ := ret[0].(error)
@@ -240,7 +240,7 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexTokens(ctx, tokenCIDs, address any
 }
 
 // NotifyWebhookClients mocks base method.
-func (m *MockCoreWorkflows) NotifyWebhookClients(ctx workflow.Context, event webhook.WebhookEvent) error {
+func (m *MockCoreWorkflows) NotifyWebhookClients(ctx context.Context, event webhook.WebhookEvent) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "NotifyWebhookClients", ctx, event)
 	ret0, _ := ret[0].(error)

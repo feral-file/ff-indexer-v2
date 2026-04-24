@@ -3,7 +3,7 @@
 package workflows
 
 import (
-	"go.temporal.io/sdk/workflow"
+	"context"
 
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 )
@@ -13,10 +13,10 @@ import (
 //go:generate mockgen -source=media_workflow.go -destination=../mocks/media_workflows.go -package=mocks -mock_names=MediaWorkflows=MockMediaWorkflows
 type MediaWorkflows interface {
 	// IndexMediaWorkflow indexes a single media file
-	IndexMediaWorkflow(ctx workflow.Context, url string) error
+	IndexMediaWorkflow(ctx context.Context, url string) error
 
 	// IndexMultipleMediaWorkflow indexes multiple media files
-	IndexMultipleMediaWorkflow(ctx workflow.Context, urls []string) error
+	IndexMultipleMediaWorkflow(ctx context.Context, urls []string) error
 }
 
 // mediaWorkflows is the concrete implementation of MediaWorkflows.
@@ -26,8 +26,12 @@ type mediaWorkflows struct {
 }
 
 // NewMediaWorkflows creates a new media workflows instance.
-// jobQueue may be nil when no enqueues are performed from this workflow.
+// jobQueue is required. Non-test call sites (Temporal client) that only need method values may use [jobs.NopQueue];
+// unit tests should use a mock [jobs.JobQueue].
 func NewMediaWorkflows(executor MediaExecutor, jobQueue jobs.JobQueue) MediaWorkflows {
+	if jobQueue == nil {
+		panic("workflows: NewMediaWorkflows requires a non-nil jobQueue (see NewMediaWorkflows doc for NopQueue vs mocks)")
+	}
 	return &mediaWorkflows{
 		executor: executor,
 		jobQueue: jobQueue,

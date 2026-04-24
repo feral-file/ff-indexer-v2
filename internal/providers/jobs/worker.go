@@ -195,7 +195,7 @@ func (w *Worker) flushCancelRequests(ctx context.Context) {
 }
 
 func (w *Worker) executeJob(parent context.Context, job *schema.Job) {
-	workCtx, jobCancel := context.WithCancel(parent)
+	workCtx, jobCancel := context.WithCancel(WithJobID(parent, job.ID))
 	defer jobCancel()
 	w.addInflight(job.ID, jobCancel)
 	defer w.removeInflight(job.ID)

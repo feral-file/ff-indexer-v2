@@ -1,21 +1,20 @@
 package workflows
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	"go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/temporal"
-	"go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	"github.com/feral-file/ff-indexer-v2/internal/store"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
@@ -23,13 +22,15 @@ import (
 // IndexTokenOwner indexes all tokens held by a single address
 // This is the parent workflow that delegates to blockchain-specific child workflows
 // It manages the job lifecycle (creation, completion, failure, cancellation)
-func (w *coreWorkflows) IndexTokenOwner(ctx workflow.Context, address string) error {
-	logger.InfoWf(ctx, "Starting token owner indexing",
+func (w *coreWorkflows) IndexTokenOwner(ctx context.Context, address string) error {
+	logger.InfoCtx(ctx, "Starting token owner indexing",
 		zap.String("address", address),
 	)
 
-	// Get workflow ID for job tracking
-	workflowID := workflow.GetInfo(ctx).WorkflowExecution.ID
+	workflowID := ""
+	if id, ok := jobs.JobIDFromContext(ctx); ok {
+		workflowID = strconv.FormatInt(id, 10)
+	}
 
 	// Determine blockchain from address format
 	blockchain := types.AddressToBlockchain(address)
@@ -45,86 +46,61 @@ func (w *coreWorkflows) IndexTokenOwner(ctx workflow.Context, address string) er
 		return fmt.Errorf("unsupported blockchain for address: %s", address)
 	}
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 10 * time.Second,
-			MaximumAttempts: 2,
-		},
-	}
-	activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
-
 	// Defer to handle cancellation gracefully
 	defer func() {
-		if workflow.GetInfo(ctx).GetCurrentHistoryLength() > 0 {
-			// Check if workflow is being canceled
-			if ctx.Err() != nil && (errors.Is(ctx.Err(), workflow.ErrCanceled) || strings.Contains(ctx.Err().Error(), "canceled")) {
-				logger.InfoWf(ctx, "Workflow canceled, updating job status",
-					zap.String("address", address),
-					zap.String("workflowID", workflowID))
+		if ctx.Err() != nil && (errors.Is(ctx.Err(), context.Canceled) || strings.Contains(ctx.Err().Error(), "canceled")) {
+			logger.InfoCtx(ctx, "Workflow canceled, updating job status",
+				zap.String("address", address),
+				zap.String("workflowID", workflowID))
 
-				// Use detached context for cleanup activity
-				detachedCtx, _ := workflow.NewDisconnectedContext(ctx)
-				detachedCtx = workflow.WithActivityOptions(detachedCtx, activityOptions)
-
-				if err := workflow.ExecuteActivity(detachedCtx, w.executor.UpdateIndexingJobStatus,
-					workflowID, schema.IndexingJobStatusCanceled, workflow.Now(ctx)).Get(detachedCtx, nil); err != nil {
-					logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
-				}
+			sticky := context.WithoutCancel(ctx)
+			if err := w.executor.UpdateIndexingJobStatus(sticky,
+				workflowID, schema.IndexingJobStatusCanceled, time.Now().UTC()); err != nil {
+				logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
 			}
 		}
 	}()
 
 	// Create or update job status to 'running' at start
-	err := workflow.ExecuteActivity(activityCtx, w.executor.CreateIndexingJob,
-		address, chainID, workflowID, nil).Get(ctx, nil)
+	err := w.executor.CreateIndexingJob(ctx, address, chainID, workflowID, nil)
 	if err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to create/update job"), zap.Error(err))
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to create/update job"), zap.Error(err))
 		// Don't fail workflow if job tracking fails
 	}
 
 	// Update job status to 'running'
-	if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
-		workflowID, schema.IndexingJobStatusRunning, workflow.Now(ctx)).Get(ctx, nil); err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to running"), zap.Error(err))
+	if err := w.executor.UpdateIndexingJobStatus(ctx,
+		workflowID, schema.IndexingJobStatusRunning, time.Now().UTC()); err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to running"), zap.Error(err))
 	}
 
-	// Configure child workflow options
-	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:               fmt.Sprintf("index-token-owner-%s-%s", string(blockchain), address),
-		WorkflowExecutionTimeout: 30 * (24*time.Hour + 15*time.Minute), // 30 days + buffer for each day
-		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
-	}
-	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
+	wid := workflowID
 	// Execute child workflow based on blockchain
 	switch blockchain {
 	case domain.BlockchainTezos:
-		err = workflow.ExecuteChildWorkflow(childCtx, w.IndexTezosTokenOwner, address, &workflowID).Get(ctx, nil)
+		err = w.IndexTezosTokenOwner(ctx, address, &wid)
 	case domain.BlockchainEthereum:
-		err = workflow.ExecuteChildWorkflow(childCtx, w.IndexEthereumTokenOwner, address, &workflowID).Get(ctx, nil)
+		err = w.IndexEthereumTokenOwner(ctx, address, &wid)
 	default:
 		err = fmt.Errorf("unsupported blockchain for address: %s", address)
 	}
 
 	if err != nil {
-		// Check if error is due to cancellation
-		if errors.Is(err, workflow.ErrCanceled) || strings.Contains(err.Error(), "canceled") {
-			// Use detached context for cleanup activity
-			detachedCtx, _ := workflow.NewDisconnectedContext(ctx)
-			detachedCtx = workflow.WithActivityOptions(detachedCtx, activityOptions)
-
-			// Update job status to 'canceled' when child workflow is canceled
-			if err := workflow.ExecuteActivity(detachedCtx, w.executor.UpdateIndexingJobStatus,
-				workflowID, schema.IndexingJobStatusCanceled, workflow.Now(detachedCtx)).Get(detachedCtx, nil); err != nil {
-				logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
+		if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "canceled") {
+			sticky := context.WithoutCancel(ctx)
+			if err := w.executor.UpdateIndexingJobStatus(sticky,
+				workflowID, schema.IndexingJobStatusCanceled, time.Now().UTC()); err != nil {
+				logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to canceled"), zap.Error(err))
 			}
-			return errors.New("workflow canceled")
+			return err
 		}
 
-		logger.ErrorWf(ctx,
+		var re *jobs.RescheduleError
+		if errors.As(err, &re) {
+			return err
+		}
+
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to index tokens for owner"),
 			zap.Error(err),
 			zap.String("address", address),
@@ -132,22 +108,22 @@ func (w *coreWorkflows) IndexTokenOwner(ctx workflow.Context, address string) er
 		)
 
 		// Update job status to 'failed'
-		if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
-			workflowID, schema.IndexingJobStatusFailed, workflow.Now(ctx)).Get(ctx, nil); err != nil {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to failed"), zap.Error(err))
+		if err := w.executor.UpdateIndexingJobStatus(ctx,
+			workflowID, schema.IndexingJobStatusFailed, time.Now().UTC()); err != nil {
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to failed"), zap.Error(err))
 		}
 		return err
 	}
 
-	logger.InfoWf(ctx, "Token owner indexing completed",
+	logger.InfoCtx(ctx, "Token owner indexing completed",
 		zap.String("address", address),
 		zap.String("blockchain", string(blockchain)),
 	)
 
 	// Update job status to 'completed'
-	if err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
-		workflowID, schema.IndexingJobStatusCompleted, workflow.Now(ctx)).Get(ctx, nil); err != nil {
-		logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to completed"), zap.Error(err))
+	if err := w.executor.UpdateIndexingJobStatus(ctx,
+		workflowID, schema.IndexingJobStatusCompleted, time.Now().UTC()); err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to update job status to completed"), zap.Error(err))
 		// Don't fail workflow
 	}
 
@@ -325,27 +301,18 @@ func findLastCompleteBlockIndexByTarget(tokens []domain.TokenWithBlock, targetCo
 // IndexTezosTokenOwner indexes all tokens held by a Tezos address
 // Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
 // jobID is optional and used for job status tracking during quota pauses
-func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address string, jobID *string) error {
-	logger.InfoWf(ctx, "Starting Tezos token owner indexing",
+func (w *coreWorkflows) IndexTezosTokenOwner(ctx context.Context, address string, jobID *string) error {
+	logger.InfoCtx(ctx, "Starting Tezos token owner indexing",
 		zap.String("address", address),
 		zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
 	)
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 10 * time.Second,
-			MaximumAttempts: 2,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 	chainID := w.config.TezosChainID
 
 	// Step 1: Ensure watched address record exists
-	err := workflow.ExecuteActivity(ctx, w.executor.EnsureWatchedAddressExists, address, chainID, w.config.BudgetedIndexingDefaultDailyQuota).Get(ctx, nil)
+	err := w.executor.EnsureWatchedAddressExists(ctx, address, chainID, w.config.BudgetedIndexingDefaultDailyQuota)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to ensure watched address exists"),
 			zap.Error(err),
 			zap.String("address", address),
@@ -356,9 +323,9 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 
 	// Step 2: Get current indexing block range for this address and chain
 	var rangeResult *BlockRangeResult
-	err = workflow.ExecuteActivity(ctx, w.executor.GetIndexingBlockRangeForAddress, address, chainID).Get(ctx, &rangeResult)
+	rangeResult, err = w.executor.GetIndexingBlockRangeForAddress(ctx, address, chainID)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to get indexing block range"),
 			zap.Error(err),
 			zap.String("address", address),
@@ -370,7 +337,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 	storedMinBlock := rangeResult.MinBlock
 	storedMaxBlock := rangeResult.MaxBlock
 
-	logger.InfoWf(ctx, "Retrieved stored block range",
+	logger.InfoCtx(ctx, "Retrieved stored block range",
 		zap.String("address", address),
 		zap.Uint64("storedMinBlock", storedMinBlock),
 		zap.Uint64("storedMaxBlock", storedMaxBlock),
@@ -378,9 +345,9 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 
 	// Step 3: Get the current latest block from TzKT
 	var latestBlock uint64
-	err = workflow.ExecuteActivity(ctx, w.executor.GetLatestTezosBlock).Get(ctx, &latestBlock)
+	latestBlock, err = w.executor.GetLatestTezosBlock(ctx)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to get latest Tezos block"),
 			zap.Error(err),
 			zap.String("address", address),
@@ -388,7 +355,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 		return err
 	}
 
-	logger.InfoWf(ctx, "Retrieved latest block from TzKT",
+	logger.InfoCtx(ctx, "Retrieved latest block from TzKT",
 		zap.String("address", address),
 		zap.Uint64("latestBlock", latestBlock),
 	)
@@ -397,16 +364,15 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 	if storedMinBlock == 0 && storedMaxBlock == 0 {
 		// First run: No previous indexing exists
 		// Fetch entire range from start to latest, process in chunks
-		logger.InfoWf(ctx, "First run detected, fetching all tokens from start to latest",
+		logger.InfoCtx(ctx, "First run detected, fetching all tokens from start to latest",
 			zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
 			zap.Uint64("latestBlock", latestBlock),
 		)
 
 		var allTokens []domain.TokenWithBlock
-		err = workflow.ExecuteActivity(ctx, w.executor.GetTezosTokenCIDsByAccountWithinBlockRange,
-			address, w.config.TezosTokenSweepStartBlock, latestBlock).Get(ctx, &allTokens)
+		allTokens, err = w.executor.GetTezosTokenCIDsByAccountWithinBlockRange(ctx, address, w.config.TezosTokenSweepStartBlock, latestBlock)
 		if err != nil {
-			logger.ErrorWf(ctx,
+			logger.ErrorCtx(ctx,
 				fmt.Errorf("failed to fetch tokens"),
 				zap.Error(err),
 				zap.String("address", address),
@@ -414,7 +380,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 			return err
 		}
 
-		logger.InfoWf(ctx, "Retrieved all tokens for first run",
+		logger.InfoCtx(ctx, "Retrieved all tokens for first run",
 			zap.String("address", address),
 			zap.Int("tokenCount", len(allTokens)),
 		)
@@ -428,7 +394,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 		scannedMaxBlock := latestBlock
 
 		for i, chunk := range chunks {
-			logger.InfoWf(ctx, "Processing token chunk",
+			logger.InfoCtx(ctx, "Processing token chunk",
 				zap.Int("chunkIndex", i+1),
 				zap.Int("totalChunks", len(chunks)),
 				zap.Int("tokenCount", len(chunk)),
@@ -447,20 +413,18 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 			if actualMinBlock != nil {
 				if i == 0 {
 					// First chunk - establish the max_block (scanned range end)
-					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-						address, chainID, *actualMinBlock, scannedMaxBlock).Get(ctx, nil)
+					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, scannedMaxBlock)
 					storedMaxBlock = scannedMaxBlock
 				} else {
 					// Subsequent chunks - progressively update min_block toward start
-					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-						address, chainID, *actualMinBlock, storedMaxBlock).Get(ctx, nil)
+					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, storedMaxBlock)
 				}
 				if err != nil {
-					logger.Error(fmt.Errorf("failed to update block range: %w", err), zap.String("address", address))
+					logger.ErrorCtx(ctx, fmt.Errorf("failed to update block range: %w", err), zap.String("address", address))
 					return err
 				}
 
-				logger.InfoWf(ctx, "Updated block range after chunk",
+				logger.InfoCtx(ctx, "Updated block range after chunk",
 					zap.Uint64("actualMinBlock", *actualMinBlock),
 					zap.Uint64("actualMaxBlock", *actualMaxBlock),
 					zap.Uint64("storedMinBlock", *actualMinBlock),
@@ -472,31 +436,25 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 			if !shouldContinue {
 				// Quota exhausted after this chunk - block range already updated above with actual indexed range
 				// On continue-as-new, we'll start from actualMinBlock and fetch remaining tokens
-				logger.InfoWf(ctx, "Quota exhausted after processing chunk, will continue-as-new",
+				logger.InfoCtx(ctx, "Quota exhausted after processing chunk, will continue-as-new",
 					zap.Int("chunksCompleted", i+1),
 					zap.Int("totalChunks", len(chunks)),
 				)
-				if err := w.handleQuotaExhausted(ctx, address, quotaResetAt, jobID); err != nil {
-					return err
-				}
-				// Continue-as-new to reset event history and resume indexing
-				return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address, jobID)
+				return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
 			}
 
 			// Add a brief delay to prevent exceeding third-party service rate limits
-			if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
-				logger.ErrorWf(ctx,
-					fmt.Errorf("failed to sleep"),
-					zap.Error(err),
-				)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(2 * time.Second):
 			}
 		}
 
 		// Final update to ensure we mark the complete scanned range
-		err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-			address, chainID, scannedMinBlock, scannedMaxBlock).Get(ctx, nil)
+		err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, scannedMinBlock, scannedMaxBlock)
 		if err != nil {
-			logger.ErrorWf(ctx,
+			logger.ErrorCtx(ctx,
 				fmt.Errorf("failed to update final block range"),
 				zap.Error(err),
 				zap.String("address", address),
@@ -504,13 +462,13 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 			return err
 		}
 
-		logger.InfoWf(ctx, "Completed first run sweep",
+		logger.InfoCtx(ctx, "Completed first run sweep",
 			zap.Uint64("scannedMinBlock", scannedMinBlock),
 			zap.Uint64("scannedMaxBlock", scannedMaxBlock),
 		)
 	} else {
 		// Subsequent run: Sweep backward first (historical), then forward (latest updates)
-		logger.InfoWf(ctx, "Subsequent run detected, sweeping backward then forward",
+		logger.InfoCtx(ctx, "Subsequent run detected, sweeping backward then forward",
 			zap.Uint64("storedMinBlock", storedMinBlock),
 			zap.Uint64("storedMaxBlock", storedMaxBlock),
 			zap.Uint64("latestBlock", latestBlock),
@@ -518,16 +476,15 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 
 		// Part A: Sweep backward (historical data) - FIRST
 		if storedMinBlock > w.config.TezosTokenSweepStartBlock {
-			logger.InfoWf(ctx, "Sweeping backward for historical data",
+			logger.InfoCtx(ctx, "Sweeping backward for historical data",
 				zap.Uint64("startBlock", w.config.TezosTokenSweepStartBlock),
 				zap.Uint64("storedMinBlock", storedMinBlock),
 			)
 
 			var backwardTokens []domain.TokenWithBlock
-			err = workflow.ExecuteActivity(ctx, w.executor.GetTezosTokenCIDsByAccountWithinBlockRange,
-				address, w.config.TezosTokenSweepStartBlock, storedMinBlock-1).Get(ctx, &backwardTokens)
+			backwardTokens, err = w.executor.GetTezosTokenCIDsByAccountWithinBlockRange(ctx, address, w.config.TezosTokenSweepStartBlock, storedMinBlock-1)
 			if err != nil {
-				logger.ErrorWf(ctx,
+				logger.ErrorCtx(ctx,
 					fmt.Errorf("failed to fetch backward tokens"),
 					zap.Error(err),
 					zap.String("address", address),
@@ -535,7 +492,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 				return err
 			}
 
-			logger.InfoWf(ctx, "Retrieved backward sweep tokens",
+			logger.InfoCtx(ctx, "Retrieved backward sweep tokens",
 				zap.String("address", address),
 				zap.Int("tokenCount", len(backwardTokens)),
 			)
@@ -549,7 +506,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 			scannedMaxBlock := storedMinBlock - 1
 
 			for i, chunk := range chunks {
-				logger.InfoWf(ctx, "Processing backward chunk",
+				logger.InfoCtx(ctx, "Processing backward chunk",
 					zap.Int("chunkIndex", i+1),
 					zap.Int("totalChunks", len(chunks)),
 					zap.Int("tokenCount", len(chunk)),
@@ -565,48 +522,41 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 				// Update min_block after each successful chunk for resumability
 				// Use actual min block of indexed tokens
 				if actualMinBlock != nil {
-					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-						address, chainID, *actualMinBlock, storedMaxBlock).Get(ctx, nil)
+					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, storedMaxBlock)
 					if err != nil {
-						logger.ErrorWf(ctx,
+						logger.ErrorCtx(ctx,
 							fmt.Errorf("failed to update min block"),
 							zap.Error(err),
 							zap.String("address", address),
 						)
 						return err
 					}
-					logger.InfoWf(ctx, "Updated min block after chunk",
+					logger.InfoCtx(ctx, "Updated min block after chunk",
 						zap.Uint64("actualMinBlock", *actualMinBlock))
 				}
 
 				// Check if we should continue after updating block range
 				if !shouldContinue {
 					// Quota exhausted after this chunk - block range already updated above
-					logger.InfoWf(ctx, "Quota exhausted during backward sweep, will continue-as-new",
+					logger.InfoCtx(ctx, "Quota exhausted during backward sweep, will continue-as-new",
 						zap.Int("chunksCompleted", i+1),
 						zap.Int("totalChunks", len(chunks)),
 					)
-					if err := w.handleQuotaExhausted(ctx, address, quotaResetAt, jobID); err != nil {
-						return err
-					}
-					// Continue-as-new to reset event history and resume indexing
-					return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address, jobID)
+					return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
 				}
 
 				// Add a brief delay to prevent exceeding third-party service rate limits
-				if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
-					logger.ErrorWf(ctx,
-						fmt.Errorf("failed to sleep"),
-						zap.Error(err),
-					)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(2 * time.Second):
 				}
 			}
 
 			// Final update to ensure we mark the complete scanned range
-			err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-				address, chainID, scannedMinBlock, storedMaxBlock).Get(ctx, nil)
+			err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, scannedMinBlock, storedMaxBlock)
 			if err != nil {
-				logger.ErrorWf(ctx,
+				logger.ErrorCtx(ctx,
 					fmt.Errorf("failed to update final min block"),
 					zap.Error(err),
 					zap.String("address", address),
@@ -615,7 +565,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 			}
 
 			storedMinBlock = scannedMinBlock
-			logger.InfoWf(ctx, "Completed backward sweep",
+			logger.InfoCtx(ctx, "Completed backward sweep",
 				zap.Uint64("scannedMinBlock", scannedMinBlock),
 				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
 			)
@@ -623,16 +573,15 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 
 		// Part B: Sweep forward (latest updates) - SECOND
 		if latestBlock > storedMaxBlock {
-			logger.InfoWf(ctx, "Sweeping forward for latest updates",
+			logger.InfoCtx(ctx, "Sweeping forward for latest updates",
 				zap.Uint64("storedMaxBlock", storedMaxBlock),
 				zap.Uint64("latestBlock", latestBlock),
 			)
 
 			var forwardTokens []domain.TokenWithBlock
-			err = workflow.ExecuteActivity(ctx, w.executor.GetTezosTokenCIDsByAccountWithinBlockRange,
-				address, storedMaxBlock+1, latestBlock).Get(ctx, &forwardTokens)
+			forwardTokens, err = w.executor.GetTezosTokenCIDsByAccountWithinBlockRange(ctx, address, storedMaxBlock+1, latestBlock)
 			if err != nil {
-				logger.ErrorWf(ctx,
+				logger.ErrorCtx(ctx,
 					fmt.Errorf("failed to fetch forward tokens"),
 					zap.Error(err),
 					zap.String("address", address),
@@ -640,7 +589,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 				return err
 			}
 
-			logger.InfoWf(ctx, "Retrieved forward sweep tokens",
+			logger.InfoCtx(ctx, "Retrieved forward sweep tokens",
 				zap.String("address", address),
 				zap.Int("tokenCount", len(forwardTokens)),
 			)
@@ -654,7 +603,7 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 			scannedMaxBlock := latestBlock
 
 			for i, chunk := range chunks {
-				logger.InfoWf(ctx, "Processing forward chunk",
+				logger.InfoCtx(ctx, "Processing forward chunk",
 					zap.Int("chunkIndex", i+1),
 					zap.Int("totalChunks", len(chunks)),
 					zap.Int("tokenCount", len(chunk)),
@@ -670,10 +619,9 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 				// Update max_block after each successful chunk for resumability
 				// Use actual max block of indexed tokens
 				if actualMaxBlock != nil {
-					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-						address, chainID, storedMinBlock, *actualMaxBlock).Get(ctx, nil)
+					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, storedMinBlock, *actualMaxBlock)
 					if err != nil {
-						logger.ErrorWf(ctx,
+						logger.ErrorCtx(ctx,
 							fmt.Errorf("failed to update max block"),
 							zap.Error(err),
 							zap.String("address", address),
@@ -681,38 +629,32 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 						return err
 					}
 
-					logger.InfoWf(ctx, "Updated max block after chunk",
+					logger.InfoCtx(ctx, "Updated max block after chunk",
 						zap.Uint64("actualMaxBlock", *actualMaxBlock))
 				}
 
 				// Check if we should continue after updating block range
 				if !shouldContinue {
 					// Quota exhausted after this chunk - block range already updated above
-					logger.InfoWf(ctx, "Quota exhausted during forward sweep, will continue-as-new",
+					logger.InfoCtx(ctx, "Quota exhausted during forward sweep, will continue-as-new",
 						zap.Int("chunksCompleted", i+1),
 						zap.Int("totalChunks", len(chunks)),
 					)
-					if err := w.handleQuotaExhausted(ctx, address, quotaResetAt, jobID); err != nil {
-						return err
-					}
-					// Continue-as-new to reset event history and resume indexing
-					return workflow.NewContinueAsNewError(ctx, w.IndexTezosTokenOwner, address, jobID)
+					return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
 				}
 
 				// Add a brief delay to prevent exceeding third-party service rate limits
-				if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
-					logger.ErrorWf(ctx,
-						fmt.Errorf("failed to sleep"),
-						zap.Error(err),
-					)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(2 * time.Second):
 				}
 			}
 
 			// Final update to ensure we mark the complete scanned range
-			err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-				address, chainID, storedMinBlock, scannedMaxBlock).Get(ctx, nil)
+			err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, storedMinBlock, scannedMaxBlock)
 			if err != nil {
-				logger.ErrorWf(ctx,
+				logger.ErrorCtx(ctx,
 					fmt.Errorf("failed to update final max block"),
 					zap.Error(err),
 					zap.String("address", address),
@@ -720,41 +662,32 @@ func (w *coreWorkflows) IndexTezosTokenOwner(ctx workflow.Context, address strin
 				return err
 			}
 
-			logger.InfoWf(ctx, "Completed forward sweep",
+			logger.InfoCtx(ctx, "Completed forward sweep",
 				zap.Uint64("scannedMinBlock", scannedMinBlock),
 				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
 			)
 		}
 	}
 
-	logger.InfoWf(ctx, "Tezos token owner indexing completed", zap.String("address", address))
+	logger.InfoCtx(ctx, "Tezos token owner indexing completed", zap.String("address", address))
 
 	return nil
 }
 
 // IndexEthereumTokenOwner indexes all tokens held by an Ethereum address
 // Uses bi-directional block range sweeping: backward first (historical), then forward (latest updates)
-func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address string, jobID *string) error {
-	logger.InfoWf(ctx, "Starting Ethereum token owner indexing",
+func (w *coreWorkflows) IndexEthereumTokenOwner(ctx context.Context, address string, jobID *string) error {
+	logger.InfoCtx(ctx, "Starting Ethereum token owner indexing",
 		zap.String("address", address),
 		zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
 	)
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 10 * time.Second,
-			MaximumAttempts: 2,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
 	chainID := w.config.EthereumChainID
 
 	// Step 1: Ensure watched address record exists
-	err := workflow.ExecuteActivity(ctx, w.executor.EnsureWatchedAddressExists, address, chainID, w.config.BudgetedIndexingDefaultDailyQuota).Get(ctx, nil)
+	err := w.executor.EnsureWatchedAddressExists(ctx, address, chainID, w.config.BudgetedIndexingDefaultDailyQuota)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to ensure watched address exists"),
 			zap.Error(err),
 			zap.String("address", address),
@@ -765,9 +698,9 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 
 	// Step 2: Get current indexing block range for this address and chain
 	var rangeResult *BlockRangeResult
-	err = workflow.ExecuteActivity(ctx, w.executor.GetIndexingBlockRangeForAddress, address, chainID).Get(ctx, &rangeResult)
+	rangeResult, err = w.executor.GetIndexingBlockRangeForAddress(ctx, address, chainID)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to get indexing block range"),
 			zap.Error(err),
 			zap.String("address", address),
@@ -779,7 +712,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 	storedMinBlock := rangeResult.MinBlock
 	storedMaxBlock := rangeResult.MaxBlock
 
-	logger.InfoWf(ctx, "Retrieved stored block range",
+	logger.InfoCtx(ctx, "Retrieved stored block range",
 		zap.String("address", address),
 		zap.Uint64("storedMinBlock", storedMinBlock),
 		zap.Uint64("storedMaxBlock", storedMaxBlock),
@@ -787,9 +720,9 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 
 	// Step 3: Get the current latest block from blockchain
 	var latestBlock uint64
-	err = workflow.ExecuteActivity(ctx, w.executor.GetLatestEthereumBlock).Get(ctx, &latestBlock)
+	latestBlock, err = w.executor.GetLatestEthereumBlock(ctx)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to get latest block"),
 			zap.Error(err),
 			zap.String("address", address),
@@ -797,7 +730,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 		return err
 	}
 
-	logger.InfoWf(ctx, "Retrieved latest block from blockchain",
+	logger.InfoCtx(ctx, "Retrieved latest block from blockchain",
 		zap.String("address", address),
 		zap.Uint64("latestBlock", latestBlock),
 	)
@@ -811,22 +744,16 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 	if storedMinBlock == 0 && storedMaxBlock == 0 {
 		// First run: No previous indexing exists
 		// Fetch entire range from start to latest, process in chunks
-		logger.InfoWf(ctx, "First run detected, fetching all tokens from start to latest",
+		logger.InfoCtx(ctx, "First run detected, fetching all tokens from start to latest",
 			zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
 			zap.Uint64("latestBlock", latestBlock),
 		)
 
 		var allTokens []domain.TokenWithBlock
 		var allTokensResult domain.TokenWithBlockRangeResult
-		err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
-			address,
-			w.config.EthereumTokenSweepStartBlock,
-			latestBlock,
-			limit,
-			domain.BlockScanOrderDesc,
-		).Get(ctx, &allTokensResult)
+		allTokensResult, err = w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, w.config.EthereumTokenSweepStartBlock, latestBlock, limit, domain.BlockScanOrderDesc)
 		if err != nil {
-			logger.ErrorWf(ctx,
+			logger.ErrorCtx(ctx,
 				fmt.Errorf("failed to fetch tokens"),
 				zap.Error(err),
 				zap.String("address", address),
@@ -835,7 +762,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 		}
 		allTokens = allTokensResult.Tokens
 
-		logger.InfoWf(ctx, "Retrieved all tokens for first run",
+		logger.InfoCtx(ctx, "Retrieved all tokens for first run",
 			zap.String("address", address),
 			zap.Int("tokenCount", len(allTokens)),
 		)
@@ -849,7 +776,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 		scannedMaxBlock := allTokensResult.EffectiveToBlock
 
 		for i, chunk := range chunks {
-			logger.InfoWf(ctx, "Processing token chunk",
+			logger.InfoCtx(ctx, "Processing token chunk",
 				zap.Int("chunkIndex", i+1),
 				zap.Int("totalChunks", len(chunks)),
 				zap.Int("tokenCount", len(chunk)),
@@ -867,16 +794,14 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 			if actualMinBlock != nil {
 				if i == 0 {
 					// First chunk - establish the max_block (scanned range end)
-					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-						address, chainID, *actualMinBlock, scannedMaxBlock).Get(ctx, nil)
+					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, scannedMaxBlock)
 					storedMaxBlock = scannedMaxBlock
 				} else {
 					// Subsequent chunks - progressively update min_block toward start
-					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-						address, chainID, *actualMinBlock, storedMaxBlock).Get(ctx, nil)
+					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, storedMaxBlock)
 				}
 				if err != nil {
-					logger.ErrorWf(ctx,
+					logger.ErrorCtx(ctx,
 						fmt.Errorf("failed to update block range"),
 						zap.Error(err),
 						zap.String("address", address),
@@ -884,7 +809,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 					return err
 				}
 
-				logger.InfoWf(ctx, "Updated block range after chunk",
+				logger.InfoCtx(ctx, "Updated block range after chunk",
 					zap.Uint64("actualMinBlock", *actualMinBlock),
 					zap.Uint64("actualMaxBlock", *actualMaxBlock),
 				)
@@ -893,31 +818,25 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 			// Check if we should continue after updating block range
 			if !shouldContinue {
 				// Quota exhausted after this chunk - block range already updated above with actual indexed range
-				logger.InfoWf(ctx, "Quota exhausted after processing chunk, will continue-as-new",
+				logger.InfoCtx(ctx, "Quota exhausted after processing chunk, will continue-as-new",
 					zap.Int("chunksCompleted", i+1),
 					zap.Int("totalChunks", len(chunks)),
 				)
-				if err := w.handleQuotaExhausted(ctx, address, quotaResetAt, jobID); err != nil {
-					return err
-				}
-				// Continue-as-new to reset event history and resume indexing
-				return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address, jobID)
+				return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
 			}
 
 			// Add a brief delay to prevent exceeding third-party service rate limits
-			if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
-				logger.ErrorWf(ctx,
-					fmt.Errorf("failed to sleep"),
-					zap.Error(err),
-				)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(2 * time.Second):
 			}
 		}
 
 		// Final update to ensure we mark the complete scanned range
-		err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-			address, chainID, scannedMinBlock, scannedMaxBlock).Get(ctx, nil)
+		err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, scannedMinBlock, scannedMaxBlock)
 		if err != nil {
-			logger.ErrorWf(ctx,
+			logger.ErrorCtx(ctx,
 				fmt.Errorf("failed to update final block range"),
 				zap.Error(err),
 				zap.String("address", address),
@@ -925,13 +844,13 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 			return err
 		}
 
-		logger.InfoWf(ctx, "Completed first run sweep",
+		logger.InfoCtx(ctx, "Completed first run sweep",
 			zap.Uint64("scannedMinBlock", scannedMinBlock),
 			zap.Uint64("scannedMaxBlock", scannedMaxBlock),
 		)
 	} else {
 		// Subsequent run: Sweep backward first (historical), then forward (latest updates)
-		logger.InfoWf(ctx, "Subsequent run detected, sweeping backward then forward",
+		logger.InfoCtx(ctx, "Subsequent run detected, sweeping backward then forward",
 			zap.Uint64("storedMinBlock", storedMinBlock),
 			zap.Uint64("storedMaxBlock", storedMaxBlock),
 			zap.Uint64("latestBlock", latestBlock),
@@ -939,22 +858,16 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 
 		// Part A: Sweep backward (historical data) - FIRST
 		if storedMinBlock > w.config.EthereumTokenSweepStartBlock {
-			logger.InfoWf(ctx, "Sweeping backward for historical data",
+			logger.InfoCtx(ctx, "Sweeping backward for historical data",
 				zap.Uint64("startBlock", w.config.EthereumTokenSweepStartBlock),
 				zap.Uint64("storedMinBlock", storedMinBlock),
 			)
 
 			var backwardTokens []domain.TokenWithBlock
 			var backwardTokensResult domain.TokenWithBlockRangeResult
-			err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
-				address,
-				w.config.EthereumTokenSweepStartBlock,
-				storedMinBlock-1,
-				limit,
-				domain.BlockScanOrderDesc,
-			).Get(ctx, &backwardTokensResult)
+			backwardTokensResult, err = w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, w.config.EthereumTokenSweepStartBlock, storedMinBlock-1, limit, domain.BlockScanOrderDesc)
 			if err != nil {
-				logger.ErrorWf(ctx,
+				logger.ErrorCtx(ctx,
 					fmt.Errorf("failed to fetch backward tokens"),
 					zap.Error(err),
 					zap.String("address", address),
@@ -963,7 +876,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 			}
 			backwardTokens = backwardTokensResult.Tokens
 
-			logger.InfoWf(ctx, "Retrieved backward sweep tokens",
+			logger.InfoCtx(ctx, "Retrieved backward sweep tokens",
 				zap.String("address", address),
 				zap.Int("tokenCount", len(backwardTokens)),
 			)
@@ -977,7 +890,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 			scannedMaxBlock := backwardTokensResult.EffectiveToBlock
 
 			for i, chunk := range chunks {
-				logger.InfoWf(ctx, "Processing backward chunk",
+				logger.InfoCtx(ctx, "Processing backward chunk",
 					zap.Int("chunkIndex", i+1),
 					zap.Int("totalChunks", len(chunks)),
 					zap.Int("tokenCount", len(chunk)),
@@ -993,10 +906,9 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 				// Update min_block after each successful chunk for resumability
 				// Use actual min block of indexed tokens
 				if actualMinBlock != nil {
-					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-						address, chainID, *actualMinBlock, storedMaxBlock).Get(ctx, nil)
+					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, *actualMinBlock, storedMaxBlock)
 					if err != nil {
-						logger.ErrorWf(ctx,
+						logger.ErrorCtx(ctx,
 							fmt.Errorf("failed to update min block"),
 							zap.Error(err),
 							zap.String("address", address),
@@ -1004,38 +916,32 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 						return err
 					}
 
-					logger.InfoWf(ctx, "Updated min block after chunk",
+					logger.InfoCtx(ctx, "Updated min block after chunk",
 						zap.Uint64("actualMinBlock", *actualMinBlock))
 				}
 
 				// Check if we should continue after updating block range
 				if !shouldContinue {
 					// Quota exhausted after this chunk - block range already updated above
-					logger.InfoWf(ctx, "Quota exhausted during backward sweep, will continue-as-new",
+					logger.InfoCtx(ctx, "Quota exhausted during backward sweep, will continue-as-new",
 						zap.Int("chunksCompleted", i+1),
 						zap.Int("totalChunks", len(chunks)),
 					)
-					if err := w.handleQuotaExhausted(ctx, address, quotaResetAt, jobID); err != nil {
-						return err
-					}
-					// Continue-as-new to reset event history and resume indexing
-					return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address, jobID)
+					return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
 				}
 
 				// Add a brief delay to prevent exceeding third-party service rate limits
-				if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
-					logger.ErrorWf(ctx,
-						fmt.Errorf("failed to sleep"),
-						zap.Error(err),
-					)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(2 * time.Second):
 				}
 			}
 
 			// Final update to ensure we mark the complete scanned range
-			err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-				address, chainID, scannedMinBlock, storedMaxBlock).Get(ctx, nil)
+			err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, scannedMinBlock, storedMaxBlock)
 			if err != nil {
-				logger.ErrorWf(ctx,
+				logger.ErrorCtx(ctx,
 					fmt.Errorf("failed to update final min block"),
 					zap.Error(err),
 					zap.String("address", address),
@@ -1044,7 +950,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 			}
 
 			storedMinBlock = scannedMinBlock
-			logger.InfoWf(ctx, "Completed backward sweep",
+			logger.InfoCtx(ctx, "Completed backward sweep",
 				zap.Uint64("scannedMinBlock", scannedMinBlock),
 				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
 			)
@@ -1052,22 +958,16 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 
 		// Part B: Sweep forward (latest updates) - SECOND
 		if latestBlock > storedMaxBlock {
-			logger.InfoWf(ctx, "Sweeping forward for latest updates",
+			logger.InfoCtx(ctx, "Sweeping forward for latest updates",
 				zap.Uint64("storedMaxBlock", storedMaxBlock),
 				zap.Uint64("latestBlock", latestBlock),
 			)
 
 			var forwardTokens []domain.TokenWithBlock
 			var forwardTokensResult domain.TokenWithBlockRangeResult
-			err = workflow.ExecuteActivity(ctx, w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange,
-				address,
-				storedMaxBlock+1,
-				latestBlock,
-				limit,
-				domain.BlockScanOrderAsc,
-			).Get(ctx, &forwardTokensResult)
+			forwardTokensResult, err = w.executor.GetEthereumTokenCIDsByOwnerWithinBlockRange(ctx, address, storedMaxBlock+1, latestBlock, limit, domain.BlockScanOrderAsc)
 			if err != nil {
-				logger.ErrorWf(ctx,
+				logger.ErrorCtx(ctx,
 					fmt.Errorf("failed to fetch forward tokens"),
 					zap.Error(err),
 					zap.String("address", address),
@@ -1076,7 +976,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 			}
 			forwardTokens = forwardTokensResult.Tokens
 
-			logger.InfoWf(ctx, "Retrieved forward sweep tokens",
+			logger.InfoCtx(ctx, "Retrieved forward sweep tokens",
 				zap.String("address", address),
 				zap.Int("tokenCount", len(forwardTokens)),
 			)
@@ -1090,7 +990,7 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 			scannedMaxBlock := forwardTokensResult.EffectiveToBlock
 
 			for i, chunk := range chunks {
-				logger.InfoWf(ctx, "Processing forward chunk",
+				logger.InfoCtx(ctx, "Processing forward chunk",
 					zap.Int("chunkIndex", i+1),
 					zap.Int("totalChunks", len(chunks)),
 					zap.Int("tokenCount", len(chunk)),
@@ -1106,10 +1006,9 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 				// Update max_block after each successful chunk for resumability
 				// Use actual max block of indexed tokens
 				if actualMaxBlock != nil {
-					err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-						address, chainID, storedMinBlock, *actualMaxBlock).Get(ctx, nil)
+					err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, storedMinBlock, *actualMaxBlock)
 					if err != nil {
-						logger.ErrorWf(ctx,
+						logger.ErrorCtx(ctx,
 							fmt.Errorf("failed to update max block"),
 							zap.Error(err),
 							zap.String("address", address),
@@ -1117,38 +1016,32 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 						return err
 					}
 
-					logger.InfoWf(ctx, "Updated max block after chunk",
+					logger.InfoCtx(ctx, "Updated max block after chunk",
 						zap.Uint64("actualMaxBlock", *actualMaxBlock))
 				}
 
 				// Check if we should continue after updating block range
 				if !shouldContinue {
 					// Quota exhausted after this chunk - block range already updated above
-					logger.InfoWf(ctx, "Quota exhausted during forward sweep, will continue-as-new",
+					logger.InfoCtx(ctx, "Quota exhausted during forward sweep, will continue-as-new",
 						zap.Int("chunksCompleted", i+1),
 						zap.Int("totalChunks", len(chunks)),
 					)
-					if err := w.handleQuotaExhausted(ctx, address, quotaResetAt, jobID); err != nil {
-						return err
-					}
-					// Continue-as-new to reset event history and resume indexing
-					return workflow.NewContinueAsNewError(ctx, w.IndexEthereumTokenOwner, address, jobID)
+					return w.returnQuotaReschedule(ctx, jobID, quotaResetAt)
 				}
 
 				// Add a brief delay to prevent exceeding third-party service rate limits
-				if err := workflow.Sleep(ctx, 2*time.Second); err != nil {
-					logger.ErrorWf(ctx,
-						fmt.Errorf("failed to sleep"),
-						zap.Error(err),
-					)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(2 * time.Second):
 				}
 			}
 
 			// Final update to ensure we mark the complete scanned range
-			err = workflow.ExecuteActivity(ctx, w.executor.UpdateIndexingBlockRangeForAddress,
-				address, chainID, storedMinBlock, scannedMaxBlock).Get(ctx, nil)
+			err = w.executor.UpdateIndexingBlockRangeForAddress(ctx, address, chainID, storedMinBlock, scannedMaxBlock)
 			if err != nil {
-				logger.ErrorWf(ctx,
+				logger.ErrorCtx(ctx,
 					fmt.Errorf("failed to update final max block"),
 					zap.Error(err),
 					zap.String("address", address),
@@ -1156,33 +1049,27 @@ func (w *coreWorkflows) IndexEthereumTokenOwner(ctx workflow.Context, address st
 				return err
 			}
 
-			logger.InfoWf(ctx, "Completed forward sweep",
+			logger.InfoCtx(ctx, "Completed forward sweep",
 				zap.Uint64("scannedMinBlock", scannedMinBlock),
 				zap.Uint64("scannedMaxBlock", scannedMaxBlock),
 			)
 		}
 	}
 
-	logger.InfoWf(ctx, "Ethereum token owner indexing completed", zap.String("address", address))
+	logger.InfoCtx(ctx, "Ethereum token owner indexing completed", zap.String("address", address))
 
 	return nil
 }
 
 // indexTokenChunk indexes a chunk of tokens using the IndexTokens workflow
 // For owner-specific indexing, pass the address to enable efficient ERC1155 indexing
-func (w *coreWorkflows) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain.TokenCID, address *string) error {
+func (w *coreWorkflows) indexTokenChunk(ctx context.Context, tokenCIDs []domain.TokenCID, address *string) error {
 	if len(tokenCIDs) == 0 {
 		return nil
 	}
 
-	indexTokensWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowExecutionTimeout: 12 * time.Hour,
-	}
-	indexTokensCtx := workflow.WithChildOptions(ctx, indexTokensWorkflowOptions)
-
-	err := workflow.ExecuteChildWorkflow(indexTokensCtx, w.IndexTokens, tokenCIDs, address).Get(ctx, nil)
-	if err != nil {
-		logger.ErrorWf(ctx,
+	if err := w.IndexTokens(ctx, tokenCIDs, address); err != nil {
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to index tokens"),
 			zap.Error(err),
 			zap.Int("tokenCount", len(tokenCIDs)),
@@ -1199,29 +1086,20 @@ func (w *coreWorkflows) indexTokenChunk(ctx workflow.Context, tokenCIDs []domain
 // - actualMinBlock/actualMaxBlock indicate the actual block range of tokens that were indexed, nil means nothing was indexed
 // - quotaResetAt is the time when quota will reset (only valid when shouldContinue=false)
 func (w *coreWorkflows) processChunkWithQuota(
-	ctx workflow.Context,
+	ctx context.Context,
 	address string,
 	chainID domain.Chain,
 	tokens []domain.TokenWithBlock,
 	chunkInfo string, // e.g., "forward chunk 1/5" for logging
 	jobID *string, // optional job ID for progress tracking
 ) (bool, *uint64, *uint64, time.Time, error) {
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 10 * time.Second,
-			MaximumAttempts: 2,
-		},
-	}
-	activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
 
 	requestedCount := len(tokens)
 	allowedCount := requestedCount
 	var quotaResetAt time.Time
 	if w.config.BudgetedIndexingModeEnabled {
 		// Check quota
-		var quotaStatus *store.QuotaInfo
-		err := workflow.ExecuteActivity(activityCtx, w.executor.GetQuotaInfo, address, chainID).Get(ctx, &quotaStatus)
+		quotaStatus, err := w.executor.GetQuotaInfo(ctx, address, chainID)
 		if err != nil {
 			return false, nil, nil, time.Time{}, fmt.Errorf("failed to check quota: %w", err)
 		}
@@ -1229,7 +1107,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 		quotaResetAt = quotaStatus.QuotaResetAt
 
 		if quotaStatus.QuotaExhausted {
-			logger.InfoWf(ctx, "Quota exhausted, will sleep until reset and continue-as-new",
+			logger.InfoCtx(ctx, "Quota exhausted, will reschedule at quota reset and continue",
 				zap.String("address", address),
 				zap.Time("quotaResetAt", quotaStatus.QuotaResetAt),
 				zap.String("chunkInfo", chunkInfo),
@@ -1254,7 +1132,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 		if completeBlockIndex <= 0 {
 			// Edge case: even the first block exceeds quota
 			// We still process it to ensure forward progress, but log a warning
-			logger.WarnWf(ctx, "First block exceeds quota, will process it anyway to ensure forward progress",
+			logger.WarnCtx(ctx, "First block exceeds quota, will process it anyway to ensure forward progress",
 				zap.Int("allowedCount", allowedCount),
 				zap.String("chunkInfo", chunkInfo),
 			)
@@ -1270,7 +1148,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 		wasLimited = completeBlockIndex < len(tokens)
 
 		if wasLimited {
-			logger.InfoWf(ctx, "Limiting chunk to complete blocks within quota",
+			logger.InfoCtx(ctx, "Limiting chunk to complete blocks within quota",
 				zap.Int("requested", len(tokens)),
 				zap.Int("allowed", allowedCount),
 				zap.Int("actual", len(actualTokens)),
@@ -1290,9 +1168,9 @@ func (w *coreWorkflows) processChunkWithQuota(
 	if w.config.BudgetedIndexingModeEnabled {
 		// Increment usage counter after successful indexing
 		count := len(actualInfo.tokenCIDs)
-		err := workflow.ExecuteActivity(activityCtx, w.executor.IncrementTokensIndexed, address, chainID, count).Get(ctx, nil)
+		err := w.executor.IncrementTokensIndexed(ctx, address, chainID, count)
 		if err != nil {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to increment token usage"),
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to increment token usage"),
 				zap.Error(err),
 				zap.String("address", address),
 				zap.Int("count", count),
@@ -1300,7 +1178,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 			return false, nil, nil, time.Time{}, err
 		}
 
-		logger.InfoWf(ctx, "Incremented token usage for budgeted indexing mode",
+		logger.InfoCtx(ctx, "Incremented token usage for budgeted indexing mode",
 			zap.String("address", address),
 			zap.Int("count", count),
 		)
@@ -1310,17 +1188,17 @@ func (w *coreWorkflows) processChunkWithQuota(
 	// Note: The store layer accumulates tokens_processed, so we pass the incremental count (chunk size)
 	if jobID != nil {
 		chunkSize := len(actualInfo.tokenCIDs)
-		logger.InfoWf(ctx, "Updating job progress (incremental)",
+		logger.InfoCtx(ctx, "Updating job progress (incremental)",
 			zap.String("jobID", *jobID),
 			zap.Int("chunkTokens", chunkSize),
 			zap.Uint64("minBlock", actualInfo.minBlock),
 			zap.Uint64("maxBlock", actualInfo.maxBlock),
 		)
 
-		err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobProgress,
-			*jobID, chunkSize, actualInfo.minBlock, actualInfo.maxBlock).Get(ctx, nil)
+		err := w.executor.UpdateIndexingJobProgress(ctx,
+			*jobID, chunkSize, actualInfo.minBlock, actualInfo.maxBlock)
 		if err != nil {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to update job progress"),
+			logger.ErrorCtx(ctx, fmt.Errorf("failed to update job progress"),
 				zap.Error(err),
 				zap.String("jobID", *jobID),
 				zap.Int("chunkTokens", chunkSize))
@@ -1330,7 +1208,7 @@ func (w *coreWorkflows) processChunkWithQuota(
 
 	// If we had to limit due to quota, return the actual range indexed and signal quota exhaustion
 	if wasLimited {
-		logger.InfoWf(ctx, "Quota exhausted after partial chunk",
+		logger.InfoCtx(ctx, "Quota exhausted after partial chunk",
 			zap.Int("indexed", len(actualInfo.tokenCIDs)),
 			zap.Int("total", len(tokens)),
 			zap.Uint64("actualMinBlock", actualInfo.minBlock),
@@ -1342,64 +1220,11 @@ func (w *coreWorkflows) processChunkWithQuota(
 	return true, &actualInfo.minBlock, &actualInfo.maxBlock, time.Time{}, nil // shouldContinue=true, success
 }
 
-// handleQuotaExhausted sleeps until quota reset and returns error to trigger continue-as-new
-// Returns temporal.NewContinueAsNewError to signal the workflow should restart
-// jobID is optional and used for updating job status during quota pauses
-func (w *coreWorkflows) handleQuotaExhausted(ctx workflow.Context, address string, quotaResetAt time.Time, jobID *string) error {
-	if !w.config.BudgetedIndexingModeEnabled {
-		return nil // No quota management if budgeted mode is disabled
-	}
-
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 10 * time.Second,
-			MaximumAttempts: 2,
-		},
-	}
-	activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
-
+// returnQuotaReschedule records paused status when a job id is available and returns ErrReschedule
+// so the worker re-queues this job after the quota reset time (no in-process sleep in v1).
+func (w *coreWorkflows) returnQuotaReschedule(ctx context.Context, jobID *string, quotaResetAt time.Time) error {
 	if jobID != nil {
-		// Update job status to 'paused' before sleeping
-		err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
-			*jobID, schema.IndexingJobStatusPaused, workflow.Now(ctx)).Get(ctx, nil)
-		if err != nil {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to paused"), zap.Error(err))
-			// Don't fail workflow
-		}
+		_ = w.executor.UpdateIndexingJobStatus(context.WithoutCancel(ctx), *jobID, schema.IndexingJobStatusPaused, time.Now().UTC())
 	}
-
-	// Calculate sleep duration until quota reset
-	now := workflow.Now(ctx)
-	sleepDuration := quotaResetAt.Sub(now)
-
-	if sleepDuration > 0 {
-		logger.InfoWf(ctx, "Sleeping until quota reset before continue-as-new",
-			zap.String("address", address),
-			zap.Duration("sleepDuration", sleepDuration),
-			zap.Time("quotaResetAt", quotaResetAt),
-		)
-		if err := workflow.Sleep(ctx, sleepDuration); err != nil {
-			return err
-		}
-		logger.InfoWf(ctx, "Quota reset complete, preparing to continue-as-new",
-			zap.String("address", address),
-		)
-	} else {
-		logger.InfoWf(ctx, "Quota already reset, proceeding to continue-as-new immediately",
-			zap.String("address", address),
-		)
-	}
-
-	if jobID != nil {
-		// Update the job status to 'running'
-		err := workflow.ExecuteActivity(activityCtx, w.executor.UpdateIndexingJobStatus,
-			*jobID, schema.IndexingJobStatusRunning, workflow.Now(ctx)).Get(ctx, nil)
-		if err != nil {
-			logger.ErrorWf(ctx, fmt.Errorf("failed to update job status to running"), zap.Error(err))
-			// Don't fail workflow
-		}
-	}
-
-	return nil
+	return jobs.ErrReschedule(quotaResetAt)
 }
