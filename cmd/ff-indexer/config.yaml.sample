@@ -38,23 +38,22 @@ database:
   conn_max_lifetime: 5m
   conn_max_idle_time: 10m
 
-temporal:
-  host_port: localhost:7233
-  namespace: default
-  token_task_queue: token-indexing
-  media_task_queue: media-indexing
-  max_concurrent_activity_execution_size: 50
-  worker_activities_per_second: 50
-  max_concurrent_activity_task_pollers: 10
+jobs:
+  token_queue: token_index
+  media_queue: media_index
+  token_worker:
+    concurrency: 50
+    poll_interval: 2s
+    batch_size: 16
+    cancel_interval: 5s
+  media_worker:
+    concurrency: 10
+    poll_interval: 2s
+    batch_size: 16
+    cancel_interval: 5s
 
 # Set true only when running the CGO/full media path with Cloudflare credentials configured.
 media_enabled: false
-
-# Overrides for the media-indexing Temporal worker (CPU-heavy activities)
-media_worker_temporal:
-  max_concurrent_activity_execution_size: 10
-  worker_activities_per_second: 10
-  max_concurrent_activity_task_pollers: 2
 
 ethereum:
   websocket_url: ""

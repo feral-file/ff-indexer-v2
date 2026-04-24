@@ -10,8 +10,6 @@ import (
 
 	"github.com/alitto/pond/v2"
 	"github.com/cenkalti/backoff/v4"
-	"go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
 	"github.com/oklog/ulid/v2"
@@ -20,13 +18,11 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
-	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
 const (
@@ -42,17 +38,17 @@ type MediaHealthSweeperConfig struct {
 
 // mediaHealthSweeper implements the Sweeper interface for media health checking
 type mediaHealthSweeper struct {
-	config                *MediaHealthSweeperConfig
-	store                 store.Store
-	urlChecker            uri.URLChecker
-	dataURIChecker        uri.DataURIChecker
-	pool                  pond.Pool
-	clock                 adapter.Clock
-	orchestrator          temporal.TemporalOrchestrator
-	orchestratorTaskQueue string
-	running               atomic.Bool
-	stopChan              chan struct{}
-	stoppedCh             chan struct{}
+	config         *MediaHealthSweeperConfig
+	store          store.Store
+	urlChecker     uri.URLChecker
+	dataURIChecker uri.DataURIChecker
+	pool           pond.Pool
+	clock          adapter.Clock
+	jobQueue       jobs.JobQueue
+	tokenQueue     string
+	running        atomic.Bool
+	stopChan       chan struct{}
+	stoppedCh      chan struct{}
 }
 
 // NewMediaHealthSweeper creates a new media health sweeper
@@ -62,19 +58,19 @@ func NewMediaHealthSweeper(
 	checker uri.URLChecker,
 	dataURIChecker uri.DataURIChecker,
 	clock adapter.Clock,
-	orchestrator temporal.TemporalOrchestrator,
-	orchestratorTaskQueue string,
+	jq jobs.JobQueue,
+	tokenQueue string,
 ) Sweeper {
 	return &mediaHealthSweeper{
-		config:                config,
-		store:                 st,
-		urlChecker:            checker,
-		dataURIChecker:        dataURIChecker,
-		clock:                 clock,
-		orchestrator:          orchestrator,
-		orchestratorTaskQueue: orchestratorTaskQueue,
-		stopChan:              make(chan struct{}),
-		stoppedCh:             make(chan struct{}),
+		config:         config,
+		store:          st,
+		urlChecker:     checker,
+		dataURIChecker: dataURIChecker,
+		clock:          clock,
+		jobQueue:       jq,
+		tokenQueue:     tokenQueue,
+		stopChan:       make(chan struct{}),
+		stoppedCh:      make(chan struct{}),
 	}
 }
 
@@ -456,17 +452,13 @@ func (s *mediaHealthSweeper) triggerWebhook(ctx context.Context, tokenCID string
 		},
 	}
 
-	// Start webhook notification workflow (fire-and-forget)
-	workflowOptions := client.StartWorkflowOptions{
-		ID:                    fmt.Sprintf("webhook-notify-%s-%s", webhookEvent.EventType, webhookEvent.EventID),
-		TaskQueue:             s.orchestratorTaskQueue,
-		WorkflowRunTimeout:    30 * time.Minute,
-		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-	}
-
-	w := workflows.NewCoreWorkflows(nil, workflows.CoreWorkflowsConfig{}, nil, jobs.NopQueue{})
-	workflowRun, err := s.orchestrator.ExecuteWorkflow(ctx, workflowOptions, w.NotifyWebhookClients, webhookEvent)
-	if err != nil {
+	uk := jobs.WebhookNotifyUniqueKey(eventID)
+	if _, _, err := s.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+		Queue:     s.tokenQueue,
+		Kind:      "NotifyWebhookClients",
+		Args:      []any{webhookEvent},
+		UniqueKey: &uk,
+	}); err != nil {
 		logger.ErrorCtx(ctx, err,
 			zap.String("token_cid", tokenCID),
 			zap.String("event_type", webhookEvent.EventType),
@@ -475,13 +467,8 @@ func (s *mediaHealthSweeper) triggerWebhook(ctx context.Context, tokenCID string
 		return
 	}
 
-	// Log workflow start (handle nil workflowRun from tests)
-	if workflowRun != nil {
-		logger.InfoCtx(ctx, "Webhook notification workflow started",
-			zap.String("token_cid", tokenCID),
-			zap.String("event_type", webhookEvent.EventType),
-			zap.String("workflow_id", workflowRun.GetID()),
-			zap.String("run_id", workflowRun.GetRunID()),
-		)
-	}
+	logger.InfoCtx(ctx, "Webhook notification job enqueued",
+		zap.String("token_cid", tokenCID),
+		zap.String("event_type", webhookEvent.EventType),
+	)
 }

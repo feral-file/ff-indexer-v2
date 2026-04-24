@@ -63,15 +63,20 @@ type TezosConfig struct {
 	BlockHeadStaleWindow time.Duration `mapstructure:"block_head_stale_window"`
 }
 
-// TemporalConfig holds Temporal configuration
-type TemporalConfig struct {
-	HostPort                           string  `mapstructure:"host_port"`
-	Namespace                          string  `mapstructure:"namespace"`
-	TokenTaskQueue                     string  `mapstructure:"token_task_queue"`
-	MediaTaskQueue                     string  `mapstructure:"media_task_queue"`
-	MaxConcurrentActivityExecutionSize int     `mapstructure:"max_concurrent_activity_execution_size"`
-	WorkerActivitiesPerSecond          float64 `mapstructure:"worker_activities_per_second"`
-	MaxConcurrentActivityTaskPollers   int     `mapstructure:"max_concurrent_activity_task_pollers"`
+// WorkerPoolConfig configures one jobs.Worker poll loop (postgres job queue consumer).
+type WorkerPoolConfig struct {
+	Concurrency    int           `mapstructure:"concurrency"`
+	PollInterval   time.Duration `mapstructure:"poll_interval"`
+	BatchSize      int           `mapstructure:"batch_size"`
+	CancelInterval time.Duration `mapstructure:"cancel_interval"`
+}
+
+// JobsConfig holds job queue names and worker pool settings for token_index and media_index.
+type JobsConfig struct {
+	TokenQueue  string           `mapstructure:"token_queue"`
+	MediaQueue  string           `mapstructure:"media_queue"`
+	TokenWorker WorkerPoolConfig `mapstructure:"token_worker"`
+	MediaWorker WorkerPoolConfig `mapstructure:"media_worker"`
 }
 
 // VendorsConfig holds vendor API configurations
@@ -109,7 +114,7 @@ type WorkerConfig struct {
 type WorkerCoreConfig struct {
 	BaseConfig                   `mapstructure:",squash"`
 	Database                     DatabaseConfig    `mapstructure:"database"`
-	Temporal                     TemporalConfig    `mapstructure:"temporal"`
+	Jobs                         JobsConfig        `mapstructure:"jobs"`
 	Ethereum                     EthereumConfig    `mapstructure:"ethereum"`
 	Tezos                        TezosConfig       `mapstructure:"tezos"`
 	Vendors                      VendorsConfig     `mapstructure:"vendors"`
@@ -137,7 +142,7 @@ type APIConfig struct {
 	BaseConfig    `mapstructure:",squash"`
 	Server        ServerConfig   `mapstructure:"server"`
 	Database      DatabaseConfig `mapstructure:"database"`
-	Temporal      TemporalConfig `mapstructure:"temporal"`
+	Jobs          JobsConfig     `mapstructure:"jobs"`
 	Auth          AuthConfig     `mapstructure:"auth"`
 	BlacklistPath string         `mapstructure:"blacklist_path"`
 	Tezos         TezosConfig    `mapstructure:"tezos"`
@@ -221,11 +226,11 @@ type TransformConfig struct {
 	WorkerConcurrency int `mapstructure:"worker_concurrency"`
 }
 
-// WorkerMediaConfig holds configuration for the media-indexing Temporal worker.
+// WorkerMediaConfig holds configuration for the media-indexing job worker.
 type WorkerMediaConfig struct {
 	BaseConfig   `mapstructure:",squash"`
 	Database     DatabaseConfig   `mapstructure:"database"`
-	Temporal     TemporalConfig   `mapstructure:"temporal"`
+	Jobs         JobsConfig       `mapstructure:"jobs"`
 	MediaEnabled bool             `mapstructure:"media_enabled"`
 	URI          URIConfig        `mapstructure:"uri"`
 	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
@@ -248,37 +253,27 @@ type MediaHealthSweeperConfig struct {
 type SweeperConfig struct {
 	BaseConfig         `mapstructure:",squash"`
 	Database           DatabaseConfig           `mapstructure:"database"`
-	Temporal           TemporalConfig           `mapstructure:"temporal"`
+	Jobs               JobsConfig               `mapstructure:"jobs"`
 	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
-}
-
-// MediaWorkerTemporalConfig holds Temporal worker pool settings for the media-indexing queue.
-// HostPort, Namespace, and MediaTaskQueue come from Temporal.
-type MediaWorkerTemporalConfig struct {
-	MaxConcurrentActivityExecutionSize int     `mapstructure:"max_concurrent_activity_execution_size"`
-	WorkerActivitiesPerSecond          float64 `mapstructure:"worker_activities_per_second"`
-	MaxConcurrentActivityTaskPollers   int     `mapstructure:"max_concurrent_activity_task_pollers"`
 }
 
 // AppConfig is the configuration for the single-process ff-indexer binary.
 type AppConfig struct {
-	BaseConfig   `mapstructure:",squash"`
-	Server       ServerConfig   `mapstructure:"server"`
-	Database     DatabaseConfig `mapstructure:"database"`
-	Auth         AuthConfig     `mapstructure:"auth"`
-	Temporal     TemporalConfig `mapstructure:"temporal"`
-	MediaEnabled bool           `mapstructure:"media_enabled"`
-	// MediaWorkerTemporal configures the media Temporal worker pool (separate from token-indexing limits).
-	MediaWorkerTemporal MediaWorkerTemporalConfig `mapstructure:"media_worker_temporal"`
-	Ethereum            EthereumConfig            `mapstructure:"ethereum"`
-	Tezos               TezosConfig               `mapstructure:"tezos"`
-	Vendors             VendorsConfig             `mapstructure:"vendors"`
-	URI                 URIConfig                 `mapstructure:"uri"`
-	RateLimiter         RateLimiterConfig         `mapstructure:"rate_limiter"`
-	Cloudflare          CloudflareConfig          `mapstructure:"cloudflare"`
-	Rasterizer          RasterizerConfig          `mapstructure:"rasterizer"`
-	Transform           TransformConfig           `mapstructure:"transform"`
-	MediaHealthSweeper  MediaHealthSweeperConfig  `mapstructure:"media_health_sweeper"`
+	BaseConfig         `mapstructure:",squash"`
+	Server             ServerConfig             `mapstructure:"server"`
+	Database           DatabaseConfig           `mapstructure:"database"`
+	Auth               AuthConfig               `mapstructure:"auth"`
+	Jobs               JobsConfig               `mapstructure:"jobs"`
+	MediaEnabled       bool                     `mapstructure:"media_enabled"`
+	Ethereum           EthereumConfig           `mapstructure:"ethereum"`
+	Tezos              TezosConfig              `mapstructure:"tezos"`
+	Vendors            VendorsConfig            `mapstructure:"vendors"`
+	URI                URIConfig                `mapstructure:"uri"`
+	RateLimiter        RateLimiterConfig        `mapstructure:"rate_limiter"`
+	Cloudflare         CloudflareConfig         `mapstructure:"cloudflare"`
+	Rasterizer         RasterizerConfig         `mapstructure:"rasterizer"`
+	Transform          TransformConfig          `mapstructure:"transform"`
+	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
 
 	EthereumTokenSweepStartBlock uint64 `mapstructure:"ethereum_token_sweep_start_block"`
 	TezosTokenSweepStartBlock    uint64 `mapstructure:"tezos_token_sweep_start_block"`
@@ -328,22 +323,12 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 	}{
 		{name: "database.host", value: cfg.Database.Host},
 		{name: "database.dbname", value: cfg.Database.DBName},
-		{name: "temporal.host_port", value: cfg.Temporal.HostPort},
-		{name: "temporal.token_task_queue", value: cfg.Temporal.TokenTaskQueue},
+		{name: "jobs.token_queue", value: cfg.Jobs.TokenQueue},
+		{name: "jobs.media_queue", value: cfg.Jobs.MediaQueue},
 		{name: "ethereum.rpc_url", value: cfg.Ethereum.RPCURL},
 		{name: "ethereum.websocket_url", value: cfg.Ethereum.WebSocketURL},
 		{name: "tezos.api_url", value: cfg.Tezos.APIURL},
 		{name: "tezos.websocket_url", value: cfg.Tezos.WebSocketURL},
-	}
-
-	if cfg.MediaEnabled {
-		requiredFields = append(requiredFields, struct {
-			name  string
-			value string
-		}{
-			name:  "temporal.media_task_queue",
-			value: cfg.Temporal.MediaTaskQueue,
-		})
 	}
 
 	missingFields := make([]string, 0)
@@ -366,7 +351,7 @@ func (a *AppConfig) ToAPIConfig() *APIConfig {
 		BaseConfig:    a.BaseConfig,
 		Server:        a.Server,
 		Database:      a.Database,
-		Temporal:      a.Temporal,
+		Jobs:          a.Jobs,
 		Auth:          a.Auth,
 		BlacklistPath: a.BlacklistPath,
 		Tezos:         a.Tezos,
@@ -374,12 +359,12 @@ func (a *AppConfig) ToAPIConfig() *APIConfig {
 	}
 }
 
-// ToWorkerCoreConfig maps AppConfig for the token-indexing Temporal worker.
+// ToWorkerCoreConfig maps AppConfig for the token-indexing job worker.
 func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
 	return &WorkerCoreConfig{
 		BaseConfig:                         a.BaseConfig,
 		Database:                           a.Database,
-		Temporal:                           a.Temporal,
+		Jobs:                               a.Jobs,
 		Ethereum:                           a.Ethereum,
 		Tezos:                              a.Tezos,
 		Vendors:                            a.Vendors,
@@ -399,20 +384,12 @@ func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
 	}
 }
 
-// ToWorkerMediaConfig maps AppConfig for the media-indexing Temporal worker.
+// ToWorkerMediaConfig maps AppConfig for the media-indexing job worker.
 func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
 	return &WorkerMediaConfig{
-		BaseConfig: a.BaseConfig,
-		Database:   a.Database,
-		Temporal: TemporalConfig{
-			HostPort:                           a.Temporal.HostPort,
-			Namespace:                          a.Temporal.Namespace,
-			TokenTaskQueue:                     a.Temporal.TokenTaskQueue,
-			MediaTaskQueue:                     a.Temporal.MediaTaskQueue,
-			MaxConcurrentActivityExecutionSize: a.MediaWorkerTemporal.MaxConcurrentActivityExecutionSize,
-			WorkerActivitiesPerSecond:          a.MediaWorkerTemporal.WorkerActivitiesPerSecond,
-			MaxConcurrentActivityTaskPollers:   a.MediaWorkerTemporal.MaxConcurrentActivityTaskPollers,
-		},
+		BaseConfig:   a.BaseConfig,
+		Database:     a.Database,
+		Jobs:         a.Jobs,
 		MediaEnabled: a.MediaEnabled,
 		URI:          a.URI,
 		Cloudflare:   a.Cloudflare,
@@ -428,7 +405,7 @@ func (a *AppConfig) ToSweeperConfig() *SweeperConfig {
 	return &SweeperConfig{
 		BaseConfig:         a.BaseConfig,
 		Database:           a.Database,
-		Temporal:           a.Temporal,
+		Jobs:               a.Jobs,
 		MediaHealthSweeper: a.MediaHealthSweeper,
 	}
 }
@@ -450,20 +427,19 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("database.conn_max_lifetime", "5m")
 	v.SetDefault("database.conn_max_idle_time", "10m")
 
-	// Temporal
-	v.SetDefault("temporal.host_port", "localhost:7233")
-	v.SetDefault("temporal.namespace", "default")
-	v.SetDefault("temporal.token_task_queue", "token-indexing")
-	v.SetDefault("temporal.media_task_queue", "media-indexing")
-	v.SetDefault("temporal.max_concurrent_activity_execution_size", 50)
-	v.SetDefault("temporal.worker_activities_per_second", 50)
-	v.SetDefault("temporal.max_concurrent_activity_task_pollers", 10)
+	// Postgres job queue
+	v.SetDefault("jobs.token_queue", "token_index")
+	v.SetDefault("jobs.media_queue", "media_index")
+	v.SetDefault("jobs.token_worker.concurrency", 50)
+	v.SetDefault("jobs.token_worker.poll_interval", 2*time.Second)
+	v.SetDefault("jobs.token_worker.batch_size", 16)
+	v.SetDefault("jobs.token_worker.cancel_interval", 5*time.Second)
+	v.SetDefault("jobs.media_worker.concurrency", 10)
+	v.SetDefault("jobs.media_worker.poll_interval", 2*time.Second)
+	v.SetDefault("jobs.media_worker.batch_size", 16)
+	v.SetDefault("jobs.media_worker.cancel_interval", 5*time.Second)
 
-	// Media worker Temporal pool (former worker-media defaults)
 	v.SetDefault("media_enabled", false)
-	v.SetDefault("media_worker_temporal.max_concurrent_activity_execution_size", 10)
-	v.SetDefault("media_worker_temporal.worker_activities_per_second", 10)
-	v.SetDefault("media_worker_temporal.max_concurrent_activity_task_pollers", 2)
 
 	// Chains
 	v.SetDefault("ethereum.chain_id", "eip155:1")
@@ -600,14 +576,17 @@ func bindAllEnvVars(v *viper.Viper) {
 		"tezos.start_level",
 		"tezos.block_head_ttl",
 		"tezos.block_head_stale_window",
-		// Temporal
-		"temporal.host_port",
-		"temporal.namespace",
-		"temporal.token_task_queue",
-		"temporal.media_task_queue",
-		"temporal.max_concurrent_activity_execution_size",
-		"temporal.worker_activities_per_second",
-		"temporal.max_concurrent_activity_task_pollers",
+		// Job queue
+		"jobs.token_queue",
+		"jobs.media_queue",
+		"jobs.token_worker.concurrency",
+		"jobs.token_worker.poll_interval",
+		"jobs.token_worker.batch_size",
+		"jobs.token_worker.cancel_interval",
+		"jobs.media_worker.concurrency",
+		"jobs.media_worker.poll_interval",
+		"jobs.media_worker.batch_size",
+		"jobs.media_worker.cancel_interval",
 		"media_enabled",
 		// Vendors
 		"vendors.artblocks_url",
@@ -616,9 +595,6 @@ func bindAllEnvVars(v *viper.Viper) {
 		"vendors.objkt_api_key",
 		"vendors.opensea_url",
 		"vendors.opensea_api_key",
-		"media_worker_temporal.max_concurrent_activity_execution_size",
-		"media_worker_temporal.worker_activities_per_second",
-		"media_worker_temporal.max_concurrent_activity_task_pollers",
 		// Server
 		"server.host",
 		"server.port",

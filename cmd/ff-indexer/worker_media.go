@@ -8,9 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"go.temporal.io/sdk/client"
-	"go.temporal.io/sdk/interceptor"
-	"go.temporal.io/sdk/worker"
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -22,22 +19,20 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
-	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
-// registerWorkerMedia wires the media-indexing Temporal worker (worker-media).
+// registerWorkerMedia wires the media-indexing jobs.Worker (worker-media / media_index queue).
 func registerWorkerMedia(
 	_ context.Context,
 	cfg *config.AppConfig,
 	db *gorm.DB,
-	temporalClient client.Client,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
 	wcfg := cfg.ToWorkerMediaConfig()
 	if !wcfg.MediaEnabled {
-		logger.Warn("Media Temporal worker disabled by config (FF_INDEXER_MEDIA_ENABLED=false)")
+		logger.Warn("Media job worker disabled by config (FF_INDEXER_MEDIA_ENABLED=false)")
 		run = func(ctx context.Context) error {
 			<-ctx.Done()
 			return ctx.Err()
@@ -108,38 +103,24 @@ func registerWorkerMedia(
 	mediaExecutor := workflows.NewMediaExecutor(dataStore, mediaProcessor)
 	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)
 
-	sentryInterceptor := temporal.NewSentryActivityInterceptor()
-	temporalWorker := worker.New(temporalClient,
-		wcfg.Temporal.MediaTaskQueue,
-		worker.Options{
-			MaxConcurrentActivityExecutionSize: wcfg.Temporal.MaxConcurrentActivityExecutionSize,
-			WorkerActivitiesPerSecond:          wcfg.Temporal.WorkerActivitiesPerSecond,
-			MaxConcurrentActivityTaskPollers:   wcfg.Temporal.MaxConcurrentActivityTaskPollers,
-			Interceptors: []interceptor.WorkerInterceptor{
-				sentryInterceptor,
-			},
-		})
+	mediaWf := workflows.NewMediaWorkflows(mediaExecutor, jobQueue)
 
-	mediaWorkflows := workflows.NewMediaWorkflows(mediaExecutor, jobQueue)
+	reg := jobs.NewRegistry(jsonAdapter)
+	reg.Register("IndexMediaWorkflow", mediaWf.IndexMediaWorkflow)
+	reg.Register("IndexMultipleMediaWorkflow", mediaWf.IndexMultipleMediaWorkflow)
 
-	temporalWorker.RegisterWorkflow(mediaWorkflows.IndexMediaWorkflow)
-	temporalWorker.RegisterWorkflow(mediaWorkflows.IndexMultipleMediaWorkflow)
-	temporalWorker.RegisterActivity(mediaExecutor.IndexMediaFile)
+	mw := wcfg.Jobs.MediaWorker
+	jWorker := jobs.NewWorker(dataStore, reg, jobs.WorkerConfig{
+		Queue:          wcfg.Jobs.MediaQueue,
+		Concurrency:    mw.Concurrency,
+		PollInterval:   mw.PollInterval,
+		BatchSize:      mw.BatchSize,
+		CancelInterval: mw.CancelInterval,
+	})
 
 	// Run until worker stops or ctx is canceled; cleanup closes transform resources.
 	run = func(ctx context.Context) error {
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- temporalWorker.Start()
-		}()
-		select {
-		case err := <-errCh:
-			return err
-		case <-ctx.Done():
-			temporalWorker.Stop()
-			<-errCh
-			return ctx.Err()
-		}
+		return jWorker.Run(ctx)
 	}
 
 	cleanup = func(ctx context.Context) error {

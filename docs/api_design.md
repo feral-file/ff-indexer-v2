@@ -102,11 +102,11 @@ Design rules:
 
 - Expansions are **inferred from the selection set**; keep parity with REST expansions and document any intentional differences in schema comments.
 
-## Async operations and workflow tracking
+## Async operations and job tracking
 
-- **Trigger responses** use **`workflow_id` + `run_id`** (`TriggerIndexingResult`) for token and metadata workflows.
-- **Address indexing** returns **per-address jobs** (`TriggerAddressIndexingResult` / OpenAPI equivalent) so each address can be tracked separately.
-- **Status endpoints:** `GET /api/v1/workflows/{workflow_id}/runs/{run_id}` and `GET /api/v1/indexing/jobs/{workflow_id}` remain the **supported** way to poll progress.
+- **Trigger responses** return **`job_id`** (`TriggerIndexingResult` / GraphQL `TriggerIndexingResult`) for token and metadata indexing; use it with the job status query.
+- **Address indexing** returns **per-address jobs** with **`job_id`** each (`TriggerAddressIndexingResult` / OpenAPI equivalent).
+- **Status endpoints:** `GET /api/v1/jobs/{job_id}` (queue job lifecycle) and `GET /api/v1/indexing/jobs/{job_id}` (address indexing detail: progress, blocks, optional counts) are the supported way to poll progress.
 - **Optional expensive fields:** Use explicit query flags (e.g. `include_total_indexed`) for costly aggregates; defaults should favor low latency.
 
 ## Webhooks

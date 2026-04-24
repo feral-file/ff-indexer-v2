@@ -2320,6 +2320,7 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 		Status:        input.Status,
 		WorkflowID:    input.WorkflowID,
 		WorkflowRunID: input.WorkflowRunID,
+		JobID:         input.JobID,
 		StartedAt:     now, // Always set started_at since we only track running workflows
 	}
 
@@ -2348,11 +2349,11 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 	return nil
 }
 
-// GetAddressIndexingJobByWorkflowID retrieves a job by workflow ID
-func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error) {
+// GetAddressIndexingJobByJobID retrieves a job by postgres jobs.id (address_indexing_jobs.job_id).
+func (s *pgStore) GetAddressIndexingJobByJobID(ctx context.Context, jobID int64) (*schema.AddressIndexingJob, error) {
 	var job schema.AddressIndexingJob
 
-	err := s.db.WithContext(ctx).Where("workflow_id = ?", workflowID).First(&job).Error
+	err := s.db.WithContext(ctx).Where("job_id = ?", jobID).First(&job).Error
 	if err == nil {
 		return &job, nil
 	}
@@ -2360,19 +2361,18 @@ func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflo
 		return nil, fmt.Errorf("failed to get job: %w", err)
 	}
 	if !hasDBResolver(s.db) {
-		return nil, fmt.Errorf("job not found for workflow: %s", workflowID)
+		return nil, fmt.Errorf("job not found for job_id: %d", jobID)
 	}
 
-	// Replica can lag behind primary; retry on primary before returning not found.
 	err = s.db.WithContext(ctx).
 		Clauses(dbresolver.Write).
-		Where("workflow_id = ?", workflowID).
+		Where("job_id = ?", jobID).
 		First(&job).Error
 	if err == nil {
 		return &job, nil
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("job not found for workflow: %s", workflowID)
+		return nil, fmt.Errorf("job not found for job_id: %d", jobID)
 	}
 	return nil, fmt.Errorf("failed to get job: %w", err)
 }

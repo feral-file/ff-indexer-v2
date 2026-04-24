@@ -61,18 +61,33 @@ func (mr *MockAPIExecutorMockRecorder) CreateWebhookClient(ctx, webhookURL, even
 }
 
 // GetAddressIndexingJob mocks base method.
-func (m *MockAPIExecutor) GetAddressIndexingJob(ctx context.Context, workflowID string, opts executor.GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error) {
+func (m *MockAPIExecutor) GetAddressIndexingJob(ctx context.Context, jobID int64, opts executor.GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAddressIndexingJob", ctx, workflowID, opts)
+	ret := m.ctrl.Call(m, "GetAddressIndexingJob", ctx, jobID, opts)
 	ret0, _ := ret[0].(*dto.AddressIndexingJobResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetAddressIndexingJob indicates an expected call of GetAddressIndexingJob.
-func (mr *MockAPIExecutorMockRecorder) GetAddressIndexingJob(ctx, workflowID, opts any) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) GetAddressIndexingJob(ctx, jobID, opts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIExecutor)(nil).GetAddressIndexingJob), ctx, workflowID, opts)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIExecutor)(nil).GetAddressIndexingJob), ctx, jobID, opts)
+}
+
+// GetJobStatus mocks base method.
+func (m *MockAPIExecutor) GetJobStatus(ctx context.Context, jobID int64) (*dto.JobStatusResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetJobStatus", ctx, jobID)
+	ret0, _ := ret[0].(*dto.JobStatusResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetJobStatus indicates an expected call of GetJobStatus.
+func (mr *MockAPIExecutorMockRecorder) GetJobStatus(ctx, jobID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobStatus", reflect.TypeOf((*MockAPIExecutor)(nil).GetJobStatus), ctx, jobID)
 }
 
 // GetToken mocks base method.
@@ -103,21 +118,6 @@ func (m *MockAPIExecutor) GetTokens(ctx context.Context, owners []string, chains
 func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, limit, offset, includeUnviewable, sortBy, sortOrder, expansions any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokens", reflect.TypeOf((*MockAPIExecutor)(nil).GetTokens), ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, limit, offset, includeUnviewable, sortBy, sortOrder, expansions)
-}
-
-// GetWorkflowStatus mocks base method.
-func (m *MockAPIExecutor) GetWorkflowStatus(ctx context.Context, workflowID, runID string) (*dto.WorkflowStatusResponse, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetWorkflowStatus", ctx, workflowID, runID)
-	ret0, _ := ret[0].(*dto.WorkflowStatusResponse)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetWorkflowStatus indicates an expected call of GetWorkflowStatus.
-func (mr *MockAPIExecutorMockRecorder) GetWorkflowStatus(ctx, workflowID, runID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkflowStatus", reflect.TypeOf((*MockAPIExecutor)(nil).GetWorkflowStatus), ctx, workflowID, runID)
 }
 
 // SyncCollection mocks base method.

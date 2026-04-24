@@ -30,11 +30,11 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 		// Collection sync endpoint (public read access)
 		v1.GET("/collection/:address/sync", handler.SyncCollection)
 
-		// Workflow endpoints (public read access)
-		v1.GET("/workflows/:workflow_id/runs/:run_id", handler.GetWorkflowStatus)
+		// Job status (public read access)
+		v1.GET("/jobs/:job_id", handler.GetJobStatus)
 
 		// Indexing job endpoints (public read access)
-		v1.GET("/indexing/jobs/:workflow_id", handler.GetAddressIndexingJob)
+		v1.GET("/indexing/jobs/:job_id", handler.GetAddressIndexingJob)
 
 		// Webhook endpoints (requires API key authentication only)
 		v1.POST("/webhooks/clients", middleware.APIKeyAuth(authCfg), handler.CreateWebhookClient)

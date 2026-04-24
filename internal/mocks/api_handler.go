@@ -64,6 +64,18 @@ func (mr *MockAPIHandlerMockRecorder) GetAddressIndexingJob(c any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIHandler)(nil).GetAddressIndexingJob), c)
 }
 
+// GetJobStatus mocks base method.
+func (m *MockAPIHandler) GetJobStatus(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "GetJobStatus", c)
+}
+
+// GetJobStatus indicates an expected call of GetJobStatus.
+func (mr *MockAPIHandlerMockRecorder) GetJobStatus(c any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobStatus", reflect.TypeOf((*MockAPIHandler)(nil).GetJobStatus), c)
+}
+
 // GetToken mocks base method.
 func (m *MockAPIHandler) GetToken(c *gin.Context) {
 	m.ctrl.T.Helper()
@@ -74,18 +86,6 @@ func (m *MockAPIHandler) GetToken(c *gin.Context) {
 func (mr *MockAPIHandlerMockRecorder) GetToken(c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetToken", reflect.TypeOf((*MockAPIHandler)(nil).GetToken), c)
-}
-
-// GetWorkflowStatus mocks base method.
-func (m *MockAPIHandler) GetWorkflowStatus(c *gin.Context) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "GetWorkflowStatus", c)
-}
-
-// GetWorkflowStatus indicates an expected call of GetWorkflowStatus.
-func (mr *MockAPIHandlerMockRecorder) GetWorkflowStatus(c any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkflowStatus", reflect.TypeOf((*MockAPIHandler)(nil).GetWorkflowStatus), c)
 }
 
 // HealthCheck mocks base method.

@@ -19,7 +19,7 @@ FF-Indexer v2 is a production-ready indexing service designed to capture and ind
 - **Provenance tracking** with full blockchain event history
 - **Owner-based indexing** for wallet-based queries
 
-The system is built with reliability and operational clarity in mind, using Temporal for workflow orchestration and PostgreSQL for persistent storage while chain ingestion runs in-process.
+The system is built with reliability and operational clarity in mind, using a PostgreSQL-backed `jobs` queue for background work and the same database for all durable state, while chain ingestion runs in-process.
 
 ## Quick Start
 
@@ -48,8 +48,8 @@ make quickstart
 
 This will start:
 - PostgreSQL (port 5432)
-- Temporal server (ports 7233-7235) and UI (port 8080)
-- **ff-indexer** - single container running the HTTP API, chain ingestion, Temporal workers (token by default, media only when built with CGO), and media health sweeper
+- (Optional in compose) Temporal and UI if still included in the stack for other use
+- **ff-indexer** - single container running the HTTP API, chain ingestion, job workers (token by default, media when built with CGO), and media health sweeper
 
 The API will be available at `http://localhost:8081`
 
@@ -58,7 +58,7 @@ The API will be available at `http://localhost:8081`
 For local development, you can run infrastructure in Docker and the application locally:
 
 ```bash
-# Start only infrastructure (PostgreSQL, Temporal)
+# Start only infrastructure (PostgreSQL, etc.)
 make dev
 
 # Run the binary (CGO optional; without CGO the media worker is disabled)
@@ -83,9 +83,9 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 All of the following run inside the **`ff-indexer`** process (goroutines) by default:
 
-- **Chain ingestion** - Ethereum and Tezos event subscriptions plus ordered in-memory flush queues that start workflows and advance durable cursors
-- **Worker core** — Temporal worker on `token-indexing`
-- **Worker media** — Temporal worker on `media-indexing` (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
+- **Chain ingestion** - Ethereum and Tezos event subscriptions plus ordered in-memory flush queues that enqueue jobs and advance durable cursors
+- **Worker core** — polls the `token_index` job queue
+- **Worker media** — polls the `media_index` job queue (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
 - **API server** — REST and GraphQL
 - **Sweeper** — Media URL health checks
 
@@ -94,7 +94,6 @@ All of the following run inside the **`ff-indexer`** process (goroutines) by def
 - Go 1.25.0+
 - Docker and Docker Compose
 - PostgreSQL 18+
-- Temporal 1.29.0+
 - Access to Ethereum RPC endpoints
 
 ## License

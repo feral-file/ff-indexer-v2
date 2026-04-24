@@ -251,19 +251,19 @@ func (mr *MockStoreMockRecorder) GetActiveWebhookClientsByEventType(ctx, eventTy
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveWebhookClientsByEventType", reflect.TypeOf((*MockStore)(nil).GetActiveWebhookClientsByEventType), ctx, eventType)
 }
 
-// GetAddressIndexingJobByWorkflowID mocks base method.
-func (m *MockStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error) {
+// GetAddressIndexingJobByJobID mocks base method.
+func (m *MockStore) GetAddressIndexingJobByJobID(ctx context.Context, jobID int64) (*schema.AddressIndexingJob, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetAddressIndexingJobByWorkflowID", ctx, workflowID)
+	ret := m.ctrl.Call(m, "GetAddressIndexingJobByJobID", ctx, jobID)
 	ret0, _ := ret[0].(*schema.AddressIndexingJob)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetAddressIndexingJobByWorkflowID indicates an expected call of GetAddressIndexingJobByWorkflowID.
-func (mr *MockStoreMockRecorder) GetAddressIndexingJobByWorkflowID(ctx, workflowID any) *gomock.Call {
+// GetAddressIndexingJobByJobID indicates an expected call of GetAddressIndexingJobByJobID.
+func (mr *MockStoreMockRecorder) GetAddressIndexingJobByJobID(ctx, jobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJobByWorkflowID", reflect.TypeOf((*MockStore)(nil).GetAddressIndexingJobByWorkflowID), ctx, workflowID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJobByJobID", reflect.TypeOf((*MockStore)(nil).GetAddressIndexingJobByJobID), ctx, jobID)
 }
 
 // GetAllKeyValuesByPrefix mocks base method.

@@ -55,6 +55,15 @@ func (r *indexingJobResolver) CurrentMaxBlock(ctx context.Context, obj *dto.Addr
 	return &num, nil
 }
 
+// ExecutionTime is the resolver for the execution_time_ms field.
+func (r *jobStatusResolver) ExecutionTime(ctx context.Context, obj *dto.JobStatusResponse) (*Uint64, error) {
+	if obj.ExecutionTime == nil {
+		return nil, nil
+	}
+	val := Uint64(*obj.ExecutionTime)
+	return &val, nil
+}
+
 // ProviderMetadata is the resolver for the provider_metadata field.
 func (r *mediaAssetResolver) ProviderMetadata(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error) {
 	if obj.ProviderMetadata == nil {
@@ -396,23 +405,18 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
 }
 
-// WorkflowStatus is the resolver for the workflowStatus field.
-func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error) {
-	if workflowID == "" {
-		return nil, apierrors.NewValidationError("workflowID is required")
+// JobStatus is the resolver for the jobStatus field.
+func (r *queryResolver) JobStatus(ctx context.Context, jobID int) (*dto.JobStatusResponse, error) {
+	if jobID < 1 {
+		return nil, apierrors.NewValidationError("job_id must be positive")
 	}
-
-	if runID == "" {
-		return nil, apierrors.NewValidationError("runID is required")
-	}
-
-	return r.executor.GetWorkflowStatus(ctx, workflowID, runID)
+	return r.executor.GetJobStatus(ctx, int64(jobID))
 }
 
 // IndexingJob is the resolver for the indexingJob field.
-func (r *queryResolver) IndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error) {
-	if workflowID == "" {
-		return nil, apierrors.NewValidationError("workflowID is required")
+func (r *queryResolver) IndexingJob(ctx context.Context, jobID int) (*dto.AddressIndexingJobResponse, error) {
+	if jobID < 1 {
+		return nil, apierrors.NewValidationError("job_id must be positive")
 	}
 
 	opts := executor.GetAddressIndexingJobOptions{}
@@ -429,7 +433,7 @@ func (r *queryResolver) IndexingJob(ctx context.Context, workflowID string) (*dt
 		}
 	}
 
-	return r.executor.GetAddressIndexingJob(ctx, workflowID, opts)
+	return r.executor.GetAddressIndexingJob(ctx, int64(jobID), opts)
 }
 
 // SyncCollection is the resolver for the syncCollection field.
@@ -539,20 +543,14 @@ func (r *tokenMetadataResolver) LatestJSON(ctx context.Context, obj *dto.TokenMe
 	return JSON(obj.LatestJSON), nil
 }
 
-// ExecutionTime is the resolver for the execution_time_ms field.
-func (r *workflowStatusResolver) ExecutionTime(ctx context.Context, obj *dto.WorkflowStatusResponse) (*Uint64, error) {
-	if obj.ExecutionTime == nil {
-		return nil, nil
-	}
-	val := Uint64(*obj.ExecutionTime)
-	return &val, nil
-}
-
 // EnrichmentSource returns EnrichmentSourceResolver implementation.
 func (r *Resolver) EnrichmentSource() EnrichmentSourceResolver { return &enrichmentSourceResolver{r} }
 
 // IndexingJob returns IndexingJobResolver implementation.
 func (r *Resolver) IndexingJob() IndexingJobResolver { return &indexingJobResolver{r} }
+
+// JobStatus returns JobStatusResolver implementation.
+func (r *Resolver) JobStatus() JobStatusResolver { return &jobStatusResolver{r} }
 
 // MediaAsset returns MediaAssetResolver implementation.
 func (r *Resolver) MediaAsset() MediaAssetResolver { return &mediaAssetResolver{r} }
@@ -597,11 +595,9 @@ func (r *Resolver) TokenList() TokenListResolver { return &tokenListResolver{r} 
 // TokenMetadata returns TokenMetadataResolver implementation.
 func (r *Resolver) TokenMetadata() TokenMetadataResolver { return &tokenMetadataResolver{r} }
 
-// WorkflowStatus returns WorkflowStatusResolver implementation.
-func (r *Resolver) WorkflowStatus() WorkflowStatusResolver { return &workflowStatusResolver{r} }
-
 type enrichmentSourceResolver struct{ *Resolver }
 type indexingJobResolver struct{ *Resolver }
+type jobStatusResolver struct{ *Resolver }
 type mediaAssetResolver struct{ *Resolver }
 type mutationResolver struct{ *Resolver }
 type ownerProvenanceResolver struct{ *Resolver }
@@ -615,4 +611,3 @@ type tokenResolver struct{ *Resolver }
 type tokenEventResolver struct{ *Resolver }
 type tokenListResolver struct{ *Resolver }
 type tokenMetadataResolver struct{ *Resolver }
-type workflowStatusResolver struct{ *Resolver }

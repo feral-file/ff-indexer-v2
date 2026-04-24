@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
@@ -195,7 +196,12 @@ func (w *Worker) flushCancelRequests(ctx context.Context) {
 }
 
 func (w *Worker) executeJob(parent context.Context, job *schema.Job) {
-	workCtx, jobCancel := context.WithCancel(WithJobID(parent, job.ID))
+	if parent == nil {
+		parent = context.Background()
+	}
+	// Scope Sentry (and zapsentry via FromContext) to this job only, before cancel/job-id wiring.
+	dispatchCtx := logger.ContextWithSentryJobHandler(parent, job.ID, job.Kind, w.config.Queue)
+	workCtx, jobCancel := context.WithCancel(WithJobID(dispatchCtx, job.ID))
 	defer jobCancel()
 	w.addInflight(job.ID, jobCancel)
 	defer w.removeInflight(job.ID)

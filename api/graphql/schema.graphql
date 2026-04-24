@@ -193,14 +193,13 @@ type TokenList {
 
 # Result of triggering indexing
 type TriggerIndexingResult {
-  workflow_id: String!
-  run_id: String!
+  job_id: Int!
 }
 
 # Address indexing job information
 type AddressIndexingJobInfo {
   address: String!
-  workflow_id: String!
+  job_id: Int!
 }
 
 # Result of triggering address indexing (returns array of jobs)
@@ -208,11 +207,11 @@ type TriggerAddressIndexingResult {
   jobs: [AddressIndexingJobInfo!]!
 }
 
-# Workflow status information
-type WorkflowStatus {
-  workflow_id: String!
-  run_id: String!
+# Job status information
+type JobStatus {
+  job_id: Int!
   status: String!
+  last_error: String
   start_time: Time
   close_time: Time
   execution_time_ms: Uint64
@@ -250,17 +249,14 @@ type Query {
     sort_order: Order = desc
   ): TokenList
 
-  # Get workflow status by workflow ID and run ID
-  # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id
-  workflowStatus(
-    workflow_id: String!
-    run_id: String!
-  ): WorkflowStatus
+  # Get job status by job id
+  # Equivalent to: GET /api/v1/jobs/:job_id
+  jobStatus(job_id: Int!): JobStatus
 
-  # Get indexing job by workflow ID
-  # Equivalent to: GET /api/v1/indexing/jobs/:workflow_id
+  # Get address indexing job by queue job id
+  # Equivalent to: GET /api/v1/indexing/jobs/:job_id
   indexingJob(
-    workflow_id: String!
+    job_id: Int!
   ): IndexingJob
 
   # Sync collection state for an address using checkpoint-based pagination (open, no authentication required)
@@ -288,7 +284,7 @@ type Mutation {
 
   # Trigger indexing for tokens by owner addresses with job tracking (requires authentication)
   # Equivalent to: POST /api/v1/tokens/addresses/index
-  # Returns an array of jobs with workflow IDs for tracking each address's indexing progress
+  # Returns an array of per-address entries with job_id for tracking indexing progress
   triggerAddressIndexing(
     addresses: [String!]!
   ): TriggerAddressIndexingResult
@@ -359,7 +355,7 @@ type WebhookClientResult {
 
 # Address indexing job
 type IndexingJob {
-  workflow_id: String!
+  job_id: Int!
   address: String!
   chain: String!
   status: String!

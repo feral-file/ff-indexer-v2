@@ -8,9 +8,7 @@ This guide covers local development setup, seed data, and useful scripts for FF-
 
 The development stack uses Docker Compose for infrastructure services:
 
-- **PostgreSQL** (port 5432) - Main database
-- **Temporal** (ports 7233-7235) - Workflow orchestration
-- **Temporal UI** (port 8080) - Temporal web interface
+- **PostgreSQL** (port 5432) - Main database and `jobs` queue for background work
 
 ### Starting Infrastructure
 
@@ -31,10 +29,6 @@ make quickstart
 psql -h localhost -U postgres -d ff_indexer
 # Password: postgres (default)
 ```
-
-**Temporal UI**:
-- URL: http://localhost:8080
-- View workflows, executions, and history
 
 ### Configuration
 
@@ -63,7 +57,7 @@ cp cmd/ff-indexer/config.yaml.sample config/config.yaml
 Environment variables use the `FF_INDEXER_` prefix and map to nested config keys:
 - `FF_INDEXER_DATABASE_HOST` → `database.host`
 - `FF_INDEXER_ETHEREUM_RPC_URL` → `ethereum.rpc_url`
-- `FF_INDEXER_TEMPORAL_HOST_PORT` → `temporal.host_port`
+- `FF_INDEXER_JOBS_TOKEN_QUEUE` → `jobs.token_queue`
 
 Dots in config keys become underscores in env vars.
 
@@ -113,10 +107,9 @@ export FF_INDEXER_ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY
 export FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://mainnet.infura.io/ws/v3/YOUR_KEY
 export FF_INDEXER_ETHEREUM_CHAIN_ID=eip155:1
 
-# Temporal
-export FF_INDEXER_TEMPORAL_HOST_PORT=localhost:7233
-export FF_INDEXER_TEMPORAL_NAMESPACE=default
-export FF_INDEXER_TEMPORAL_TOKEN_TASK_QUEUE=token-indexing
+# Job queue (names for token_index / media_index workers)
+export FF_INDEXER_JOBS_TOKEN_QUEUE=token_index
+export FF_INDEXER_JOBS_MEDIA_QUEUE=media_index
 ```
 
 ## Running Locally
@@ -127,11 +120,11 @@ After starting infrastructure, run the binary:
 go run ./cmd/ff-indexer -config config/config.yaml
 ```
 
-- **Without CGO** (`CGO_ENABLED=0`): the media Temporal worker is not started; other subsystems run.
-- **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including `media-indexing` worker when `FF_INDEXER_MEDIA_ENABLED=true`.
-- **With `FF_INDEXER_MEDIA_ENABLED=false`**: the media Temporal worker is intentionally disabled even in CGO/full builds.
+- **Without CGO** (`CGO_ENABLED=0`): the media job worker is not started; other subsystems run.
+- **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including the `media_index` queue worker when `FF_INDEXER_MEDIA_ENABLED=true`.
+- **With `FF_INDEXER_MEDIA_ENABLED=false`**: the media worker is intentionally disabled even in CGO/full builds.
 
-Media worker-specific Temporal concurrency is configured under `media_worker_temporal` in [cmd/ff-indexer/config.yaml.sample](cmd/ff-indexer/config.yaml.sample).
+Media worker concurrency and poll settings use `FF_INDEXER_JOBS_MEDIA_WORKER_*` (see [config/.env](config/.env)).
 
 ### Data URI Media Processing
 
@@ -200,33 +193,19 @@ psql -h localhost -U postgres -d ff_indexer -c "\di"
 psql -h localhost -U postgres -d ff_indexer -c "SELECT * FROM key_value_store WHERE key LIKE '%cursor%';"
 ```
 
-## Testing Workflows
+## Job queue (manual checks)
 
-### Manual Workflow Execution
+Work is stored in the `jobs` table (`queue`, `kind`, `status`, `payload`, `unique_key`). There is no automatic retry: failed jobs stay failed until a new job is enqueued or operators intervene.
 
-Use Temporal CLI to trigger workflows:
-
-```bash
-# Install Temporal CLI
-# https://docs.temporal.io/cli
-
-# Start a workflow
-temporal workflow start \
-  --task-queue token-indexing \
-  --type IndexToken \
-  --workflow-id test-index-token-1 \
-  --input '{"token_cid": "eip155:1:erc721:0x1234567890123456789012345678901234567890:1"}'
-
-# Check workflow status
-temporal workflow describe --workflow-id test-index-token-1
+**Inspect recent jobs**:
+```sql
+SELECT id, queue, kind, status, created_at, last_error FROM jobs ORDER BY id DESC LIMIT 20;
 ```
 
-### View Workflows in Temporal UI
-
-1. Open http://localhost:8080
-2. Navigate to Workflows
-3. Search for your workflow ID
-4. View execution history and details
+**HTTP status of a job** (after an API trigger returns `job_id`):
+```bash
+curl -s "http://localhost:8081/api/v1/jobs/123"
+```
 
 ## Debugging
 
@@ -270,11 +249,6 @@ SELECT * FROM provenance_events ORDER BY timestamp DESC LIMIT 10;
 - Verify connection string in config
 - Check firewall/network settings
 
-**Temporal connection errors**:
-- Verify Temporal is running: `docker ps`
-- Check Temporal UI: http://localhost:8080
-- Verify namespace and task queue names
-
 **Chain ingestion not receiving events**:
 - Verify WebSocket connection to blockchain RPC
 - Check block cursor in database
@@ -307,9 +281,8 @@ curl -X POST http://localhost:8081/api/v1/tokens/addresses/index \
 
 ### Monitoring
 
-**Temporal Metrics**:
-- View workflows and activities in Temporal UI
-- Check execution times and failure rates
+**Job queue**:
+- Query `jobs` in PostgreSQL (see "Job queue (manual checks)" above) for `status` and `last_error`.
 
 **Database Performance**:
 ```sql
@@ -407,9 +380,8 @@ Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environm
 
 ## Tips
 
-1. **Use Temporal UI** for workflow debugging and monitoring
-2. **Check Temporal workflow history** for event ingestion and execution progress
-3. **Use database transactions** when testing data changes
+1. **Inspect the `jobs` table** and application logs for handler failures (v1 does not auto-retry failed jobs).
+2. **Use database transactions** when testing data changes
 4. **Monitor logs** in real-time with `make logs`
 5. **Use GraphQL Playground** at http://localhost:8081/graphql for API testing
 6. **Keep infrastructure running** and restart only application services during development

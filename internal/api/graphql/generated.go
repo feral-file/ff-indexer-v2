@@ -43,6 +43,7 @@ type Config struct {
 type ResolverRoot interface {
 	EnrichmentSource() EnrichmentSourceResolver
 	IndexingJob() IndexingJobResolver
+	JobStatus() JobStatusResolver
 	MediaAsset() MediaAssetResolver
 	Mutation() MutationResolver
 	OwnerProvenance() OwnerProvenanceResolver
@@ -56,7 +57,6 @@ type ResolverRoot interface {
 	TokenEvent() TokenEventResolver
 	TokenList() TokenListResolver
 	TokenMetadata() TokenMetadataResolver
-	WorkflowStatus() WorkflowStatusResolver
 }
 
 type DirectiveRoot struct {
@@ -64,8 +64,8 @@ type DirectiveRoot struct {
 
 type ComplexityRoot struct {
 	AddressIndexingJobInfo struct {
-		Address    func(childComplexity int) int
-		WorkflowID func(childComplexity int) int
+		Address func(childComplexity int) int
+		JobID   func(childComplexity int) int
 	}
 
 	Artist struct {
@@ -96,13 +96,22 @@ type ComplexityRoot struct {
 		CurrentMaxBlock     func(childComplexity int) int
 		CurrentMinBlock     func(childComplexity int) int
 		FailedAt            func(childComplexity int) int
+		JobID               func(childComplexity int) int
 		PausedAt            func(childComplexity int) int
 		StartedAt           func(childComplexity int) int
 		Status              func(childComplexity int) int
 		TokensProcessed     func(childComplexity int) int
 		TotalTokensIndexed  func(childComplexity int) int
 		TotalTokensViewable func(childComplexity int) int
-		WorkflowID          func(childComplexity int) int
+	}
+
+	JobStatus struct {
+		CloseTime     func(childComplexity int) int
+		ExecutionTime func(childComplexity int) int
+		JobID         func(childComplexity int) int
+		LastError     func(childComplexity int) int
+		StartTime     func(childComplexity int) int
+		Status        func(childComplexity int) int
 	}
 
 	MediaAsset struct {
@@ -182,11 +191,11 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		IndexingJob    func(childComplexity int, workflowID string) int
+		IndexingJob    func(childComplexity int, jobID int) int
+		JobStatus      func(childComplexity int, jobID int) int
 		SyncCollection func(childComplexity int, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) int
 		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
 		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
-		WorkflowStatus func(childComplexity int, workflowID string, runID string) int
 	}
 
 	SyncCheckpoint struct {
@@ -270,8 +279,7 @@ type ComplexityRoot struct {
 	}
 
 	TriggerIndexingResult struct {
-		RunID      func(childComplexity int) int
-		WorkflowID func(childComplexity int) int
+		JobID func(childComplexity int) int
 	}
 
 	WebhookClientResult struct {
@@ -284,15 +292,6 @@ type ComplexityRoot struct {
 		WebhookSecret    func(childComplexity int) int
 		WebhookURL       func(childComplexity int) int
 	}
-
-	WorkflowStatus struct {
-		CloseTime     func(childComplexity int) int
-		ExecutionTime func(childComplexity int) int
-		RunID         func(childComplexity int) int
-		StartTime     func(childComplexity int) int
-		Status        func(childComplexity int) int
-		WorkflowID    func(childComplexity int) int
-	}
 }
 
 type EnrichmentSourceResolver interface {
@@ -303,6 +302,9 @@ type EnrichmentSourceResolver interface {
 type IndexingJobResolver interface {
 	CurrentMinBlock(ctx context.Context, obj *dto.AddressIndexingJobResponse) (*Uint64, error)
 	CurrentMaxBlock(ctx context.Context, obj *dto.AddressIndexingJobResponse) (*Uint64, error)
+}
+type JobStatusResolver interface {
+	ExecutionTime(ctx context.Context, obj *dto.JobStatusResponse) (*Uint64, error)
 }
 type MediaAssetResolver interface {
 	ProviderMetadata(ctx context.Context, obj *dto.MediaAssetResponse) (JSON, error)
@@ -342,8 +344,8 @@ type ProvenanceEventResolver interface {
 type QueryResolver interface {
 	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
-	WorkflowStatus(ctx context.Context, workflowID string, runID string) (*dto.WorkflowStatusResponse, error)
-	IndexingJob(ctx context.Context, workflowID string) (*dto.AddressIndexingJobResponse, error)
+	JobStatus(ctx context.Context, jobID int) (*dto.JobStatusResponse, error)
+	IndexingJob(ctx context.Context, jobID int) (*dto.AddressIndexingJobResponse, error)
 	SyncCollection(ctx context.Context, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) (*dto.SyncCollectionResponse, error)
 }
 type SyncCheckpointResolver interface {
@@ -369,9 +371,6 @@ type TokenMetadataResolver interface {
 	TokenID(ctx context.Context, obj *dto.TokenMetadataResponse) (Uint64, error)
 	OriginJSON(ctx context.Context, obj *dto.TokenMetadataResponse) (JSON, error)
 	LatestJSON(ctx context.Context, obj *dto.TokenMetadataResponse) (JSON, error)
-}
-type WorkflowStatusResolver interface {
-	ExecutionTime(ctx context.Context, obj *dto.WorkflowStatusResponse) (*Uint64, error)
 }
 
 type executableSchema struct {
@@ -399,12 +398,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.AddressIndexingJobInfo.Address(childComplexity), true
-	case "AddressIndexingJobInfo.workflow_id":
-		if e.complexity.AddressIndexingJobInfo.WorkflowID == nil {
+	case "AddressIndexingJobInfo.job_id":
+		if e.complexity.AddressIndexingJobInfo.JobID == nil {
 			break
 		}
 
-		return e.complexity.AddressIndexingJobInfo.WorkflowID(childComplexity), true
+		return e.complexity.AddressIndexingJobInfo.JobID(childComplexity), true
 
 	case "Artist.did":
 		if e.complexity.Artist.DID == nil {
@@ -534,6 +533,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.IndexingJob.FailedAt(childComplexity), true
+	case "IndexingJob.job_id":
+		if e.complexity.IndexingJob.JobID == nil {
+			break
+		}
+
+		return e.complexity.IndexingJob.JobID(childComplexity), true
 	case "IndexingJob.paused_at":
 		if e.complexity.IndexingJob.PausedAt == nil {
 			break
@@ -570,12 +575,43 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.IndexingJob.TotalTokensViewable(childComplexity), true
-	case "IndexingJob.workflow_id":
-		if e.complexity.IndexingJob.WorkflowID == nil {
+
+	case "JobStatus.close_time":
+		if e.complexity.JobStatus.CloseTime == nil {
 			break
 		}
 
-		return e.complexity.IndexingJob.WorkflowID(childComplexity), true
+		return e.complexity.JobStatus.CloseTime(childComplexity), true
+	case "JobStatus.execution_time_ms":
+		if e.complexity.JobStatus.ExecutionTime == nil {
+			break
+		}
+
+		return e.complexity.JobStatus.ExecutionTime(childComplexity), true
+	case "JobStatus.job_id":
+		if e.complexity.JobStatus.JobID == nil {
+			break
+		}
+
+		return e.complexity.JobStatus.JobID(childComplexity), true
+	case "JobStatus.last_error":
+		if e.complexity.JobStatus.LastError == nil {
+			break
+		}
+
+		return e.complexity.JobStatus.LastError(childComplexity), true
+	case "JobStatus.start_time":
+		if e.complexity.JobStatus.StartTime == nil {
+			break
+		}
+
+		return e.complexity.JobStatus.StartTime(childComplexity), true
+	case "JobStatus.status":
+		if e.complexity.JobStatus.Status == nil {
+			break
+		}
+
+		return e.complexity.JobStatus.Status(childComplexity), true
 
 	case "MediaAsset.created_at":
 		if e.complexity.MediaAsset.CreatedAt == nil {
@@ -915,7 +951,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.IndexingJob(childComplexity, args["workflow_id"].(string)), true
+		return e.complexity.Query.IndexingJob(childComplexity, args["job_id"].(int)), true
+	case "Query.jobStatus":
+		if e.complexity.Query.JobStatus == nil {
+			break
+		}
+
+		args, err := ec.field_Query_jobStatus_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.JobStatus(childComplexity, args["job_id"].(int)), true
 	case "Query.syncCollection":
 		if e.complexity.Query.SyncCollection == nil {
 			break
@@ -949,17 +996,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
-	case "Query.workflowStatus":
-		if e.complexity.Query.WorkflowStatus == nil {
-			break
-		}
-
-		args, err := ec.field_Query_workflowStatus_args(ctx, rawArgs)
-		if err != nil {
-			return 0, false
-		}
-
-		return e.complexity.Query.WorkflowStatus(childComplexity, args["workflow_id"].(string), args["run_id"].(string)), true
 
 	case "SyncCheckpoint.event_id":
 		if e.complexity.SyncCheckpoint.EventID == nil {
@@ -1305,18 +1341,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.complexity.TriggerAddressIndexingResult.Jobs(childComplexity), true
 
-	case "TriggerIndexingResult.run_id":
-		if e.complexity.TriggerIndexingResult.RunID == nil {
+	case "TriggerIndexingResult.job_id":
+		if e.complexity.TriggerIndexingResult.JobID == nil {
 			break
 		}
 
-		return e.complexity.TriggerIndexingResult.RunID(childComplexity), true
-	case "TriggerIndexingResult.workflow_id":
-		if e.complexity.TriggerIndexingResult.WorkflowID == nil {
-			break
-		}
-
-		return e.complexity.TriggerIndexingResult.WorkflowID(childComplexity), true
+		return e.complexity.TriggerIndexingResult.JobID(childComplexity), true
 
 	case "WebhookClientResult.client_id":
 		if e.complexity.WebhookClientResult.ClientID == nil {
@@ -1366,43 +1396,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.WebhookClientResult.WebhookURL(childComplexity), true
-
-	case "WorkflowStatus.close_time":
-		if e.complexity.WorkflowStatus.CloseTime == nil {
-			break
-		}
-
-		return e.complexity.WorkflowStatus.CloseTime(childComplexity), true
-	case "WorkflowStatus.execution_time_ms":
-		if e.complexity.WorkflowStatus.ExecutionTime == nil {
-			break
-		}
-
-		return e.complexity.WorkflowStatus.ExecutionTime(childComplexity), true
-	case "WorkflowStatus.run_id":
-		if e.complexity.WorkflowStatus.RunID == nil {
-			break
-		}
-
-		return e.complexity.WorkflowStatus.RunID(childComplexity), true
-	case "WorkflowStatus.start_time":
-		if e.complexity.WorkflowStatus.StartTime == nil {
-			break
-		}
-
-		return e.complexity.WorkflowStatus.StartTime(childComplexity), true
-	case "WorkflowStatus.status":
-		if e.complexity.WorkflowStatus.Status == nil {
-			break
-		}
-
-		return e.complexity.WorkflowStatus.Status(childComplexity), true
-	case "WorkflowStatus.workflow_id":
-		if e.complexity.WorkflowStatus.WorkflowID == nil {
-			break
-		}
-
-		return e.complexity.WorkflowStatus.WorkflowID(childComplexity), true
 
 	}
 	return 0, false
@@ -1703,14 +1696,13 @@ type TokenList {
 
 # Result of triggering indexing
 type TriggerIndexingResult {
-  workflow_id: String!
-  run_id: String!
+  job_id: Int!
 }
 
 # Address indexing job information
 type AddressIndexingJobInfo {
   address: String!
-  workflow_id: String!
+  job_id: Int!
 }
 
 # Result of triggering address indexing (returns array of jobs)
@@ -1718,11 +1710,11 @@ type TriggerAddressIndexingResult {
   jobs: [AddressIndexingJobInfo!]!
 }
 
-# Workflow status information
-type WorkflowStatus {
-  workflow_id: String!
-  run_id: String!
+# Job status information
+type JobStatus {
+  job_id: Int!
   status: String!
+  last_error: String
   start_time: Time
   close_time: Time
   execution_time_ms: Uint64
@@ -1760,17 +1752,14 @@ type Query {
     sort_order: Order = desc
   ): TokenList
 
-  # Get workflow status by workflow ID and run ID
-  # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id
-  workflowStatus(
-    workflow_id: String!
-    run_id: String!
-  ): WorkflowStatus
+  # Get job status by job id
+  # Equivalent to: GET /api/v1/jobs/:job_id
+  jobStatus(job_id: Int!): JobStatus
 
-  # Get indexing job by workflow ID
-  # Equivalent to: GET /api/v1/indexing/jobs/:workflow_id
+  # Get address indexing job by queue job id
+  # Equivalent to: GET /api/v1/indexing/jobs/:job_id
   indexingJob(
-    workflow_id: String!
+    job_id: Int!
   ): IndexingJob
 
   # Sync collection state for an address using checkpoint-based pagination (open, no authentication required)
@@ -1869,7 +1858,7 @@ type WebhookClientResult {
 
 # Address indexing job
 type IndexingJob {
-  workflow_id: String!
+  job_id: Int!
   address: String!
   chain: String!
   status: String!
@@ -1976,11 +1965,22 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 func (ec *executionContext) field_Query_indexingJob_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "workflow_id", ec.unmarshalNString2string)
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "job_id", ec.unmarshalNInt2int)
 	if err != nil {
 		return nil, err
 	}
-	args["workflow_id"] = arg0
+	args["job_id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_jobStatus_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "job_id", ec.unmarshalNInt2int)
+	if err != nil {
+		return nil, err
+	}
+	args["job_id"] = arg0
 	return args, nil
 }
 
@@ -2107,22 +2107,6 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 	return args, nil
 }
 
-func (ec *executionContext) field_Query_workflowStatus_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
-	var err error
-	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "workflow_id", ec.unmarshalNString2string)
-	if err != nil {
-		return nil, err
-	}
-	args["workflow_id"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "run_id", ec.unmarshalNString2string)
-	if err != nil {
-		return nil, err
-	}
-	args["run_id"] = arg1
-	return args, nil
-}
-
 func (ec *executionContext) field___Directive_args_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -2204,30 +2188,30 @@ func (ec *executionContext) fieldContext_AddressIndexingJobInfo_address(_ contex
 	return fc, nil
 }
 
-func (ec *executionContext) _AddressIndexingJobInfo_workflow_id(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobInfo) (ret graphql.Marshaler) {
+func (ec *executionContext) _AddressIndexingJobInfo_job_id(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobInfo) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_AddressIndexingJobInfo_workflow_id,
+		ec.fieldContext_AddressIndexingJobInfo_job_id,
 		func(ctx context.Context) (any, error) {
-			return obj.WorkflowID, nil
+			return obj.JobID, nil
 		},
 		nil,
-		ec.marshalNString2string,
+		ec.marshalNInt2int64,
 		true,
 		true,
 	)
 }
 
-func (ec *executionContext) fieldContext_AddressIndexingJobInfo_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_AddressIndexingJobInfo_job_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "AddressIndexingJobInfo",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -2645,30 +2629,30 @@ func (ec *executionContext) fieldContext_EnrichmentSource_updated_at(_ context.C
 	return fc, nil
 }
 
-func (ec *executionContext) _IndexingJob_workflow_id(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
+func (ec *executionContext) _IndexingJob_job_id(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_IndexingJob_workflow_id,
+		ec.fieldContext_IndexingJob_job_id,
 		func(ctx context.Context) (any, error) {
-			return obj.WorkflowID, nil
+			return obj.JobID, nil
 		},
 		nil,
-		ec.marshalNString2string,
+		ec.marshalNInt2int64,
 		true,
 		true,
 	)
 }
 
-func (ec *executionContext) fieldContext_IndexingJob_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_IndexingJob_job_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "IndexingJob",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -3051,6 +3035,180 @@ func (ec *executionContext) fieldContext_IndexingJob_canceled_at(_ context.Conte
 	return fc, nil
 }
 
+func (ec *executionContext) _JobStatus_job_id(ctx context.Context, field graphql.CollectedField, obj *dto.JobStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_JobStatus_job_id,
+		func(ctx context.Context) (any, error) {
+			return obj.JobID, nil
+		},
+		nil,
+		ec.marshalNInt2int64,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_JobStatus_job_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "JobStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _JobStatus_status(ctx context.Context, field graphql.CollectedField, obj *dto.JobStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_JobStatus_status,
+		func(ctx context.Context) (any, error) {
+			return obj.Status, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_JobStatus_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "JobStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _JobStatus_last_error(ctx context.Context, field graphql.CollectedField, obj *dto.JobStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_JobStatus_last_error,
+		func(ctx context.Context) (any, error) {
+			return obj.LastError, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_JobStatus_last_error(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "JobStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _JobStatus_start_time(ctx context.Context, field graphql.CollectedField, obj *dto.JobStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_JobStatus_start_time,
+		func(ctx context.Context) (any, error) {
+			return obj.StartTime, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_JobStatus_start_time(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "JobStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _JobStatus_close_time(ctx context.Context, field graphql.CollectedField, obj *dto.JobStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_JobStatus_close_time,
+		func(ctx context.Context) (any, error) {
+			return obj.CloseTime, nil
+		},
+		nil,
+		ec.marshalOTime2ᚖtimeᚐTime,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_JobStatus_close_time(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "JobStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _JobStatus_execution_time_ms(ctx context.Context, field graphql.CollectedField, obj *dto.JobStatusResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_JobStatus_execution_time_ms,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.JobStatus().ExecutionTime(ctx, obj)
+		},
+		nil,
+		ec.marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_JobStatus_execution_time_ms(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "JobStatus",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Uint64 does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _MediaAsset_id(ctx context.Context, field graphql.CollectedField, obj *dto.MediaAssetResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -3378,10 +3536,8 @@ func (ec *executionContext) fieldContext_Mutation_triggerTokenIndexing(ctx conte
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			switch field.Name {
-			case "workflow_id":
-				return ec.fieldContext_TriggerIndexingResult_workflow_id(ctx, field)
-			case "run_id":
-				return ec.fieldContext_TriggerIndexingResult_run_id(ctx, field)
+			case "job_id":
+				return ec.fieldContext_TriggerIndexingResult_job_id(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type TriggerIndexingResult", field.Name)
 		},
@@ -3470,10 +3626,8 @@ func (ec *executionContext) fieldContext_Mutation_triggerMetadataIndexing(ctx co
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			switch field.Name {
-			case "workflow_id":
-				return ec.fieldContext_TriggerIndexingResult_workflow_id(ctx, field)
-			case "run_id":
-				return ec.fieldContext_TriggerIndexingResult_run_id(ctx, field)
+			case "job_id":
+				return ec.fieldContext_TriggerIndexingResult_job_id(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type TriggerIndexingResult", field.Name)
 		},
@@ -4750,24 +4904,24 @@ func (ec *executionContext) fieldContext_Query_tokens(ctx context.Context, field
 	return fc, nil
 }
 
-func (ec *executionContext) _Query_workflowStatus(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+func (ec *executionContext) _Query_jobStatus(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_Query_workflowStatus,
+		ec.fieldContext_Query_jobStatus,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().WorkflowStatus(ctx, fc.Args["workflow_id"].(string), fc.Args["run_id"].(string))
+			return ec.resolvers.Query().JobStatus(ctx, fc.Args["job_id"].(int))
 		},
 		nil,
-		ec.marshalOWorkflowStatus2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐWorkflowStatusResponse,
+		ec.marshalOJobStatus2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐJobStatusResponse,
 		true,
 		false,
 	)
 }
 
-func (ec *executionContext) fieldContext_Query_workflowStatus(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_Query_jobStatus(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -4775,20 +4929,20 @@ func (ec *executionContext) fieldContext_Query_workflowStatus(ctx context.Contex
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			switch field.Name {
-			case "workflow_id":
-				return ec.fieldContext_WorkflowStatus_workflow_id(ctx, field)
-			case "run_id":
-				return ec.fieldContext_WorkflowStatus_run_id(ctx, field)
+			case "job_id":
+				return ec.fieldContext_JobStatus_job_id(ctx, field)
 			case "status":
-				return ec.fieldContext_WorkflowStatus_status(ctx, field)
+				return ec.fieldContext_JobStatus_status(ctx, field)
+			case "last_error":
+				return ec.fieldContext_JobStatus_last_error(ctx, field)
 			case "start_time":
-				return ec.fieldContext_WorkflowStatus_start_time(ctx, field)
+				return ec.fieldContext_JobStatus_start_time(ctx, field)
 			case "close_time":
-				return ec.fieldContext_WorkflowStatus_close_time(ctx, field)
+				return ec.fieldContext_JobStatus_close_time(ctx, field)
 			case "execution_time_ms":
-				return ec.fieldContext_WorkflowStatus_execution_time_ms(ctx, field)
+				return ec.fieldContext_JobStatus_execution_time_ms(ctx, field)
 			}
-			return nil, fmt.Errorf("no field named %q was found under type WorkflowStatus", field.Name)
+			return nil, fmt.Errorf("no field named %q was found under type JobStatus", field.Name)
 		},
 	}
 	defer func() {
@@ -4798,7 +4952,7 @@ func (ec *executionContext) fieldContext_Query_workflowStatus(ctx context.Contex
 		}
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
-	if fc.Args, err = ec.field_Query_workflowStatus_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+	if fc.Args, err = ec.field_Query_jobStatus_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -4813,7 +4967,7 @@ func (ec *executionContext) _Query_indexingJob(ctx context.Context, field graphq
 		ec.fieldContext_Query_indexingJob,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().IndexingJob(ctx, fc.Args["workflow_id"].(string))
+			return ec.resolvers.Query().IndexingJob(ctx, fc.Args["job_id"].(int))
 		},
 		nil,
 		ec.marshalOIndexingJob2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐAddressIndexingJobResponse,
@@ -4830,8 +4984,8 @@ func (ec *executionContext) fieldContext_Query_indexingJob(ctx context.Context, 
 		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			switch field.Name {
-			case "workflow_id":
-				return ec.fieldContext_IndexingJob_workflow_id(ctx, field)
+			case "job_id":
+				return ec.fieldContext_IndexingJob_job_id(ctx, field)
 			case "address":
 				return ec.fieldContext_IndexingJob_address(ctx, field)
 			case "chain":
@@ -6858,8 +7012,8 @@ func (ec *executionContext) fieldContext_TriggerAddressIndexingResult_jobs(_ con
 			switch field.Name {
 			case "address":
 				return ec.fieldContext_AddressIndexingJobInfo_address(ctx, field)
-			case "workflow_id":
-				return ec.fieldContext_AddressIndexingJobInfo_workflow_id(ctx, field)
+			case "job_id":
+				return ec.fieldContext_AddressIndexingJobInfo_job_id(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type AddressIndexingJobInfo", field.Name)
 		},
@@ -6867,59 +7021,30 @@ func (ec *executionContext) fieldContext_TriggerAddressIndexingResult_jobs(_ con
 	return fc, nil
 }
 
-func (ec *executionContext) _TriggerIndexingResult_workflow_id(ctx context.Context, field graphql.CollectedField, obj *dto.TriggerIndexingResponse) (ret graphql.Marshaler) {
+func (ec *executionContext) _TriggerIndexingResult_job_id(ctx context.Context, field graphql.CollectedField, obj *dto.TriggerIndexingResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
 		ec.OperationContext,
 		field,
-		ec.fieldContext_TriggerIndexingResult_workflow_id,
+		ec.fieldContext_TriggerIndexingResult_job_id,
 		func(ctx context.Context) (any, error) {
-			return obj.WorkflowID, nil
+			return obj.JobID, nil
 		},
 		nil,
-		ec.marshalNString2string,
+		ec.marshalNInt2int64,
 		true,
 		true,
 	)
 }
 
-func (ec *executionContext) fieldContext_TriggerIndexingResult_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+func (ec *executionContext) fieldContext_TriggerIndexingResult_job_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "TriggerIndexingResult",
 		Field:      field,
 		IsMethod:   false,
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _TriggerIndexingResult_run_id(ctx context.Context, field graphql.CollectedField, obj *dto.TriggerIndexingResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_TriggerIndexingResult_run_id,
-		func(ctx context.Context) (any, error) {
-			return obj.RunID, nil
-		},
-		nil,
-		ec.marshalNString2string,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_TriggerIndexingResult_run_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "TriggerIndexingResult",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -7152,180 +7277,6 @@ func (ec *executionContext) fieldContext_WebhookClientResult_updated_at(_ contex
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Time does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _WorkflowStatus_workflow_id(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_WorkflowStatus_workflow_id,
-		func(ctx context.Context) (any, error) {
-			return obj.WorkflowID, nil
-		},
-		nil,
-		ec.marshalNString2string,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_WorkflowStatus_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "WorkflowStatus",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _WorkflowStatus_run_id(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_WorkflowStatus_run_id,
-		func(ctx context.Context) (any, error) {
-			return obj.RunID, nil
-		},
-		nil,
-		ec.marshalNString2string,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_WorkflowStatus_run_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "WorkflowStatus",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _WorkflowStatus_status(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_WorkflowStatus_status,
-		func(ctx context.Context) (any, error) {
-			return obj.Status, nil
-		},
-		nil,
-		ec.marshalNString2string,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_WorkflowStatus_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "WorkflowStatus",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _WorkflowStatus_start_time(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_WorkflowStatus_start_time,
-		func(ctx context.Context) (any, error) {
-			return obj.StartTime, nil
-		},
-		nil,
-		ec.marshalOTime2ᚖtimeᚐTime,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_WorkflowStatus_start_time(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "WorkflowStatus",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Time does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _WorkflowStatus_close_time(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_WorkflowStatus_close_time,
-		func(ctx context.Context) (any, error) {
-			return obj.CloseTime, nil
-		},
-		nil,
-		ec.marshalOTime2ᚖtimeᚐTime,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_WorkflowStatus_close_time(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "WorkflowStatus",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Time does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _WorkflowStatus_execution_time_ms(ctx context.Context, field graphql.CollectedField, obj *dto.WorkflowStatusResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_WorkflowStatus_execution_time_ms,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.WorkflowStatus().ExecutionTime(ctx, obj)
-		},
-		nil,
-		ec.marshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_WorkflowStatus_execution_time_ms(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "WorkflowStatus",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Uint64 does not have child fields")
 		},
 	}
 	return fc, nil
@@ -8801,8 +8752,8 @@ func (ec *executionContext) _AddressIndexingJobInfo(ctx context.Context, sel ast
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "workflow_id":
-			out.Values[i] = ec._AddressIndexingJobInfo_workflow_id(ctx, field, obj)
+		case "job_id":
+			out.Values[i] = ec._AddressIndexingJobInfo_job_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -9016,8 +8967,8 @@ func (ec *executionContext) _IndexingJob(ctx context.Context, sel ast.SelectionS
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("IndexingJob")
-		case "workflow_id":
-			out.Values[i] = ec._IndexingJob_workflow_id(ctx, field, obj)
+		case "job_id":
+			out.Values[i] = ec._IndexingJob_job_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
@@ -9124,6 +9075,89 @@ func (ec *executionContext) _IndexingJob(ctx context.Context, sel ast.SelectionS
 			out.Values[i] = ec._IndexingJob_failed_at(ctx, field, obj)
 		case "canceled_at":
 			out.Values[i] = ec._IndexingJob_canceled_at(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
+var jobStatusImplementors = []string{"JobStatus"}
+
+func (ec *executionContext) _JobStatus(ctx context.Context, sel ast.SelectionSet, obj *dto.JobStatusResponse) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, jobStatusImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("JobStatus")
+		case "job_id":
+			out.Values[i] = ec._JobStatus_job_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "status":
+			out.Values[i] = ec._JobStatus_status(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "last_error":
+			out.Values[i] = ec._JobStatus_last_error(ctx, field, obj)
+		case "start_time":
+			out.Values[i] = ec._JobStatus_start_time(ctx, field, obj)
+		case "close_time":
+			out.Values[i] = ec._JobStatus_close_time(ctx, field, obj)
+		case "execution_time_ms":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._JobStatus_execution_time_ms(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -10176,7 +10210,7 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
-		case "workflowStatus":
+		case "jobStatus":
 			field := field
 
 			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
@@ -10185,7 +10219,7 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 						ec.Error(ctx, ec.Recover(ctx, r))
 					}
 				}()
-				res = ec._Query_workflowStatus(ctx, field)
+				res = ec._Query_jobStatus(ctx, field)
 				return res
 			}
 
@@ -11106,13 +11140,8 @@ func (ec *executionContext) _TriggerIndexingResult(ctx context.Context, sel ast.
 		switch field.Name {
 		case "__typename":
 			out.Values[i] = graphql.MarshalString("TriggerIndexingResult")
-		case "workflow_id":
-			out.Values[i] = ec._TriggerIndexingResult_workflow_id(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
-			}
-		case "run_id":
-			out.Values[i] = ec._TriggerIndexingResult_run_id(ctx, field, obj)
+		case "job_id":
+			out.Values[i] = ec._TriggerIndexingResult_job_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -11190,92 +11219,6 @@ func (ec *executionContext) _WebhookClientResult(ctx context.Context, sel ast.Se
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		default:
-			panic("unknown field " + strconv.Quote(field.Name))
-		}
-	}
-	out.Dispatch(ctx)
-	if out.Invalids > 0 {
-		return graphql.Null
-	}
-
-	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
-
-	for label, dfs := range deferred {
-		ec.processDeferredGroup(graphql.DeferredGroup{
-			Label:    label,
-			Path:     graphql.GetPath(ctx),
-			FieldSet: dfs,
-			Context:  ctx,
-		})
-	}
-
-	return out
-}
-
-var workflowStatusImplementors = []string{"WorkflowStatus"}
-
-func (ec *executionContext) _WorkflowStatus(ctx context.Context, sel ast.SelectionSet, obj *dto.WorkflowStatusResponse) graphql.Marshaler {
-	fields := graphql.CollectFields(ec.OperationContext, sel, workflowStatusImplementors)
-
-	out := graphql.NewFieldSet(fields)
-	deferred := make(map[string]*graphql.FieldSet)
-	for i, field := range fields {
-		switch field.Name {
-		case "__typename":
-			out.Values[i] = graphql.MarshalString("WorkflowStatus")
-		case "workflow_id":
-			out.Values[i] = ec._WorkflowStatus_workflow_id(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
-		case "run_id":
-			out.Values[i] = ec._WorkflowStatus_run_id(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
-		case "status":
-			out.Values[i] = ec._WorkflowStatus_status(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
-			}
-		case "start_time":
-			out.Values[i] = ec._WorkflowStatus_start_time(ctx, field, obj)
-		case "close_time":
-			out.Values[i] = ec._WorkflowStatus_close_time(ctx, field, obj)
-		case "execution_time_ms":
-			field := field
-
-			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._WorkflowStatus_execution_time_ms(ctx, field, obj)
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -12538,6 +12481,13 @@ func (ec *executionContext) marshalOJSON2githubᚗcomᚋferalᚑfileᚋffᚑinde
 	return v
 }
 
+func (ec *executionContext) marshalOJobStatus2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐJobStatusResponse(ctx context.Context, sel ast.SelectionSet, v *dto.JobStatusResponse) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._JobStatus(ctx, sel, v)
+}
+
 func (ec *executionContext) marshalOMediaAsset2ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐMediaAssetResponseᚄ(ctx context.Context, sel ast.SelectionSet, v []dto.MediaAssetResponse) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
@@ -12852,13 +12802,6 @@ func (ec *executionContext) marshalOWebhookClientResult2ᚖgithubᚗcomᚋferal�
 		return graphql.Null
 	}
 	return ec._WebhookClientResult(ctx, sel, v)
-}
-
-func (ec *executionContext) marshalOWorkflowStatus2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐWorkflowStatusResponse(ctx context.Context, sel ast.SelectionSet, v *dto.WorkflowStatusResponse) graphql.Marshaler {
-	if v == nil {
-		return graphql.Null
-	}
-	return ec._WorkflowStatus(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalO__EnumValue2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐEnumValueᚄ(ctx context.Context, sel ast.SelectionSet, v []introspection.EnumValue) graphql.Marshaler {

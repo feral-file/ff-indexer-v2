@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.temporal.io/sdk/client"
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -48,7 +47,7 @@ func TestRunner_UsesConfiguredStartBlockAndFlushesEvent(t *testing.T) {
 	defer ctrl.Finish()
 
 	store := mocks.NewMockStore(ctrl)
-	orchestrator := mocks.NewMockTemporalOrchestrator(ctrl)
+	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 	flushed := make(chan struct{}, 1)
@@ -57,9 +56,7 @@ func TestRunner_UsesConfiguredStartBlockAndFlushesEvent(t *testing.T) {
 	blacklist.EXPECT().IsTokenCIDBlacklisted(event.TokenCID()).Return(false)
 	store.EXPECT().GetTokenByTokenCID(gomock.Any(), event.TokenCID().String()).Return(nil, nil)
 	store.EXPECT().IsAnyAddressWatched(gomock.Any(), event.Chain, []string{"0xfrom", "0xto"}).Return(true, nil)
-	orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.AssignableToTypeOf(client.StartWorkflowOptions{}), gomock.Any(), event).
-		Return(nil, nil)
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(&schema.Job{ID: 1}, true, nil)
 	store.EXPECT().
 		SetBlockCursor(gomock.Any(), string(event.Chain), event.BlockNumber).
 		DoAndReturn(func(context.Context, string, uint64) error {
@@ -79,13 +76,13 @@ func TestRunner_UsesConfiguredStartBlockAndFlushesEvent(t *testing.T) {
 			},
 		},
 		store,
-		orchestrator,
+		jq,
 		blacklist,
 		ingestion.Config{
-			ChainID:           domain.ChainEthereumMainnet,
-			StartBlock:        1000,
-			TemporalTaskQueue: "token-indexing",
-			QueueCapacity:     1,
+			ChainID:       domain.ChainEthereumMainnet,
+			StartBlock:    1000,
+			TokenQueue:    "token_index",
+			QueueCapacity: 1,
 		},
 		clock,
 	)
@@ -102,7 +99,7 @@ func TestRunner_UsesLatestBlockWhenNoCursorExists(t *testing.T) {
 	defer ctrl.Finish()
 
 	store := mocks.NewMockStore(ctrl)
-	orchestrator := mocks.NewMockTemporalOrchestrator(ctrl)
+	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
@@ -120,12 +117,12 @@ func TestRunner_UsesLatestBlockWhenNoCursorExists(t *testing.T) {
 			},
 		},
 		store,
-		orchestrator,
+		jq,
 		blacklist,
 		ingestion.Config{
-			ChainID:           domain.ChainTezosMainnet,
-			TemporalTaskQueue: "token-indexing",
-			QueueCapacity:     1,
+			ChainID:       domain.ChainTezosMainnet,
+			TokenQueue:    "token_index",
+			QueueCapacity: 1,
 		},
 		clock,
 	)
@@ -141,7 +138,7 @@ func TestRunner_RetriesCursorPersistenceWithoutRestartingWorkflow(t *testing.T) 
 	defer ctrl.Finish()
 
 	store := mocks.NewMockStore(ctrl)
-	orchestrator := mocks.NewMockTemporalOrchestrator(ctrl)
+	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := mocks.NewMockClock(ctrl)
 	flushed := make(chan struct{}, 1)
@@ -149,10 +146,7 @@ func TestRunner_RetriesCursorPersistenceWithoutRestartingWorkflow(t *testing.T) 
 	event := mintEvent()
 	blacklist.EXPECT().IsTokenCIDBlacklisted(event.TokenCID()).Return(false)
 	store.EXPECT().GetTokenByTokenCID(gomock.Any(), event.TokenCID().String()).Return(&schema.Token{}, nil)
-	orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.AssignableToTypeOf(client.StartWorkflowOptions{}), gomock.Any(), event).
-		Return(nil, nil).
-		Times(1)
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(&schema.Job{ID: 1}, true, nil).Times(1)
 	store.EXPECT().SetBlockCursor(gomock.Any(), string(event.Chain), event.BlockNumber).
 		Return(errors.New("db unavailable"))
 	retryCh := make(chan time.Time, 1)
@@ -175,14 +169,14 @@ func TestRunner_RetriesCursorPersistenceWithoutRestartingWorkflow(t *testing.T) 
 			},
 		},
 		store,
-		orchestrator,
+		jq,
 		blacklist,
 		ingestion.Config{
-			ChainID:           domain.ChainEthereumMainnet,
-			StartBlock:        100,
-			TemporalTaskQueue: "token-indexing",
-			QueueCapacity:     1,
-			RetryDelay:        time.Minute,
+			ChainID:       domain.ChainEthereumMainnet,
+			StartBlock:    100,
+			TokenQueue:    "token_index",
+			QueueCapacity: 1,
+			RetryDelay:    time.Minute,
 		},
 		clock,
 	)
@@ -200,7 +194,7 @@ func TestRunner_RetriesWorkflowStartUntilItSucceeds(t *testing.T) {
 	defer ctrl.Finish()
 
 	store := mocks.NewMockStore(ctrl)
-	orchestrator := mocks.NewMockTemporalOrchestrator(ctrl)
+	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := mocks.NewMockClock(ctrl)
 	flushed := make(chan struct{}, 1)
@@ -208,14 +202,10 @@ func TestRunner_RetriesWorkflowStartUntilItSucceeds(t *testing.T) {
 	event := mintEvent()
 	blacklist.EXPECT().IsTokenCIDBlacklisted(event.TokenCID()).Return(false).Times(2)
 	store.EXPECT().GetTokenByTokenCID(gomock.Any(), event.TokenCID().String()).Return(&schema.Token{}, nil).Times(2)
-	orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.AssignableToTypeOf(client.StartWorkflowOptions{}), gomock.Any(), event).
-		Return(nil, errors.New("temporal unavailable"))
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, false, errors.New("queue unavailable"))
 	retryCh := make(chan time.Time, 1)
 	clock.EXPECT().After(time.Minute).Return(retryCh)
-	orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.AssignableToTypeOf(client.StartWorkflowOptions{}), gomock.Any(), event).
-		Return(nil, nil)
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(&schema.Job{ID: 1}, true, nil)
 	store.EXPECT().
 		SetBlockCursor(gomock.Any(), string(event.Chain), event.BlockNumber).
 		DoAndReturn(func(context.Context, string, uint64) error {
@@ -234,14 +224,14 @@ func TestRunner_RetriesWorkflowStartUntilItSucceeds(t *testing.T) {
 			},
 		},
 		store,
-		orchestrator,
+		jq,
 		blacklist,
 		ingestion.Config{
-			ChainID:           domain.ChainEthereumMainnet,
-			StartBlock:        100,
-			TemporalTaskQueue: "token-indexing",
-			QueueCapacity:     1,
-			RetryDelay:        time.Minute,
+			ChainID:       domain.ChainEthereumMainnet,
+			StartBlock:    100,
+			TokenQueue:    "token_index",
+			QueueCapacity: 1,
+			RetryDelay:    time.Minute,
 		},
 		clock,
 	)

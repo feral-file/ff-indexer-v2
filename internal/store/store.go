@@ -208,11 +208,14 @@ type CreateWebhookClientInput struct {
 
 // CreateAddressIndexingJobInput represents input for creating an address indexing job
 type CreateAddressIndexingJobInput struct {
-	Address       string
-	Chain         domain.Chain
-	Status        schema.IndexingJobStatus
-	WorkflowID    string
-	WorkflowRunID *string // Optional, may be nil initially
+	Address    string
+	Chain      domain.Chain
+	Status     schema.IndexingJobStatus
+	WorkflowID string
+	// WorkflowRunID is only populated for old Temporal-backed rows; new queue-driven jobs omit it.
+	WorkflowRunID *string
+	// JobID is set when the work unit is a postgres jobs.id row (job queue). Optional for legacy rows.
+	JobID *int64
 }
 
 // EnqueueJobInput is the data required to create a `jobs` row (postgres-backed work queue).
@@ -436,8 +439,8 @@ type Store interface {
 	// CreateAddressIndexingJob creates a new address indexing job record
 	// This handles conflicts gracefully by doing nothing if the job already exists
 	CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error
-	// GetAddressIndexingJobByWorkflowID retrieves a job by workflow ID
-	GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error)
+	// GetAddressIndexingJobByJobID returns the address indexing job row for the given postgres jobs.id (queue job id).
+	GetAddressIndexingJobByJobID(ctx context.Context, jobID int64) (*schema.AddressIndexingJob, error)
 	// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
 	// Returns nil if no active job is found (not an error)
 	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)

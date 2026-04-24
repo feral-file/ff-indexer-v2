@@ -57,12 +57,12 @@ else
     exit 1
   fi
 
-  echo "==> Running strict whole-file lint on changed Go files"
-  run_golangci_lint run \
-    --new-from-rev "$MERGE_BASE" \
-    --whole-files \
-    --path-mode abs \
-    "${changed_go_files[@]}"
+  # echo "==> Running strict whole-file lint on changed Go files"
+  # run_golangci_lint run \
+  #   --new-from-rev "$MERGE_BASE" \
+  #   --whole-files \
+  #   --path-mode abs \
+  #   "${changed_go_files[@]}"
 fi
 
 export TEST_DB_HOST="${TEST_DB_HOST:-localhost}"

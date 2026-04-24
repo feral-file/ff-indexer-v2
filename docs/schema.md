@@ -390,7 +390,7 @@ Tracks address-level indexing job status independent of Temporal workflows. Deco
 - `idx_address_indexing_jobs_status_created` on (status, created_at DESC) - For querying jobs by status
 
 **Use Cases**:
-- Query job status via REST API (`GET /api/v1/indexing/jobs/{workflow_id}`)
+- Query job status via REST API (`GET /api/v1/indexing/jobs/{job_id}`) using the queue `jobs.id`
 - Query job status via GraphQL (`indexingJob(workflow_id)`)
 - Track progress of owner-based indexing workflows
 - Monitor paused jobs due to quota exhaustion
