@@ -47,9 +47,8 @@ make quickstart
 **Configuration**: The system supports both YAML config files and environment variables. Environment variables (with `FF_INDEXER_` prefix) override config file values. See [DEVELOPMENT.md](DEVELOPMENT.md) for details.
 
 This will start:
-- PostgreSQL (port 5432)
-- (Optional in compose) Temporal and UI if still included in the stack for other use
-- **ff-indexer** - single container running the HTTP API, chain ingestion, job workers (token by default, media when built with CGO), and media health sweeper
+- **PostgreSQL** (port 5432) — application data and the **`jobs` table** (durable work queue; no separate orchestrator)
+- **ff-indexer** — one container that runs the HTTP API, chain ingestion, job workers for `token_index` (and `media_index` when built with CGO and enabled), and the media health sweeper
 
 The API will be available at `http://localhost:8081`
 
@@ -88,6 +87,10 @@ All of the following run inside the **`ff-indexer`** process (goroutines) by def
 - **Worker media** — polls the `media_index` job queue (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
 - **API server** — REST and GraphQL
 - **Sweeper** — Media URL health checks
+
+## Job queue
+
+Async work is stored in PostgreSQL in the **`jobs`** table (see [`docs/schema.md`](docs/schema.md)). Workers **claim** rows in transactions using **`SELECT … FOR UPDATE SKIP LOCKED`** so concurrent claimers do not block on each other’s locks. A **per-queue advisory lock** limits the default deployment to a single active poller per queue name. **v1 does not automatically retry** failed jobs: a handler error leaves the row in **`failed`** with **`last_error`**; operators re-enqueue or fix upstreams as needed. Operational guidance and example SQL are in [DEVELOPMENT.md](DEVELOPMENT.md#job-queue-manual-checks).
 
 ## Requirements
 

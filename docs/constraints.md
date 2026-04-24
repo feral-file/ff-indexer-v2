@@ -7,12 +7,12 @@ Hard and soft constraints for **FF Indexer v2**. Agents and engineers should tre
 - **Domain boundary** — This service is **indexing and data delivery** for on-chain NFTs (and related metadata/media), not exhibition CMS, marketplace checkout, or device runtime (FF OS / DP-1 playback). It **feeds** apps and partners; it does not replace their UX or protocol responsibilities.
 - **Supported networks and standards** — In scope: **Ethereum** (ERC-721, ERC-1155) and **Tezos** (FA2), at the chains enumerated in OpenAPI (e.g. mainnet and agreed testnets). Adding chains or standards requires **chain ingestion**, **schema**, **API surface**, and **operational** updates together.
 - **Stewardship vs access** — APIs expose **ownership and collection-oriented** data for product flows (e.g. “My Collection”). They must **not** be designed to imply that owning a token **gates** public discovery of the work; product strategy treats art as **public by default** with stewardship as **legibility**.
-- **Truth model** — The indexer reflects **observed chain state**, **resolved metadata**, **vendor enrichment**, and **media health** as implemented. Clients should assume **eventual consistency**: triggers and workflows complete asynchronously; reads may lag writes briefly depending on load and pipeline stage.
+- **Truth model** — The indexer reflects **observed chain state**, **resolved metadata**, **vendor enrichment**, and **media health** as implemented. Clients should assume **eventual consistency**: triggers and **jobs** complete asynchronously; reads may lag writes briefly depending on load and pipeline stage.
 - **Viewability** — **`viewable` / `is_viewable`** encode “fit for display” heuristics (metadata, enrichment, accessible media URLs, sweeper outcomes). It is a **product-oriented** flag, not a legal or on-chain guarantee.
 
 ## Data and consistency constraints
 
-- **System of record** — **PostgreSQL** holds authoritative indexed state for tokens, balances, provenance, metadata, enrichment, media assets, jobs, and webhook configuration. **Temporal** carries workflow state and PostgreSQL carries durable indexed data; in-process ingestion is not a long-term source of truth.
+- **System of record** — **PostgreSQL** holds authoritative indexed state for tokens, balances, provenance, metadata, enrichment, media assets, the **`jobs` queue** (pending/running/succeeded/failed/canceled), and webhook configuration. Orchestration is **not** a separate system: the same database is the durable source of truth for work items and outcomes; in-process ingestion is not a long-term source of truth.
 - **Canonical identity** — **`token_cid`** is the stable external identifier; **`(chain, contract_address, token_number)`** is unique in the database. Any API or client that bypasses CID rules risks collisions or rejected writes.
 - **Migrations** — Schema changes go through **`db/migrations/`** and stay mirrored in **`db/init_pg_db.sql`** (and fixtures when tests depend on them). Do not leave drift between migration history and fresh installs.
 - **JSONB and evolution** — Metadata and vendor payloads use **JSONB** for flexibility; **breaking** interpretation of stored JSON without migration or dual-read logic is out of bounds for production-safe releases.
@@ -31,13 +31,13 @@ Hard and soft constraints for **FF Indexer v2**. Agents and engineers should tre
 
 - **Expensive reads** — Optional aggregates (e.g. **total token counts** on indexing jobs) stay **off by default** where the API already uses flags. New heavy queries should follow the same pattern.
 - **Expansion cost** — **`expand`** / nested GraphQL fields can multiply work (metadata, enrichment, **media_assets**, provenance). Defaults should favor **safe** response sizes; clients that need large graphs must paginate at the **single-token** level where supported.
-- **Batch triggers** — OpenAPI documents **maximum batch sizes** for trigger endpoints; enforcement protects workers and vendor rate limits. Do not raise limits without assessing **Temporal concurrency**, **RPC**, and **downstream quotas**.
+- **Batch triggers** — OpenAPI documents **maximum batch sizes** for trigger endpoints; enforcement protects **job workers**, **RPC**, and **downstream quotas**. Do not raise limits without assessing worker concurrency settings, backpressure, and vendor limits.
 - **Offset pagination** — List endpoints use **limit/offset**. Very deep offsets can be expensive on PostgreSQL; **cursor-style** alternatives (like collection sync) exist where offset is unsuitable.
 
 ## Operational constraints
 
-- **Critical dependencies** — A functioning indexing pipeline requires **PostgreSQL**, **Temporal**, **Ethereum (and Tezos) RPC** (and Tezos indexer connectivity as deployed), and **running workers/ingestion** (core, media, chain ingestion, sweeper as applicable). Missing any of these degrades specific paths predictably rather than "half working" without visibility.
-- **Workflow observability** — Long-running work is **Temporal workflow–backed**; operators and integrators use **workflow and job APIs** for status. New async features should expose **trackable IDs** and documented polling patterns.
+- **Critical dependencies** — A functioning indexing pipeline requires **PostgreSQL** (data + `jobs` queue), **Ethereum (and Tezos) RPC** (and Tezos indexer connectivity as deployed), and **running workers/ingestion** (core, media, chain ingestion, sweeper as applicable). Missing any of these degrades specific paths predictably rather than "half working" without visibility.
+- **Job observability** — Long-running work is **Postgres job–backed** (`jobs` rows and related tables); operators and integrators use **job APIs** and direct SQL inspection for status. New async features should expose **trackable ids** (e.g. `job_id`) and documented polling patterns.
 - **Configuration** — Runtime config uses **YAML plus `FF_INDEXER_*` environment overrides** as documented in **DEVELOPMENT.md**. Secrets (RPC URLs, API keys, Cloudflare, webhook signing) must not be committed.
 - **Blacklist / abuse** — Indexing requests are subject to **blacklist validation** (see architecture). Changes to filtering rules affect **fair use and cost**; document operator impact when adjusting.
 - **Health scope** — **`GET /health`** is **liveness** for the API process. Deep dependency checks belong behind an explicit **readiness** contract if introduced, not silently folded into `/health` without agreement.
@@ -51,14 +51,14 @@ Hard and soft constraints for **FF Indexer v2**. Agents and engineers should tre
 
 ## Deployment constraints
 
-- **Runtime versions** — Target versions in **README** (Go, PostgreSQL, Temporal) are **supported baselines** for development and CI. Upgrades should be validated with **`make check`** and integration tests.
-- **Single-process application** — The default deployment runs **`ff-indexer`** as one OS process (API, chain ingestion, Temporal workers, sweeper). An "API only" build **does not index** unless ingestion and workers are also running (e.g., full binary or external workers).
+- **Runtime versions** — Target versions in **README** (Go, PostgreSQL) are **supported baselines** for development and CI. Upgrades should be validated with **`make check`** and integration tests.
+- **Single-process application** — The default deployment runs **`ff-indexer`** as one OS process (API, chain ingestion, job workers, sweeper). An "API only" build **does not index** unless ingestion and workers are also running in that or another process.
 - **Cloudflare** — **Worker media** integration assumes **Cloudflare Images/Stream** (or configured equivalents) for processed media URLs; swapping providers is a **cross-cutting** change (workers, config, URL shapes).
-- **Observability** — Production operation expects **logs and metrics** suitable for diagnosing **stuck workflows**, **ingestion replay loops**, and **RPC errors**. New components should emit **actionable** errors rather than swallowing failures.
+- **Observability** — Production operation expects **logs and metrics** suitable for diagnosing **stuck or failed jobs** (`jobs.status`, `last_error`), **ingestion replay loops**, and **RPC errors**. New components should emit **actionable** errors rather than swallowing failures.
 
 ## Non-goals
 
 - **Sole authority for rights or licensing** — The indexer does not replace **legal** or **DP-1** enforcement on devices; it supplies **state and signals** (e.g. viewability, provenance).
 - **Guaranteed completeness of third-party data** — Vendor APIs, gateways (IPFS/Arweave/ONCHFS), and RPC providers can **fail or rate-limit**; the system prioritizes **clear degradation** over fake completeness.
-- **Unbounded synchronous indexing in the API** — Trigger endpoints **accept** work and return **202** (or equivalent) with workflow identifiers; they do not block until the chain is fully scanned.
+- **Unbounded synchronous indexing in the API** — Trigger endpoints **accept** work and return **202** (or equivalent) with **job** identifiers; they do not block until the chain is fully scanned.
 - **Per-tenant arbitrary SQL or unbounded ad hoc analytics** — The API is **curated query surfaces**; arbitrary query languages or report-style dumps are out of scope unless added as a first-class, documented product.

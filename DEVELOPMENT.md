@@ -195,11 +195,24 @@ psql -h localhost -U postgres -d ff_indexer -c "SELECT * FROM key_value_store WH
 
 ## Job queue (manual checks)
 
-Work is stored in the `jobs` table (`queue`, `kind`, `status`, `payload`, `unique_key`). There is no automatic retry: failed jobs stay failed until a new job is enqueued or operators intervene.
+Work is stored in the **`jobs`** table (`queue`, `kind`, `status`, `payload`, `unique_key`, `run_after`, …). See [`docs/schema.md`](../docs/schema.md#jobs) for the full state machine and indexes.
+
+**No automatic retry (v1).** A handler error sets **`failed`** and **`last_error`**. The service does not apply exponential backoff or re-drive failed rows automatically. Webhook deliveries are also single-shot for delivery semantics; `webhook_clients.retry_max_attempts` is retained in the schema/API for compatibility but is not used to retry delivery. Operators **re-enqueue** work (e.g. new API trigger or ingestion event) or fix configuration/upstreams, then watch new jobs succeed.
+
+**Claiming and scaling.** At runtime, workers **poll** for `pending` jobs ready by `run_after` and **claim** them inside a database transaction with **`SELECT … FOR UPDATE SKIP LOCKED`**, so different sessions can claim different rows without waiting on each other’s row locks. A **per-queue advisory lock** (`pg_try_advisory_lock` on a hash of the queue name) ensures only one process in the default model **polls** a given `queue` name; do not start multiple competing pollers for the same queue name without a deliberate operational plan.
 
 **Inspect recent jobs**:
 ```sql
-SELECT id, queue, kind, status, created_at, last_error FROM jobs ORDER BY id DESC LIMIT 20;
+SELECT id, queue, kind, status, run_after, created_at, last_error FROM jobs ORDER BY id DESC LIMIT 20;
+```
+
+**Pending work ready to run** (illustrative):
+```sql
+SELECT id, queue, kind, run_after
+FROM jobs
+WHERE status = 'pending' AND run_after <= now()
+ORDER BY run_after, id
+LIMIT 20;
 ```
 
 **HTTP status of a job** (after an API trigger returns `job_id`):
@@ -381,10 +394,10 @@ Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environm
 ## Tips
 
 1. **Inspect the `jobs` table** and application logs for handler failures (v1 does not auto-retry failed jobs).
-2. **Use database transactions** when testing data changes
-4. **Monitor logs** in real-time with `make logs`
-5. **Use GraphQL Playground** at http://localhost:8081/graphql for API testing
-6. **Keep infrastructure running** and restart only application services during development
+2. **Use database transactions** when testing data changes.
+3. **Monitor logs** in real-time with `make logs`.
+4. **Use GraphQL Playground** at http://localhost:8081/graphql for API testing.
+5. **Keep infrastructure running** and restart only application services during development.
 
 ## Next Steps
 

@@ -23,6 +23,7 @@ The database includes the following main tables:
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
 - `watched_addresses` - Addresses being monitored for indexing
+- `jobs` - Postgres-backed durable job queue (token and media work units)
 - `address_indexing_jobs` - Address-level indexing job status tracking
 - `webhook_clients` - Registered webhook clients for event notifications
 - `webhook_deliveries` - Audit log of webhook delivery attempts
@@ -361,6 +362,48 @@ Configuration and state management (cursors, version, etc.).
 - `tezos_ghostnet_cursor` - Last processed level for Tezos ghostnet
 - `indexer_version` - Current indexer version
 
+### jobs
+
+Durable work queue: one row per unit of background work. Logical queues (e.g. `token_index`, `media_index`) map to **worker pools** in `cmd/ff-indexer`; the handler name is stored in `kind` and resolved by an in-process registry.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Primary key; returned to clients as `job_id` from trigger/status APIs |
+| queue | TEXT | Queue name (e.g. `token_index`, `media_index`) |
+| kind | TEXT | Registered handler name (e.g. `IndexTokenMint`, `IndexMediaWorkflow`) |
+| payload | JSONB | Handler arguments (wire format: JSON array of values) |
+| status | job_status | `pending` \| `running` \| `succeeded` \| `failed` \| `canceled` |
+| unique_key | TEXT | When set, deduplicates in-flight work (see partial unique index below) |
+| run_after | TIMESTAMPTZ | Do not run before this time (scheduling, quota resume, operator reschedule) |
+| last_error | TEXT | Set when a handler fails (terminal for `failed` status) |
+| cancel_requested | BOOLEAN | Worker observes this and cancels the handler context |
+| created_at | TIMESTAMPTZ | Row creation time |
+| updated_at | TIMESTAMPTZ | Last update time |
+| started_at | TIMESTAMPTZ | When a worker claimed the job |
+| finished_at | TIMESTAMPTZ | When the job reached a terminal status |
+
+**Indexes**:
+
+- `jobs_unique_key_active` — **UNIQUE** partial index on `(queue, kind, unique_key)` **WHERE** `status IN ('pending','running')` **AND** `unique_key IS NOT NULL`. Enforces at most one *active* job per deduplication key; a new enqueue with the same key after success/failure can insert a new row.
+- `jobs_poll` — on `(queue, run_after)` **WHERE** `status = 'pending'`, to support efficient polling of ready work.
+
+**Claim semantics (implementation)**:
+
+Workers **claim** work in PostgreSQL using a transaction that selects candidate rows and updates them to `running` with **`SELECT … FOR UPDATE SKIP LOCKED`**. `SKIP LOCKED` lets concurrent transactions skip rows already locked by another session so multiple workers (or poller threads) do not block each other on the same job row. (At most one **process** is expected to *poll* a given `queue` name in default deployments, backed by a **per-queue advisory lock**; the SQL still uses `SKIP LOCKED` for safe claim batches.)
+
+**State machine (v1)**:
+
+- **`pending` → `running`**: on successful claim by a worker.
+- **`running` → `succeeded`**: handler returns with no error.
+- **`running` → `failed`**: handler returns an error (other than a controlled reschedule sentinel). `last_error` is populated. **There is no automatic retry**: operators must re-enqueue or fix upstream and enqueue again.
+- **`running` → `pending`**: handler requests reschedule (e.g. quota not yet reset) with a new `run_after` time.
+- **Startup / crash recovery**: rows left `running` (e.g. after process death) are swept back to **`pending`** with cleared `started_at` so they can be claimed again. This is a deliberate trade-off: a handler that was mid-flight may run twice; idempotent handlers and dedup keys mitigate duplicates.
+- **Cancel**: `cancel_requested` is set; the worker cancels the handler context and drives the row to **`canceled`**.
+
+**Relationships**:
+
+- `address_indexing_jobs.job_id` → `jobs.id` (required for address indexing work units)
+
 ### address_indexing_jobs
 
 Tracks address-level indexing job status for owner-based indexing. Each row is keyed to the postgres-backed job queue via `job_id` (`jobs.id`), which is the same id returned by enqueue/trigger APIs and used in `GET /api/v1/indexing/jobs/{job_id}` and GraphQL.
@@ -371,7 +414,7 @@ Tracks address-level indexing job status for owner-based indexing. Each row is k
 | address | TEXT | Blockchain address being indexed |
 | chain | blockchain_chain | Blockchain identifier |
 | status | indexing_job_status | Job status (running, paused, failed, completed, canceled) |
-| job_id | BIGINT | Foreign key to `jobs.id` (queue work unit); `ON DELETE CASCADE` |
+| job_id | BIGINT | Foreign key to `jobs.id` (queue work unit); `NOT NULL`, `ON DELETE CASCADE` |
 | tokens_processed | INTEGER | Number of tokens processed (default: 0) |
 | current_min_block | BIGINT | Current minimum block indexed |
 | current_max_block | BIGINT | Current maximum block indexed |
@@ -392,7 +435,7 @@ Tracks address-level indexing job status for owner-based indexing. Each row is k
 - Query job status via REST API (`GET /api/v1/indexing/jobs/{job_id}`) and GraphQL using the queue `jobs.id` as `job_id`
 - Track progress of owner-based indexing
 - Monitor paused jobs due to quota exhaustion
-- Identify failed indexing jobs for retry
+- Identify failed indexing jobs for operator follow-up or manual re-enqueue
 
 **Note**: This table is updated by the in-process owner indexing steps (`IndexTezosTokenOwner` and `IndexEthereumTokenOwner`). Job records are created when work starts (status: `running`) and updated as indexing progresses.
 
@@ -424,7 +467,7 @@ Registered webhook clients for event notifications with HTTPS endpoints and even
 **Use Cases**:
 - Register webhook clients to receive real-time event notifications
 - Filter events by type (indexing events, ownership events, or wildcard)
-- Configure retry behavior for failed deliveries
+- `retry_max_attempts` is stored for API compatibility; see `docs/api_design.md` for current delivery behavior (v1: no automatic re-drive of failed deliveries from this value alone)
 
 ### webhook_deliveries
 
@@ -437,8 +480,8 @@ Audit log of webhook delivery attempts with status tracking and response details
 | event_id | VARCHAR(255) | Unique event ID (ULID for time-sortable) |
 | event_type | VARCHAR(50) | Event type (e.g., "token.indexing.queryable") |
 | payload | JSONB | Full event payload |
-| workflow_id | VARCHAR(255) | Temporal workflow ID for tracking |
-| workflow_run_id | VARCHAR(255) | Temporal run ID |
+| workflow_id | VARCHAR(255) | Correlation id for the delivery (legacy column name; new work typically stores the queue job id or equivalent) |
+| workflow_run_id | VARCHAR(255) | Optional second correlation id (legacy) |
 | delivery_status | webhook_delivery_status | Delivery status (pending, success, failed) |
 | attempts | INTEGER | Number of delivery attempts (default: 0) |
 | last_attempt_at | TIMESTAMPTZ | Timestamp of last attempt |
@@ -498,6 +541,13 @@ Audit log of webhook delivery attempts with status tracking and response details
 - `cloudflare` - Cloudflare Images/Stream
 - `s3` - Amazon S3
 
+### job_status
+- `pending` - Eligible to be claimed when `run_after` has passed
+- `running` - Claimed by a worker
+- `succeeded` - Handler completed successfully
+- `failed` - Handler failed; see `last_error` (no automatic retry in v1)
+- `canceled` - Canceled (e.g. operator or `cancel_requested`)
+
 ### event_type
 - `mint` - Token mint event
 - `transfer` - Token transfer event
@@ -505,11 +555,11 @@ Audit log of webhook delivery attempts with status tracking and response details
 - `metadata_update` - Metadata update event
 
 ### indexing_job_status
-- `running` - Workflow is currently running
-- `paused` - Workflow paused (quota exhausted, will resume after quota reset)
-- `failed` - Workflow failed with an error
-- `completed` - Workflow completed successfully
-- `canceled` - Workflow was canceled
+- `running` - Address indexing is currently running
+- `paused` - Paused (quota exhausted; work may resume after quota reset via rescheduled `jobs` row)
+- `failed` - Failed with an error
+- `completed` - Completed successfully
+- `canceled` - Canceled
 
 ### webhook_delivery_status
 - `pending` - Delivery pending or in progress
@@ -537,6 +587,8 @@ watched_addresses (standalone)
 key_value_store (standalone)
 
 address_indexing_jobs (standalone, references `jobs` via `job_id`)
+
+jobs (standalone; referenced by `address_indexing_jobs.job_id` and by application logic for all async work)
 ```
 
 ## Triggers
@@ -555,6 +607,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_webhook_deliveries_updated_at`
 - `update_address_indexing_jobs_updated_at`
 - `update_token_media_health_updated_at`
+- `update_jobs_updated_at`
 
 ## Migrations
 
