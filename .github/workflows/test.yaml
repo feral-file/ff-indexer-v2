@@ -8,7 +8,9 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.golangci.yaml'
+      - '.golangci.strict.yaml'
       - 'Makefile'
+      - 'tools/scripts/post_implementation_check.sh'
       - 'db/**'
       - 'internal/api/graphql/**'
       - '.github/workflows/**'
@@ -20,7 +22,9 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.golangci.yaml'
+      - '.golangci.strict.yaml'
       - 'Makefile'
+      - 'tools/scripts/post_implementation_check.sh'
       - 'db/**'
       - 'internal/api/graphql/**'
       - '.github/workflows/**'
@@ -76,7 +80,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23.5'
+          go-version: '1.24.13'
           cache: true
           cache-dependency-path: ./go.sum
 
@@ -95,8 +99,8 @@ jobs:
         env:
           PGPASSWORD: postgres
 
-      - name: Run tests with coverage
-        run: go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|cmd|internal/store/schema|tools")
+      - name: Run CI-aligned verification
+        run: make post-implementation-check
         env:
           TEST_DB_HOST: localhost
           TEST_DB_PORT: 5432
@@ -104,13 +108,6 @@ jobs:
           TEST_DB_PASSWORD: postgres
           TEST_DB_NAME: test_db
           FF_INDEXER_VENDORS_OPENSEA_API_KEY: ${{ secrets.OPENSEA_TEST_API_KEY }}
-
-      - name: Filter generated files from coverage
-        run: |
-          if [ -f coverage.out ]; then
-            grep -v "generated.go" coverage.out > coverage.filtered.out || true
-            mv coverage.filtered.out coverage.out
-          fi
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
