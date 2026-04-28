@@ -260,6 +260,195 @@ func TestWorker_Run_OnShutdownReschedules(t *testing.T) {
 	require.NoError(t, <-errC)
 }
 
+// TestWorker_Run_MarkJobSucceededFails_WorkerExits covers handler success + MarkJobSucceeded error → worker exits.
+func TestWorker_Run_MarkJobSucceededFails_WorkerExits(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	reg.Register("H", func(ctx context.Context) error { return nil })
+
+	j := &schema.Job{ID: 6, Kind: "H", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	persistErr := errors.New("db write failed")
+	st.EXPECT().MarkJobSucceeded(gomock.Any(), int64(6)).Return(persistErr)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: 50 * time.Millisecond, BatchSize: 4, CancelInterval: time.Hour})
+	err := w.Run(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "MarkJobSucceeded failed for job 6")
+}
+
+// TestWorker_Run_MarkJobFailedFails_WorkerExits covers handler error + MarkJobFailed error → worker exits.
+func TestWorker_Run_MarkJobFailedFails_WorkerExits(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	reg.Register("E", func(context.Context) error { return errors.New("handler boom") })
+
+	j := &schema.Job{ID: 7, Kind: "E", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	persistErr := errors.New("db write failed")
+	st.EXPECT().MarkJobFailed(gomock.Any(), int64(7), "handler boom").Return(persistErr)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: 50 * time.Millisecond, BatchSize: 4, CancelInterval: time.Hour})
+	err := w.Run(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "MarkJobFailed failed for job 7")
+}
+
+// TestWorker_Run_RescheduleJobFails_WorkerExits covers ErrReschedule + RescheduleJob error → worker exits.
+func TestWorker_Run_RescheduleJobFails_WorkerExits(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	when := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	reg.Register("R", func(context.Context) error { return jobs.ErrReschedule(when) })
+
+	j := &schema.Job{ID: 8, Kind: "R", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	persistErr := errors.New("db write failed")
+	st.EXPECT().RescheduleJob(gomock.Any(), int64(8), gomock.Any()).Return(persistErr)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: 50 * time.Millisecond, BatchSize: 4, CancelInterval: time.Hour})
+	err := w.Run(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "RescheduleJob failed for job 8")
+}
+
+// TestWorker_Run_ShutdownRescheduleFails_WorkerExits covers shutdown + RescheduleJob error → worker exits.
+func TestWorker_Run_ShutdownRescheduleFails_WorkerExits(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	started := make(chan struct{})
+	reg.Register("S", func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return context.Canceled
+	})
+
+	j := &schema.Job{ID: 9, Kind: "S", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	persistErr := errors.New("db write failed")
+	st.EXPECT().RescheduleJob(gomock.Any(), int64(9), gomock.Any()).Return(persistErr)
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: time.Hour, BatchSize: 4, CancelInterval: time.Hour})
+	errC := goRun(w, ctx)
+	<-started
+	cancel()
+	err := <-errC
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "RescheduleJob on shutdown failed for job 9")
+}
+
+// TestWorker_Run_MarkJobCanceledFails_WorkerExits covers user cancel + MarkJobCanceled error → worker exits.
+func TestWorker_Run_MarkJobCanceledFails_WorkerExits(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+	started := make(chan struct{})
+	reg.Register("B", func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+
+	j := &schema.Job{ID: 10, Kind: "B", Queue: "tok", Payload: []byte("[]")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				return []*schema.Job{j}, nil
+			}
+			return nil, nil
+		},
+	)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, ids []int64) ([]*schema.Job, error) {
+			if len(ids) == 0 {
+				return nil, nil
+			}
+			return []*schema.Job{{ID: ids[0], CancelRequested: true}}, nil
+		},
+	)
+	st.EXPECT().GetJob(gomock.Any(), int64(10)).Return(&schema.Job{ID: 10, CancelRequested: true}, nil).AnyTimes()
+	persistErr := errors.New("db write failed")
+	st.EXPECT().MarkJobCanceled(gomock.Any(), int64(10)).Return(persistErr)
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: time.Hour, BatchSize: 4, CancelInterval: 20 * time.Millisecond})
+	errC := goRun(w, ctx)
+	<-started
+	err := <-errC
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "MarkJobCanceled failed for job 10")
+}
+
 func goRun(w *jobs.Worker, ctx context.Context) <-chan error {
 	ch := make(chan error, 1)
 	go func() { ch <- w.Run(ctx) }()
