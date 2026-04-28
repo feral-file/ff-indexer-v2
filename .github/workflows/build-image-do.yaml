@@ -1,0 +1,22 @@
+name: Build Image DO
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Placeholder only on main. Use a feature branch with the real workflow to build an image."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  placeholder:
+    name: Placeholder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain usage
+        run: |
+          echo "This placeholder exists on main so GitHub shows the workflow in the Actions panel."
+          echo "Select the branch that contains the real build workflow when running it manually."
