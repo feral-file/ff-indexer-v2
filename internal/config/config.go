@@ -430,13 +430,13 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// Postgres job queue
 	v.SetDefault("jobs.token_queue", "token_index")
 	v.SetDefault("jobs.media_queue", "media_index")
-	v.SetDefault("jobs.token_worker.concurrency", 50)
+	v.SetDefault("jobs.token_worker.concurrency", 5)
 	v.SetDefault("jobs.token_worker.poll_interval", 2*time.Second)
-	v.SetDefault("jobs.token_worker.batch_size", 16)
+	v.SetDefault("jobs.token_worker.batch_size", 100)
 	v.SetDefault("jobs.token_worker.cancel_interval", 5*time.Second)
-	v.SetDefault("jobs.media_worker.concurrency", 10)
+	v.SetDefault("jobs.media_worker.concurrency", 2)
 	v.SetDefault("jobs.media_worker.poll_interval", 2*time.Second)
-	v.SetDefault("jobs.media_worker.batch_size", 16)
+	v.SetDefault("jobs.media_worker.batch_size", 100)
 	v.SetDefault("jobs.media_worker.cancel_interval", 5*time.Second)
 
 	v.SetDefault("media_enabled", false)
