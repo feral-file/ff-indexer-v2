@@ -401,6 +401,86 @@ func TestWorker_Run_ShutdownRescheduleFails_WorkerExits(t *testing.T) {
 	require.Contains(t, err.Error(), "RescheduleJob on shutdown failed for job 9")
 }
 
+// TestWorker_Run_FatalErrorCancelsBlockingHandlers covers the critical fail-fast scenario:
+// when one job's terminal state transition fails, the worker cancels all in-flight handlers
+// and exits promptly rather than waiting indefinitely for them to complete naturally.
+func TestWorker_Run_FatalErrorCancelsBlockingHandlers(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+
+	// Job 1: blocks on context until canceled.
+	job1Started := make(chan struct{})
+	job1Canceled := make(chan struct{})
+	reg.Register("BlockingJob", func(ctx context.Context) error {
+		close(job1Started)
+		<-ctx.Done()
+		close(job1Canceled)
+		return ctx.Err()
+	})
+
+	// Job 2: succeeds immediately, but MarkJobSucceeded fails (fatal error).
+	reg.Register("QuickJob", func(ctx context.Context) error {
+		return nil
+	})
+
+	job1 := &schema.Job{ID: 100, Kind: "BlockingJob", Queue: "tok", Payload: []byte("[]")}
+	job2 := &schema.Job{ID: 101, Kind: "QuickJob", Queue: "tok", Payload: []byte("[]")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var claimCalls int32
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
+		func(context.Context, string, int) ([]*schema.Job, error) {
+			if atomic.AddInt32(&claimCalls, 1) == 1 {
+				// First claim: return both jobs.
+				return []*schema.Job{job1, job2}, nil
+			}
+			// After jobs start, no more claims (ctx will be canceled).
+			return nil, nil
+		},
+	)
+
+	// Job 2 succeeds but MarkJobSucceeded fails (fatal error).
+	persistErr := errors.New("db write failed")
+	st.EXPECT().MarkJobSucceeded(gomock.Any(), int64(101)).Return(persistErr)
+
+	// Job 1 gets rescheduled on shutdown (because its context was canceled by fail-fast).
+	st.EXPECT().RescheduleJob(gomock.Any(), int64(100), gomock.Any()).Return(nil)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{Queue: "tok", PollInterval: 50 * time.Millisecond, BatchSize: 4, CancelInterval: time.Hour})
+
+	// Run worker in background.
+	errC := make(chan error, 1)
+	go func() { errC <- w.Run(ctx) }()
+
+	// Wait for blocking job to start.
+	<-job1Started
+
+	// Now wait for the blocking job to be canceled (by fail-fast).
+	// This should happen promptly after job2's fatal error.
+	select {
+	case <-job1Canceled:
+		// Good: blocking handler was canceled.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Blocking handler was not canceled promptly on fatal error")
+	}
+
+	// Wait for worker to exit with fatal error.
+	select {
+	case err := <-errC:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "MarkJobSucceeded failed for job 101")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Worker did not exit promptly after fatal error")
+	}
+}
+
 // TestWorker_Run_MarkJobCanceledFails_WorkerExits covers user cancel + MarkJobCanceled error → worker exits.
 func TestWorker_Run_MarkJobCanceledFails_WorkerExits(t *testing.T) {
 	t.Parallel()

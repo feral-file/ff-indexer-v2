@@ -92,6 +92,9 @@ func NewWorker(st store.Store, reg *Registry, cfg WorkerConfig) *Worker {
 // If a terminal job state transition (MarkJobSucceeded, MarkJobFailed, etc.) fails to persist,
 // the worker fails fast and returns the error. This allows the supervisor to restart the process,
 // triggering the startup sweep to recover any orphaned running jobs.
+//
+// Reason: Internal worker context allows prompt cancellation of all in-flight handlers when a fatal
+// error occurs or external shutdown is requested, preventing indefinite blocking on batchWG.Wait().
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.ctxErr(ctx); err != nil {
 		return err
@@ -109,6 +112,11 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 
+	// runCtx is an internal worker context that we control for canceling all in-flight handlers.
+	// When fatal error or external shutdown occurs, we cancel this to interrupt handlers promptly.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+
 	pollCh := time.NewTicker(w.config.PollInterval)
 	defer pollCh.Stop()
 	cancelCh := time.NewTicker(w.config.CancelInterval)
@@ -116,7 +124,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	var batchWG sync.WaitGroup
 	defer func() {
-		// Wait for handler goroutines; parent ctx is already canceled, so new claims stop.
+		// Wait for handler goroutines; runCtx is already canceled, so handlers finish promptly.
 		batchWG.Wait()
 	}()
 
@@ -124,14 +132,16 @@ func (w *Worker) Run(ctx context.Context) error {
 	// Buffered to prevent goroutine leak if multiple jobs fail simultaneously.
 	fatalErr := make(chan error, 1)
 
-	if err := w.claimAndDispatch(ctx, &batchWG, fatalErr); err != nil && !errors.Is(err, context.Canceled) {
+	if err := w.claimAndDispatch(runCtx, &batchWG, fatalErr); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			// Check for fatal errors before returning on shutdown.
+			// Cancel all in-flight handlers on external shutdown.
+			runCancel()
+			// Wait completes in defer; check for fatal errors that arrived during drain.
 			select {
 			case err := <-fatalErr:
 				return err
@@ -139,14 +149,15 @@ func (w *Worker) Run(ctx context.Context) error {
 				return nil
 			}
 		case err := <-fatalErr:
-			// Terminal state persistence failure: fail-fast to trigger restart and sweep.
+			// Terminal state persistence failure: cancel all handlers and fail-fast.
+			runCancel()
 			return err
 		case <-pollCh.C:
-			if err := w.claimAndDispatch(ctx, &batchWG, fatalErr); err != nil && !errors.Is(err, context.Canceled) {
+			if err := w.claimAndDispatch(runCtx, &batchWG, fatalErr); err != nil && !errors.Is(err, context.Canceled) {
 				return err
 			}
 		case <-cancelCh.C:
-			w.flushCancelRequests(ctx)
+			w.flushCancelRequests(runCtx)
 		}
 	}
 }
