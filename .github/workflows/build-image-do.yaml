@@ -1,0 +1,168 @@
+name: Build Image DO
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version suffix for the image tag (for example: 0.1.0, prod, 2026-04-02). If empty, use the commit hash."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  DOCR_REGISTRY_NAME: feral-file
+  DOCR_REGISTRY: registry.digitalocean.com/feral-file
+  DOCR_REPOSITORY: apps
+  DOCR_TAG_PREFIX: ff-indexer-
+  DOCR_KEEP_IMAGES: "3"
+
+jobs:
+  build-and-push:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Determine image tag
+        id: determine-tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          if [ -n "${INPUT_TAG}" ]; then
+            TAG="${DOCR_TAG_PREFIX}${INPUT_TAG}"
+          else
+            TAG="${DOCR_TAG_PREFIX}${GIT_SHA::12}"
+          fi
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "Using tag: ${TAG}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_DOCR_TOKEN }}
+
+      - name: Login to DigitalOcean Container Registry
+        run: doctl registry login --expiry-seconds 1200
+
+      - name: Generate Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCR_REGISTRY }}/${{ env.DOCR_REPOSITORY }}
+          tags: |
+            type=raw,value=${{ steps.determine-tag.outputs.tag }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./tools/docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            CGO_ENABLED=1
+          provenance: false
+          sbom: false
+
+      - name: Clean up older DOCR tags for ff-indexer
+        if: ${{ success() }}
+        continue-on-error: true
+        env:
+          DO_TOKEN: ${{ secrets.DIGITALOCEAN_DOCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime
+
+          token = os.environ["DO_TOKEN"]
+          registry = os.environ["DOCR_REGISTRY_NAME"]
+          repository = os.environ["DOCR_REPOSITORY"]
+          prefix = os.environ["DOCR_TAG_PREFIX"]
+          keep = int(os.environ["DOCR_KEEP_IMAGES"])
+
+          def request_json(url: str, method: str = "GET") -> dict:
+              req = urllib.request.Request(
+                  url,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req) as response:
+                  if response.status == 204:
+                      return {}
+                  return json.load(response)
+
+          tags = []
+          url = (
+              f"https://api.digitalocean.com/v2/registry/{registry}/repositories/"
+              f"{repository}/tags?page=1&per_page=200"
+          )
+          while url:
+              payload = request_json(url)
+              tags.extend(payload.get("tags", []))
+              pages = payload.get("links", {}).get("pages", {})
+              url = pages.get("next")
+
+          matching = [tag for tag in tags if tag.get("tag", "").startswith(prefix)]
+          matching.sort(
+              key=lambda item: datetime.fromisoformat(
+                  item["updated_at"].replace("Z", "+00:00")
+              ),
+              reverse=True,
+          )
+
+          to_delete = matching[keep:]
+          print(
+              f"Found {len(matching)} tags matching prefix {prefix}; "
+              f"keeping {min(len(matching), keep)} and deleting {len(to_delete)}."
+          )
+
+          deleted = []
+          for item in to_delete:
+              tag = item["tag"]
+              encoded_tag = urllib.parse.quote(tag, safe="")
+              delete_url = (
+                  f"https://api.digitalocean.com/v2/registry/{registry}/repositories/"
+                  f"{repository}/tags/{encoded_tag}"
+              )
+              request_json(delete_url, method="DELETE")
+              deleted.append(tag)
+              print(f"Deleted tag: {tag}")
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as summary:
+                  summary.write("\n## DOCR cleanup\n\n")
+                  summary.write(
+                      f"- Prefix: `{prefix}`\n"
+                      f"- Kept: `{min(len(matching), keep)}`\n"
+                      f"- Deleted: `{len(deleted)}`\n"
+                  )
+                  for tag in deleted:
+                      summary.write(f"  - `{tag}`\n")
+          PY
+
+      - name: Output image tag
+        run: |
+          echo "## Built image" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- \`${DOCR_REGISTRY}/${DOCR_REPOSITORY}:${{ steps.determine-tag.outputs.tag }}\`" >> "${GITHUB_STEP_SUMMARY}"

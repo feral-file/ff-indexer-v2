@@ -89,7 +89,7 @@ If a substantial change has no spec or design note, do not jump straight to impl
 
 ## Definition of done
 
-- Run `make post-implementation-check` after substantive code changes. If you cannot run it, say exactly what blocked verification.
+- Run `make check` after substantive code changes. If you cannot run it, say exactly what blocked verification.
 - Keep coverage non-regressing versus the base branch. If a necessary change lowers coverage, call it out in the PR and explain why.
 - Update `README.md`, `DEVELOPMENT.md`, `docs/`, or other authoritative docs when behavior, architecture, setup, or verification contracts change.
 - Reduce branching and nesting before accepting a large function. The strict lint profile treats cyclomatic and cognitive complexity as first-class review concerns.
@@ -123,18 +123,14 @@ go generate ./...
 Primary verification command:
 
 ```bash
-make post-implementation-check
+make check
 ```
 
-This is the canonical local verification entrypoint. It runs strict whole-file linting for Go files changed versus `main`, then runs the CI-aligned Go test package set with coverage output filtered the same way as CI.
+This is the canonical local verification entrypoint. It runs, in order: `imports` (`goimports`), `lint-local` (full-repo `golangci-lint` with CGO enabled), `test-lightweight-build` (`CGO_ENABLED=0` build plus `cmd/ff-indexer` tests), and `test` (`CGO_ENABLED=1` `go test -cover ./...`).
 
-The strict lint profile enforces:
+The lint profile enforces cyclomatic and cognitive complexity, function and file length, and doc quality expectations for the code it analyzes.
 
-- cyclomatic and cognitive complexity limits
-- function and file length limits
-- function and package doc comments
-
-Use `make check` when you intentionally want a broader maintenance pass across imports, local linting, and the repo-wide test command. Run additional targeted generation or build checks when relevant. If you cannot run the full expected verification, say so explicitly.
+CI still defines its own exact steps in `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`. Run additional targeted generation or build checks when relevant. If you cannot run the full expected verification, say so explicitly.
 
 ## Review and done
 
@@ -149,11 +145,11 @@ Before merge, commit finalization, or PR completion:
 A change is done only when implementation, relevant tests, verification, documentation, and review are all complete.
 
 - Prefer waiting for CI status checks before considering a PR done.
-- If local `make post-implementation-check` or full CI cannot be run, state that explicitly in the PR description so reviewers know what was validated.
+- If local `make check` or full CI cannot be run, state that explicitly in the PR description so reviewers know what was validated.
 - When creating a GitHub issue, use the repository issue templates in `.github/ISSUE_TEMPLATE/` and complete every requested section.
 - When creating a PR, use `.github/PULL_REQUEST_TEMPLATE.md` and keep the description aligned with the template fields.
 - Do not replace the template structure with ad hoc prose; add extra context only after the required sections are complete.
-- Before requesting review and after addressing review feedback, review the full diff, rerun `make post-implementation-check`, and summarize any remaining unverified risk.
+- Before requesting review and after addressing review feedback, review the full diff, rerun `make check`, and summarize any remaining unverified risk.
 
 ## Commit style
 

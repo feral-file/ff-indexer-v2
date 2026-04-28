@@ -12,6 +12,7 @@ CREATE TYPE event_type AS ENUM ('mint', 'transfer', 'burn', 'metadata_update');
 CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
 CREATE TYPE indexing_job_status AS ENUM ('running', 'paused', 'failed', 'completed', 'canceled');
 CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken');
+CREATE TYPE job_status AS ENUM ('pending', 'running', 'succeeded', 'failed', 'canceled');
 
 -- ============================================================================
 -- CORE TABLES
@@ -261,8 +262,8 @@ CREATE TABLE webhook_deliveries (
     event_id VARCHAR(255) NOT NULL,           -- Unique event ID (ULID for time-sortable)
     event_type VARCHAR(50) NOT NULL,          -- e.g., "token.indexing.queryable", "token.indexing.viewable"
     payload JSONB NOT NULL,                   -- Full event payload
-    workflow_id VARCHAR(255) NOT NULL,        -- Temporal workflow ID for tracking
-    workflow_run_id VARCHAR(255),             -- Temporal run ID
+    workflow_id VARCHAR(255) NOT NULL,        -- Correlation ID for tracking (historical column name)
+    workflow_run_id VARCHAR(255),             -- Optional second correlation ID (historical column name)
     delivery_status webhook_delivery_status NOT NULL DEFAULT 'pending', -- pending, success, failed
     attempts INTEGER NOT NULL DEFAULT 0,      -- Number of delivery attempts
     last_attempt_at TIMESTAMPTZ,              -- Timestamp of last attempt
@@ -273,16 +274,31 @@ CREATE TABLE webhook_deliveries (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Jobs queue - durable work items for the postgres-backed job worker
+CREATE TABLE jobs (
+    id BIGSERIAL PRIMARY KEY,
+    queue TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status job_status NOT NULL DEFAULT 'pending',
+    unique_key TEXT,
+    run_after TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error TEXT,
+    cancel_requested BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ
+);
+
 -- Address Indexing Jobs table - Tracks address-level indexing job status
 CREATE TABLE address_indexing_jobs (
     id BIGSERIAL PRIMARY KEY,
     address TEXT NOT NULL,
     chain blockchain_chain NOT NULL,
     status indexing_job_status NOT NULL,
-    
-    -- Orchestrator workflow references
-    workflow_id TEXT NOT NULL,
-    workflow_run_id TEXT,
+    -- Queue work unit: required FK to jobs (see migration 016)
+    job_id BIGINT NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
     
     -- Progress tracking
     tokens_processed INTEGER DEFAULT 0,
@@ -393,8 +409,11 @@ CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(delivery_status
 CREATE INDEX idx_webhook_deliveries_event_id ON webhook_deliveries(event_id);
 CREATE INDEX idx_webhook_deliveries_client ON webhook_deliveries(client_id, created_at DESC);
 
+-- Jobs table indexes
+CREATE UNIQUE INDEX jobs_unique_key_active ON jobs (queue, kind, unique_key) WHERE status IN ('pending', 'running') AND unique_key IS NOT NULL;
+CREATE INDEX jobs_poll ON jobs (queue, run_after) WHERE status = 'pending';
+
 -- Address Indexing Jobs table indexes
-CREATE UNIQUE INDEX idx_address_indexing_job_workflow_id ON address_indexing_jobs(workflow_id) WHERE status IN ('running', 'paused');
 CREATE UNIQUE INDEX idx_address_indexing_jobs_address_chain_active ON address_indexing_jobs(address, chain) WHERE status IN ('running', 'paused');
 CREATE INDEX idx_address_indexing_jobs_address_chain_created ON address_indexing_jobs(address, chain, created_at DESC);
 CREATE INDEX idx_address_indexing_jobs_status_created ON address_indexing_jobs(status, created_at DESC);
@@ -495,6 +514,11 @@ CREATE TRIGGER update_address_indexing_jobs_updated_at
     BEFORE UPDATE ON address_indexing_jobs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to jobs
+CREATE TRIGGER update_jobs_updated_at
+    BEFORE UPDATE ON jobs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ============================================================================
 -- INITIAL DATA
 -- ============================================================================
@@ -524,4 +548,14 @@ COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';
 COMMENT ON TABLE key_value_store IS 'For configuration and state management';
 COMMENT ON TABLE webhook_clients IS 'Registered webhook clients for event notifications with HTTPS endpoints and event filtering';
 COMMENT ON TABLE webhook_deliveries IS 'Audit log of webhook delivery attempts with status tracking and response details';
-COMMENT ON TABLE address_indexing_jobs IS 'Tracks address-level indexing job status independent of Temporal workflows. Decouples job status from Temporal for easier querying via REST/GraphQL APIs.';
+COMMENT ON TABLE address_indexing_jobs IS 'Tracks address-level indexing job status; linked to the postgres job queue via job_id (jobs.id).';
+COMMENT ON TYPE job_status IS 'Status of a row in the postgres-backed job queue';
+COMMENT ON TABLE jobs IS 'Durable work queue: one row per unit of work for in-process handler dispatch';
+COMMENT ON COLUMN jobs.queue IS 'Logical queue name (e.g. token_index, media_index) consumed by a worker pool';
+COMMENT ON COLUMN jobs.kind IS 'Handler name registered with the job registry (workflow name successor)';
+COMMENT ON COLUMN jobs.payload IS 'JSON arguments for the handler (wire format: array of raw JSON values)';
+COMMENT ON COLUMN jobs.unique_key IS 'When set, enforces at most one active (pending or running) job per (queue, kind, unique_key)';
+COMMENT ON COLUMN jobs.run_after IS 'Do not run this job before this time (used for scheduling and manual reschedule)';
+COMMENT ON COLUMN jobs.last_error IS 'Terminal or latest failure message when status is failed';
+COMMENT ON COLUMN jobs.cancel_requested IS 'When true, worker should cancel the in-flight handler context';
+COMMENT ON COLUMN address_indexing_jobs.job_id IS 'Postgres job queue id (jobs.id) for this address indexing work unit';

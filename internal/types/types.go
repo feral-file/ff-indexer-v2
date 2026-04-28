@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -302,4 +303,20 @@ func parseDataURIMetadata(metadata string) (string, map[string]string, bool) {
 // IsDataURI checks if a string is a valid data URI
 func IsDataURI(s string) bool {
 	return strings.HasPrefix(s, "data:") && strings.Contains(s, ",")
+}
+
+// Int64FromUnsignedDecimalString parses s as an unsigned base-10 integer. After leading and
+// trailing ASCII whitespace is removed, the entire remainder must be digits [0-9] with no
+// sign prefix. Empty strings and non-digit runes are rejected.
+func Int64FromUnsignedDecimalString(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty string")
+	}
+	for i, c := range s {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("not an unsigned decimal string at rune %d", i)
+		}
+	}
+	return strconv.ParseInt(s, 10, 64)
 }

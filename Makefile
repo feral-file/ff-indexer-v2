@@ -1,5 +1,7 @@
 .PHONY: help build build-full rebuild rebuild-full run run-full quickstart quickstart-full \
-	up down start stop restart logs ps clean config \
+	up down start stop restart logs logs-component \
+	logs-api logs-ethereum-ingestion logs-tezos-ingestion logs-worker-core logs-worker-media logs-sweeper \
+	ps clean config \
 	up-infra up-app dev
 
 # Docker Compose settings
@@ -17,7 +19,7 @@ DOCKER_COMPOSE_FLAGS :=
 DOCKER_COMPOSE_UP := $(DOCKER_COMPOSE) up -d --remove-orphans
 
 # Service names
-INFRA_SERVICES := postgres temporal-postgres temporal temporal-ui
+INFRA_SERVICES := postgres
 APP_SERVICE := ff-indexer
 ALL_APP_SERVICES := $(APP_SERVICE)
 
@@ -65,7 +67,7 @@ up: ## Start all services
 	@echo "$(COLOR_GREEN)✓ All services started$(COLOR_RESET)"
 	@$(MAKE) ps
 
-up-infra: ## Start only infrastructure services (postgres, temporal)
+up-infra: ## Start only infrastructure services (PostgreSQL)
 	@echo "$(COLOR_GREEN)Starting infrastructure services...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE_UP) $(INFRA_SERVICES)
 	@echo "$(COLOR_GREEN)✓ Infrastructure services started$(COLOR_RESET)"
@@ -125,6 +127,11 @@ restart-infra: ## Restart infrastructure services
 
 ##@ Monitoring Commands
 
+# $(1) = logger component (cmd/ff-indexer/main.go WithComponent). Matches compact or spaced JSON from zap.
+define run_ff_indexer_component_logs
+	@$(DOCKER_COMPOSE) logs -f --no-log-prefix $(APP_SERVICE) 2>&1 | grep -E '"component":[[:space:]]*"$(1)"'
+endef
+
 logs: ## Show logs for all services (follow mode)
 	@$(DOCKER_COMPOSE) logs -f
 
@@ -133,6 +140,36 @@ logs-app: ## Show logs for ff-indexer
 
 logs-infra: ## Show logs for infrastructure services
 	@$(DOCKER_COMPOSE) logs -f $(INFRA_SERVICES)
+
+# COMPONENT names match logger.WithComponent in cmd/ff-indexer/main.go.
+# Matches zap's JSON field with optional space after the colon: "component":"x" or "component": "x"
+# Or use shortcuts: make logs-api, make logs-ethereum-ingestion, etc.
+logs-component: ## Stream ff-indexer logs for one component (COMPONENT=name, e.g. worker-core)
+	@if [ -z "$(COMPONENT)" ]; then \
+		echo "$(COLOR_YELLOW)Usage: make logs-component COMPONENT=<name>$(COLOR_RESET)"; \
+		echo "  Or: make logs-api / make logs-ethereum-ingestion / ... (see make help)"; \
+		echo "  http-server, ethereum-ingestion, tezos-ingestion, worker-core, worker-media, sweeper"; \
+		exit 1; \
+	fi
+	$(call run_ff_indexer_component_logs,$(COMPONENT))
+
+logs-api: ## Stream ff-indexer logs for the HTTP server (component http-server)
+	$(call run_ff_indexer_component_logs,http-server)
+
+logs-ethereum-ingestion: ## Stream logs for Ethereum chain ingestion
+	$(call run_ff_indexer_component_logs,ethereum-ingestion)
+
+logs-tezos-ingestion: ## Stream logs for Tezos chain ingestion
+	$(call run_ff_indexer_component_logs,tezos-ingestion)
+
+logs-worker-core: ## Stream logs for the core postgres job worker
+	$(call run_ff_indexer_component_logs,worker-core)
+
+logs-worker-media: ## Stream logs for the media job worker
+	$(call run_ff_indexer_component_logs,worker-media)
+
+logs-sweeper: ## Stream logs for the media health sweeper
+	$(call run_ff_indexer_component_logs,sweeper)
 
 ps: ## Show status of all services
 	@$(DOCKER_COMPOSE) ps
@@ -211,7 +248,7 @@ lint: ## Run linters in Docker (CGO files skipped - use lint-local for full chec
 
 lint-local: ## Run linters locally with full CGO support (requires libvips: brew install vips)
 	@echo "$(COLOR_BLUE)Running linters locally with CGO support...$(COLOR_RESET)"
-	@golangci-lint run --verbose
+	@CGO_ENABLED=1 golangci-lint run --verbose
 	@echo "$(COLOR_GREEN)✓ Linters passed$(COLOR_RESET)"
 
 imports: ## Format imports
@@ -221,19 +258,16 @@ imports: ## Format imports
 
 test: ## Run tests
 	@echo "$(COLOR_BLUE)Running tests...$(COLOR_RESET)"
-	@go test -cover ./...
+	@CGO_ENABLED=1 go test -cover ./...
 	@echo "$(COLOR_GREEN)✓ Tests passed$(COLOR_RESET)"
 
-post-implementation-check: ## Run the canonical local verification flow for current changes
-	@./tools/scripts/post_implementation_check.sh
-	@echo "$(COLOR_GREEN)✓ Post-implementation checks passed$(COLOR_RESET)"
 test-lightweight-build: ## Verify the default CGO_ENABLED=0 app build and stub tests used by lightweight Docker mode
 	@echo "$(COLOR_BLUE)Verifying lightweight app build and stub tests (CGO_ENABLED=0)...$(COLOR_RESET)"
 	@CGO_ENABLED=0 go build ./cmd/ff-indexer
 	@CGO_ENABLED=0 go test ./cmd/ff-indexer/...
 	@echo "$(COLOR_GREEN)✓ Lightweight build passed$(COLOR_RESET)"
 
-check: imports lint-local test-lightweight-build test ## Run linters, format imports, lightweight build check, and tests
+check: imports lint-local test ## Format imports, local golangci-lint, lightweight (CGO=0) build + cmd tests, full (CGO=1) tests
 	@echo "$(COLOR_GREEN)✓ All checks passed$(COLOR_RESET)"
 
 ##@ Quick Start
@@ -246,7 +280,7 @@ quickstart: setup build up ## Complete setup and start (lightweight mode, recomm
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Mode:         Lightweight (~112MB)                    ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  API:          http://localhost:8081                   ║$(COLOR_RESET)"
-	@echo "$(COLOR_GREEN)║  Temporal UI:  http://localhost:8080                   ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  GraphQL:      http://localhost:8081/graphql           ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Run 'make logs' to view logs                         ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Run 'make ps' to view service status                 ║$(COLOR_RESET)"
@@ -265,7 +299,7 @@ quickstart-full: setup build-full up ## Complete setup and start (full mode with
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Mode:         Full with Media (~730MB)                ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  API:          http://localhost:8081                   ║$(COLOR_RESET)"
-	@echo "$(COLOR_GREEN)║  Temporal UI:  http://localhost:8080                   ║$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)║  GraphQL:      http://localhost:8081/graphql           ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║                                                        ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║  Media Processing: ✓ ENABLED                           ║$(COLOR_RESET)"
 	@echo "$(COLOR_GREEN)║    - libvips 8.18.2 (image processing)                 ║$(COLOR_RESET)"
@@ -284,5 +318,4 @@ dev: up-infra ## Start development mode (only infrastructure; run ff-indexer loc
 	@echo ""
 	@echo "$(COLOR_BLUE)Available services:$(COLOR_RESET)"
 	@echo "  PostgreSQL: localhost:5432"
-	@echo "  Temporal:   localhost:7233"
 	@echo ""

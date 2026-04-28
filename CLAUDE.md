@@ -6,7 +6,7 @@ Key repo rules for Claude Code:
 
 - Follow the repo workflow: `spec -> design -> tasks -> tests -> implementation -> verification -> review -> merge`
 - Read the authoritative docs listed in `AGENTS.md` before making substantial changes
-- Run `make post-implementation-check` as the canonical local verification command for substantive work
+- Run `make check` as the canonical local verification command for substantive work
 - Keep coverage non-regressing versus the base branch unless the PR documents the exception
 - Add doc comments for changed Go functions and packages
 - For non-trivial changed Go functions, use the doc comment to capture reason, trade-offs, and constraints

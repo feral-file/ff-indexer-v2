@@ -19,7 +19,7 @@ FF-Indexer v2 is a production-ready indexing service designed to capture and ind
 - **Provenance tracking** with full blockchain event history
 - **Owner-based indexing** for wallet-based queries
 
-The system is built with reliability and operational clarity in mind, using Temporal for workflow orchestration and PostgreSQL for persistent storage while chain ingestion runs in-process.
+The system is built with reliability and operational clarity in mind, using a PostgreSQL-backed `jobs` queue for background work and the same database for all durable state, while chain ingestion runs in-process.
 
 ## Quick Start
 
@@ -47,9 +47,8 @@ make quickstart
 **Configuration**: The system supports both YAML config files and environment variables. Environment variables (with `FF_INDEXER_` prefix) override config file values. See [DEVELOPMENT.md](DEVELOPMENT.md) for details.
 
 This will start:
-- PostgreSQL (port 5432)
-- Temporal server (ports 7233-7235) and UI (port 8080)
-- **ff-indexer** - single container running the HTTP API, chain ingestion, Temporal workers (token by default, media only when built with CGO), and media health sweeper
+- **PostgreSQL** (port 5432) — application data and the **`jobs` table** (durable work queue; no separate orchestrator)
+- **ff-indexer** — one container that runs the HTTP API, chain ingestion, job workers for `token_index` (and `media_index` when built with CGO and enabled), and the media health sweeper
 
 The API will be available at `http://localhost:8081`
 
@@ -58,7 +57,7 @@ The API will be available at `http://localhost:8081`
 For local development, you can run infrastructure in Docker and the application locally:
 
 ```bash
-# Start only infrastructure (PostgreSQL, Temporal)
+# Start only infrastructure (PostgreSQL, etc.)
 make dev
 
 # Run the binary (CGO optional; without CGO the media worker is disabled)
@@ -83,18 +82,21 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 All of the following run inside the **`ff-indexer`** process (goroutines) by default:
 
-- **Chain ingestion** - Ethereum and Tezos event subscriptions plus ordered in-memory flush queues that start workflows and advance durable cursors
-- **Worker core** — Temporal worker on `token-indexing`
-- **Worker media** — Temporal worker on `media-indexing` (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
+- **Chain ingestion** - Ethereum and Tezos event subscriptions plus ordered in-memory flush queues that enqueue jobs and advance durable cursors
+- **Worker core** — polls the `token_index` job queue
+- **Worker media** — polls the `media_index` job queue (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
 - **API server** — REST and GraphQL
 - **Sweeper** — Media URL health checks
+
+## Job queue
+
+Async work is stored in PostgreSQL in the **`jobs`** table (see [`docs/schema.md`](docs/schema.md)). Workers **claim** rows in transactions using **`SELECT … FOR UPDATE SKIP LOCKED`** so concurrent claimers do not block on each other’s locks. A **per-queue advisory lock** limits the default deployment to a single active poller per queue name. **v1 does not automatically retry** failed jobs: a handler error leaves the row in **`failed`** with **`last_error`**; operators re-enqueue or fix upstreams as needed. Operational guidance and example SQL are in [DEVELOPMENT.md](DEVELOPMENT.md#job-queue-manual-checks).
 
 ## Requirements
 
 - Go 1.25.0+
 - Docker and Docker Compose
 - PostgreSQL 18+
-- Temporal 1.29.0+
 - Access to Ethereum RPC endpoints
 
 ## License

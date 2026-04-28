@@ -8,29 +8,28 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion 
 
 1. Chain ingestion subscribes to Ethereum and Tezos events
 2. Each ingestion runner enqueues normalized events in an in-memory flush queue
-3. The ingestion runner filters each queued event, starts the matching Temporal workflow, and only then advances the durable cursor in PostgreSQL
-4. Temporal workers execute indexing logic and persist results in PostgreSQL
+3. The ingestion runner filters each queued event, enqueues a matching **job** on the PostgreSQL-backed queue for that event, and only then advances the durable cursor in PostgreSQL
+4. In-process **job workers** poll the `jobs` table, run registered handlers (token and media workflows), and persist results in PostgreSQL
 
-**Deployment model**: A single OS process (`cmd/ff-indexer`) runs the HTTP API, chain ingestion, Temporal workers, and the media health sweeper concurrently. External infrastructure remains **PostgreSQL** and **Temporal**. Outbound vendor and TzKT traffic is rate limited in-process.
+**Deployment model**: A single OS process (`cmd/ff-indexer`) runs the HTTP API, chain ingestion, two logical **job worker pools** (token queue and, when enabled, media queue), and the media health sweeper concurrently. Durable orchestration state lives in **PostgreSQL** (`jobs` and the rest of the schema). Outbound vendor and TzKT traffic is rate limited in-process.
 
 ## System Components
 
 ### Infrastructure Services
 
-1. **PostgreSQL** - Primary database for indexed data and cursor state
-2. **Temporal** - Workflow orchestration engine
+1. **PostgreSQL** — Primary database for indexed data, cursor state, and the **`jobs` queue** (durable work items, status, deduplication keys)
 
 ### Application Subsystems
 
-1. **Chain ingestion** - Subscribes to blockchain events, owns the ordered flush queue, starts workflows, and persists durable cursor progress
-2. **Worker core** - Executes token indexing workflows
-3. **Worker media** - Processes and uploads media files
-4. **API server** - Provides REST and GraphQL APIs
-5. **Sweeper** - Monitors media URL health
+1. **Chain ingestion** — Subscribes to blockchain events, owns the ordered flush queue, enqueues jobs, and persists durable cursor progress
+2. **Worker core** — Polls the `token_index` job queue and runs token- and webhook-related handlers
+3. **Worker media** — Polls the `media_index` job queue and runs media pipeline handlers (CGO / full image when enabled)
+4. **API server** — Provides REST and GraphQL APIs
+5. **Sweeper** — Monitors media URL health and can enqueue jobs (e.g. webhook notify)
 
 ## Chain Ingestion
 
-**Purpose**: Monitor blockchain networks for token mints, transfers, burns, and metadata updates, then flush those events into workflow execution with explicit durable progress.
+**Purpose**: Monitor blockchain networks for token mints, transfers, burns, and metadata updates, then flush those events into job execution with explicit durable progress.
 
 **Responsibilities**:
 
@@ -40,9 +39,9 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion 
 - Enqueue each normalized event into the ordered flush queue
 - Apply backpressure when the in-memory dispatch queue is saturated
 
-Durable progress moves only inside the ingestion runner after the queued event has flushed successfully.
+Durable progress moves only inside the ingestion runner after the queued event has flushed successfully (job enqueued and cursor rules satisfied).
 
-**Current routing**:
+**Current routing** (by job `kind` on the token queue):
 
 - `mint` -> `IndexTokenMint`
 - `transfer` -> `IndexTokenTransfer`
@@ -50,11 +49,11 @@ Durable progress moves only inside the ingestion runner after the queued event h
 - `metadata_update` -> `IndexMetadataUpdate`
 - `metadata_update_range` -> ignored explicitly until range handling is redesigned
 
-## Worker Core
+## Worker core
 
-**Purpose**: Execute Temporal workflows for token indexing, metadata resolution, and provenance tracking.
+**Purpose**: Execute **handlers** registered for the token queue—token indexing, metadata resolution, provenance, owner sweeps, and webhook delivery.
 
-Representative workflows:
+Representative `kind` values:
 
 - `IndexTokenMint`
 - `IndexTokenTransfer`
@@ -63,6 +62,9 @@ Representative workflows:
 - `IndexTokenMetadata`
 - `IndexTokenProvenances`
 - `IndexTokenOwner`
+- `DeliverWebhook` / `NotifyWebhookClients` (as applicable)
+
+Cross-queue work (for example, resolving media for a token) is modeled by **enqueuing** a separate job on the `media_index` queue rather than in-process handoff.
 
 ## Data Flow
 
@@ -75,9 +77,9 @@ Chain ingestion
     ↓
 Ordered flush queue
     ↓
-Temporal workflow
+jobs row (token queue)
     ↓
-Worker core activities
+Worker core handlers
     ↓
 PostgreSQL
 ```
@@ -87,13 +89,13 @@ PostgreSQL
 ```text
 Token event
     ↓
-IndexToken* workflow
+IndexToken* handler
     ↓
-FetchTokenMetadata activity
+FetchTokenMetadata (executor)
     ↓
 Metadata resolver and vendor enrichment
     ↓
-UpsertTokenMetadata activity
+UpsertTokenMetadata (executor)
     ↓
 PostgreSQL
 ```
@@ -103,9 +105,9 @@ PostgreSQL
 ```text
 Token metadata
     ↓
-IndexMediaWorkflow
+IndexMediaWorkflow job (media_index queue)
     ↓
-IndexMediaFile activity
+IndexMediaFile (executor)
     ↓
 Cloudflare Images / Stream
     ↓
@@ -116,4 +118,6 @@ PostgreSQL media asset records
 
 The default deployment target is still a single full `ff-indexer` replica. Because each chain ingestion runner owns its own in-process queue and durable cursor stream, running multiple identical full replicas will duplicate work unless operators intentionally partition chains or ingestion responsibility.
 
-Stateless API processes and Temporal workers can still scale independently when deployed separately from chain ingestion.
+The HTTP API and job workers are **in-process** by default. Running **a second** process that polls the same queue is intentionally discouraged at the data layer: one worker hold per queue uses a **Postgres advisory lock** so only one poller “owns” a given queue name; additional replicas would exit the worker cleanly or not poll. Scale-out patterns (if ever needed) would partition **queue names** or separate deployment roles rather than N identical pollers on the same queue.
+
+Stateless read replicas or split API-only deployments are separate operational choices; the job queue’s correctness assumes a **single active poller per logical queue** unless the deployment model is extended deliberately.

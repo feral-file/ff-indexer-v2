@@ -7,19 +7,16 @@ import (
 	"sync"
 	"time"
 
-	"go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
-	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
 const (
@@ -30,11 +27,11 @@ const (
 // Config defines how one chain ingestion runner subscribes, flushes, and
 // persists durable progress.
 type Config struct {
-	ChainID           domain.Chain
-	StartBlock        uint64
-	TemporalTaskQueue string
-	QueueCapacity     int
-	RetryDelay        time.Duration
+	ChainID       domain.Chain
+	StartBlock    uint64
+	TokenQueue    string
+	QueueCapacity int
+	RetryDelay    time.Duration
 }
 
 // Runner owns one chain ingestion pipeline from event source to workflow start.
@@ -60,12 +57,12 @@ type queueItem struct {
 }
 
 type runner struct {
-	source       blockchain.EventSource
-	store        store.Store
-	orchestrator temporal.TemporalOrchestrator
-	blacklist    registry.BlacklistRegistry
-	config       Config
-	clock        adapter.Clock
+	source    blockchain.EventSource
+	store     store.Store
+	jobQueue  jobs.JobQueue
+	blacklist registry.BlacklistRegistry
+	config    Config
+	clock     adapter.Clock
 
 	cancel    context.CancelFunc
 	queue     chan *queueItem
@@ -86,7 +83,7 @@ func NewRunner(
 	parentCtx context.Context,
 	source blockchain.EventSource,
 	st store.Store,
-	orchestrator temporal.TemporalOrchestrator,
+	jq jobs.JobQueue,
 	blacklist registry.BlacklistRegistry,
 	cfg Config,
 	clock adapter.Clock,
@@ -101,15 +98,15 @@ func NewRunner(
 	ctx, cancel := context.WithCancel(parentCtx)
 
 	r := &runner{
-		source:       source,
-		store:        st,
-		orchestrator: orchestrator,
-		blacklist:    blacklist,
-		config:       cfg,
-		clock:        clock,
-		cancel:       cancel,
-		queue:        make(chan *queueItem, cfg.QueueCapacity),
-		doneCh:       make(chan struct{}),
+		source:    source,
+		store:     st,
+		jobQueue:  jq,
+		blacklist: blacklist,
+		config:    cfg,
+		clock:     clock,
+		cancel:    cancel,
+		queue:     make(chan *queueItem, cfg.QueueCapacity),
+		doneCh:    make(chan struct{}),
 	}
 
 	go r.runFlushLoop(ctx)
@@ -283,7 +280,7 @@ func (r *runner) resolveEvent(ctx context.Context, event *domain.BlockchainEvent
 		return flushOutcomeDropped, nil
 	}
 
-	return r.startWorkflow(ctx, event)
+	return r.enqueueChainJob(ctx, event)
 }
 
 func (r *runner) shouldProcessEvent(ctx context.Context, event *domain.BlockchainEvent) (bool, error) {
@@ -316,19 +313,17 @@ func (r *runner) shouldProcessEvent(ctx context.Context, event *domain.Blockchai
 	return r.store.IsAnyAddressWatched(ctx, event.Chain, addresses)
 }
 
-func (r *runner) startWorkflow(ctx context.Context, event *domain.BlockchainEvent) (flushOutcome, error) {
-	workerCore := workflows.NewWorkerCore(nil, workflows.WorkerCoreConfig{}, nil, nil)
-
-	var workflowFunc interface{}
+func (r *runner) enqueueChainJob(ctx context.Context, event *domain.BlockchainEvent) (flushOutcome, error) {
+	var kind string
 	switch event.EventType {
 	case domain.EventTypeMint:
-		workflowFunc = workerCore.IndexTokenMint
+		kind = "IndexTokenMint"
 	case domain.EventTypeTransfer:
-		workflowFunc = workerCore.IndexTokenTransfer
+		kind = "IndexTokenTransfer"
 	case domain.EventTypeBurn:
-		workflowFunc = workerCore.IndexTokenBurn
+		kind = "IndexTokenBurn"
 	case domain.EventTypeMetadataUpdate:
-		workflowFunc = workerCore.IndexMetadataUpdate
+		kind = "IndexMetadataUpdate"
 	case domain.EventTypeMetadataUpdateRange:
 		logger.WarnCtx(ctx, "Ignoring unsupported metadata range event",
 			zap.String("chain", string(event.Chain)),
@@ -343,21 +338,20 @@ func (r *runner) startWorkflow(ctx context.Context, event *domain.BlockchainEven
 		return flushOutcomeIgnoredUnsupported, nil
 	}
 
-	options := client.StartWorkflowOptions{
-		ID:                    fmt.Sprintf("process-event-%s-%s-%d", event.Chain, event.TxHash, event.LogIndex),
-		TaskQueue:             r.config.TemporalTaskQueue,
-		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
-		WorkflowRunTimeout:    30 * time.Minute,
-	}
-
-	// TODO(ingestion-workflow-start): Distinguish "workflow already started"
-	// from "workflow did not start" so replay after a partial client-side
+	uk := jobs.ProcessEventUniqueKey(event.Chain, event.TxHash, event.LogIndex)
+	// TODO(ingestion-workflow-start): Distinguish "job already present (dedup)"
+	// from "enqueue did not start" so replay after a partial client-side
 	// failure can advance the cursor instead of retrying the same item forever.
-	if _, err := r.orchestrator.ExecuteWorkflow(ctx, options, workflowFunc, event); err != nil {
-		return "", fmt.Errorf("failed to execute workflow: %w", err)
+	if _, _, err := r.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+		Queue:     r.config.TokenQueue,
+		Kind:      kind,
+		Args:      []any{event},
+		UniqueKey: &uk,
+	}); err != nil {
+		return "", fmt.Errorf("failed to enqueue chain job: %w", err)
 	}
 
-	logger.InfoCtx(ctx, "Started workflow for blockchain event",
+	logger.InfoCtx(ctx, "Enqueued job for blockchain event",
 		zap.String("chain", string(event.Chain)),
 		zap.String("event_type", string(event.EventType)),
 		zap.String("token_cid", event.TokenCID().String()),

@@ -14,7 +14,7 @@ import (
 func TestRegisterWorkerMediaStub_DisabledMediaIsNoOp(t *testing.T) {
 	run, cleanup, err := registerWorkerMedia(context.Background(), &config.AppConfig{
 		MediaEnabled: false,
-	}, nil, nil)
+	}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, run)
 	require.NotNil(t, cleanup)
@@ -29,7 +29,7 @@ func TestRegisterWorkerMediaStub_DisabledMediaIsNoOp(t *testing.T) {
 func TestRegisterWorkerMediaStub_EnabledMediaFailsFast(t *testing.T) {
 	run, cleanup, err := registerWorkerMedia(context.Background(), &config.AppConfig{
 		MediaEnabled: true,
-	}, nil, nil)
+	}, nil)
 
 	require.Error(t, err)
 	require.EqualError(t, err, "media worker requires CGO_ENABLED=1 when media_enabled=true")

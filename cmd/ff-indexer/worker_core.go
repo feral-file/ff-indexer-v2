@@ -4,9 +4,6 @@ import (
 	"context"
 	"time"
 
-	"go.temporal.io/sdk/client"
-	"go.temporal.io/sdk/interceptor"
-	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
@@ -16,7 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
-	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
@@ -29,12 +26,11 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
-// registerWorkerCore wires the token-indexing Temporal worker (worker-core / token task queue).
+// registerWorkerCore wires the token-indexing jobs.Worker (worker-core / token_index queue).
 func registerWorkerCore(
 	ctx context.Context,
 	cfg *config.WorkerCoreConfig,
 	db *gorm.DB,
-	temporalClient client.Client,
 	rateLimiter ratelimit.Limiter,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
 	// Store and shared adapters.
@@ -46,8 +42,6 @@ func registerWorkerCore(
 	fs := adapter.NewFileSystem()
 	base64Adapter := adapter.NewBase64()
 	ioAdapter := adapter.NewIO()
-	temporalActivityAdapter := adapter.NewActivity()
-	temporalWorkflowAdapter := adapter.NewWorkflow()
 
 	httpClient := adapter.NewHTTPClient(15 * time.Second)
 
@@ -131,7 +125,7 @@ func registerWorkerCore(
 		}
 	}
 
-	executor := workflows.NewExecutor(
+	executor := workflows.NewCoreExecutor(
 		dataStore,
 		metadataResolver,
 		metadataEnhancer,
@@ -141,27 +135,14 @@ func registerWorkerCore(
 		clockAdapter,
 		httpClient,
 		ioAdapter,
-		temporalActivityAdapter,
 		blacklistRegistry,
 		urlChecker,
 		dataURIChecker)
 
-	// Temporal worker: register workflows and activities on the token task queue.
-	sentryInterceptor := temporal.NewSentryActivityInterceptor()
-	temporalWorker := worker.New(
-		temporalClient,
-		cfg.Temporal.TokenTaskQueue,
-		worker.Options{
-			MaxConcurrentActivityExecutionSize: cfg.Temporal.MaxConcurrentActivityExecutionSize,
-			WorkerActivitiesPerSecond:          cfg.Temporal.WorkerActivitiesPerSecond,
-			MaxConcurrentActivityTaskPollers:   cfg.Temporal.MaxConcurrentActivityTaskPollers,
-			Interceptors: []interceptor.WorkerInterceptor{
-				sentryInterceptor,
-			},
-		})
+	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)
 
-	workerCore := workflows.NewWorkerCore(executor,
-		workflows.WorkerCoreConfig{
+	core := workflows.NewCoreWorkflows(executor,
+		workflows.CoreWorkflowsConfig{
 			EthereumTokenSweepStartBlock:       cfg.EthereumTokenSweepStartBlock,
 			TezosTokenSweepStartBlock:          cfg.TezosTokenSweepStartBlock,
 			EthereumChainID:                    cfg.Ethereum.ChainID,
@@ -170,70 +151,42 @@ func registerWorkerCore(
 			EthereumOwnerSubsequentBatchTarget: cfg.EthereumOwnerSubsequentBatchTarget,
 			TezosOwnerFirstBatchTarget:         cfg.TezosOwnerFirstBatchTarget,
 			TezosOwnerSubsequentBatchTarget:    cfg.TezosOwnerSubsequentBatchTarget,
+			TokenTaskQueue:                     cfg.Jobs.TokenQueue,
 			MediaEnabled:                       cfg.MediaEnabled,
-			MediaTaskQueue:                     cfg.Temporal.MediaTaskQueue,
+			MediaTaskQueue:                     cfg.Jobs.MediaQueue,
 			BudgetedIndexingModeEnabled:        cfg.BudgetedIndexingEnabled,
 			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
-		}, blacklistRegistry, temporalWorkflowAdapter)
+		}, blacklistRegistry, jobQueue)
 
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMint)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenTransfer)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenBurn)
-	temporalWorker.RegisterWorkflow(workerCore.IndexMetadataUpdate)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenMetadata)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenFromEvent)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenProvenances)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokens)
-	temporalWorker.RegisterWorkflow(workerCore.IndexToken)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTokenOwner)
-	temporalWorker.RegisterWorkflow(workerCore.IndexTezosTokenOwner)
-	temporalWorker.RegisterWorkflow(workerCore.IndexEthereumTokenOwner)
-	temporalWorker.RegisterWorkflow(workerCore.IndexMultipleTokensMetadata)
-	temporalWorker.RegisterWorkflow(workerCore.NotifyWebhookClients)
-	temporalWorker.RegisterWorkflow(workerCore.DeliverWebhook)
+	reg := jobs.NewRegistry(jsonAdapter)
+	reg.Register("IndexTokenMint", core.IndexTokenMint)
+	reg.Register("IndexTokenTransfer", core.IndexTokenTransfer)
+	reg.Register("IndexTokenBurn", core.IndexTokenBurn)
+	reg.Register("IndexMetadataUpdate", core.IndexMetadataUpdate)
+	reg.Register("IndexToken", core.IndexToken)
+	reg.Register("IndexTokens", core.IndexTokens)
+	reg.Register("IndexTokenFromEvent", core.IndexTokenFromEvent)
+	reg.Register("IndexTokenMetadata", core.IndexTokenMetadata)
+	reg.Register("IndexMultipleTokensMetadata", core.IndexMultipleTokensMetadata)
+	reg.Register("IndexTokenProvenances", core.IndexTokenProvenances)
+	reg.Register("IndexTokenOwner", core.IndexTokenOwner)
+	reg.Register("IndexTezosTokenOwner", core.IndexTezosTokenOwner)
+	reg.Register("IndexEthereumTokenOwner", core.IndexEthereumTokenOwner)
+	reg.Register("NotifyWebhookClients", core.NotifyWebhookClients)
+	reg.Register("DeliverWebhook", core.DeliverWebhook)
 
-	temporalWorker.RegisterActivity(executor.CreateTokenMint)
-	temporalWorker.RegisterActivity(executor.ResolveTokenMetadata)
-	temporalWorker.RegisterActivity(executor.EnhanceTokenMetadata)
-	temporalWorker.RegisterActivity(executor.UpdateTokenTransfer)
-	temporalWorker.RegisterActivity(executor.UpdateTokenBurn)
-	temporalWorker.RegisterActivity(executor.CreateMetadataUpdate)
-	temporalWorker.RegisterActivity(executor.IndexTokenWithMinimalProvenancesByBlockchainEvent)
-	temporalWorker.RegisterActivity(executor.IndexTokenWithFullProvenancesByTokenCID)
-	temporalWorker.RegisterActivity(executor.CheckTokenExists)
-	temporalWorker.RegisterActivity(executor.GetEthereumTokenCIDsByOwnerWithinBlockRange)
-	temporalWorker.RegisterActivity(executor.GetLatestEthereumBlock)
-	temporalWorker.RegisterActivity(executor.GetLatestTezosBlock)
-	temporalWorker.RegisterActivity(executor.IndexTokenWithMinimalProvenancesByTokenCID)
-	temporalWorker.RegisterActivity(executor.GetTezosTokenCIDsByAccountWithinBlockRange)
-	temporalWorker.RegisterActivity(executor.GetIndexingBlockRangeForAddress)
-	temporalWorker.RegisterActivity(executor.UpdateIndexingBlockRangeForAddress)
-	temporalWorker.RegisterActivity(executor.EnsureWatchedAddressExists)
-	temporalWorker.RegisterActivity(executor.GetActiveWebhookClientsByEventType)
-	temporalWorker.RegisterActivity(executor.GetWebhookClientByID)
-	temporalWorker.RegisterActivity(executor.CreateWebhookDeliveryRecord)
-	temporalWorker.RegisterActivity(executor.DeliverWebhookHTTP)
-	temporalWorker.RegisterActivity(executor.GetQuotaInfo)
-	temporalWorker.RegisterActivity(executor.IncrementTokensIndexed)
-	temporalWorker.RegisterActivity(executor.CreateIndexingJob)
-	temporalWorker.RegisterActivity(executor.UpdateIndexingJobStatus)
-	temporalWorker.RegisterActivity(executor.UpdateIndexingJobProgress)
-	temporalWorker.RegisterActivity(executor.CheckMediaURLsHealthAndUpdateViewability)
+	tw := cfg.Jobs.TokenWorker
+	jWorker := jobs.NewWorker(dataStore, reg, jobs.WorkerConfig{
+		Queue:          cfg.Jobs.TokenQueue,
+		Concurrency:    tw.Concurrency,
+		PollInterval:   tw.PollInterval,
+		BatchSize:      tw.BatchSize,
+		CancelInterval: tw.CancelInterval,
+	})
 
 	// Run blocks until worker exits or ctx is canceled; cleanup closes the Ethereum RPC client.
 	run = func(ctx context.Context) error {
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- temporalWorker.Start()
-		}()
-		select {
-		case err := <-errCh:
-			return err
-		case <-ctx.Done():
-			temporalWorker.Stop()
-			<-errCh
-			return ctx.Err()
-		}
+		return jWorker.Run(ctx)
 	}
 	cleanup = func(context.Context) error {
 		adapterEthClient.Close()

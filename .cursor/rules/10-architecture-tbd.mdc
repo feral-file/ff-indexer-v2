@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Architecture Guidance
 
-**System design** for this repository lives in `docs/architecture.md` (components, data flow, NATS/Temporal/Postgres roles, API server behavior).
+**System design** for this repository lives in `docs/architecture.md` (components, data flow, PostgreSQL and the `jobs` queue, API server behavior).
 
 **Product, API, and guardrails** intersect with:
 

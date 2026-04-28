@@ -50,7 +50,10 @@ tags:
   - name: collections
     description: Collection sync and state management operations
   - name: workflows
-    description: Temporal workflow status and tracking operations
+    description: |
+      Legacy workflow-style paths; job status is Postgres-backed. Prefer `GET /api/v1/jobs/{job_id}`.
+  - name: jobs
+    description: Indexer job status (Postgres-backed queue)
   - name: indexing
     description: Address indexing job tracking operations
   - name: webhooks
@@ -521,7 +524,8 @@ paths:
         **This endpoint does not require authentication** - it is open for public use.
         
         ## Response
-        Returns a workflow ID and run ID that can be used to track the indexing progress.
+        Returns a Postgres queue `job_id` plus deprecated `workflow_id` (decimal string of `job_id`) and
+        `run_id` (always null) for legacy clients; use `job_id` with `GET /api/v1/jobs/{job_id}` for status.
       operationId: triggerTokenIndexing
       tags:
         - tokens
@@ -564,11 +568,11 @@ paths:
         **This endpoint requires authentication** - use JWT Bearer token or API Key.
 
         ## Response
-        Returns an array of jobs with workflow IDs that can be used to track each address's indexing progress.
-        Each address gets its own workflow ID for independent progress tracking.
-        
-        ## Job Tracking
-        Use the returned workflow IDs with `/api/v1/indexing/jobs/{workflow_id}` to track:
+        Returns a `job_id` per address for tracking.
+
+        ## Job tracking
+        Use the returned `job_id` with `GET /api/v1/jobs/{job_id}` for queue status, and
+        `GET /api/v1/indexing/jobs/{job_id}` for address indexing detail (progress, blocks, etc.):
         - Current status (running, paused, completed, failed, canceled)
         - Tokens processed count
         - Current block range being indexed
@@ -635,8 +639,9 @@ paths:
         **This endpoint does not require authentication** - it is open for public use.
         
         ## Response
-        Returns a workflow ID and run ID that can be used to track the metadata refresh progress.
-        The workflow will trigger child workflows for each token in parallel.
+        Returns a Postgres queue `job_id` plus deprecated `workflow_id` (decimal string of `job_id`) and
+        `run_id` (always null) for legacy clients; use `job_id` with `GET /api/v1/jobs/{job_id}` for status.
+        Processing runs work units for each token according to the indexer implementation.
       operationId: triggerMetadataIndexing
       tags:
         - tokens
@@ -694,78 +699,163 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
 
-  /api/v1/workflows/{workflow_id}/runs/{run_id}:
+  /api/v1/jobs/{job_id}:
     get:
-      summary: Get workflow status
+      summary: Get indexer job status
       description: |
-        Retrieves the status of a Temporal workflow execution by workflow ID and run ID.
-        
-        This endpoint returns information about the workflow execution, including:
-        - Current status (RUNNING, COMPLETED, FAILED, CANCELED, TERMINATED, TIMED_OUT)
-        - Start time
-        - Close time (if completed)
-        - Execution duration (if completed)
-      operationId: getWorkflowStatus
+        Retrieves the status of a background indexer job by its Postgres job id.
+
+        Returns status, optional error, start/close time, and execution time when
+        the job is terminal.
+      operationId: getJobStatus
       tags:
-        - workflows
+        - jobs
       parameters:
-        - name: workflow_id
+        - name: job_id
           in: path
           required: true
-          description: The workflow ID
+          description: Integer job id returned by trigger operations
           schema:
-            type: string
-          example: "index-tokens-abc123"
-        - name: run_id
-          in: path
-          required: true
-          description: The run ID
-          schema:
-            type: string
-          example: "def456"
+            type: integer
+            format: int64
+            minimum: 1
       responses:
         '200':
-          description: Workflow status retrieved successfully
+          description: Job status retrieved successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WorkflowStatusResponse'
+                $ref: '#/components/schemas/JobStatusResponse'
         '400':
           description: Bad request - Missing or invalid parameters
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
-        '404':
-          description: Workflow execution not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
         '500':
-          description: Internal server error
+          description: |
+            Internal server error, including when the job id does not exist (response uses `code: internal_error`).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
 
-  /api/v1/indexing/jobs/{workflow_id}:
+  /api/v1/workflows/{workflow_id}:
     get:
-      summary: Get indexing job status by workflow ID
+      summary: Get indexer job status (legacy workflow id only)
       description: |
-        Retrieves the status of an address indexing job by its workflow ID.
-        
+        **Compatibility path** — same response as `GET /api/v1/jobs/{job_id}`.
+
+        `workflow_id` is the unsigned decimal string of the Postgres job id (`jobs.id`), as on deprecated
+        trigger response fields. Prefer `GET /api/v1/jobs/{job_id}` for new integrations.
+      operationId: getWorkflowJobStatus
+      deprecated: true
+      tags:
+        - workflows
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          description: |
+            Decimal string of `jobs.id` (same semantics as deprecated `workflow_id` on trigger responses).
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+            example: "42"
+      responses:
+        '200':
+          description: Job status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '400':
+          description: Bad request — missing or invalid path parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: |
+            Internal server error, including when the job id does not exist (response uses `code: internal_error`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/workflows/{workflow_id}/runs/{run_id}:
+    get:
+      summary: Get indexer job status (legacy workflow + run URL)
+      description: |
+        **Compatibility path** — same response as `GET /api/v1/jobs/{job_id}` and `GET /api/v1/workflows/{workflow_id}`.
+
+        - `workflow_id` — decimal string of `jobs.id` (see deprecated trigger fields).
+        - `run_id` — not used for Postgres queue jobs; only kept for old clients that still call this URL
+          shape. It has no effect on the response.
+
+        Prefer `GET /api/v1/jobs/{job_id}` for new integrations.
+      operationId: getWorkflowRun
+      deprecated: true
+      tags:
+        - workflows
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          description: |
+            Decimal string of `jobs.id` (same semantics as deprecated `workflow_id` on trigger responses).
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+            example: "42"
+        - name: run_id
+          in: path
+          required: true
+          description: |
+            **Ignored** for queue-backed jobs. Legacy path segment only; use `GET /api/v1/workflows/{workflow_id}` if
+            you do not need a run placeholder.
+          schema:
+            type: string
+            example: "00000000-0000-0000-0000-000000000000"
+      responses:
+        '200':
+          description: Job status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '400':
+          description: Bad request — missing or invalid path parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: |
+            Internal server error, including when the job id does not exist (response uses `code: internal_error`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/indexing/jobs/{job_id}:
+    get:
+      summary: Get address indexing job by queue job id
+      description: |
+        Retrieves the status of an address indexing job by its postgres `jobs.id` (same id
+        returned when triggering address indexing).
+
         This endpoint returns information about the indexing job, including:
         - Current status (running, paused, failed, completed, canceled)
         - Address and chain being indexed
         - Progress tracking (tokens processed, block ranges)
         - Timing information (started, paused, completed, failed times)
         - Optional: Total token counts (indexed and viewable)
-        
-        The workflow ID is returned when you trigger address indexing via the
-        `POST /api/v1/tokens/addresses/index` endpoint or the GraphQL `triggerAddressIndexing` mutation.
-        
-        Each address gets its own workflow and job record for tracking progress independently.
+
+        The job id is returned when you trigger address indexing via
+        `POST /api/v1/tokens/addresses/index` or the GraphQL `triggerAddressIndexing` mutation.
+
+        Each address gets its own job record for tracking progress independently.
         
         ## Optional Token Counts
         
@@ -784,13 +874,15 @@ paths:
       tags:
         - indexing
       parameters:
-        - name: workflow_id
+        - name: job_id
           in: path
           required: true
-          description: The workflow ID of the indexing job
+          description: Queue job id (`jobs.id`) returned from trigger address indexing
           schema:
-            type: string
-          example: "index-token-owner-0x1234567890123456789012345678901234567890"
+            type: integer
+            format: int64
+            minimum: 1
+          example: 42
         - name: include_total_indexed
           in: query
           description: Include total_tokens_indexed (total tokens owned by address) in the response
@@ -813,7 +905,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/AddressIndexingJobResponse'
         '400':
-          description: Bad request - Missing or invalid workflow ID
+          description: Bad request - Missing or invalid job id
           content:
             application/json:
               schema:
@@ -1780,17 +1872,27 @@ components:
     TriggerIndexingResponse:
       type: object
       required:
+        - job_id
         - workflow_id
-        - run_id
       properties:
+        job_id:
+          type: integer
+          format: int64
+          description: Postgres job id; use with GET /api/v1/jobs/{job_id}
+          example: 42
         workflow_id:
           type: string
-          description: Temporal workflow ID for tracking
-          example: "index-workflow-123"
+          deprecated: true
+          description: |
+            Deprecated — use job_id for new clients. This value is the decimal string of job_id for
+            backward-compatible clients only (same semantics as deprecated GraphQL trigger fields).
+          example: "42"
         run_id:
-          type: string
-          description: Temporal run ID for tracking
-          example: "run-456"
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            Deprecated — always null for postgres-queue jobs; kept for legacy response shape.
+          example: null
 
     SyncCheckpoint:
       type: object
@@ -1909,16 +2011,31 @@ components:
       type: object
       required:
         - address
+        - job_id
         - workflow_id
       properties:
         address:
           type: string
           description: The wallet address being indexed
           example: "tz1abc123..."
+        job_id:
+          type: integer
+          format: int64
+          description: Postgres job id (`jobs.id`)
+          example: 1
         workflow_id:
-          type: string
-          description: Temporal workflow ID for tracking this address's indexing job
-          example: "index-token-owner-tz1abc123..."
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            **Deprecated** — use `job_id` for new clients. This value is the decimal string of `job_id` for
+            backward-compatible clients only.
+          example: "1"
+        workflow_run_id:
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            **Deprecated** — always null for postgres-queue jobs; kept for legacy response shape.
+          example: null
 
     TriggerAddressIndexingResponse:
       type: object
@@ -1932,58 +2049,52 @@ components:
             $ref: '#/components/schemas/AddressIndexingJobInfo'
           example:
             - address: "tz1abc123..."
-              workflow_id: "index-token-owner-tz1abc123..."
+              job_id: 1
+              workflow_id: "1"
+              workflow_run_id: null
             - address: "0x1234..."
-              workflow_id: "index-token-owner-0x1234..."
+              job_id: 2
+              workflow_id: "2"
+              workflow_run_id: null
 
-    WorkflowStatusResponse:
+    JobStatusResponse:
       type: object
       required:
-        - workflow_id
-        - run_id
+        - job_id
         - status
       properties:
-        workflow_id:
-          type: string
-          description: Temporal workflow ID
-          example: "index-workflow-123"
-        run_id:
-          type: string
-          description: Temporal run ID
-          example: "run-456"
+        job_id:
+          type: integer
+          format: int64
+          description: Postgres job id
+          example: 42
         status:
           type: string
           description: |
-            Current status of the workflow execution.
-            
-            Possible values:
-            - WORKFLOW_EXECUTION_STATUS_RUNNING - Workflow is currently running
-            - WORKFLOW_EXECUTION_STATUS_COMPLETED - Workflow completed successfully
-            - WORKFLOW_EXECUTION_STATUS_FAILED - Workflow failed with an error
-            - WORKFLOW_EXECUTION_STATUS_CANCELED - Workflow was canceled
-            - WORKFLOW_EXECUTION_STATUS_TERMINATED - Workflow was terminated
-            - WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW - Workflow continued as new
-            - WORKFLOW_EXECUTION_STATUS_TIMED_OUT - Workflow timed out
-          example: "WORKFLOW_EXECUTION_STATUS_COMPLETED"
+            Queued, running, completed, failed, or canceled; see `internal/schema` job status
+            for canonical values.
+          example: "completed"
+        last_error:
+          type: [string, "null"]
+          description: Error message if the job failed
         start_time:
           type: string
           format: date-time
-          description: Workflow start time in RFC3339 format
-          example: "2024-01-15T10:30:00Z"
+          description: When the job started
         close_time:
           type: string
           format: date-time
-          description: Workflow close time in RFC3339 format (only present if workflow is closed)
-          example: "2024-01-15T10:35:00Z"
+          description: When the job finished, if it is terminal
         execution_time_ms:
           type: integer
           format: uint64
-          description: Total execution time in milliseconds (only present if workflow is closed)
+          description: Time from start to close in milliseconds (when complete)
           example: 300000
 
     AddressIndexingJobResponse:
       type: object
       required:
+        - job_id
         - workflow_id
         - address
         - chain
@@ -1991,10 +2102,21 @@ components:
         - tokens_processed
         - started_at
       properties:
+        job_id:
+          type: integer
+          format: int64
+          description: Postgres queue job id for this address indexing work unit
         workflow_id:
-          type: string
-          description: Orchestrator workflow ID for this indexing job
-          example: "index-token-owner-0x1234567890123456789012345678901234567890"
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            **Deprecated** — use `job_id` for new clients. This value is the decimal string of `job_id` for
+            backward-compatible clients only.
+        workflow_run_id:
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            **Deprecated** — always null for postgres-queue jobs; kept for legacy response shape. null if not applicable.
         address:
           type: string
           description: Blockchain address being indexed

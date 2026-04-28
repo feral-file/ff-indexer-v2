@@ -1,45 +1,30 @@
 package workflows
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
+	"context"
 	"fmt"
-	"time"
 
-	"go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/temporal"
-	"go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	"github.com/feral-file/ff-indexer-v2/internal/metadata"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
 // IndexMetadataUpdate processes a metadata update event
-func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.BlockchainEvent) error {
-	logger.InfoWf(ctx, "Processing metadata update event",
+func (w *coreWorkflows) IndexMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
+	logger.InfoCtx(ctx, "Processing metadata update event",
 		zap.String("tokenCID", event.TokenCID().String()),
 		zap.String("chain", string(event.Chain)),
 		zap.String("txHash", event.TxHash),
 	)
 
-	// Configure activity options
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 10 * time.Second,
-			MaximumAttempts: 2,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
-
 	// Step 1: Create the metadata update record in the database
-	err := workflow.ExecuteActivity(ctx, w.executor.CreateMetadataUpdate, event).Get(ctx, nil)
+	err := w.executor.CreateMetadataUpdate(ctx, event)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to create metadata update record"),
 			zap.String("tokenCID", event.TokenCID().String()),
 			zap.Error(err),
@@ -47,19 +32,15 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 		return err
 	}
 
-	// Step 2: Start child workflow to index token metadata
-	childWorkflowOptions := workflow.ChildWorkflowOptions{
-		WorkflowID:               "index-metadata-" + event.TokenCID().String(),
-		WorkflowExecutionTimeout: time.Hour,
-		WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-		ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON,
-	}
-	childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
-	// Execute the child workflow without waiting for the result
-	childWorkflowExec := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, event.TokenCID(), nil).GetChildWorkflowExecution()
-	if err := childWorkflowExec.Get(ctx, nil); err != nil {
-		logger.ErrorWf(ctx,
+	// Step 2: Enqueue token metadata indexing job
+	_, _, err = w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+		Queue:     w.config.TokenTaskQueue,
+		Kind:      "IndexTokenMetadata",
+		Args:      []any{event.TokenCID(), nil},
+		UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", event.TokenCID().String())),
+	})
+	if err != nil {
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to execute child workflow IndexTokenMetadata"),
 			zap.String("tokenCID", event.TokenCID().String()),
 			zap.Error(err),
@@ -67,7 +48,7 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 		return err
 	}
 
-	logger.InfoWf(ctx, "Metadata update event recorded and metadata indexing started",
+	logger.InfoCtx(ctx, "Metadata update event recorded and metadata indexing started",
 		zap.String("tokenCID", event.TokenCID().String()),
 	)
 
@@ -75,18 +56,8 @@ func (w *workerCore) IndexMetadataUpdate(ctx workflow.Context, event *domain.Blo
 }
 
 // IndexTokenMetadata indexes token metadata
-func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
-	logger.InfoWf(ctx, "Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
-
-	// Configure activity options with longer timeout for metadata fetching
-	activityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Minute, // Longer timeout for fetching from IPFS/Arweave
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval: 10 * time.Second,
-			MaximumAttempts: 2,
-		},
-	}
-	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
+	logger.InfoCtx(ctx, "Indexing token metadata", zap.String("tokenCID", tokenCID.String()))
 
 	// Step 1: Fetch the token normalizedMetadata from the blockchain
 	// This activity handles:
@@ -95,10 +66,9 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// - FA2: Use TzKT API to get normalizedMetadata
 	// It also processes the URI (IPFS, Arweave, HTTP, data URIs)
 	// and stores the metadata in the database
-	var normalizedMetadata *metadata.NormalizedMetadata
-	err := workflow.ExecuteActivity(ctx, w.executor.ResolveTokenMetadata, tokenCID).Get(ctx, &normalizedMetadata)
+	normalizedMetadata, err := w.executor.ResolveTokenMetadata(ctx, tokenCID)
 	if err != nil {
-		logger.ErrorWf(ctx,
+		logger.ErrorCtx(ctx,
 			fmt.Errorf("failed to fetch token metadata"),
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
@@ -123,12 +93,11 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// - Fetch additional metadata from vendor APIs
 	// - Store enrichment data in enrichment_sources table
 	// - Update token_metadata with enriched data and set enrichment_level to 'vendor'
-	var enhancedMetadata *metadata.EnhancedMetadata
-	err = workflow.ExecuteActivity(ctx, w.executor.EnhanceTokenMetadata, tokenCID, normalizedMetadata).Get(ctx, &enhancedMetadata)
+	enhancedMetadata, err := w.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
 	if err != nil {
 		// Log the error but don't fail the workflow
 		// Enrichment is optional and should not block the main indexing flow
-		logger.WarnWf(ctx, "Failed to enhance token metadata (non-fatal)",
+		logger.WarnCtx(ctx, "Failed to enhance token metadata (non-fatal)",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
@@ -153,11 +122,10 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// Step 3: Check media health and update viewability, then fire the webhook
 	// This activity checks all URLs in parallel and updates the is_viewable column
 	// It returns the viewability status and list of healthy URLs
-	var result *MediaHealthCheckResult
-	err = workflow.ExecuteActivity(ctx, w.executor.CheckMediaURLsHealthAndUpdateViewability,
-		tokenCID.String(), uniqueURLs).Get(ctx, &result)
+	result, err := w.executor.CheckMediaURLsHealthAndUpdateViewability(ctx,
+		tokenCID.String(), uniqueURLs)
 	if err != nil {
-		logger.WarnWf(ctx, "Failed to check media health and update viewability (non-fatal)",
+		logger.WarnCtx(ctx, "Failed to check media health and update viewability (non-fatal)",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Error(err),
 		)
@@ -167,7 +135,7 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		}
 	}
 
-	logger.InfoWf(ctx, "Token viewability updated",
+	logger.InfoCtx(ctx, "Token viewability updated",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.Bool("is_viewable", result.IsViewable),
 		zap.Int("healthy_urls_count", len(result.HealthyURLs)),
@@ -185,20 +153,20 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 	// When media indexing is disabled for the deployment, skip creating child workflows
 	// so token-indexing does not enqueue work onto an unserved task queue.
 	if !w.config.MediaEnabled {
-		logger.InfoWf(ctx, "Skipping media indexing workflow because media is disabled",
+		logger.InfoCtx(ctx, "Skipping media indexing workflow because media is disabled",
 			zap.String("tokenCID", tokenCID.String()),
 		)
 	} else if len(result.HealthyURLs) > 0 {
-		logger.InfoWf(ctx, "Triggering media indexing workflow",
+		logger.InfoCtx(ctx, "Triggering media indexing workflow",
 			zap.String("tokenCID", tokenCID.String()),
 			zap.Int("mediaCount", len(result.HealthyURLs)),
 		)
 
 		// Only index valid URLs from the healthy URLs list
 		validURLs := make([]string, 0, len(result.HealthyURLs))
-		for _, url := range result.HealthyURLs {
-			if types.IsValidURL(url) || types.IsDataURI(url) {
-				validURLs = append(validURLs, url)
+		for _, u := range result.HealthyURLs {
+			if types.IsValidURL(u) || types.IsDataURI(u) {
+				validURLs = append(validURLs, u)
 			}
 		}
 
@@ -206,79 +174,59 @@ func (w *workerCore) IndexTokenMetadata(ctx workflow.Context, tokenCID domain.To
 		// oversized data URI cannot cause the entire batch to fail, and failures
 		// are isolated to individual URLs.
 		// FIXME: This is a temporary solution to avoid the entire batch failing due to a single oversized data URI.
-		// The better approach for data URI could be Claim Check Pattern to ensure the data URI bypass the Temporal params size limit.
-		for _, url := range validURLs {
-			// Use a SHA-256 hash of the URL as the workflow ID so that long data
-			// URIs don't exceed Temporal's 255-character workflow ID limit.
-			hash := sha256.Sum256([]byte(url))
-			workflowID := fmt.Sprintf("index-media-%s", base64.RawURLEncoding.EncodeToString(hash[:]))
-
-			childWorkflowOptions := workflow.ChildWorkflowOptions{
-				WorkflowID:            workflowID,
-				WorkflowRunTimeout:    30 * time.Minute,
-				TaskQueue:             w.config.MediaTaskQueue,
-				WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-				ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON,
-			}
-			childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
-			childWorkflow := workflow.ExecuteChildWorkflow(childCtx, "IndexMediaWorkflow", url)
-
-			var childExecution workflow.Execution
-			if err := childWorkflow.GetChildWorkflowExecution().Get(childCtx, &childExecution); err != nil {
-				logger.WarnWf(ctx, "Failed to start media indexing workflow for URL (non-fatal)",
+		// The better approach for data URI could be Claim Check Pattern to avoid oversized job payloads.
+		for _, u := range validURLs {
+			uk := types.StringPtr("media-" + types.MD5Hash(u))
+			_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+				Queue:     w.config.MediaTaskQueue,
+				Kind:      "IndexMediaWorkflow",
+				Args:      []any{u},
+				UniqueKey: uk,
+			})
+			if err != nil {
+				logger.WarnCtx(ctx, "Failed to start media indexing workflow for URL (non-fatal)",
 					zap.String("tokenCID", tokenCID.String()),
-					zap.String("workflowID", workflowID),
+					zap.String("url", u),
 					zap.Error(err),
 				)
 			} else {
-				logger.InfoWf(ctx, "Media indexing workflow started",
+				logger.InfoCtx(ctx, "Media indexing job enqueued",
 					zap.String("tokenCID", tokenCID.String()),
-					zap.String("workflowID", childExecution.ID),
+					zap.String("uniqueKey", *uk),
 				)
 			}
 		}
 	}
 
-	logger.InfoWf(ctx, "Token metadata indexed successfully", zap.String("tokenCID", tokenCID.String()))
+	logger.InfoCtx(ctx, "Token metadata indexed successfully", zap.String("tokenCID", tokenCID.String()))
 
 	return nil
 }
 
 // IndexMultipleTokensMetadata indexes metadata for multiple tokens by triggering child workflows
-func (w *workerCore) IndexMultipleTokensMetadata(ctx workflow.Context, tokenCIDs []domain.TokenCID) error {
-	logger.InfoWf(ctx, "Indexing multiple tokens metadata", zap.Int("count", len(tokenCIDs)))
+func (w *coreWorkflows) IndexMultipleTokensMetadata(ctx context.Context, tokenCIDs []domain.TokenCID) error {
+	logger.InfoCtx(ctx, "Indexing multiple tokens metadata", zap.Int("count", len(tokenCIDs)))
 
 	if len(tokenCIDs) == 0 {
-		logger.WarnWf(ctx, "No token CIDs provided for batch metadata indexing")
+		logger.WarnCtx(ctx, "No token CIDs provided for batch metadata indexing")
 		return nil
 	}
 
 	// Trigger child workflows for each token
 	// Each child workflow runs independently and in parallel
-	var childFutures []workflow.ChildWorkflowFuture
 	for _, tokenCID := range tokenCIDs {
-		childWorkflowOptions := workflow.ChildWorkflowOptions{
-			WorkflowID:               fmt.Sprintf("index-metadata-%s", tokenCID.String()),
-			WorkflowExecutionTimeout: time.Hour,
-			WorkflowIDReusePolicy:    enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
-			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON, // Don't wait for children to complete
-		}
-		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
-
-		// Start the child workflow without waiting for result (fire and forget)
-		childWorkflowFuture := workflow.ExecuteChildWorkflow(childCtx, w.IndexTokenMetadata, tokenCID, nil)
-		childFutures = append(childFutures, childWorkflowFuture)
-
-	}
-
-	for _, childFuture := range childFutures {
-		if err := childFuture.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
+		_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+			Queue:     w.config.TokenTaskQueue,
+			Kind:      "IndexTokenMetadata",
+			Args:      []any{tokenCID, nil},
+			UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", tokenCID.String())),
+		})
+		if err != nil {
 			return err
 		}
 	}
 
-	logger.InfoWf(ctx, "Multiple tokens metadata indexing workflows triggered",
+	logger.InfoCtx(ctx, "Multiple tokens metadata indexing workflows triggered",
 		zap.Int("count", len(tokenCIDs)),
 	)
 

@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
@@ -23,7 +22,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/server"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	temporal "github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -104,17 +103,8 @@ func run() int {
 
 	dataStore := store.NewPGStore(db)
 
-	// Temporal client (shared by API, chain listeners, workers, sweeper).
-	temporalLogger := temporal.NewZapLoggerAdapter(logger.Default())
-	temporalClient, err := client.Dial(client.Options{
-		HostPort:  cfg.Temporal.HostPort,
-		Namespace: cfg.Temporal.Namespace,
-		Logger:    temporalLogger,
-	})
-	if err != nil {
-		logger.FatalCtx(rootCtx, "Failed to connect to Temporal", zap.Error(err))
-	}
-	defer temporalClient.Close()
+	jsonAdapter := adapter.NewJSON()
+	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)
 
 	// Process-local rate limiter for vendor APIs and Tezos paths.
 	rateLimiter, err := ratelimit.NewLimiter(cfg.RateLimiter)
@@ -122,8 +112,6 @@ func run() int {
 		logger.FatalCtx(rootCtx, "Failed to initialize rate limiter", zap.Error(err))
 	}
 	defer func() { _ = rateLimiter.Close() }()
-
-	jsonAdapter := adapter.NewJSON()
 
 	fs := adapter.NewFileSystem()
 	var blacklistRegistry registry.BlacklistRegistry
@@ -138,18 +126,18 @@ func run() int {
 		logger.WarnCtx(rootCtx, "Blacklist registry path not configured, all contracts will be allowed")
 	}
 
-	// Worker-core: token task queue + dedicated Ethereum RPC client for activities.
+	// Worker-core: token job queue + dedicated Ethereum RPC client for handlers.
 	wCoreCfg := cfg.ToWorkerCoreConfig()
-	runWorkerCore, cleanupWorkerCore, err := registerWorkerCore(rootCtx, wCoreCfg, db, temporalClient, rateLimiter)
+	runWorkerCore, cleanupWorkerCore, err := registerWorkerCore(rootCtx, wCoreCfg, db, rateLimiter)
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Failed to init worker-core", zap.Error(err))
 	}
 
 	// REST/GraphQL API.
 	apiCfg := cfg.ToAPIConfig()
-	srv := newAPIServer(apiCfg, dataStore, temporalClient, blacklistRegistry)
+	srv := newAPIServer(apiCfg, dataStore, jobQueue, blacklistRegistry)
 
-	// Media URL health sweeper (Temporal-driven batch checks).
+	// Media URL health sweeper (scheduled batch checks; may enqueue jobs).
 	sweeperCfg := cfg.ToSweeperConfig()
 	httpClient := adapter.NewHTTPClient(sweeperCfg.MediaHealthSweeper.HTTPTimeout)
 	ioAdapter := adapter.NewIO()
@@ -166,15 +154,15 @@ func run() int {
 		WorkerPoolSize: sweeperCfg.MediaHealthSweeper.Worker.WorkerPoolSize,
 		RecheckAfter:   sweeperCfg.MediaHealthSweeper.RecheckAfter,
 	}
-	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, temporalClient, sweeperCfg.Temporal.TokenTaskQueue)
+	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue)
 
 	// Worker-media: media task queue (requires CGO build).
-	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, cfg, db, temporalClient)
+	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, cfg, db)
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Failed to init worker-media", zap.Error(err))
 	}
 
-	// Subsystems: HTTP, chain listeners, Temporal workers, sweeper.
+	// Subsystems: HTTP, chain listeners, postgres job workers, sweeper.
 	g, ctx := errgroup.WithContext(rootCtx)
 
 	g.Go(func() error {
@@ -184,12 +172,12 @@ func run() int {
 
 	g.Go(func() error {
 		componentCtx := logger.WithComponent(ctx, "ethereum-ingestion")
-		return runEthereumIngestion(componentCtx, cfg, dataStore, temporalClient, blacklistRegistry)
+		return runEthereumIngestion(componentCtx, cfg, dataStore, jobQueue, blacklistRegistry)
 	})
 
 	g.Go(func() error {
 		componentCtx := logger.WithComponent(ctx, "tezos-ingestion")
-		return runTezosIngestion(componentCtx, cfg, dataStore, temporalClient, blacklistRegistry, rateLimiter)
+		return runTezosIngestion(componentCtx, cfg, dataStore, jobQueue, blacklistRegistry, rateLimiter)
 	})
 
 	g.Go(func() error {
@@ -247,19 +235,19 @@ func waitForSubsystems(
 func newAPIServer(
 	cfg *config.APIConfig,
 	dataStore store.Store,
-	temporalClient client.Client,
+	jq jobs.JobQueue,
 	blacklistRegistry registry.BlacklistRegistry,
 ) *server.Server {
 	jsonAdapter := adapter.NewJSON()
 	clockAdapter := adapter.NewClock()
 	serverConfig := server.Config{
-		Debug:                 cfg.Debug,
-		Host:                  cfg.Server.Host,
-		Port:                  cfg.Server.Port,
-		ReadTimeout:           time.Duration(cfg.Server.ReadTimeout) * time.Second,
-		WriteTimeout:          time.Duration(cfg.Server.WriteTimeout) * time.Second,
-		IdleTimeout:           time.Duration(cfg.Server.IdleTimeout) * time.Second,
-		OrchestratorTaskQueue: cfg.Temporal.TokenTaskQueue,
+		Debug:        cfg.Debug,
+		Host:         cfg.Server.Host,
+		Port:         cfg.Server.Port,
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+		TokenQueue:   cfg.Jobs.TokenQueue,
 		Auth: middleware.AuthConfig{
 			JWTPublicKey: cfg.Auth.JWTPublicKey,
 			APIKeys:      cfg.Auth.APIKeys,
@@ -267,7 +255,7 @@ func newAPIServer(
 		TezosChainID:    cfg.Tezos.ChainID,
 		EthereumChainID: cfg.Ethereum.ChainID,
 	}
-	return server.New(serverConfig, dataStore, temporalClient, blacklistRegistry, jsonAdapter, clockAdapter)
+	return server.New(serverConfig, dataStore, jq, blacklistRegistry, jsonAdapter, clockAdapter)
 }
 
 func runHTTPServer(ctx context.Context, srv *server.Server) error {

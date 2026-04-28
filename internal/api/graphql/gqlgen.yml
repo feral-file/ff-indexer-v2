@@ -283,6 +283,8 @@ models:
     model:
       - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.TriggerIndexingResponse
     fields:
+      job_id:
+        fieldName: JobID
       workflow_id:
         fieldName: WorkflowID
       run_id:
@@ -296,6 +298,10 @@ models:
         fieldName: Address
       workflow_id:
         fieldName: WorkflowID
+      workflow_run_id:
+        fieldName: WorkflowRunID
+      job_id:
+        fieldName: JobID
 
   TriggerAddressIndexingResult:
     model:
@@ -304,16 +310,16 @@ models:
       jobs:
         fieldName: Jobs
 
-  WorkflowStatus:
+  JobStatus:
     model:
-      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.WorkflowStatusResponse
+      - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.JobStatusResponse
     fields:
-      workflow_id:
-        fieldName: WorkflowID
-      run_id:
-        fieldName: RunID
+      job_id:
+        fieldName: JobID
       status:
         fieldName: Status
+      last_error:
+        fieldName: LastError
       start_time:
         fieldName: StartTime
       close_time:
@@ -346,8 +352,12 @@ models:
     model:
       - github.com/feral-file/ff-indexer-v2/internal/api/shared/dto.AddressIndexingJobResponse
     fields:
+      job_id:
+        fieldName: JobID
       workflow_id:
         fieldName: WorkflowID
+      workflow_run_id:
+        fieldName: WorkflowRunID
       address:
         fieldName: Address
       chain:

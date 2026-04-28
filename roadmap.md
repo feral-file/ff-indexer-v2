@@ -6,28 +6,25 @@ This document outlines the planned features and improvements for FF-Indexer v2. 
 
 ### Overview
 
-The current FF-Indexer v2 architecture is designed for full-scale production deployments with multiple services, Temporal workflows, NATS JetStream, and comprehensive media processing. However, for deployment on FF1 (resource limited), we need a lightweight version that can run efficiently with minimal resource requirements while maintaining core indexing functionality.
+The current FF-Indexer v2 **production** shape is a **single `ff-indexer` process** (HTTP API, chain ingestion, postgres-backed **`jobs` workers**, sweeper) with **PostgreSQL** as the system of record. Optional **Cloudflare** media and **CGO** add weight. For deployment on FF1 (resource limited), we need a variant that runs efficiently with minimal resources while keeping core indexing.
 
 ### Goals
 
 Create a streamlined version of the indexer optimized for FF1 that:
 
 - **Small Device Compatibility**: Designed to run efficiently on FF1 hardware with limited resources
-- **Minimal Dependencies**: Replace heavy dependencies (Temporal, NATS) with lightweight alternatives
+- **Minimal Dependencies**: Fewer moving parts (e.g. no Cloudflare, smaller optional stacks)
 - **Self-Hosted Media**: Process and serve media files locally without external cloud services
 - **GraphQL-First API**: Provide GraphQL as the primary and only API interface
 - **Core Functionality**: Maintain essential indexing capabilities while removing resource-intensive features
 
 ### Proposed Architecture
 
-The FF1 lightweight version will make significant architectural changes:
+The FF1 lightweight version will make significant product/architecture changes on top of the existing **single-process + `jobs` queue** model:
 
-1. **Replace Temporal Workflows**: Use direct processing or lightweight in-memory task queues instead of Temporal orchestration
-2. **Replace NATS JetStream**: Use direct database writes or lightweight message passing instead of NATS event streaming
-3. **Remove Cloudflare Integration**: Eliminate dependency on Cloudflare Images and Stream services
-4. **Local Media Processing**: Process media files (images, videos) locally and store them on the device's filesystem
-5. **GraphQL-Only API**: Remove REST API endpoints, focusing solely on GraphQL for all queries and operations
-6. **Unified Service**: Consolidate event emission, processing, and API into a single service to reduce overhead
+1. **Remove Cloudflare Integration**: Eliminate dependency on Cloudflare Images and Stream services where FF1 cannot use them
+2. **Local Media Processing**: Process media files (images, videos) locally and store them on the device's filesystem
+3. **Tighter resource profile**: Optional SQLite (or smaller Postgres), reduced enrichment defaults, and stricter limits as needed for the device class
 
 ### Features to Include
 
@@ -36,22 +33,18 @@ The FF1 lightweight version will make significant architectural changes:
 - **GraphQL API**: Complete GraphQL API for querying indexed tokens, metadata, and provenance
 - **Local Media Storage**: Download, process, and serve media files from local filesystem
 - **Database**: PostgreSQL (or SQLite for even lighter deployments) for data persistence
-- **Direct Event Processing**: Blockchain event processing without intermediate message queues
+- **Event-driven indexing**: Chain ingestion enqueues **`jobs`** (no separate message broker required)
 
 ### Features to Remove or Replace
 
-- **Temporal Workflows**: Replaced with direct processing or lightweight task queues
-- **NATS JetStream**: Replaced with direct database writes or in-memory queues
-- **Cloudflare Services**: Removed entirely; media processed and served locally
-- **REST API**: Removed; GraphQL is the only API interface
+- **Cloudflare Services**: Removed entirely for FF1; media processed and served locally
 - **Advanced Enrichment**: Optional; can be disabled to reduce resource usage
-- **Separate Worker Services**: Consolidated into a single unified service
+- **Split deployment roles**: Full tree already runs workers in-process; FF1 avoids extra operational surfaces beyond the device
 
 ### Implementation Strategy
 
 1. **Lightweight Alternatives**: 
-   - Replace Temporal with simple goroutine-based processing or lightweight job queues
-   - Replace NATS with direct database writes or in-memory channels
+   - Keep postgres-backed **`jobs`** (or evaluate SQLite / smaller DB for FF1)
    - Use local filesystem for media storage instead of Cloudflare
 
 2. **Configuration Modes**: 

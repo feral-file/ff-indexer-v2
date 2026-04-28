@@ -86,9 +86,9 @@ database:
   user: u
   password: p
   dbname: db
-temporal:
-  host_port: localhost:7233
-  token_task_queue: token-indexing
+jobs:
+  token_queue: token_index
+  media_queue: media_index
 ethereum:
   rpc_url: https://rpc.example.com
   websocket_url: wss://ws.example.com
@@ -120,9 +120,9 @@ func TestValidateRequiredConfigValues(t *testing.T) {
 			Host:   "localhost",
 			DBName: "ff_indexer",
 		},
-		Temporal: TemporalConfig{
-			HostPort:       "localhost:7233",
-			TokenTaskQueue: "token-indexing",
+		Jobs: JobsConfig{
+			TokenQueue: "token_index",
+			MediaQueue: "media_index",
 		},
 		Ethereum: EthereumConfig{
 			RPCURL:       "https://rpc.example.com",
@@ -142,9 +142,9 @@ func TestValidateRequiredConfigValues_MissingFields(t *testing.T) {
 		Database: DatabaseConfig{
 			Host: "localhost",
 		},
-		Temporal: TemporalConfig{
-			HostPort:       "localhost:7233",
-			TokenTaskQueue: "token-indexing",
+		Jobs: JobsConfig{
+			TokenQueue: "token_index",
+			MediaQueue: "media_index",
 		},
 		Ethereum: EthereumConfig{
 			RPCURL: "https://rpc.example.com",
@@ -157,32 +157,6 @@ func TestValidateRequiredConfigValues_MissingFields(t *testing.T) {
 	err := ValidateRequiredConfigValues(cfg)
 	require.Error(t, err)
 	assert.EqualError(t, err, "missing required config values: database.dbname, ethereum.websocket_url, tezos.websocket_url")
-}
-
-func TestValidateRequiredConfigValues_RequiresMediaTaskQueueWhenMediaEnabled(t *testing.T) {
-	cfg := &AppConfig{
-		MediaEnabled: true,
-		Database: DatabaseConfig{
-			Host:   "localhost",
-			DBName: "ff_indexer",
-		},
-		Temporal: TemporalConfig{
-			HostPort:       "localhost:7233",
-			TokenTaskQueue: "token-indexing",
-		},
-		Ethereum: EthereumConfig{
-			RPCURL:       "https://rpc.example.com",
-			WebSocketURL: "wss://ws.example.com",
-		},
-		Tezos: TezosConfig{
-			APIURL:       "https://api.tzkt.io",
-			WebSocketURL: "wss://ws.tzkt.io",
-		},
-	}
-
-	err := ValidateRequiredConfigValues(cfg)
-	require.Error(t, err)
-	assert.EqualError(t, err, "missing required config values: temporal.media_task_queue")
 }
 
 func TestConfigWithEnvironmentVariables(t *testing.T) {

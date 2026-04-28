@@ -36,10 +36,8 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    Edit `config/config.yaml` with your settings.
 
 3. **Required configuration** (in env vars or YAML):
-   - Database credentials
-   - NATS URL
-   - Temporal connection
-   - Ethereum/Tezos RPC endpoints
+   - Database credentials (PostgreSQL; the app also uses the **`jobs` table** as its work queue)
+   - Ethereum RPC (and Tezos indexer/RPC as needed for your chains)
    - Cloudflare credentials (only when `FF_INDEXER_MEDIA_ENABLED=true`)
    - API authentication (JWT public key or API keys)
 
@@ -49,12 +47,11 @@ Thank you for your interest in contributing to FF-Indexer v2! This document outl
    ```bash
    make dev
    ```
-   This starts PostgreSQL, Temporal, and NATS in Docker.
+   This brings up Docker Compose from [`tools/docker/Docker-compose.yaml`](tools/docker/Docker-compose.yaml) (PostgreSQL for the app database and `jobs` queue, plus `ff-indexer` when using `make up` / `make quickstart`).
 
 5. **Verify setup**:
    - PostgreSQL: `psql -h localhost -U postgres -d ff_indexer`
-   - Temporal UI: `http://localhost:8080`
-   - NATS: `http://localhost:8222`
+   - After `go run ./cmd/ff-indexer`, API: `http://localhost:8081` (port from config)
 
 ## Development Workflow
 
@@ -68,7 +65,7 @@ go run ./cmd/ff-indexer -config config/config.yaml
 
 ### Code Structure
 
-- `cmd/ff-indexer` - Single application entrypoint (HTTP API, emitters, bridge, Temporal workers, sweeper)
+- `cmd/ff-indexer` - Single application entrypoint (HTTP API, chain ingestion, postgres-backed job workers, sweeper)
 - `internal/` - Internal packages (not exported)
   - `adapter/` - External service adapters
   - `api/` - API handlers (REST, GraphQL)
@@ -80,10 +77,10 @@ go run ./cmd/ff-indexer -config config/config.yaml
   - `providers/` - Blockchain and external service providers
   - `registry/` - Blacklist and publisher registries
   - `store/` - Database layer
-  - `workflows/` - Temporal workflows and activities
+  - `workflows/` - In-process workflow handlers invoked by the job worker (orchestration via `jobs` table)
   - `uri/` - URI resolution (IPFS, Arweave, HTTP)
 - `db/` - Database migrations and schema
-- `tools/` - Development tools and scripts
+- `tools/` - `docker/` (Compose and images), `registry/` (publisher/blacklist JSON fixtures). There is no `tools/benchmark` CLI.
 - `docs/` - Documentation
 
 ### Testing
@@ -91,16 +88,12 @@ go run ./cmd/ff-indexer -config config/config.yaml
 The canonical pre-review verification command is:
 
 ```bash
-make post-implementation-check
+make check
 ```
 
-This command lints Go files changed versus `main` with whole-file readability and simplicity rules, then runs the CI-aligned Go test suite with coverage output.
+This runs import formatting, full-repo `golangci-lint` (with CGO), a lightweight `CGO_ENABLED=0` build and `cmd/ff-indexer` tests, then `CGO_ENABLED=1` `go test -cover ./...`. See the `check` target in the `Makefile` for the exact dependency chain.
 
-The strict lint profile now checks:
-
-- cyclomatic and cognitive complexity
-- function and file length
-- Go doc quality for changed functions and packages
+The lint profile checks cyclomatic and cognitive complexity, function and file length, and doc quality.
 
 Coverage policy is non-regression versus the base branch. If coverage drops, explain why in the PR body and call out any follow-up work.
 
@@ -123,7 +116,7 @@ go test ./internal/store/...
 
 ### Linting
 
-`make post-implementation-check` is the authoritative lint-and-test gate for substantive changes.
+`make check` is the authoritative lint-and-test gate for substantive changes.
 
 For narrower maintenance work, this project also uses standard Go tooling:
 
@@ -166,7 +159,7 @@ make build-full
    - Update documentation as needed
    - Add doc comments to changed Go functions
    - For non-trivial changed functions, use the doc comment to record the reason, trade-offs, and constraints behind the implementation
-   - Run `make post-implementation-check`
+   - Run `make check`
 
 3. **Commit your changes**:
    - Use clear, descriptive commit messages
@@ -190,7 +183,7 @@ make build-full
 3. **Link to Issue**: Reference related issues
 
 4. **Checklist**: 
-   - [ ] `make post-implementation-check` passes locally, or the blocker is documented
+   - [ ] `make check` passes locally, or the blocker is documented
    - [ ] Code is formatted
    - [ ] Documentation updated
    - [ ] No breaking changes (or documented)
@@ -213,7 +206,7 @@ When creating a PR, use the template at [.github/PULL_REQUEST_TEMPLATE.md](.gith
 - Keep PRs focused and reasonably sized
 - Rebase on main if needed before merging
 - Review the full diff before requesting review and again after addressing feedback
-- Rerun `make post-implementation-check` after each substantive review update
+- Rerun `make check` after each substantive review update
 
 ## Coding Standards
 
@@ -230,7 +223,7 @@ When creating a PR, use the template at [.github/PULL_REQUEST_TEMPLATE.md](.gith
 - Always handle errors explicitly
 - Use `fmt.Errorf` with `%w` for error wrapping
 - Return errors, don't log and ignore
-- Use `temporal.NewNonRetryableApplicationError` for non-retryable errors in workflows
+- Return wrapped errors from handlers; the v1 job worker does not distinguish retryable types (failed jobs stay `failed` with `last_error`)
 
 ### Logging
 

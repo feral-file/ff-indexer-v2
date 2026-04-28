@@ -1,7 +1,7 @@
 # ff-indexer image.
 #
 # Build args:
-#   CGO_ENABLED=1 — media Temporal worker (libvips, resvg, chromium); see Docker-compose build args.
+#   CGO_ENABLED=1 — media job worker (libvips, resvg, chromium); see Docker-compose build args.
 #   CGO_ENABLED=0 — smaller image; media worker stub (see cmd/ff-indexer/worker_media_stub.go).
 #
 # Stages:

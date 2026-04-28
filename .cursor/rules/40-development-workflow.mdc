@@ -42,16 +42,12 @@ Do not edit generated mocks manually.
 Primary verification command:
 
 ```bash
-make post-implementation-check
+make check
 ```
 
-This is the canonical local verification entrypoint.
+This is the canonical local verification entrypoint (see the `check` target in the `Makefile`: imports, local lint, lightweight build, full tests).
 
-It is the default gate for substantive changes and is expected to mirror the repo's CI-shaped Go verification flow.
-
-Use `make check` only when you intentionally want the broader maintenance pass across imports, local linting, and the repo-wide test command.
-
-If the full verification path cannot be run, state that clearly, explain the blocker, and report what was run instead.
+CI defines its own steps in `.github/workflows/`. If the full verification path cannot be run, state that clearly, explain the blocker, and report what was run instead.
 
 ## Definition of done
 

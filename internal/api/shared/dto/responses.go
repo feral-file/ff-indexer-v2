@@ -6,14 +6,29 @@ import (
 
 // TriggerIndexingResponse represents the response for triggering indexing
 type TriggerIndexingResponse struct {
+	JobID int64 `json:"job_id"`
+	// WorkflowID duplicates JobID as a decimal string for legacy API clients.
+	//
+	// Deprecated: use JobID for new integrations.
 	WorkflowID string `json:"workflow_id"`
-	RunID      string `json:"run_id"`
+	// RunID is unused for postgres-queue jobs (always null); kept for the legacy GraphQL field name run_id.
+	//
+	// Deprecated: reserved for legacy clients only.
+	RunID *string `json:"run_id"`
 }
 
 // AddressIndexingJobInfo represents job information for a single address
 type AddressIndexingJobInfo struct {
-	Address    string `json:"address"`
+	Address string `json:"address"`
+	JobID   int64  `json:"job_id"`
+	// WorkflowID duplicates JobID as a decimal string for legacy API clients.
+	//
+	// Deprecated: use JobID; do not rely on this field for new integrations.
 	WorkflowID string `json:"workflow_id"`
+	// WorkflowRunID is unused for postgres-queue-driven jobs (always null).
+	//
+	// Deprecated: reserved for legacy clients only.
+	WorkflowRunID *string `json:"workflow_run_id"`
 }
 
 // TriggerAddressIndexingResponse represents the response for triggering address indexing
@@ -21,14 +36,14 @@ type TriggerAddressIndexingResponse struct {
 	Jobs []AddressIndexingJobInfo `json:"jobs"`
 }
 
-// WorkflowStatusResponse represents the status of a Temporal workflow execution
-type WorkflowStatusResponse struct {
-	WorkflowID    string     `json:"workflow_id"`
-	RunID         string     `json:"run_id"`
+// JobStatusResponse represents the status of a postgres-backed indexer job
+type JobStatusResponse struct {
+	JobID         int64      `json:"job_id"`
 	Status        string     `json:"status"`
+	LastError     *string    `json:"last_error,omitempty"`
 	StartTime     *time.Time `json:"start_time,omitempty"`
 	CloseTime     *time.Time `json:"close_time,omitempty"`
-	ExecutionTime *uint64    `json:"execution_time_ms,omitempty"` // Execution time in milliseconds
+	ExecutionTime *uint64    `json:"execution_time_ms,omitempty"`
 }
 
 // CreateWebhookClientResponse represents the response for creating a webhook client
@@ -45,7 +60,15 @@ type CreateWebhookClientResponse struct {
 
 // AddressIndexingJobResponse represents an address indexing job
 type AddressIndexingJobResponse struct {
-	WorkflowID          string     `json:"workflow_id"`
+	JobID int64 `json:"job_id"`
+	// WorkflowID duplicates JobID as a decimal string for legacy API clients.
+	//
+	// Deprecated: use JobID; do not rely on this field for new integrations.
+	WorkflowID string `json:"workflow_id"`
+	// WorkflowRunID is unused for postgres-queue-driven jobs (always null).
+	//
+	// Deprecated: reserved for legacy clients only.
+	WorkflowRunID       *string    `json:"workflow_run_id"`
 	Address             string     `json:"address"`
 	Chain               string     `json:"chain"`
 	Status              string     `json:"status"`

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -14,6 +13,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/ingestion"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -25,7 +25,7 @@ func runEthereumIngestion(
 	ctx context.Context,
 	cfg *config.AppConfig,
 	dataStore store.Store,
-	temporalClient client.Client,
+	jq jobs.JobQueue,
 	blacklistRegistry registry.BlacklistRegistry,
 ) error {
 	clockAdapter := adapter.NewClock()
@@ -57,12 +57,12 @@ func runEthereumIngestion(
 		ctx,
 		source,
 		dataStore,
-		temporalClient,
+		jq,
 		blacklistRegistry,
 		ingestion.Config{
-			ChainID:           cfg.Ethereum.ChainID,
-			StartBlock:        cfg.Ethereum.StartBlock,
-			TemporalTaskQueue: cfg.Temporal.TokenTaskQueue,
+			ChainID:    cfg.Ethereum.ChainID,
+			StartBlock: cfg.Ethereum.StartBlock,
+			TokenQueue: cfg.Jobs.TokenQueue,
 		},
 		clockAdapter,
 	)
@@ -76,7 +76,7 @@ func runTezosIngestion(
 	ctx context.Context,
 	cfg *config.AppConfig,
 	dataStore store.Store,
-	temporalClient client.Client,
+	jq jobs.JobQueue,
 	blacklistRegistry registry.BlacklistRegistry,
 	rateLimiter ratelimit.Limiter,
 ) error {
@@ -105,12 +105,12 @@ func runTezosIngestion(
 		ctx,
 		source,
 		dataStore,
-		temporalClient,
+		jq,
 		blacklistRegistry,
 		ingestion.Config{
-			ChainID:           cfg.Tezos.ChainID,
-			StartBlock:        cfg.Tezos.StartLevel,
-			TemporalTaskQueue: cfg.Temporal.TokenTaskQueue,
+			ChainID:    cfg.Tezos.ChainID,
+			StartBlock: cfg.Tezos.StartLevel,
+			TokenQueue: cfg.Jobs.TokenQueue,
 		},
 		clockAdapter,
 	)
