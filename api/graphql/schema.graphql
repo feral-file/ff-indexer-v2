@@ -194,6 +194,10 @@ type TokenList {
 # Result of triggering indexing
 type TriggerIndexingResult {
   job_id: Int!
+  # Deprecated: same as str(job_id); prefer job_id for new clients.
+  workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
+  # Deprecated: always null for postgres-queue jobs; kept for legacy response shape named run_id on older clients.
+  run_id: String @deprecated(reason: "Unused for queue-backed jobs; always null.")
 }
 
 # Address indexing job information
@@ -256,6 +260,13 @@ type Query {
   # Get job status by job id
   # Equivalent to: GET /api/v1/jobs/:job_id
   jobStatus(job_id: Int!): JobStatus
+
+  # Legacy: same as jobStatus when workflow_id is the decimal string of jobs.id; run_id is ignored.
+  # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id
+  workflowStatus(
+    workflow_id: String!
+    run_id: String
+  ): JobStatus @deprecated(reason: "Use jobStatus(job_id). workflow_id must be the decimal string of jobs.id; run_id is optional and ignored for queue-backed jobs.")
 
   # Get address indexing job by queue job id or by workflow_id (decimal string of job_id, legacy alias)
   # Equivalent to: GET /api/v1/indexing/jobs/:job_id

@@ -529,7 +529,17 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 		return nil, apierrors.NewServiceError("Failed to trigger indexing: empty job")
 	}
 
-	return &dto.TriggerIndexingResponse{JobID: j.ID}, nil
+	return newTriggerIndexingResponse(j.ID), nil
+}
+
+// newTriggerIndexingResponse builds a trigger response with canonical job_id and deprecated workflow/run fields for legacy clients.
+func newTriggerIndexingResponse(jobID int64) *dto.TriggerIndexingResponse {
+	wf := strconv.FormatInt(jobID, 10)
+	return &dto.TriggerIndexingResponse{
+		JobID:      jobID,
+		WorkflowID: wf,
+		RunID:      nil, // legacy Temporal run id; unused for Postgres queue jobs
+	}
 }
 
 // TriggerAddressIndexing triggers indexing for tokens by owner addresses.
@@ -712,7 +722,7 @@ func (e *executor) TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint6
 	if j == nil {
 		return nil, apierrors.NewServiceError("Failed to trigger metadata indexing: empty job")
 	}
-	return &dto.TriggerIndexingResponse{JobID: j.ID}, nil
+	return newTriggerIndexingResponse(j.ID), nil
 }
 
 // Helper methods for expanding token data

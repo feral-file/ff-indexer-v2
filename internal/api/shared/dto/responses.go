@@ -7,6 +7,14 @@ import (
 // TriggerIndexingResponse represents the response for triggering indexing
 type TriggerIndexingResponse struct {
 	JobID int64 `json:"job_id"`
+	// WorkflowID duplicates JobID as a decimal string for legacy API clients.
+	//
+	// Deprecated: use JobID for new integrations.
+	WorkflowID string `json:"workflow_id"`
+	// RunID is unused for postgres-queue jobs (always null); kept for the legacy GraphQL field name run_id.
+	//
+	// Deprecated: reserved for legacy clients only.
+	RunID *string `json:"run_id"`
 }
 
 // AddressIndexingJobInfo represents job information for a single address

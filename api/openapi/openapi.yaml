@@ -524,7 +524,8 @@ paths:
         **This endpoint does not require authentication** - it is open for public use.
         
         ## Response
-        Returns a workflow ID and run ID that can be used to track the indexing progress.
+        Returns a Postgres queue `job_id` plus deprecated `workflow_id` (decimal string of `job_id`) and
+        `run_id` (always null) for legacy clients; use `job_id` with `GET /api/v1/jobs/{job_id}` for status.
       operationId: triggerTokenIndexing
       tags:
         - tokens
@@ -638,8 +639,9 @@ paths:
         **This endpoint does not require authentication** - it is open for public use.
         
         ## Response
-        Returns a workflow ID and run ID that can be used to track the metadata refresh progress.
-        The workflow will trigger child workflows for each token in parallel.
+        Returns a Postgres queue `job_id` plus deprecated `workflow_id` (decimal string of `job_id`) and
+        `run_id` (always null) for legacy clients; use `job_id` with `GET /api/v1/jobs/{job_id}` for status.
+        Processing runs work units for each token according to the indexer implementation.
       operationId: triggerMetadataIndexing
       tags:
         - tokens
@@ -1871,12 +1873,26 @@ components:
       type: object
       required:
         - job_id
+        - workflow_id
       properties:
         job_id:
           type: integer
           format: int64
           description: Postgres job id; use with GET /api/v1/jobs/{job_id}
           example: 42
+        workflow_id:
+          type: string
+          deprecated: true
+          description: |
+            Deprecated — use job_id for new clients. This value is the decimal string of job_id for
+            backward-compatible clients only (same semantics as deprecated GraphQL trigger fields).
+          example: "42"
+        run_id:
+          type: [string, "null"]
+          deprecated: true
+          description: |
+            Deprecated — always null for postgres-queue jobs; kept for legacy response shape.
+          example: null
 
     SyncCheckpoint:
       type: object

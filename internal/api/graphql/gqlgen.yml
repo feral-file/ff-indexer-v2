@@ -285,6 +285,10 @@ models:
     fields:
       job_id:
         fieldName: JobID
+      workflow_id:
+        fieldName: WorkflowID
+      run_id:
+        fieldName: RunID
 
   AddressIndexingJobInfo:
     model:

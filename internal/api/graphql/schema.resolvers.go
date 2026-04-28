@@ -414,6 +414,26 @@ func (r *queryResolver) JobStatus(ctx context.Context, jobID int) (*dto.JobStatu
 	return r.executor.GetJobStatus(ctx, int64(jobID))
 }
 
+// WorkflowStatus is the resolver for the deprecated workflowStatus field.
+//
+// Reason: Preserves the pre–job_id GraphQL arguments; workflow_id is interpreted as the decimal
+// string of jobs.id (same as REST GET /api/v1/workflows/:workflow_id/runs/:run_id). Optional run_id is ignored
+// because queue-backed jobs do not have a Temporal run id.
+func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, _ *string) (*dto.JobStatusResponse, error) {
+	wf := strings.TrimSpace(workflowID)
+	if wf == "" {
+		return nil, apierrors.NewValidationError("workflow_id is required")
+	}
+	jobID, err := internalTypes.Int64FromUnsignedDecimalString(wf)
+	if err != nil {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("invalid workflow_id: %v", err))
+	}
+	if jobID < 1 {
+		return nil, apierrors.NewValidationError("workflow_id must be a positive decimal integer (jobs.id)")
+	}
+	return r.executor.GetJobStatus(ctx, jobID)
+}
+
 // IndexingJob is the resolver for the indexingJob field.
 func (r *queryResolver) IndexingJob(ctx context.Context, jobID *int, workflowID *string) (*dto.AddressIndexingJobResponse, error) {
 	hasJob := jobID != nil
