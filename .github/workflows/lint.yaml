@@ -8,7 +8,9 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.golangci.yaml'
+      - '.golangci.strict.yaml'
       - 'Makefile'
+      - 'tools/scripts/post_implementation_check.sh'
       - 'db/**'
       - 'internal/api/graphql/**'
       - '.github/workflows/**'
@@ -19,7 +21,9 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.golangci.yaml'
+      - '.golangci.strict.yaml'
       - 'Makefile'
+      - 'tools/scripts/post_implementation_check.sh'
       - 'db/**'
       - 'internal/api/graphql/**'
       - '.github/workflows/**'
@@ -58,7 +62,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23.5'
+          go-version: '1.24.13'
           cache: true
           cache-dependency-path: ./go.sum
 
@@ -71,7 +75,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.4.0
+          version: v2.5.0
           working-directory: ./
 
       - name: Run go fmt check

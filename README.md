@@ -75,6 +75,29 @@ cd cmd/sweeper && go run main.go
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
+## Verification
+
+Use the repo-wide CI-shaped verification path before handing off substantive changes:
+
+```bash
+make post-implementation-check
+```
+
+This target runs `tools/scripts/post_implementation_check.sh`, which is the same non-mutating verification path used by the GitHub Actions Test workflow. It checks changed Go files for formatting and strict lint issues, then runs the CI test package set with coverage output and generated-file filtering.
+
+`make post-implementation-check` expects PostgreSQL test dependencies at `localhost:5432` by default, matching CI. Start them locally with `make dev`, or override `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, and `TEST_DB_NAME`.
+
+Use `make check` only when you intentionally want the broader local maintenance pass. It runs `imports`, `lint-local`, and `test`; `imports` rewrites Go imports, so it is not the non-mutating CI-shaped verification command.
+
+## GitHub Actions
+
+This repo has these primary GitHub Actions workflows:
+
+- **Test** (`.github/workflows/test.yaml`) - sets up Go 1.24.13, libvips, and PostgreSQL, then runs `make post-implementation-check` and uploads coverage to Codecov.
+- **Lint** (`.github/workflows/lint.yaml`) - runs repo-wide `golangci-lint` v2.5.0 and a `gofmt` check with Go 1.24.13.
+- **Build Images** (`.github/workflows/build-images.yaml`) - builds and publishes container images.
+- **Secret Scan** (`.github/workflows/secret-scan.yaml`) - scans for leaked secrets.
+
 ## Documentation
 
 - **[Agent Guide](AGENTS.md)** - Repository workflow, canonical verification, and PR/review contract for agents and contributors

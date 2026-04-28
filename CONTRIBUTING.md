@@ -153,7 +153,7 @@ go fmt ./...
 go vet ./...
 
 # Check for common issues
-docker run --rm -v $(pwd):/app -w /app golangci/golangci-lint:v2.1.6 golangci-lint run --verbose
+docker run --rm -v $(pwd):/app -w /app golangci/golangci-lint:v2.5.0 golangci-lint run --verbose
 ```
 
 ### Building
