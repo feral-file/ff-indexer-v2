@@ -28,7 +28,7 @@ func newMediaWf(t *testing.T) *mediaWfDeps {
 	ctrl := gomock.NewController(t)
 	exec := mocks.NewMockMediaExecutor(ctrl)
 	jq := mocks.NewMockJobQueue(ctrl)
-	mw := workflows.NewMediaWorkflows(exec, jq)
+	mw := workflows.NewMediaWorkflows(exec, jq, workflows.MediaWorkflowsConfig{MediaTaskQueue: "media_index"})
 	return &mediaWfDeps{
 		Ctx:    context.Background(),
 		Ctrl:   ctrl,

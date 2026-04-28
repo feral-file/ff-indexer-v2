@@ -21,6 +21,7 @@ func defaultCompactCoreWfConfig() workflows.CoreWorkflowsConfig {
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
 		TezosTokenSweepStartBlock:    0,
+		TokenTaskQueue:               "token_index",
 		MediaTaskQueue:               "media_index",
 	}
 }
@@ -32,8 +33,6 @@ type coreWfDeps struct {
 	Ctx  context.Context
 	Ctrl *gomock.Controller
 	Exec *mocks.MockCoreExecutor
-	// Bl is the registry passed to [workflows.NewCoreWorkflows] (default mock when newCoreWfDeps bl arg is nil).
-	Bl registry.BlacklistRegistry
 	// BlMock is the concrete gomock when Bl is or wraps [*mocks.MockBlacklistRegistry], else nil.
 	BlMock *mocks.MockBlacklistRegistry
 	// MockJQ is the job queue passed to [workflows.NewCoreWorkflows]; same instance as the interface field on Wf.
@@ -63,7 +62,6 @@ func newCoreWfDeps(t *testing.T, cfg workflows.CoreWorkflowsConfig, bl registry.
 		Ctx:    context.Background(),
 		Ctrl:   ctrl,
 		Exec:   exec,
-		Bl:     bl,
 		BlMock: blMock,
 		MockJQ: jq,
 		Wf:     wf,

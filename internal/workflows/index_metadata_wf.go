@@ -13,9 +13,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
-// mediaIndexJobQueue is the jobs.queue for media work (cgo media worker).
-const mediaIndexJobQueue = "media_index"
-
 // IndexMetadataUpdate processes a metadata update event
 func (w *coreWorkflows) IndexMetadataUpdate(ctx context.Context, event *domain.BlockchainEvent) error {
 	logger.InfoCtx(ctx, "Processing metadata update event",
@@ -37,7 +34,7 @@ func (w *coreWorkflows) IndexMetadataUpdate(ctx context.Context, event *domain.B
 
 	// Step 2: Enqueue token metadata indexing job
 	_, _, err = w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
-		Queue:     tokenIndexJobQueue,
+		Queue:     w.config.TokenTaskQueue,
 		Kind:      "IndexTokenMetadata",
 		Args:      []any{event.TokenCID(), nil},
 		UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", event.TokenCID().String())),
@@ -181,7 +178,7 @@ func (w *coreWorkflows) IndexTokenMetadata(ctx context.Context, tokenCID domain.
 		for _, u := range validURLs {
 			uk := types.StringPtr("media-" + types.MD5Hash(u))
 			_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
-				Queue:     mediaIndexJobQueue,
+				Queue:     w.config.MediaTaskQueue,
 				Kind:      "IndexMediaWorkflow",
 				Args:      []any{u},
 				UniqueKey: uk,
@@ -219,7 +216,7 @@ func (w *coreWorkflows) IndexMultipleTokensMetadata(ctx context.Context, tokenCI
 	// Each child workflow runs independently and in parallel
 	for _, tokenCID := range tokenCIDs {
 		_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
-			Queue:     tokenIndexJobQueue,
+			Queue:     w.config.TokenTaskQueue,
 			Kind:      "IndexTokenMetadata",
 			Args:      []any{tokenCID, nil},
 			UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", tokenCID.String())),

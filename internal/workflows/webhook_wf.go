@@ -44,7 +44,7 @@ func (w *coreWorkflows) NotifyWebhookClients(ctx context.Context, event webhook.
 	for _, c := range clients {
 		uk := fmt.Sprintf("webhook-deliver-%s-%s", c.ClientID, event.EventID)
 		_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
-			Queue:     tokenIndexJobQueue,
+			Queue:     w.config.TokenTaskQueue,
 			Kind:      "DeliverWebhook",
 			Args:      []any{c.ClientID, event},
 			UniqueKey: &uk,
@@ -196,7 +196,7 @@ func (w *coreWorkflows) triggerWebhookTokenIndexingNotification(ctx context.Cont
 func (w *coreWorkflows) triggerWebhookNotification(ctx context.Context, event webhook.WebhookEvent) {
 	uk := "webhook-notify-" + event.EventID
 	_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
-		Queue:     tokenIndexJobQueue,
+		Queue:     w.config.TokenTaskQueue,
 		Kind:      "NotifyWebhookClients",
 		Args:      []any{event},
 		UniqueKey: &uk,

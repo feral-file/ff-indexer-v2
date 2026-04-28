@@ -19,20 +19,28 @@ type MediaWorkflows interface {
 	IndexMultipleMediaWorkflow(ctx context.Context, urls []string) error
 }
 
+// MediaWorkflowsConfig holds queue names and other settings for [MediaWorkflows].
+type MediaWorkflowsConfig struct {
+	// MediaTaskQueue is the jobs.queue for child IndexMediaWorkflow jobs enqueued by IndexMultipleMediaWorkflow.
+	MediaTaskQueue string
+}
+
 // mediaWorkflows is the concrete implementation of MediaWorkflows.
 type mediaWorkflows struct {
 	executor MediaExecutor
 	jobQueue jobs.JobQueue
+	config   MediaWorkflowsConfig
 }
 
 // NewMediaWorkflows creates a new media workflows instance.
 // jobQueue is required. Non-test call sites that only need method values may use [jobs.NopQueue];
-func NewMediaWorkflows(executor MediaExecutor, jobQueue jobs.JobQueue) MediaWorkflows {
+func NewMediaWorkflows(executor MediaExecutor, jobQueue jobs.JobQueue, config MediaWorkflowsConfig) MediaWorkflows {
 	if jobQueue == nil {
 		panic("workflows: NewMediaWorkflows requires a non-nil jobQueue (see NewMediaWorkflows doc for NopQueue vs mocks)")
 	}
 	return &mediaWorkflows{
 		executor: executor,
 		jobQueue: jobQueue,
+		config:   config,
 	}
 }

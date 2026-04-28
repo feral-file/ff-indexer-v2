@@ -9,6 +9,8 @@ import (
 
 	"gorm.io/gorm"
 
+	"go.uber.org/zap"
+
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -207,7 +209,8 @@ func (w *Worker) executeJob(parent context.Context, job *schema.Job) {
 	defer w.removeInflight(job.ID)
 
 	err := w.registry.Dispatch(workCtx, job)
-	w.finishWithOutcome(context.WithoutCancel(parent), job, err, parent)
+	// stickyCtx carries the job Sentry hub so persistence errors after dispatch are traceable.
+	w.finishWithOutcome(context.WithoutCancel(dispatchCtx), job, err, parent)
 }
 
 func (w *Worker) addInflight(id int64, cancel context.CancelFunc) {
@@ -231,37 +234,37 @@ func (w *Worker) finishWithOutcome(stickyCtx context.Context, job *schema.Job, e
 	id := job.ID
 	if err == nil {
 		if e := w.store.MarkJobSucceeded(stickyCtx, id); e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
-			_ = e
+			logger.ErrorCtx(stickyCtx, e, zap.String("operation", "MarkJobSucceeded"), zap.Int64("job_id", id))
 		}
 		return
 	}
 	var re *RescheduleError
 	if errors.As(err, &re) {
 		if e := w.store.RescheduleJob(stickyCtx, id, re.At); e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
-			_ = e
+			logger.ErrorCtx(stickyCtx, e, zap.String("operation", "RescheduleJob"), zap.Int64("job_id", id))
 		}
 		return
 	}
 	if errors.Is(err, context.Canceled) {
 		if runCtx.Err() != nil {
 			if e := w.store.RescheduleJob(stickyCtx, id, time.Now().UTC()); e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
-				_ = e
+				logger.ErrorCtx(stickyCtx, e, zap.String("operation", "RescheduleJob"), zap.String("reason", "shutdown"), zap.Int64("job_id", id))
 			}
 			return
 		}
 		j2, ge := w.store.GetJob(stickyCtx, id)
 		if ge == nil && j2 != nil && j2.CancelRequested {
 			if e := w.store.MarkJobCanceled(stickyCtx, id); e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
-				_ = e
+				logger.ErrorCtx(stickyCtx, e, zap.String("operation", "MarkJobCanceled"), zap.Int64("job_id", id))
 			}
 			return
 		}
 		if e := w.store.MarkJobFailed(stickyCtx, id, "canceled: "+err.Error()); e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
-			_ = e
+			logger.ErrorCtx(stickyCtx, e, zap.String("operation", "MarkJobFailed"), zap.String("reason", "canceled"), zap.Int64("job_id", id))
 		}
 		return
 	}
 	if e := w.store.MarkJobFailed(stickyCtx, id, err.Error()); e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
-		_ = e
+		logger.ErrorCtx(stickyCtx, e, zap.String("operation", "MarkJobFailed"), zap.Int64("job_id", id))
 	}
 }

@@ -103,7 +103,9 @@ func registerWorkerMedia(
 	mediaExecutor := workflows.NewMediaExecutor(dataStore, mediaProcessor)
 	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)
 
-	mediaWf := workflows.NewMediaWorkflows(mediaExecutor, jobQueue)
+	mediaWf := workflows.NewMediaWorkflows(mediaExecutor, jobQueue, workflows.MediaWorkflowsConfig{
+		MediaTaskQueue: wcfg.Jobs.MediaQueue,
+	})
 
 	reg := jobs.NewRegistry(jsonAdapter)
 	reg.Register("IndexMediaWorkflow", mediaWf.IndexMediaWorkflow)

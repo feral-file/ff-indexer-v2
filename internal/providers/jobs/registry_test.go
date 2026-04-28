@@ -157,6 +157,16 @@ func TestRegistry_Dispatch_HandlerError(t *testing.T) {
 	require.EqualError(t, err, "handler failed")
 }
 
+func TestRegistry_Dispatch_HandlerPanic_ReturnsError(t *testing.T) {
+	t.Parallel()
+	r := newTestRegistry(t)
+	r.Register("panic", func(context.Context) error { panic("boom") })
+	err := r.Dispatch(context.Background(), &schema.Job{Kind: "panic", Payload: []byte("[]")})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "handler panic")
+	require.Contains(t, err.Error(), "boom")
+}
+
 type handlerFailureError struct{ s string }
 
 func (e handlerFailureError) Error() string { return e.s }

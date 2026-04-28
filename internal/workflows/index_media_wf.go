@@ -37,7 +37,7 @@ func (w *mediaWorkflows) IndexMultipleMediaWorkflow(ctx context.Context, urls []
 	for url := range uniqueURLs {
 		uk := "media-" + types.MD5Hash(url)
 		_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
-			Queue:     mediaIndexJobQueue,
+			Queue:     w.config.MediaTaskQueue,
 			Kind:      "IndexMediaWorkflow",
 			Args:      []any{url},
 			UniqueKey: &uk,

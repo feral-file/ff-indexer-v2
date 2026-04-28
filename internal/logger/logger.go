@@ -107,8 +107,13 @@ func Flush(timeout time.Duration) {
 // FromContext returns a logger with sentry scope and component field from context
 // This should be used when you have a context with sentry hub or component information
 func FromContext(ctx context.Context) *zap.Logger {
+	base := log
+	if base == nil {
+		// Tests and code paths before Initialize must not nil-deref; Sentry scope still attaches when hub is on ctx.
+		base = zap.NewNop()
+	}
 	if ctx == nil {
-		return log
+		return base
 	}
 
 	// Extract component from context
@@ -121,10 +126,10 @@ func FromContext(ctx context.Context) *zap.Logger {
 	if hub != nil {
 		// Attach the hub's scope directly to the logger
 		// This ensures breadcrumbs and events use the correct scope from the context
-		logger = log.With(zapsentry.NewScopeFromScope(hub.Scope()))
+		logger = base.With(zapsentry.NewScopeFromScope(hub.Scope()))
 	} else {
 		// Fallback: use zapsentry.Context for trace linking (even if no hub in context)
-		logger = log.With(zapsentry.Context(ctx))
+		logger = base.With(zapsentry.Context(ctx))
 	}
 
 	// Add component field for service identification

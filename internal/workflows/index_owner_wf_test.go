@@ -27,6 +27,7 @@ func ownerCfg() workflows.CoreWorkflowsConfig {
 		EthereumOwnerSubsequentBatchTarget: 50,
 		TezosOwnerFirstBatchTarget:         50,
 		TezosOwnerSubsequentBatchTarget:    50,
+		TokenTaskQueue:                     "token_index",
 		MediaTaskQueue:                     "media_index",
 		MediaEnabled:                       false,
 		BudgetedIndexingDefaultDailyQuota:  1000,

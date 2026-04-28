@@ -7,7 +7,10 @@ import (
 	"reflect"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
@@ -106,7 +109,17 @@ func reflectTypeError() reflect.Type {
 	return reflect.TypeFor[error]()
 }
 
-func (h *registryHandler) call(ctx context.Context, payload []byte, j adapter.JSON) error {
+func (h *registryHandler) call(ctx context.Context, payload []byte, j adapter.JSON) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Reason: Reflective invokes can panic on bad arity or bugs in handlers; without recovery
+			// the worker goroutine dies and the job stays "running". Log with job-scoped ctx so
+			// zapsentry/Sentry sees the hub from ContextWithSentryJobHandler (see worker.executeJob).
+			logger.ErrorCtx(ctx, fmt.Errorf("job handler panic: %v", r), zap.Any("panic", r))
+			err = fmt.Errorf("jobs: handler panic: %v", r)
+		}
+	}()
+
 	p := bytesNormPayloadForArray(payload)
 	if len(h.inT) == 0 {
 		var raws []json.RawMessage
@@ -117,7 +130,8 @@ func (h *registryHandler) call(ctx context.Context, payload []byte, j adapter.JS
 			return fmt.Errorf("jobs: want 0 args got %d", len(raws))
 		}
 		ret := h.fn.Call([]reflect.Value{reflect.ValueOf(ctx)})
-		return returnAsError(ret)
+		err = returnAsError(ret)
+		return err
 	}
 	var raws []json.RawMessage
 	if err := j.Unmarshal(p, &raws); err != nil {
@@ -136,7 +150,8 @@ func (h *registryHandler) call(ctx context.Context, payload []byte, j adapter.JS
 		args[i+1] = arg
 	}
 	ret := h.fn.Call(args)
-	return returnAsError(ret)
+	err = returnAsError(ret)
+	return err
 }
 
 // bytesNormPayloadForArray ensures a JSON top-level array for varargs. Empty or whitespace-only

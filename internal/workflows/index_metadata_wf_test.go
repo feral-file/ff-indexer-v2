@@ -26,6 +26,7 @@ func metadataWfConfig(mediaEnabled bool) workflows.CoreWorkflowsConfig {
 		EthereumTokenSweepStartBlock: 0,
 		TezosTokenSweepStartBlock:    0,
 		MediaEnabled:                 mediaEnabled,
+		TokenTaskQueue:               "token_index",
 		MediaTaskQueue:               "media_index",
 	}
 }

@@ -15,8 +15,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
 
-const tokenIndexJobQueue = "token_index"
-
 // IndexTokenMint processes a token mint event
 func (w *coreWorkflows) IndexTokenMint(ctx context.Context, event *domain.BlockchainEvent) error {
 	logger.InfoCtx(ctx, "Processing token mint event",
@@ -375,7 +373,7 @@ func (w *coreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID
 
 func (w *coreWorkflows) startIndexTokenMetadataAsync(ctx context.Context, tokenCID domain.TokenCID, address *string) {
 	_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
-		Queue:     tokenIndexJobQueue,
+		Queue:     w.config.TokenTaskQueue,
 		Kind:      "IndexTokenMetadata",
 		Args:      []any{tokenCID, address},
 		UniqueKey: types.StringPtr(fmt.Sprintf("index-metadata-%s", tokenCID.String())),
@@ -390,7 +388,7 @@ func (w *coreWorkflows) startIndexTokenMetadataAsync(ctx context.Context, tokenC
 
 func (w *coreWorkflows) startIndexTokenProvenancesAsync(ctx context.Context, tokenCID domain.TokenCID, address *string) {
 	_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
-		Queue:     tokenIndexJobQueue,
+		Queue:     w.config.TokenTaskQueue,
 		Kind:      "IndexTokenProvenances",
 		Args:      []any{tokenCID, address},
 		UniqueKey: types.StringPtr(fmt.Sprintf("index-provenance-%s", tokenCID.String())),

@@ -151,6 +151,7 @@ func registerWorkerCore(
 			EthereumOwnerSubsequentBatchTarget: cfg.EthereumOwnerSubsequentBatchTarget,
 			TezosOwnerFirstBatchTarget:         cfg.TezosOwnerFirstBatchTarget,
 			TezosOwnerSubsequentBatchTarget:    cfg.TezosOwnerSubsequentBatchTarget,
+			TokenTaskQueue:                     cfg.Jobs.TokenQueue,
 			MediaEnabled:                       cfg.MediaEnabled,
 			MediaTaskQueue:                     cfg.Jobs.MediaQueue,
 			BudgetedIndexingModeEnabled:        cfg.BudgetedIndexingEnabled,

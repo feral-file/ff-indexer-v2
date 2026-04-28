@@ -32,6 +32,7 @@ func testTokenCore(t *testing.T) *coreWfDeps {
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
 		TezosTokenSweepStartBlock:    0,
+		TokenTaskQueue:               "token_index",
 		MediaTaskQueue:               "media_index",
 		MediaEnabled:                 false,
 	}, nil)
