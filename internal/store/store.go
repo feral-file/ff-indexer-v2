@@ -485,6 +485,14 @@ type Store interface {
 	// v1 uses unique keys and idempotent flows where that matters; otherwise duplicate execution is a known ops edge.
 	// Constraints: Only rows with the given queue and status=running are updated. Returns the number of rows changed.
 	SweepOrphanedJobs(ctx context.Context, queue string) (int64, error)
+	// SweepCanceledPendingJobs transitions pending jobs with cancel_requested=true to canceled status.
+	// This ensures user cancellation intent is reflected in terminal job state, since ClaimJobs now filters
+	// out jobs with cancel_requested=true (preventing their execution).
+	//
+	// Reason: Canceled pending jobs remain in pending state indefinitely without an explicit transition.
+	// Constraints: Only rows with the given queue, status=pending, and cancel_requested=true are updated.
+	// Returns the number of rows changed.
+	SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error)
 	// AcquireJobQueueLock tries to take a session-level advisory lock for this queue on a single dedicated connection.
 	// If acquired, the returned release function unlocks and closes the connection. If not acquired, callers
 	// should not run another worker for the same queue in this process.

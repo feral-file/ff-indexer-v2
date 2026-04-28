@@ -6015,6 +6015,70 @@ func testJobQueue(t *testing.T, store Store) {
 		assert.True(t, acq3)
 		rel3()
 	})
+
+	t.Run("claim jobs does not claim canceled pending jobs", func(t *testing.T) {
+		queue := "q_no_claim_canceled_" + t.Name()
+		
+		// Enqueue two jobs
+		j1, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: queue, Kind: "A", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		j2, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: queue, Kind: "B", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		
+		// Cancel the first job while still pending
+		require.NoError(t, store.RequestJobCancel(ctx, j1.ID))
+		
+		// Claim jobs - should only get j2
+		claimed, err := store.ClaimJobs(ctx, queue, 10)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1, "should only claim the non-canceled job")
+		assert.Equal(t, j2.ID, claimed[0].ID)
+		assert.Equal(t, schema.JobStatusRunning, claimed[0].Status)
+		
+		// Verify j1 is still pending with cancel_requested=true
+		j1After, err := store.GetJob(ctx, j1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.JobStatusPending, j1After.Status)
+		assert.True(t, j1After.CancelRequested)
+	})
+
+	t.Run("sweep canceled pending jobs transitions to canceled status", func(t *testing.T) {
+		queue := "q_sweep_canceled_" + t.Name()
+		
+		// Enqueue jobs
+		j1, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: queue, Kind: "A", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		j2, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: queue, Kind: "B", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		j3, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: queue, Kind: "C", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		
+		// Cancel j1 and j2 while pending
+		require.NoError(t, store.RequestJobCancel(ctx, j1.ID))
+		require.NoError(t, store.RequestJobCancel(ctx, j2.ID))
+		
+		// Sweep canceled pending jobs
+		n, err := store.SweepCanceledPendingJobs(ctx, queue)
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), n, "should sweep 2 canceled pending jobs")
+		
+		// Verify j1 and j2 are now canceled
+		j1After, err := store.GetJob(ctx, j1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.JobStatusCanceled, j1After.Status)
+		assert.NotNil(t, j1After.FinishedAt)
+		
+		j2After, err := store.GetJob(ctx, j2.ID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.JobStatusCanceled, j2After.Status)
+		assert.NotNil(t, j2After.FinishedAt)
+		
+		// Verify j3 is still pending
+		j3After, err := store.GetJob(ctx, j3.ID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.JobStatusPending, j3After.Status)
+		assert.False(t, j3After.CancelRequested)
+	})
 }
 
 // =============================================================================

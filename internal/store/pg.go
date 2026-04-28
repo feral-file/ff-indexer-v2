@@ -3050,6 +3050,7 @@ func (s *pgStore) GetJob(ctx context.Context, id int64) (*schema.Job, error) {
 }
 
 // ClaimJobs claims pending, due jobs and marks them running.
+// Jobs with cancel_requested=true are excluded to prevent executing user-canceled work.
 func (s *pgStore) ClaimJobs(ctx context.Context, queue string, limit int) ([]*schema.Job, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -3061,6 +3062,7 @@ WITH picked AS (
 	FROM jobs
 	WHERE queue = ?
 	  AND status = 'pending'
+	  AND cancel_requested = false
 	  AND run_after <= ?
 	ORDER BY run_after ASC, id ASC
 	FOR UPDATE SKIP LOCKED
@@ -3192,6 +3194,23 @@ func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string) (int64, e
 			"status":     schema.JobStatusPending,
 			"started_at": gorm.Expr("NULL"),
 			"updated_at": now,
+		})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
+// SweepCanceledPendingJobs transitions pending jobs with cancel_requested to canceled status.
+// Returns the number of jobs transitioned.
+func (s *pgStore) SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error) {
+	now := time.Now().UTC()
+	result := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("queue = ? AND status = ? AND cancel_requested = ?", queue, schema.JobStatusPending, true).
+		Updates(map[string]any{
+			"status":      schema.JobStatusCanceled,
+			"finished_at": now,
+			"updated_at":  now,
 		})
 	if result.Error != nil {
 		return 0, result.Error

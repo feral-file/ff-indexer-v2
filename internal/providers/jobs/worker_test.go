@@ -207,6 +207,7 @@ func TestWorker_Run_CancelObserverMarksCanceled(t *testing.T) {
 			return []*schema.Job{{ID: ids[0], CancelRequested: true}}, nil
 		},
 	)
+	st.EXPECT().SweepCanceledPendingJobs(gomock.Any(), "tok").Return(int64(0), nil).AnyTimes()
 	out := make(chan struct{})
 	st.EXPECT().GetJob(gomock.Any(), int64(4)).Return(&schema.Job{ID: 4, CancelRequested: true}, nil).AnyTimes()
 	st.EXPECT().MarkJobCanceled(gomock.Any(), int64(4)).Return(nil).Do(func(context.Context, int64) { close(out) })
@@ -517,6 +518,7 @@ func TestWorker_Run_MarkJobCanceledFails_WorkerExits(t *testing.T) {
 			return []*schema.Job{{ID: ids[0], CancelRequested: true}}, nil
 		},
 	)
+	st.EXPECT().SweepCanceledPendingJobs(gomock.Any(), "tok").Return(int64(0), nil).AnyTimes()
 	st.EXPECT().GetJob(gomock.Any(), int64(10)).Return(&schema.Job{ID: 10, CancelRequested: true}, nil).AnyTimes()
 	persistErr := errors.New("db write failed")
 	st.EXPECT().MarkJobCanceled(gomock.Any(), int64(10)).Return(persistErr)
@@ -527,6 +529,147 @@ func TestWorker_Run_MarkJobCanceledFails_WorkerExits(t *testing.T) {
 	err := <-errC
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MarkJobCanceled failed for job 10")
+}
+
+// TestWorker_Run_RespectsConcurrencyWhenClaiming verifies that the worker never executes more jobs
+// concurrently than its concurrency limit, even when claiming more jobs via pond's internal queueing.
+func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+
+	// Track concurrent executions
+	var concurrentExecutions atomic.Int32
+	var maxConcurrent atomic.Int32
+	var executions atomic.Int32
+	
+	reg.Register("slow", func(ctx context.Context) error {
+		current := concurrentExecutions.Add(1)
+		defer concurrentExecutions.Add(-1)
+		
+		// Track the maximum concurrent executions
+		for {
+			max := maxConcurrent.Load()
+			if current <= max || maxConcurrent.CompareAndSwap(max, current) {
+				break
+			}
+		}
+		
+		executions.Add(1)
+		time.Sleep(200 * time.Millisecond)
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "q").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q").Return(int64(0), nil)
+
+	// With pond, we claim up to BatchSize, and pond queues internally
+	var claimCallCount atomic.Int32
+	st.EXPECT().ClaimJobs(gomock.Any(), "q", 10).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, limit int) ([]*schema.Job, error) {
+			callNum := claimCallCount.Add(1)
+			
+			// First 2 calls: return jobs
+			if callNum <= 2 {
+				jobs := make([]*schema.Job, 0, 10)
+				for i := 0; i < 10; i++ {
+					jobs = append(jobs, &schema.Job{
+						ID:      int64(callNum*100 + int32(i)),
+						Kind:    "slow",
+						Queue:   "q",
+						Payload: []byte("[]"),
+					})
+				}
+				return jobs, nil
+			}
+			// After 2 calls, return nothing
+			return nil, nil
+		},
+	)
+
+	st.EXPECT().MarkJobSucceeded(gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	st.EXPECT().SweepCanceledPendingJobs(gomock.Any(), "q").Return(int64(0), nil).AnyTimes()
+
+	// Configure worker with Concurrency=2, BatchSize=10
+	// Pond will queue up to 10 jobs but only execute 2 concurrently
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{
+		Queue:          "q",
+		Concurrency:    2,
+		BatchSize:      10,
+		PollInterval:   50 * time.Millisecond,
+		CancelInterval: time.Hour,
+	})
+
+	errC := goRun(w, ctx)
+	
+	// Wait for executions to complete
+	time.Sleep(3 * time.Second)
+	cancel()
+	require.NoError(t, <-errC)
+
+	// Verify we executed jobs
+	require.Greater(t, executions.Load(), int32(0), "expected some jobs to execute")
+	
+	// Verify concurrency was respected (should never exceed 2)
+	require.LessOrEqual(t, maxConcurrent.Load(), int32(2), 
+		"max concurrent executions should not exceed concurrency limit")
+}
+
+// TestWorker_Run_DoesNotClaimCanceledPendingJobs verifies that pending jobs with cancel_requested=true
+// are not claimed by the worker, and that the sweep transitions them to canceled status.
+func TestWorker_Run_DoesNotClaimCanceledPendingJobs(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+
+	// Track if the handler is called (it should NOT be)
+	var handlerCalled atomic.Bool
+	reg.Register("test", func(ctx context.Context) error {
+		handlerCalled.Store(true)
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "q").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q").Return(int64(0), nil)
+
+	// ClaimJobs should filter out canceled jobs (due to cancel_requested=false in SQL)
+	st.EXPECT().ClaimJobs(gomock.Any(), "q", gomock.Any()).AnyTimes().Return(nil, nil)
+
+	// SweepCanceledPendingJobs should be called and transition 1 job to canceled
+	sweepCalled := make(chan struct{})
+	st.EXPECT().SweepCanceledPendingJobs(gomock.Any(), "q").DoAndReturn(
+		func(context.Context, string) (int64, error) {
+			close(sweepCalled)
+			return int64(1), nil // Indicate 1 job was transitioned
+		},
+	).MinTimes(1)
+
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{
+		Queue:          "q",
+		PollInterval:   time.Hour,
+		CancelInterval: 50 * time.Millisecond, // Sweep runs frequently
+	})
+
+	errC := goRun(w, ctx)
+	
+	// Wait for sweep to be called
+	<-sweepCalled
+	cancel()
+	require.NoError(t, <-errC)
+
+	// Verify the handler was never executed
+	require.False(t, handlerCalled.Load(), "handler should not execute for canceled pending jobs")
 }
 
 func goRun(w *jobs.Worker, ctx context.Context) <-chan error {

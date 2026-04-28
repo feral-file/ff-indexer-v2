@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"gorm.io/gorm"
 
 	"go.uber.org/zap"
@@ -46,7 +47,7 @@ type Worker struct {
 	config   WorkerConfig
 	mu       sync.Mutex
 	inflight map[int64]context.CancelFunc
-	sem      chan struct{}
+	pool     pond.Pool
 }
 
 // NewWorker returns a worker. Store and registry must be non-nil. Empty Queue panics. Defaults:
@@ -73,13 +74,11 @@ func NewWorker(st store.Store, reg *Registry, cfg WorkerConfig) *Worker {
 	if cfg.CancelInterval <= 0 {
 		cfg.CancelInterval = 5 * time.Second
 	}
-	sem := make(chan struct{}, cfg.Concurrency)
 	return &Worker{
 		store:    st,
 		registry: reg,
 		config:   cfg,
 		inflight: make(map[int64]context.CancelFunc),
-		sem:      sem,
 	}
 }
 
@@ -94,7 +93,7 @@ func NewWorker(st store.Store, reg *Registry, cfg WorkerConfig) *Worker {
 // triggering the startup sweep to recover any orphaned running jobs.
 //
 // Reason: Internal worker context allows prompt cancellation of all in-flight handlers when a fatal
-// error occurs or external shutdown is requested, preventing indefinite blocking on batchWG.Wait().
+// error occurs or external shutdown is requested; stopPool (sync.Once + StopAndWait) drains the pool.
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.ctxErr(ctx); err != nil {
 		return err
@@ -112,6 +111,20 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Create worker pool with context
+	w.pool = pond.NewPool(
+		w.config.Concurrency,
+		pond.WithQueueSize(w.config.BatchSize),
+		pond.WithContext(ctx),
+	)
+	var poolStopOnce sync.Once
+	stopPool := func() {
+		poolStopOnce.Do(func() {
+			w.pool.StopAndWait()
+		})
+	}
+	defer stopPool()
+
 	// runCtx is an internal worker context that we control for canceling all in-flight handlers.
 	// When fatal error or external shutdown occurs, we cancel this to interrupt handlers promptly.
 	runCtx, runCancel := context.WithCancel(ctx)
@@ -122,17 +135,11 @@ func (w *Worker) Run(ctx context.Context) error {
 	cancelCh := time.NewTicker(w.config.CancelInterval)
 	defer cancelCh.Stop()
 
-	var batchWG sync.WaitGroup
-	defer func() {
-		// Wait for handler goroutines; runCtx is already canceled, so handlers finish promptly.
-		batchWG.Wait()
-	}()
-
 	// fatalErr captures the first terminal state persistence failure from any job execution.
 	// Buffered to prevent goroutine leak if multiple jobs fail simultaneously.
 	fatalErr := make(chan error, 1)
 
-	if err := w.claimAndDispatch(runCtx, &batchWG, fatalErr); err != nil && !errors.Is(err, context.Canceled) {
+	if err := w.claimAndDispatch(runCtx, fatalErr); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 
@@ -141,7 +148,10 @@ func (w *Worker) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			// Cancel all in-flight handlers on external shutdown.
 			runCancel()
-			// Wait completes in defer; check for fatal errors that arrived during drain.
+			// Drain the pool before reading fatalErr: handlers may still be persisting terminal
+			// state (e.g. RescheduleJob on shutdown); otherwise we can return nil while the
+			// buffered fatalErr is sent only after defers run.
+			stopPool()
 			select {
 			case err := <-fatalErr:
 				return err
@@ -153,11 +163,12 @@ func (w *Worker) Run(ctx context.Context) error {
 			runCancel()
 			return err
 		case <-pollCh.C:
-			if err := w.claimAndDispatch(runCtx, &batchWG, fatalErr); err != nil && !errors.Is(err, context.Canceled) {
+			if err := w.claimAndDispatch(runCtx, fatalErr); err != nil && !errors.Is(err, context.Canceled) {
 				return err
 			}
 		case <-cancelCh.C:
 			w.flushCancelRequests(runCtx)
+			w.sweepCanceledPending(runCtx)
 		}
 	}
 }
@@ -169,24 +180,31 @@ func (w *Worker) ctxErr(ctx context.Context) error {
 	return nil
 }
 
-func (w *Worker) claimAndDispatch(ctx context.Context, batchWG *sync.WaitGroup, fatalErr chan<- error) error {
+// claimAndDispatch claims jobs up to batch size and dispatches them to w.pool (created in Run).
+// The pool ensures the running job count never exceeds Concurrency.
+//
+// Reason: Using pond.Pool provides consistent goroutine management across the codebase and
+// automatic handling of worker lifecycle. Jobs run asynchronously, with the pool tracking
+// completion and the fatalErr channel enabling fail-fast on terminal state persistence failures.
+func (w *Worker) claimAndDispatch(ctx context.Context, fatalErr chan<- error) error {
 	if err := w.ctxErr(ctx); err != nil {
 		return err
 	}
+
+	// Claim jobs up to the batch size
+	// Pool will naturally limit concurrent execution to Concurrency
 	jobs, err := w.store.ClaimJobs(ctx, w.config.Queue, w.config.BatchSize)
 	if err != nil {
 		return err
 	}
+
 	for _, j := range jobs {
 		if j == nil {
 			continue
 		}
 		job := j
-		batchWG.Add(1)
-		go func() {
-			defer batchWG.Done()
-			w.sem <- struct{}{}
-			defer func() { <-w.sem }()
+
+		w.pool.Submit(func() {
 			if err := w.executeJob(ctx, job); err != nil {
 				// Send the first fatal error; non-blocking if already sent.
 				select {
@@ -194,8 +212,9 @@ func (w *Worker) claimAndDispatch(ctx context.Context, batchWG *sync.WaitGroup, 
 				default:
 				}
 			}
-		}()
+		})
 	}
+
 	return nil
 }
 
@@ -228,6 +247,24 @@ func (w *Worker) flushCancelRequests(ctx context.Context) {
 		if c, ok := byID[r.ID]; ok {
 			c()
 		}
+	}
+}
+
+// sweepCanceledPending transitions pending jobs with cancel_requested to canceled status.
+// Reason: ClaimJobs now filters out jobs with cancel_requested=true, but those rows remain
+// in pending state indefinitely unless explicitly transitioned. This sweep ensures user
+// cancellation intent is reflected in terminal job state.
+func (w *Worker) sweepCanceledPending(ctx context.Context) {
+	if err := w.ctxErr(ctx); err != nil {
+		return
+	}
+	count, err := w.store.SweepCanceledPendingJobs(ctx, w.config.Queue)
+	if err != nil {
+		logger.WarnCtx(ctx, "failed to sweep canceled pending jobs", zap.Error(err))
+		return
+	}
+	if count > 0 {
+		logger.InfoCtx(ctx, "swept canceled pending jobs", zap.Int64("count", count))
 	}
 }
 

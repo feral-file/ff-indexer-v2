@@ -14,11 +14,10 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "go.uber.org/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockStore is a mock of Store interface.
@@ -922,6 +921,21 @@ func (m *MockStore) SetKeyValue(ctx context.Context, key, value string) error {
 func (mr *MockStoreMockRecorder) SetKeyValue(ctx, key, value any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetKeyValue", reflect.TypeOf((*MockStore)(nil).SetKeyValue), ctx, key, value)
+}
+
+// SweepCanceledPendingJobs mocks base method.
+func (m *MockStore) SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SweepCanceledPendingJobs", ctx, queue)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SweepCanceledPendingJobs indicates an expected call of SweepCanceledPendingJobs.
+func (mr *MockStoreMockRecorder) SweepCanceledPendingJobs(ctx, queue any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepCanceledPendingJobs", reflect.TypeOf((*MockStore)(nil).SweepCanceledPendingJobs), ctx, queue)
 }
 
 // SweepOrphanedJobs mocks base method.
