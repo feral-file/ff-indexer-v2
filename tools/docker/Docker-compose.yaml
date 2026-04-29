@@ -17,7 +17,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ../../db/init_pg_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${FF_INDEXER_DATABASE_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -50,6 +50,9 @@ services:
       - ../../config/.env.local
     environment:
       - FF_INDEXER_DATABASE_HOST=postgres
+      # Default image uses CGO_ENABLED=0 (media worker stub). .env.local often sets media true;
+      # that requires a CGO build (`docker compose build --build-arg CGO_ENABLED=1 ff-indexer`).
+      - FF_INDEXER_MEDIA_ENABLED=false
     ports:
       - "${API_PORT:-8081}:8081"
     shm_size: "1g"
