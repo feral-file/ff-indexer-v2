@@ -37,19 +37,113 @@ COMMENT ON COLUMN jobs.run_after IS 'Do not run this job before this time (used 
 COMMENT ON COLUMN jobs.last_error IS 'Terminal or latest failure message when status is failed';
 COMMENT ON COLUMN jobs.cancel_requested IS 'When true, worker should cancel the in-flight handler context';
 
--- Nullable FK first; rows without a queue job are removed, then we enforce NOT NULL + CASCADE.
+-- Nullable FK first; we'll backfill existing rows with corresponding jobs entries
 ALTER TABLE address_indexing_jobs
     ADD COLUMN job_id BIGINT REFERENCES jobs(id) ON DELETE SET NULL;
 
 -- Partial unique index on workflow_id (from migration 006; dropped with Temporal columns)
 DROP INDEX IF EXISTS idx_address_indexing_job_workflow_id;
 
--- Legacy rows that never got a jobs.id cannot be used with the new API
-DELETE FROM address_indexing_jobs WHERE job_id IS NULL;
+-- Backfill: Create jobs table rows for all existing address_indexing_jobs
+-- This preserves historical data and allows resumption of paused/running jobs
+DO $$
+DECLARE
+    aij_rec RECORD;
+    new_job_id BIGINT;
+    target_status job_status;
+    target_run_after TIMESTAMPTZ;
+    target_finished_at TIMESTAMPTZ;
+    unique_key_value TEXT;
+    job_exists BOOLEAN;
+BEGIN
+    FOR aij_rec IN 
+        SELECT * FROM address_indexing_jobs WHERE job_id IS NULL
+    LOOP
+        -- Map address_indexing_jobs.status to jobs.status
+        target_status := CASE 
+            WHEN aij_rec.status = 'running' THEN 'running'::job_status
+            WHEN aij_rec.status = 'paused' THEN 'pending'::job_status
+            WHEN aij_rec.status = 'completed' THEN 'succeeded'::job_status
+            WHEN aij_rec.status = 'failed' THEN 'failed'::job_status
+            WHEN aij_rec.status = 'canceled' THEN 'canceled'::job_status
+        END;
+        
+        -- Build unique key: 'index-token-owner-{chain}-{address}'
+        unique_key_value := 'index-token-owner-' || aij_rec.chain || '-' || aij_rec.address;
+        
+        -- Check if an active job already exists (would violate unique constraint)
+        SELECT EXISTS(
+            SELECT 1 FROM jobs 
+            WHERE queue = 'token_index' 
+              AND kind = 'IndexTokenOwner'
+              AND unique_key = unique_key_value
+              AND status IN ('pending', 'running')
+        ) INTO job_exists;
+        
+        -- Skip if active job exists to avoid unique constraint violation
+        IF job_exists AND target_status IN ('pending', 'running') THEN
+            RAISE NOTICE 'Skipping duplicate active job for address=% chain=%', aij_rec.address, aij_rec.chain;
+            CONTINUE;
+        END IF;
+        
+        -- For paused jobs, try to get quota_reset_at from watched_addresses, fallback to now()
+        IF aij_rec.status = 'paused' THEN
+            SELECT COALESCE(wa.quota_reset_at, now())
+            INTO target_run_after
+            FROM watched_addresses wa
+            WHERE wa.address = aij_rec.address AND wa.chain = aij_rec.chain;
+            
+            IF target_run_after IS NULL THEN
+                target_run_after := now();
+            END IF;
+        ELSE
+            target_run_after := aij_rec.created_at;
+        END IF;
+        
+        -- Calculate finished_at for terminal states
+        target_finished_at := COALESCE(aij_rec.completed_at, aij_rec.failed_at, aij_rec.canceled_at);
+        
+        -- Insert into jobs table
+        INSERT INTO jobs (
+            queue, 
+            kind, 
+            payload, 
+            status, 
+            unique_key, 
+            run_after, 
+            created_at, 
+            updated_at, 
+            started_at, 
+            finished_at
+        )
+        VALUES (
+            'token_index',
+            'IndexTokenOwner',
+            jsonb_build_array(to_jsonb(aij_rec.address)),
+            target_status,
+            unique_key_value,
+            target_run_after,
+            aij_rec.created_at,
+            aij_rec.updated_at,
+            COALESCE(aij_rec.started_at, aij_rec.created_at),
+            target_finished_at
+        )
+        RETURNING id INTO new_job_id;
+        
+        -- Update address_indexing_jobs with new job_id
+        UPDATE address_indexing_jobs 
+        SET job_id = new_job_id 
+        WHERE id = aij_rec.id;
+        
+        RAISE NOTICE 'Migrated address_indexing_job id=% to job id=%', aij_rec.id, new_job_id;
+    END LOOP;
+END $$;
 
+-- Drop legacy Temporal columns
 ALTER TABLE address_indexing_jobs DROP COLUMN IF EXISTS workflow_id;
 ALTER TABLE address_indexing_jobs DROP COLUMN IF EXISTS workflow_run_id;
 
+-- Change FK constraint to CASCADE delete and enforce NOT NULL
 ALTER TABLE address_indexing_jobs DROP CONSTRAINT IF EXISTS address_indexing_jobs_job_id_fkey;
 ALTER TABLE address_indexing_jobs
     ADD CONSTRAINT address_indexing_jobs_job_id_fkey
