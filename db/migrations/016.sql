@@ -48,7 +48,17 @@ DROP INDEX IF EXISTS idx_address_indexing_job_workflow_id;
 -- This preserves historical data and allows resumption of paused/running jobs
 DO $$
 DECLARE
-    aij_rec RECORD;
+    aij_id BIGINT;
+    aij_address TEXT;
+    aij_chain blockchain_chain;
+    aij_status indexing_job_status;
+    aij_started_at TIMESTAMPTZ;
+    aij_paused_at TIMESTAMPTZ;
+    aij_completed_at TIMESTAMPTZ;
+    aij_failed_at TIMESTAMPTZ;
+    aij_canceled_at TIMESTAMPTZ;
+    aij_created_at TIMESTAMPTZ;
+    aij_updated_at TIMESTAMPTZ;
     new_job_id BIGINT;
     target_status job_status;
     target_run_after TIMESTAMPTZ;
@@ -56,20 +66,25 @@ DECLARE
     unique_key_value TEXT;
     job_exists BOOLEAN;
 BEGIN
-    FOR aij_rec IN 
-        SELECT * FROM address_indexing_jobs WHERE job_id IS NULL
+    FOR aij_id, aij_address, aij_chain, aij_status, aij_started_at, aij_paused_at, 
+        aij_completed_at, aij_failed_at, aij_canceled_at, aij_created_at, aij_updated_at IN
+        SELECT id, address, chain, status, started_at, paused_at, completed_at, 
+               failed_at, canceled_at, created_at, updated_at
+        FROM address_indexing_jobs 
+        WHERE job_id IS NULL
+        ORDER BY id  -- Process in order for consistency
     LOOP
         -- Map address_indexing_jobs.status to jobs.status
         target_status := CASE 
-            WHEN aij_rec.status = 'running' THEN 'running'::job_status
-            WHEN aij_rec.status = 'paused' THEN 'pending'::job_status
-            WHEN aij_rec.status = 'completed' THEN 'succeeded'::job_status
-            WHEN aij_rec.status = 'failed' THEN 'failed'::job_status
-            WHEN aij_rec.status = 'canceled' THEN 'canceled'::job_status
+            WHEN aij_status = 'running' THEN 'running'::job_status
+            WHEN aij_status = 'paused' THEN 'pending'::job_status
+            WHEN aij_status = 'completed' THEN 'succeeded'::job_status
+            WHEN aij_status = 'failed' THEN 'failed'::job_status
+            WHEN aij_status = 'canceled' THEN 'canceled'::job_status
         END;
         
         -- Build unique key: 'index-token-owner-{chain}-{address}'
-        unique_key_value := 'index-token-owner-' || aij_rec.chain || '-' || aij_rec.address;
+        unique_key_value := 'index-token-owner-' || aij_chain || '-' || aij_address;
         
         -- Check if an active job already exists (would violate unique constraint)
         SELECT EXISTS(
@@ -82,26 +97,26 @@ BEGIN
         
         -- Skip if active job exists to avoid unique constraint violation
         IF job_exists AND target_status IN ('pending', 'running') THEN
-            RAISE NOTICE 'Skipping duplicate active job for address=% chain=%', aij_rec.address, aij_rec.chain;
+            RAISE NOTICE 'Skipping duplicate active job for address=% chain=%', aij_address, aij_chain;
             CONTINUE;
         END IF;
         
         -- For paused jobs, try to get quota_reset_at from watched_addresses, fallback to now()
-        IF aij_rec.status = 'paused' THEN
+        IF aij_status = 'paused' THEN
             SELECT COALESCE(wa.quota_reset_at, now())
             INTO target_run_after
             FROM watched_addresses wa
-            WHERE wa.address = aij_rec.address AND wa.chain = aij_rec.chain;
+            WHERE wa.address = aij_address AND wa.chain = aij_chain::text;
             
             IF target_run_after IS NULL THEN
                 target_run_after := now();
             END IF;
         ELSE
-            target_run_after := aij_rec.created_at;
+            target_run_after := aij_created_at;
         END IF;
         
         -- Calculate finished_at for terminal states
-        target_finished_at := COALESCE(aij_rec.completed_at, aij_rec.failed_at, aij_rec.canceled_at);
+        target_finished_at := COALESCE(aij_completed_at, aij_failed_at, aij_canceled_at);
         
         -- Insert into jobs table
         INSERT INTO jobs (
@@ -119,13 +134,13 @@ BEGIN
         VALUES (
             'token_index',
             'IndexTokenOwner',
-            jsonb_build_array(to_jsonb(aij_rec.address)),
+            jsonb_build_array(to_jsonb(aij_address)),
             target_status,
             unique_key_value,
             target_run_after,
-            aij_rec.created_at,
-            aij_rec.updated_at,
-            COALESCE(aij_rec.started_at, aij_rec.created_at),
+            aij_created_at,
+            aij_updated_at,
+            COALESCE(aij_started_at, aij_created_at),
             target_finished_at
         )
         RETURNING id INTO new_job_id;
@@ -133,9 +148,9 @@ BEGIN
         -- Update address_indexing_jobs with new job_id
         UPDATE address_indexing_jobs 
         SET job_id = new_job_id 
-        WHERE id = aij_rec.id;
+        WHERE id = aij_id;
         
-        RAISE NOTICE 'Migrated address_indexing_job id=% to job id=%', aij_rec.id, new_job_id;
+        RAISE NOTICE 'Migrated address_indexing_job id=% to job id=%', aij_id, new_job_id;
     END LOOP;
 END $$;
 
