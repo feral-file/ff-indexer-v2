@@ -64,7 +64,8 @@
             "0xFfE213c3faA18B4B80aC1658C363D471dC745886",
             "0x614d5475FE81ef4b6Dd8093b5C73EfEEE03167e0",
             "0x115C9A6118bC7a3EB0aBD30f6BCF1C45Bb198AEd",
-            "0x67E3ad1902A55074AAdD84d9b335105B2D52b813"
+            "0x67E3ad1902A55074AAdD84d9b335105B2D52b813",
+            "0x32c07ADE321B90813220F5064842B1F34A59f322"
           ]
         },
         "tezos:mainnet": {
@@ -82,7 +83,8 @@
         "eip155:1": {
           "deployer_addresses": [
             "0x96dC73c8B5969608C77375F085949744b5177660",
-            "0xB8559AF91377e5BaB052A4E9a5088cB65a9a4d63"
+            "0xB8559AF91377e5BaB052A4E9a5088cB65a9a4d63",
+            "0x00df4E8d293d57718aac0B18cBfBE128c5d484Ef"
           ],
           "collection_addresses": [
             "0x059EDD72Cd353dF5106D2B9cC5ab83a52287aC3a",
@@ -114,7 +116,9 @@
             "0x942BC2d3e7a589FE5bd4A5C6eF9727DFd82F5C8a",
             "0x99a9B7c1116f9ceEB1652de04d5969CcE509B069",
             "0x0A1BBD57033F57E7B6743621b79fCB9Eb2CE3676",
-            "0x0000F6Bc84aB98fbD8fce1f6D047965C723F0000"
+            "0x0000F6Bc84aB98fbD8fce1f6D047965C723F0000",
+            "0x0000018afA7Ca51648ed4B2B00C133005Ea17115",
+            "0x0000000C687DaeD0fbA60d1dBA4e5f6149E8B894"
           ]
         }
       }
@@ -157,7 +161,8 @@
             "0xb2d39da392f19edb27639b92adfe7edfcc96391b"
           ],
           "collection_addresses": [
-            "0xb932a70a57673d89f4acffbe830e8ed7f75fb9e0"
+            "0xb932a70a57673d89f4acffbe830e8ed7f75fb9e0",
+            "0x41A322b28D0fF354040e2CbC676F0320d8c8850d"
           ]
         }
       }
