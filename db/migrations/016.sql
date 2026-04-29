@@ -1,5 +1,6 @@
 -- Migration 016: Postgres job queue (jobs) and address_indexing_jobs.job_id
--- Creates `jobs`, adds `address_indexing_jobs.job_id`, removes legacy Temporal `workflow_id` / `workflow_run_id`,
+-- Creates `jobs`, adds `address_indexing_jobs.job_id`, removes legacy Temporal `workflow_run_id` only,
+-- keeps deprecated `workflow_id` (opaque string: pre-migration Temporal id or decimal `jobs.id` string),
 -- and enforces `job_id NOT NULL` with `FOREIGN KEY ... ON DELETE CASCADE` to `jobs(id)`.
 
 CREATE TYPE job_status AS ENUM ('pending', 'running', 'succeeded', 'failed', 'canceled');
@@ -40,9 +41,6 @@ COMMENT ON COLUMN jobs.cancel_requested IS 'When true, worker should cancel the 
 -- Nullable FK first; we'll backfill existing rows with corresponding jobs entries
 ALTER TABLE address_indexing_jobs
     ADD COLUMN job_id BIGINT REFERENCES jobs(id) ON DELETE SET NULL;
-
--- Partial unique index on workflow_id (from migration 006; dropped with Temporal columns)
-DROP INDEX IF EXISTS idx_address_indexing_job_workflow_id;
 
 -- Backfill: Create jobs table rows for all existing address_indexing_jobs
 -- This preserves historical data and allows resumption of paused/running jobs
@@ -154,8 +152,7 @@ BEGIN
     END LOOP;
 END $$;
 
--- Drop legacy Temporal columns
-ALTER TABLE address_indexing_jobs DROP COLUMN IF EXISTS workflow_id;
+-- Drop legacy Temporal run id only (workflow_id retained for API backward compatibility)
 ALTER TABLE address_indexing_jobs DROP COLUMN IF EXISTS workflow_run_id;
 
 -- Change FK constraint to CASCADE delete and enforce NOT NULL
@@ -167,3 +164,4 @@ ALTER TABLE address_indexing_jobs ALTER COLUMN job_id SET NOT NULL;
 
 COMMENT ON TABLE address_indexing_jobs IS 'Tracks address-level indexing job status; linked to the postgres job queue via job_id (jobs.id).';
 COMMENT ON COLUMN address_indexing_jobs.job_id IS 'Postgres job queue id (jobs.id) for this address indexing work unit';
+COMMENT ON COLUMN address_indexing_jobs.workflow_id IS 'Deprecated. Legacy correlation id (Temporal UUID/string or decimal jobs.id string). Prefer job_id; APIs may resolve status by this value for older clients.';

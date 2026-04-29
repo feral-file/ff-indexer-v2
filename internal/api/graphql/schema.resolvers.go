@@ -416,10 +416,10 @@ func (r *queryResolver) JobStatus(ctx context.Context, jobID int) (*dto.JobStatu
 
 // WorkflowStatus is the resolver for the deprecated workflowStatus field.
 //
-// Reason: Preserves the pre–job_id GraphQL arguments; workflow_id is interpreted as the decimal
-// string of jobs.id (same as REST GET /api/v1/workflows/:workflow_id/runs/:run_id). Optional run_id is ignored
-// because queue-backed jobs do not have a Temporal run id.
+// Reason: Preserves the pre–job_id GraphQL arguments; deprecated argument workflow_id is the decimal string of jobs.id
+// (same as REST GET /api/v1/workflows/:workflow_id). Uses the jobs table only. Optional run_id is ignored.
 func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, runID *string) (*dto.JobStatusResponse, error) {
+	_ = runID
 	wf := strings.TrimSpace(workflowID)
 	if wf == "" {
 		return nil, apierrors.NewValidationError("workflow_id is required")
@@ -434,7 +434,8 @@ func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, r
 	return r.executor.GetJobStatus(ctx, jobID)
 }
 
-// IndexingJob is the resolver for the indexingJob field.
+// IndexingJob is the resolver for the indexingJob field. When the client passes deprecated workflow_id instead of job_id,
+// resolution uses address_indexing_jobs (decimal jobs.id or stored opaque workflow_id); see executor.GetAddressIndexingJobByLegacyWorkflowID.
 func (r *queryResolver) IndexingJob(ctx context.Context, jobID *int, workflowID *string) (*dto.AddressIndexingJobResponse, error) {
 	hasJob := jobID != nil
 	hasWF := workflowID != nil && strings.TrimSpace(*workflowID) != ""
@@ -451,15 +452,6 @@ func (r *queryResolver) IndexingJob(ctx context.Context, jobID *int, workflowID 
 			return nil, apierrors.NewValidationError("job_id must be positive")
 		}
 		resolvedID = int64(*jobID)
-	} else {
-		parsed, err := internalTypes.Int64FromUnsignedDecimalString(*workflowID)
-		if err != nil {
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid workflow_id: %v", err))
-		}
-		if parsed < 1 {
-			return nil, apierrors.NewValidationError("workflow_id must resolve to a positive job id")
-		}
-		resolvedID = parsed
 	}
 
 	opts := executor.GetAddressIndexingJobOptions{}
@@ -476,7 +468,10 @@ func (r *queryResolver) IndexingJob(ctx context.Context, jobID *int, workflowID 
 		}
 	}
 
-	return r.executor.GetAddressIndexingJob(ctx, resolvedID, opts)
+	if hasJob {
+		return r.executor.GetAddressIndexingJob(ctx, resolvedID, opts)
+	}
+	return r.executor.GetAddressIndexingJobByLegacyWorkflowID(ctx, *workflowID, opts)
 }
 
 // SyncCollection is the resolver for the syncCollection field.

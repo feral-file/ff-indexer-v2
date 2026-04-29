@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -4474,6 +4475,7 @@ func testAddressIndexingJobs(t *testing.T, store Store) {
 		assert.Equal(t, 0, job.TokensProcessed)
 		assert.Nil(t, job.CurrentMinBlock)
 		assert.Nil(t, job.CurrentMaxBlock)
+		assert.Equal(t, strconv.FormatInt(queueJobID, 10), job.WorkflowID)
 	})
 
 	t.Run("CreateAddressIndexingJob - duplicate active address+chain is idempotent", func(t *testing.T) {
@@ -4572,6 +4574,31 @@ func testAddressIndexingJobs(t *testing.T, store Store) {
 
 	t.Run("GetAddressIndexingJobByJobID - not found", func(t *testing.T) {
 		_, err := store.GetAddressIndexingJobByJobID(ctx, 999_999_999)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "job not found")
+	})
+
+	t.Run("GetAddressIndexingJobByWorkflowID - opaque legacy id", func(t *testing.T) {
+		queueJobID := mustStubJobsRowID(t, ctx, store, "addr-wf-legacy-uuid")
+		legacyWF := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+		input := CreateAddressIndexingJobInput{
+			Address:    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			Chain:      domain.ChainEthereumMainnet,
+			Status:     schema.IndexingJobStatusRunning,
+			JobID:      queueJobID,
+			WorkflowID: legacyWF,
+		}
+		err := store.CreateAddressIndexingJob(ctx, input)
+		require.NoError(t, err)
+
+		job, err := store.GetAddressIndexingJobByWorkflowID(ctx, legacyWF)
+		require.NoError(t, err)
+		assert.Equal(t, legacyWF, job.WorkflowID)
+		assert.Equal(t, queueJobID, job.JobID)
+	})
+
+	t.Run("GetAddressIndexingJobByWorkflowID - not found", func(t *testing.T) {
+		_, err := store.GetAddressIndexingJobByWorkflowID(ctx, "no-such-workflow-id")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "job not found")
 	})

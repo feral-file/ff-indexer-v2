@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -54,6 +55,10 @@ type Executor interface {
 
 	// GetAddressIndexingJob retrieves an address indexing job by postgres jobs.id (queue job id)
 	GetAddressIndexingJob(ctx context.Context, jobID int64, opts GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error)
+
+	// GetAddressIndexingJobByLegacyWorkflowID loads an address indexing job when the client passes deprecated
+	// workflow_id: either the decimal string of jobs.id or the opaque value stored in address_indexing_jobs.workflow_id.
+	GetAddressIndexingJobByLegacyWorkflowID(ctx context.Context, workflowID string, opts GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error)
 
 	// SyncCollection retrieves token events for an address since a checkpoint
 	// checkpoint: optional, if nil returns events from beginning (initial sync)
@@ -534,6 +539,7 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 
 // newTriggerIndexingResponse builds a trigger response with canonical job_id and deprecated workflow/run fields for legacy clients.
 func newTriggerIndexingResponse(jobID int64) *dto.TriggerIndexingResponse {
+	// Deprecated JSON workflow_id; token/metadata triggers use decimal str(job_id) only.
 	wf := strconv.FormatInt(jobID, 10)
 	return &dto.TriggerIndexingResponse{
 		JobID:      jobID,
@@ -583,10 +589,15 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 				return nil, apierrors.NewServiceError(
 					fmt.Sprintf("active indexing job for %s is missing job_id; cannot report progress", address))
 			}
+			// Deprecated response field workflow_id (JSON); mirrors address_indexing_jobs.workflow_id.
+			wf := strings.TrimSpace(existingJob.WorkflowID)
+			if wf == "" {
+				wf = strconv.FormatInt(existingJob.JobID, 10)
+			}
 			outJobs = append(outJobs, dto.AddressIndexingJobInfo{
 				Address:    address,
 				JobID:      existingJob.JobID,
-				WorkflowID: strconv.FormatInt(existingJob.JobID, 10),
+				WorkflowID: wf,
 			})
 
 			logger.Info(fmt.Sprintf("Found existing %s job for address", existingJob.Status),
@@ -623,8 +634,9 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 		}
 
 		outJobs = append(outJobs, dto.AddressIndexingJobInfo{
-			Address:    address,
-			JobID:      pj.ID,
+			Address: address,
+			JobID:   pj.ID,
+			// Deprecated JSON workflow_id; new rows use str(job_id).
 			WorkflowID: strconv.FormatInt(pj.ID, 10),
 		})
 
@@ -1096,10 +1108,38 @@ func (e *executor) GetAddressIndexingJob(ctx context.Context, jobID int64, opts 
 	if err != nil {
 		return nil, apierrors.NewNotFoundError(fmt.Sprintf("Indexing job not found: %v", err))
 	}
+	return e.buildAddressIndexingJobResponse(ctx, job, opts)
+}
 
+// GetAddressIndexingJobByLegacyWorkflowID handles deprecated GraphQL/address-indexing arguments named workflow_id:
+// unsigned decimal jobs.id, or exact match on address_indexing_jobs.workflow_id (opaque legacy string).
+func (e *executor) GetAddressIndexingJobByLegacyWorkflowID(ctx context.Context, workflowID string, opts GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error) {
+	wf := strings.TrimSpace(workflowID) // client-supplied deprecated workflow_id
+	if wf == "" {
+		return nil, apierrors.NewValidationError("workflow_id is required")
+	}
+	var job *schema.AddressIndexingJob
+	var err error
+	if jobID, perr := internalTypes.Int64FromUnsignedDecimalString(wf); perr == nil && jobID >= 1 {
+		job, err = e.store.GetAddressIndexingJobByJobID(ctx, jobID)
+	} else {
+		job, err = e.store.GetAddressIndexingJobByWorkflowID(ctx, wf)
+	}
+	if err != nil {
+		return nil, apierrors.NewNotFoundError(fmt.Sprintf("Indexing job not found: %v", err))
+	}
+	return e.buildAddressIndexingJobResponse(ctx, job, opts)
+}
+
+func (e *executor) buildAddressIndexingJobResponse(ctx context.Context, job *schema.AddressIndexingJob, opts GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error) {
+	// Deprecated JSON field workflow_id: echo persisted address_indexing_jobs.workflow_id (fallback str(job_id)).
+	wf := strings.TrimSpace(job.WorkflowID)
+	if wf == "" {
+		wf = strconv.FormatInt(job.JobID, 10)
+	}
 	response := &dto.AddressIndexingJobResponse{
 		JobID:           job.JobID,
-		WorkflowID:      strconv.FormatInt(job.JobID, 10),
+		WorkflowID:      wf,
 		Address:         job.Address,
 		Chain:           string(job.Chain),
 		Status:          string(job.Status),
@@ -1113,18 +1153,15 @@ func (e *executor) GetAddressIndexingJob(ctx context.Context, jobID int64, opts 
 		CanceledAt:      job.CanceledAt,
 	}
 
-	// Only query counts if at least one was requested
 	if opts.IncludeTotalIndexed || opts.IncludeTotalViewable {
 		counts, err := e.store.GetTokenCountsByAddress(ctx, job.Address, job.Chain)
 		if err != nil {
-			// Log error but don't fail the request - counts are optional
 			logger.WarnCtx(ctx, "Failed to get token counts",
 				zap.Error(err),
 				zap.String("address", job.Address),
 				zap.String("chain", string(job.Chain)),
 			)
 		} else {
-			// Conditionally populate based on what was requested
 			if opts.IncludeTotalIndexed {
 				response.TotalTokensIndexed = &counts.TotalIndexed
 			}

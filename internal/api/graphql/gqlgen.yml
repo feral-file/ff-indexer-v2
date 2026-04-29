@@ -285,6 +285,7 @@ models:
     fields:
       job_id:
         fieldName: JobID
+      # Deprecated GraphQL field workflow_id -> dto.WorkflowID (decimal str(job_id) for triggers).
       workflow_id:
         fieldName: WorkflowID
       run_id:
@@ -296,6 +297,7 @@ models:
     fields:
       address:
         fieldName: Address
+      # Deprecated workflow_id -> dto.WorkflowID (stored opaque id on address_indexing_jobs).
       workflow_id:
         fieldName: WorkflowID
       job_id:
@@ -352,6 +354,7 @@ models:
     fields:
       job_id:
         fieldName: JobID
+      # Deprecated workflow_id -> dto.WorkflowID (persisted correlation on address_indexing_jobs).
       workflow_id:
         fieldName: WorkflowID
       address:

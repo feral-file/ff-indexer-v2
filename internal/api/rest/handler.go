@@ -44,8 +44,7 @@ type Handler interface {
 	// GET /api/v1/jobs/:job_id
 	GetJobStatus(c *gin.Context)
 
-	// GetWorkflowRun retrieves job status by legacy workflow paths (workflow_id is decimal jobs.id; optional
-	// /runs/:run_id is ignored for queue-backed jobs)
+	// GetWorkflowRun retrieves job status by deprecated legacy URL paths. Path param workflow_id is the decimal string of jobs.id only.
 	// GET /api/v1/workflows/:workflow_id
 	// GET /api/v1/workflows/:workflow_id/runs/:run_id
 	GetWorkflowRun(c *gin.Context)
@@ -54,8 +53,8 @@ type Handler interface {
 	// POST /api/v1/webhooks/clients
 	CreateWebhookClient(c *gin.Context)
 
-	// GetAddressIndexingJob retrieves an address indexing job by queue job id
-	// GET /api/v1/indexing/jobs/:job_id
+	// GetAddressIndexingJob retrieves an address indexing job by postgres jobs.id (canonical path).
+	// JSON responses include deprecated `workflow_id` from address_indexing_jobs when present; legacy opaque ids require GraphQL `indexingJob(workflow_id)`.
 	GetAddressIndexingJob(c *gin.Context)
 
 	// SyncCollection retrieves token changes for an address using timestamp-based watermark mechanism
@@ -301,10 +300,10 @@ func (h *handler) GetJobStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-// GetWorkflowRun returns the same payload as GetJobStatus for the job whose id matches workflow_id.
+// GetWorkflowRun returns the same payload as GetJobStatus. Deprecated path segment workflow_id must be the decimal jobs.id.
 // An optional /runs/:run_id suffix is accepted for legacy URL shape only; it is not used.
 func (h *handler) GetWorkflowRun(c *gin.Context) {
-	wf := c.Param("workflow_id")
+	wf := c.Param("workflow_id") // deprecated param name; value is jobs.id as decimal string
 	if wf == "" {
 		respondBadRequest(c, "workflow_id is required")
 		return
@@ -361,7 +360,7 @@ func (h *handler) CreateWebhookClient(c *gin.Context) {
 	c.JSON(http.StatusCreated, response)
 }
 
-// GetAddressIndexingJob retrieves an address indexing job by postgres jobs.id
+// GetAddressIndexingJob retrieves an address indexing job by postgres jobs.id; response echoes deprecated workflow_id from the row.
 func (h *handler) GetAddressIndexingJob(c *gin.Context) {
 	p := c.Param("job_id")
 	if p == "" {

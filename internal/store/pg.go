@@ -2330,13 +2330,19 @@ func (s *pgStore) CreateAddressIndexingJob(ctx context.Context, input CreateAddr
 	if n > 0 {
 		return nil
 	}
+	// Deprecated column workflow_id on address_indexing_jobs; see CreateAddressIndexingJobInput.WorkflowID.
+	workflowID := strings.TrimSpace(input.WorkflowID)
+	if workflowID == "" {
+		workflowID = strconv.FormatInt(input.JobID, 10)
+	}
 	now := time.Now()
 	job := &schema.AddressIndexingJob{
-		Address:   input.Address,
-		Chain:     input.Chain,
-		Status:    input.Status,
-		JobID:     input.JobID,
-		StartedAt: now,
+		Address:    input.Address,
+		Chain:      input.Chain,
+		Status:     input.Status,
+		JobID:      input.JobID,
+		WorkflowID: workflowID,
+		StartedAt:  now,
 	}
 	switch input.Status {
 	case schema.IndexingJobStatusRunning:
@@ -2384,6 +2390,34 @@ func (s *pgStore) GetAddressIndexingJobByJobID(ctx context.Context, jobID int64)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("job not found for job_id: %d", jobID)
+	}
+	return nil, fmt.Errorf("failed to get job: %w", err)
+}
+
+// GetAddressIndexingJobByWorkflowID retrieves a job by deprecated workflow_id (exact match).
+func (s *pgStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error) {
+	var job schema.AddressIndexingJob
+
+	err := s.db.WithContext(ctx).Where("workflow_id = ?", workflowID).First(&job).Error
+	if err == nil {
+		return &job, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to get job: %w", err)
+	}
+	if !hasDBResolver(s.db) {
+		return nil, fmt.Errorf("job not found for workflow_id: %s", workflowID)
+	}
+
+	err = s.db.WithContext(ctx).
+		Clauses(dbresolver.Write).
+		Where("workflow_id = ?", workflowID).
+		First(&job).Error
+	if err == nil {
+		return &job, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("job not found for workflow_id: %s", workflowID)
 	}
 	return nil, fmt.Errorf("failed to get job: %w", err)
 }

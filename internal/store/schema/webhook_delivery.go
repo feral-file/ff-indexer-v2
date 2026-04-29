@@ -30,7 +30,7 @@ type WebhookDelivery struct {
 	EventType string `gorm:"column:event_type;not null;type:varchar(50)"`
 	// Payload is the complete webhook event payload as JSON
 	Payload datatypes.JSON `gorm:"column:payload;not null;type:jsonb"`
-	// WorkflowID is a correlation identifier for this delivery (API/historical naming; not an external orchestrator ID).
+	// WorkflowID is a correlation identifier for this delivery (deprecated/historical column and JSON name `workflow_id`).
 	WorkflowID string `gorm:"column:workflow_id;not null;type:varchar(255)"`
 	// WorkflowRunID is an optional second correlation identifier (API/historical naming).
 	WorkflowRunID string `gorm:"column:workflow_run_id;type:varchar(255)"`

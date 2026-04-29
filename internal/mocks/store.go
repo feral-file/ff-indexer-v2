@@ -266,6 +266,21 @@ func (mr *MockStoreMockRecorder) GetAddressIndexingJobByJobID(ctx, jobID any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJobByJobID", reflect.TypeOf((*MockStore)(nil).GetAddressIndexingJobByJobID), ctx, jobID)
 }
 
+// GetAddressIndexingJobByWorkflowID mocks base method.
+func (m *MockStore) GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAddressIndexingJobByWorkflowID", ctx, workflowID)
+	ret0, _ := ret[0].(*schema.AddressIndexingJob)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAddressIndexingJobByWorkflowID indicates an expected call of GetAddressIndexingJobByWorkflowID.
+func (mr *MockStoreMockRecorder) GetAddressIndexingJobByWorkflowID(ctx, workflowID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJobByWorkflowID", reflect.TypeOf((*MockStore)(nil).GetAddressIndexingJobByWorkflowID), ctx, workflowID)
+}
+
 // GetAllKeyValuesByPrefix mocks base method.
 func (m *MockStore) GetAllKeyValuesByPrefix(ctx context.Context, prefix string) (map[string]string, error) {
 	m.ctrl.T.Helper()

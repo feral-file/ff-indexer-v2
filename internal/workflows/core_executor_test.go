@@ -3955,10 +3955,11 @@ func TestCreateIndexingJob_Success(t *testing.T) {
 	jobID := int64(42)
 
 	expectedInput := store.CreateAddressIndexingJobInput{
-		Address: address,
-		Chain:   chain,
-		Status:  schema.IndexingJobStatusRunning,
-		JobID:   jobID,
+		Address:    address,
+		Chain:      chain,
+		Status:     schema.IndexingJobStatusRunning,
+		JobID:      jobID,
+		WorkflowID: "42",
 	}
 
 	mocks.store.EXPECT().

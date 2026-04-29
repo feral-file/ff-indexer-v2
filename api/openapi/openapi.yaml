@@ -2027,8 +2027,8 @@ components:
           type: [string, "null"]
           deprecated: true
           description: |
-            **Deprecated** — use `job_id` for new clients. This value is the decimal string of `job_id` for
-            backward-compatible clients only.
+            **Deprecated** — use `job_id` for new clients. Echoes `address_indexing_jobs.workflow_id`
+            (typically the decimal string of `job_id` for new rows; may be an opaque legacy correlation id).
           example: "1"
 
     TriggerAddressIndexingResponse:
@@ -2102,8 +2102,8 @@ components:
           type: [string, "null"]
           deprecated: true
           description: |
-            **Deprecated** — use `job_id` for new clients. This value is the decimal string of `job_id` for
-            backward-compatible clients only.
+            **Deprecated** — use `job_id` for new clients. Echoes `address_indexing_jobs.workflow_id`
+            (typically the decimal string of `job_id` for new rows; may be an opaque legacy correlation id).
         address:
           type: string
           description: Blockchain address being indexed

@@ -7,7 +7,7 @@ import (
 // TriggerIndexingResponse represents the response for triggering indexing
 type TriggerIndexingResponse struct {
 	JobID int64 `json:"job_id"`
-	// WorkflowID duplicates JobID as a decimal string for legacy API clients.
+	// WorkflowID duplicates JobID as a decimal string for legacy API clients (token/metadata triggers).
 	//
 	// Deprecated: use JobID for new integrations.
 	WorkflowID string `json:"workflow_id"`
@@ -21,9 +21,10 @@ type TriggerIndexingResponse struct {
 type AddressIndexingJobInfo struct {
 	Address string `json:"address"`
 	JobID   int64  `json:"job_id"`
-	// WorkflowID duplicates JobID as a decimal string for legacy API clients.
+	// WorkflowID is the deprecated JSON field `workflow_id`: opaque correlation string persisted on
+	// address_indexing_jobs (typically str(job_id) for new rows; legacy rows may use a pre-migration id).
 	//
-	// Deprecated: use JobID; do not rely on this field for new integrations.
+	// Deprecated: use JobID for new integrations.
 	WorkflowID string `json:"workflow_id"`
 }
 
@@ -57,9 +58,10 @@ type CreateWebhookClientResponse struct {
 // AddressIndexingJobResponse represents an address indexing job
 type AddressIndexingJobResponse struct {
 	JobID int64 `json:"job_id"`
-	// WorkflowID duplicates JobID as a decimal string for legacy API clients.
+	// WorkflowID is the deprecated JSON field `workflow_id`: opaque correlation string persisted on
+	// address_indexing_jobs (typically str(job_id) for new rows; legacy rows may use a pre-migration id).
 	//
-	// Deprecated: use JobID; do not rely on this field for new integrations.
+	// Deprecated: use JobID for new integrations.
 	WorkflowID          string     `json:"workflow_id"`
 	Address             string     `json:"address"`
 	Chain               string     `json:"chain"`

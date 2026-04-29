@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1557,6 +1558,8 @@ func (e *coreExecutor) CreateIndexingJob(ctx context.Context, address string, ch
 		Chain:   chain,
 		Status:  schema.IndexingJobStatusRunning,
 		JobID:   jobID,
+		// Deprecated column workflow_id; default correlation for new rows is str(job_id).
+		WorkflowID: strconv.FormatInt(jobID, 10),
 	})
 }
 

@@ -415,6 +415,7 @@ Tracks address-level indexing job status for owner-based indexing. Each row is k
 | chain | blockchain_chain | Blockchain identifier |
 | status | indexing_job_status | Job status (running, paused, failed, completed, canceled) |
 | job_id | BIGINT | Foreign key to `jobs.id` (queue work unit); `NOT NULL`, `ON DELETE CASCADE` |
+| workflow_id | TEXT | Deprecated. Legacy correlation id (Temporal UUID/string or decimal `jobs.id` string). Prefer `job_id`; APIs resolve polling by this value for older clients. |
 | tokens_processed | INTEGER | Number of tokens processed (default: 0) |
 | current_min_block | BIGINT | Current minimum block indexed |
 | current_max_block | BIGINT | Current maximum block indexed |
@@ -427,6 +428,7 @@ Tracks address-level indexing job status for owner-based indexing. Each row is k
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
 **Indexes**:
+- `idx_address_indexing_job_workflow_id` (unique partial) on `workflow_id` where status is `running` or `paused` — at most one active job per deprecated workflow id
 - `idx_address_indexing_jobs_address_chain_active` (unique partial) on (address, chain) where status is `running` or `paused` — at most one active job per address+chain
 - `idx_address_indexing_jobs_address_chain_created` on (address, chain, created_at DESC) - For querying jobs by address
 - `idx_address_indexing_jobs_status_created` on (status, created_at DESC) - For querying jobs by status

@@ -578,7 +578,7 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 				jobs := make([]*schema.Job, 0, 10)
 				for i := 0; i < 10; i++ {
 					jobs = append(jobs, &schema.Job{
-						ID:      int64(callNum*100 + int32(i)),
+						ID:      int64(callNum)*100 + int64(i),
 						Kind:    "slow",
 						Queue:   "q",
 						Payload: []byte("[]"),

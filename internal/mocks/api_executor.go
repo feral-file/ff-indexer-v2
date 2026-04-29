@@ -75,6 +75,21 @@ func (mr *MockAPIExecutorMockRecorder) GetAddressIndexingJob(ctx, jobID, opts an
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJob", reflect.TypeOf((*MockAPIExecutor)(nil).GetAddressIndexingJob), ctx, jobID, opts)
 }
 
+// GetAddressIndexingJobByLegacyWorkflowID mocks base method.
+func (m *MockAPIExecutor) GetAddressIndexingJobByLegacyWorkflowID(ctx context.Context, workflowID string, opts executor.GetAddressIndexingJobOptions) (*dto.AddressIndexingJobResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAddressIndexingJobByLegacyWorkflowID", ctx, workflowID, opts)
+	ret0, _ := ret[0].(*dto.AddressIndexingJobResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAddressIndexingJobByLegacyWorkflowID indicates an expected call of GetAddressIndexingJobByLegacyWorkflowID.
+func (mr *MockAPIExecutorMockRecorder) GetAddressIndexingJobByLegacyWorkflowID(ctx, workflowID, opts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAddressIndexingJobByLegacyWorkflowID", reflect.TypeOf((*MockAPIExecutor)(nil).GetAddressIndexingJobByLegacyWorkflowID), ctx, workflowID, opts)
+}
+
 // GetJobStatus mocks base method.
 func (m *MockAPIExecutor) GetJobStatus(ctx context.Context, jobID int64) (*dto.JobStatusResponse, error) {
 	m.ctrl.T.Helper()

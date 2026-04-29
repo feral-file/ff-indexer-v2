@@ -213,6 +213,9 @@ type CreateAddressIndexingJobInput struct {
 	Status  schema.IndexingJobStatus
 	// JobID is the postgres jobs.id row; required (FK to jobs).
 	JobID int64
+	// WorkflowID is the deprecated opaque correlation id stored for API backward compatibility.
+	// When empty at insert time, the store defaults it to the decimal string of JobID.
+	WorkflowID string
 }
 
 // EnqueueJobInput is the data required to create a `jobs` row (postgres-backed work queue).
@@ -438,6 +441,9 @@ type Store interface {
 	CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error
 	// GetAddressIndexingJobByJobID returns the address indexing job row for the given postgres jobs.id (queue job id).
 	GetAddressIndexingJobByJobID(ctx context.Context, jobID int64) (*schema.AddressIndexingJob, error)
+	// GetAddressIndexingJobByWorkflowID looks up by the deprecated address_indexing_jobs.workflow_id column (exact match).
+	// Prefer GetAddressIndexingJobByJobID; this exists for legacy clients that only retain the opaque correlation string.
+	GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error)
 	// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
 	// Returns nil if no active job is found (not an error)
 	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)

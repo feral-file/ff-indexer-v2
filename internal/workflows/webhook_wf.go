@@ -93,6 +93,8 @@ func (w *coreWorkflows) DeliverWebhook(ctx context.Context, clientID string, eve
 	}
 
 	// Create delivery record
+	// Correlation id for the delivery audit row; column name workflow_id is legacy API/DB naming.
+	// When a handler runs inside a queue job, this is "job:<jobs.id>"; unrelated to address_indexing_jobs.workflow_id.
 	workflowID := "job:local"
 	workflowRunID := ""
 	if id, ok := jobs.JobIDFromContext(ctx); ok {

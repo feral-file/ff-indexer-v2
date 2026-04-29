@@ -299,6 +299,8 @@ CREATE TABLE address_indexing_jobs (
     status indexing_job_status NOT NULL,
     -- Queue work unit: required FK to jobs (see migration 016)
     job_id BIGINT NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+    -- Deprecated: legacy correlation id (Temporal UUID/string or str(job_id)); prefer job_id
+    workflow_id TEXT NOT NULL,
     
     -- Progress tracking
     tokens_processed INTEGER DEFAULT 0,
@@ -414,6 +416,7 @@ CREATE UNIQUE INDEX jobs_unique_key_active ON jobs (queue, kind, unique_key) WHE
 CREATE INDEX jobs_poll ON jobs (queue, run_after) WHERE status = 'pending';
 
 -- Address Indexing Jobs table indexes
+CREATE UNIQUE INDEX idx_address_indexing_job_workflow_id ON address_indexing_jobs(workflow_id) WHERE status IN ('running', 'paused');
 CREATE UNIQUE INDEX idx_address_indexing_jobs_address_chain_active ON address_indexing_jobs(address, chain) WHERE status IN ('running', 'paused');
 CREATE INDEX idx_address_indexing_jobs_address_chain_created ON address_indexing_jobs(address, chain, created_at DESC);
 CREATE INDEX idx_address_indexing_jobs_status_created ON address_indexing_jobs(status, created_at DESC);
@@ -559,3 +562,4 @@ COMMENT ON COLUMN jobs.run_after IS 'Do not run this job before this time (used 
 COMMENT ON COLUMN jobs.last_error IS 'Terminal or latest failure message when status is failed';
 COMMENT ON COLUMN jobs.cancel_requested IS 'When true, worker should cancel the in-flight handler context';
 COMMENT ON COLUMN address_indexing_jobs.job_id IS 'Postgres job queue id (jobs.id) for this address indexing work unit';
+COMMENT ON COLUMN address_indexing_jobs.workflow_id IS 'Deprecated. Legacy correlation id (Temporal UUID/string or decimal jobs.id string). Prefer job_id; APIs may resolve status by this value for older clients.';

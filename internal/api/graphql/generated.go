@@ -1739,7 +1739,7 @@ type TokenList {
 type TriggerIndexingResult {
   job_id: Int!
   # Deprecated: same as str(job_id); prefer job_id for new clients.
-  workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
+  workflow_id: String! @deprecated(reason: "Use job_id. Stored opaque correlation id (decimal jobs.id or legacy Temporal string).")
   # Deprecated: always null for postgres-queue jobs; kept for legacy response shape named run_id on older clients.
   run_id: String @deprecated(reason: "Unused for queue-backed jobs; always null.")
 }
@@ -1749,7 +1749,7 @@ type AddressIndexingJobInfo {
   address: String!
   job_id: Int!
   # Deprecated: same as str(job_id); prefer job_id for new clients.
-  workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
+  workflow_id: String! @deprecated(reason: "Use job_id. Stored opaque correlation id (decimal jobs.id or legacy Temporal string).")
 }
 
 # Result of triggering address indexing (returns array of jobs)
@@ -1806,16 +1806,17 @@ type Query {
   # Legacy: same as jobStatus when workflow_id is the decimal string of jobs.id; run_id is ignored.
   # Equivalent to: GET /api/v1/workflows/:workflow_id/runs/:run_id
   workflowStatus(
+    # Deprecated argument name: decimal string of jobs.id only (same as GET /api/v1/workflows/:workflow_id).
     workflow_id: String!
     run_id: String
   ): JobStatus @deprecated(reason: "Use jobStatus(job_id). workflow_id must be the decimal string of jobs.id; run_id is optional and ignored for queue-backed jobs.")
 
-  # Get address indexing job by queue job id or by workflow_id (decimal string of job_id, legacy alias)
+  # Get address indexing job by queue job id or by deprecated workflow_id (decimal jobs.id or stored opaque string)
   # Equivalent to: GET /api/v1/indexing/jobs/:job_id
   indexingJob(
     job_id: Int
-    # Deprecated: use job_id; accepts the decimal string of jobs.id (legacy only).
-    workflow_id: String @deprecated(reason: "Use job_id instead; workflow_id is only a decimal string alias.")
+    # Deprecated: use job_id; may pass decimal jobs.id or the stored workflow_id string (e.g. legacy Temporal id).
+    workflow_id: String @deprecated(reason: "Use job_id instead when possible; workflow_id accepts legacy opaque strings stored on the row.")
   ): IndexingJob
 
   # Sync collection state for an address using checkpoint-based pagination (open, no authentication required)
@@ -1915,8 +1916,8 @@ type WebhookClientResult {
 # Address indexing job
 type IndexingJob {
   job_id: Int!
-  # Deprecated: same as str(job_id); prefer job_id for new clients.
-  workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
+  # Deprecated: stored correlation id (decimal jobs.id or legacy opaque string); prefer job_id.
+  workflow_id: String! @deprecated(reason: "Use job_id. Stored opaque correlation id (decimal jobs.id or legacy Temporal string).")
   address: String!
   chain: String!
   status: String!
