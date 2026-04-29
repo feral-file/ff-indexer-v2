@@ -206,8 +206,6 @@ type AddressIndexingJobInfo {
   job_id: Int!
   # Deprecated: same as str(job_id); prefer job_id for new clients.
   workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
-  # Deprecated: always null for postgres-queue jobs; reserved for legacy API shape.
-  workflow_run_id: String @deprecated(reason: "Unused for queue-backed jobs; always null.")
 }
 
 # Result of triggering address indexing (returns array of jobs)
@@ -375,8 +373,6 @@ type IndexingJob {
   job_id: Int!
   # Deprecated: same as str(job_id); prefer job_id for new clients.
   workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
-  # Deprecated: always null for postgres-queue jobs; reserved for legacy API shape.
-  workflow_run_id: String @deprecated(reason: "Unused for queue-backed jobs; always null.")
   address: String!
   chain: String!
   status: String!

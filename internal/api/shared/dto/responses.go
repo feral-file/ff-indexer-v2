@@ -25,10 +25,6 @@ type AddressIndexingJobInfo struct {
 	//
 	// Deprecated: use JobID; do not rely on this field for new integrations.
 	WorkflowID string `json:"workflow_id"`
-	// WorkflowRunID is unused for postgres-queue-driven jobs (always null).
-	//
-	// Deprecated: reserved for legacy clients only.
-	WorkflowRunID *string `json:"workflow_run_id"`
 }
 
 // TriggerAddressIndexingResponse represents the response for triggering address indexing
@@ -64,11 +60,7 @@ type AddressIndexingJobResponse struct {
 	// WorkflowID duplicates JobID as a decimal string for legacy API clients.
 	//
 	// Deprecated: use JobID; do not rely on this field for new integrations.
-	WorkflowID string `json:"workflow_id"`
-	// WorkflowRunID is unused for postgres-queue-driven jobs (always null).
-	//
-	// Deprecated: reserved for legacy clients only.
-	WorkflowRunID       *string    `json:"workflow_run_id"`
+	WorkflowID          string     `json:"workflow_id"`
 	Address             string     `json:"address"`
 	Chain               string     `json:"chain"`
 	Status              string     `json:"status"`

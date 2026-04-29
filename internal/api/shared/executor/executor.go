@@ -584,10 +584,9 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 					fmt.Sprintf("active indexing job for %s is missing job_id; cannot report progress", address))
 			}
 			outJobs = append(outJobs, dto.AddressIndexingJobInfo{
-				Address:       address,
-				JobID:         existingJob.JobID,
-				WorkflowID:    strconv.FormatInt(existingJob.JobID, 10),
-				WorkflowRunID: nil, // legacy field; not used for queue-backed jobs
+				Address:    address,
+				JobID:      existingJob.JobID,
+				WorkflowID: strconv.FormatInt(existingJob.JobID, 10),
 			})
 
 			logger.Info(fmt.Sprintf("Found existing %s job for address", existingJob.Status),
@@ -624,10 +623,9 @@ func (e *executor) TriggerAddressIndexing(ctx context.Context, addresses []strin
 		}
 
 		outJobs = append(outJobs, dto.AddressIndexingJobInfo{
-			Address:       address,
-			JobID:         pj.ID,
-			WorkflowID:    strconv.FormatInt(pj.ID, 10),
-			WorkflowRunID: nil, // legacy field; not used for queue-backed jobs
+			Address:    address,
+			JobID:      pj.ID,
+			WorkflowID: strconv.FormatInt(pj.ID, 10),
 		})
 
 		logger.Info("Started new indexing job for address",
@@ -1102,7 +1100,6 @@ func (e *executor) GetAddressIndexingJob(ctx context.Context, jobID int64, opts 
 	response := &dto.AddressIndexingJobResponse{
 		JobID:           job.JobID,
 		WorkflowID:      strconv.FormatInt(job.JobID, 10),
-		WorkflowRunID:   nil, // legacy field; not used for queue-backed jobs
 		Address:         job.Address,
 		Chain:           string(job.Chain),
 		Status:          string(job.Status),

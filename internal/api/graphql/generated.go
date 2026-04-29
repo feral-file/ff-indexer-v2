@@ -64,10 +64,9 @@ type DirectiveRoot struct {
 
 type ComplexityRoot struct {
 	AddressIndexingJobInfo struct {
-		Address       func(childComplexity int) int
-		JobID         func(childComplexity int) int
-		WorkflowID    func(childComplexity int) int
-		WorkflowRunID func(childComplexity int) int
+		Address    func(childComplexity int) int
+		JobID      func(childComplexity int) int
+		WorkflowID func(childComplexity int) int
 	}
 
 	Artist struct {
@@ -106,7 +105,6 @@ type ComplexityRoot struct {
 		TotalTokensIndexed  func(childComplexity int) int
 		TotalTokensViewable func(childComplexity int) int
 		WorkflowID          func(childComplexity int) int
-		WorkflowRunID       func(childComplexity int) int
 	}
 
 	JobStatus struct {
@@ -418,12 +416,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.AddressIndexingJobInfo.WorkflowID(childComplexity), true
-	case "AddressIndexingJobInfo.workflow_run_id":
-		if e.complexity.AddressIndexingJobInfo.WorkflowRunID == nil {
-			break
-		}
-
-		return e.complexity.AddressIndexingJobInfo.WorkflowRunID(childComplexity), true
 
 	case "Artist.did":
 		if e.complexity.Artist.DID == nil {
@@ -601,12 +593,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.IndexingJob.WorkflowID(childComplexity), true
-	case "IndexingJob.workflow_run_id":
-		if e.complexity.IndexingJob.WorkflowRunID == nil {
-			break
-		}
-
-		return e.complexity.IndexingJob.WorkflowRunID(childComplexity), true
 
 	case "JobStatus.close_time":
 		if e.complexity.JobStatus.CloseTime == nil {
@@ -1764,8 +1750,6 @@ type AddressIndexingJobInfo {
   job_id: Int!
   # Deprecated: same as str(job_id); prefer job_id for new clients.
   workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
-  # Deprecated: always null for postgres-queue jobs; reserved for legacy API shape.
-  workflow_run_id: String @deprecated(reason: "Unused for queue-backed jobs; always null.")
 }
 
 # Result of triggering address indexing (returns array of jobs)
@@ -1933,8 +1917,6 @@ type IndexingJob {
   job_id: Int!
   # Deprecated: same as str(job_id); prefer job_id for new clients.
   workflow_id: String! @deprecated(reason: "Use job_id. This value is the decimal string of job_id for legacy clients only.")
-  # Deprecated: always null for postgres-queue jobs; reserved for legacy API shape.
-  workflow_run_id: String @deprecated(reason: "Unused for queue-backed jobs; always null.")
   address: String!
   chain: String!
   status: String!
@@ -2331,35 +2313,6 @@ func (ec *executionContext) _AddressIndexingJobInfo_workflow_id(ctx context.Cont
 }
 
 func (ec *executionContext) fieldContext_AddressIndexingJobInfo_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "AddressIndexingJobInfo",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _AddressIndexingJobInfo_workflow_run_id(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobInfo) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_AddressIndexingJobInfo_workflow_run_id,
-		func(ctx context.Context) (any, error) {
-			return obj.WorkflowRunID, nil
-		},
-		nil,
-		ec.marshalOString2ᚖstring,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_AddressIndexingJobInfo_workflow_run_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "AddressIndexingJobInfo",
 		Field:      field,
@@ -2830,35 +2783,6 @@ func (ec *executionContext) _IndexingJob_workflow_id(ctx context.Context, field 
 }
 
 func (ec *executionContext) fieldContext_IndexingJob_workflow_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "IndexingJob",
-		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type String does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _IndexingJob_workflow_run_id(ctx context.Context, field graphql.CollectedField, obj *dto.AddressIndexingJobResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_IndexingJob_workflow_run_id,
-		func(ctx context.Context) (any, error) {
-			return obj.WorkflowRunID, nil
-		},
-		nil,
-		ec.marshalOString2ᚖstring,
-		true,
-		false,
-	)
-}
-
-func (ec *executionContext) fieldContext_IndexingJob_workflow_run_id(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "IndexingJob",
 		Field:      field,
@@ -5264,8 +5188,6 @@ func (ec *executionContext) fieldContext_Query_indexingJob(ctx context.Context, 
 				return ec.fieldContext_IndexingJob_job_id(ctx, field)
 			case "workflow_id":
 				return ec.fieldContext_IndexingJob_workflow_id(ctx, field)
-			case "workflow_run_id":
-				return ec.fieldContext_IndexingJob_workflow_run_id(ctx, field)
 			case "address":
 				return ec.fieldContext_IndexingJob_address(ctx, field)
 			case "chain":
@@ -7296,8 +7218,6 @@ func (ec *executionContext) fieldContext_TriggerAddressIndexingResult_jobs(_ con
 				return ec.fieldContext_AddressIndexingJobInfo_job_id(ctx, field)
 			case "workflow_id":
 				return ec.fieldContext_AddressIndexingJobInfo_workflow_id(ctx, field)
-			case "workflow_run_id":
-				return ec.fieldContext_AddressIndexingJobInfo_workflow_run_id(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type AddressIndexingJobInfo", field.Name)
 		},
@@ -9104,8 +9024,6 @@ func (ec *executionContext) _AddressIndexingJobInfo(ctx context.Context, sel ast
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
-		case "workflow_run_id":
-			out.Values[i] = ec._AddressIndexingJobInfo_workflow_run_id(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -9326,8 +9244,6 @@ func (ec *executionContext) _IndexingJob(ctx context.Context, sel ast.SelectionS
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
-		case "workflow_run_id":
-			out.Values[i] = ec._IndexingJob_workflow_run_id(ctx, field, obj)
 		case "address":
 			out.Values[i] = ec._IndexingJob_address(ctx, field, obj)
 			if out.Values[i] == graphql.Null {

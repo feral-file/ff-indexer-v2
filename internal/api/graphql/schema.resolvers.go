@@ -419,7 +419,7 @@ func (r *queryResolver) JobStatus(ctx context.Context, jobID int) (*dto.JobStatu
 // Reason: Preserves the pre–job_id GraphQL arguments; workflow_id is interpreted as the decimal
 // string of jobs.id (same as REST GET /api/v1/workflows/:workflow_id/runs/:run_id). Optional run_id is ignored
 // because queue-backed jobs do not have a Temporal run id.
-func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, _ *string) (*dto.JobStatusResponse, error) {
+func (r *queryResolver) WorkflowStatus(ctx context.Context, workflowID string, runID *string) (*dto.JobStatusResponse, error) {
 	wf := strings.TrimSpace(workflowID)
 	if wf == "" {
 		return nil, apierrors.NewValidationError("workflow_id is required")

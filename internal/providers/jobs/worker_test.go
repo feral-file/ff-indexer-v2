@@ -543,11 +543,11 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 	var concurrentExecutions atomic.Int32
 	var maxConcurrent atomic.Int32
 	var executions atomic.Int32
-	
+
 	reg.Register("slow", func(ctx context.Context) error {
 		current := concurrentExecutions.Add(1)
 		defer concurrentExecutions.Add(-1)
-		
+
 		// Track the maximum concurrent executions
 		for {
 			max := maxConcurrent.Load()
@@ -555,7 +555,7 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 				break
 			}
 		}
-		
+
 		executions.Add(1)
 		time.Sleep(200 * time.Millisecond)
 		return nil
@@ -572,7 +572,7 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 	st.EXPECT().ClaimJobs(gomock.Any(), "q", 10).AnyTimes().DoAndReturn(
 		func(_ context.Context, _ string, limit int) ([]*schema.Job, error) {
 			callNum := claimCallCount.Add(1)
-			
+
 			// First 2 calls: return jobs
 			if callNum <= 2 {
 				jobs := make([]*schema.Job, 0, 10)
@@ -606,7 +606,7 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 	})
 
 	errC := goRun(w, ctx)
-	
+
 	// Wait for executions to complete
 	time.Sleep(3 * time.Second)
 	cancel()
@@ -614,9 +614,9 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 
 	// Verify we executed jobs
 	require.Greater(t, executions.Load(), int32(0), "expected some jobs to execute")
-	
+
 	// Verify concurrency was respected (should never exceed 2)
-	require.LessOrEqual(t, maxConcurrent.Load(), int32(2), 
+	require.LessOrEqual(t, maxConcurrent.Load(), int32(2),
 		"max concurrent executions should not exceed concurrency limit")
 }
 
@@ -662,7 +662,7 @@ func TestWorker_Run_DoesNotClaimCanceledPendingJobs(t *testing.T) {
 	})
 
 	errC := goRun(w, ctx)
-	
+
 	// Wait for sweep to be called
 	<-sweepCalled
 	cancel()

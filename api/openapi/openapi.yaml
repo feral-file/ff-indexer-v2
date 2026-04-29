@@ -2030,12 +2030,6 @@ components:
             **Deprecated** — use `job_id` for new clients. This value is the decimal string of `job_id` for
             backward-compatible clients only.
           example: "1"
-        workflow_run_id:
-          type: [string, "null"]
-          deprecated: true
-          description: |
-            **Deprecated** — always null for postgres-queue jobs; kept for legacy response shape.
-          example: null
 
     TriggerAddressIndexingResponse:
       type: object
@@ -2051,11 +2045,9 @@ components:
             - address: "tz1abc123..."
               job_id: 1
               workflow_id: "1"
-              workflow_run_id: null
             - address: "0x1234..."
               job_id: 2
               workflow_id: "2"
-              workflow_run_id: null
 
     JobStatusResponse:
       type: object
@@ -2112,11 +2104,6 @@ components:
           description: |
             **Deprecated** — use `job_id` for new clients. This value is the decimal string of `job_id` for
             backward-compatible clients only.
-        workflow_run_id:
-          type: [string, "null"]
-          deprecated: true
-          description: |
-            **Deprecated** — always null for postgres-queue jobs; kept for legacy response shape. null if not applicable.
         address:
           type: string
           description: Blockchain address being indexed
