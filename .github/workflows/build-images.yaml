@@ -18,21 +18,8 @@ env:
 
 jobs:
   build-and-push:
-    name: Build ${{ matrix.service }}
+    name: Build ff-indexer
     runs-on: ubuntu-latest
-
-    # Run all services in parallel
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - api
-          - ethereum-event-emitter
-          - tezos-event-emitter
-          - event-bridge
-          - worker-core
-          - worker-media
-          - sweeper
 
     permissions:
       contents: read
@@ -64,7 +51,7 @@ jobs:
           echo "Checking ECR repository..."
           if aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
             echo "✅ ECR repository '${{ env.ECR_REPOSITORY }}' exists"
-            
+
             # Check repository policy
             echo "Checking repository permissions..."
             aws ecr get-repository-policy --repository-name ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} || echo "No repository policy set"
@@ -94,26 +81,27 @@ jobs:
         with:
           images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
           tags: |
-            type=raw,value=${{ matrix.service }}-${{ steps.determine-tag.outputs.tag }}
+            type=raw,value=ff-indexer-${{ steps.determine-tag.outputs.tag }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./tools/docker/Dockerfile-${{ matrix.service }}
+          file: ./tools/docker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
+            CGO_ENABLED=1
             BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
             VERSION=${{ steps.determine-tag.outputs.tag }}
             REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
           provenance: false
 
       - name: Image digest
-        run: echo "Built and pushed ${{ matrix.service }} - ${{ steps.meta.outputs.tags }}"
+        run: echo "Built and pushed ff-indexer - ${{ steps.meta.outputs.tags }}"
 
   summary:
     name: Build Summary
@@ -125,28 +113,22 @@ jobs:
       - name: Check build status
         run: |
           if [ "${{ needs.build-and-push.result }}" = "success" ]; then
-            echo "✅ All images built and pushed successfully!"
+            echo "✅ Image built and pushed successfully!"
           else
-            echo "❌ Some images failed to build"
+            echo "❌ Image build failed"
             exit 1
           fi
 
       - name: Output image tags
         run: |
           TAG="${{ inputs.tag || github.ref_name }}"
-          echo "## 🐳 Built Images" >> $GITHUB_STEP_SUMMARY
+          echo "## Built image" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Image Tag |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-----------|" >> $GITHUB_STEP_SUMMARY
-          echo "| API | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:api-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Ethereum Event Emitter | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:ethereum-event-emitter-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tezos Event Emitter | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:tezos-event-emitter-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Event Bridge | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:event-bridge-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Worker Core | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:worker-core-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Worker Media | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:worker-media-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Sweeper | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:sweeper-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| ff-indexer | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:ff-indexer-${TAG}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Helm Values" >> $GITHUB_STEP_SUMMARY
+          echo "### Helm-style reference" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
           echo "global:" >> $GITHUB_STEP_SUMMARY
@@ -154,32 +136,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "image:" >> $GITHUB_STEP_SUMMARY
           echo "  repository: ${{ env.ECR_REPOSITORY }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "api:" >> $GITHUB_STEP_SUMMARY
-          echo "  image:" >> $GITHUB_STEP_SUMMARY
-          echo "    tag: api-${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "ethereumEventEmitter:" >> $GITHUB_STEP_SUMMARY
-          echo "  image:" >> $GITHUB_STEP_SUMMARY
-          echo "    tag: ethereum-event-emitter-${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "tezosEventEmitter:" >> $GITHUB_STEP_SUMMARY
-          echo "  image:" >> $GITHUB_STEP_SUMMARY
-          echo "    tag: tezos-event-emitter-${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "eventBridge:" >> $GITHUB_STEP_SUMMARY
-          echo "  image:" >> $GITHUB_STEP_SUMMARY
-          echo "    tag: event-bridge-${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "workerCore:" >> $GITHUB_STEP_SUMMARY
-          echo "  image:" >> $GITHUB_STEP_SUMMARY
-          echo "    tag: worker-core-${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "workerMedia:" >> $GITHUB_STEP_SUMMARY
-          echo "  image:" >> $GITHUB_STEP_SUMMARY
-          echo "    tag: worker-media-${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "sweeper:" >> $GITHUB_STEP_SUMMARY
-          echo "  image:" >> $GITHUB_STEP_SUMMARY
-          echo "    tag: sweeper-${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "  tag: ff-indexer-${TAG}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

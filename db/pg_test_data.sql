@@ -1070,3 +1070,151 @@ VALUES (
 -- Reset sequence
 SELECT setval('token_media_health_id_seq', 100, true);
 
+-- =============================================================================
+-- Jobs (postgres job queue) — one row per job_status, plus a succeeded+pending pair
+-- sharing the same (queue, kind, unique_key) to exercise the partial unique index
+-- (duplicates are allowed once the prior job is no longer pending or running).
+-- =============================================================================
+
+-- pending
+INSERT INTO jobs (
+    id, queue, kind, payload, status, unique_key, run_after, last_error, cancel_requested,
+    created_at, updated_at, started_at, finished_at
+) VALUES (
+    1,
+    'token_index',
+    'IndexTokenOwner',
+    '["eip155:1", "0x1000000000000000000000000000000000000001"]'::jsonb,
+    'pending',
+    'fixture-pending-owner',
+    now(),
+    NULL,
+    false,
+    now() - interval '5 minutes',
+    now() - interval '5 minutes',
+    NULL,
+    NULL
+);
+
+-- running
+INSERT INTO jobs (
+    id, queue, kind, payload, status, unique_key, run_after, last_error, cancel_requested,
+    created_at, updated_at, started_at, finished_at
+) VALUES (
+    2,
+    'token_index',
+    'IndexTokens',
+    '[]'::jsonb,
+    'running',
+    NULL,
+    now(),
+    NULL,
+    false,
+    now() - interval '2 minutes',
+    now() - interval '2 minutes',
+    now() - interval '1 minute',
+    NULL
+);
+
+-- succeeded
+INSERT INTO jobs (
+    id, queue, kind, payload, status, unique_key, run_after, last_error, cancel_requested,
+    created_at, updated_at, started_at, finished_at
+) VALUES (
+    3,
+    'media_index',
+    'IndexMediaWorkflow',
+    '["ipfs://QmFixtureMedia"]'::jsonb,
+    'succeeded',
+    'media-abc',
+    now() - interval '1 day',
+    NULL,
+    false,
+    now() - interval '1 day',
+    now() - interval '23 hours',
+    now() - interval '1 day',
+    now() - interval '23 hours'
+);
+
+-- failed
+INSERT INTO jobs (
+    id, queue, kind, payload, status, unique_key, run_after, last_error, cancel_requested,
+    created_at, updated_at, started_at, finished_at
+) VALUES (
+    4,
+    'token_index',
+    'DeliverWebhook',
+    '["client-all-events-123", "01HYTEST000000000000000001"]'::jsonb,
+    'failed',
+    NULL,
+    now() - interval '3 days',
+    'connection refused: webhook endpoint',
+    false,
+    now() - interval '3 days',
+    now() - interval '3 days',
+    now() - interval '3 days',
+    now() - interval '3 days'
+);
+
+-- canceled
+INSERT INTO jobs (
+    id, queue, kind, payload, status, unique_key, run_after, last_error, cancel_requested,
+    created_at, updated_at, started_at, finished_at
+) VALUES (
+    5,
+    'token_index',
+    'IndexMetadataUpdate',
+    '["eip155:1:erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D:1"]'::jsonb,
+    'canceled',
+    'index-metadata-bayc-1',
+    now() - interval '6 hours',
+    NULL,
+    true,
+    now() - interval '6 hours',
+    now() - interval '6 hours',
+    now() - interval '5 hours 59 minutes',
+    now() - interval '5 hours 58 minutes'
+);
+
+-- Succeeded job that released unique_key (partial index no longer applies)
+INSERT INTO jobs (
+    id, queue, kind, payload, status, unique_key, run_after, last_error, cancel_requested,
+    created_at, updated_at, started_at, finished_at
+) VALUES (
+    6,
+    'token_index',
+    'IndexTokenFromEvent',
+    '[]'::jsonb,
+    'succeeded',
+    'process-event-dedup-demo',
+    now() - interval '10 hours',
+    NULL,
+    false,
+    now() - interval '10 hours',
+    now() - interval '10 hours',
+    now() - interval '10 hours',
+    now() - interval '9 hours 59 minutes'
+);
+
+-- New pending job with the same (queue, kind, unique_key) as id=6; allowed because id=6 is terminal
+INSERT INTO jobs (
+    id, queue, kind, payload, status, unique_key, run_after, last_error, cancel_requested,
+    created_at, updated_at, started_at, finished_at
+) VALUES (
+    7,
+    'token_index',
+    'IndexTokenFromEvent',
+    '[]'::jsonb,
+    'pending',
+    'process-event-dedup-demo',
+    now(),
+    NULL,
+    false,
+    now() - interval '1 hour',
+    now() - interval '1 hour',
+    NULL,
+    NULL
+);
+
+SELECT setval('jobs_id_seq', 100, true);
+

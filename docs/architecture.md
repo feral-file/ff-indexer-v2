@@ -1,446 +1,123 @@
 # Architecture
 
-This document describes the system architecture, components, data flow, and communication patterns of FF-Indexer v2.
+This document describes the system architecture, components, and data flow of FF-Indexer v2.
 
 ## Overview
 
-FF-Indexer v2 is a distributed system that indexes NFT data from multiple blockchain networks. It uses an event-driven architecture with Temporal for workflow orchestration and NATS JetStream for event streaming.
+FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion path is direct:
+
+1. Chain ingestion subscribes to Ethereum and Tezos events
+2. Each ingestion runner enqueues normalized events in an in-memory flush queue
+3. The ingestion runner filters each queued event, enqueues a matching **job** on the PostgreSQL-backed queue for that event, and only then advances the durable cursor in PostgreSQL
+4. In-process **job workers** poll the `jobs` table, run registered handlers (token and media workflows), and persist results in PostgreSQL
+
+**Deployment model**: A single OS process (`cmd/ff-indexer`) runs the HTTP API, chain ingestion, two logical **job worker pools** (token queue and, when enabled, media queue), and the media health sweeper concurrently. Durable orchestration state lives in **PostgreSQL** (`jobs` and the rest of the schema). Outbound vendor and TzKT traffic is rate limited in-process.
 
 ## System Components
 
 ### Infrastructure Services
 
-1. **PostgreSQL** - Primary database for all indexed data
-2. **Temporal** - Workflow orchestration engine
-3. **NATS JetStream** - Event streaming and message queue
+1. **PostgreSQL** — Primary database for indexed data, cursor state, and the **`jobs` queue** (durable work items, status, deduplication keys)
 
-### Application Services
+### Application Subsystems
 
-1. **Event Emitters** - Subscribe to blockchain events and publish to NATS
-2. **Event Bridge** - Consumes events from NATS and triggers Temporal workflows
-3. **Worker Core** - Executes Temporal workflows for token indexing
-4. **Worker Media** - Processes and uploads media files
-5. **API Server** - Provides REST and GraphQL APIs
-6. **Sweeper** - Continuously monitors media URL health (can be extended for multiple purposes)
+1. **Chain ingestion** — Subscribes to blockchain events, owns the ordered flush queue, enqueues jobs, and persists durable cursor progress
+2. **Worker core** — Polls the `token_index` job queue and runs token- and webhook-related handlers
+3. **Worker media** — Polls the `media_index` job queue and runs media pipeline handlers (CGO / full image when enabled)
+4. **API server** — Provides REST and GraphQL APIs
+5. **Sweeper** — Monitors media URL health and can enqueue jobs (e.g. webhook notify)
 
-## Component Details
+## Chain Ingestion
 
-### Event Emitters
-
-**Purpose**: Monitor blockchain networks and emit events for token mints, transfers, burns, and metadata updates.
-
-**Components**:
-- `ethereum-event-emitter`: Subscribes to Ethereum WebSocket events
-- `tezos-event-emitter`: Subscribes to Tezos events via TzKT WebSocket
+**Purpose**: Monitor blockchain networks for token mints, transfers, burns, and metadata updates, then flush those events into job execution with explicit durable progress.
 
 **Responsibilities**:
-- Connect to blockchain RPC endpoints
-- Subscribe to relevant contract events
-- Parse and normalize events into `BlockchainEvent` format
-- Publish events to NATS JetStream stream `BLOCKCHAIN_EVENTS`
-- Maintain block cursor in database for resumability
 
-**Output**: Publishes events to NATS subjects:
-- `events.ethereum.mint`
-- `events.ethereum.transfer`
-- `events.ethereum.burn`
-- `events.tezos.mint`
-- etc.
+- Connect to blockchain RPC or indexer endpoints
+- Subscribe to relevant event feeds
+- Parse and normalize events into `domain.BlockchainEvent`
+- Enqueue each normalized event into the ordered flush queue
+- Apply backpressure when the in-memory dispatch queue is saturated
 
-### Event Bridge
+Durable progress moves only inside the ingestion runner after the queued event has flushed successfully (job enqueued and cursor rules satisfied).
 
-**Purpose**: Acts as a bridge between NATS events and Temporal workflows, filtering and routing events appropriately.
+**Current routing** (by job `kind` on the token queue):
 
-**Responsibilities**:
-- Consume events from NATS JetStream stream
-- Filter events based on blacklist registry
-- Check if tokens are already indexed or addresses are watched
-- Route events to appropriate Temporal workflows based on event type
-- Handle message acknowledgment and retries
+- `mint` -> `IndexTokenMint`
+- `transfer` -> `IndexTokenTransfer`
+- `burn` -> `IndexTokenBurn`
+- `metadata_update` -> `IndexMetadataUpdate`
+- `metadata_update_range` -> ignored explicitly until range handling is redesigned
 
-**Workflow Routing**:
-- `mint` → `IndexTokenMint` workflow
-- `transfer` → `IndexTokenTransfer` workflow
-- `burn` → `IndexTokenBurn` workflow
-- `metadata_update` → `IndexMetadataUpdate` workflow
+## Worker core
 
-### Worker Core
+**Purpose**: Execute **handlers** registered for the token queue—token indexing, metadata resolution, provenance, owner sweeps, and webhook delivery.
 
-**Purpose**: Executes Temporal workflows for indexing tokens, resolving metadata, and tracking provenance.
+Representative `kind` values:
 
-**Workflows**:
-- `IndexTokenMint` - Processes mint events
-- `IndexTokenTransfer` - Processes transfer events
-- `IndexTokenBurn` - Processes burn events
-- `IndexTokenMetadata` - Resolves and enriches metadata
-- `IndexTokenProvenances` - Indexes full provenance history
-- `IndexTokenFromEvent` - Full token indexing from event
-- `IndexToken` - Index token by TokenCID
-- `IndexTokens` - Batch token indexing
-- `IndexTokenOwner` - Owner-based sweep for one address (per-chain child workflows)
+- `IndexTokenMint`
+- `IndexTokenTransfer`
+- `IndexTokenBurn`
+- `IndexMetadataUpdate`
+- `IndexTokenMetadata`
+- `IndexTokenProvenances`
+- `IndexTokenOwner`
+- `DeliverWebhook` / `NotifyWebhookClients` (as applicable)
 
-**Activities**:
-- `CreateTokenMint` - Create token record from mint event
-- `FetchTokenMetadata` - Fetch metadata from blockchain
-- `UpsertTokenMetadata` - Store metadata in database
-- `EnhanceTokenMetadata` - Enrich metadata from vendor APIs
-- `UpdateTokenTransfer` - Update ownership from transfer
-- `IndexTokenWithMinimalProvenancesByBlockchainEvent` - Quick token indexing
-- `IndexTokenWithFullProvenancesByTokenCID` - Full provenance indexing
-
-### Worker Media
-
-**Purpose**: Processes media files (images, videos) and uploads them to Cloudflare.
-
-**Workflows**:
-- `IndexMediaWorkflow` - Process single media file
-- `IndexMultipleMediaWorkflow` - Batch media processing
-
-**Activities**:
-- `IndexMediaFile` - Download, process, and upload media
-
-### API Server
-
-**Purpose**: Provides HTTP APIs (REST and GraphQL) for querying indexed data.
-
-**Endpoints**:
-- REST API: `/api/v1/*`
-- GraphQL API: `/graphql` (query and mutation)
-- Health check: `/health`
-
-**Features**:
-- JWT authentication for mutations
-- API key authentication
-- CORS support
-- Blacklist validation for indexing requests
-
-**GraphQL Auto-Detection**:
-
-The GraphQL API automatically detects which fields to expand based on your query structure, eliminating the need for explicit `expands` parameters (which are required for REST APIs).
-
-**How it works**:
-1. When you query for nested fields (e.g., `owners`, `provenance_events`, `enrichment_source`), the system automatically detects these fields from your GraphQL query
-2. The appropriate data is fetched and populated without needing to specify `expands: ["owners", "provenance_events"]`
-3. This provides a more natural GraphQL experience where you simply request the fields you need
-
-**Example**:
-
-```graphql
-# Auto-detects that owners and metadata are needed
-query {
-  token(cid: "tez-KT1...") {
-    token_cid
-    metadata {
-      name
-      image_url
-    }
-    owners {
-      items {
-        owner_address
-        quantity
-      }
-    }
-  }
-}
-```
-
-**Field to Expansion Mapping** (GraphQL auto-detects requested fields; REST uses `expand`):
-- `owners` → `ExpansionOwners`
-- `provenance_events` → `ExpansionProvenanceEvents`
-- `enrichment_source` → `ExpansionEnrichmentSource`
-
-### Sweeper
-
-**Purpose**: Continuously monitors the health of media URLs associated with tokens. It is designed to be extensible for multiple purposes.
-
-**Responsibilities**:
-- Query `token_media_health` table for URLs needing health checks
-- Perform concurrent health checks using goroutine pool
-- Try alternative gateways for IPFS/Arweave/OnChFS URLs
-- Update health status in database (`healthy`, `broken`, `checking`, `unknown`)
-- Propagate working URLs back to `token_metadata` and `enrichment_sources`
+Cross-queue work (for example, resolving media for a token) is modeled by **enqueuing** a separate job on the `media_index` queue rather than in-process handoff.
 
 ## Data Flow
 
-### Event-Driven Indexing Flow
+### Event Ingestion
 
-```
-Blockchain (Ethereum/Tezos)
+```text
+Blockchain (Ethereum / Tezos)
     ↓
-Event Emitter (WebSocket subscription)
+Chain ingestion
     ↓
-NATS JetStream (BLOCKCHAIN_EVENTS stream)
+Ordered flush queue
     ↓
-Event Bridge (filtering and routing)
+jobs row (token queue)
     ↓
-Temporal Workflow (IndexTokenMint/Transfer/Burn)
+Worker core handlers
     ↓
-Worker Core Activities (database operations)
-    ↓
-PostgreSQL (tokens, metadata, provenance)
+PostgreSQL
 ```
 
-### Metadata Resolution Flow
+### Metadata Resolution
 
-```
-Token Mint Event
+```text
+Token event
     ↓
-IndexTokenMint Workflow
+IndexToken* handler
     ↓
-IndexTokenMetadata Workflow (child)
+FetchTokenMetadata (executor)
     ↓
-FetchTokenMetadata Activity
-    ├─→ Blockchain RPC (tokenURI)
-    ├─→ URI Resolver (IPFS/Arweave/ONCHFS/HTTP)
-    └─→ Metadata Resolver (normalization)
+Metadata resolver and vendor enrichment
     ↓
-EnhanceTokenMetadata Activity
-    ├─→ Art Blocks API (if applicable)
-    ├─→ fxhash API (if applicable)
-    └─→ Other vendor APIs
+UpsertTokenMetadata (executor)
     ↓
-UpsertTokenMetadata Activity
-    ↓
-PostgreSQL (token_metadata table)
+PostgreSQL
 ```
 
-### Media Processing Flow
+### Media Processing
 
-```
-Token Metadata (image_url, animation_url)
+```text
+Token metadata
     ↓
-IndexMediaWorkflow (triggered by worker-core)
+IndexMediaWorkflow job (media_index queue)
     ↓
-IndexMediaFile Activity
-    ├─→ Download from source URL
-    ├─→ Process (validate, stream pipeline)
-    ├─→ Upload to Cloudflare Images/Stream
-    └─→ Store media_asset record
+IndexMediaFile (executor)
     ↓
-PostgreSQL (media_assets table)
-```
-
-### Media Health Check Flow
-
-```
-token_media_health table (URLs needing check)
+Cloudflare Images / Stream
     ↓
-Sweeper (continuous polling)
-    ↓
-URL Health Check (concurrent workers)
-    ├─→ HTTPS URLs (HEAD → Range GET → Full GET)
-    ├─→ IPFS URLs (try multiple gateways)
-    ├─→ Arweave URLs (try multiple gateways)
-    └─→ OnChFS URLs (try multiple gateways)
-    ↓
-Update health status
-    ├─→ token_media_health (health_status, last_checked_at)
-    ├─→ token_metadata (media_url if better gateway found)
-    └─→ enrichment_sources (media_url if better gateway found)
-    ↓
-PostgreSQL (updated health status)
+PostgreSQL media asset records
 ```
 
-## Component Communication
+## Scaling Notes
 
-### Event Streaming (NATS JetStream)
+The default deployment target is still a single full `ff-indexer` replica. Because each chain ingestion runner owns its own in-process queue and durable cursor stream, running multiple identical full replicas will duplicate work unless operators intentionally partition chains or ingestion responsibility.
 
-**Stream**: `BLOCKCHAIN_EVENTS`
-- **Subjects**: `events.*.>` (wildcard matching)
-- **Storage**: File-based persistence
-- **Retention**: 7 days
-- **Replicas**: 1 (configurable)
+The HTTP API and job workers are **in-process** by default. Running **a second** process that polls the same queue is intentionally discouraged at the data layer: one worker hold per queue uses a **Postgres advisory lock** so only one poller “owns” a given queue name; additional replicas would exit the worker cleanly or not poll. Scale-out patterns (if ever needed) would partition **queue names** or separate deployment roles rather than N identical pollers on the same queue.
 
-**Publishers**:
-- Event Emitters (ethereum-event-emitter, tezos-event-emitter)
-
-**Consumers**:
-- Event Bridge (consumer: `event-bridge`)
-
-### Workflow Orchestration (Temporal)
-
-**Task Queues**:
-- `token-indexing` - Core indexing workflows (worker-core)
-- `media-indexing` - Media processing workflows (worker-media)
-
-**Workflow Execution**:
-- Event Bridge triggers workflows via Temporal client
-- Workers execute workflows and activities
-- Activities perform database operations, API calls, etc.
-
-### Database (PostgreSQL)
-
-**Shared Connection**:
-- All services connect to the same PostgreSQL instance
-- Connection pooling per service
-- GORM for ORM operations
-
-**Key Tables**:
-- `tokens` - Token records
-- `token_metadata` - Metadata JSON and normalized fields
-- `enrichment_sources` - Vendor API responses
-- `media_assets` - Media file references
-- `token_media_health` - Media URL health status
-- `provenance_events` - Blockchain event history
-- `balances` - Multi-token ownership (ERC1155, FA2)
-- `watched_addresses` - Owner-based indexing config
-- `key_value_store` - Configuration and cursors
-
-## Communication Diagram
-
-```
-┌─────────────────┐
-│   Blockchain    │
-│  (Ethereum/     │
-│    Tezos)       │
-└────────┬────────┘
-         │ WebSocket
-         ↓
-┌─────────────────┐
-│ Event Emitters  │──────┐
-│ (Ethereum/      │      │
-│  Tezos)         │      │
-└─────────────────┘      │
-                         │ NATS JetStream
-                         │ (BLOCKCHAIN_EVENTS)
-                         ↓
-┌─────────────────┐      │
-│  Event Bridge   │◄─────┘
-│                 │
-└────────┬────────┘
-         │ Temporal Client
-         ↓
-┌─────────────────┐
-│   Temporal      │
-│   (Workflows)   │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    ↓         ↓
-┌─────────┐ ┌──────────┐
-│ Worker  │ │  Worker  │
-│  Core   │ │  Media   │
-└────┬────┘ └─────┬─────┘
-     │           │
-     └─────┬─────┘
-           │
-           ↓
-    ┌──────────────┐
-    │  PostgreSQL  │
-    └──────────────┘
-           ↑
-           │
-    ┌──────┴──────┐
-    │             │
-┌─────────┐ ┌──────────┐
-│  REST   │ │ GraphQL  │
-│   API   │ │   API    │
-└─────────┘ └──────────┘
-```
-
-## Schema Diagram
-
-```
-tokens (1) ────┬── (1) token_metadata
-               │
-               ├── (N) balances
-               │
-               ├── (N) provenance_events
-               │
-               ├── (N) enrichment_sources
-               │
-               ├── (N) token_media_health
-
-media_assets (standalone table)
-
-watched_addresses (standalone table)
-
-key_value_store (standalone table)
-```
-
-## Scaling Considerations
-
-### Horizontal Scaling
-
-- **Event Emitters**: Can run multiple instances per chain (different start blocks)
-- **Event Bridge**: Can run multiple instances (NATS consumer groups)
-- **Worker Core**: Can run multiple instances (Temporal task queue)
-- **Worker Media**: Can run multiple instances (Temporal task queue)
-- **API Server**: Can run multiple instances (stateless)
-- **Sweeper**: Should run single instance
-
-### Vertical Scaling
-
-- **PostgreSQL**: Connection pooling, query optimization, indexes
-- **Temporal**: Separate workflow and activity workers
-- **NATS**: Stream replication for high availability
-
-## Error Handling
-
-- **Event Emitters**: Retry on connection failures, save cursor on errors
-- **Event Bridge**: NAK messages on processing errors (retry up to MaxDeliver)
-- **Temporal Workflows**: Retry policies per activity, non-retryable errors
-- **Workers**: Temporal handles retries, dead letter queues
-
-## Monitoring
-
-- **Logging**: Structured logging with zap, Sentry integration
-- **Metrics**: Temporal workflow metrics, NATS monitoring
-- **Health Checks**: Service health endpoints, database connectivity
-
-## Security
-
-- **Authentication**: JWT for API mutations, API keys
-- **Blacklist**: Contract address filtering
-- **CORS**: Configurable origins
-- **Input Validation**: Schema validation for all inputs
-
-## Configuration
-
-The system supports flexible configuration through YAML files and environment variables.
-
-### Configuration Sources
-
-1. **YAML Config Files**: Each service can use a `config.yaml` file in its `cmd/{service}/` directory
-2. **Environment Variables**: Variables with `FF_INDEXER_` prefix override config file values
-3. **Environment Files**: `.env` files in `config/` directory (loaded automatically)
-
-### Configuration Priority
-
-1. Environment variables (highest priority)
-2. `.env.local` files
-3. YAML config files (base configuration)
-
-### Configuration Mapping
-
-Environment variables map to nested YAML keys:
-- `FF_INDEXER_DATABASE_HOST` → `database.host`
-- `FF_INDEXER_ETHEREUM_RPC_URL` → `ethereum.rpc_url`
-- `FF_INDEXER_TEMPORAL_HOST_PORT` → `temporal.host_port`
-
-Dots in YAML keys become underscores in environment variables.
-
-### Example Configuration
-
-**YAML config** (`cmd/api/config.yaml`):
-```yaml
-database:
-  host: localhost
-  port: 5432
-  user: postgres
-
-server:
-  port: 8081
-```
-
-**Environment variables** (override YAML):
-```bash
-export FF_INDEXER_DATABASE_HOST=production-db.example.com
-export FF_INDEXER_SERVER_PORT=8080
-```
-
-**Result**: Database host and server port use environment variable values, other settings use YAML defaults.
-
-See [DEVELOPMENT.md](../DEVELOPMENT.md) for detailed configuration examples.
-
-
+Stateless read replicas or split API-only deployments are separate operational choices; the job queue’s correctness assumes a **single active poller per logical queue** unless the deployment model is extended deliberately.

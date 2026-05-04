@@ -8,73 +8,59 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/golang/mock/gomock"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
-	"go.temporal.io/sdk/testsuite"
-	"go.temporal.io/sdk/workflow"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
-	workflowsmedia "github.com/feral-file/ff-indexer-v2/internal/workflows/media"
 )
 
-// IndexMetadataWorkflowTestSuite is the test suite for metadata workflow tests
-type IndexMetadataWorkflowTestSuite struct {
-	suite.Suite
-	testsuite.WorkflowTestSuite
-
-	env              *testsuite.TestWorkflowEnvironment
-	ctrl             *gomock.Controller
-	executor         *mocks.MockCoreExecutor
-	blacklist        *mocks.MockBlacklistRegistry
-	temporalWorkflow *mocks.MockWorkflow
-	workerCore       workflows.WorkerCore
-	workerMedia      workflowsmedia.Worker
-}
-
-// SetupTest is called before each test
-func (s *IndexMetadataWorkflowTestSuite) SetupTest() {
-	// Initialize logger for tests
-	_ = logger.Initialize(logger.Config{
-		Debug: true,
-	})
-
-	s.env = s.NewTestWorkflowEnvironment()
-	s.ctrl = gomock.NewController(s.T())
-	s.executor = mocks.NewMockCoreExecutor(s.ctrl)
-	s.blacklist = mocks.NewMockBlacklistRegistry(s.ctrl)
-	s.temporalWorkflow = mocks.NewMockWorkflow(s.ctrl)
-	s.workerCore = workflows.NewWorkerCore(s.executor, workflows.WorkerCoreConfig{
+func metadataWfConfig(mediaEnabled bool) workflows.CoreWorkflowsConfig {
+	return workflows.CoreWorkflowsConfig{
 		TezosChainID:                 domain.ChainTezosMainnet,
 		EthereumChainID:              domain.ChainEthereumMainnet,
 		EthereumTokenSweepStartBlock: 0,
 		TezosTokenSweepStartBlock:    0,
-		MediaTaskQueue:               "media-task-queue",
-	}, s.blacklist, s.temporalWorkflow)
-	s.workerMedia = workflowsmedia.NewWorker(mocks.NewMockMediaExecutor(s.ctrl))
+		MediaEnabled:                 mediaEnabled,
+		TokenTaskQueue:               "token_index",
+		MediaTaskQueue:               "media_index",
+	}
 }
 
-// TearDownTest is called after each test
-func (s *IndexMetadataWorkflowTestSuite) TearDownTest() {
-	s.env.AssertExpectations(s.T())
-	s.ctrl.Finish()
+// newMetadataWf builds [workflows.CoreWorkflows] with a [mocks.MockJobQueue]; attach EXPECTs on [coreWfDeps.MockJQ].
+func newMetadataWf(t *testing.T, mediaEnabled bool) *coreWfDeps {
+	t.Helper()
+	return newCoreWfDeps(t, metadataWfConfig(mediaEnabled), nil)
 }
 
-// TestIndexMetadataWorkflowTestSuite runs the test suite
-func TestIndexMetadataWorkflowTestSuite(t *testing.T) {
-	suite.Run(t, new(IndexMetadataWorkflowTestSuite))
+// indexTokenMetadataChain configures executor calls for a successful IndexTokenMetadata when job queue is set (webhooks as enqueue).
+func indexTokenMetadataCore(
+	t *testing.T,
+	exec *mocks.MockCoreExecutor,
+	tokenCID domain.TokenCID,
+	normalized *metadata.NormalizedMetadata,
+	enhanced *metadata.EnhancedMetadata,
+	health *workflows.MediaHealthCheckResult,
+) {
+	t.Helper()
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tokenCID).Return(normalized, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tokenCID, gomock.Any()).Return(enhanced, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).Return(health, nil)
 }
 
 // ====================================================================================
-// IndexMetadataUpdate Tests
+// IndexMetadataUpdate
 // ====================================================================================
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_Success() {
+func TestIndexMetadataUpdate_Success(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
 		Standard:        domain.StandardERC721,
@@ -84,23 +70,22 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_Success() {
 		TxHash:          "0xabcd",
 		BlockNumber:     100,
 	}
-	tokenCID := event.TokenCID()
+	f.Exec.EXPECT().CreateMetadataUpdate(gomock.Any(), event).Return(nil)
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, o jobs.EnqueueOptions) (any, bool, error) {
+			require.Equal(t, "IndexTokenMetadata", o.Kind)
+			require.Len(t, o.Args, 2)
+			return nil, true, nil
+		}).Times(1)
 
-	// Mock CreateMetadataUpdate activity
-	s.env.OnActivity(s.executor.CreateMetadataUpdate, mock.Anything, event).Return(nil)
-
-	// Mock child workflow IndexTokenMetadata
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMetadataUpdate, event)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := f.Wf.IndexMetadataUpdate(f.Ctx, event)
+	require.NoError(t, err)
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_CreateMetadataUpdateError() {
+func TestIndexMetadataUpdate_CreateMetadataUpdateError(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
 		Standard:        domain.StandardERC721,
@@ -110,29 +95,16 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_CreateMetadataU
 		TxHash:          "0xabcd",
 		BlockNumber:     100,
 	}
-	expectedError := errors.New("database error")
+	f.Exec.EXPECT().CreateMetadataUpdate(gomock.Any(), event).Return(errors.New("database error"))
 
-	// Track retry attempts - MaximumAttempts: 2 (1 retry)
-	var activityCallCount int
-	s.env.OnActivity(s.executor.CreateMetadataUpdate, mock.Anything, event).Return(
-		func(ctx context.Context, event *domain.BlockchainEvent) error {
-			activityCallCount++
-			return expectedError
-		},
-	)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMetadataUpdate, event)
-
-	// Verify workflow completed with error
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
-
-	// Verify no retries (MaximumAttempts: 2)
-	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
+	err := f.Wf.IndexMetadataUpdate(f.Ctx, event)
+	require.Error(t, err)
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_ChildWorkflowStartFailure() {
+func TestIndexMetadataUpdate_EnqueueFails(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
 	event := &domain.BlockchainEvent{
 		Chain:           domain.ChainEthereumMainnet,
 		Standard:        domain.StandardERC721,
@@ -142,549 +114,263 @@ func (s *IndexMetadataWorkflowTestSuite) TestIndexMetadataUpdate_ChildWorkflowSt
 		TxHash:          "0xabcd",
 		BlockNumber:     100,
 	}
-	tokenCID := event.TokenCID()
-	var childWorkflowCallCount int
+	f.Exec.EXPECT().CreateMetadataUpdate(gomock.Any(), event).Return(nil)
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, false, errors.New("enqueue failed"))
 
-	// Mock CreateMetadataUpdate activity
-	s.env.OnActivity(s.executor.CreateMetadataUpdate, mock.Anything, event).Return(nil)
-
-	// Mock child workflow to fail at start
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(
-		func(ctx workflow.Context, tokenCID domain.TokenCID, address *string) error {
-			childWorkflowCallCount++
-			return testsuite.ErrMockStartChildWorkflowFailed
-		},
-	)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMetadataUpdate, event)
-
-	// Verify workflow completed with error (it returns the error)
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
-
-	s.Equal(1, childWorkflowCallCount, "Child workflow should be attempted 1 time (initial + 0 retries)")
+	err := f.Wf.IndexMetadataUpdate(f.Ctx, event)
+	require.Error(t, err)
 }
 
 // ====================================================================================
-// IndexTokenMetadata Tests
+// IndexTokenMetadata
 // ====================================================================================
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithoutEnhancement() {
+func TestIndexTokenMetadata_Success_WithoutEnhancement(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	stubJqAnyEnqueue(f.MockJQ)
+
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       "https://example.com/image.jpg",
+	normalized := &metadata.NormalizedMetadata{
+		Name: "Test Token", Description: "Test Description", Image: "https://example.com/image.jpg",
 	}
+	health := &workflows.MediaHealthCheckResult{IsViewable: true, HealthyURLs: []string{normalized.Image}}
+	indexTokenMetadataCore(t, f.Exec, tokenCID, normalized, nil, health)
 
-	// Mock ResolveTokenMetadata activity
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock EnhanceTokenMetadata activity - returns nil (no enhancement)
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - return viewable status
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-		})).Return(&workflows.MediaHealthCheckResult{
-		IsViewable:  true,
-		HealthyURLs: []string{normalizedMetadata.Image},
-	}, nil)
-
-	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		// Verify it's a webhook event with correct event type
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
-		}
-		return false
-	})).Return(nil)
-
-	// Mock media indexing child workflow - one per URL
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, "https://example.com/image.jpg").Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	err := f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil)
+	require.NoError(t, err)
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_Success_WithEnhancement() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	metadataImageURL := "https://example.com/image.jpg"
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       metadataImageURL,
-	}
-	enhancedImageURL := "https://example.com/enhanced-image.jpg"
-	enhancedMetadata := &metadata.EnhancedMetadata{
-		ImageURL: &enhancedImageURL,
-	}
-
-	// Mock ResolveTokenMetadata activity
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock EnhanceTokenMetadata activity - returns enhanced metadata
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(enhancedMetadata, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - return viewable status for both URLs
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 2
-		})).Return(&workflows.MediaHealthCheckResult{
-		IsViewable:  true,
-		HealthyURLs: []string{metadataImageURL, enhancedImageURL},
-	}, nil)
-
-	// Mock webhook notification workflow - should be triggered for token.indexing.viewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
-		}
-		return false
-	})).Return(nil)
-
-	// Mock media indexing child workflow - one per URL
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, metadataImageURL).Return(nil)
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, enhancedImageURL).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_FetchMetadataError() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	expectedError := errors.New("failed to fetch metadata")
-
-	// Track retry attempts - MaximumAttempts: 2 (1 retry)
-	var activityCallCount int
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(
-		func(ctx context.Context, tokenCID domain.TokenCID) (*metadata.NormalizedMetadata, error) {
-			activityCallCount++
-			return nil, expectedError
-		},
-	)
-
-	// Mock enhancement activity - returns nil (no enhancement)
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, mock.Anything).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - no URLs (since metadata failed), return not viewable
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 0
-		})).Return(&workflows.MediaHealthCheckResult{
-		IsViewable:  false,
-		HealthyURLs: nil,
-	}, nil)
-
-	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
-		}
-		return false
-	})).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed without error
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-
-	// Verify retries (MaximumAttempts: 2)
-	s.Equal(2, activityCallCount, "Activity should be attempted 2 times (initial + 1 retry)")
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_EnhancementError_NonFatal() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       "https://example.com/image.jpg",
-	}
-	enhancementError := errors.New("enhancement failed")
-
-	// Mock ResolveTokenMetadata activity
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock EnhanceTokenMetadata activity to fail - should not fail workflow
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, enhancementError)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - return viewable status
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-		})).Return(&workflows.MediaHealthCheckResult{
-		IsViewable:  true,
-		HealthyURLs: []string{normalizedMetadata.Image},
-	}, nil)
-
-	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
-
-	// Mock media indexing child workflow - one per URL
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, mock.Anything).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully despite enhancement error (non-fatal)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaWorkflowStartFailure_NonFatal() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       "https://example.com/image.jpg",
-	}
-
-	// Mock ResolveTokenMetadata activity
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock EnhanceTokenMetadata activity
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - return viewable status
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 1 && urls[0] == normalizedMetadata.Image
-		})).Return(&workflows.MediaHealthCheckResult{
-		IsViewable:  true,
-		HealthyURLs: []string{normalizedMetadata.Image},
-	}, nil)
-
-	// Mock webhook notification workflow
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.Anything).Return(nil)
-
-	// Mock media indexing child workflow to fail at start - should not fail parent workflow
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, mock.Anything).Return(testsuite.ErrMockStartChildWorkflowFailed)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully despite media workflow start failure (non-fatal)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-// ====================================================================================
-// Media URL Health Tests
-// ====================================================================================
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsHealthy_TriggersWebhook() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	imageURL := "https://example.com/image.jpg"
-	animationURL := "https://example.com/animation.mp4"
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       imageURL,
-		Animation:   animationURL,
-	}
-
-	// Mock ResolveTokenMetadata activity
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock EnhanceTokenMetadata activity
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - both are healthy, return viewable
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 2
-		})).Return(&workflows.MediaHealthCheckResult{
-		IsViewable:  true,
-		HealthyURLs: []string{imageURL, animationURL},
-	}, nil)
-
-	// Mock webhook notification workflow - should be triggered because animation is healthy
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingViewable
-		}
-		return false
-	})).Return(nil)
-
-	// Mock media indexing child workflow - one per URL
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, imageURL).Return(nil)
-	s.env.OnWorkflow(s.workerMedia.IndexMediaWorkflow, mock.Anything, animationURL).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_MediaURLsBroken_TriggersUnviewableWebhook() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	imageURL := "https://example.com/broken-image.jpg"
-	animationURL := "https://example.com/broken-animation.mp4"
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       imageURL,
-		Animation:   animationURL,
-	}
-
-	// Mock ResolveTokenMetadata activity
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock EnhanceTokenMetadata activity
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - both are broken, return not viewable
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 2
-		})).Return(&workflows.MediaHealthCheckResult{
-		IsViewable:  false,
-		HealthyURLs: nil, // No healthy URLs
-	}, nil)
-
-	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
-		}
-		return false
-	})).Return(nil)
-
-	// No media indexing workflow should be triggered since there are no healthy URLs
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully with unviewable webhook triggered
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NoMediaURLs() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		// No Image or Animation URLs
-	}
-
-	// Mock ResolveTokenMetadata activity
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock EnhanceTokenMetadata activity
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - no URLs, return not viewable
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 0
-		})).Return(false, nil)
-
-	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
-		}
-		return false
-	})).Return(nil)
-
-	// No media workflow should be triggered
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_NilMetadata() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-
-	// Mock ResolveTokenMetadata activity to return nil metadata
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(nil, nil)
-
-	// Mock EnhanceTokenMetadata activity - should still be called even with nil metadata
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, (*metadata.NormalizedMetadata)(nil)).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - no URLs, return not viewable
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 0
-		})).Return(false, nil)
-
-	// Mock webhook notification workflow - should be triggered for token.indexing.unviewable event
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			return webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable
-		}
-		return false
-	})).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
-
-	// Verify workflow completed successfully (gracefully handles nil metadata)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexTokenMetadata_UnviewableEvent_WhenMediaBecomesUnhealthy() {
-	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
-	imageURL := "https://example.com/broken-image.jpg"
-	normalizedMetadata := &metadata.NormalizedMetadata{
-		Name:        "Test Token",
-		Description: "Test Description",
-		Image:       imageURL,
-	}
-
-	// Mock ResolveTokenMetadata activity
-	s.env.OnActivity(s.executor.ResolveTokenMetadata, mock.Anything, tokenCID).Return(normalizedMetadata, nil)
-
-	// Mock EnhanceTokenMetadata activity
-	s.env.OnActivity(s.executor.EnhanceTokenMetadata, mock.Anything, tokenCID, normalizedMetadata).Return(nil, nil)
-
-	// Mock CheckMediaURLsHealthAndUpdateViewability activity - returns false (not viewable)
-	s.env.OnActivity(s.executor.CheckMediaURLsHealthAndUpdateViewability, mock.Anything,
-		tokenCID.String(), mock.MatchedBy(func(urls []string) bool {
-			return len(urls) == 1 && urls[0] == imageURL
-		})).Return(&workflows.MediaHealthCheckResult{
-		IsViewable:  false,
-		HealthyURLs: nil, // No healthy URLs
-	}, nil)
-
-	// Mock webhook notification workflow - should be triggered with token.indexing.unviewable event
-	var webhookTriggered bool
-	s.env.OnWorkflow(s.workerCore.NotifyWebhookClients, mock.Anything, mock.MatchedBy(func(event interface{}) bool {
-		if webhookEvent, ok := event.(webhook.WebhookEvent); ok {
-			if webhookEvent.EventType == webhook.EventTypeTokenIndexingUnviewable {
-				webhookTriggered = true
-				return true
+func TestIndexTokenMetadata_MediaDisabled_DoesNotEnqueueMedia(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, false)
+	defer f.Ctrl.Finish()
+	var mediaEnqueues int
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, o jobs.EnqueueOptions) (any, bool, error) {
+			if o.Kind == "IndexMediaWorkflow" {
+				mediaEnqueues++
 			}
-		}
-		return false
-	})).Return(nil)
+			return nil, true, nil
+		}).AnyTimes()
 
-	// No media indexing workflow should be triggered since there are no healthy URLs
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	normalized := &metadata.NormalizedMetadata{
+		Name: "Test Token", Description: "Test Description", Image: "https://example.com/image.jpg",
+	}
+	health := &workflows.MediaHealthCheckResult{IsViewable: true, HealthyURLs: []string{normalized.Image}}
+	indexTokenMetadataCore(t, f.Exec, tokenCID, normalized, nil, health)
 
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexTokenMetadata, tokenCID, (*string)(nil))
+	err := f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil)
+	require.NoError(t, err)
+	require.Zero(t, mediaEnqueues, "media indexing must be skipped when MediaEnabled is false")
+}
 
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+func TestIndexTokenMetadata_Success_WithEnhancement(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	stubJqAnyEnqueue(f.MockJQ)
 
-	// Verify that the unviewable webhook was triggered
-	s.True(webhookTriggered, "Expected token.indexing.unviewable webhook to be triggered")
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	baseImg := "https://example.com/image.jpg"
+	enhancedURL := "https://example.com/enhanced-image.jpg"
+	normalized := &metadata.NormalizedMetadata{Name: "T", Image: baseImg}
+	enhanced := &metadata.EnhancedMetadata{ImageURL: &enhancedURL}
+	health := &workflows.MediaHealthCheckResult{IsViewable: true, HealthyURLs: []string{baseImg, enhancedURL}}
+	indexTokenMetadataCore(t, f.Exec, tokenCID, normalized, enhanced, health)
+
+	err := f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil)
+	require.NoError(t, err)
+}
+
+func TestIndexTokenMetadata_FetchMetadataError(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	stubJqAnyEnqueue(f.MockJQ)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	f.Exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tokenCID).Return(nil, errors.New("failed to fetch metadata"))
+	f.Exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tokenCID, gomock.Any()).Return(nil, nil)
+	f.Exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	err := f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil)
+	require.NoError(t, err, "metadata fetch error is non-fatal for the workflow")
+}
+
+func TestIndexTokenMetadata_EnhancementError_NonFatal(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	stubJqAnyEnqueue(f.MockJQ)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	normalized := &metadata.NormalizedMetadata{Image: "https://example.com/image.jpg"}
+	health := &workflows.MediaHealthCheckResult{IsViewable: true, HealthyURLs: []string{normalized.Image}}
+	f.Exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tokenCID).Return(normalized, nil)
+	f.Exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tokenCID, normalized).Return(nil, errors.New("enhancement failed"))
+	f.Exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).Return(health, nil)
+
+	err := f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil)
+	require.NoError(t, err)
+}
+
+func TestIndexTokenMetadata_MediaEnqueueFailure_NonFatal(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	normalized := &metadata.NormalizedMetadata{Image: "https://example.com/image.jpg"}
+	health := &workflows.MediaHealthCheckResult{IsViewable: true, HealthyURLs: []string{normalized.Image}}
+	indexTokenMetadataCore(t, f.Exec, tokenCID, normalized, nil, health)
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, o jobs.EnqueueOptions) (any, bool, error) {
+			if o.Kind == "IndexMediaWorkflow" {
+				return nil, false, errors.New("queue offline")
+			}
+			return nil, true, nil
+		}).AnyTimes()
+
+	err := f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil)
+	require.NoError(t, err, "IndexMedia job enqueue errors are non-fatal")
+}
+
+func TestIndexTokenMetadata_WebhookViewableEvent(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	var eventTypes []string
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, o jobs.EnqueueOptions) (any, bool, error) {
+			if o.Kind == "NotifyWebhookClients" && len(o.Args) > 0 {
+				if ev, ok := o.Args[0].(webhook.WebhookEvent); ok {
+					eventTypes = append(eventTypes, ev.EventType)
+				}
+			}
+			return nil, true, nil
+		}).AnyTimes()
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	normalized := &metadata.NormalizedMetadata{Image: "https://example.com/a.jpg", Animation: "https://example.com/b.mp4"}
+	health := &workflows.MediaHealthCheckResult{IsViewable: true, HealthyURLs: []string{"https://example.com/a.jpg", "https://example.com/b.mp4"}}
+	indexTokenMetadataCore(t, f.Exec, tokenCID, normalized, nil, health)
+
+	require.NoError(t, f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil))
+	require.Contains(t, eventTypes, webhook.EventTypeTokenIndexingViewable)
+}
+
+func TestIndexTokenMetadata_WebhookUnviewableEvent(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	var eventTypes []string
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, o jobs.EnqueueOptions) (any, bool, error) {
+			if o.Kind == "NotifyWebhookClients" && len(o.Args) > 0 {
+				if ev, ok := o.Args[0].(webhook.WebhookEvent); ok {
+					eventTypes = append(eventTypes, ev.EventType)
+				}
+			}
+			return nil, true, nil
+		}).AnyTimes()
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	normalized := &metadata.NormalizedMetadata{Image: "https://x.com/b.jpg", Animation: "https://x.com/b2.mp4"}
+	health := &workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}
+	indexTokenMetadataCore(t, f.Exec, tokenCID, normalized, nil, health)
+
+	require.NoError(t, f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil))
+	require.Contains(t, eventTypes, webhook.EventTypeTokenIndexingUnviewable)
+}
+
+func TestIndexTokenMetadata_NoMediaURLs(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	stubJqAnyEnqueue(f.MockJQ)
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	normalized := &metadata.NormalizedMetadata{Name: "T"}
+	health := &workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}
+	indexTokenMetadataCore(t, f.Exec, tokenCID, normalized, nil, health)
+
+	require.NoError(t, f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil))
+}
+
+func TestIndexTokenMetadata_NilMetadata(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	stubJqAnyEnqueue(f.MockJQ)
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	f.Exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tokenCID).Return(nil, nil)
+	f.Exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tokenCID, (*metadata.NormalizedMetadata)(nil)).Return(nil, nil)
+	f.Exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	require.NoError(t, f.Wf.IndexTokenMetadata(f.Ctx, tokenCID, nil))
 }
 
 // ====================================================================================
-// IndexMultipleTokensMetadata Tests
+// IndexMultipleTokensMetadata
 // ====================================================================================
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_Success() {
+func TestIndexMultipleTokensMetadata_Success(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
 	tokenCIDs := []domain.TokenCID{
 		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1"),
 		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2"),
 		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "3"),
 	}
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(nil, true, nil).Times(3)
 
-	// Mock child workflows for each token
-	for _, tokenCID := range tokenCIDs {
-		s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
-	}
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	require.NoError(t, f.Wf.IndexMultipleTokensMetadata(f.Ctx, tokenCIDs))
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_EmptyList() {
-	tokenCIDs := []domain.TokenCID{}
-
-	// Execute the workflow with empty list
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
-
-	// Verify workflow completed successfully (no-op)
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+func TestIndexMultipleTokensMetadata_EmptyList(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	require.NoError(t, f.Wf.IndexMultipleTokensMetadata(f.Ctx, nil))
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_ChildWorkflowStartFailure() {
-	tokenCIDs := []domain.TokenCID{
-		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1"),
-		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2"),
-		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "3"),
-	}
-
-	// Mock child workflows - first one fails to start
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[0], (*string)(nil)).Return(testsuite.ErrMockStartChildWorkflowFailed)
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[1], (*string)(nil)).Return(nil)
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[2], (*string)(nil)).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
-
-	// Verify workflow completed with error
-	// The current implementation returns error when child workflow fails to start
-	s.True(s.env.IsWorkflowCompleted())
-	s.Error(s.env.GetWorkflowError())
-}
-
-func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_SingleToken() {
-	tokenCIDs := []domain.TokenCID{
+func TestIndexMultipleTokensMetadata_EnqueueError(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	tokens := []domain.TokenCID{
 		domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1"),
 	}
-
-	// Mock child workflow
-	s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCIDs[0], (*string)(nil)).Return(nil)
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, false, errors.New("no queue"))
+	err := f.Wf.IndexMultipleTokensMetadata(f.Ctx, tokens)
+	require.Error(t, err)
 }
 
-func (s *IndexMetadataWorkflowTestSuite) TestIndexMultipleTokensMetadata_LargeNumberOfTokens() {
-	// Test with a larger number of tokens to ensure concurrent processing works
-	tokenCIDs := make([]domain.TokenCID, 20)
+func TestIndexMultipleTokensMetadata_SingleToken(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	tok := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, true, nil).Times(1)
+	require.NoError(t, f.Wf.IndexMultipleTokensMetadata(f.Ctx, []domain.TokenCID{tok}))
+}
+
+func TestIndexMultipleTokensMetadata_LargeList_Enqueues(t *testing.T) {
+	t.Parallel()
+	f := newMetadataWf(t, true)
+	defer f.Ctrl.Finish()
+	list := make([]domain.TokenCID, 20)
 	for i := range 20 {
-		tokenCIDs[i] = domain.NewTokenCID(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0x1234567890123456789012345678901234567890",
-			fmt.Sprintf("%d", i),
+		list[i] = domain.NewTokenCID(
+			domain.ChainEthereumMainnet, domain.StandardERC721,
+			"0x1234567890123456789012345678901234567890", fmt.Sprintf("%d", i),
 		)
 	}
-
-	// Mock child workflows for each token
-	for _, tokenCID := range tokenCIDs {
-		s.env.OnWorkflow(s.workerCore.IndexTokenMetadata, mock.Anything, tokenCID, (*string)(nil)).Return(nil)
-	}
-
-	// Execute the workflow
-	s.env.ExecuteWorkflow(s.workerCore.IndexMultipleTokensMetadata, tokenCIDs)
-
-	// Verify workflow completed successfully
-	s.True(s.env.IsWorkflowCompleted())
-	s.NoError(s.env.GetWorkflowError())
+	f.MockJQ.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(nil, true, nil).Times(20)
+	require.NoError(t, f.Wf.IndexMultipleTokensMetadata(f.Ctx, list))
 }

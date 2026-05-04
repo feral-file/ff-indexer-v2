@@ -208,11 +208,26 @@ type CreateWebhookClientInput struct {
 
 // CreateAddressIndexingJobInput represents input for creating an address indexing job
 type CreateAddressIndexingJobInput struct {
-	Address       string
-	Chain         domain.Chain
-	Status        schema.IndexingJobStatus
-	WorkflowID    string
-	WorkflowRunID *string // Optional, may be nil initially
+	Address string
+	Chain   domain.Chain
+	Status  schema.IndexingJobStatus
+	// JobID is the postgres jobs.id row; required (FK to jobs).
+	JobID int64
+	// WorkflowID is the deprecated opaque correlation id stored for API backward compatibility.
+	// When empty at insert time, the store defaults it to the decimal string of JobID.
+	WorkflowID string
+}
+
+// EnqueueJobInput is the data required to create a `jobs` row (postgres-backed work queue).
+// Payload is JSON (typically a JSON array of raw handler arguments) and is stored in `payload` JSONB.
+// If UniqueKey is non-nil, an active duplicate (same queue, kind, and key while status is pending or running)
+// causes EnqueueJob to return the existing row and created=false.
+type EnqueueJobInput struct {
+	Queue     string
+	Kind      string
+	Payload   []byte
+	UniqueKey *string
+	RunAfter  *time.Time
 }
 
 // QuotaInfo represents the current quota status for an address
@@ -424,16 +439,75 @@ type Store interface {
 	// CreateAddressIndexingJob creates a new address indexing job record
 	// This handles conflicts gracefully by doing nothing if the job already exists
 	CreateAddressIndexingJob(ctx context.Context, input CreateAddressIndexingJobInput) error
-	// GetAddressIndexingJobByWorkflowID retrieves a job by workflow ID
+	// GetAddressIndexingJobByJobID returns the address indexing job row for the given postgres jobs.id (queue job id).
+	GetAddressIndexingJobByJobID(ctx context.Context, jobID int64) (*schema.AddressIndexingJob, error)
+	// GetAddressIndexingJobByWorkflowID looks up by the deprecated address_indexing_jobs.workflow_id column (exact match).
+	// Prefer GetAddressIndexingJobByJobID; this exists for legacy clients that only retain the opaque correlation string.
 	GetAddressIndexingJobByWorkflowID(ctx context.Context, workflowID string) (*schema.AddressIndexingJob, error)
 	// GetActiveIndexingJobForAddress retrieves an active (running or paused) job for a specific address and chain
 	// Returns nil if no active job is found (not an error)
 	GetActiveIndexingJobForAddress(ctx context.Context, address string, chainID domain.Chain) (*schema.AddressIndexingJob, error)
 	// UpdateAddressIndexingJobStatus updates job status with timestamp
-	UpdateAddressIndexingJobStatus(ctx context.Context, workflowID string, status schema.IndexingJobStatus, timestamp time.Time) error
+	UpdateAddressIndexingJobStatus(ctx context.Context, jobID int64, status schema.IndexingJobStatus, timestamp time.Time) error
 	// UpdateAddressIndexingJobProgress updates job progress metrics
-	UpdateAddressIndexingJobProgress(ctx context.Context, workflowID string, tokensProcessed int, minBlock, maxBlock uint64) error
+	UpdateAddressIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error
 	// GetTokenCountsByAddress retrieves total token counts for an address
 	// Returns both total tokens indexed and total tokens viewable (with metadata or enrichment)
 	GetTokenCountsByAddress(ctx context.Context, address string, chain domain.Chain) (*TokenCountsByAddress, error)
+
+	// =============================================================================
+	// Job queue (Postgres)
+	// =============================================================================
+
+	// EnqueueJob inserts a new `jobs` row, or when UniqueKey is set and a matching active job exists, returns
+	// the existing row with created=false. The partial unique index enforces at most one active job per
+	// (queue, kind, unique_key). Created is true when a new row was inserted.
+	EnqueueJob(ctx context.Context, input EnqueueJobInput) (job *schema.Job, created bool, err error)
+	// GetJob loads a `jobs` row by primary key.
+	GetJob(ctx context.Context, id int64) (*schema.Job, error)
+	// ClaimJobs claims up to `limit` pending work items for a queue, ordered by run_after then id, using
+	// FOR UPDATE SKIP LOCKED in a CTE, then flips their status to running and sets started_at.
+	//
+	// Reason: Concurrency safety without a lease table—each worker only sees unclaimed rows.
+	// Trade-offs: Claim latency is periodic (poll) rather than push; v1 keeps this for simplicity.
+	// Constraints: Only rows with status=pending and run_after <= now() are eligible. limit <= 0 returns none.
+	ClaimJobs(ctx context.Context, queue string, limit int) ([]*schema.Job, error)
+	// MarkJobSucceeded marks a running job as succeeded and sets finished_at.
+	MarkJobSucceeded(ctx context.Context, id int64) error
+	// MarkJobFailed marks a running job as failed with a terminal last_error and sets finished_at.
+	MarkJobFailed(ctx context.Context, id int64, lastErr string) error
+	// RescheduleJob returns a running job to pending, clears started_at, and sets run_after (e.g. quota reset).
+	// Only rows still in status=running are updated.
+	RescheduleJob(ctx context.Context, id int64, runAfter time.Time) error
+	// RequestJobCancel sets cancel_requested for operators or API-initiated stop; the worker applies it to in-flight work.
+	RequestJobCancel(ctx context.Context, id int64) error
+	// MarkJobCanceled sets status=canceled and finished_at when the handler observes cancelation.
+	MarkJobCanceled(ctx context.Context, id int64) error
+	// SweepOrphanedJobs returns running jobs in a queue to pending at worker startup (crash recovery) when no
+	// per-job heartbeat/lease is stored.
+	//
+	// Reason: A running row without a live worker must not block the queue.
+	// Trade-offs: A slow shutdown can briefly duplicate work if a new worker starts before the old one exits, but
+	// v1 uses unique keys and idempotent flows where that matters; otherwise duplicate execution is a known ops edge.
+	// Constraints: Only rows with the given queue and status=running are updated. Returns the number of rows changed.
+	SweepOrphanedJobs(ctx context.Context, queue string) (int64, error)
+	// SweepCanceledPendingJobs transitions pending jobs with cancel_requested=true to canceled status.
+	// This ensures user cancellation intent is reflected in terminal job state, since ClaimJobs now filters
+	// out jobs with cancel_requested=true (preventing their execution).
+	//
+	// Reason: Canceled pending jobs remain in pending state indefinitely without an explicit transition.
+	// Constraints: Only rows with the given queue, status=pending, and cancel_requested=true are updated.
+	// Returns the number of rows changed.
+	SweepCanceledPendingJobs(ctx context.Context, queue string) (int64, error)
+	// AcquireJobQueueLock tries to take a session-level advisory lock for this queue on a single dedicated connection.
+	// If acquired, the returned release function unlocks and closes the connection. If not acquired, callers
+	// should not run another worker for the same queue in this process.
+	//
+	// Reason: Excludes duplicate worker processes on the same queue while allowing multiple queues across connections.
+	// Trade-offs: Lock is per-database cluster and process-cooperative (not a cross-datacenter global mutex).
+	// Constraints: The release function must be called exactly once; lock scope matches hashtext('jobs_worker:'||queue) in SQL.
+	AcquireJobQueueLock(ctx context.Context, queue string) (acquired bool, release func(), err error)
+	// ListInFlightJobsWithCancelRequest returns running jobs in the given queue, limited to the provided ids, that
+	// have cancel_requested=true. Used to cancel in-flight handler contexts in the worker.
+	ListInFlightJobsWithCancelRequest(ctx context.Context, queue string, ids []int64) ([]*schema.Job, error)
 }

@@ -36,6 +36,17 @@ func SentryMiddleware() gin.HandlerFunc {
 	}
 }
 
+// RequestContextComponent wraps the request context with logger.WithComponent so each
+// handler and downstream logger.InfoCtx/ErrorCtx call includes the component field.
+// Run it after SentryMiddleware so the Sentry hub remains an ancestor of the new context.
+func RequestContextComponent(component string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := logger.WithComponent(c.Request.Context(), component)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
+
 // Logger returns a gin middleware for structured logging using zap
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {

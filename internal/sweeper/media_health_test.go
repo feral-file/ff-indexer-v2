@@ -6,10 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.temporal.io/sdk/client"
+	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
@@ -26,7 +25,7 @@ type testSweeperMocks struct {
 	urlChecker     *mocks.MockURLChecker
 	dataURIChecker *mocks.MockDataURIChecker
 	clock          *mocks.MockClock
-	orchestrator   *mocks.MockTemporalOrchestrator
+	jobQueue       *mocks.MockJobQueue
 	sweeper        sweeper.Sweeper
 }
 
@@ -48,7 +47,7 @@ func setupTestSweeper(t *testing.T) *testSweeperMocks {
 		urlChecker:     mocks.NewMockURLChecker(ctrl),
 		dataURIChecker: mocks.NewMockDataURIChecker(ctrl),
 		clock:          mocks.NewMockClock(ctrl),
-		orchestrator:   mocks.NewMockTemporalOrchestrator(ctrl),
+		jobQueue:       mocks.NewMockJobQueue(ctrl),
 	}
 
 	config := &sweeper.MediaHealthSweeperConfig{
@@ -63,7 +62,7 @@ func setupTestSweeper(t *testing.T) *testSweeperMocks {
 		tm.urlChecker,
 		tm.dataURIChecker,
 		tm.clock,
-		tm.orchestrator,
+		tm.jobQueue,
 		"test-task-queue",
 	)
 
@@ -113,16 +112,8 @@ func TestMediaHealthSweeper_CheckURL_Healthy(t *testing.T) {
 			{TokenID: 1, TokenCID: "token1", OldViewable: false, NewViewable: true},
 		}, nil)
 
-	// Mock Trigger webhook for token (viewability changed from false to true)
-	mocks.orchestrator.EXPECT().
-		ExecuteWorkflow(
-			gomock.Any(),
-			gomock.Any(),
-			gomock.Any(),
-			gomock.Any(),
-		).
-		Return(client.WorkflowRun(nil), nil).
-		Times(1)
+	mocks.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 1}, true, nil).Times(1)
 
 	// Mock clock expectations
 	now := time.Now()
@@ -193,15 +184,8 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 			{TokenID: 1, TokenCID: "token1", OldViewable: false, NewViewable: true},
 		}, nil)
 
-	// Mock Trigger webhook for token (viewability changed)
-	mocks.orchestrator.EXPECT().
-		ExecuteWorkflow(
-			gomock.Any(),
-			gomock.Any(),
-			gomock.Any(),
-			gomock.Any(),
-		).
-		Return(client.WorkflowRun(nil), nil)
+	mocks.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 1}, true, nil)
 
 	// Mock clock and sweep
 	now := time.Now()
@@ -269,15 +253,8 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 			{TokenID: 1, TokenCID: "token1", OldViewable: true, NewViewable: false},
 		}, nil)
 
-	// Mock Trigger webhook (viewability changed from true to false)
-	mocks.orchestrator.EXPECT().
-		ExecuteWorkflow(
-			gomock.Any(),
-			gomock.Any(),
-			gomock.Any(),
-			gomock.Any(),
-		).
-		Return(client.WorkflowRun(nil), nil)
+	mocks.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 1}, true, nil)
 
 	// Mock clock and sweep
 	now := time.Now()
@@ -552,10 +529,8 @@ func TestMediaHealthSweeper_MultipleURLs(t *testing.T) {
 			}, nil
 		})
 
-	// Mock Trigger webhooks for both tokens
-	mocks.orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(client.WorkflowRun(nil), nil).
+	mocks.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 1}, true, nil).
 		Times(2)
 
 	// Mock clock and sweep
@@ -689,9 +664,8 @@ func TestMediaHealthSweeper_GetURLsError_HandledGracefully(t *testing.T) {
 			{TokenID: 1, TokenCID: "token1", OldViewable: false, NewViewable: true},
 		}, nil)
 
-	mocks.orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(client.WorkflowRun(nil), nil)
+	mocks.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 1}, true, nil)
 
 	// Mock clock
 	now := time.Now()
@@ -750,9 +724,8 @@ func TestMediaHealthSweeper_CheckDataURI_Valid(t *testing.T) {
 		}, nil)
 
 	// Mock Trigger webhook
-	mocks.orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(client.WorkflowRun(nil), nil)
+	mocks.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 1}, true, nil)
 
 	// Mock clock and sweep
 	now := time.Now()
@@ -822,9 +795,8 @@ func TestMediaHealthSweeper_CheckDataURI_Invalid(t *testing.T) {
 		}, nil)
 
 	// Mock Trigger webhook
-	mocks.orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(client.WorkflowRun(nil), nil)
+	mocks.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 1}, true, nil)
 
 	// Mock clock and sweep
 	now := time.Now()
@@ -907,9 +879,8 @@ func TestMediaHealthSweeper_SameTokenMultipleURLs(t *testing.T) {
 		}, nil).
 		Times(1) // Should only be called once with deduplicated token ID
 
-	mocks.orchestrator.EXPECT().
-		ExecuteWorkflow(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(client.WorkflowRun(nil), nil)
+	mocks.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		Return(&schema.Job{ID: 1}, true, nil)
 
 	// Mock clock and sweep
 	now := time.Now()

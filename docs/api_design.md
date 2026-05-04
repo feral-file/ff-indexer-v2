@@ -14,7 +14,7 @@ Rules for designing and evolving the FF Indexer v2 API surface. **Normative cont
 | --- | --- |
 | `tokens` | Token reads, expansions, and indexing triggers |
 | `collections` | Owner collection sync (checkpointed event stream) |
-| `workflows` | Temporal workflow run status |
+| `workflows` | Async workflow / job correlation (e.g. `workflow_id` from API triggers; backed by `jobs` where applicable) |
 | `indexing` | Address indexing job status |
 | `webhooks` | Webhook client registration (outbound delivery is documented under `webhooks` in OpenAPI) |
 | `health` | Service health |
@@ -102,11 +102,11 @@ Design rules:
 
 - Expansions are **inferred from the selection set**; keep parity with REST expansions and document any intentional differences in schema comments.
 
-## Async operations and workflow tracking
+## Async operations and job tracking
 
-- **Trigger responses** use **`workflow_id` + `run_id`** (`TriggerIndexingResult`) for token and metadata workflows.
-- **Address indexing** returns **per-address jobs** (`TriggerAddressIndexingResult` / OpenAPI equivalent) so each address can be tracked separately.
-- **Status endpoints:** `GET /api/v1/workflows/{workflow_id}/runs/{run_id}` and `GET /api/v1/indexing/jobs/{workflow_id}` remain the **supported** way to poll progress.
+- **Token and metadata trigger responses** return **`job_id`** plus **deprecated** **`workflow_id`** (decimal string of `job_id`) and **`run_id`** (always null) on `TriggerIndexingResult` / OpenAPI `TriggerIndexingResponse`; new clients should use **`job_id`** with `jobStatus` / `GET /api/v1/jobs/{job_id}`.
+- **Address indexing** returns **per-address jobs** with **`job_id`** and **deprecated** **`workflow_id`** (stored opaque correlation id: for new queue-backed rows this is typically the decimal string of `job_id`; pre-migration rows may retain a legacy Temporal-style string). New integrations should use **`job_id`**. Deprecated **`workflow_id`** is persisted and echoed in the API for backward compatibility.
+- **Status endpoints:** `GET /api/v1/jobs/{job_id}` (queue job lifecycle), GraphQL `jobStatus(job_id)`, **deprecated** GraphQL `workflowStatus(workflow_id, run_id)` (same as `jobStatus` when `workflow_id` is the decimal string of `jobs.id`; optional `run_id` is ignored), and `GET /api/v1/indexing/jobs/{job_id}` (address indexing detail: progress, blocks, optional counts) are the supported ways to poll progress. Legacy REST `GET /api/v1/workflows/{workflow_id}` behaves like `GET /api/v1/jobs/{job_id}` (jobs table only). GraphQL `indexingJob` may still resolve by stored address-indexing `workflow_id` when not using `job_id`. Address indexing GET/trigger responses mirror **`job_id`** plus deprecated **`workflow_id`** as above.
 - **Optional expensive fields:** Use explicit query flags (e.g. `include_total_indexed`) for costly aggregates; defaults should favor low latency.
 
 ## Webhooks

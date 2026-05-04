@@ -3,6 +3,7 @@ package rest
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,16 +40,21 @@ type Handler interface {
 	// POST /api/v1/tokens/metadata/index
 	TriggerMetadataIndexing(c *gin.Context)
 
-	// GetWorkflowStatus retrieves the status of a Temporal workflow execution
+	// GetJobStatus retrieves the status of a postgres job
+	// GET /api/v1/jobs/:job_id
+	GetJobStatus(c *gin.Context)
+
+	// GetWorkflowRun retrieves job status by deprecated legacy URL paths. Path param workflow_id is the decimal string of jobs.id only.
+	// GET /api/v1/workflows/:workflow_id
 	// GET /api/v1/workflows/:workflow_id/runs/:run_id
-	GetWorkflowStatus(c *gin.Context)
+	GetWorkflowRun(c *gin.Context)
 
 	// CreateWebhookClient creates a new webhook client (requires authentication via API key)
 	// POST /api/v1/webhooks/clients
 	CreateWebhookClient(c *gin.Context)
 
-	// GetAddressIndexingJob retrieves an indexing job by workflow ID
-	// GET /api/v1/indexing/jobs/:workflow_id
+	// GetAddressIndexingJob retrieves an address indexing job by postgres jobs.id (canonical path).
+	// JSON responses include deprecated `workflow_id` from address_indexing_jobs when present; legacy opaque ids require GraphQL `indexingJob(workflow_id)`.
 	GetAddressIndexingJob(c *gin.Context)
 
 	// SyncCollection retrieves token changes for an address using timestamp-based watermark mechanism
@@ -272,24 +278,45 @@ func (h *handler) TriggerMetadataIndexing(c *gin.Context) {
 	c.JSON(http.StatusAccepted, response)
 }
 
-// GetWorkflowStatus retrieves the status of a Temporal workflow execution
-func (h *handler) GetWorkflowStatus(c *gin.Context) {
-	workflowID := c.Param("workflow_id")
-	if workflowID == "" {
+// GetJobStatus retrieves the status of a job
+func (h *handler) GetJobStatus(c *gin.Context) {
+	idStr := c.Param("job_id")
+	if idStr == "" {
+		respondBadRequest(c, "job_id is required")
+		return
+	}
+	jobID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || jobID < 1 {
+		respondBadRequest(c, "job_id must be a positive integer")
+		return
+	}
+
+	status, err := h.executor.GetJobStatus(c.Request.Context(), jobID)
+	if err != nil {
+		respondInternalError(c, err, "Failed to get job status")
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// GetWorkflowRun returns the same payload as GetJobStatus. Deprecated path segment workflow_id must be the decimal jobs.id.
+// An optional /runs/:run_id suffix is accepted for legacy URL shape only; it is not used.
+func (h *handler) GetWorkflowRun(c *gin.Context) {
+	wf := c.Param("workflow_id") // deprecated param name; value is jobs.id as decimal string
+	if wf == "" {
 		respondBadRequest(c, "workflow_id is required")
 		return
 	}
-
-	runID := c.Param("run_id")
-	if runID == "" {
-		respondBadRequest(c, "run_id is required")
+	jobID, err := internalTypes.Int64FromUnsignedDecimalString(wf)
+	if err != nil || jobID < 1 {
+		respondBadRequest(c, "workflow_id must be a positive decimal integer (jobs.id)")
 		return
 	}
 
-	// Call executor's GetWorkflowStatus method
-	status, err := h.executor.GetWorkflowStatus(c.Request.Context(), workflowID, runID)
+	status, err := h.executor.GetJobStatus(c.Request.Context(), jobID)
 	if err != nil {
-		respondInternalError(c, err, "Failed to get workflow status")
+		respondInternalError(c, err, "Failed to get job status")
 		return
 	}
 
@@ -333,11 +360,16 @@ func (h *handler) CreateWebhookClient(c *gin.Context) {
 	c.JSON(http.StatusCreated, response)
 }
 
-// GetAddressIndexingJob retrieves an indexing job by workflow ID
+// GetAddressIndexingJob retrieves an address indexing job by postgres jobs.id; response echoes deprecated workflow_id from the row.
 func (h *handler) GetAddressIndexingJob(c *gin.Context) {
-	workflowID := c.Param("workflow_id")
-	if workflowID == "" {
-		respondBadRequest(c, "workflow_id is required")
+	p := c.Param("job_id")
+	if p == "" {
+		respondBadRequest(c, "job_id is required")
+		return
+	}
+	jobID, err := strconv.ParseInt(p, 10, 64)
+	if err != nil || jobID < 1 {
+		respondBadRequest(c, "job_id must be a positive integer")
 		return
 	}
 
@@ -347,8 +379,7 @@ func (h *handler) GetAddressIndexingJob(c *gin.Context) {
 		IncludeTotalViewable: c.Query("include_total_viewable") == "true",
 	}
 
-	// Call executor's GetAddressIndexingJob method
-	job, err := h.executor.GetAddressIndexingJob(c.Request.Context(), workflowID, opts)
+	job, err := h.executor.GetAddressIndexingJob(c.Request.Context(), jobID, opts)
 	if err != nil {
 		respondInternalError(c, err, "Failed to get indexing job")
 		return

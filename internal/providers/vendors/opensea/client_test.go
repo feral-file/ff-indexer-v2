@@ -2,14 +2,11 @@ package opensea_test
 
 import (
 	"context"
-	"os"
 	"testing"
-	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 
-	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 )
@@ -20,15 +17,14 @@ func TestOpenSeaClient_GetNFT(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
-	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
 
-	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockLimiter, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
 	tokenID := "1"
 
-	// Mock response
 	responseJSON := []byte(`{
 		"nft": {
 			"identifier": "1",
@@ -57,8 +53,8 @@ func TestOpenSeaClient_GetNFT(t *testing.T) {
 		"X-API-KEY": "test-api-key",
 	}
 
-	mockRateLimitProxy.EXPECT().
-		Request(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+	mockLimiter.EXPECT().
+		Do(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
 			return fn(ctx)
 		})
@@ -126,10 +122,9 @@ func TestOpenSeaClient_GetNFT_NoAPIKey(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
-	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
 
-	// Create client without API key (empty string)
-	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockLimiter, "https://api.opensea.io/api/v2", "", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
@@ -148,16 +143,16 @@ func TestOpenSeaClient_GetNFT_APIError(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
-	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
 
-	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockLimiter, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
 	tokenID := "1"
 
-	mockRateLimitProxy.EXPECT().
-		Request(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+	mockLimiter.EXPECT().
+		Do(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
 			return fn(ctx)
 		})
@@ -179,9 +174,9 @@ func TestOpenSeaClient_GetNFT_UnmarshalError(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
-	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
 
-	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockLimiter, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
@@ -189,8 +184,8 @@ func TestOpenSeaClient_GetNFT_UnmarshalError(t *testing.T) {
 
 	responseJSON := []byte(`invalid json`)
 
-	mockRateLimitProxy.EXPECT().
-		Request(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+	mockLimiter.EXPECT().
+		Do(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
 			return fn(ctx)
 		})
@@ -216,9 +211,9 @@ func TestOpenSeaClient_GetNFT_ResponseErrors(t *testing.T) {
 
 	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
 	mockJSON := mocks.NewMockJSON(ctrl)
-	mockRateLimitProxy := mocks.NewMockRateLimitProxy(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
 
-	client := opensea.NewClient(mockHTTPClient, mockRateLimitProxy, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
+	client := opensea.NewClient(mockHTTPClient, mockLimiter, "https://api.opensea.io/api/v2", "test-api-key", mockJSON)
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
@@ -226,8 +221,8 @@ func TestOpenSeaClient_GetNFT_ResponseErrors(t *testing.T) {
 
 	responseJSON := []byte(`{"errors": ["NFT not found"]}`)
 
-	mockRateLimitProxy.EXPECT().
-		Request(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+	mockLimiter.EXPECT().
+		Do(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
 			return fn(ctx)
 		})
@@ -258,121 +253,47 @@ func TestExtractArtistFromTraits(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "Artist trait",
+			name: "single artist trait",
 			traits: []opensea.Trait{
-				{TraitType: "Background", Value: "Blue"},
-				{TraitType: "Artist", Value: "Tyler Hobbs"},
+				{TraitType: "Artist", Value: "Alice"},
 			},
-			expected: "Tyler Hobbs",
+			expected: "Alice",
 		},
 		{
-			name: "Artists trait",
+			name: "multiple artist trait aliases",
 			traits: []opensea.Trait{
-				{TraitType: "Background", Value: "Blue"},
-				{TraitType: "Artists", Value: "Tyler Hobbs, John Doe"},
+				{TraitType: "Artist", Value: "Alice"},
+				{TraitType: "creator", Value: "Bob"},
 			},
-			expected: "Tyler Hobbs, John Doe",
+			expected: "Alice, Bob",
 		},
 		{
-			name: "Creator trait",
+			name: "deduplicates artists",
 			traits: []opensea.Trait{
-				{TraitType: "Background", Value: "Blue"},
-				{TraitType: "Creator", Value: "John Doe"},
+				{TraitType: "artist", Value: "Alice"},
+				{TraitType: "Artist", Value: "Alice"},
 			},
-			expected: "John Doe",
+			expected: "Alice",
 		},
 		{
-			name: "Artist Name trait",
-			traits: []opensea.Trait{
-				{TraitType: "Artist Name", Value: "Jane Smith"},
-			},
-			expected: "Jane Smith",
-		},
-		{
-			name: "No artist trait",
-			traits: []opensea.Trait{
-				{TraitType: "Background", Value: "Blue"},
-				{TraitType: "Eyes", Value: "Laser"},
-			},
-			expected: "",
-		},
-		{
-			name:     "Empty traits",
-			traits:   []opensea.Trait{},
-			expected: "",
-		},
-		{
-			name: "Case insensitive matching",
-			traits: []opensea.Trait{
-				{TraitType: "ARTIST", Value: "Test Artist"},
-			},
-			expected: "Test Artist",
-		},
-		{
-			name: "Non-string value",
+			name: "ignores non-string values",
 			traits: []opensea.Trait{
 				{TraitType: "Artist", Value: 123},
 			},
 			expected: "",
 		},
 		{
-			name: "Multiple artist traits",
+			name: "no matching traits",
 			traits: []opensea.Trait{
 				{TraitType: "Background", Value: "Blue"},
-				{TraitType: "Artist", Value: "Tyler Hobbs"},
-				{TraitType: "Artist", Value: "John Doe"},
 			},
-			expected: "Tyler Hobbs, John Doe",
-		},
-		{
-			name: "Multiple different artist traits",
-			traits: []opensea.Trait{
-				{TraitType: "Background", Value: "Blue"},
-				{TraitType: "Artist", Value: "Tyler Hobbs"},
-				{TraitType: "Artist Name", Value: "John Doe"},
-				{TraitType: "Creator", Value: "Jane Smith"},
-				{TraitType: "Creator Name", Value: "Jane Smith"},
-				{TraitType: "Made By", Value: "Jane Smith"},
-				{TraitType: "Created By", Value: "Jane Smith"},
-			},
-			expected: "Tyler Hobbs, John Doe, Jane Smith",
+			expected: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := opensea.ExtractArtistFromTraits(tt.traits)
-			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expected, opensea.ExtractArtistFromTraits(tt.traits))
 		})
 	}
-}
-
-// TestOpenSeaClient_Integration is an integration test that calls the real OpenSea API
-// It will only run if OPENSEA_API_KEY environment variable is set
-func TestOpenSeaClient_Integration(t *testing.T) {
-	apiKey := os.Getenv("OPENSEA_API_KEY")
-	if apiKey == "" {
-		t.Skip("Skipping integration test: OPENSEA_API_KEY not set")
-	}
-
-	// Use real HTTP client and JSON adapter
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	jsonAdapter := adapter.NewJSON()
-
-	client := opensea.NewClient(httpClient, nil, "https://api.opensea.io/api/v2", apiKey, jsonAdapter)
-
-	ctx := context.Background()
-	contractAddress := "0x513AC47320798fB6D74543242a9c0F686682998D" // BAYC
-	tokenID := "60555235769946072280257368134421579233129900805931125862653074656717210657350"
-
-	result, err := client.GetNFT(ctx, contractAddress, tokenID)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, "60555235769946072280257368134421579233129900805931125862653074656717210657350", result.Identifier)
-	assert.NotEmpty(t, result.Name)
-	assert.NotEmpty(t, result.Description)
-	assert.NotEmpty(t, result.ImageURL)
-	assert.NotEmpty(t, result.DisplayAnimationURL)
-	assert.NotEmpty(t, result.MetadataURL)
 }

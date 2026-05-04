@@ -17,389 +17,45 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ../../db/init_pg_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${FF_INDEXER_DATABASE_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - ff-indexer-network
     restart: unless-stopped
-
-  # PostgreSQL database for Temporal
-  temporal-postgres:
-    image: postgres:18-alpine
-    container_name: temporal-postgres
-    environment:
-      POSTGRES_USER: temporal
-      POSTGRES_PASSWORD: temporal
-      POSTGRES_DB: temporal
-    ports:
-      - "5433:5432"
-    volumes:
-      - temporal_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U temporal"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
-  # Temporal server
-  temporal:
-    image: temporalio/auto-setup:1.29.0
-    container_name: temporal
-    depends_on:
-      temporal-postgres:
-        condition: service_healthy
-    environment:
-      - DB=postgres12
-      - DB_PORT=5432
-      - POSTGRES_USER=temporal
-      - POSTGRES_PWD=temporal
-      - POSTGRES_SEEDS=temporal-postgres
-    ports:
-      - "7233:7233"
-      - "7234:7234"
-      - "7235:7235"
-      - "7239:7239"
-    volumes:
-      - temporal_data:/etc/temporal
-    healthcheck:
-      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
-  # Temporal Web UI
-  temporal-ui:
-    image: temporalio/ui:2.42.1
-    container_name: temporal-ui
-    depends_on:
-      temporal:
-        condition: service_healthy
-    environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
-    ports:
-      - "8080:8080"
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
-  # Redis for rate limiting
-  redis:
-    image: redis:8.2.2-alpine
-    container_name: ff-indexer-redis
-    command: >
-      redis-server
-      --appendonly yes
-      --requirepass ${FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD:-redis_password}
-    environment:
-      - REDIS_PASSWORD=${FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD:-redis_password}
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping | grep PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
-  # NATS JetStream for event streaming
-  nats:
-    image: nats:2.12.1-alpine
-    container_name: ff-indexer-nats
-    command:
-      - "-js"
-      - "-m"
-      - "8222"
-      - "-sd"
-      - "/data"
-    ports:
-      - "4222:4222"  # Client connections
-      - "8222:8222"  # HTTP monitoring
-      - "6222:6222"  # Clustering
-    volumes:
-      - nats_data:/data
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-
-  # NATS Stream Setup - Creates the BLOCKCHAIN_EVENTS stream
-  nats-setup:
-    image: natsio/nats-box:latest
-    container_name: ff-indexer-nats-setup
-    depends_on:
-      nats:
-        condition: service_healthy
-    volumes:
-      - ../../tools/nats/stream.json:/config/stream.json:ro
-    command:
-      - sh
-      - -c
-      - |
-        echo 'Creating BLOCKCHAIN_EVENTS stream from config...'
-        nats --server nats://nats:4222 stream add --config /config/stream.json --defaults || echo 'Stream might already exist'
-        echo 'Verifying stream...'
-        nats --server nats://nats:4222 stream info BLOCKCHAIN_EVENTS
-        echo 'Stream setup complete!'
-    networks:
-      - ff-indexer-network
-    restart: "no"
 
   # ====================================
-  # Application Services
+  # Application (single process: API + chain ingestion + workers + sweeper)
   # ====================================
 
-  # Ethereum Event Emitter
-  ethereum-event-emitter:
+  ff-indexer:
     build:
       context: ../..
-      dockerfile: tools/docker/Dockerfile-ethereum-event-emitter
-    image: ff-indexer-ethereum-event-emitter:latest
-    container_name: ff-indexer-ethereum-event-emitter
+      dockerfile: tools/docker/Dockerfile
+      # CGO=1 enables media worker (vips/chromium)
+      # Default 0 for reliable builds; override: docker compose build --build-arg CGO_ENABLED=1 ff-indexer
+      args:
+        CGO_ENABLED: "0"
+    image: ff-indexer:latest
+    container_name: ff-indexer
     depends_on:
       postgres:
         condition: service_healthy
-      nats:
-        condition: service_healthy
-      nats-setup:
-        condition: service_completed_successfully
     volumes:
-      - ../../cmd/ethereum-event-emitter/config.yaml.sample:/app/config.yaml:ro
-    env_file:
-      - ../../config/.env
-      - ../../config/.env.local
-    environment:
-      # Docker-specific overrides
-      - FF_INDEXER_DATABASE_HOST=postgres
-      - FF_INDEXER_NATS_URL=nats://nats:4222
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "ethereum-event-emitter"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Tezos Event Emitter
-  tezos-event-emitter:
-    build:
-      context: ../..
-      dockerfile: tools/docker/Dockerfile-tezos-event-emitter
-    image: ff-indexer-tezos-event-emitter:latest
-    container_name: ff-indexer-tezos-event-emitter
-    depends_on:
-      postgres:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-      nats-setup:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-    volumes:
-      - ../../cmd/tezos-event-emitter/config.yaml.sample:/app/config.yaml:ro
-    env_file:
-      - ../../config/.env
-      - ../../config/.env.local
-    environment:
-      # Docker-specific overrides
-      - FF_INDEXER_DATABASE_HOST=postgres
-      - FF_INDEXER_NATS_URL=nats://nats:4222
-      - FF_INDEXER_RATE_LIMITER_REDIS_ADDR=redis:6379
-      - FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD=${FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD:-redis_password}
-      - FF_INDEXER_RATE_LIMITER_REDIS_DB=${FF_INDEXER_RATE_LIMITER_REDIS_DB:-0}
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "tezos-event-emitter"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Event Bridge
-  event-bridge:
-    build:
-      context: ../..
-      dockerfile: tools/docker/Dockerfile-event-bridge
-    image: ff-indexer-event-bridge:latest
-    container_name: ff-indexer-event-bridge
-    depends_on:
-      postgres:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-      nats-setup:
-        condition: service_completed_successfully
-      temporal:
-        condition: service_healthy
-      ethereum-event-emitter:
-        condition: service_healthy
-      tezos-event-emitter:
-        condition: service_healthy
-    volumes:
-      - ../../cmd/event-bridge/config.yaml.sample:/app/config.yaml:ro
-      - ../../tools/registry/blacklist.json:/app/tools/registry/blacklist.json:ro
-    env_file:
-      - ../../config/.env
-      - ../../config/.env.local
-    environment:
-      # Docker-specific overrides
-      - FF_INDEXER_DATABASE_HOST=postgres
-      - FF_INDEXER_NATS_URL=nats://nats:4222
-      - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "event-bridge"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Worker Core
-  worker-core:
-    build:
-      context: ../..
-      dockerfile: tools/docker/Dockerfile-worker-core
-    image: ff-indexer-worker-core:latest
-    container_name: ff-indexer-worker-core
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      temporal:
-        condition: service_healthy
-    volumes:
-      - ../../cmd/worker-core/config.yaml.sample:/app/config.yaml:ro
+      - ../../cmd/ff-indexer/config.yaml.sample:/app/config.yaml:ro
       - ../../tools/registry:/app/tools/registry:ro
     env_file:
       - ../../config/.env
       - ../../config/.env.local
     environment:
-      # Docker-specific overrides
       - FF_INDEXER_DATABASE_HOST=postgres
-      - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
-      - FF_INDEXER_RATE_LIMITER_REDIS_ADDR=redis:6379
-      - FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD=${FF_INDEXER_RATE_LIMITER_REDIS_PASSWORD:-redis_password}
-      - FF_INDEXER_RATE_LIMITER_REDIS_DB=${FF_INDEXER_RATE_LIMITER_REDIS_DB:-0}
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "worker-core"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Worker Media
-  worker-media:
-    build:
-      context: ../..
-      dockerfile: tools/docker/Dockerfile-worker-media
-    image: ff-indexer-worker-media:latest
-    container_name: ff-indexer-worker-media
-    depends_on:
-      postgres:
-        condition: service_healthy
-      temporal:
-        condition: service_healthy
-    volumes:
-      - ../../cmd/worker-media/config.yaml.sample:/app/config.yaml:ro
-    env_file:
-      - ../../config/.env
-      - ../../config/.env.local
-    environment:
-      # Docker-specific overrides
-      - FF_INDEXER_DATABASE_HOST=postgres
-      - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
-    # Increase shared memory for Chromium (default 64MB is insufficient)
-    # Chromium requires adequate shared memory to avoid hanging during rendering
-    shm_size: "1g"
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "worker-media"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # API Server
-  api:
-    build:
-      context: ../..
-      dockerfile: tools/docker/Dockerfile-api
-    image: ff-indexer-api:latest
-    container_name: ff-indexer-api
-    depends_on:
-      postgres:
-        condition: service_healthy
-      temporal:
-        condition: service_healthy
-      worker-core:
-        condition: service_healthy
-    volumes:
-      - ../../cmd/api/config.yaml.sample:/app/config.yaml:ro
-      - ../../tools/registry/blacklist.json:/app/tools/registry/blacklist.json:ro
-    env_file:
-      - ../../config/.env
-      - ../../config/.env.local
-    environment:
-      # Docker-specific overrides
-      - FF_INDEXER_DATABASE_HOST=postgres
-      - FF_INDEXER_TEMPORAL_HOST_PORT=temporal:7233
+      # Default image uses CGO_ENABLED=0 (media worker stub). .env.local often sets media true;
+      # that requires a CGO build (`docker compose build --build-arg CGO_ENABLED=1 ff-indexer`).
+      - FF_INDEXER_MEDIA_ENABLED=false
     ports:
       - "${API_PORT:-8081}:8081"
+    shm_size: "1g"
     networks:
       - ff-indexer-network
     restart: unless-stopped
@@ -415,49 +71,8 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Media Health Sweeper
-  sweeper:
-    build:
-      context: ../..
-      dockerfile: tools/docker/Dockerfile-sweeper
-    image: ff-indexer-sweeper:latest
-    container_name: ff-indexer-sweeper
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ../../cmd/sweeper/config.yaml.sample:/app/config.yaml:ro
-    env_file:
-      - ../../config/.env
-      - ../../config/.env.local
-    environment:
-      # Docker-specific overrides
-      - FF_INDEXER_DATABASE_HOST=postgres
-    networks:
-      - ff-indexer-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "sweeper"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
 volumes:
   postgres_data:
-    driver: local
-  temporal_postgres_data:
-    driver: local
-  temporal_data:
-    driver: local
-  nats_data:
-    driver: local
-  redis_data:
     driver: local
 
 networks:

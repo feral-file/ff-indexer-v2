@@ -31,7 +31,7 @@ Aligned with the current system description and architecture band **Ownership & 
 - **Media processing** — Integration with **Cloudflare Images and Stream** (and health-oriented follow-up such as sweeper behavior described in the README).
 - **Provenance history** — Queryable event history supporting trust and UI timelines.
 - **Dual API access** — **REST** and **GraphQL** exposing the same domain with documented equivalence.
-- **Workflow-backed operations** — **Temporal**-tracked triggers and status for long-running work; **NATS JetStream** and workers as the execution substrate (per README architecture).
+- **Job-backed operations** — Long-running work is tracked via **PostgreSQL `jobs`** rows (status, payload, errors); chain ingestion and the API **enqueue** handlers that run in-process workers.
 - **Webhooks** — Registered clients receive typed token events for integrations that need push instead of poll.
 
 ## Out-of-scope capabilities (for this component)
@@ -48,7 +48,7 @@ Unless explicitly added elsewhere in this repo’s specs:
 - **Reliability as a feature** — Meets bar implied by company principles: **reliability before novelty**; indexing and APIs should be predictable enough that apps can treat them as **infrastructure**, not a fragile experiment.
 - **Correctness and clarity** — Token identity (**CID**), ownership, burn state, and **viewability** are consistent across list/detail paths and expansions; errors are **actionable** (stable codes, clear messages).
 - **Support for Collection and sync UX** — Address indexing, job visibility, and **checkpointed collection sync** enable clients to build **incremental** personal library experiences without gaps, consistent with app/data patterns in reference specs.
-- **Operational sustainability** — Stack choices in the README (PostgreSQL, Temporal, NATS, workers) support **scaling and recovery**; health and workflow surfaces support operators and integrators.
+- **Operational sustainability** — Stack choices in the README (PostgreSQL, in-process job workers) support **scaling and recovery**; health, job status, and related API surfaces support operators and integrators.
 - **Trust alignment** — Fits **Ownership & Identity** expectations: verifiable stewardship data and integration hooks (webhooks, signatures) without weakening the **vendor-neutral, portable** trust posture described in architecture docs.
 
 ## Operational priorities

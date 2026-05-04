@@ -17,6 +17,25 @@ var (
 	sentryClient *sentry.Client
 )
 
+// componentKey is the context key type for storing component names
+type componentKey struct{}
+
+// Component tags identify the ff-indexer process mode in structured logs (field "component").
+// Keep these string values stable: operators and log filters depend on them.
+const (
+	ComponentHTTPServer        = "http-server"
+	ComponentEthereumIngestion = "ethereum-ingestion"
+	ComponentTezosIngestion    = "tezos-ingestion"
+	ComponentWorkerCore        = "worker-core"
+	ComponentWorkerMedia       = "worker-media"
+	ComponentSweeper           = "sweeper"
+)
+
+// WithComponent returns a new context with the component name attached
+func WithComponent(ctx context.Context, component string) context.Context {
+	return context.WithValue(ctx, componentKey{}, component)
+}
+
 // Config holds logger configuration
 type Config struct {
 	Debug           bool
@@ -96,23 +115,40 @@ func Flush(timeout time.Duration) {
 	}
 }
 
-// FromContext returns a logger with sentry scope from context
-// This should be used when you have a context with sentry hub
+// FromContext returns a logger with sentry scope and component field from context
+// This should be used when you have a context with sentry hub or component information
 func FromContext(ctx context.Context) *zap.Logger {
-	if ctx == nil {
-		return log
+	base := log
+	if base == nil {
+		// Tests and code paths before Initialize must not nil-deref; Sentry scope still attaches when hub is on ctx.
+		base = zap.NewNop()
 	}
+	if ctx == nil {
+		return base
+	}
+
+	// Extract component from context
+	component, _ := ctx.Value(componentKey{}).(string)
 
 	// Extract Sentry hub from context (if present)
 	hub := sentry.GetHubFromContext(ctx)
+
+	var logger *zap.Logger
 	if hub != nil {
 		// Attach the hub's scope directly to the logger
 		// This ensures breadcrumbs and events use the correct scope from the context
-		return log.With(zapsentry.NewScopeFromScope(hub.Scope()))
+		logger = base.With(zapsentry.NewScopeFromScope(hub.Scope()))
+	} else {
+		// Fallback: use zapsentry.Context for trace linking (even if no hub in context)
+		logger = base.With(zapsentry.Context(ctx))
 	}
 
-	// Fallback: use zapsentry.Context for trace linking (even if no hub in context)
-	return log.With(zapsentry.Context(ctx))
+	// Add component field for service identification
+	if component != "" {
+		logger = logger.With(zap.String("component", component))
+	}
+
+	return logger
 }
 
 // Default returns the global logger (without context scope)
@@ -176,61 +212,4 @@ func Debug(msg string, fields ...zap.Field) {
 // DebugCtx logs a debug message with context
 func DebugCtx(ctx context.Context, msg string, fields ...zap.Field) {
 	FromContext(ctx).Debug(msg, fields...)
-}
-
-// WorkflowInfo holds workflow information for Sentry tracking
-type WorkflowInfo struct {
-	WorkflowType string
-	WorkflowID   string
-	RunID        string
-	Namespace    string
-	TaskQueue    string
-}
-
-// WithWorkflowInfo adds workflow information to Sentry and returns a logger with workflow context
-// This should be used in Temporal workflows to enable Sentry tracking with workflow context
-func WithWorkflowInfo(info WorkflowInfo) *zap.Logger {
-	// Create a new Sentry hub with workflow context
-	hub := sentry.CurrentHub().Clone()
-
-	// Set workflow context
-	hub.Scope().SetContext("temporal_workflow", map[string]interface{}{
-		"workflow_type": info.WorkflowType,
-		"workflow_id":   info.WorkflowID,
-		"run_id":        info.RunID,
-		"namespace":     info.Namespace,
-		"task_queue":    info.TaskQueue,
-	})
-
-	// Set workflow tags for easy filtering in Sentry
-	hub.Scope().SetTag("workflow_type", info.WorkflowType)
-	hub.Scope().SetTag("workflow_id", info.WorkflowID)
-
-	// Attach the hub's scope directly to the logger
-	// This ensures breadcrumbs and events use the correct scope with workflow context
-	return log.With(zapsentry.NewScopeFromScope(hub.Scope()))
-}
-
-// InfoWorkflow logs an info message with workflow context
-func InfoWorkflow(info WorkflowInfo, msg string, fields ...zap.Field) {
-	WithWorkflowInfo(info).Info(msg, fields...)
-}
-
-// ErrorWorkflow logs an error message with workflow context
-func ErrorWorkflow(info WorkflowInfo, err error, fields ...zap.Field) {
-	if err != nil {
-		WithWorkflowInfo(info).Error(err.Error(), fields...)
-	} else {
-		WithWorkflowInfo(info).Error("error occurred", fields...)
-	}
-}
-
-// WarnWorkflow logs a warning message with workflow context
-func WarnWorkflow(info WorkflowInfo, msg string, fields ...zap.Field) {
-	WithWorkflowInfo(info).Warn(msg, fields...)
-}
-
-// DebugWorkflow logs a debug message with workflow context
-func DebugWorkflow(info WorkflowInfo, msg string, fields ...zap.Field) {
-	WithWorkflowInfo(info).Debug(msg, fields...)
 }

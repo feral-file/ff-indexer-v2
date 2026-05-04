@@ -16,45 +16,45 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/temporal"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
 // Config holds the server configuration
 type Config struct {
-	Debug                 bool
-	Host                  string
-	Port                  int
-	ReadTimeout           time.Duration
-	WriteTimeout          time.Duration
-	IdleTimeout           time.Duration
-	OrchestratorTaskQueue string
-	Auth                  middleware.AuthConfig
-	TezosChainID          domain.Chain
-	EthereumChainID       domain.Chain
+	Debug           bool
+	Host            string
+	Port            int
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	IdleTimeout     time.Duration
+	TokenQueue      string
+	Auth            middleware.AuthConfig
+	TezosChainID    domain.Chain
+	EthereumChainID domain.Chain
 }
 
 // Server wraps the HTTP server
 type Server struct {
-	config       Config
-	store        store.Store
-	orchestrator temporal.TemporalOrchestrator
-	blacklist    registry.BlacklistRegistry
-	httpServer   *http.Server
-	json         adapter.JSON
-	clock        adapter.Clock
+	config     Config
+	store      store.Store
+	jobQueue   jobs.JobQueue
+	blacklist  registry.BlacklistRegistry
+	httpServer *http.Server
+	json       adapter.JSON
+	clock      adapter.Clock
 }
 
 // New creates a new API server
-func New(cfg Config, store store.Store, orchestrator temporal.TemporalOrchestrator, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock) *Server {
+func New(cfg Config, store store.Store, jobQueue jobs.JobQueue, blacklist registry.BlacklistRegistry, json adapter.JSON, clock adapter.Clock) *Server {
 	return &Server{
-		config:       cfg,
-		store:        store,
-		orchestrator: orchestrator,
-		blacklist:    blacklist,
-		json:         json,
-		clock:        clock,
+		config:    cfg,
+		store:     store,
+		jobQueue:  jobQueue,
+		blacklist: blacklist,
+		json:      json,
+		clock:     clock,
 	}
 }
 
@@ -72,12 +72,13 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Setup middleware - SentryMiddleware should be first to enable context-based logging
 	router.Use(middleware.SentryMiddleware())
+	router.Use(middleware.RequestContextComponent(logger.ComponentHTTPServer))
 	router.Use(middleware.Recovery())
 	router.Use(middleware.Logger())
 	router.Use(middleware.SetupCORS())
 
 	// Create shared executor (contains business logic shared between REST and GraphQL)
-	exec := executor.NewExecutor(s.store, s.orchestrator, s.config.OrchestratorTaskQueue, s.blacklist, s.json, s.clock, s.config.TezosChainID, s.config.EthereumChainID)
+	exec := executor.NewExecutor(s.store, s.jobQueue, s.config.TokenQueue, s.blacklist, s.json, s.clock, s.config.TezosChainID, s.config.EthereumChainID)
 
 	// Create REST handler
 	restHandler := rest.NewHandler(s.config.Debug, exec)

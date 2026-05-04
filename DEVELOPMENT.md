@@ -8,10 +8,7 @@ This guide covers local development setup, seed data, and useful scripts for FF-
 
 The development stack uses Docker Compose for infrastructure services:
 
-- **PostgreSQL** (port 5432) - Main database
-- **Temporal** (ports 7233-7235) - Workflow orchestration
-- **Temporal UI** (port 8080) - Temporal web interface
-- **NATS JetStream** (ports 4222, 8222) - Event streaming
+- **PostgreSQL** (port 5432) - Main database and `jobs` queue for background work
 
 ### Starting Infrastructure
 
@@ -33,14 +30,6 @@ psql -h localhost -U postgres -d ff_indexer
 # Password: postgres (default)
 ```
 
-**Temporal UI**:
-- URL: http://localhost:8080
-- View workflows, executions, and history
-
-**NATS Monitoring**:
-- URL: http://localhost:8222
-- View streams, consumers, and messages
-
 ### Configuration
 
 The system supports **dual configuration**: YAML config files and environment variables. You can use either or both together.
@@ -48,42 +37,34 @@ The system supports **dual configuration**: YAML config files and environment va
 **Configuration Priority** (highest to lowest):
 1. Environment variables (with `FF_INDEXER_` prefix)
 2. `.env.local` files
-3. YAML config files (`config.yaml` in each `cmd/*/` directory)
+3. YAML config files
 
 #### Option 1: YAML Config Files
 
-Each service can use a `config.yaml` file in its directory:
+The binary loads a single config (defaults search `cmd/ff-indexer/`, current directory, and `config/`):
 
 ```bash
-# Copy sample configs
-cp cmd/api/config.yaml.sample cmd/api/config.yaml
-cp cmd/worker-core/config.yaml.sample cmd/worker-core/config.yaml
-cp cmd/worker-media/config.yaml.sample cmd/worker-media/config.yaml
-cp cmd/event-bridge/config.yaml.sample cmd/event-bridge/config.yaml
-cp cmd/ethereum-event-emitter/config.yaml.sample cmd/ethereum-event-emitter/config.yaml
-cp cmd/tezos-event-emitter/config.yaml.sample cmd/tezos-event-emitter/config.yaml
-cp cmd/sweeper/config.yaml.sample cmd/sweeper/config.yaml
-
-# Edit config files with your settings
+cp cmd/ff-indexer/config.yaml.sample config/config.yaml
+# Edit config/config.yaml with your settings
 ```
 
 **Config file location**:
-- Default: `cmd/{service}/config.yaml` (relative to service directory)
-- Can be overridden with `--config` flag: `go run main.go --config /path/to/config.yaml`
+- Default search paths include `config/config.yaml`, the repo root, and `cmd/ff-indexer/`
+- Override with `-config /path/to/config.yaml`
 
 #### Option 2: Environment Variables
 
 Environment variables use the `FF_INDEXER_` prefix and map to nested config keys:
 - `FF_INDEXER_DATABASE_HOST` → `database.host`
 - `FF_INDEXER_ETHEREUM_RPC_URL` → `ethereum.rpc_url`
-- `FF_INDEXER_TEMPORAL_HOST_PORT` → `temporal.host_port`
+- `FF_INDEXER_JOBS_TOKEN_QUEUE` → `jobs.token_queue`
 
 Dots in config keys become underscores in env vars.
 
 **Environment variable files** (loaded in order, later files override earlier):
 1. `config/.env` - Base configuration (version controlled)
 2. `config/.env.local` - Local overrides (git ignored)
-3. `config/.env.{service}.local` - Service-specific overrides (git ignored)
+3. `config/.env.ff-indexer.local` - Optional overrides for the binary (git ignored)
 
 #### Required Configuration
 
@@ -94,13 +75,14 @@ FF_INDEXER_DATABASE_USER=YOUR_DB_USER
 FF_INDEXER_DATABASE_PASSWORD=YOUR_DB_PASSWORD
 FF_INDEXER_DATABASE_DBNAME=ff_indexer
 
-# Ethereum (for ethereum-event-emitter and worker-core)
+# Ethereum (for ff-indexer chain ingestion and token worker)
 FF_INDEXER_ETHEREUM_RPC_URL=YOUR_ETHEREUM_RPC_URL
 FF_INDEXER_ETHEREUM_WEBSOCKET_URL=YOUR_ETHEREUM_WEBSOCKET_URL
 
-# Cloudflare (for worker-media)
+# Cloudflare (only required when FF_INDEXER_MEDIA_ENABLED=true)
 FF_INDEXER_CLOUDFLARE_ACCOUNT_ID=YOUR_ACCOUNT_ID
 FF_INDEXER_CLOUDFLARE_API_TOKEN=YOUR_API_TOKEN
+FF_INDEXER_MEDIA_ENABLED=false
 
 # API authentication
 FF_INDEXER_AUTH_JWT_PUBLIC_KEY=YOUR_JWT_PUBKEY_PEM
@@ -125,45 +107,24 @@ export FF_INDEXER_ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY
 export FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://mainnet.infura.io/ws/v3/YOUR_KEY
 export FF_INDEXER_ETHEREUM_CHAIN_ID=eip155:1
 
-# Temporal
-export FF_INDEXER_TEMPORAL_HOST_PORT=localhost:7233
-export FF_INDEXER_TEMPORAL_NAMESPACE=default
-export FF_INDEXER_TEMPORAL_TASK_QUEUE=token-indexing
+# Job queue (names for token_index / media_index workers)
+export FF_INDEXER_JOBS_TOKEN_QUEUE=token_index
+export FF_INDEXER_JOBS_MEDIA_QUEUE=media_index
 ```
 
-## Running Services Locally
+## Running Locally
 
-After starting infrastructure, run services with Go:
+After starting infrastructure, run the binary:
 
-### Ethereum Event Emitter
 ```bash
-cd cmd/ethereum-event-emitter
-go run main.go
+go run ./cmd/ff-indexer -config config/config.yaml
 ```
 
-### Tezos Event Emitter
-```bash
-cd cmd/tezos-event-emitter
-go run main.go
-```
+- **Without CGO** (`CGO_ENABLED=0`): the media job worker is not started; other subsystems run.
+- **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including the `media_index` queue worker when `FF_INDEXER_MEDIA_ENABLED=true`.
+- **With `FF_INDEXER_MEDIA_ENABLED=false`**: the media worker is intentionally disabled even in CGO/full builds.
 
-### Event Bridge
-```bash
-cd cmd/event-bridge
-go run main.go
-```
-
-### Worker Core
-```bash
-cd cmd/worker-core
-go run main.go
-```
-
-### Worker Media
-```bash
-cd cmd/worker-media
-go run main.go
-```
+Media worker concurrency and poll settings use `FF_INDEXER_JOBS_MEDIA_WORKER_*` (see [config/.env](config/.env)).
 
 ### Data URI Media Processing
 
@@ -174,19 +135,7 @@ When metadata contains data URIs, the media worker decodes and transforms them s
   - `source_url` stores the raw URL (including data URIs) for consistency.
 - API expansions resolve media assets by hashing incoming URLs for lookup.
 
-### API Server
-```bash
-cd cmd/api
-go run main.go
-```
-API available at: http://localhost:8081
-
-### Sweeper
-```bash
-cd cmd/sweeper
-go run main.go
-```
-Continuously checks media URL health and updates database
+HTTP API (same process): http://localhost:8081 (port from `server.port` in config).
 
 ## Database Setup
 
@@ -222,19 +171,6 @@ make dev
 
 ## Scripts
 
-### NATS Stream Setup
-
-Setup NATS stream manually:
-```bash
-./tools/scripts/setup_nats.sh
-```
-
-Or using Docker:
-```bash
-make up
-# The nats-setup container runs automatically
-```
-
 ### Database Utilities
 
 **Check database connection**:
@@ -257,33 +193,32 @@ psql -h localhost -U postgres -d ff_indexer -c "\di"
 psql -h localhost -U postgres -d ff_indexer -c "SELECT * FROM key_value_store WHERE key LIKE '%cursor%';"
 ```
 
-## Testing Workflows
+## Job queue (manual checks)
 
-### Manual Workflow Execution
+Work is stored in the **`jobs`** table (`queue`, `kind`, `status`, `payload`, `unique_key`, `run_after`, …). See [`docs/schema.md`](../docs/schema.md#jobs) for the full state machine and indexes.
 
-Use Temporal CLI to trigger workflows:
+**No automatic retry (v1).** A handler error sets **`failed`** and **`last_error`**. The service does not apply exponential backoff or re-drive failed rows automatically. Webhook deliveries are also single-shot for delivery semantics; `webhook_clients.retry_max_attempts` is retained in the schema/API for compatibility but is not used to retry delivery. Operators **re-enqueue** work (e.g. new API trigger or ingestion event) or fix configuration/upstreams, then watch new jobs succeed.
 
-```bash
-# Install Temporal CLI
-# https://docs.temporal.io/cli
+**Claiming and scaling.** At runtime, workers **poll** for `pending` jobs ready by `run_after` and **claim** them inside a database transaction with **`SELECT … FOR UPDATE SKIP LOCKED`**, so different sessions can claim different rows without waiting on each other’s row locks. A **per-queue advisory lock** (`pg_try_advisory_lock` on a hash of the queue name) ensures only one process in the default model **polls** a given `queue` name; do not start multiple competing pollers for the same queue name without a deliberate operational plan.
 
-# Start a workflow
-temporal workflow start \
-  --task-queue token-indexing \
-  --type IndexToken \
-  --workflow-id test-index-token-1 \
-  --input '{"token_cid": "eip155:1:erc721:0x1234567890123456789012345678901234567890:1"}'
-
-# Check workflow status
-temporal workflow describe --workflow-id test-index-token-1
+**Inspect recent jobs**:
+```sql
+SELECT id, queue, kind, status, run_after, created_at, last_error FROM jobs ORDER BY id DESC LIMIT 20;
 ```
 
-### View Workflows in Temporal UI
+**Pending work ready to run** (illustrative):
+```sql
+SELECT id, queue, kind, run_after
+FROM jobs
+WHERE status = 'pending' AND run_after <= now()
+ORDER BY run_after, id
+LIMIT 20;
+```
 
-1. Open http://localhost:8080
-2. Navigate to Workflows
-3. Search for your workflow ID
-4. View execution history and details
+**HTTP status of a job** (after an API trigger returns `job_id`):
+```bash
+curl -s "http://localhost:8081/api/v1/jobs/123"
+```
 
 ## Debugging
 
@@ -295,9 +230,8 @@ View service logs:
 make logs
 
 # Specific service
-make logs-api
-make logs-workers
-make logs-emitters
+make logs-app
+make logs-infra
 ```
 
 ### Database Debugging
@@ -321,15 +255,6 @@ LIMIT 10;
 SELECT * FROM provenance_events ORDER BY timestamp DESC LIMIT 10;
 ```
 
-**Check NATS messages**:
-```bash
-# View stream info
-nats stream info BLOCKCHAIN_EVENTS
-
-# View consumer info
-nats consumer info BLOCKCHAIN_EVENTS event-bridge
-```
-
 ### Common Issues
 
 **Database connection errors**:
@@ -337,17 +262,7 @@ nats consumer info BLOCKCHAIN_EVENTS event-bridge
 - Verify connection string in config
 - Check firewall/network settings
 
-**Temporal connection errors**:
-- Verify Temporal is running: `docker ps`
-- Check Temporal UI: http://localhost:8080
-- Verify namespace and task queue names
-
-**NATS connection errors**:
-- Check NATS is running: `docker ps`
-- Verify stream exists: `nats stream info BLOCKCHAIN_EVENTS`
-- Check NATS monitoring: http://localhost:8222
-
-**Event emitter not receiving events**:
+**Chain ingestion not receiving events**:
 - Verify WebSocket connection to blockchain RPC
 - Check block cursor in database
 - Verify contract addresses are correct
@@ -379,9 +294,8 @@ curl -X POST http://localhost:8081/api/v1/tokens/addresses/index \
 
 ### Monitoring
 
-**Temporal Metrics**:
-- View workflows and activities in Temporal UI
-- Check execution times and failure rates
+**Job queue**:
+- Query `jobs` in PostgreSQL (see "Job queue (manual checks)" above) for `status` and `last_error`.
 
 **Database Performance**:
 ```sql
@@ -444,24 +358,16 @@ make clean-images
 Use this command before handing off a substantive change:
 
 ```bash
-make post-implementation-check
+make check
 ```
 
-It is the repo's canonical local verification entrypoint and intentionally mirrors the required CI shape:
+It runs the `check` target in the `Makefile`: format imports (`goimports`), full-repo local lint (`golangci-lint` with CGO enabled), a lightweight `CGO_ENABLED=0` build plus `cmd/ff-indexer` tests, then `CGO_ENABLED=1` `go test -cover ./...`.
 
-- strict whole-file linting for Go files changed versus `main`
-- the CI test package set, not `go test ./...`
-- `coverage.out` generation followed by the same generated-file filtering used in CI
+The lint profile is opinionated (complexity, length, doc expectations). For CI’s exact commands and package filters, see `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`.
 
-The strict lint profile is intentionally opinionated:
-
-- cyclomatic complexity and cognitive complexity are capped at strict thresholds
-- functions and files are kept short enough to stay readable
-- changed Go functions and packages must have proper doc comments
+Some packages need PostgreSQL or Docker (for example `internal/store` may use `TEST_DB_*` against a local DB or testcontainers when `TEST_DB_HOST` is unset). Start infrastructure with `make up-infra` when tests require Postgres, and set `TEST_DB_*` if you use an external database instead of the default container path.
 
 For non-trivial changed functions, use the doc comment to capture the reason, trade-offs, and constraints behind the implementation so later contributors do not reopen already-rejected paths by accident.
-
-By default the script expects PostgreSQL at `localhost:5432` with the same test credentials used in CI. Start local dependencies first with `make dev`, or override `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, and `TEST_DB_NAME` when needed.
 
 Coverage policy is non-regression versus the base branch. If a change must lower coverage, document the reason in the PR description and call out the gap for reviewers.
 
@@ -479,12 +385,11 @@ Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environm
 
 ## Tips
 
-1. **Use Temporal UI** for workflow debugging and monitoring
-2. **Check NATS monitoring** for event flow issues
-3. **Use database transactions** when testing data changes
-4. **Monitor logs** in real-time with `make logs`
-5. **Use GraphQL Playground** at http://localhost:8081/graphql for API testing
-6. **Keep infrastructure running** and restart only application services during development
+1. **Inspect the `jobs` table** and application logs for handler failures (v1 does not auto-retry failed jobs).
+2. **Use database transactions** when testing data changes.
+3. **Monitor logs** in real-time with `make logs`.
+4. **Use GraphQL Playground** at http://localhost:8081/graphql for API testing.
+5. **Keep infrastructure running** and restart only application services during development.
 
 ## Next Steps
 

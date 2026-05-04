@@ -19,7 +19,7 @@ FF-Indexer v2 is a production-ready indexing service designed to capture and ind
 - **Provenance tracking** with full blockchain event history
 - **Owner-based indexing** for wallet-based queries
 
-The system is built with scalability and reliability in mind, using Temporal for workflow orchestration, NATS JetStream for event streaming, and PostgreSQL for persistent storage.
+The system is built with reliability and operational clarity in mind, using a PostgreSQL-backed `jobs` queue for background work and the same database for all durable state, while chain ingestion runs in-process.
 
 ## Quick Start
 
@@ -37,9 +37,8 @@ make setup
 
 # Configure your settings (choose one or both):
 # Option 1: Edit config/.env.local with your credentials
-# Option 2: Copy config.yaml.sample files and customize
-#   cp cmd/api/config.yaml.sample cmd/api/config.yaml
-#   # Edit cmd/api/config.yaml, cmd/worker-core/config.yaml, etc.
+# Option 2: Copy the sample config and customize
+#   cp cmd/ff-indexer/config.yaml.sample config/config.yaml
 
 # Build and start all services
 make quickstart
@@ -48,30 +47,25 @@ make quickstart
 **Configuration**: The system supports both YAML config files and environment variables. Environment variables (with `FF_INDEXER_` prefix) override config file values. See [DEVELOPMENT.md](DEVELOPMENT.md) for details.
 
 This will start:
-- PostgreSQL (port 5432)
-- Temporal server (ports 7233-7235) and UI (port 8080)
-- NATS JetStream (ports 4222, 8222)
-- All application services (event emitters, workers, API)
+- **PostgreSQL** (port 5432) — application data and the **`jobs` table** (durable work queue; no separate orchestrator)
+- **ff-indexer** — one container that runs the HTTP API, chain ingestion, job workers for `token_index` (and `media_index` when built with CGO and enabled), and the media health sweeper
 
 The API will be available at `http://localhost:8081`
 
 ### Local Development
 
-For local development, you can run infrastructure in Docker and services locally:
+For local development, you can run infrastructure in Docker and the application locally:
 
 ```bash
-# Start only infrastructure (PostgreSQL, Temporal, NATS)
+# Start only infrastructure (PostgreSQL, etc.)
 make dev
 
-# Run services locally with Go
-cd cmd/ethereum-event-emitter && go run main.go
-cd cmd/tezos-event-emitter && go run main.go
-cd cmd/event-bridge && go run main.go
-cd cmd/worker-core && go run main.go
-cd cmd/worker-media && go run main.go
-cd cmd/api && go run main.go
-cd cmd/sweeper && go run main.go
+# Run the binary (CGO optional; without CGO the media worker is disabled)
+go run ./cmd/ff-indexer -config config/config.yaml
 ```
+
+- Lightweight mode: `CGO_ENABLED=0`, media worker stub only.
+- Full media mode: `CGO_ENABLED=1`, `FF_INDEXER_MEDIA_ENABLED=true`, and Cloudflare media config.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
@@ -86,21 +80,23 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 ## Components
 
-- **Event Emitters** (`ethereum-event-emitter`, `tezos-event-emitter`) - Subscribe to blockchain events and publish to NATS
-- **Event Bridge** (`event-bridge`) - Consumes events from NATS and triggers Temporal workflows
-- **Worker Core** (`worker-core`) - Executes Temporal workflows for token indexing, metadata resolution, and enrichment
-- **Worker Media** (`worker-media`) - Processes and uploads media files to Cloudflare
-- **API Server** (`api`) - Provides REST and GraphQL APIs for querying indexed data
-- **Sweeper** (`sweeper`) - Continuously monitors media URL health and updates status
+All of the following run inside the **`ff-indexer`** process (goroutines) by default:
+
+- **Chain ingestion** - Ethereum and Tezos event subscriptions plus ordered in-memory flush queues that enqueue jobs and advance durable cursors
+- **Worker core** — polls the `token_index` job queue
+- **Worker media** — polls the `media_index` job queue (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
+- **API server** — REST and GraphQL
+- **Sweeper** — Media URL health checks
+
+## Job queue
+
+Async work is stored in PostgreSQL in the **`jobs`** table (see [`docs/schema.md`](docs/schema.md)). Workers **claim** rows in transactions using **`SELECT … FOR UPDATE SKIP LOCKED`** so concurrent claimers do not block on each other’s locks. A **per-queue advisory lock** limits the default deployment to a single active poller per queue name. **v1 does not automatically retry** failed jobs: a handler error leaves the row in **`failed`** with **`last_error`**; operators re-enqueue or fix upstreams as needed. Operational guidance and example SQL are in [DEVELOPMENT.md](DEVELOPMENT.md#job-queue-manual-checks).
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.25.0+
 - Docker and Docker Compose
 - PostgreSQL 18+
-- Temporal 1.29.0+
-- Redis 8.2.2+
-- NATs Jetstream 2.12.1+
 - Access to Ethereum RPC endpoints
 
 ## License

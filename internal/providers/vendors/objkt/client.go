@@ -58,21 +58,21 @@ type Client interface {
 
 // ObjktClient implements objkt client
 type ObjktClient struct {
-	httpClient     adapter.HTTPClient
-	rateLimitProxy ratelimit.Proxy
-	apiURL         string
-	apiKey         string
-	json           adapter.JSON
+	httpClient  adapter.HTTPClient
+	rateLimiter ratelimit.Limiter
+	apiURL      string
+	apiKey      string
+	json        adapter.JSON
 }
 
 // NewClient creates a new objkt client
-func NewClient(httpClient adapter.HTTPClient, rateLimitProxy ratelimit.Proxy, apiURL string, apiKey string, json adapter.JSON) Client {
+func NewClient(httpClient adapter.HTTPClient, rateLimiter ratelimit.Limiter, apiURL string, apiKey string, json adapter.JSON) Client {
 	return &ObjktClient{
-		httpClient:     httpClient,
-		rateLimitProxy: rateLimitProxy,
-		apiURL:         apiURL,
-		apiKey:         apiKey,
-		json:           json,
+		httpClient:  httpClient,
+		rateLimiter: rateLimiter,
+		apiURL:      apiURL,
+		apiKey:      apiKey,
+		json:        json,
 	}
 }
 
@@ -113,7 +113,7 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
 	}
 
 	// Make the POST request
-	responseBody, err := ratelimit.Request(ctx, c.rateLimitProxy, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
+	responseBody, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
 		headers := map[string]string{
 			"Content-Type": "application/json",
 		}

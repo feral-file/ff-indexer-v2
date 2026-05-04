@@ -32,10 +32,10 @@ type AddressIndexingJob struct {
 	Chain domain.Chain `gorm:"column:chain;not null;type:blockchain_chain"`
 	// Status is the status of the indexing job
 	Status IndexingJobStatus `gorm:"column:status;not null;type:indexing_job_status"`
-	// WorkflowID is the orchestrator workflow ID handling this job
+	// JobID is the postgres jobs.id row (queue) that drives this address job
+	JobID int64 `gorm:"column:job_id;not null"`
+	// WorkflowID is deprecated: legacy correlation id (Temporal UUID/string or str(job_id)); prefer JobID.
 	WorkflowID string `gorm:"column:workflow_id;not null"`
-	// WorkflowRunID is the orchestrator workflow run ID for this workflow execution
-	WorkflowRunID *string `gorm:"column:workflow_run_id"`
 	// TokensProcessed is the number of tokens processed by this job
 	TokensProcessed int `gorm:"column:tokens_processed;default:0"`
 	// CurrentMinBlock is the current minimum block being indexed

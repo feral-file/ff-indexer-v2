@@ -106,8 +106,8 @@ type TokenWithBlockRangeResult struct {
 	EffectiveToBlock   uint64           `json:"effective_to_block"`
 }
 
-// BlockchainEvent represents a normalized blockchain event
-// This is the standard format published to NATS
+// BlockchainEvent represents the normalized event model shared by chain event
+// sources and ingestion.
 type BlockchainEvent struct {
 	Chain           Chain         `json:"chain"`                     // e.g., "eip155:1", "tezos:mainnet"
 	Standard        ChainStandard `json:"standard"`                  // e.g., "erc721", "erc1155", "fa2"
