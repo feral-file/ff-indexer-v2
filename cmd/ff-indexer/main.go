@@ -166,32 +166,32 @@ func run() int {
 	g, ctx := errgroup.WithContext(rootCtx)
 
 	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "http-server")
+		componentCtx := logger.WithComponent(ctx, logger.ComponentHTTPServer)
 		return runHTTPServer(componentCtx, srv)
 	})
 
 	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "ethereum-ingestion")
+		componentCtx := logger.WithComponent(ctx, logger.ComponentEthereumIngestion)
 		return runEthereumIngestion(componentCtx, cfg, dataStore, jobQueue, blacklistRegistry)
 	})
 
 	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "tezos-ingestion")
+		componentCtx := logger.WithComponent(ctx, logger.ComponentTezosIngestion)
 		return runTezosIngestion(componentCtx, cfg, dataStore, jobQueue, blacklistRegistry, rateLimiter)
 	})
 
 	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "worker-core")
+		componentCtx := logger.WithComponent(ctx, logger.ComponentWorkerCore)
 		return runWorkerCore(componentCtx)
 	})
 
 	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "worker-media")
+		componentCtx := logger.WithComponent(ctx, logger.ComponentWorkerMedia)
 		return runWorkerMedia(componentCtx)
 	})
 
 	g.Go(func() error {
-		componentCtx := logger.WithComponent(ctx, "sweeper")
+		componentCtx := logger.WithComponent(ctx, logger.ComponentSweeper)
 		return runSweeper(componentCtx, mediaSweeper)
 	})
 

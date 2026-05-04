@@ -20,6 +20,17 @@ var (
 // componentKey is the context key type for storing component names
 type componentKey struct{}
 
+// Component tags identify the ff-indexer process mode in structured logs (field "component").
+// Keep these string values stable: operators and log filters depend on them.
+const (
+	ComponentHTTPServer        = "http-server"
+	ComponentEthereumIngestion = "ethereum-ingestion"
+	ComponentTezosIngestion    = "tezos-ingestion"
+	ComponentWorkerCore        = "worker-core"
+	ComponentWorkerMedia       = "worker-media"
+	ComponentSweeper           = "sweeper"
+)
+
 // WithComponent returns a new context with the component name attached
 func WithComponent(ctx context.Context, component string) context.Context {
 	return context.WithValue(ctx, componentKey{}, component)

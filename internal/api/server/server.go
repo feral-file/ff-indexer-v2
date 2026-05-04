@@ -72,6 +72,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Setup middleware - SentryMiddleware should be first to enable context-based logging
 	router.Use(middleware.SentryMiddleware())
+	router.Use(middleware.RequestContextComponent(logger.ComponentHTTPServer))
 	router.Use(middleware.Recovery())
 	router.Use(middleware.Logger())
 	router.Use(middleware.SetupCORS())
