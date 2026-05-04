@@ -137,6 +137,56 @@ func TestValidateRequiredConfigValues(t *testing.T) {
 	require.NoError(t, ValidateRequiredConfigValues(cfg))
 }
 
+func TestValidateRequiredConfigValues_MediaDisabled_EmptyMediaQueue(t *testing.T) {
+	cfg := &AppConfig{
+		MediaEnabled: false,
+		Database: DatabaseConfig{
+			Host:   "localhost",
+			DBName: "ff_indexer",
+		},
+		Jobs: JobsConfig{
+			TokenQueue: "token_index",
+			MediaQueue: "",
+		},
+		Ethereum: EthereumConfig{
+			RPCURL:       "https://rpc.example.com",
+			WebSocketURL: "wss://ws.example.com",
+		},
+		Tezos: TezosConfig{
+			APIURL:       "https://api.tzkt.io",
+			WebSocketURL: "wss://ws.tzkt.io",
+		},
+	}
+
+	require.NoError(t, ValidateRequiredConfigValues(cfg))
+}
+
+func TestValidateRequiredConfigValues_MediaEnabled_MissingMediaQueue(t *testing.T) {
+	cfg := &AppConfig{
+		MediaEnabled: true,
+		Database: DatabaseConfig{
+			Host:   "localhost",
+			DBName: "ff_indexer",
+		},
+		Jobs: JobsConfig{
+			TokenQueue: "token_index",
+			MediaQueue: "",
+		},
+		Ethereum: EthereumConfig{
+			RPCURL:       "https://rpc.example.com",
+			WebSocketURL: "wss://ws.example.com",
+		},
+		Tezos: TezosConfig{
+			APIURL:       "https://api.tzkt.io",
+			WebSocketURL: "wss://ws.tzkt.io",
+		},
+	}
+
+	err := ValidateRequiredConfigValues(cfg)
+	require.Error(t, err)
+	assert.EqualError(t, err, "missing required config values: jobs.media_queue")
+}
+
 func TestValidateRequiredConfigValues_MissingFields(t *testing.T) {
 	cfg := &AppConfig{
 		Database: DatabaseConfig{

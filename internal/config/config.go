@@ -317,18 +317,21 @@ func LoadAppConfig(configFile string, envPath string) (*AppConfig, error) {
 // the minimum required config values present before startup initializes shared
 // dependencies.
 func ValidateRequiredConfigValues(cfg *AppConfig) error {
-	requiredFields := []struct {
+	type reqField struct {
 		name  string
 		value string
-	}{
+	}
+	requiredFields := []reqField{
 		{name: "database.host", value: cfg.Database.Host},
 		{name: "database.dbname", value: cfg.Database.DBName},
 		{name: "jobs.token_queue", value: cfg.Jobs.TokenQueue},
-		{name: "jobs.media_queue", value: cfg.Jobs.MediaQueue},
 		{name: "ethereum.rpc_url", value: cfg.Ethereum.RPCURL},
 		{name: "ethereum.websocket_url", value: cfg.Ethereum.WebSocketURL},
 		{name: "tezos.api_url", value: cfg.Tezos.APIURL},
 		{name: "tezos.websocket_url", value: cfg.Tezos.WebSocketURL},
+	}
+	if cfg.MediaEnabled {
+		requiredFields = append(requiredFields, reqField{name: "jobs.media_queue", value: cfg.Jobs.MediaQueue})
 	}
 
 	missingFields := make([]string, 0)
