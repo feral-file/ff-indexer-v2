@@ -283,3 +283,17 @@ FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 	assert.False(t, cfg.MediaEnabled)
 	assert.False(t, cfg.ToWorkerMediaConfig().MediaEnabled)
 }
+
+func TestValidateSecurityConfig_negativeMaxRedirects(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.MaxRedirects = -1
+	require.Error(t, validateSecurityConfig(cfg))
+}
+
+func TestMediaHealthSSRFValidator_invalidAllowlistIP(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Enabled = true
+	cfg.Security.SSRFProtection.Allowlist.IPs = []string{"not-an-ip"}
+	_, err := cfg.MediaHealthSSRFValidator()
+	require.Error(t, err)
+}

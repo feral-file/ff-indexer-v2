@@ -322,6 +322,7 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 			logger.WarnCtx(ctx, "URL is broken",
 				zap.String("url", url),
 				zap.Stringp("error", result.Error),
+				zap.Bool("ssrf_blocked", result.SSRFBlocked),
 			)
 
 			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusBroken, result.Error); err != nil {

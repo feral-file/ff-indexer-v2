@@ -48,6 +48,7 @@ Hard and soft constraints for **FF Indexer v2**. Agents and engineers should tre
 - **Least privilege** — Prefer **narrow API keys** and documented scopes as the auth model evolves; **address indexing** stays **authenticated** to reduce anonymous abuse of expensive sweeps.
 - **No silent trust** — Do not treat indexer output as **cryptographic proof** of ownership for high-risk actions in other systems without independent verification where product/trust architecture requires it.
 - **PII** — The system handles **wallet addresses** and **public on-chain / metadata** content. Treat logs and exports as **sensitive operational data**; avoid logging full vendor payloads or secrets at default levels.
+- **Outbound URL fetch (media health)** — The media health sweeper performs HTTP(S) `HEAD`/`GET` probes for **stored media URLs** that may originate from chain metadata. By default the sweeper HTTP client applies **SSRF controls** (blocked RFC-private/link-local/loopback/documentation ranges, cloud-metadata hostnames, redirect limits). **`security.ssrf_protection.allowlist.domains`** skips hostname/DNS/IP validation for matching hosts (including subdomains); **`allowlist.ips`** only overrides IP-range rules. Treat allowlists like firewall exceptions—minimal entries with explicit operator review.
 
 ## Deployment constraints
 

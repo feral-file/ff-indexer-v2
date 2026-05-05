@@ -1,0 +1,145 @@
+package ssrf_test
+
+import (
+	"context"
+	"net/netip"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
+)
+
+type mapResolver map[string][]netip.Addr
+
+func (m mapResolver) LookupNetIP(_ context.Context, network, host string) ([]netip.Addr, error) {
+	host = strings.ToLower(host)
+	key := network + "/" + host
+	addrs, ok := m[key]
+	if !ok {
+		return nil, &netError{msg: "lookup failed"}
+	}
+	return addrs, nil
+}
+
+type netError struct{ msg string }
+
+func (e *netError) Error() string   { return e.msg }
+func (e *netError) Timeout() bool   { return false }
+func (e *netError) Temporary() bool { return false }
+
+func TestValidator_publicHTTPSucceeds(t *testing.T) {
+	t.Parallel()
+	pub := netip.MustParseAddr("8.8.8.8")
+	r := mapResolver{
+		"ip4/public.example": {pub},
+	}
+	v := ssrf.NewValidatorWithResolver(r, ssrf.Options{})
+	ctx := context.Background()
+	require.NoError(t, v.ValidateHTTPURL(ctx, "https://public.example/path"))
+}
+
+func TestValidator_localhostHostnameBlocked(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	err := v.ValidateHTTPURL(ctx, "http://localhost:8080/")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ssrf.ErrBlocked)
+}
+
+func TestValidator_literalLoopbackBlocked(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://127.0.0.1/"), ssrf.ErrBlocked)
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://[::1]/"), ssrf.ErrBlocked)
+}
+
+func TestValidator_privateIPv4Blocked(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://192.168.1.1/"), ssrf.ErrBlocked)
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://10.0.0.5/"), ssrf.ErrBlocked)
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://172.16.0.1/"), ssrf.ErrBlocked)
+}
+
+func TestValidator_cloudMetadataBlocked(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://169.254.169.254/latest/meta-data/"), ssrf.ErrBlocked)
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://metadata.google.internal/computeMetadata/v1/"), ssrf.ErrBlocked)
+}
+
+func TestValidator_localtestMeBlocked(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://localtest.me/"), ssrf.ErrBlocked)
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://x.localtest.me/"), ssrf.ErrBlocked)
+}
+
+func TestValidator_ipv4MappedBlocked(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://[::ffff:192.168.1.1]/"), ssrf.ErrBlocked)
+}
+
+func TestValidator_dnsResolvedPrivateBlocked(t *testing.T) {
+	t.Parallel()
+	priv := netip.MustParseAddr("192.168.2.2")
+	r := mapResolver{
+		"ip4/evil.example": {priv},
+	}
+	v := ssrf.NewValidatorWithResolver(r, ssrf.Options{})
+	ctx := context.Background()
+	err := v.ValidateHTTPURL(ctx, "http://evil.example/")
+	require.ErrorIs(t, err, ssrf.ErrBlocked)
+}
+
+func TestValidator_allowDomainSkipsResolution(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidatorWithResolver(mapResolver{}, ssrf.Options{
+		AllowDomains: []string{"internal.company.internal"},
+	})
+	ctx := context.Background()
+	require.NoError(t, v.ValidateHTTPURL(ctx, "https://cdn.internal.company.internal/media"))
+}
+
+func TestValidator_allowIPBypass(t *testing.T) {
+	t.Parallel()
+	ip := netip.MustParseAddr("192.168.55.55")
+	v := ssrf.NewValidator(ssrf.Options{AllowIPs: []netip.Addr{ip}})
+	ctx := context.Background()
+	require.NoError(t, v.ValidateHTTPURL(ctx, "http://192.168.55.55:8080/foo"))
+}
+
+func TestValidator_userinfoRejected(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	err := v.ValidateHTTPURL(ctx, "http://user@example.com/")
+	require.ErrorIs(t, err, ssrf.ErrBlocked)
+}
+
+func TestValidator_multicastOptional(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	vOff := ssrf.NewValidator(ssrf.Options{BlockMulticast: false})
+	require.NoError(t, vOff.ValidateHTTPURL(ctx, "http://224.0.0.1/"))
+
+	vOn := ssrf.NewValidator(ssrf.Options{BlockMulticast: true})
+	require.ErrorIs(t, vOn.ValidateHTTPURL(ctx, "http://224.0.0.1/"), ssrf.ErrBlocked)
+}
+
+func TestValidator_nonHTTPScheme(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	err := v.ValidateHTTPURL(ctx, "ftp://example.com/")
+	require.ErrorIs(t, err, ssrf.ErrBlocked)
+}

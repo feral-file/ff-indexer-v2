@@ -25,7 +25,7 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion 
 2. **Worker core** — Polls the `token_index` job queue and runs token- and webhook-related handlers
 3. **Worker media** — Polls the `media_index` job queue and runs media pipeline handlers (CGO / full image when enabled)
 4. **API server** — Provides REST and GraphQL APIs
-5. **Sweeper** — Monitors media URL health and can enqueue jobs (e.g. webhook notify)
+5. **Sweeper** — Monitors media URL health and can enqueue jobs (e.g. webhook notify). Media health HTTP checks apply **SSRF controls** by default (configure under `security.ssrf_protection`; see `docs/constraints.md`).
 
 ## Chain Ingestion
 

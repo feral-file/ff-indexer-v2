@@ -139,7 +139,24 @@ func run() int {
 
 	// Media URL health sweeper (scheduled batch checks; may enqueue jobs).
 	sweeperCfg := cfg.ToSweeperConfig()
-	httpClient := adapter.NewHTTPClient(sweeperCfg.MediaHealthSweeper.HTTPTimeout)
+	ssrfValidator, err := cfg.MediaHealthSSRFValidator()
+	if err != nil {
+		logger.FatalCtx(rootCtx, "Invalid SSRF security configuration", zap.Error(err))
+	}
+	var httpClient adapter.HTTPClient
+	if ssrfValidator != nil {
+		maxRedir := cfg.Security.SSRFProtection.MaxRedirects
+		httpClient = adapter.NewHTTPClientWithSSRF(sweeperCfg.MediaHealthSweeper.HTTPTimeout, ssrfValidator, maxRedir)
+		logger.InfoCtx(rootCtx, "Media health HTTP client uses SSRF validation",
+			zap.Int("max_redirects", maxRedir),
+			zap.Bool("block_multicast", cfg.Security.SSRFProtection.BlockMulticast),
+			zap.Int("ssrf_allowlist_domains", len(cfg.Security.SSRFProtection.Allowlist.Domains)),
+			zap.Int("ssrf_allowlist_ips", len(cfg.Security.SSRFProtection.Allowlist.IPs)),
+		)
+	} else {
+		httpClient = adapter.NewHTTPClient(sweeperCfg.MediaHealthSweeper.HTTPTimeout)
+		logger.WarnCtx(rootCtx, "Media health HTTP client SSRF validation is DISABLED (security.ssrf_protection.enabled=false)")
+	}
 	ioAdapter := adapter.NewIO()
 	clock := adapter.NewClock()
 	uriResolverConfig := &uri.Config{

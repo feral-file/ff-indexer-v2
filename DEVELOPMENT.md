@@ -61,6 +61,19 @@ Environment variables use the `FF_INDEXER_` prefix and map to nested config keys
 
 Dots in config keys become underscores in env vars.
 
+**Media health SSRF protection** (`security.ssrf_protection` in YAML):
+
+- **`enabled`** — When `true` (default), the sweeper HTTP client validates each URL (and redirect hop) before connecting.
+- **`max_redirects`** — Maximum **redirect hops** after the initial request (default `3` when unset in YAML). `0` forbids redirects. With `3`, the client may follow up to three `3xx` responses after the first GET/HEAD.
+- **`block_multicast`** — Refuse multicast ranges when `true` (default `false`).
+- **`allowlist.domains`** — Hostnames that bypass hostname/DNS/IP checks (matching subdomain suffix applies). Trust DNS for anything under those names.
+- **`allowlist.ips`** — Literal IPs that bypass IP-range blocking only.
+
+Examples:
+
+- `FF_INDEXER_SECURITY_SSRF_PROTECTION_ENABLED=false`
+- `FF_INDEXER_SECURITY_SSRF_PROTECTION_MAX_REDIRECTS=5`
+
 **Environment variable files** (loaded in order, later files override earlier):
 1. `config/.env` - Base configuration (version controlled)
 2. `config/.env.local` - Local overrides (git ignored)
