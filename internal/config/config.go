@@ -232,9 +232,11 @@ type TransformConfig struct {
 
 // WorkerMediaConfig holds configuration for the media-indexing job worker.
 type WorkerMediaConfig struct {
-	BaseConfig   `mapstructure:",squash"`
-	Database     DatabaseConfig   `mapstructure:"database"`
-	Jobs         JobsConfig       `mapstructure:"jobs"`
+	BaseConfig `mapstructure:",squash"`
+	Database   DatabaseConfig `mapstructure:"database"`
+	Jobs       JobsConfig     `mapstructure:"jobs"`
+	// Security mirrors AppConfig.security for media-worker outbound HTTP (URI resolution and downloads).
+	Security     SecurityConfig   `mapstructure:"security"`
 	MediaEnabled bool             `mapstructure:"media_enabled"`
 	URI          URIConfig        `mapstructure:"uri"`
 	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
@@ -462,6 +464,7 @@ func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
 		BaseConfig:   a.BaseConfig,
 		Database:     a.Database,
 		Jobs:         a.Jobs,
+		Security:     a.Security,
 		MediaEnabled: a.MediaEnabled,
 		URI:          a.URI,
 		Cloudflare:   a.Cloudflare,

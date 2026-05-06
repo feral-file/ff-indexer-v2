@@ -321,3 +321,21 @@ func TestToWorkerCoreConfig_includesSecurityForSSRF(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, v)
 }
+
+func TestToWorkerMediaConfig_includesSecurityForSSRF(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Enabled = true
+	cfg.Security.SSRFProtection.MaxRedirects = 7
+	cfg.Security.SSRFProtection.BlockMulticast = true
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"cdn.example.com"}
+
+	w := cfg.ToWorkerMediaConfig()
+	require.Equal(t, cfg.Security.SSRFProtection.Enabled, w.Security.SSRFProtection.Enabled)
+	require.Equal(t, 7, w.Security.SSRFProtection.MaxRedirects)
+	require.True(t, w.Security.SSRFProtection.BlockMulticast)
+	require.Equal(t, []string{"cdn.example.com"}, w.Security.SSRFProtection.Allowlist.Domains)
+
+	v, err := SSRFValidatorFromProtection(w.Security.SSRFProtection)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+}

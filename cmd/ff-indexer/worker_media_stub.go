@@ -15,10 +15,10 @@ import (
 // registerWorkerMedia is a no-op when CGO is disabled (media indexing requires CGO).
 func registerWorkerMedia(
 	_ context.Context,
-	cfg *config.AppConfig,
+	wcfg *config.WorkerMediaConfig,
 	_ *gorm.DB,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
-	if cfg != nil && cfg.MediaEnabled {
+	if wcfg != nil && wcfg.MediaEnabled {
 		return nil, nil, errors.New("media worker requires CGO_ENABLED=1 when media_enabled=true")
 	}
 

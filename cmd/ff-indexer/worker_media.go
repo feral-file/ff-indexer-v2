@@ -27,10 +27,9 @@ import (
 // registerWorkerMedia wires the media-indexing jobs.Worker (worker-media / media_index queue).
 func registerWorkerMedia(
 	_ context.Context,
-	cfg *config.AppConfig,
+	wcfg *config.WorkerMediaConfig,
 	db *gorm.DB,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
-	wcfg := cfg.ToWorkerMediaConfig()
 	if !wcfg.MediaEnabled {
 		logger.Warn("Media job worker disabled by config (FF_INDEXER_MEDIA_ENABLED=false)")
 		run = func(ctx context.Context) error {
@@ -55,12 +54,12 @@ func registerWorkerMedia(
 	chromedpClient := adapter.NewChromedpClient()
 	xml := adapter.NewXML()
 
-	ssrfValidator, err := config.SSRFValidatorFromProtection(cfg.Security.SSRFProtection)
+	ssrfValidator, err := config.SSRFValidatorFromProtection(wcfg.Security.SSRFProtection)
 	if err != nil {
 		return nil, nil, fmt.Errorf("SSRF security configuration: %w", err)
 	}
-	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
-	mediaDownloaderHTTPClient := adapter.NewHTTPClientWithSSRF(15*time.Minute, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
+	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, wcfg.Security.SSRFProtection.MaxRedirects)
+	mediaDownloaderHTTPClient := adapter.NewHTTPClientWithSSRF(15*time.Minute, ssrfValidator, wcfg.Security.SSRFProtection.MaxRedirects)
 
 	uriResolverConfig := &uri.Config{
 		IPFSGateways:    wcfg.URI.IPFSGateways,

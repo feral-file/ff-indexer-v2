@@ -171,7 +171,8 @@ func run() int {
 	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue)
 
 	// Worker-media: media task queue (requires CGO build).
-	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, cfg, db)
+	wMediaCfg := cfg.ToWorkerMediaConfig()
+	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, wMediaCfg, db)
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Failed to init worker-media", zap.Error(err))
 	}

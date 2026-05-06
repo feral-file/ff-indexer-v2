@@ -12,7 +12,7 @@ import (
 )
 
 func TestRegisterWorkerMediaStub_DisabledMediaIsNoOp(t *testing.T) {
-	run, cleanup, err := registerWorkerMedia(context.Background(), &config.AppConfig{
+	run, cleanup, err := registerWorkerMedia(context.Background(), &config.WorkerMediaConfig{
 		MediaEnabled: false,
 	}, nil)
 	require.NoError(t, err)
@@ -27,7 +27,7 @@ func TestRegisterWorkerMediaStub_DisabledMediaIsNoOp(t *testing.T) {
 }
 
 func TestRegisterWorkerMediaStub_EnabledMediaFailsFast(t *testing.T) {
-	run, cleanup, err := registerWorkerMedia(context.Background(), &config.AppConfig{
+	run, cleanup, err := registerWorkerMedia(context.Background(), &config.WorkerMediaConfig{
 		MediaEnabled: true,
 	}, nil)
 
