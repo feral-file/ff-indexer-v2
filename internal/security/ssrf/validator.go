@@ -21,8 +21,7 @@ import (
 var ErrBlocked = errors.New("ssrf: blocked URL")
 
 // ErrResolutionFailed indicates DNS (or dual-stack) resolution yielded no usable addresses.
-// It is distinct from ErrBlocked so callers can treat resolver outages as transient fetch failures
-// rather than SSRF policy violations.
+// It is distinct from ErrBlocked so callers do not attribute resolver/name failures to SSRF policy.
 var ErrResolutionFailed = errors.New("ssrf: host resolution failed")
 
 // Resolver resolves hostnames to IP addresses (injectable for tests).
@@ -86,9 +85,6 @@ func NewValidatorWithResolver(resolver Resolver, opts Options) *Validator {
 //   - Host literals and DNS results must not fall into blocked IP ranges unless allowlisted.
 //
 // Allowlisted domains bypass hostname checks and DNS resolution entirely; operators must trust DNS for those names.
-//
-// DNS resolution failures surface as ErrResolutionFailed (not ErrBlocked) so health checks can retry
-// without marking SSRFBlocked.
 func (v *Validator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {

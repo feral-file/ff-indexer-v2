@@ -30,7 +30,7 @@ const (
 // HealthCheckResult represents the result of checking a URL's health
 type HealthCheckResult struct {
 	Status      HealthStatus
-	WorkingURL  *string // Alternative working URL if found (for IPFS/Arweave)
+	WorkingURL  *string // Alternative working URL if found (for IPFS/Arweave/OnChFS)
 	Error       *string // Error message if broken
 	SSRFBlocked bool    // True when ssrf.ErrBlocked refused the fetch (policy); false for DNS (ErrResolutionFailed) or transport errors
 }
@@ -87,12 +87,18 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	// 1. Always try the HTTP URL first
 	result := c.checkHTTPS(ctx, url)
 
-	// 2. If healthy, return immediately
+	// 2. SSRF policy refusal is final: do not run IPFS/Arweave/OnChFS fallbacks that could
+	// re-probe public gateways and rewrite a blocklisted origin as "healthy".
+	if result.SSRFBlocked {
+		return result
+	}
+
+	// 3. If healthy, return immediately
 	if result.Status == HealthStatusHealthy {
 		return result
 	}
 
-	// 3. If broken or transient error, try fallback resolution for known gateway types
+	// 4. If broken or transient error, try fallback resolution for known gateway types
 
 	// Check if it's an IPFS gateway URL - resolve with CID
 	if isIPFS, cid := types.IsIPFSGatewayURL(url); isIPFS {
@@ -106,18 +112,13 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		return c.checkArweaveGateway(ctx, txID)
 	}
 
-	// Check if it's an OnChFS URL - try to resolve via gateways
-	if isOnChFS, _ := types.IsOnChFSGatewayURL(url); isOnChFS {
-		if result.SSRFBlocked {
-			return result
-		}
-		logger.InfoCtx(ctx, "HTTP check failed for OnChFS URL, assuming healthy", zap.String("url", url))
-		return HealthCheckResult{
-			Status: HealthStatusHealthy, // Assume healthy, not resolved for now
-		}
+	// Check if it's an OnChFS URL - resolve hash across configured gateways
+	if isOnChFS, hash := types.IsOnChFSGatewayURL(url); isOnChFS {
+		logger.InfoCtx(ctx, "HTTP check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("hash", hash))
+		return c.checkOnChFSGateway(ctx, hash)
 	}
 
-	// 4. For other HTTP URLs, return the original result
+	// 5. For other HTTP URLs, return the original result
 	return result
 }
 
@@ -147,6 +148,19 @@ func (c *urlChecker) checkArweaveGateway(ctx context.Context, txID string) Healt
 	}
 }
 
+// checkOnChFSGateway resolves an OnChFS content hash across configured gateways and returns the first working URL.
+func (c *urlChecker) checkOnChFSGateway(ctx context.Context, hash string) HealthCheckResult {
+	workingURL, err := FindWorkingOnChFSGateway(ctx, c.httpClient, hash, c.onchfsGateways)
+	if err != nil {
+		return mapOutboundFetchErr(err, false)
+	}
+
+	return HealthCheckResult{
+		Status:     HealthStatusHealthy,
+		WorkingURL: &workingURL,
+	}
+}
+
 // healthResultFromSSRF maps SSRF policy failures to a broken result with SSRFBlocked set.
 func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 	if errors.Is(err, ssrf.ErrBlocked) {
@@ -163,21 +177,16 @@ func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 // mapOutboundFetchErr maps HTTP client fetch errors to HealthCheckResult.
 //
 // SSRF policy failures (ErrBlocked) yield broken + SSRFBlocked. DNS resolution failures
-// (ErrResolutionFailed) are distinct: transient when classifyTransient is true so sweeps can retry.
-// When classifyTransient is false (IPFS/Arweave gateway resolution), retryable transport errors
-// stay broken so the sweeper does not treat them as sweep-wide retries.
+// (ErrResolutionFailed) yield broken without SSRFBlocked so bad or unresolvable hosts are not
+// retried every sweep tick (scheduled sweeps can still pick the row up later).
+// When classifyTransient is true, retryable transport errors map to transient_error; when false,
+// they stay broken (used for IPFS/Arweave/OnChFS gateway aggregation).
 func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	if hr, ok := healthResultFromSSRF(err); ok {
 		return hr
 	}
 	if errors.Is(err, ssrf.ErrResolutionFailed) {
 		msg := err.Error()
-		if classifyTransient {
-			return HealthCheckResult{
-				Status: HealthStatusTransientError,
-				Error:  &msg,
-			}
-		}
 		return HealthCheckResult{
 			Status: HealthStatusBroken,
 			Error:  &msg,
