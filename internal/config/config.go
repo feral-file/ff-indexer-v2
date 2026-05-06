@@ -344,6 +344,11 @@ func validateSecurityConfig(cfg *AppConfig) error {
 	if sp.MaxRedirects < 0 {
 		return fmt.Errorf("security.ssrf_protection.max_redirects must be >= 0 (got %d)", sp.MaxRedirects)
 	}
+	for _, raw := range sp.Allowlist.Domains {
+		if err := ssrf.ValidateAllowlistDomainEntry(raw); err != nil {
+			return fmt.Errorf("security.ssrf_protection.allowlist.domains: %w", err)
+		}
+	}
 	if _, err := cfg.MediaHealthSSRFValidator(); err != nil {
 		return err
 	}
@@ -351,7 +356,7 @@ func validateSecurityConfig(cfg *AppConfig) error {
 }
 
 // MediaHealthSSRFValidator returns a Validator when SSRF protection is enabled, nil when disabled.
-// Reason: Centralizes allowlist parsing and keeps cmd/ff-indexer wiring short.
+// Reason: Shared by media health sweeper and media worker outbound HTTP for stored/source URLs.
 func (a *AppConfig) MediaHealthSSRFValidator() (*ssrf.Validator, error) {
 	sp := a.Security.SSRFProtection
 	if !sp.Enabled {

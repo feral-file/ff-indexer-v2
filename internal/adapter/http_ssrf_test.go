@@ -144,3 +144,17 @@ func TestNewHTTPClientWithSSRF_redirectValidated(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ssrf.ErrBlocked), "got %v", err)
 }
+
+func TestNewHTTPClientWithSSRF_nilValidator_fetchesWithoutBlock(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewHTTPClientWithSSRF(5*time.Second, nil, 99)
+	resp, err := client.GetResponseNoRetry(context.Background(), srv.URL, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Body)
+	require.NoError(t, resp.Body.Close())
+}

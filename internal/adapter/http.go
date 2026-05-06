@@ -128,8 +128,7 @@ func NewHTTPClient(timeout time.Duration) HTTPClient {
 // NewHTTPClientWithSSRF creates an HTTP client that validates every request URL (including redirects)
 // before connecting. maxRedirects caps redirect hops after the initial request (`0` means none).
 //
-// Reason: Media health checks fetch stored URLs that may be attacker-controlled.
-// Constraints: Redirect destinations use the same validation rules as the initial URL.
+// If v is nil, behavior matches NewHTTPClient: no validation and DefaultTransport redirect policy.
 func NewHTTPClientWithSSRF(timeout time.Duration, v SSRFValidator, maxRedirects int) HTTPClient {
 	return &RealHTTPClient{
 		client: newUnderlyingHTTPClient(timeout, v, maxRedirects),

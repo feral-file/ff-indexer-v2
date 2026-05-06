@@ -32,7 +32,7 @@ type HealthCheckResult struct {
 	Status      HealthStatus
 	WorkingURL  *string // Alternative working URL if found (for IPFS/Arweave)
 	Error       *string // Error message if broken
-	SSRFBlocked bool    // True when the outbound fetch was refused by SSRF policy
+	SSRFBlocked bool    // True when ssrf.ErrBlocked refused the fetch (policy); false for DNS (ErrResolutionFailed) or transport errors
 }
 
 // URLChecker defines the interface for checking URL health
@@ -162,12 +162,26 @@ func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 
 // mapOutboundFetchErr maps HTTP client fetch errors to HealthCheckResult.
 //
-// SSRF policy failures always yield broken + SSRFBlocked. When classifyTransient is true
-// (direct URL checks), retryable transport errors are transient; when false (IPFS/Arweave
-// gateway resolution), non-SSRF errors are broken so the sweeper does not treat them as sweep-wide retries.
+// SSRF policy failures (ErrBlocked) yield broken + SSRFBlocked. DNS resolution failures
+// (ErrResolutionFailed) are distinct: transient when classifyTransient is true so sweeps can retry.
+// When classifyTransient is false (IPFS/Arweave gateway resolution), retryable transport errors
+// stay broken so the sweeper does not treat them as sweep-wide retries.
 func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	if hr, ok := healthResultFromSSRF(err); ok {
 		return hr
+	}
+	if errors.Is(err, ssrf.ErrResolutionFailed) {
+		msg := err.Error()
+		if classifyTransient {
+			return HealthCheckResult{
+				Status: HealthStatusTransientError,
+				Error:  &msg,
+			}
+		}
+		return HealthCheckResult{
+			Status: HealthStatusBroken,
+			Error:  &msg,
+		}
 	}
 	if classifyTransient && adapter.IsHTTPRetryableError(err) {
 		msg := err.Error()

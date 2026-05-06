@@ -55,7 +55,12 @@ func registerWorkerMedia(
 	chromedpClient := adapter.NewChromedpClient()
 	xml := adapter.NewXML()
 
-	httpClient := adapter.NewHTTPClient(15 * time.Second)
+	ssrfValidator, err := cfg.MediaHealthSSRFValidator()
+	if err != nil {
+		return nil, nil, fmt.Errorf("SSRF security configuration: %w", err)
+	}
+	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
+	mediaDownloaderHTTPClient := adapter.NewHTTPClientWithSSRF(15*time.Minute, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
 
 	uriResolverConfig := &uri.Config{
 		IPFSGateways:    wcfg.URI.IPFSGateways,
@@ -70,7 +75,6 @@ func registerWorkerMedia(
 		return nil, nil, fmt.Errorf("cloudflare client: %w", err)
 	}
 
-	mediaDownloaderHTTPClient := adapter.NewHTTPClient(15 * time.Minute)
 	mediaDownloader := downloader.NewDownloader(mediaDownloaderHTTPClient, fileSystem)
 
 	cloudflareConfig := &cloudflare.Config{

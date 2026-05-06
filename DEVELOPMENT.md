@@ -61,13 +61,13 @@ Environment variables use the `FF_INDEXER_` prefix and map to nested config keys
 
 Dots in config keys become underscores in env vars.
 
-**Media health SSRF protection** (`security.ssrf_protection` in YAML):
+**Outbound SSRF protection** (`security.ssrf_protection` in YAML; shared by the **media health sweeper** and **media worker** outbound downloads):
 
-- **`enabled`** — When `true` (default), the sweeper HTTP client validates each URL (and redirect hop) before connecting.
+- **`enabled`** — When `true` (default), HTTP clients that fetch stored/source media URLs validate each URL (and redirect hop) before connecting.
 - **`max_redirects`** — Maximum **redirect hops** after the initial request (default `3` when unset in YAML). `0` forbids redirects. With `3`, the client may follow up to three `3xx` responses after the first GET/HEAD.
 - **`block_multicast`** — Refuse multicast ranges when `true` (default `false`).
-- **`allowlist.domains`** — Hostnames that bypass hostname/DNS/IP checks (matching subdomain suffix applies). Trust DNS for anything under those names.
-- **`allowlist.ips`** — Literal IPs that bypass IP-range blocking only.
+- **`allowlist.domains`** — Hostnames that bypass hostname/DNS/IP checks (matching subdomain suffix applies). Each entry must include **at least one dot** (e.g. `cdn.example.com`); bare suffixes like `com` are rejected at startup. Trust DNS for anything under those names.
+- **`allowlist.ips`** — Literal IPs that bypass IP-range blocking only (IPv4-mapped literals such as `::ffff:192.168.x.x` match an IPv4 entry on the list).
 
 Examples:
 

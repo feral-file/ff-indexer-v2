@@ -2,6 +2,7 @@ package ssrf_test
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"strings"
 	"testing"
@@ -142,4 +143,30 @@ func TestValidator_nonHTTPScheme(t *testing.T) {
 	ctx := context.Background()
 	err := v.ValidateHTTPURL(ctx, "ftp://example.com/")
 	require.ErrorIs(t, err, ssrf.ErrBlocked)
+}
+
+func TestValidator_dnsResolutionFailsWithErrResolutionFailed(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidatorWithResolver(mapResolver{}, ssrf.Options{})
+	ctx := context.Background()
+	err := v.ValidateHTTPURL(ctx, "http://nx-no-such-host.example.invalid/")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ssrf.ErrResolutionFailed)
+	require.False(t, errors.Is(err, ssrf.ErrBlocked))
+}
+
+func TestValidator_allowIPv4MappedLiteralMatchesIPv4AllowIP(t *testing.T) {
+	t.Parallel()
+	ip := netip.MustParseAddr("192.168.55.55")
+	v := ssrf.NewValidator(ssrf.Options{AllowIPs: []netip.Addr{ip}})
+	ctx := context.Background()
+	require.NoError(t, v.ValidateHTTPURL(ctx, "http://[::ffff:192.168.55.55]:8080/foo"))
+}
+
+func TestValidateAllowlistDomainEntry_rejectsBareSuffix(t *testing.T) {
+	require.NoError(t, ssrf.ValidateAllowlistDomainEntry(""))
+	require.NoError(t, ssrf.ValidateAllowlistDomainEntry("   "))
+	require.NoError(t, ssrf.ValidateAllowlistDomainEntry("cdn.example.com"))
+	require.Error(t, ssrf.ValidateAllowlistDomainEntry("com"))
+	require.Error(t, ssrf.ValidateAllowlistDomainEntry("org"))
 }

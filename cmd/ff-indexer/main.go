@@ -143,19 +143,16 @@ func run() int {
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Invalid SSRF security configuration", zap.Error(err))
 	}
-	var httpClient adapter.HTTPClient
+	httpClient := adapter.NewHTTPClientWithSSRF(sweeperCfg.MediaHealthSweeper.HTTPTimeout, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
 	if ssrfValidator != nil {
-		maxRedir := cfg.Security.SSRFProtection.MaxRedirects
-		httpClient = adapter.NewHTTPClientWithSSRF(sweeperCfg.MediaHealthSweeper.HTTPTimeout, ssrfValidator, maxRedir)
-		logger.InfoCtx(rootCtx, "Media health HTTP client uses SSRF validation",
-			zap.Int("max_redirects", maxRedir),
+		logger.InfoCtx(rootCtx, "Outbound media HTTP client uses SSRF validation (sweeper + worker when CGO enabled)",
+			zap.Int("max_redirects", cfg.Security.SSRFProtection.MaxRedirects),
 			zap.Bool("block_multicast", cfg.Security.SSRFProtection.BlockMulticast),
 			zap.Int("ssrf_allowlist_domains", len(cfg.Security.SSRFProtection.Allowlist.Domains)),
 			zap.Int("ssrf_allowlist_ips", len(cfg.Security.SSRFProtection.Allowlist.IPs)),
 		)
 	} else {
-		httpClient = adapter.NewHTTPClient(sweeperCfg.MediaHealthSweeper.HTTPTimeout)
-		logger.WarnCtx(rootCtx, "Media health HTTP client SSRF validation is DISABLED (security.ssrf_protection.enabled=false)")
+		logger.WarnCtx(rootCtx, "Outbound media HTTP SSRF validation is DISABLED (security.ssrf_protection.enabled=false)")
 	}
 	ioAdapter := adapter.NewIO()
 	clock := adapter.NewClock()

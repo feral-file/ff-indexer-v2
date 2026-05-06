@@ -284,6 +284,12 @@ FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 	assert.False(t, cfg.ToWorkerMediaConfig().MediaEnabled)
 }
 
+func TestValidateSecurityConfig_allowlistDomainTooBroad(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"com"}
+	require.Error(t, validateSecurityConfig(cfg))
+}
+
 func TestValidateSecurityConfig_negativeMaxRedirects(t *testing.T) {
 	cfg := &AppConfig{}
 	cfg.Security.SSRFProtection.MaxRedirects = -1

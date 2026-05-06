@@ -758,6 +758,38 @@ func stringPtr(s string) *string {
 	return &s
 }
 
+func TestURLChecker_dnsResolutionFailed_notMarkedAsSSRFBlocked(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTP := mocks.NewMockHTTPClient(ctrl)
+	mockIO := mocks.NewMockIO(ctrl)
+
+	u := "https://example.com/asset.bin"
+	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
+
+	mockHTTP.EXPECT().
+		HeadNoRetry(gomock.Any(), u).
+		Return(nil, assert.AnError)
+
+	mockHTTP.EXPECT().
+		GetResponseNoRetry(gomock.Any(), u, rangeHdr).
+		Return(nil, fmt.Errorf("resolver: %w", ssrf.ErrResolutionFailed))
+
+	cfg := &uri.Config{
+		IPFSGateways:    []string{"https://ipfs.io"},
+		ArweaveGateways: []string{"https://arweave.net"},
+		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
+	}
+	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
+	result := checker.Check(context.Background(), u)
+
+	require.Equal(t, uri.HealthStatusTransientError, result.Status)
+	require.False(t, result.SSRFBlocked)
+	require.NotNil(t, result.Error)
+	require.Contains(t, *result.Error, "resolver")
+}
+
 func TestURLChecker_SSrfBlocked_shortCircuitsOnChFS(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockHTTP := mocks.NewMockHTTPClient(ctrl)

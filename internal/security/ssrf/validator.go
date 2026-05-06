@@ -1,5 +1,5 @@
 // Package ssrf validates outbound HTTP(S) URLs for server-side request forgery risks used by
-// components that fetch attacker-influenced URLs (e.g. media health checks).
+// components that fetch attacker-influenced URLs (media health sweeper, media worker downloads).
 //
 // Reason: Stored media URLs may point at loopback, RFC-private space, link-local, or cloud metadata.
 // Trade-offs: DNS resolution adds latency; allowlisted hosts skip resolution so operators must trust DNS.
@@ -19,6 +19,11 @@ import (
 
 // ErrBlocked indicates the URL target failed SSRF policy checks.
 var ErrBlocked = errors.New("ssrf: blocked URL")
+
+// ErrResolutionFailed indicates DNS (or dual-stack) resolution yielded no usable addresses.
+// It is distinct from ErrBlocked so callers can treat resolver outages as transient fetch failures
+// rather than SSRF policy violations.
+var ErrResolutionFailed = errors.New("ssrf: host resolution failed")
 
 // Resolver resolves hostnames to IP addresses (injectable for tests).
 type Resolver interface {
@@ -82,7 +87,8 @@ func NewValidatorWithResolver(resolver Resolver, opts Options) *Validator {
 //
 // Allowlisted domains bypass hostname checks and DNS resolution entirely; operators must trust DNS for those names.
 //
-// DNS resolution failures surface as ErrBlocked (fail-closed) so sweeper outcomes stay deterministic.
+// DNS resolution failures surface as ErrResolutionFailed (not ErrBlocked) so health checks can retry
+// without marking SSRFBlocked.
 func (v *Validator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -125,7 +131,7 @@ func (v *Validator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
 		ips = append(ips, addrs...)
 	}
 	if len(ips) == 0 {
-		return fmt.Errorf("%w: DNS resolution failed for host %q: %w", ErrBlocked, host, errors.Join(lookupErrs...))
+		return fmt.Errorf("%w: DNS resolution failed for host %q: %w", ErrResolutionFailed, host, errors.Join(lookupErrs...))
 	}
 
 	for _, ip := range ips {
@@ -153,7 +159,26 @@ func (v *Validator) hostAllowlisted(host string) bool {
 }
 
 func (v *Validator) ipAllowlisted(ip netip.Addr) bool {
-	return slices.Contains(v.opts.AllowIPs, ip)
+	if slices.Contains(v.opts.AllowIPs, ip) {
+		return true
+	}
+	if mapped, ok := extractEmbeddedIPv4(ip); ok {
+		return slices.Contains(v.opts.AllowIPs, mapped)
+	}
+	return false
+}
+
+// ValidateAllowlistDomainEntry rejects unsafe allowlist.domain patterns at config load.
+// Entries must contain at least one dot so bare public suffixes like "com" cannot whitelist entire TLDs.
+func ValidateAllowlistDomainEntry(raw string) error {
+	d := strings.ToLower(strings.TrimSpace(raw))
+	if d == "" {
+		return nil
+	}
+	if !strings.Contains(d, ".") {
+		return fmt.Errorf("domain %q must contain at least one dot (reject overly broad suffix entries)", raw)
+	}
+	return nil
 }
 
 func (v *Validator) checkBlockedHostname(host string) error {
