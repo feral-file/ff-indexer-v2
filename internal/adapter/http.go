@@ -85,13 +85,13 @@ func (t *ssrfRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 
 func ssrfCheckRedirect(maxRedirects int, v SSRFValidator) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
-		if err := v.ValidateHTTPURL(req.Context(), req.URL.String()); err != nil {
-			return fmt.Errorf("redirect blocked: %w", err)
-		}
-		// len(via) is the number of requests already completed in this redirect chain before req.
-		// Allow exactly maxRedirects redirect hops: refuse when the chain would exceed that count.
+		// Refuse over-budget chains before ValidateHTTPURL so the overflow hop does not trigger DNS
+		// or other resolver work for a URL that will not be followed anyway.
 		if len(via) > maxRedirects {
 			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+		if err := v.ValidateHTTPURL(req.Context(), req.URL.String()); err != nil {
+			return fmt.Errorf("redirect blocked: %w", err)
 		}
 		return nil
 	}

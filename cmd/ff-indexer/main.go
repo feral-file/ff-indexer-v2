@@ -139,13 +139,13 @@ func run() int {
 
 	// Media URL health sweeper (scheduled batch checks; may enqueue jobs).
 	sweeperCfg := cfg.ToSweeperConfig()
-	ssrfValidator, err := cfg.MediaHealthSSRFValidator()
+	ssrfValidator, err := config.SSRFValidatorFromProtection(cfg.Security.SSRFProtection)
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Invalid SSRF security configuration", zap.Error(err))
 	}
 	httpClient := adapter.NewHTTPClientWithSSRF(sweeperCfg.MediaHealthSweeper.HTTPTimeout, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
 	if ssrfValidator != nil {
-		logger.InfoCtx(rootCtx, "Outbound media HTTP client uses SSRF validation (sweeper + worker when CGO enabled)",
+		logger.InfoCtx(rootCtx, "Outbound media HTTP client uses SSRF validation (sweeper; token worker; media worker when CGO enabled)",
 			zap.Int("max_redirects", cfg.Security.SSRFProtection.MaxRedirects),
 			zap.Bool("block_multicast", cfg.Security.SSRFProtection.BlockMulticast),
 			zap.Int("ssrf_allowlist_domains", len(cfg.Security.SSRFProtection.Allowlist.Domains)),

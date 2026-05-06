@@ -55,7 +55,7 @@ func registerWorkerMedia(
 	chromedpClient := adapter.NewChromedpClient()
 	xml := adapter.NewXML()
 
-	ssrfValidator, err := cfg.MediaHealthSSRFValidator()
+	ssrfValidator, err := config.SSRFValidatorFromProtection(cfg.Security.SSRFProtection)
 	if err != nil {
 		return nil, nil, fmt.Errorf("SSRF security configuration: %w", err)
 	}

@@ -19,6 +19,33 @@ type allowAllValidator struct{}
 
 func (allowAllValidator) ValidateHTTPURL(context.Context, string) error { return nil }
 
+func TestNewHTTPClientWithSSRF_overBudgetRedirectSkipsRedirectTargetValidation(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/would-validate-if-checked", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	v := &countAllValidations{}
+	client := NewHTTPClientWithSSRF(5*time.Second, v, 0)
+	_, err := client.GetResponseNoRetry(context.Background(), srv.URL, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "stopped after 0 redirects")
+	// Only the initial request is validated in RoundTrip; redirect cap must reject before CheckRedirect validates the Location.
+	require.Equal(t, 1, v.n, "expected exactly one ValidateHTTPURL (initial URL only)")
+}
+
+type countAllValidations struct{ n int }
+
+func (v *countAllValidations) ValidateHTTPURL(context.Context, string) error {
+	v.n++
+	return nil
+}
+
 func TestNewHTTPClientWithSSRF_blocksLoopback(t *testing.T) {
 	t.Parallel()
 	v := ssrf.NewValidator(ssrf.Options{})

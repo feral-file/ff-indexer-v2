@@ -114,19 +114,21 @@ type WorkerConfig struct {
 
 // WorkerCoreConfig holds configuration for worker-core
 type WorkerCoreConfig struct {
-	BaseConfig                   `mapstructure:",squash"`
-	Database                     DatabaseConfig    `mapstructure:"database"`
-	Jobs                         JobsConfig        `mapstructure:"jobs"`
-	Ethereum                     EthereumConfig    `mapstructure:"ethereum"`
-	Tezos                        TezosConfig       `mapstructure:"tezos"`
-	Vendors                      VendorsConfig     `mapstructure:"vendors"`
-	URI                          URIConfig         `mapstructure:"uri"`
-	RateLimiter                  RateLimiterConfig `mapstructure:"rate_limiter"`
-	MediaEnabled                 bool              `mapstructure:"media_enabled"`
-	EthereumTokenSweepStartBlock uint64            `mapstructure:"ethereum_token_sweep_start_block"`
-	TezosTokenSweepStartBlock    uint64            `mapstructure:"tezos_token_sweep_start_block"`
-	PublisherRegistryPath        string            `mapstructure:"publisher_registry_path"`
-	BlacklistPath                string            `mapstructure:"blacklist_path"`
+	BaseConfig  `mapstructure:",squash"`
+	Database    DatabaseConfig    `mapstructure:"database"`
+	Jobs        JobsConfig        `mapstructure:"jobs"`
+	Ethereum    EthereumConfig    `mapstructure:"ethereum"`
+	Tezos       TezosConfig       `mapstructure:"tezos"`
+	Vendors     VendorsConfig     `mapstructure:"vendors"`
+	URI         URIConfig         `mapstructure:"uri"`
+	RateLimiter RateLimiterConfig `mapstructure:"rate_limiter"`
+	// Security mirrors AppConfig.security for token-worker outbound HTTP (metadata / URI resolution).
+	Security                     SecurityConfig `mapstructure:"security"`
+	MediaEnabled                 bool           `mapstructure:"media_enabled"`
+	EthereumTokenSweepStartBlock uint64         `mapstructure:"ethereum_token_sweep_start_block"`
+	TezosTokenSweepStartBlock    uint64         `mapstructure:"tezos_token_sweep_start_block"`
+	PublisherRegistryPath        string         `mapstructure:"publisher_registry_path"`
+	BlacklistPath                string         `mapstructure:"blacklist_path"`
 
 	// Budgeted Indexing Mode Configuration
 	BudgetedIndexingEnabled           bool `mapstructure:"budgeted_indexing_enabled"`
@@ -349,16 +351,15 @@ func validateSecurityConfig(cfg *AppConfig) error {
 			return fmt.Errorf("security.ssrf_protection.allowlist.domains: %w", err)
 		}
 	}
-	if _, err := cfg.MediaHealthSSRFValidator(); err != nil {
+	if _, err := SSRFValidatorFromProtection(cfg.Security.SSRFProtection); err != nil {
 		return err
 	}
 	return nil
 }
 
-// MediaHealthSSRFValidator returns a Validator when SSRF protection is enabled, nil when disabled.
-// Reason: Shared by media health sweeper and media worker outbound HTTP for stored/source URLs.
-func (a *AppConfig) MediaHealthSSRFValidator() (*ssrf.Validator, error) {
-	sp := a.Security.SSRFProtection
+// SSRFValidatorFromProtection builds an ssrf.Validator from unified SSRF settings, or nil when disabled.
+// Shared by the media health sweeper, media worker, token worker (worker-core), and config validation.
+func SSRFValidatorFromProtection(sp SSRFProtectionConfig) (*ssrf.Validator, error) {
 	if !sp.Enabled {
 		return nil, nil
 	}
@@ -440,6 +441,7 @@ func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
 		Vendors:                            a.Vendors,
 		URI:                                a.URI,
 		RateLimiter:                        a.RateLimiter,
+		Security:                           a.Security,
 		MediaEnabled:                       a.MediaEnabled,
 		EthereumTokenSweepStartBlock:       a.EthereumTokenSweepStartBlock,
 		TezosTokenSweepStartBlock:          a.TezosTokenSweepStartBlock,

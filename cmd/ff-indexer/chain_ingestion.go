@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -82,7 +83,17 @@ func runTezosIngestion(
 ) error {
 	clockAdapter := adapter.NewClock()
 	signalR := adapter.NewSignalR()
-	httpClient := adapter.NewHTTPClient(15 * time.Second)
+
+	ssrfValidator, err := config.SSRFValidatorFromProtection(cfg.Security.SSRFProtection)
+	if err != nil {
+		return fmt.Errorf("SSRF security configuration: %w", err)
+	}
+	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
+	if ssrfValidator != nil {
+		logger.InfoCtx(ctx, "Tezos chain ingestion outbound HTTP uses SSRF validation",
+			zap.Int("max_redirects", cfg.Security.SSRFProtection.MaxRedirects),
+		)
+	}
 
 	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient, clockAdapter)
 	tzBlockProvider := block.NewBlockProvider(tzBlockFetcher,
