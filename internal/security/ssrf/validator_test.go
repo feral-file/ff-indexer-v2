@@ -75,6 +75,33 @@ func TestValidator_cloudMetadataBlocked(t *testing.T) {
 	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://metadata.google.internal/computeMetadata/v1/"), ssrf.ErrBlocked)
 }
 
+func TestValidator_blockedHostnameTrailingRootLabelDot(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://metadata.google.internal./computeMetadata/v1/"), ssrf.ErrBlocked)
+}
+
+func TestValidator_publicHTTPSucceeds_trailingDotInHostnameUsesCanonicalResolverKey(t *testing.T) {
+	t.Parallel()
+	pub := netip.MustParseAddr("8.8.8.8")
+	r := mapResolver{
+		"ip4/public.example": {pub},
+	}
+	v := ssrf.NewValidatorWithResolver(r, ssrf.Options{})
+	ctx := context.Background()
+	require.NoError(t, v.ValidateHTTPURL(ctx, "https://public.example./path"))
+}
+
+func TestValidator_allowDomainConfigTrailingDotMatches(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidatorWithResolver(mapResolver{}, ssrf.Options{
+		AllowDomains: []string{"internal.company.internal."},
+	})
+	ctx := context.Background()
+	require.NoError(t, v.ValidateHTTPURL(ctx, "https://cdn.internal.company.internal/media"))
+}
+
 func TestValidator_localtestMeBlocked(t *testing.T) {
 	t.Parallel()
 	v := ssrf.NewValidator(ssrf.Options{})
@@ -167,6 +194,8 @@ func TestValidateAllowlistDomainEntry_rejectsBareSuffix(t *testing.T) {
 	require.NoError(t, ssrf.ValidateAllowlistDomainEntry(""))
 	require.NoError(t, ssrf.ValidateAllowlistDomainEntry("   "))
 	require.NoError(t, ssrf.ValidateAllowlistDomainEntry("cdn.example.com"))
+	require.NoError(t, ssrf.ValidateAllowlistDomainEntry("cdn.example.com."))
 	require.Error(t, ssrf.ValidateAllowlistDomainEntry("com"))
 	require.Error(t, ssrf.ValidateAllowlistDomainEntry("org"))
+	require.Error(t, ssrf.ValidateAllowlistDomainEntry("com."))
 }

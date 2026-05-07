@@ -1,5 +1,6 @@
 // Package ssrf validates outbound HTTP(S) URLs for server-side request forgery risks used by
-// components that fetch attacker-influenced URLs (media health sweeper, media worker downloads).
+// components that fetch attacker-influenced URLs (media health sweeper, token worker, Tezos
+// chain ingestion, media worker, and related HTTP clients).
 //
 // Reason: Stored media URLs may point at loopback, RFC-private space, link-local, or cloud metadata.
 // Trade-offs: DNS resolution adds latency; allowlisted hosts skip resolution so operators must trust DNS.
@@ -86,6 +87,9 @@ func NewValidatorWithResolver(resolver Resolver, opts Options) *Validator {
 //
 // Allowlisted domains bypass hostname checks and DNS resolution entirely; operators must trust DNS for those names.
 //
+// Hostnames are normalized: ASCII lowercasing and removal of trailing root-label dots (FQDN form),
+// so e.g. metadata.google.internal. matches the same hostname block rules as metadata.google.internal.
+//
 // Known limitation (DNS rebinding / TOCTOU): this pre-request resolution is not reused at TCP dial
 // time by the default [net/http] transport, which may resolve the hostname again. Callers that need
 // stronger binding must implement connect-time controls separately (not done here yet).
@@ -104,7 +108,7 @@ func (v *Validator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
 	if host == "" {
 		return fmt.Errorf("%w: missing host", ErrBlocked)
 	}
-	host = strings.ToLower(host)
+	host = canonicalHost(host)
 
 	if v.hostAllowlisted(host) {
 		return nil
@@ -147,7 +151,7 @@ func (v *Validator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
 
 func (v *Validator) hostAllowlisted(host string) bool {
 	for _, d := range v.opts.AllowDomains {
-		d = strings.ToLower(strings.TrimSpace(d))
+		d = canonicalHost(d)
 		if d == "" {
 			continue
 		}
@@ -156,6 +160,16 @@ func (v *Validator) hostAllowlisted(host string) bool {
 		}
 	}
 	return false
+}
+
+// canonicalHost normalizes a URL host for policy checks: trim space, ASCII lowercasing, and strip
+// trailing root-label dots so FQDN and usual forms match the same rules.
+func canonicalHost(host string) string {
+	h := strings.ToLower(strings.TrimSpace(host))
+	for strings.HasSuffix(h, ".") {
+		h = strings.TrimSuffix(h, ".")
+	}
+	return h
 }
 
 func (v *Validator) ipAllowlisted(ip netip.Addr) bool {
@@ -170,8 +184,9 @@ func (v *Validator) ipAllowlisted(ip netip.Addr) bool {
 
 // ValidateAllowlistDomainEntry rejects unsafe allowlist.domain patterns at config load.
 // Entries must contain at least one dot so bare public suffixes like "com" cannot whitelist entire TLDs.
+// Trailing root-label dots are stripped before validation (e.g. cdn.example.com. is accepted like cdn.example.com).
 func ValidateAllowlistDomainEntry(raw string) error {
-	d := strings.ToLower(strings.TrimSpace(raw))
+	d := canonicalHost(raw)
 	if d == "" {
 		return nil
 	}

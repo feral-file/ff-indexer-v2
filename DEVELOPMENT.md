@@ -61,9 +61,9 @@ Environment variables use the `FF_INDEXER_` prefix and map to nested config keys
 
 Dots in config keys become underscores in env vars.
 
-**Outbound SSRF protection** (`security.ssrf_protection` in YAML; shared by the **media health sweeper** and **media worker** outbound downloads):
+**Outbound SSRF protection** (`security.ssrf_protection` in YAML; shared by every HTTP client built via `NewHTTPClientWithSSRF` in this binary — including the **media health sweeper**, **token-indexing worker (worker core)** and its metadata/URI fetches, **Tezos chain ingestion** HTTP usage, and **media worker** outbound downloads when CGO and media are enabled):
 
-- **`enabled`** — When `true` (default), HTTP clients that fetch stored/source media URLs validate each URL (and redirect hop) before connecting.
+- **`enabled`** — When `true` (default), those HTTP clients validate each URL (and redirect hop) before connecting for attacker-influenced or stored source URLs (media, metadata, gateway checks, etc.).
 - **`max_redirects`** — Maximum **redirect hops** after the initial request (default `3` when unset in YAML). `0` forbids redirects. With `3`, the client may follow up to three `3xx` responses after the first GET/HEAD.
 - **`block_multicast`** — Refuse multicast ranges when `true` (default `false`).
 - **`allowlist.domains`** — Hostnames that bypass hostname/DNS/IP checks (matching subdomain suffix applies). Each entry must include **at least one dot** (e.g. `cdn.example.com`); bare suffixes like `com` are rejected at startup. Trust DNS for anything under those names.
