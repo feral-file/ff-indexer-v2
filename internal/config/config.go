@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 )
 
 // BaseConfig holds base configuration
@@ -112,19 +114,21 @@ type WorkerConfig struct {
 
 // WorkerCoreConfig holds configuration for worker-core
 type WorkerCoreConfig struct {
-	BaseConfig                   `mapstructure:",squash"`
-	Database                     DatabaseConfig    `mapstructure:"database"`
-	Jobs                         JobsConfig        `mapstructure:"jobs"`
-	Ethereum                     EthereumConfig    `mapstructure:"ethereum"`
-	Tezos                        TezosConfig       `mapstructure:"tezos"`
-	Vendors                      VendorsConfig     `mapstructure:"vendors"`
-	URI                          URIConfig         `mapstructure:"uri"`
-	RateLimiter                  RateLimiterConfig `mapstructure:"rate_limiter"`
-	MediaEnabled                 bool              `mapstructure:"media_enabled"`
-	EthereumTokenSweepStartBlock uint64            `mapstructure:"ethereum_token_sweep_start_block"`
-	TezosTokenSweepStartBlock    uint64            `mapstructure:"tezos_token_sweep_start_block"`
-	PublisherRegistryPath        string            `mapstructure:"publisher_registry_path"`
-	BlacklistPath                string            `mapstructure:"blacklist_path"`
+	BaseConfig  `mapstructure:",squash"`
+	Database    DatabaseConfig    `mapstructure:"database"`
+	Jobs        JobsConfig        `mapstructure:"jobs"`
+	Ethereum    EthereumConfig    `mapstructure:"ethereum"`
+	Tezos       TezosConfig       `mapstructure:"tezos"`
+	Vendors     VendorsConfig     `mapstructure:"vendors"`
+	URI         URIConfig         `mapstructure:"uri"`
+	RateLimiter RateLimiterConfig `mapstructure:"rate_limiter"`
+	// Security mirrors AppConfig.security for token-worker outbound HTTP (metadata / URI resolution).
+	Security                     SecurityConfig `mapstructure:"security"`
+	MediaEnabled                 bool           `mapstructure:"media_enabled"`
+	EthereumTokenSweepStartBlock uint64         `mapstructure:"ethereum_token_sweep_start_block"`
+	TezosTokenSweepStartBlock    uint64         `mapstructure:"tezos_token_sweep_start_block"`
+	PublisherRegistryPath        string         `mapstructure:"publisher_registry_path"`
+	BlacklistPath                string         `mapstructure:"blacklist_path"`
 
 	// Budgeted Indexing Mode Configuration
 	BudgetedIndexingEnabled           bool `mapstructure:"budgeted_indexing_enabled"`
@@ -228,9 +232,11 @@ type TransformConfig struct {
 
 // WorkerMediaConfig holds configuration for the media-indexing job worker.
 type WorkerMediaConfig struct {
-	BaseConfig   `mapstructure:",squash"`
-	Database     DatabaseConfig   `mapstructure:"database"`
-	Jobs         JobsConfig       `mapstructure:"jobs"`
+	BaseConfig `mapstructure:",squash"`
+	Database   DatabaseConfig `mapstructure:"database"`
+	Jobs       JobsConfig     `mapstructure:"jobs"`
+	// Security mirrors AppConfig.security for media-worker outbound HTTP (URI resolution and downloads).
+	Security     SecurityConfig   `mapstructure:"security"`
 	MediaEnabled bool             `mapstructure:"media_enabled"`
 	URI          URIConfig        `mapstructure:"uri"`
 	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
@@ -255,6 +261,25 @@ type SweeperConfig struct {
 	Database           DatabaseConfig           `mapstructure:"database"`
 	Jobs               JobsConfig               `mapstructure:"jobs"`
 	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
+}
+
+// SecurityConfig holds process-wide security controls (optional sections keyed under `security:`).
+type SecurityConfig struct {
+	SSRFProtection SSRFProtectionConfig `mapstructure:"ssrf_protection"`
+}
+
+// SSRFProtectionConfig configures outbound URL validation for the media health sweeper HTTP client.
+type SSRFProtectionConfig struct {
+	Enabled        bool                `mapstructure:"enabled"`
+	MaxRedirects   int                 `mapstructure:"max_redirects"` // Redirect hops allowed after the initial request (see adapter.ssrfCheckRedirect).
+	BlockMulticast bool                `mapstructure:"block_multicast"`
+	Allowlist      SSRFAllowlistConfig `mapstructure:"allowlist"`
+}
+
+// SSRFAllowlistConfig lists destinations that bypass default SSRF block rules (use sparingly).
+type SSRFAllowlistConfig struct {
+	Domains []string `mapstructure:"domains"`
+	IPs     []string `mapstructure:"ips"`
 }
 
 // AppConfig is the configuration for the single-process ff-indexer binary.
@@ -289,6 +314,8 @@ type AppConfig struct {
 	EthereumOwnerSubsequentBatchTarget int `mapstructure:"ethereum_owner_subsequent_batch_target"`
 	TezosOwnerFirstBatchTarget         int `mapstructure:"tezos_owner_first_batch_target"`
 	TezosOwnerSubsequentBatchTarget    int `mapstructure:"tezos_owner_subsequent_batch_target"`
+
+	Security SecurityConfig `mapstructure:"security"`
 }
 
 // LoadAppConfig loads unified configuration for cmd/ff-indexer.
@@ -310,7 +337,50 @@ func LoadAppConfig(configFile string, envPath string) (*AppConfig, error) {
 	if err := ValidateRequiredConfigValues(&cfg); err != nil {
 		return nil, err
 	}
+	if err := validateSecurityConfig(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+func validateSecurityConfig(cfg *AppConfig) error {
+	sp := cfg.Security.SSRFProtection
+	if sp.MaxRedirects < 0 {
+		return fmt.Errorf("security.ssrf_protection.max_redirects must be >= 0 (got %d)", sp.MaxRedirects)
+	}
+	for _, raw := range sp.Allowlist.Domains {
+		if err := ssrf.ValidateAllowlistDomainEntry(raw); err != nil {
+			return fmt.Errorf("security.ssrf_protection.allowlist.domains: %w", err)
+		}
+	}
+	if _, err := SSRFValidatorFromProtection(cfg.Security.SSRFProtection); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SSRFValidatorFromProtection builds an ssrf.Validator from unified SSRF settings, or nil when disabled.
+// Shared by the media health sweeper, media worker, token worker (worker-core), and config validation.
+func SSRFValidatorFromProtection(sp SSRFProtectionConfig) (*ssrf.Validator, error) {
+	if !sp.Enabled {
+		return nil, nil
+	}
+	opts := ssrf.Options{
+		BlockMulticast: sp.BlockMulticast,
+		AllowDomains:   append([]string(nil), sp.Allowlist.Domains...),
+	}
+	for _, s := range sp.Allowlist.IPs {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		ip, err := netip.ParseAddr(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid security.ssrf_protection.allowlist.ips entry %q: %w", s, err)
+		}
+		opts.AllowIPs = append(opts.AllowIPs, ip)
+	}
+	return ssrf.NewValidator(opts), nil
 }
 
 // ValidateRequiredConfigValues verifies that the unified ff-indexer process has
@@ -373,6 +443,7 @@ func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
 		Vendors:                            a.Vendors,
 		URI:                                a.URI,
 		RateLimiter:                        a.RateLimiter,
+		Security:                           a.Security,
 		MediaEnabled:                       a.MediaEnabled,
 		EthereumTokenSweepStartBlock:       a.EthereumTokenSweepStartBlock,
 		TezosTokenSweepStartBlock:          a.TezosTokenSweepStartBlock,
@@ -393,6 +464,7 @@ func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
 		BaseConfig:   a.BaseConfig,
 		Database:     a.Database,
 		Jobs:         a.Jobs,
+		Security:     a.Security,
 		MediaEnabled: a.MediaEnabled,
 		URI:          a.URI,
 		Cloudflare:   a.Cloudflare,
@@ -511,6 +583,11 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("media_health_sweeper.worker.pool_size", 5)
 	v.SetDefault("media_health_sweeper.worker.queue_size", 100)
 	v.SetDefault("media_health_sweeper.recheck_after", "24h")
+
+	// SSRF protection for media health HTTP client (recommended enabled in production).
+	v.SetDefault("security.ssrf_protection.enabled", true)
+	v.SetDefault("security.ssrf_protection.max_redirects", 3)
+	v.SetDefault("security.ssrf_protection.block_multicast", false)
 }
 
 // configureViper returns a viper instance with the config file and environment variables set
@@ -640,6 +717,11 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
 		"media_health_sweeper.uri.onchfs_gateways",
+		"security.ssrf_protection.enabled",
+		"security.ssrf_protection.max_redirects",
+		"security.ssrf_protection.block_multicast",
+		"security.ssrf_protection.allowlist.domains",
+		"security.ssrf_protection.allowlist.ips",
 		// Rate Limiter
 		"rate_limiter.max_workers",
 		"rate_limiter.max_queue_size",

@@ -138,6 +138,19 @@ media_health_sweeper:
     onchfs_gateways:
       - https://onchfs.fxhash2.xyz
 
+# Outbound SSRF protection for media URL fetches (health sweeper + media worker when CGO enabled).
+# When enabled, loopback, RFC-private/link-local space, cloud metadata endpoints, and unsafe redirects are blocked.
+security:
+  ssrf_protection:
+    enabled: true
+    # Redirect hops allowed after the initial request (each Location URL validated).
+    max_redirects: 3
+    block_multicast: false
+    allowlist:
+      # Each domain must contain at least one dot (reject bare suffixes like "com").
+      domains: []
+      ips: []
+
 cloudflare:
   account_id: ""
   api_token: ""

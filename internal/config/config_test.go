@@ -283,3 +283,67 @@ FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 	assert.False(t, cfg.MediaEnabled)
 	assert.False(t, cfg.ToWorkerMediaConfig().MediaEnabled)
 }
+
+func TestValidateSecurityConfig_allowlistDomainTooBroad(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"com"}
+	require.Error(t, validateSecurityConfig(cfg))
+}
+
+func TestValidateSecurityConfig_allowlistDomainRejectsIPLiteral(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"127.0.0.1"}
+	require.Error(t, validateSecurityConfig(cfg))
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"169.254.169.254"}
+	require.Error(t, validateSecurityConfig(cfg))
+}
+
+func TestValidateSecurityConfig_negativeMaxRedirects(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.MaxRedirects = -1
+	require.Error(t, validateSecurityConfig(cfg))
+}
+
+func TestSSRFValidatorFromProtection_invalidAllowlistIP(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Enabled = true
+	cfg.Security.SSRFProtection.Allowlist.IPs = []string{"not-an-ip"}
+	_, err := SSRFValidatorFromProtection(cfg.Security.SSRFProtection)
+	require.Error(t, err)
+}
+
+func TestToWorkerCoreConfig_includesSecurityForSSRF(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Enabled = true
+	cfg.Security.SSRFProtection.MaxRedirects = 7
+	cfg.Security.SSRFProtection.BlockMulticast = true
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"cdn.example.com"}
+
+	w := cfg.ToWorkerCoreConfig()
+	require.Equal(t, cfg.Security.SSRFProtection.Enabled, w.Security.SSRFProtection.Enabled)
+	require.Equal(t, 7, w.Security.SSRFProtection.MaxRedirects)
+	require.True(t, w.Security.SSRFProtection.BlockMulticast)
+	require.Equal(t, []string{"cdn.example.com"}, w.Security.SSRFProtection.Allowlist.Domains)
+
+	v, err := SSRFValidatorFromProtection(w.Security.SSRFProtection)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+}
+
+func TestToWorkerMediaConfig_includesSecurityForSSRF(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Enabled = true
+	cfg.Security.SSRFProtection.MaxRedirects = 7
+	cfg.Security.SSRFProtection.BlockMulticast = true
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"cdn.example.com"}
+
+	w := cfg.ToWorkerMediaConfig()
+	require.Equal(t, cfg.Security.SSRFProtection.Enabled, w.Security.SSRFProtection.Enabled)
+	require.Equal(t, 7, w.Security.SSRFProtection.MaxRedirects)
+	require.True(t, w.Security.SSRFProtection.BlockMulticast)
+	require.Equal(t, []string{"cdn.example.com"}, w.Security.SSRFProtection.Allowlist.Domains)
+
+	v, err := SSRFValidatorFromProtection(w.Security.SSRFProtection)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+}

@@ -61,6 +61,19 @@ Environment variables use the `FF_INDEXER_` prefix and map to nested config keys
 
 Dots in config keys become underscores in env vars.
 
+**Outbound SSRF protection** (`security.ssrf_protection` in YAML; shared by every HTTP client built via `NewHTTPClientWithSSRF` in this binary — including the **media health sweeper**, **token-indexing worker (worker core)** and its metadata/URI fetches, **Tezos chain ingestion** HTTP usage, and **media worker** outbound downloads when CGO and media are enabled):
+
+- **`enabled`** — When `true` (default), those HTTP clients validate each URL (and redirect hop) before connecting for attacker-influenced or stored source URLs (media, metadata, gateway checks, etc.).
+- **`max_redirects`** — Maximum **redirect hops** after the initial request (default `3` when unset in YAML). `0` forbids redirects. With `3`, the client may follow up to three `3xx` responses after the first GET/HEAD.
+- **`block_multicast`** — Refuse multicast ranges when `true` (default `false`).
+- **`allowlist.domains`** — **Hostnames only** (not IP literals — those belong in `allowlist.ips`; IPv4/IPv6 strings here are rejected at startup). Entries bypass hostname/DNS/IP checks (subdomain suffix matching applies). Each entry must include **at least one dot** (e.g. `cdn.example.com`); bare suffixes like `com` are rejected. Trust DNS for anything under those names.
+- **`allowlist.ips`** — Literal IPs that bypass IP-range blocking only (IPv4-mapped literals such as `::ffff:192.168.x.x` match an IPv4 entry on the list).
+
+Examples:
+
+- `FF_INDEXER_SECURITY_SSRF_PROTECTION_ENABLED=false`
+- `FF_INDEXER_SECURITY_SSRF_PROTECTION_MAX_REDIRECTS=5`
+
 **Environment variable files** (loaded in order, later files override earlier):
 1. `config/.env` - Base configuration (version controlled)
 2. `config/.env.local` - Local overrides (git ignored)

@@ -139,7 +139,21 @@ func run() int {
 
 	// Media URL health sweeper (scheduled batch checks; may enqueue jobs).
 	sweeperCfg := cfg.ToSweeperConfig()
-	httpClient := adapter.NewHTTPClient(sweeperCfg.MediaHealthSweeper.HTTPTimeout)
+	ssrfValidator, err := config.SSRFValidatorFromProtection(cfg.Security.SSRFProtection)
+	if err != nil {
+		logger.FatalCtx(rootCtx, "Invalid SSRF security configuration", zap.Error(err))
+	}
+	httpClient := adapter.NewHTTPClientWithSSRF(sweeperCfg.MediaHealthSweeper.HTTPTimeout, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
+	if ssrfValidator != nil {
+		logger.InfoCtx(rootCtx, "Outbound media HTTP client uses SSRF validation (sweeper; token worker; media worker when CGO enabled)",
+			zap.Int("max_redirects", cfg.Security.SSRFProtection.MaxRedirects),
+			zap.Bool("block_multicast", cfg.Security.SSRFProtection.BlockMulticast),
+			zap.Int("ssrf_allowlist_domains", len(cfg.Security.SSRFProtection.Allowlist.Domains)),
+			zap.Int("ssrf_allowlist_ips", len(cfg.Security.SSRFProtection.Allowlist.IPs)),
+		)
+	} else {
+		logger.WarnCtx(rootCtx, "Outbound media HTTP SSRF validation is DISABLED (security.ssrf_protection.enabled=false)")
+	}
 	ioAdapter := adapter.NewIO()
 	clock := adapter.NewClock()
 	uriResolverConfig := &uri.Config{
@@ -157,7 +171,8 @@ func run() int {
 	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue)
 
 	// Worker-media: media task queue (requires CGO build).
-	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, cfg, db)
+	wMediaCfg := cfg.ToWorkerMediaConfig()
+	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, wMediaCfg, db)
 	if err != nil {
 		logger.FatalCtx(rootCtx, "Failed to init worker-media", zap.Error(err))
 	}

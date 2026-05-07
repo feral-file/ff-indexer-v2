@@ -2,6 +2,7 @@ package uri
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
@@ -27,9 +29,10 @@ const (
 
 // HealthCheckResult represents the result of checking a URL's health
 type HealthCheckResult struct {
-	Status     HealthStatus
-	WorkingURL *string // Alternative working URL if found (for IPFS/Arweave)
-	Error      *string // Error message if broken
+	Status      HealthStatus
+	WorkingURL  *string // Alternative working URL if found (for IPFS/Arweave/OnChFS)
+	Error       *string // Error message if broken
+	SSRFBlocked bool    // True when ssrf.ErrBlocked refused the fetch (policy); false for DNS (ErrResolutionFailed) or transport errors
 }
 
 // URLChecker defines the interface for checking URL health
@@ -84,12 +87,18 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	// 1. Always try the HTTP URL first
 	result := c.checkHTTPS(ctx, url)
 
-	// 2. If healthy, return immediately
+	// 2. SSRF policy refusal is final: do not run IPFS/Arweave/OnChFS fallbacks that could
+	// re-probe public gateways and rewrite a blocklisted origin as "healthy".
+	if result.SSRFBlocked {
+		return result
+	}
+
+	// 3. If healthy, return immediately
 	if result.Status == HealthStatusHealthy {
 		return result
 	}
 
-	// 3. If broken or transient error, try fallback resolution for known gateway types
+	// 4. If broken or transient error, try fallback resolution for known gateway types
 
 	// Check if it's an IPFS gateway URL - resolve with CID
 	if isIPFS, cid := types.IsIPFSGatewayURL(url); isIPFS {
@@ -103,15 +112,13 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		return c.checkArweaveGateway(ctx, txID)
 	}
 
-	// Check if it's an OnChFS URL - try to resolve via gateways
-	if isOnChFS, _ := types.IsOnChFSGatewayURL(url); isOnChFS {
-		logger.InfoCtx(ctx, "HTTP check failed for OnChFS URL, assuming healthy", zap.String("url", url))
-		return HealthCheckResult{
-			Status: HealthStatusHealthy, // Assume healthy, not resolved for now
-		}
+	// Check if it's an OnChFS URL - resolve hash across configured gateways
+	if isOnChFS, hash := types.IsOnChFSGatewayURL(url); isOnChFS {
+		logger.InfoCtx(ctx, "HTTP check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("hash", hash))
+		return c.checkOnChFSGateway(ctx, hash)
 	}
 
-	// 4. For other HTTP URLs, return the original result
+	// 5. For other HTTP URLs, return the original result
 	return result
 }
 
@@ -119,11 +126,7 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 func (c *urlChecker) checkIPFSGateway(ctx context.Context, cid string) HealthCheckResult {
 	workingURL, err := FindWorkingIPFSGateway(ctx, c.httpClient, cid, c.ipfsGateways)
 	if err != nil {
-		errMsg := err.Error()
-		return HealthCheckResult{
-			Status: HealthStatusBroken,
-			Error:  &errMsg,
-		}
+		return mapOutboundFetchErr(err, false)
 	}
 
 	return HealthCheckResult{
@@ -136,11 +139,7 @@ func (c *urlChecker) checkIPFSGateway(ctx context.Context, cid string) HealthChe
 func (c *urlChecker) checkArweaveGateway(ctx context.Context, txID string) HealthCheckResult {
 	workingURL, err := FindWorkingArweaveGateway(ctx, c.httpClient, txID, c.arweaveGateways)
 	if err != nil {
-		errMsg := err.Error()
-		return HealthCheckResult{
-			Status: HealthStatusBroken,
-			Error:  &errMsg,
-		}
+		return mapOutboundFetchErr(err, false)
 	}
 
 	return HealthCheckResult{
@@ -149,11 +148,73 @@ func (c *urlChecker) checkArweaveGateway(ctx context.Context, txID string) Healt
 	}
 }
 
+// checkOnChFSGateway resolves an OnChFS content hash across configured gateways and returns the first working URL.
+func (c *urlChecker) checkOnChFSGateway(ctx context.Context, hash string) HealthCheckResult {
+	workingURL, err := FindWorkingOnChFSGateway(ctx, c.httpClient, hash, c.onchfsGateways)
+	if err != nil {
+		return mapOutboundFetchErr(err, false)
+	}
+
+	return HealthCheckResult{
+		Status:     HealthStatusHealthy,
+		WorkingURL: &workingURL,
+	}
+}
+
+// healthResultFromSSRF maps SSRF policy failures to a broken result with SSRFBlocked set.
+func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
+	if errors.Is(err, ssrf.ErrBlocked) {
+		msg := err.Error()
+		return HealthCheckResult{
+			Status:      HealthStatusBroken,
+			Error:       &msg,
+			SSRFBlocked: true,
+		}, true
+	}
+	return HealthCheckResult{}, false
+}
+
+// mapOutboundFetchErr maps HTTP client fetch errors to HealthCheckResult.
+//
+// SSRF policy failures (ErrBlocked, including redirect-cap exhaustion from the SSRF HTTP client) yield broken + SSRFBlocked. DNS resolution failures
+// (ErrResolutionFailed) yield broken without SSRFBlocked so bad or unresolvable hosts are not
+// retried every sweep tick (scheduled sweeps can still pick the row up later).
+// When classifyTransient is true, retryable transport errors map to transient_error; when false,
+// they stay broken (used for IPFS/Arweave/OnChFS gateway aggregation).
+func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
+	if hr, ok := healthResultFromSSRF(err); ok {
+		return hr
+	}
+	if errors.Is(err, ssrf.ErrResolutionFailed) {
+		msg := err.Error()
+		return HealthCheckResult{
+			Status: HealthStatusBroken,
+			Error:  &msg,
+		}
+	}
+	if classifyTransient && adapter.IsHTTPRetryableError(err) {
+		msg := err.Error()
+		return HealthCheckResult{
+			Status: HealthStatusTransientError,
+			Error:  &msg,
+		}
+	}
+	msg := err.Error()
+	return HealthCheckResult{
+		Status: HealthStatusBroken,
+		Error:  &msg,
+	}
+}
+
 // checkHTTPS checks regular HTTPS URLs
 func (c *urlChecker) checkHTTPS(ctx context.Context, url string) HealthCheckResult {
 	// 1. Try HEAD request first
 	resp, err := c.httpClient.HeadNoRetry(ctx, url)
-	if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if err != nil {
+		if hr, ok := healthResultFromSSRF(err); ok {
+			return hr
+		}
+	} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
@@ -181,20 +242,7 @@ func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheck
 
 	resp, err := c.httpClient.GetResponseNoRetry(ctx, url, headers)
 	if err != nil {
-		// Check if it's a transient error
-		if adapter.IsHTTPRetryableError(err) {
-			errMsg := err.Error()
-			return HealthCheckResult{
-				Status: HealthStatusTransientError,
-				Error:  &errMsg,
-			}
-		}
-
-		errMsg := err.Error()
-		return HealthCheckResult{
-			Status: HealthStatusBroken,
-			Error:  &errMsg,
-		}
+		return mapOutboundFetchErr(err, true)
 	}
 	defer func() {
 		if resp.Body != nil {
@@ -238,19 +286,7 @@ func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheck
 func (c *urlChecker) checkWithoutRange(ctx context.Context, url string) HealthCheckResult {
 	resp, err := c.httpClient.GetResponseNoRetry(ctx, url, nil)
 	if err != nil {
-		if adapter.IsHTTPRetryableError(err) {
-			errMsg := err.Error()
-			return HealthCheckResult{
-				Status: HealthStatusTransientError,
-				Error:  &errMsg,
-			}
-		}
-
-		errMsg := err.Error()
-		return HealthCheckResult{
-			Status: HealthStatusBroken,
-			Error:  &errMsg,
-		}
+		return mapOutboundFetchErr(err, true)
 	}
 	defer func() {
 		if resp.Body != nil {

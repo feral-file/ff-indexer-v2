@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -43,7 +44,16 @@ func registerWorkerCore(
 	base64Adapter := adapter.NewBase64()
 	ioAdapter := adapter.NewIO()
 
-	httpClient := adapter.NewHTTPClient(15 * time.Second)
+	ssrfValidator, err := config.SSRFValidatorFromProtection(cfg.Security.SSRFProtection)
+	if err != nil {
+		return nil, nil, fmt.Errorf("SSRF security configuration: %w", err)
+	}
+	httpClient := adapter.NewHTTPClientWithSSRF(15*time.Second, ssrfValidator, cfg.Security.SSRFProtection.MaxRedirects)
+	if ssrfValidator != nil {
+		logger.InfoCtx(ctx, "Token worker outbound HTTP uses SSRF validation",
+			zap.Int("max_redirects", cfg.Security.SSRFProtection.MaxRedirects),
+		)
+	}
 
 	// Chain clients (Ethereum RPC + Tezos TzKT) and vendor APIs.
 	ethDialer := adapter.NewEthClientDialer()

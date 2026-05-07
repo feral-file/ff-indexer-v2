@@ -2,6 +2,7 @@ package uri
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -10,7 +11,22 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 )
+
+// noteGatewayProbeFailure records SSRF policy blocks vs DNS resolution failures from parallel gateway HEAD probes.
+// ErrBlocked takes precedence when surfacing an error to callers.
+func noteGatewayProbeFailure(err error, blocked *error, resolution *error) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, ssrf.ErrBlocked) {
+		*blocked = err
+	}
+	if errors.Is(err, ssrf.ErrResolutionFailed) {
+		*resolution = err
+	}
+}
 
 // FindWorkingIPFSGateway finds a working IPFS gateway for the given CID
 // It tries all gateways in parallel and returns the first working one
@@ -61,11 +77,20 @@ func FindWorkingIPFSGateway(ctx context.Context, httpClient adapter.HTTPClient, 
 	}()
 
 	// Return the first successful result
+	var blockedErr, resolutionErr error
 	for res := range resultCh {
 		if res.err == nil {
 			logger.InfoCtx(ctx, "Found working IPFS gateway", zap.String("url", res.url))
 			return res.url, nil
 		}
+		noteGatewayProbeFailure(res.err, &blockedErr, &resolutionErr)
+	}
+
+	if blockedErr != nil {
+		return "", blockedErr
+	}
+	if resolutionErr != nil {
+		return "", resolutionErr
 	}
 
 	return "", fmt.Errorf("no working IPFS gateway found for CID: %s", cid)
@@ -120,11 +145,20 @@ func FindWorkingArweaveGateway(ctx context.Context, httpClient adapter.HTTPClien
 	}()
 
 	// Return the first successful result
+	var blockedErr, resolutionErr error
 	for res := range resultCh {
 		if res.err == nil {
 			logger.InfoCtx(ctx, "Found working Arweave gateway", zap.String("url", res.url))
 			return res.url, nil
 		}
+		noteGatewayProbeFailure(res.err, &blockedErr, &resolutionErr)
+	}
+
+	if blockedErr != nil {
+		return "", blockedErr
+	}
+	if resolutionErr != nil {
+		return "", resolutionErr
 	}
 
 	return "", fmt.Errorf("no working Arweave gateway found for TX: %s", txID)
@@ -180,11 +214,20 @@ func FindWorkingOnChFSGateway(ctx context.Context, httpClient adapter.HTTPClient
 	}()
 
 	// Return the first successful result
+	var blockedErr, resolutionErr error
 	for res := range resultCh {
 		if res.err == nil {
 			logger.InfoCtx(ctx, "Found working OnChFS gateway", zap.String("url", res.url))
 			return res.url, nil
 		}
+		noteGatewayProbeFailure(res.err, &blockedErr, &resolutionErr)
+	}
+
+	if blockedErr != nil {
+		return "", blockedErr
+	}
+	if resolutionErr != nil {
+		return "", resolutionErr
 	}
 
 	return "", fmt.Errorf("no working OnChFS gateway found for hash: %s", hash)

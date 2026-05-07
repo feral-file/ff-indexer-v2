@@ -151,6 +151,66 @@ func TestMediaHealthSweeper_CheckURL_Healthy(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestMediaHealthSweeper_CheckURL_SSrfBroken(t *testing.T) {
+	mocks := setupTestSweeper(t)
+	defer tearDownTestSweeper(mocks)
+
+	ctx := context.Background()
+	testURL := "http://127.0.0.1/image.jpg"
+
+	mocks.store.EXPECT().
+		GetTokenIDsByMediaURL(gomock.Any(), testURL).
+		Return([]uint64{99}, nil)
+
+	errMsg := "blocked by ssrf policy"
+	mocks.urlChecker.EXPECT().
+		Check(gomock.Any(), testURL).
+		Return(uri.HealthCheckResult{
+			Status:      uri.HealthStatusBroken,
+			Error:       &errMsg,
+			SSRFBlocked: true,
+		})
+
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, schema.MediaHealthStatusBroken, &errMsg).
+		Return(nil)
+
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(gomock.Any(), []uint64{99}).
+		Return(nil, nil)
+
+	now := time.Now()
+	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
+	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	mocks.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+
+	gomock.InOrder(
+		mocks.store.EXPECT().
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
+			Return([]string{testURL}, nil).
+			Times(1),
+		mocks.store.EXPECT().
+			GetURLsForChecking(gomock.Any(), 24*time.Hour, 10).
+			Return([]string{}, nil).
+			MinTimes(1),
+	)
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = mocks.sweeper.Stop(ctx)
+	}()
+
+	err := mocks.sweeper.Start(ctx)
+	require.NoError(t, err)
+}
+
 func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 	mocks := setupTestSweeper(t)
 	defer tearDownTestSweeper(mocks)
