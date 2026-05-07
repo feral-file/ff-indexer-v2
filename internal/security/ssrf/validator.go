@@ -85,6 +85,10 @@ func NewValidatorWithResolver(resolver Resolver, opts Options) *Validator {
 //   - Host literals and DNS results must not fall into blocked IP ranges unless allowlisted.
 //
 // Allowlisted domains bypass hostname checks and DNS resolution entirely; operators must trust DNS for those names.
+//
+// Known limitation (DNS rebinding / TOCTOU): this pre-request resolution is not reused at TCP dial
+// time by the default [net/http] transport, which may resolve the hostname again. Callers that need
+// stronger binding must implement connect-time controls separately (not done here yet).
 func (v *Validator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {

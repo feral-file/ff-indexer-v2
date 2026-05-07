@@ -851,6 +851,32 @@ func TestURLChecker_dnsResolutionFailed_notMarkedAsSSRFBlocked(t *testing.T) {
 	require.Contains(t, *result.Error, "resolver")
 }
 
+func TestURLChecker_redirectLimit_exhaustion_markedAsSSRFBlocked(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTP := mocks.NewMockHTTPClient(ctrl)
+	mockIO := mocks.NewMockIO(ctrl)
+
+	u := "https://example.com/asset.bin"
+	// Mirrors adapter.ssrfCheckRedirect when max redirects exceeded after wrapping with ssrf.ErrBlocked.
+	mockHTTP.EXPECT().
+		HeadNoRetry(gomock.Any(), u).
+		Return(nil, fmt.Errorf("%w: stopped after 3 redirects", ssrf.ErrBlocked))
+
+	cfg := &uri.Config{
+		IPFSGateways:    []string{"https://ipfs.io"},
+		ArweaveGateways: []string{"https://arweave.net"},
+		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
+	}
+	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
+	result := checker.Check(context.Background(), u)
+
+	require.Equal(t, uri.HealthStatusBroken, result.Status)
+	require.True(t, result.SSRFBlocked)
+	require.NotNil(t, result.Error)
+}
+
 func TestURLChecker_SSrfBlocked_shortCircuitsOnChFS(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockHTTP := mocks.NewMockHTTPClient(ctrl)

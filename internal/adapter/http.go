@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 )
 
 // HTTPClient defines an interface for HTTP client operations to enable mocking
@@ -76,6 +77,13 @@ type ssrfRoundTripper struct {
 	v    SSRFValidator
 }
 
+// RoundTrip validates req.URL before delegating to the underlying transport.
+//
+// Known limitation (DNS rebinding / TOCTOU): ValidateHTTPURL may resolve the hostname
+// here, but the standard transport typically resolves again at dial time. A malicious
+// or flaky resolver could return different addresses between those two steps, so the
+// connected peer is not cryptographically tied to the pre-check. Documented deliberately
+// until we pin dials to validated addresses or adopt another connect-time policy.
 func (t *ssrfRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err := t.v.ValidateHTTPURL(req.Context(), req.URL.String()); err != nil {
 		return nil, err
@@ -88,7 +96,8 @@ func ssrfCheckRedirect(maxRedirects int, v SSRFValidator) func(*http.Request, []
 		// Refuse over-budget chains before ValidateHTTPURL so the overflow hop does not trigger DNS
 		// or other resolver work for a URL that will not be followed anyway.
 		if len(via) > maxRedirects {
-			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+			// Classify as SSRF policy so health checks set SSRFBlocked and skip gateway fallbacks.
+			return fmt.Errorf("%w: stopped after %d redirects", ssrf.ErrBlocked, maxRedirects)
 		}
 		if err := v.ValidateHTTPURL(req.Context(), req.URL.String()); err != nil {
 			return fmt.Errorf("redirect blocked: %w", err)
@@ -127,8 +136,12 @@ func NewHTTPClient(timeout time.Duration) HTTPClient {
 
 // NewHTTPClientWithSSRF creates an HTTP client that validates every request URL (including redirects)
 // before connecting. maxRedirects caps redirect hops after the initial request (`0` means none).
+// Exceeding that cap returns an error wrapping ssrf.ErrBlocked (same sentinel as other policy refusals).
 //
 // If v is nil, behavior matches NewHTTPClient: no validation and DefaultTransport redirect policy.
+//
+// Known limitation: validation runs before each RoundTrip, but the default transport may resolve
+// the host again at dial time; see the ssrfRoundTripper.RoundTrip comment in this file.
 func NewHTTPClientWithSSRF(timeout time.Duration, v SSRFValidator, maxRedirects int) HTTPClient {
 	return &RealHTTPClient{
 		client: newUnderlyingHTTPClient(timeout, v, maxRedirects),

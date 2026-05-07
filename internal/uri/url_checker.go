@@ -176,7 +176,7 @@ func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 
 // mapOutboundFetchErr maps HTTP client fetch errors to HealthCheckResult.
 //
-// SSRF policy failures (ErrBlocked) yield broken + SSRFBlocked. DNS resolution failures
+// SSRF policy failures (ErrBlocked, including redirect-cap exhaustion from the SSRF HTTP client) yield broken + SSRFBlocked. DNS resolution failures
 // (ErrResolutionFailed) yield broken without SSRFBlocked so bad or unresolvable hosts are not
 // retried every sweep tick (scheduled sweeps can still pick the row up later).
 // When classifyTransient is true, retryable transport errors map to transient_error; when false,

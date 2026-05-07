@@ -34,6 +34,7 @@ func TestNewHTTPClientWithSSRF_overBudgetRedirectSkipsRedirectTargetValidation(t
 	client := NewHTTPClientWithSSRF(5*time.Second, v, 0)
 	_, err := client.GetResponseNoRetry(context.Background(), srv.URL, nil)
 	require.Error(t, err)
+	require.True(t, errors.Is(err, ssrf.ErrBlocked), "redirect cap should classify as SSRF policy: %v", err)
 	require.Contains(t, err.Error(), "stopped after 0 redirects")
 	// Only the initial request is validated in RoundTrip; redirect cap must reject before CheckRedirect validates the Location.
 	require.Equal(t, 1, v.n, "expected exactly one ValidateHTTPURL (initial URL only)")
@@ -76,6 +77,7 @@ func TestNewHTTPClientWithSSRF_maxRedirects(t *testing.T) {
 	client := NewHTTPClientWithSSRF(5*time.Second, allowAllValidator{}, 3)
 	_, err := client.GetResponseNoRetry(context.Background(), srv.URL, nil)
 	require.Error(t, err)
+	require.True(t, errors.Is(err, ssrf.ErrBlocked), "got %v", err)
 	require.Contains(t, err.Error(), "stopped after 3 redirects")
 }
 
@@ -122,6 +124,7 @@ func TestNewHTTPClientWithSSRF_twoHopCapBlocksThird(t *testing.T) {
 	client := NewHTTPClientWithSSRF(5*time.Second, allowAllValidator{}, 2)
 	_, err := client.GetResponseNoRetry(context.Background(), srv.URL, nil)
 	require.Error(t, err)
+	require.True(t, errors.Is(err, ssrf.ErrBlocked), "got %v", err)
 	require.Contains(t, err.Error(), "stopped after 2 redirects")
 }
 
@@ -139,6 +142,7 @@ func TestNewHTTPClientWithSSRF_zeroRedirectsBlocksLocation(t *testing.T) {
 	client := NewHTTPClientWithSSRF(5*time.Second, allowAllValidator{}, 0)
 	_, err := client.GetResponseNoRetry(context.Background(), srv.URL, nil)
 	require.Error(t, err)
+	require.True(t, errors.Is(err, ssrf.ErrBlocked), "got %v", err)
 	require.Contains(t, err.Error(), "stopped after 0 redirects")
 }
 
