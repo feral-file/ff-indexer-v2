@@ -117,6 +117,23 @@ func TestValidator_ipv4MappedBlocked(t *testing.T) {
 	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://[::ffff:192.168.1.1]/"), ssrf.ErrBlocked)
 }
 
+// 6to4 (2002::/16) embeds an IPv4 in the IPv6 address; policy must apply to the embedded IPv4.
+func TestValidator_6to4EmbedsLoopbackBlocked(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	// 2002:7f00:1:: encodes 127.0.0.1 per RFC 3056.
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://[2002:7f00:1::]/"), ssrf.ErrBlocked)
+}
+
+func TestValidator_6to4EmbedsDocumentationNetBlocked(t *testing.T) {
+	t.Parallel()
+	v := ssrf.NewValidator(ssrf.Options{})
+	ctx := context.Background()
+	// 192.0.2.4 -> 2002:c000:0204::
+	require.ErrorIs(t, v.ValidateHTTPURL(ctx, "http://[2002:c000:0204::]/"), ssrf.ErrBlocked)
+}
+
 func TestValidator_dnsResolvedPrivateBlocked(t *testing.T) {
 	t.Parallel()
 	priv := netip.MustParseAddr("192.168.2.2")
@@ -195,6 +212,10 @@ func TestValidateAllowlistDomainEntry_rejectsBareSuffix(t *testing.T) {
 	require.NoError(t, ssrf.ValidateAllowlistDomainEntry("   "))
 	require.NoError(t, ssrf.ValidateAllowlistDomainEntry("cdn.example.com"))
 	require.NoError(t, ssrf.ValidateAllowlistDomainEntry("cdn.example.com."))
+	require.Error(t, ssrf.ValidateAllowlistDomainEntry("127.0.0.1"))
+	require.Error(t, ssrf.ValidateAllowlistDomainEntry("169.254.169.254"))
+	require.Error(t, ssrf.ValidateAllowlistDomainEntry("2001:db8::1"))
+	require.Error(t, ssrf.ValidateAllowlistDomainEntry("::ffff:192.168.1.1"))
 	require.Error(t, ssrf.ValidateAllowlistDomainEntry("com"))
 	require.Error(t, ssrf.ValidateAllowlistDomainEntry("org"))
 	require.Error(t, ssrf.ValidateAllowlistDomainEntry("com."))

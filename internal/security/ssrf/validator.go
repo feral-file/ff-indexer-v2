@@ -183,12 +183,17 @@ func (v *Validator) ipAllowlisted(ip netip.Addr) bool {
 }
 
 // ValidateAllowlistDomainEntry rejects unsafe allowlist.domain patterns at config load.
+// IP literals are not allowed (use allowlist.ips); otherwise a value like 127.0.0.1 would match
+// hostAllowlisted and skip all IP-range enforcement.
 // Entries must contain at least one dot so bare public suffixes like "com" cannot whitelist entire TLDs.
 // Trailing root-label dots are stripped before validation (e.g. cdn.example.com. is accepted like cdn.example.com).
 func ValidateAllowlistDomainEntry(raw string) error {
 	d := canonicalHost(raw)
 	if d == "" {
 		return nil
+	}
+	if addr, err := netip.ParseAddr(d); err == nil {
+		return fmt.Errorf("domain %q must be a hostname, not an IP (%s); use allowlist.ips for literal addresses", raw, addr.String())
 	}
 	if !strings.Contains(d, ".") {
 		return fmt.Errorf("domain %q must contain at least one dot (reject overly broad suffix entries)", raw)
@@ -248,6 +253,10 @@ func extractEmbeddedIPv4(ip netip.Addr) (netip.Addr, bool) {
 		}
 		return v4, true
 	}
+	// 2002::/16 — 6to4 (RFC 3056); bits 16–47 are the embedded IPv4 address.
+	if sixToFour.Contains(ip) {
+		return netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}), true
+	}
 	return netip.Addr{}, false
 }
 
@@ -259,6 +268,7 @@ func ipBitPrefix128(b [16]byte) uint64 {
 var (
 	multicastIPv4 = mustPrefix("224.0.0.0/4")
 	multicastIPv6 = mustPrefix("ff00::/8")
+	sixToFour     = mustPrefix("2002::/16")
 
 	defaultBlockedPrefixes = []netip.Prefix{
 		mustPrefix("0.0.0.0/8"),

@@ -290,6 +290,14 @@ func TestValidateSecurityConfig_allowlistDomainTooBroad(t *testing.T) {
 	require.Error(t, validateSecurityConfig(cfg))
 }
 
+func TestValidateSecurityConfig_allowlistDomainRejectsIPLiteral(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"127.0.0.1"}
+	require.Error(t, validateSecurityConfig(cfg))
+	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"169.254.169.254"}
+	require.Error(t, validateSecurityConfig(cfg))
+}
+
 func TestValidateSecurityConfig_negativeMaxRedirects(t *testing.T) {
 	cfg := &AppConfig{}
 	cfg.Security.SSRFProtection.MaxRedirects = -1
