@@ -61,9 +61,10 @@ func runEthereumIngestion(
 		jq,
 		blacklistRegistry,
 		ingestion.Config{
-			ChainID:    cfg.Ethereum.ChainID,
-			StartBlock: cfg.Ethereum.StartBlock,
-			TokenQueue: cfg.Jobs.TokenQueue,
+			ChainID:           cfg.Ethereum.ChainID,
+			StartBlock:        cfg.Ethereum.StartBlock,
+			TokenQueue:        cfg.Jobs.TokenQueue,
+			BlockFlushTimeout: cfg.Ethereum.BlockFlushTimeout,
 		},
 		clockAdapter,
 	)
@@ -119,9 +120,10 @@ func runTezosIngestion(
 		jq,
 		blacklistRegistry,
 		ingestion.Config{
-			ChainID:    cfg.Tezos.ChainID,
-			StartBlock: cfg.Tezos.StartLevel,
-			TokenQueue: cfg.Jobs.TokenQueue,
+			ChainID:           cfg.Tezos.ChainID,
+			StartBlock:        cfg.Tezos.StartLevel,
+			TokenQueue:        cfg.Jobs.TokenQueue,
+			BlockFlushTimeout: cfg.Tezos.BlockFlushTimeout,
 		},
 		clockAdapter,
 	)
