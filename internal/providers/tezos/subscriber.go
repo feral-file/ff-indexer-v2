@@ -382,8 +382,9 @@ func (c *tzSubscriber) enqueueStream(msg streamMessage) {
 // very old late arrivals after pruning.
 //
 // Assumptions:
-// - TzKT SignalR feeds are monotonic by level (each feed emits events in non-decreasing level order)
-// - This allows us to use "highest level seen" as a reliable completion signal
+//   - Each TzKT SignalR feed is monotonic by level (non-decreasing level order).
+//   - That makes "highest level seen" a completion signal for that feed.
+//   - If a feed regresses in level, we warn via warnIfFeedLevelRegression and still merge the event.
 func (c *tzSubscriber) processStream(ctx context.Context) {
 	s := newStreamProcessorState()
 	var levelTimeoutC <-chan time.Time
@@ -425,11 +426,31 @@ func (c *tzSubscriber) nextIncompleteLevelTimeoutChan(s *streamProcessorState) <
 	return c.clock.After(delay)
 }
 
+// warnIfFeedLevelRegression logs when a single feed's level goes below the running high-water mark.
+//
+// Reason: Level completion uses highestTransferLevel / highestBigmapLevel under the assumption that
+// each feed is non-decreasing in level order. Out-of-order delivery breaks that invariant.
+//
+// Trade-offs: We warn (not fatal) so the stream keeps working; operators can correlate with
+// missed or duplicated indexing if TzKT ever violates ordering.
+func (c *tzSubscriber) warnIfFeedLevelRegression(ctx context.Context, feed string, level, highWater uint64) {
+	if highWater == 0 || level >= highWater {
+		return
+	}
+	logger.WarnCtx(ctx, "TzKT SignalR feed level regressed below prior high water; monotonic-by-level assumption may be violated (continuing)",
+		zap.String("chain", string(c.chainID)),
+		zap.String("feed", feed),
+		zap.Uint64("level", level),
+		zap.Uint64("high_water_mark", highWater))
+}
+
 // mergeStreamMessage merges one SignalR batch into the level buffer state.
 func (c *tzSubscriber) mergeStreamMessage(ctx context.Context, msg streamMessage, s *streamProcessorState) {
 	for i := range msg.transfers {
 		t := &msg.transfers[i]
 		level := t.Level
+
+		c.warnIfFeedLevelRegression(ctx, "transfers", level, s.highestTransferLevel)
 
 		if s.emittedLevels[level] {
 			logger.WarnCtx(ctx, "Dropping late transfer for already-emitted level",
@@ -453,6 +474,8 @@ func (c *tzSubscriber) mergeStreamMessage(ctx context.Context, msg streamMessage
 	for i := range msg.updates {
 		u := &msg.updates[i]
 		level := u.Level
+
+		c.warnIfFeedLevelRegression(ctx, "bigmaps", level, s.highestBigmapLevel)
 
 		if s.emittedLevels[level] {
 			logger.WarnCtx(ctx, "Dropping late bigmap for already-emitted level",
