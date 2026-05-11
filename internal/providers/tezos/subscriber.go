@@ -1,3 +1,11 @@
+// Package tezos implements Tezos blockchain event subscription via TzKT SignalR.
+//
+// CRITICAL DEPENDENCY: This subscriber provides level-based buffering and ascending
+// emission order within its operational window (40 levels), but relies on the runner
+// to enforce monotonic cursor updates. Without monotonic cursor guard in the runner,
+// very old late arrivals (>40 levels after pruning) can cause cursor regression.
+//
+// See processStream() doc comment for complete safety contract.
 package tezos
 
 import (
@@ -18,6 +26,9 @@ import (
 const (
 	SUBSCRIBE_TIMEOUT      = 15 * time.Second
 	defaultEventBufferSize = 2048
+	// Level buffer configuration
+	defaultMaxBufferedLevels = 20               // Max buffered levels before force-flush (~5 min tolerance)
+	defaultLevelTimeout      = 60 * time.Second // Timeout for latest level completion
 )
 
 // Config holds the configuration for Tezos/TzKT subscription
@@ -62,6 +73,15 @@ type tzSubscriber struct {
 type streamMessage struct {
 	transfers []TzKTTokenTransfer
 	updates   []TzKTBigMapUpdate
+}
+
+// levelBuffer groups events by Tezos level (block height) for cross-feed coordination.
+// Ensures transfers and bigmap updates from the same level are processed together.
+type levelBuffer struct {
+	level     uint64
+	transfers []TzKTTokenTransfer
+	bigmaps   []TzKTBigMapUpdate
+	firstSeen time.Time
 }
 
 // NewSubscriber creates a new Tezos/TzKT event subscriber
@@ -130,10 +150,7 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 
 	// Subscribe to big map updates for metadata changes
 	// Filter for token_metadata path to get only metadata-related updates
-	// TODO(tezos-feed-ordering): Preserve a stable cross-feed order between
-	// transfers and bigmaps before advancing the durable cursor. Without a
-	// merged ordering strategy, a later bigmap event can flush before an earlier
-	// transfer event and move the cursor past unfinished work.
+	// Cross-feed ordering is handled by level-based buffering in processStream()
 	sendErrChan = client.Send("SubscribeToBigMaps", map[string]interface{}{
 		"path": "token_metadata",
 	})
@@ -283,19 +300,173 @@ func (c *tzSubscriber) enqueueStream(msg streamMessage) {
 	}
 }
 
+// processStream implements level-based buffering and cross-feed coordination for Tezos events.
+//
+// Reason: Tezos has two independent SignalR feeds (transfers and bigmaps) that can arrive out of order.
+// Without coordination, a later bigmap event could advance the cursor past earlier transfer events,
+// causing data loss on restart.
+//
+// Trade-offs:
+// - Adds latency (~1 level delay) but ensures event ordering within each level
+// - Force-flush on buffer overflow may emit partial level data (rare, logged as error)
+// - Timeout-based completion for latest level only, handles feed lag gracefully
+// - Late arrivals within sliding window (40 levels) are dropped (logged as warning)
+// - Very old late arrivals (>40 levels old) may be re-emitted, but runner job dedup prevents duplicate work
+//
+// Constraints:
+// - Buffer size limited to maxBufferedLevels (default: 20 levels, ~5 min tolerance)
+// - Level timeout ensures progress even if one feed is stuck (default: 60s)
+// - Emits levels in strictly ascending order (force-flush uses lowest level, not oldest time)
+// - Emitted levels sealed within sliding window; old seals pruned for memory safety
+// - Very old late arrivals (>40 levels / ~10 min old) may create duplicate jobs if original terminal
+// - Event processing must be idempotent to handle rare duplicate-after-terminal-job case
+//
+// Safety guarantees (subscriber-level):
+// - Single-emission within sliding window (40 levels)
+// - Strictly ascending emission for active levels (within buffer + window)
+// - Memory bounded via pruning (prevents OOM)
+//
+// Safety requirements (runner-level - CRITICAL):
+// - **MUST enforce monotonic cursor updates** (reject backward movement)
+// - **MUST provide duplicate active-job prevention** (via job unique keys)
+// - **MUST implement idempotent event processing**
+//
+// Without monotonic cursor guard in runner:
+// - Very old late arrivals (>40 levels after pruning) can be re-emitted
+// - Runner may write older block cursor, causing cursor regression
+// - This defeats the entire purpose of level-based coordination
+//
+// This subscriber provides ascending order within its operational window;
+// runner must enforce monotonic cursor persistence to prevent regression from
+// very old late arrivals after pruning.
+//
+// Assumptions:
+// - TzKT SignalR feeds are monotonic by level (each feed emits events in non-decreasing level order)
+// - This allows us to use "highest level seen" as a reliable completion signal
 func (c *tzSubscriber) processStream(ctx context.Context) {
+	buffers := make(map[uint64]*levelBuffer)
+	emittedLevels := make(map[uint64]bool) // Track emitted levels to prevent re-emission
+	maxBufferedLevels := defaultMaxBufferedLevels
+	levelTimeout := defaultLevelTimeout
+	
+	// Track highest level seen from each feed
+	var highestTransferLevel uint64
+	var highestBigmapLevel uint64
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg := <-c.streamCh:
-			if err := c.handleTransfers(ctx, msg.transfers); err != nil {
-				c.reportError(err)
-				return
+			// Buffer transfers by level (skip already-emitted levels)
+			for i := range msg.transfers {
+				t := &msg.transfers[i]
+				level := t.Level
+				
+				// Skip events for already-emitted levels (late arrivals after timeout)
+				if emittedLevels[level] {
+					logger.WarnCtx(ctx, "Dropping late transfer for already-emitted level",
+						zap.Uint64("level", level))
+					continue
+				}
+				
+				if buffers[level] == nil {
+					buffers[level] = &levelBuffer{
+						level:     level,
+						firstSeen: c.clock.Now(),
+					}
+				}
+				buffers[level].transfers = append(buffers[level].transfers, *t)
+				
+				// Track highest level seen from transfers feed
+				if level > highestTransferLevel {
+					highestTransferLevel = level
+				}
 			}
-			if err := c.handleBigMapUpdates(ctx, msg.updates); err != nil {
-				c.reportError(err)
-				return
+			
+			// Buffer bigmaps by level (skip already-emitted levels)
+			for i := range msg.updates {
+				u := &msg.updates[i]
+				level := u.Level
+				
+				// Skip events for already-emitted levels (late arrivals after timeout)
+				if emittedLevels[level] {
+					logger.WarnCtx(ctx, "Dropping late bigmap for already-emitted level",
+						zap.Uint64("level", level))
+					continue
+				}
+				
+				if buffers[level] == nil {
+					buffers[level] = &levelBuffer{
+						level:     level,
+						firstSeen: c.clock.Now(),
+					}
+				}
+				buffers[level].bigmaps = append(buffers[level].bigmaps, *u)
+				
+				// Track highest level seen from bigmaps feed
+				if level > highestBigmapLevel {
+					highestBigmapLevel = level
+				}
+			}
+
+			// Get sorted levels for processing
+			sortedLevels := getSortedLevels(buffers)
+			
+			// Process completed levels in ascending order
+			// Stop at first incomplete level to maintain strict ascending emission
+			for _, level := range sortedLevels {
+				buf := buffers[level]
+				
+				// Check if level is complete
+				isComplete := isLevelComplete(buf.level, highestTransferLevel, highestBigmapLevel)
+				
+				if isComplete {
+					// Emit completed level
+					if err := c.emitLevel(ctx, buf); err != nil {
+						c.reportError(err)
+						return
+					}
+					delete(buffers, level)
+					emittedLevels[level] = true // Mark as emitted to prevent re-emission
+				} else {
+					// Found incomplete level - check if it's timed out
+					isTimedOut := hasLevelTimedOut(buf.firstSeen, levelTimeout, c.clock.Now())
+					
+					if isTimedOut {
+						// Timeout on incomplete level - emit it and continue
+						logger.WarnCtx(ctx, "Emitting incomplete level due to timeout",
+							zap.Uint64("level", level),
+							zap.Int("transfers", len(buf.transfers)),
+							zap.Int("bigmaps", len(buf.bigmaps)),
+							zap.Duration("age", c.clock.Now().Sub(buf.firstSeen)))
+						
+						if err := c.emitLevel(ctx, buf); err != nil {
+							c.reportError(err)
+							return
+						}
+						delete(buffers, level)
+						emittedLevels[level] = true
+					} else {
+						// Incomplete and not timed out - stop here to maintain ascending order
+						// Higher levels remain buffered until this level completes or times out
+						break
+					}
+				}
+			}
+
+			// Safety: Force-flush oldest level if buffer size exceeded
+			if len(buffers) > maxBufferedLevels {
+				if err := c.forceFlushOldestLevel(ctx, buffers, emittedLevels); err != nil {
+					c.reportError(err)
+					return
+				}
+			}
+			
+			// Prune emittedLevels map to prevent unbounded growth
+			// Keep only recent levels within a sliding window
+			if len(emittedLevels) > maxBufferedLevels*2 {
+				c.pruneEmittedLevels(emittedLevels, highestTransferLevel, highestBigmapLevel, maxBufferedLevels)
 			}
 		}
 	}
@@ -357,5 +528,120 @@ func (c *tzSubscriber) reportError(err error) {
 	select {
 	case c.errCh <- err:
 	default:
+	}
+}
+
+// emitLevel emits all events from a level buffer to the handler.
+// Events are emitted in deterministic order: transfers first, then bigmaps.
+//
+// Note: Events are passed to runner which enqueues jobs with unique keys.
+// If this level is emitted multiple times (e.g., due to very old late arrival after pruning):
+// - Runner prevents duplicate active jobs (pending/running)
+// - If original job already terminal (succeeded/failed), new job may be created
+// - Event processing must be idempotent to handle this rare edge case
+func (c *tzSubscriber) emitLevel(ctx context.Context, buf *levelBuffer) error {
+	// Emit transfers first
+	if err := c.handleTransfers(ctx, buf.transfers); err != nil {
+		return err
+	}
+	
+	// Then emit bigmaps
+	if err := c.handleBigMapUpdates(ctx, buf.bigmaps); err != nil {
+		return err
+	}
+	
+	logger.DebugCtx(ctx, "Level emitted",
+		zap.Uint64("level", buf.level),
+		zap.Int("transfers", len(buf.transfers)),
+		zap.Int("bigmaps", len(buf.bigmaps)))
+	
+	return nil
+}
+
+// forceFlushOldestLevel force-flushes the lowest buffered level when buffer size is exceeded.
+// This prevents memory exhaustion if one feed is stuck or lagging significantly.
+//
+// Reason: Unbounded buffering could cause OOM if one feed stops sending events.
+// Trade-offs: May emit partial level data, but prevents indefinite blocking.
+// Constraints: Only triggers when buffer exceeds maxBufferedLevels threshold.
+//
+// Safety: Flushes lowest level (not oldest by time) to maintain ascending emission order.
+// This ensures cursor progression is monotonic and prevents cursor regression.
+func (c *tzSubscriber) forceFlushOldestLevel(ctx context.Context, buffers map[uint64]*levelBuffer, emittedLevels map[uint64]bool) error {
+	// Find lowest buffered level to maintain ascending emission order
+	var lowestLevel uint64
+	first := true
+	for level := range buffers {
+		if first || level < lowestLevel {
+			lowestLevel = level
+			first = false
+		}
+	}
+	
+	buf := buffers[lowestLevel]
+	
+	// Log error: this indicates one feed is stuck/lagging significantly
+	logger.ErrorCtx(ctx, errors.New("force-flushing incomplete level due to buffer overflow (feed lag detected)"),
+		zap.Uint64("level", lowestLevel),
+		zap.Int("transfers", len(buf.transfers)),
+		zap.Int("bigmaps", len(buf.bigmaps)),
+		zap.Duration("age", c.clock.Now().Sub(buf.firstSeen)),
+		zap.Int("buffer_size", len(buffers)))
+	
+	// Emit whatever we have (partial data better than blocking indefinitely)
+	if err := c.emitLevel(ctx, buf); err != nil {
+		return err
+	}
+	delete(buffers, lowestLevel)
+	emittedLevels[lowestLevel] = true // Mark as emitted to prevent re-emission
+	
+	return nil
+}
+
+// pruneEmittedLevels removes old entries from emittedLevels to prevent unbounded memory growth.
+// Keeps a sliding window of recent levels around the current processing position.
+//
+// Reason: emittedLevels tracks every emitted level, growing without bound as chain height increases.
+// For long-running subscribers, this causes memory leak that could lead to OOM.
+//
+// Trade-offs:
+// - Sacrifices strict single-emission guarantee at subscriber level for very old late arrivals
+// - Very old late arrivals (>40 levels / ~10 min old) won't be detected as duplicates here
+// - Acceptable because:
+//   * Late arrivals >10 min old indicate severe feed issues (rare in practice)
+//   * Runner-level job queue prevents duplicate ACTIVE jobs (pending/running)
+//   * Event processing is expected to be idempotent (duplicate after terminal job is safe)
+//   * Without pruning, memory grows indefinitely (1 entry per level forever)
+//
+// Constraints: Keeps 2x maxBufferedLevels as safety margin (default: 40 levels, ~10 min).
+//
+// Safety: Uses maximum of both feeds for pruning baseline to ensure forward progress
+// even if one feed is stalled. This prevents unbounded growth under feed asymmetry.
+//
+// Guarantee: Subscriber provides "best-effort single-emission within sliding window";
+// runner prevents duplicate active jobs; processing must be idempotent for terminal-job case.
+func (c *tzSubscriber) pruneEmittedLevels(emittedLevels map[uint64]bool, highestTransferLevel, highestBigmapLevel uint64, maxBufferedLevels int) {
+	// Use maximum level from both feeds as pruning baseline
+	// This ensures pruning progresses even if one feed is stalled
+	maxTrackedLevel := highestTransferLevel
+	if highestBigmapLevel > maxTrackedLevel {
+		maxTrackedLevel = highestBigmapLevel
+	}
+	
+	// Prune threshold: keep levels within 2x buffer size of max tracked level
+	// Guard against uint64 underflow (important during startup or low levels)
+	window := uint64(maxBufferedLevels * 2)
+	var pruneThreshold uint64
+	if maxTrackedLevel <= window {
+		pruneThreshold = 0 // Keep all levels, nothing to prune yet
+	} else {
+		pruneThreshold = maxTrackedLevel - window
+	}
+	
+	// Remove levels below threshold
+	for level := range emittedLevels {
+		if level < pruneThreshold {
+			delete(emittedLevels, level)
+		}
 	}
 }

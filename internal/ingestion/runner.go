@@ -84,12 +84,27 @@ type runner struct {
 // advancement.
 //
 // Constraints: A cursor write retry must not restart a workflow that already
-// started successfully for the same queued item. Events are assumed to arrive
-// in monotonically increasing block order; out-of-order delivery can cause
-// cursor regression and data loss. BlockFlushTimeout is a guard against sparse
-// event streams. Events arriving after the timeout fires may be permanently
-// lost if a crash occurs before they are processed. Operators must configure
-// timeout >> expected maximum event arrival lag to minimize this risk.
+// started successfully for the same queued item.
+//
+// Monotonic Cursor Guarantee: The runner enforces strictly forward cursor
+// progression (block numbers must increase, never decrease). Blocks older than
+// the current cursor are rejected and logged as warnings, preventing cursor
+// regression from very old late-arriving events (e.g., after Tezos subscriber
+// seal pruning). Same-height blocks (blockNumber == cursor) are allowed to
+// accommodate legitimate late arrivals after timeout flushes. This maintains
+// both liveness and data integrity.
+//
+// StartBlock Interaction: Config.StartBlock is an override that determines the
+// subscription starting point regardless of any persisted cursor. If StartBlock
+// is set to a value older than the persisted cursor, the monotonic guard will
+// prevent cursor regression by dropping those old blocks with warnings. For
+// intentional rewinds/backfills, operators must manually reset the persisted
+// cursor to a value <= StartBlock before starting the runner.
+//
+// BlockFlushTimeout: Guard against sparse event streams. Events arriving after
+// the timeout fires may be permanently lost if a crash occurs before processing.
+// Operators must configure timeout >> expected maximum event arrival lag to
+// minimize this risk.
 func NewRunner(
 	parentCtx context.Context,
 	source blockchain.EventSource,
@@ -197,6 +212,13 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 
 	var current *blockBuffer
 	var flushTimerC <-chan time.Time
+	var err error
+	
+	// Track last flushed cursor for monotonic guard
+	// Initialize lazily on first flush to avoid constructor-time DB read
+	chainID := string(r.config.ChainID)
+	var lastCursor uint64
+	cursorInitialized := false
 
 	for {
 		select {
@@ -212,7 +234,21 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 			// This handles sparse event streams but risks losing late-arriving events
 			// from the same block if a crash occurs before they are processed.
 			if current != nil {
-				if err := r.flushBlock(ctx, current); err != nil {
+				// Lazy-initialize cursor on first flush
+				if !cursorInitialized {
+					lastCursor, err = r.store.GetBlockCursor(ctx, chainID)
+					if err != nil {
+						logger.ErrorCtx(ctx, errors.New("failed to get initial cursor"),
+							zap.String("chain", chainID), zap.Error(err))
+						r.flushErr = fmt.Errorf("failed to get initial cursor: %w", err)
+						close(r.flushFailed)
+						return
+					}
+					cursorInitialized = true
+				}
+				
+				newCursor, err := r.flushBlock(ctx, current, lastCursor)
+				if err != nil {
 					logger.ErrorCtx(ctx, errors.New("blockchain block flush failed"),
 						zap.String("chain", string(r.config.ChainID)),
 						zap.Uint64("block", current.blockNumber),
@@ -221,6 +257,7 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 					close(r.flushFailed)
 					return
 				}
+				lastCursor = newCursor
 				current = nil
 				flushTimerC = nil
 			}
@@ -228,7 +265,21 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 		case event := <-r.queue:
 			// New block? Flush previous block first
 			if current != nil && event.BlockNumber != current.blockNumber {
-				if err := r.flushBlock(ctx, current); err != nil {
+				// Lazy-initialize cursor on first flush
+				if !cursorInitialized {
+					lastCursor, err = r.store.GetBlockCursor(ctx, chainID)
+					if err != nil {
+						logger.ErrorCtx(ctx, errors.New("failed to get initial cursor"),
+							zap.String("chain", chainID), zap.Error(err))
+						r.flushErr = fmt.Errorf("failed to get initial cursor: %w", err)
+						close(r.flushFailed)
+						return
+					}
+					cursorInitialized = true
+				}
+				
+				newCursor, err := r.flushBlock(ctx, current, lastCursor)
+				if err != nil {
 					// Cursor didn't advance, so the block will replay on restart.
 					// Surface the error to Run via flushFailed and exit the loop.
 					// All errors from flushBlock are fatal (filter reads, cursor
@@ -242,6 +293,7 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 					close(r.flushFailed)
 					return
 				}
+				lastCursor = newCursor
 				current = nil
 				flushTimerC = nil
 			}
@@ -275,16 +327,45 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 // cursor persistence) is fatal and returns immediately so Run can shut down
 // and the block can replay unchanged on restart (job unique keys keep replays
 // safe).
-func (r *runner) flushBlock(ctx context.Context, block *blockBuffer) error {
+//
+// Monotonic cursor guard: Rejects cursor regression to prevent data loss from
+// very old late-arriving events (e.g., after Tezos subscriber seal pruning).
+// Blocks with blockNumber < currentCursor are logged and skipped. Same-height
+// blocks (blockNumber == currentCursor) are processed to accommodate legitimate
+// late arrivals after timeout flushes. The runner continues processing to
+// maintain liveness in both cases.
+//
+// Returns the new cursor value after successful flush (or unchanged cursor if skipped).
+func (r *runner) flushBlock(ctx context.Context, block *blockBuffer, currentCursor uint64) (uint64, error) {
+	chainID := string(r.config.ChainID)
+	
+	// Enforce monotonic cursor progression: reject backward movement only
+	// Allow same-height (==) blocks to accommodate late arrivals after timeout flush
+	if block.blockNumber < currentCursor {
+		// Old late arrival - log and skip to prevent cursor regression
+		logger.WarnCtx(ctx, "Dropping block older than cursor (backward late arrival)",
+			zap.String("chain", chainID),
+			zap.Uint64("block", block.blockNumber),
+			zap.Uint64("current_cursor", currentCursor),
+			zap.Int("events", len(block.events)),
+			zap.String("reason", "monotonic cursor guard"))
+		
+		// Don't return error - this is expected for old late arrivals
+		// Job deduplication would prevent duplicate work anyway
+		// Return unchanged cursor
+		return currentCursor, nil
+	}
+	
+	// Process events for this block
 	for _, event := range block.events {
 		if err := r.resolveEvent(ctx, event); err != nil {
-			return err
+			return currentCursor, err
 		}
 	}
 
-	chainID := string(r.config.ChainID)
+	// Advance cursor (guaranteed to move forward due to check above)
 	if err := r.store.SetBlockCursor(ctx, chainID, block.blockNumber); err != nil {
-		return fmt.Errorf("failed to persist block cursor: %w", err)
+		return currentCursor, fmt.Errorf("failed to persist block cursor: %w", err)
 	}
 
 	logger.InfoCtx(ctx, "Flushed blockchain block",
@@ -292,7 +373,7 @@ func (r *runner) flushBlock(ctx context.Context, block *blockBuffer) error {
 		zap.Uint64("block", block.blockNumber),
 		zap.Int("events", len(block.events)))
 
-	return nil
+	return block.blockNumber, nil
 }
 
 func (r *runner) resolveEvent(ctx context.Context, event *domain.BlockchainEvent) error {

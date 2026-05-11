@@ -39,6 +39,9 @@ func TestRunner_SingleBlockCursorForMultipleEventsInSameBlock(t *testing.T) {
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 	e1 := transferEvent()
 	e1.TxHash = "0xtx1"
 	e1.BlockNumber = 100
@@ -113,6 +116,9 @@ func TestRunner_UsesConfiguredStartBlockAndFlushesEvent(t *testing.T) {
 	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
+
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
 
 	e1 := transferEvent()
 	e1.BlockNumber = 100
@@ -377,6 +383,9 @@ func TestRunner_FailsWhenSetBlockCursorFails(t *testing.T) {
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 	e1 := transferEvent()
 	e1.BlockNumber = 100
 	e2 := transferEvent()
@@ -435,6 +444,9 @@ func TestRunner_FailsWhenEnqueueFails(t *testing.T) {
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 	e1 := transferEvent()
 	e1.BlockNumber = 100
 	e2 := transferEvent()
@@ -490,6 +502,9 @@ func TestRunner_FailsWhenTokenLookupFails(t *testing.T) {
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 	e1 := transferEvent()
 	e1.BlockNumber = 100
 	e2 := transferEvent()
@@ -542,6 +557,9 @@ func TestRunner_FailsWhenWatchListCheckFails(t *testing.T) {
 	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
+
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
 
 	e1 := transferEvent()
 	e1.BlockNumber = 100
@@ -597,6 +615,9 @@ func TestRunner_DropsBlacklistedTokenEvents(t *testing.T) {
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 	e1 := transferEvent()
 	e1.BlockNumber = 100
 	e2 := transferEvent()
@@ -650,6 +671,9 @@ func TestRunner_ProcessesKnownTokenWithoutAddressCheck(t *testing.T) {
 	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
+
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
 
 	e1 := transferEvent()
 	e1.BlockNumber = 100
@@ -708,6 +732,9 @@ func TestRunner_DropsEventsForUnwatchedAddresses(t *testing.T) {
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 	e1 := transferEvent()
 	e1.BlockNumber = 100
 	e2 := transferEvent()
@@ -765,6 +792,9 @@ func TestRunner_DropsEventsWithNoAddresses(t *testing.T) {
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 	e1 := transferEvent()
 	e1.BlockNumber = 100
 	e1.FromAddress = nil
@@ -821,6 +851,9 @@ func TestRunner_IgnoresMetadataUpdateRangeEvents(t *testing.T) {
 	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
+
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
 
 	e1 := transferEvent()
 	e1.EventType = domain.EventTypeMetadataUpdateRange
@@ -892,6 +925,9 @@ func TestRunner_EnqueuesJobsWithCorrectKind(t *testing.T) {
 			blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 			clock := adapter.NewClock()
 
+			// Expect lazy cursor initialization on first flush
+			store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 			e1 := transferEvent()
 			e1.EventType = tc.eventType
 			e1.BlockNumber = 100
@@ -960,6 +996,9 @@ func TestRunner_ProcessesMultipleSequentialBlocks(t *testing.T) {
 	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
+
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
 
 	events := make([]*domain.BlockchainEvent, 0, 4)
 	for i, blockNum := range []uint64{100, 101, 102, 103} {
@@ -1058,6 +1097,9 @@ func TestRunner_FlushesBlockAfterTimeout(t *testing.T) {
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
 
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
+
 	e1 := transferEvent()
 	e1.BlockNumber = 100
 
@@ -1111,6 +1153,9 @@ func TestRunner_ResetsTimeoutOnNewEventInSameBlock(t *testing.T) {
 	jq := mocks.NewMockJobQueue(ctrl)
 	blacklist := mocks.NewMockBlacklistRegistry(ctrl)
 	clock := adapter.NewClock()
+
+	// Expect lazy cursor initialization on first flush
+	store.EXPECT().GetBlockCursor(gomock.Any(), gomock.Any()).Return(uint64(0), nil).AnyTimes()
 
 	e1 := transferEvent()
 	e1.TxHash = "0xtx1"
