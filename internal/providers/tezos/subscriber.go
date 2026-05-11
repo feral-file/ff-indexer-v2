@@ -40,6 +40,25 @@ const (
 	defaultLevelTimeout      = 60 * time.Second // Timeout for latest level completion
 )
 
+// streamProcessorState holds Tezos level-buffer coordination state for processStream.
+type streamProcessorState struct {
+	buffers              map[uint64]*levelBuffer
+	emittedLevels        map[uint64]bool
+	highestTransferLevel uint64
+	highestBigmapLevel   uint64
+	maxBufferedLevels    int
+	levelTimeout         time.Duration
+}
+
+func newStreamProcessorState() *streamProcessorState {
+	return &streamProcessorState{
+		buffers:           make(map[uint64]*levelBuffer),
+		emittedLevels:     make(map[uint64]bool),
+		maxBufferedLevels: defaultMaxBufferedLevels,
+		levelTimeout:      defaultLevelTimeout,
+	}
+}
+
 // Config holds the configuration for Tezos/TzKT subscription
 type Config struct {
 	WebSocketURL string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
@@ -335,12 +354,13 @@ func (c *tzSubscriber) enqueueStream(msg streamMessage) {
 // - Very old late arrivals (>40 levels old) may be re-emitted, but runner job dedup prevents duplicate work
 //
 // Constraints:
-// - Buffer size limited to maxBufferedLevels (default: 20 levels, ~5 min tolerance)
-// - Level timeout ensures progress even if one feed is stuck (default: 60s)
-// - Emits levels in strictly ascending order (force-flush uses lowest level, not oldest time)
-// - Emitted levels sealed within sliding window; old seals pruned for memory safety
-// - Very old late arrivals (>40 levels / ~10 min old) may create duplicate jobs if original terminal
-// - Event processing must be idempotent to handle rare duplicate-after-terminal-job case
+//   - Buffer size limited to maxBufferedLevels (default: 20 levels, ~5 min tolerance)
+//   - Level timeout (default: 60s) arms a single clock.After per blocking incomplete level,
+//     same idea as the ingestion runner's BlockFlushTimeout flushTimerC — no polling while idle
+//   - Emits levels in strictly ascending order (force-flush uses lowest level, not oldest time)
+//   - Emitted levels sealed within sliding window; old seals pruned for memory safety
+//   - Very old late arrivals (>40 levels / ~10 min old) may create duplicate jobs if original terminal
+//   - Event processing must be idempotent to handle rare duplicate-after-terminal-job case
 //
 // Safety guarantees (subscriber-level):
 // - Single-emission within sliding window (40 levels)
@@ -365,132 +385,159 @@ func (c *tzSubscriber) enqueueStream(msg streamMessage) {
 // - TzKT SignalR feeds are monotonic by level (each feed emits events in non-decreasing level order)
 // - This allows us to use "highest level seen" as a reliable completion signal
 func (c *tzSubscriber) processStream(ctx context.Context) {
-	buffers := make(map[uint64]*levelBuffer)
-	emittedLevels := make(map[uint64]bool) // Track emitted levels to prevent re-emission
-	maxBufferedLevels := defaultMaxBufferedLevels
-	levelTimeout := defaultLevelTimeout
-
-	// Track highest level seen from each feed
-	var highestTransferLevel uint64
-	var highestBigmapLevel uint64
+	s := newStreamProcessorState()
+	var levelTimeoutC <-chan time.Time
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-levelTimeoutC:
+			// Timeout fired - emit oldest incomplete level, like runner does on line 235
+			if err := c.drainBufferedLevels(ctx, s, true); err != nil {
+				c.reportError(err)
+				return
+			}
+			levelTimeoutC = c.nextIncompleteLevelTimeoutChan(s)
 		case msg := <-c.streamCh:
-			// Buffer transfers by level (skip already-emitted levels)
-			for i := range msg.transfers {
-				t := &msg.transfers[i]
-				level := t.Level
-
-				// Skip events for already-emitted levels (late arrivals after timeout)
-				if emittedLevels[level] {
-					logger.WarnCtx(ctx, "Dropping late transfer for already-emitted level",
-						zap.Uint64("level", level))
-					continue
-				}
-
-				if buffers[level] == nil {
-					buffers[level] = &levelBuffer{
-						level:     level,
-						firstSeen: c.clock.Now(),
-					}
-				}
-				buffers[level].transfers = append(buffers[level].transfers, *t)
-
-				// Track highest level seen from transfers feed
-				if level > highestTransferLevel {
-					highestTransferLevel = level
-				}
+			c.mergeStreamMessage(ctx, msg, s)
+			if err := c.drainBufferedLevels(ctx, s, false); err != nil {
+				c.reportError(err)
+				return
 			}
-
-			// Buffer bigmaps by level (skip already-emitted levels)
-			for i := range msg.updates {
-				u := &msg.updates[i]
-				level := u.Level
-
-				// Skip events for already-emitted levels (late arrivals after timeout)
-				if emittedLevels[level] {
-					logger.WarnCtx(ctx, "Dropping late bigmap for already-emitted level",
-						zap.Uint64("level", level))
-					continue
-				}
-
-				if buffers[level] == nil {
-					buffers[level] = &levelBuffer{
-						level:     level,
-						firstSeen: c.clock.Now(),
-					}
-				}
-				buffers[level].bigmaps = append(buffers[level].bigmaps, *u)
-
-				// Track highest level seen from bigmaps feed
-				if level > highestBigmapLevel {
-					highestBigmapLevel = level
-				}
-			}
-
-			// Get sorted levels for processing
-			sortedLevels := getSortedLevels(buffers)
-
-			// Process completed levels in ascending order
-			// Stop at first incomplete level to maintain strict ascending emission
-			for _, level := range sortedLevels {
-				buf := buffers[level]
-
-				// Check if level is complete
-				isComplete := isLevelComplete(buf.level, highestTransferLevel, highestBigmapLevel)
-
-				if isComplete {
-					// Emit completed level
-					if err := c.emitLevel(ctx, buf); err != nil {
-						c.reportError(err)
-						return
-					}
-					delete(buffers, level)
-					emittedLevels[level] = true // Mark as emitted to prevent re-emission
-				} else {
-					// Found incomplete level - check if it's timed out
-					isTimedOut := hasLevelTimedOut(buf.firstSeen, levelTimeout, c.clock.Now())
-
-					if isTimedOut {
-						// Timeout on incomplete level - emit it and continue
-						logger.WarnCtx(ctx, "Emitting incomplete level due to timeout",
-							zap.Uint64("level", level),
-							zap.Int("transfers", len(buf.transfers)),
-							zap.Int("bigmaps", len(buf.bigmaps)),
-							zap.Duration("age", c.clock.Now().Sub(buf.firstSeen)))
-
-						if err := c.emitLevel(ctx, buf); err != nil {
-							c.reportError(err)
-							return
-						}
-						delete(buffers, level)
-						emittedLevels[level] = true
-					} else {
-						// Incomplete and not timed out - stop here to maintain ascending order
-						// Higher levels remain buffered until this level completes or times out
-						break
-					}
-				}
-			}
-
-			// Safety: Force-flush oldest level if buffer size exceeded
-			if len(buffers) > maxBufferedLevels {
-				if err := c.forceFlushOldestLevel(ctx, buffers, emittedLevels); err != nil {
-					c.reportError(err)
-					return
-				}
-			}
-
-			// Prune emittedLevels map to prevent unbounded growth
-			// Keep only recent levels within a sliding window
-			if len(emittedLevels) > maxBufferedLevels*2 {
-				c.pruneEmittedLevels(emittedLevels, highestTransferLevel, highestBigmapLevel, maxBufferedLevels)
-			}
+			levelTimeoutC = c.nextIncompleteLevelTimeoutChan(s)
 		}
 	}
+}
+
+// nextIncompleteLevelTimeoutChan returns a channel that fires when the earliest incomplete
+// level reaches its age-based timeout deadline (firstSeen + levelTimeout).
+// Returns nil when there are no incomplete levels or timeout is disabled.
+//
+// Unlike runner's inactivity timeout (which resets on new events), this computes
+// a per-level age deadline that does NOT reset when later levels arrive.
+func (c *tzSubscriber) nextIncompleteLevelTimeoutChan(s *streamProcessorState) <-chan time.Time {
+	sorted := sortedLevels(s.buffers)
+	delay, ok := nextIncompleteTimeout(sorted, s.buffers, s.highestTransferLevel, s.highestBigmapLevel, s.levelTimeout, c.clock.Now())
+	if !ok {
+		return nil
+	}
+	return c.clock.After(delay)
+}
+
+// mergeStreamMessage merges one SignalR batch into the level buffer state.
+func (c *tzSubscriber) mergeStreamMessage(ctx context.Context, msg streamMessage, s *streamProcessorState) {
+	for i := range msg.transfers {
+		t := &msg.transfers[i]
+		level := t.Level
+
+		if s.emittedLevels[level] {
+			logger.WarnCtx(ctx, "Dropping late transfer for already-emitted level",
+				zap.Uint64("level", level))
+			continue
+		}
+
+		if s.buffers[level] == nil {
+			s.buffers[level] = &levelBuffer{
+				level:     level,
+				firstSeen: c.clock.Now(),
+			}
+		}
+		s.buffers[level].transfers = append(s.buffers[level].transfers, *t)
+
+		if level > s.highestTransferLevel {
+			s.highestTransferLevel = level
+		}
+	}
+
+	for i := range msg.updates {
+		u := &msg.updates[i]
+		level := u.Level
+
+		if s.emittedLevels[level] {
+			logger.WarnCtx(ctx, "Dropping late bigmap for already-emitted level",
+				zap.Uint64("level", level))
+			continue
+		}
+
+		if s.buffers[level] == nil {
+			s.buffers[level] = &levelBuffer{
+				level:     level,
+				firstSeen: c.clock.Now(),
+			}
+		}
+		s.buffers[level].bigmaps = append(s.buffers[level].bigmaps, *u)
+
+		if level > s.highestBigmapLevel {
+			s.highestBigmapLevel = level
+		}
+	}
+}
+
+// drainBufferedLevels emits ready levels in order, then applies overflow/prune rules.
+// When fromTimeout is true (timeout fired), emits the oldest incomplete level first.
+func (c *tzSubscriber) drainBufferedLevels(ctx context.Context, s *streamProcessorState, fromTimeout bool) error {
+	sorted := sortedLevels(s.buffers)
+
+	// Timeout: emit oldest incomplete level
+	if fromTimeout && len(sorted) > 0 {
+		for _, level := range sorted {
+			buf := s.buffers[level]
+			if buf == nil {
+				continue
+			}
+			if !isLevelComplete(level, s.highestTransferLevel, s.highestBigmapLevel) {
+				// Check if this incomplete level has timed out based on its firstSeen
+				now := c.clock.Now()
+				if s.levelTimeout > 0 && now.Sub(buf.firstSeen) > s.levelTimeout {
+					logger.WarnCtx(ctx, "Emitting incomplete level due to timeout",
+						zap.Uint64("level", level),
+						zap.Int("transfers", len(buf.transfers)),
+						zap.Int("bigmaps", len(buf.bigmaps)),
+						zap.Duration("age", now.Sub(buf.firstSeen)))
+					if err := c.emitLevel(ctx, buf); err != nil {
+						return err
+					}
+					delete(s.buffers, level)
+					s.emittedLevels[level] = true
+				}
+				// First incomplete level (timed out or not) blocks further checking
+				break
+			}
+		}
+		sorted = sortedLevels(s.buffers) // Refresh after emit
+	}
+
+	// Always drain complete levels in order
+	for _, level := range sorted {
+		buf := s.buffers[level]
+		if buf == nil {
+			continue
+		}
+		if !isLevelComplete(level, s.highestTransferLevel, s.highestBigmapLevel) {
+			// First incomplete level blocks further emission
+			break
+		}
+		if err := c.emitLevel(ctx, buf); err != nil {
+			return err
+		}
+		delete(s.buffers, level)
+		s.emittedLevels[level] = true
+	}
+
+	// Handle overflow
+	if len(s.buffers) > s.maxBufferedLevels {
+		if err := c.forceFlushOldestLevel(ctx, s.buffers, s.emittedLevels); err != nil {
+			return err
+		}
+	}
+
+	// Prune old emitted tracking
+	if len(s.emittedLevels) > s.maxBufferedLevels*2 {
+		c.pruneEmittedLevels(s.emittedLevels, s.highestTransferLevel, s.highestBigmapLevel, s.maxBufferedLevels)
+	}
+
+	return nil
 }
 
 func (c *tzSubscriber) handleTransfers(ctx context.Context, transfers []TzKTTokenTransfer) error {

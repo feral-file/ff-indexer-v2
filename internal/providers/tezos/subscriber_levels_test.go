@@ -7,36 +7,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGetSortedLevels verifies that levels are returned in ascending order.
-func TestGetSortedLevels(t *testing.T) {
+func TestSortedLevels(t *testing.T) {
 	tests := []struct {
 		name     string
 		buffers  map[uint64]*levelBuffer
 		expected []uint64
 	}{
 		{
-			name:     "empty buffers",
+			name:     "empty",
 			buffers:  map[uint64]*levelBuffer{},
 			expected: []uint64{},
 		},
 		{
-			name: "single level",
-			buffers: map[uint64]*levelBuffer{
-				100: {level: 100},
-			},
+			name:     "single",
+			buffers:  map[uint64]*levelBuffer{100: {level: 100}},
 			expected: []uint64{100},
 		},
 		{
-			name: "multiple levels in order",
-			buffers: map[uint64]*levelBuffer{
-				100: {level: 100},
-				101: {level: 101},
-				102: {level: 102},
-			},
-			expected: []uint64{100, 101, 102},
-		},
-		{
-			name: "multiple levels out of order",
+			name: "ascending order",
 			buffers: map[uint64]*levelBuffer{
 				102: {level: 102},
 				100: {level: 100},
@@ -45,7 +33,7 @@ func TestGetSortedLevels(t *testing.T) {
 			expected: []uint64{100, 101, 102},
 		},
 		{
-			name: "non-sequential levels",
+			name: "non-sequential",
 			buffers: map[uint64]*levelBuffer{
 				105: {level: 105},
 				100: {level: 100},
@@ -58,13 +46,11 @@ func TestGetSortedLevels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getSortedLevels(tt.buffers)
-			require.Equal(t, tt.expected, result)
+			require.Equal(t, tt.expected, sortedLevels(tt.buffers))
 		})
 	}
 }
 
-// TestIsLevelComplete verifies the level completion logic.
 func TestIsLevelComplete(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -74,112 +60,109 @@ func TestIsLevelComplete(t *testing.T) {
 		expected             bool
 	}{
 		{
-			name:                 "level is complete when both feeds moved past",
+			name:                 "complete: both feeds moved past",
 			level:                100,
 			highestTransferLevel: 101,
 			highestBigmapLevel:   101,
 			expected:             true,
 		},
 		{
-			name:                 "level not complete when transfers not moved past",
+			name:                 "incomplete: transfers at level",
 			level:                100,
 			highestTransferLevel: 100,
 			highestBigmapLevel:   101,
 			expected:             false,
 		},
 		{
-			name:                 "level not complete when bigmaps not moved past",
+			name:                 "incomplete: bigmaps at level",
 			level:                100,
 			highestTransferLevel: 101,
 			highestBigmapLevel:   100,
 			expected:             false,
 		},
 		{
-			name:                 "level not complete when neither feed moved past",
+			name:                 "incomplete: both at level",
 			level:                100,
 			highestTransferLevel: 100,
 			highestBigmapLevel:   100,
-			expected:             false,
-		},
-		{
-			name:                 "level is complete when both feeds far ahead",
-			level:                100,
-			highestTransferLevel: 110,
-			highestBigmapLevel:   105,
-			expected:             true,
-		},
-		{
-			name:                 "level at current highest is not complete",
-			level:                105,
-			highestTransferLevel: 105,
-			highestBigmapLevel:   105,
 			expected:             false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isLevelComplete(tt.level, tt.highestTransferLevel, tt.highestBigmapLevel)
-			require.Equal(t, tt.expected, result)
+			require.Equal(t, tt.expected, isLevelComplete(tt.level, tt.highestTransferLevel, tt.highestBigmapLevel))
 		})
 	}
 }
 
-// TestHasLevelTimedOut verifies the timeout logic.
-func TestHasLevelTimedOut(t *testing.T) {
+func TestNextIncompleteTimeout(t *testing.T) {
 	now := time.Now()
 	timeout := 60 * time.Second
 
-	tests := []struct {
-		name      string
-		firstSeen time.Time
-		timeout   time.Duration
-		now       time.Time
-		expected  bool
-	}{
-		{
-			name:      "not timed out when within timeout",
-			firstSeen: now.Add(-30 * time.Second),
-			timeout:   timeout,
-			now:       now,
-			expected:  false,
-		},
-		{
-			name:      "timed out when exceeded timeout",
-			firstSeen: now.Add(-70 * time.Second),
-			timeout:   timeout,
-			now:       now,
-			expected:  true,
-		},
-		{
-			name:      "not timed out when at exact timeout boundary",
-			firstSeen: now.Add(-60 * time.Second),
-			timeout:   timeout,
-			now:       now,
-			expected:  false,
-		},
-		{
-			name:      "timed out when just over timeout",
-			firstSeen: now.Add(-61 * time.Second),
-			timeout:   timeout,
-			now:       now,
-			expected:  true,
-		},
-		{
-			name:      "not timed out for very recent events",
-			firstSeen: now.Add(-1 * time.Second),
-			timeout:   timeout,
-			now:       now,
-			expected:  false,
-		},
-	}
+	t.Run("no buffers", func(t *testing.T) {
+		_, ok := nextIncompleteTimeout([]uint64{}, map[uint64]*levelBuffer{}, 100, 100, timeout, now)
+		require.False(t, ok)
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := hasLevelTimedOut(tt.firstSeen, tt.timeout, tt.now)
-			require.Equal(t, tt.expected, result)
-		})
-	}
+	t.Run("timeout disabled", func(t *testing.T) {
+		sorted := []uint64{100}
+		buffers := map[uint64]*levelBuffer{100: {level: 100, firstSeen: now}}
+		_, ok := nextIncompleteTimeout(sorted, buffers, 100, 100, 0, now)
+		require.False(t, ok)
+	})
+
+	t.Run("all complete", func(t *testing.T) {
+		sorted := []uint64{100}
+		buffers := map[uint64]*levelBuffer{100: {level: 100, firstSeen: now}}
+		_, ok := nextIncompleteTimeout(sorted, buffers, 101, 101, timeout, now)
+		require.False(t, ok)
+	})
+
+	t.Run("incomplete with remaining time", func(t *testing.T) {
+		sorted := []uint64{100}
+		buffers := map[uint64]*levelBuffer{
+			100: {level: 100, firstSeen: now.Add(-30 * time.Second)},
+		}
+		delay, ok := nextIncompleteTimeout(sorted, buffers, 100, 100, timeout, now)
+		require.True(t, ok)
+		require.Equal(t, 30*time.Second, delay)
+	})
+
+	t.Run("incomplete past deadline", func(t *testing.T) {
+		sorted := []uint64{100}
+		buffers := map[uint64]*levelBuffer{
+			100: {level: 100, firstSeen: now.Add(-70 * time.Second)},
+		}
+		delay, ok := nextIncompleteTimeout(sorted, buffers, 100, 100, timeout, now)
+		require.True(t, ok)
+		require.Equal(t, time.Duration(0), delay)
+	})
+
+	t.Run("skips complete to find incomplete", func(t *testing.T) {
+		sorted := []uint64{100, 101, 102}
+		buffers := map[uint64]*levelBuffer{
+			100: {level: 100, firstSeen: now.Add(-80 * time.Second)},
+			101: {level: 101, firstSeen: now.Add(-70 * time.Second)},
+			102: {level: 102, firstSeen: now.Add(-20 * time.Second)},
+		}
+		// 100 and 101 are complete (feeds at 102), 102 is incomplete
+		delay, ok := nextIncompleteTimeout(sorted, buffers, 102, 102, timeout, now)
+		require.True(t, ok)
+		require.Equal(t, 40*time.Second, delay)
+	})
+
+	t.Run("uses earliest incomplete level's firstSeen", func(t *testing.T) {
+		sorted := []uint64{100, 101}
+		buffers := map[uint64]*levelBuffer{
+			100: {level: 100, firstSeen: now.Add(-50 * time.Second)},
+			101: {level: 101, firstSeen: now.Add(-20 * time.Second)},
+		}
+		// Both incomplete, should use level 100's deadline (earliest)
+		delay, ok := nextIncompleteTimeout(sorted, buffers, 100, 100, timeout, now)
+		require.True(t, ok)
+		require.Equal(t, 10*time.Second, delay)
+	})
 }
 
 // TestLevelBuffer_Structure verifies the levelBuffer structure.

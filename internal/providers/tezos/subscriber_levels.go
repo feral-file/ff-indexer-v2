@@ -1,18 +1,14 @@
 package tezos
 
-import (
-	"time"
-)
+import "time"
 
-// getSortedLevels returns sorted level numbers from the buffer map.
-// Levels are sorted in ascending order to ensure deterministic processing.
-func getSortedLevels(buffers map[uint64]*levelBuffer) []uint64 {
+// sortedLevels returns level numbers from the buffer map in ascending order.
+func sortedLevels(buffers map[uint64]*levelBuffer) []uint64 {
 	levels := make([]uint64, 0, len(buffers))
 	for level := range buffers {
 		levels = append(levels, level)
 	}
-
-	// Sort in ascending order
+	// Ascending order
 	for i := 0; i < len(levels); i++ {
 		for j := i + 1; j < len(levels); j++ {
 			if levels[i] > levels[j] {
@@ -20,20 +16,46 @@ func getSortedLevels(buffers map[uint64]*levelBuffer) []uint64 {
 			}
 		}
 	}
-
 	return levels
 }
 
-// isLevelComplete checks if a level has received events from both feeds.
-// A level is complete when we've seen a higher level from both feeds,
-// indicating both feeds have moved past this level.
+// isLevelComplete returns true if both feeds have moved past this level.
 func isLevelComplete(level, highestTransferLevel, highestBigmapLevel uint64) bool {
-	// Both feeds have moved past this level
 	return level < highestTransferLevel && level < highestBigmapLevel
 }
 
-// hasLevelTimedOut checks if a level has exceeded the timeout duration.
-// Only applies to the latest buffered level to handle feed lag gracefully.
-func hasLevelTimedOut(firstSeen time.Time, timeout time.Duration, now time.Time) bool {
-	return now.Sub(firstSeen) > timeout
+// nextIncompleteTimeout returns the delay until the earliest incomplete level times out,
+// based on its firstSeen timestamp. Returns (0, false) if no timeout is needed.
+//
+// This is the key difference from runner: runner uses inactivity timeout (resets on new events),
+// while Tezos uses per-level age timeout (level 100's timer starts when first level-100 data arrives,
+// not reset by level 101+ data).
+func nextIncompleteTimeout(
+	sortedLevels []uint64,
+	buffers map[uint64]*levelBuffer,
+	highestTransferLevel, highestBigmapLevel uint64,
+	levelTimeout time.Duration,
+	now time.Time,
+) (time.Duration, bool) {
+	if levelTimeout <= 0 {
+		return 0, false
+	}
+	// Find first incomplete level
+	for _, level := range sortedLevels {
+		buf := buffers[level]
+		if buf == nil {
+			continue
+		}
+		if isLevelComplete(level, highestTransferLevel, highestBigmapLevel) {
+			continue
+		}
+		// Found incomplete - compute delay until its deadline
+		deadline := buf.firstSeen.Add(levelTimeout)
+		delay := deadline.Sub(now)
+		if delay < 0 {
+			delay = 0
+		}
+		return delay, true
+	}
+	return 0, false
 }

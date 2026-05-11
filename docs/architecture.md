@@ -62,7 +62,7 @@ These are intentional trade-offs, not silent bugs. Operators should size **`bloc
 1. **Shutdown without flushing the in-flight block** — On process stop, the runner **does not** flush the current partial block; the durable cursor stays at the last successful block-boundary flush. Events already accepted into RAM for the unfinished height are **not** replayed from TzKT on restart (**live-only** socket; see [TzKT resume gap](#tzkt-websocket-and-resume-gap-crash-recovery)). Ethereum subscriptions may still overlap earlier heights depending on provider semantics, but **do not** rely on that for durability.
 2. **Timeout flush then restart** — After **`block_flush_timeout`**, the runner may flush height **N** and advance the cursor to **N**. On restart, subscription resumes from **N+1**. Any events for **N** that had not been delivered **before** that flush **cannot** be recovered over the live feed (TzKT) and are **skipped permanently** (distinct from same-process late arrival, where same-height buffers can still run while the process stays up).
 3. **Tezos level-buffer overflow** — When the per-level buffer exceeds its cap, the subscriber **force-flushes** the lowest incomplete level and marks it emitted. Later transfers or bigmap rows for that **same level** are **dropped** (logged). Recovery requires REST backfill / reindex if the missed data matters.
-4. **Tezos level timeout is message-driven** — Incomplete level timeout is evaluated only when **new SignalR data** is read. If **both** feeds go completely quiet while a level is incomplete, emission can **stall** until another message arrives or the process stops. This is a **liveness** edge case, not a silent cursor regression.
+4. **Tezos level timeout wake** — While an **incomplete** level blocks emission, the subscriber arms **`clock.After`** until **`firstSeen + level timeout`** for that level (same pattern as the runner’s **`block_flush_timeout`** / `flushTimerC`). When the deadline fires or a new SignalR batch arrives, the buffer is drained again. **No periodic ticker** runs when there is nothing to flush.
 
 ### Subscription start override (`start_block` / `start_level`)
 
@@ -72,7 +72,7 @@ If the configured start is **behind** the persisted cursor, live subscription ma
 
 ### Tezos ingestion specifics
 
-Tezos chain ingestion uses **TzKT HTTP + WebSocket**, normalizes FA2-relevant activity into `domain.BlockchainEvent`, and applies **level-based buffering and cross-feed coordination** in `internal/providers/tezos` so outbound events to the runner stay in **strictly ascending level order** under normal conditions. Remaining edge cases (very late old levels, overflow force-flush, message-driven timeouts, quiet-feed stalls) still rely on the ingestion runner’s monotonic guard above and the **accepted durability gaps** in the previous section.
+Tezos chain ingestion uses **TzKT HTTP + WebSocket**, normalizes FA2-relevant activity into `domain.BlockchainEvent`, and applies **level-based buffering and cross-feed coordination** in `internal/providers/tezos` so outbound events to the runner stay in **strictly ascending level order** under normal conditions. Remaining edge cases (very late old levels, overflow force-flush, deadline-based level timeout) still rely on the ingestion runner’s monotonic guard above and the **accepted durability gaps** in the previous section.
 
 #### TzKT WebSocket and resume gap (crash recovery)
 
