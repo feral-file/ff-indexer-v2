@@ -277,6 +277,7 @@ SELECT * FROM provenance_events ORDER BY timestamp DESC LIMIT 10;
 
 **Chain ingestion not receiving events**:
 - Verify WebSocket connection to blockchain RPC (Ethereum) or TzKT WebSocket (Tezos)
+- **Tezos long downtime**: TzKT WebSocket streams are **live-only** (`fromLevel` / cursor does not rewind the hub). Logs may include **“TzKT SignalR subscribing (live stream only … from_level)”** — compare that level to chain tip; a large gap implies missed FA2/metadata events unless you REST-backfill or reindex (`docs/architecture.md`, Tezos resume gap section).
 - Check block / level cursor in the `key_value_store` table (see [`docs/schema.md`](docs/schema.md#key_value_store))
 - If logs show **“Dropping block older than cursor”**, the runner discarded a buffer below the current checkpoint (often after very late Tezos deliveries or a `start_block`/`start_level` subscription behind the stored cursor). Same-height late buffers are still processed; rewind/backfill needs a deliberate cursor reset — see [`docs/architecture.md`](docs/architecture.md#chain-ingestion).
 - Verify contract addresses are correct

@@ -65,6 +65,22 @@ If the configured start is **behind** the persisted cursor, live subscription ma
 
 Tezos chain ingestion uses **TzKT HTTP + WebSocket**, normalizes FA2-relevant activity into `domain.BlockchainEvent`, and applies **level-based buffering and cross-feed coordination** in `internal/providers/tezos` so outbound events to the runner stay in **strictly ascending level order** under normal conditions. Remaining edge cases (very late old levels) still rely on the ingestion runner’s monotonic guard above.
 
+#### TzKT WebSocket and resume gap (crash recovery)
+
+The ingestion runner passes **`fromLevel`** into `EventSource.SubscribeEvents` (typically **persisted cursor + 1** when `start_level` is zero). **Ethereum** WebSocket providers typically honor a **from block** semantics in their subscription API.
+
+**TzKT SignalR does not:** published hub methods **`SubscribeToTokenTransfers`** and **`SubscribeToBigMaps`** accept only **filter** arguments (e.g. `account`, `contract`, `tokenId` for transfers; `path`, `contract`, `tags`, `ptr` for bigmaps). They do **not** take a **starting level** or historical replay window. After connect, you receive **new** events only. The **“State”** message on each channel reports the hub’s last processed level for that subscription; it does not fill the gap between your **process cursor** and **connect-time head**.
+
+**Operational consequence:** if the indexer stops while Tezos advances, restarting only opens a **live** stream. Levels **already baked into the persisted cursor remain correct** for “no double-apply”; anything **between** `fromLevel` and the levels that existed at reconnect **may never be streamed** unless another path indexes it.
+
+**Mitigations:**
+
+1. **Short outages** — Often acceptable if tip moved little and watch-list breadth is narrow; optionally trigger **manual token/index paths** via API for anything critical.
+2. **Future implementation** — **`TODO(tezos-resume)`:** before subscribing, **page TzKT REST** (e.g. `GET /v1/tokens/transfers`, bigmap/update endpoints with **level bounds** per [TzKT REST docs](https://api.tzkt.io/)), convert through the existing `TzKTClient` parsers, feed the runner’s handler in ascending level order until caught up **with overlap or idempotent jobs**, then attach WebSocket **without resetting the cursor**.
+3. **Contract-scoped ingestion** — If subscriptions are later narrowed per contract/account, REST backfill queries must apply the **same filters** as the SignalR invokes to avoid ingest drift.
+
+Official WebSocket parameter reference: TzKT **“SubscribeToTokenTransfers”** / **“SubscribeToBigMaps”** sections in the bundled API explorer (same content as hosted OpenAPI/HTML docs for `api.tzkt.io`).
+
 **Current routing** (by job `kind` on the token queue):
 
 - `mint` -> `IndexTokenMint`
