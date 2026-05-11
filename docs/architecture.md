@@ -41,6 +41,30 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion 
 
 Durable progress moves only inside the ingestion runner after the queued event has flushed successfully (job enqueued and cursor rules satisfied).
 
+### Durable checkpoint (block cursor)
+
+Progress is stored per chain in PostgreSQL (`key_value_store` cursor keys; see [`docs/schema.md`](schema.md#key_value_store)). After a **block-boundary flush** resolves every queued event in that buffered block (filters, job enqueues where applicable), the runner advances the durable cursor to that Ethereum **block number** or Tezos **level**.
+
+### Monotonic guard and late arrivals
+
+The runner keeps an in-memory cursor floor, loaded from the database **once on the first flush** after `Run`. When flushing a buffered block:
+
+- If its height is **strictly below** that floor, the runner **skips** the block (no job resolution, no cursor regression), logs a warning, and continues. This handles very old **late** arrivals—for example after Tezos level buffering, timeout flushes, or seal pruning—without rewinding the checkpoint.
+- If its height **equals** the floor, the buffer is still processed so legitimate **same-level** late events can run through idempotent job deduplication.
+- If its height is **above** the floor, processing proceeds and the cursor advances after a successful flush.
+
+Upstream subscribers aim for ascending order; the guard is the durability backstop when reality diverges.
+
+### Subscription start override (`start_block` / `start_level`)
+
+Ethereum `start_block` and Tezos `start_level` (wired into the same ingestion starting height) are **not** “only when the DB cursor is empty”. When either value is **non‑zero**, it **unconditionally** selects where `SubscribeEvents` begins, **independent of** the persisted cursor.
+
+If the configured start is **behind** the persisted cursor, live subscription may replay old heights; the **monotonic guard drops** those buffers until the stream is past the checkpoint. To **intentionally rewind or backfill** from an earlier height, operators must align intent by adjusting or clearing the stored cursor in `key_value_store` (and setting the desired start), as documented in [`docs/constraints.md`](constraints.md).
+
+### Tezos ingestion specifics
+
+Tezos chain ingestion uses **TzKT HTTP + WebSocket**, normalizes FA2-relevant activity into `domain.BlockchainEvent`, and applies **level-based buffering and cross-feed coordination** in `internal/providers/tezos` so outbound events to the runner stay in **strictly ascending level order** under normal conditions. Remaining edge cases (very late old levels) still rely on the ingestion runner’s monotonic guard above.
+
 **Current routing** (by job `kind` on the token queue):
 
 - `mint` -> `IndexTokenMint`

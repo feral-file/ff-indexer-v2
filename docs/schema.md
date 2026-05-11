@@ -356,11 +356,13 @@ Configuration and state management (cursors, version, etc.).
 - `idx_key_value_store_updated_at` on (updated_at)
 
 **Common Keys**:
-- `ethereum_mainnet_cursor` - Last processed block for Ethereum mainnet
-- `ethereum_sepolia_cursor` - Last processed block for Ethereum Sepolia
-- `tezos_mainnet_cursor` - Last processed level for Tezos mainnet
-- `tezos_ghostnet_cursor` - Last processed level for Tezos ghostnet
+- `ethereum_mainnet_cursor` - Last **fully flushed** Ethereum mainnet block number at the block boundary (see ingestion runner in [`docs/architecture.md`](architecture.md#chain-ingestion)); combined with `start_block` override and monotonic flush semantics
+- `ethereum_sepolia_cursor` - Last **fully flushed** Ethereum Sepolia block number (same semantics as mainnet)
+- `tezos_mainnet_cursor` - Last **fully flushed** Tezos mainnet **level** at the block boundary (same runner semantics; Tezos subscriber emits ordered levels toward the runner)
+- `tezos_ghostnet_cursor` - Last **fully flushed** Tezos ghostnet level
 - `indexer_version` - Current indexer version
+
+**Ingestion note**: These values are authoritative for “how far ingestion has committed” after jobs are enqueued for that block/level. They do not move backward due to late subscriber delivery; the runner skips buffers strictly below the in-memory floor loaded on first flush (see architecture doc).
 
 ### jobs
 

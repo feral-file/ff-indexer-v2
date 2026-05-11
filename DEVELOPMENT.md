@@ -276,8 +276,9 @@ SELECT * FROM provenance_events ORDER BY timestamp DESC LIMIT 10;
 - Check firewall/network settings
 
 **Chain ingestion not receiving events**:
-- Verify WebSocket connection to blockchain RPC
-- Check block cursor in database
+- Verify WebSocket connection to blockchain RPC (Ethereum) or TzKT WebSocket (Tezos)
+- Check block / level cursor in the `key_value_store` table (see [`docs/schema.md`](docs/schema.md#key_value_store))
+- If logs show **“Dropping block older than cursor”**, the runner discarded a buffer below the current checkpoint (often after very late Tezos deliveries or a `start_block`/`start_level` subscription behind the stored cursor). Same-height late buffers are still processed; rewind/backfill needs a deliberate cursor reset — see [`docs/architecture.md`](docs/architecture.md#chain-ingestion).
 - Verify contract addresses are correct
 - Check for blacklisted contracts
 

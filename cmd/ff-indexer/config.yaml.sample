@@ -59,6 +59,9 @@ ethereum:
   websocket_url: ""
   rpc_url: ""
   chain_id: eip155:1
+  # start_block: If non-zero, subscription starts here regardless of the DB cursor.
+  # Buffers below the persisted checkpoint are skipped (monotonic guard). For an
+  # intentional rewind, lower or clear the chain cursor in key_value_store first.
   start_block: 0
   block_head_ttl: 12
   block_head_stale_window: 60
@@ -72,6 +75,8 @@ tezos:
   api_url: https://api.tzkt.io
   websocket_url: https://api.tzkt.io/v1/ws
   chain_id: tezos:mainnet
+  # start_level: Same semantics as ethereum.start_block (subscription override;
+  # monotonic cursor in the ingestion runner). See docs/architecture.md.
   start_level: 0
   block_head_ttl: 10
   block_head_stale_window: 60
