@@ -213,7 +213,7 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 	var current *blockBuffer
 	var flushTimerC <-chan time.Time
 	var err error
-	
+
 	// Track last flushed cursor for monotonic guard
 	// Initialize lazily on first flush to avoid constructor-time DB read
 	chainID := string(r.config.ChainID)
@@ -246,7 +246,7 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 					}
 					cursorInitialized = true
 				}
-				
+
 				newCursor, err := r.flushBlock(ctx, current, lastCursor)
 				if err != nil {
 					logger.ErrorCtx(ctx, errors.New("blockchain block flush failed"),
@@ -277,7 +277,7 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 					}
 					cursorInitialized = true
 				}
-				
+
 				newCursor, err := r.flushBlock(ctx, current, lastCursor)
 				if err != nil {
 					// Cursor didn't advance, so the block will replay on restart.
@@ -338,7 +338,7 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 // Returns the new cursor value after successful flush (or unchanged cursor if skipped).
 func (r *runner) flushBlock(ctx context.Context, block *blockBuffer, currentCursor uint64) (uint64, error) {
 	chainID := string(r.config.ChainID)
-	
+
 	// Enforce monotonic cursor progression: reject backward movement only
 	// Allow same-height (==) blocks to accommodate late arrivals after timeout flush
 	if block.blockNumber < currentCursor {
@@ -349,13 +349,13 @@ func (r *runner) flushBlock(ctx context.Context, block *blockBuffer, currentCurs
 			zap.Uint64("current_cursor", currentCursor),
 			zap.Int("events", len(block.events)),
 			zap.String("reason", "monotonic cursor guard"))
-		
+
 		// Don't return error - this is expected for old late arrivals
 		// Job deduplication would prevent duplicate work anyway
 		// Return unchanged cursor
 		return currentCursor, nil
 	}
-	
+
 	// Process events for this block
 	for _, event := range block.events {
 		if err := r.resolveEvent(ctx, event); err != nil {

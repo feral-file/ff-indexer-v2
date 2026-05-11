@@ -203,7 +203,7 @@ func TestLevelBuffer_Structure(t *testing.T) {
 func TestPruneEmittedLevels(t *testing.T) {
 	// Create a mock subscriber with clock
 	sub := &tzSubscriber{}
-	
+
 	tests := []struct {
 		name                 string
 		emittedLevels        map[uint64]bool
@@ -338,9 +338,9 @@ func TestPruneEmittedLevels(t *testing.T) {
 			for k, v := range tt.emittedLevels {
 				emittedLevels[k] = v
 			}
-			
+
 			sub.pruneEmittedLevels(emittedLevels, tt.highestTransferLevel, tt.highestBigmapLevel, tt.maxBufferedLevels)
-			
+
 			require.Equal(t, tt.expectedRemaining, emittedLevels)
 		})
 	}
