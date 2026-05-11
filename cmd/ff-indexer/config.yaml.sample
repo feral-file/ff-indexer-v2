@@ -67,8 +67,11 @@ ethereum:
   block_head_stale_window: 60
   # block_flush_timeout: Maximum time to wait before flushing a buffered block,
   # even if no next-block event arrives. Guards against sparse event streams.
-  # WARNING: Events arriving after timeout may be lost on crash. Set >> expected
-  # maximum event arrival lag. Unit: duration (e.g., "30s", "1m"). Zero = disabled.
+  # WARNING: After a timeout flush advances the cursor, events for that same height
+  # that arrive only after restart may never appear on a live feed (especially Tezos).
+  # Shutdown also drops the open in-process block without advancing the cursor — see
+  # docs/architecture.md "Accepted durability gaps". Set >> expected lag.
+  # Unit: duration (e.g., "30s", "1m"). Zero = disabled.
   block_flush_timeout: 36s
 
 tezos:
@@ -83,8 +86,10 @@ tezos:
   block_head_stale_window: 60
   # block_flush_timeout: Maximum time to wait before flushing a buffered block,
   # even if no next-block event arrives. Guards against sparse event streams.
-  # WARNING: Events arriving after timeout may be lost on crash. Set >> expected
-  # maximum event arrival lag. Unit: duration (e.g., "30s", "1m"). Zero = disabled.
+  # WARNING: After a timeout flush advances the cursor, events for that same level
+  # that arrive only after restart are not replayed over TzKT (live-only). Shutdown
+  # drops the open in-process block — see docs/architecture.md "Accepted durability gaps".
+  # Set >> expected lag. Unit: duration (e.g., "30s", "1m"). Zero = disabled.
   block_flush_timeout: 30s
 
 vendors:

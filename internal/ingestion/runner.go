@@ -79,9 +79,11 @@ type runner struct {
 // Trade-offs: The queue is process-local and intentionally not durable; replay
 // comes from the persisted block cursor, which advances at block boundaries
 // when the next block arrives or after BlockFlushTimeout elapses. Partial
-// blocks are not flushed on shutdown to avoid race conditions where
-// late-arriving events from the same block would be lost after cursor
-// advancement.
+// blocks are not flushed on shutdown (see docs/architecture.md "Accepted
+// durability gaps"): the cursor stays at the last flush, while events still
+// buffered in RAM are dropped. Ethereum may still overlap earlier heights via
+// the subscription, but Tezos TzKT is live-only—do not assume those heights
+// replay from the socket after restart.
 //
 // Constraints: A cursor write retry must not restart a workflow that already
 // started successfully for the same queued item.
@@ -102,9 +104,10 @@ type runner struct {
 // cursor to a value <= StartBlock before starting the runner.
 //
 // BlockFlushTimeout: Guard against sparse event streams. Events arriving after
-// the timeout fires may be permanently lost if a crash occurs before processing.
-// Operators must configure timeout >> expected maximum event arrival lag to
-// minimize this risk.
+// the timeout flush (or after restart from the advanced cursor) may be
+// permanently lost—especially on Tezos, where the socket does not replay past
+// levels. Operators must configure timeout >> expected maximum event arrival
+// lag to minimize this risk (see docs/architecture.md "Accepted durability gaps").
 func NewRunner(
 	parentCtx context.Context,
 	source blockchain.EventSource,
@@ -223,10 +226,10 @@ func (r *runner) runFlushLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			// Don't flush partial block - cursor stays at last complete block.
-			// On restart, incomplete block will replay (job unique keys prevent dupes).
-			// This avoids the race where more events from the same block arrive
-			// after we've already flushed and advanced the cursor.
+			// Don't flush partial block — cursor stays at last complete block.
+			// Buffered events for the open height are lost in-process; chain-
+			// dependent whether anything replays after restart (Tezos: often not).
+			// See docs/architecture.md "Accepted durability gaps".
 			return
 
 		case <-flushTimerC:
