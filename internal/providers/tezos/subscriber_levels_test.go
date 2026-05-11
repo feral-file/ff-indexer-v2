@@ -96,6 +96,18 @@ func TestIsLevelComplete(t *testing.T) {
 	}
 }
 
+func TestIncompleteLevelTimedOut(t *testing.T) {
+	now := time.Now()
+	timeout := 60 * time.Second
+
+	require.False(t, incompleteLevelTimedOut(now, timeout, now))
+	require.False(t, incompleteLevelTimedOut(now.Add(-30*time.Second), timeout, now))
+	require.True(t, incompleteLevelTimedOut(now.Add(-61*time.Second), timeout, now))
+
+	boundary := now.Add(-60 * time.Second)
+	require.True(t, incompleteLevelTimedOut(boundary, timeout, now), "inclusive deadline matches nextIncompleteTimeout After(0) wake")
+}
+
 func TestNextIncompleteTimeout(t *testing.T) {
 	now := time.Now()
 	timeout := 60 * time.Second

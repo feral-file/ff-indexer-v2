@@ -24,6 +24,15 @@ func isLevelComplete(level, highestTransferLevel, highestBigmapLevel uint64) boo
 	return level < highestTransferLevel && level < highestBigmapLevel
 }
 
+// incompleteLevelTimedOut returns true when now has reached or passed firstSeen+levelTimeout.
+// Matches nextIncompleteTimeout's deadline (inclusive boundary) so timer wake and emit agree.
+func incompleteLevelTimedOut(firstSeen time.Time, levelTimeout time.Duration, now time.Time) bool {
+	if levelTimeout <= 0 {
+		return false
+	}
+	return !now.Before(firstSeen.Add(levelTimeout))
+}
+
 // nextIncompleteTimeout returns the delay until the earliest incomplete level times out,
 // based on its firstSeen timestamp. Returns (0, false) if no timeout is needed.
 //
