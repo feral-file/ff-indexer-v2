@@ -369,7 +369,7 @@ func (c *tzSubscriber) processStream(ctx context.Context) {
 	emittedLevels := make(map[uint64]bool) // Track emitted levels to prevent re-emission
 	maxBufferedLevels := defaultMaxBufferedLevels
 	levelTimeout := defaultLevelTimeout
-	
+
 	// Track highest level seen from each feed
 	var highestTransferLevel uint64
 	var highestBigmapLevel uint64
@@ -383,14 +383,14 @@ func (c *tzSubscriber) processStream(ctx context.Context) {
 			for i := range msg.transfers {
 				t := &msg.transfers[i]
 				level := t.Level
-				
+
 				// Skip events for already-emitted levels (late arrivals after timeout)
 				if emittedLevels[level] {
 					logger.WarnCtx(ctx, "Dropping late transfer for already-emitted level",
 						zap.Uint64("level", level))
 					continue
 				}
-				
+
 				if buffers[level] == nil {
 					buffers[level] = &levelBuffer{
 						level:     level,
@@ -398,25 +398,25 @@ func (c *tzSubscriber) processStream(ctx context.Context) {
 					}
 				}
 				buffers[level].transfers = append(buffers[level].transfers, *t)
-				
+
 				// Track highest level seen from transfers feed
 				if level > highestTransferLevel {
 					highestTransferLevel = level
 				}
 			}
-			
+
 			// Buffer bigmaps by level (skip already-emitted levels)
 			for i := range msg.updates {
 				u := &msg.updates[i]
 				level := u.Level
-				
+
 				// Skip events for already-emitted levels (late arrivals after timeout)
 				if emittedLevels[level] {
 					logger.WarnCtx(ctx, "Dropping late bigmap for already-emitted level",
 						zap.Uint64("level", level))
 					continue
 				}
-				
+
 				if buffers[level] == nil {
 					buffers[level] = &levelBuffer{
 						level:     level,
@@ -424,7 +424,7 @@ func (c *tzSubscriber) processStream(ctx context.Context) {
 					}
 				}
 				buffers[level].bigmaps = append(buffers[level].bigmaps, *u)
-				
+
 				// Track highest level seen from bigmaps feed
 				if level > highestBigmapLevel {
 					highestBigmapLevel = level
@@ -433,15 +433,15 @@ func (c *tzSubscriber) processStream(ctx context.Context) {
 
 			// Get sorted levels for processing
 			sortedLevels := getSortedLevels(buffers)
-			
+
 			// Process completed levels in ascending order
 			// Stop at first incomplete level to maintain strict ascending emission
 			for _, level := range sortedLevels {
 				buf := buffers[level]
-				
+
 				// Check if level is complete
 				isComplete := isLevelComplete(buf.level, highestTransferLevel, highestBigmapLevel)
-				
+
 				if isComplete {
 					// Emit completed level
 					if err := c.emitLevel(ctx, buf); err != nil {
@@ -453,7 +453,7 @@ func (c *tzSubscriber) processStream(ctx context.Context) {
 				} else {
 					// Found incomplete level - check if it's timed out
 					isTimedOut := hasLevelTimedOut(buf.firstSeen, levelTimeout, c.clock.Now())
-					
+
 					if isTimedOut {
 						// Timeout on incomplete level - emit it and continue
 						logger.WarnCtx(ctx, "Emitting incomplete level due to timeout",
@@ -461,7 +461,7 @@ func (c *tzSubscriber) processStream(ctx context.Context) {
 							zap.Int("transfers", len(buf.transfers)),
 							zap.Int("bigmaps", len(buf.bigmaps)),
 							zap.Duration("age", c.clock.Now().Sub(buf.firstSeen)))
-						
+
 						if err := c.emitLevel(ctx, buf); err != nil {
 							c.reportError(err)
 							return
@@ -483,7 +483,7 @@ func (c *tzSubscriber) processStream(ctx context.Context) {
 					return
 				}
 			}
-			
+
 			// Prune emittedLevels map to prevent unbounded growth
 			// Keep only recent levels within a sliding window
 			if len(emittedLevels) > maxBufferedLevels*2 {
@@ -565,17 +565,17 @@ func (c *tzSubscriber) emitLevel(ctx context.Context, buf *levelBuffer) error {
 	if err := c.handleTransfers(ctx, buf.transfers); err != nil {
 		return err
 	}
-	
+
 	// Then emit bigmaps
 	if err := c.handleBigMapUpdates(ctx, buf.bigmaps); err != nil {
 		return err
 	}
-	
+
 	logger.DebugCtx(ctx, "Level emitted",
 		zap.Uint64("level", buf.level),
 		zap.Int("transfers", len(buf.transfers)),
 		zap.Int("bigmaps", len(buf.bigmaps)))
-	
+
 	return nil
 }
 
@@ -598,9 +598,9 @@ func (c *tzSubscriber) forceFlushOldestLevel(ctx context.Context, buffers map[ui
 			first = false
 		}
 	}
-	
+
 	buf := buffers[lowestLevel]
-	
+
 	// Log error: this indicates one feed is stuck/lagging significantly
 	logger.ErrorCtx(ctx, errors.New("force-flushing incomplete level due to buffer overflow (feed lag detected)"),
 		zap.Uint64("level", lowestLevel),
@@ -608,14 +608,14 @@ func (c *tzSubscriber) forceFlushOldestLevel(ctx context.Context, buffers map[ui
 		zap.Int("bigmaps", len(buf.bigmaps)),
 		zap.Duration("age", c.clock.Now().Sub(buf.firstSeen)),
 		zap.Int("buffer_size", len(buffers)))
-	
+
 	// Emit whatever we have (partial data better than blocking indefinitely)
 	if err := c.emitLevel(ctx, buf); err != nil {
 		return err
 	}
 	delete(buffers, lowestLevel)
 	emittedLevels[lowestLevel] = true // Mark as emitted to prevent re-emission
-	
+
 	return nil
 }
 
@@ -629,10 +629,10 @@ func (c *tzSubscriber) forceFlushOldestLevel(ctx context.Context, buffers map[ui
 // - Sacrifices strict single-emission guarantee at subscriber level for very old late arrivals
 // - Very old late arrivals (>40 levels / ~10 min old) won't be detected as duplicates here
 // - Acceptable because:
-//   * Late arrivals >10 min old indicate severe feed issues (rare in practice)
-//   * Runner-level job queue prevents duplicate ACTIVE jobs (pending/running)
-//   * Event processing is expected to be idempotent (duplicate after terminal job is safe)
-//   * Without pruning, memory grows indefinitely (1 entry per level forever)
+// - Late arrivals >10 min old indicate severe feed issues (rare in practice)
+// - Runner-level job queue prevents duplicate ACTIVE jobs (pending/running)
+// - Event processing is expected to be idempotent (duplicate after terminal job is safe)
+// - Without pruning, memory grows indefinitely (1 entry per level forever)
 //
 // Constraints: Keeps 2x maxBufferedLevels as safety margin (default: 40 levels, ~10 min).
 //
@@ -648,17 +648,21 @@ func (c *tzSubscriber) pruneEmittedLevels(emittedLevels map[uint64]bool, highest
 	if highestBigmapLevel > maxTrackedLevel {
 		maxTrackedLevel = highestBigmapLevel
 	}
-	
-	// Prune threshold: keep levels within 2x buffer size of max tracked level
-	// Guard against uint64 underflow (important during startup or low levels)
-	window := uint64(maxBufferedLevels * 2)
+
+	// Prune threshold: keep levels within 2x buffer size of max tracked level.
+	// Multiply in uint64 to avoid int overflow before conversion (gosec G115).
+	ml := maxBufferedLevels
+	if ml < 0 {
+		ml = 0
+	}
+	window := uint64(ml) * 2 //nolint:gosec // ml clamped ≥0; maxBufferedLevels comes from bounded config (see processStream default).
 	var pruneThreshold uint64
 	if maxTrackedLevel <= window {
 		pruneThreshold = 0 // Keep all levels, nothing to prune yet
 	} else {
 		pruneThreshold = maxTrackedLevel - window
 	}
-	
+
 	// Remove levels below threshold
 	for level := range emittedLevels {
 		if level < pruneThreshold {
