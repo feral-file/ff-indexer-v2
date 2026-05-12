@@ -82,7 +82,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 All of the following run inside the **`ff-indexer`** process (goroutines) by default:
 
-- **Chain ingestion** - Ethereum and Tezos event subscriptions plus ordered in-memory flush queues that enqueue jobs and advance durable cursors
+- **Chain ingestion** - Ethereum and Tezos event subscriptions (TzKT for Tezos), ordered in-memory block buffers, monotonic durable cursors, and job enqueue at flush boundaries
 - **Worker core** — polls the `token_index` job queue
 - **Worker media** — polls the `media_index` job queue (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
 - **API server** — REST and GraphQL

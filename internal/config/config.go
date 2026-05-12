@@ -53,6 +53,7 @@ type EthereumConfig struct {
 	StartBlock           uint64        `mapstructure:"start_block"`
 	BlockHeadTTL         time.Duration `mapstructure:"block_head_ttl"`
 	BlockHeadStaleWindow time.Duration `mapstructure:"block_head_stale_window"`
+	BlockFlushTimeout    time.Duration `mapstructure:"block_flush_timeout"`
 }
 
 // TezosConfig holds Tezos-specific configuration
@@ -63,6 +64,7 @@ type TezosConfig struct {
 	StartLevel           uint64        `mapstructure:"start_level"`
 	BlockHeadTTL         time.Duration `mapstructure:"block_head_ttl"`
 	BlockHeadStaleWindow time.Duration `mapstructure:"block_head_stale_window"`
+	BlockFlushTimeout    time.Duration `mapstructure:"block_flush_timeout"`
 }
 
 // WorkerPoolConfig configures one jobs.Worker poll loop (postgres job queue consumer).
@@ -520,11 +522,12 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("ethereum.chain_id", "eip155:1")
 	v.SetDefault("ethereum.block_head_ttl", 12)
 	v.SetDefault("ethereum.block_head_stale_window", 60)
+	v.SetDefault("ethereum.block_flush_timeout", 36*time.Second)
 	v.SetDefault("tezos.chain_id", "tezos:mainnet")
 	v.SetDefault("tezos.api_url", "https://api.tzkt.io")
 	v.SetDefault("tezos.block_head_ttl", 10)
 	v.SetDefault("tezos.block_head_stale_window", 60)
-
+	v.SetDefault("tezos.block_flush_timeout", 30*time.Second)
 	// Vendors
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 	v.SetDefault("vendors.feralfile_url", "https://feralfile.com/api")
@@ -649,6 +652,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.start_block",
 		"ethereum.block_head_ttl",
 		"ethereum.block_head_stale_window",
+		"ethereum.block_flush_timeout",
 		// Tezos
 		"tezos.api_url",
 		"tezos.websocket_url",
@@ -656,6 +660,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"tezos.start_level",
 		"tezos.block_head_ttl",
 		"tezos.block_head_stale_window",
+		"tezos.block_flush_timeout",
 		// Job queue
 		"jobs.token_queue",
 		"jobs.media_queue",

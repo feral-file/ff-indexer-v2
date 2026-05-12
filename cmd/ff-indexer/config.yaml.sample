@@ -59,17 +59,38 @@ ethereum:
   websocket_url: ""
   rpc_url: ""
   chain_id: eip155:1
+  # start_block: If non-zero, subscription starts here regardless of the DB cursor.
+  # Buffers below the persisted checkpoint are skipped (monotonic guard). For an
+  # intentional rewind, lower or clear the chain cursor in key_value_store first.
   start_block: 0
   block_head_ttl: 12
   block_head_stale_window: 60
+  # block_flush_timeout: Maximum time to wait before flushing a buffered block,
+  # even if no next-block event arrives. Guards against sparse event streams.
+  # WARNING: After a timeout flush advances the cursor, events for that same height
+  # that arrive only after restart may never appear on a live feed (especially Tezos).
+  # Shutdown also drops the open in-process block without advancing the cursor — see
+  # docs/architecture.md "Accepted durability gaps". Set >> expected lag.
+  # Unit: duration (e.g., "30s", "1m"). Zero = disabled.
+  block_flush_timeout: 36s
 
 tezos:
   api_url: https://api.tzkt.io
   websocket_url: https://api.tzkt.io/v1/ws
   chain_id: tezos:mainnet
+  # start_level: Same semantics as ethereum.start_block for subscription intent.
+  # TzKT SignalR does not replay history by level — live stream only unless REST
+  # backfill is added (docs/architecture.md § TzKT WebSocket and resume gap).
   start_level: 0
   block_head_ttl: 10
   block_head_stale_window: 60
+  # block_flush_timeout: Maximum time to wait before flushing a buffered block,
+  # even if no next-block event arrives. Guards against sparse event streams.
+  # WARNING: After a timeout flush advances the cursor, events for that same level
+  # that arrive only after restart are not replayed over TzKT (live-only). Shutdown
+  # drops the open in-process block — see docs/architecture.md "Accepted durability gaps".
+  # Set >> expected lag. Unit: duration (e.g., "30s", "1m"). Zero = disabled.
+  block_flush_timeout: 30s
 
 vendors:
   artblocks_url: https://artblocks-mainnet.hasura.app/v1/graphql

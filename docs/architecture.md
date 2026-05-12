@@ -41,6 +41,55 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion 
 
 Durable progress moves only inside the ingestion runner after the queued event has flushed successfully (job enqueued and cursor rules satisfied).
 
+### Durable checkpoint (block cursor)
+
+Progress is stored per chain in PostgreSQL (`key_value_store` cursor keys; see [`docs/schema.md`](schema.md#key_value_store)). After a **block-boundary flush** resolves every queued event in that buffered block (filters, job enqueues where applicable), the runner advances the durable cursor to that Ethereum **block number** or Tezos **level**.
+
+### Monotonic guard and late arrivals
+
+The runner keeps an in-memory cursor floor, loaded from the database **once on the first flush** after `Run`. When flushing a buffered block:
+
+- If its height is **strictly below** that floor, the runner **skips** the block (no job resolution, no cursor regression), logs a warning, and continues. This handles very old **late** arrivals—for example after Tezos level buffering, timeout flushes, or seal pruning—without rewinding the checkpoint.
+- If its height **equals** the floor, the buffer is still processed so legitimate **same-level** late events can run through idempotent job deduplication.
+- If its height is **above** the floor, processing proceeds and the cursor advances after a successful flush.
+
+Upstream subscribers aim for ascending order; the guard is the durability backstop when reality diverges.
+
+### Accepted durability gaps (rare / edge-triggered)
+
+These are intentional trade-offs, not silent bugs. Operators should size **`block_flush_timeout`** and monitor Tezos feed health when correctness is critical.
+
+1. **Shutdown without flushing the in-flight block** — On process stop, the runner **does not** flush the current partial block; the durable cursor stays at the last successful block-boundary flush. Events already accepted into RAM for the unfinished height are **not** replayed from TzKT on restart (**live-only** socket; see [TzKT resume gap](#tzkt-websocket-and-resume-gap-crash-recovery)). Ethereum subscriptions may still overlap earlier heights depending on provider semantics, but **do not** rely on that for durability.
+2. **Timeout flush then restart** — After **`block_flush_timeout`**, the runner may flush height **N** and advance the cursor to **N**. On restart, subscription resumes from **N+1**. Any events for **N** that had not been delivered **before** that flush **cannot** be recovered over the live feed (TzKT) and are **skipped permanently** (distinct from same-process late arrival, where same-height buffers can still run while the process stays up).
+3. **Tezos level-buffer overflow** — When the per-level buffer exceeds its cap, the subscriber **force-flushes** the lowest incomplete level and marks it emitted. Later transfers or bigmap rows for that **same level** are **dropped** (logged). Recovery requires REST backfill / reindex if the missed data matters.
+4. **Tezos level timeout wake** — While an **incomplete** level blocks emission, the subscriber arms **`clock.After`** until **`firstSeen + level timeout`** for that level (same pattern as the runner’s **`block_flush_timeout`** / `flushTimerC`). When the deadline fires or a new SignalR batch arrives, the buffer is drained again. **No periodic ticker** runs when there is nothing to flush.
+
+### Subscription start override (`start_block` / `start_level`)
+
+Ethereum `start_block` and Tezos `start_level` (wired into the same ingestion starting height) are **not** “only when the DB cursor is empty”. When either value is **non‑zero**, it **unconditionally** selects where `SubscribeEvents` begins, **independent of** the persisted cursor.
+
+If the configured start is **behind** the persisted cursor, live subscription may replay old heights; the **monotonic guard drops** those buffers until the stream is past the checkpoint. To **intentionally rewind or backfill** from an earlier height, operators must align intent by adjusting or clearing the stored cursor in `key_value_store` (and setting the desired start), as documented in [`docs/constraints.md`](constraints.md).
+
+### Tezos ingestion specifics
+
+Tezos chain ingestion uses **TzKT HTTP + WebSocket**, normalizes FA2-relevant activity into `domain.BlockchainEvent`, and applies **level-based buffering and cross-feed coordination** in `internal/providers/tezos` so outbound events to the runner stay in **strictly ascending level order** under normal conditions. Remaining edge cases (very late old levels, overflow force-flush, deadline-based level timeout) still rely on the ingestion runner’s monotonic guard above and the **accepted durability gaps** in the previous section.
+
+#### TzKT WebSocket and resume gap (crash recovery)
+
+The ingestion runner passes **`fromLevel`** into `EventSource.SubscribeEvents` (typically **persisted cursor + 1** when `start_level` is zero). **Ethereum** WebSocket providers typically honor a **from block** semantics in their subscription API.
+
+**TzKT SignalR does not:** published hub methods **`SubscribeToTokenTransfers`** and **`SubscribeToBigMaps`** accept only **filter** arguments (e.g. `account`, `contract`, `tokenId` for transfers; `path`, `contract`, `tags`, `ptr` for bigmaps). They do **not** take a **starting level** or historical replay window. After connect, you receive **new** events only. The **“State”** message on each channel reports the hub’s last processed level for that subscription; it does not fill the gap between your **process cursor** and **connect-time head**.
+
+**Operational consequence:** if the indexer stops while Tezos advances, restarting only opens a **live** stream. Levels **already baked into the persisted cursor remain correct** for “no double-apply”; anything **between** `fromLevel` and the levels that existed at reconnect **may never be streamed** unless another path indexes it.
+
+**Mitigations:**
+
+1. **Short outages** — Often acceptable if tip moved little and watch-list breadth is narrow; optionally trigger **manual token/index paths** via API for anything critical.
+2. **Future implementation** — **`TODO(tezos-resume)`:** before subscribing, **page TzKT REST** (e.g. `GET /v1/tokens/transfers`, bigmap/update endpoints with **level bounds** per [TzKT REST docs](https://api.tzkt.io/)), convert through the existing `TzKTClient` parsers, feed the runner’s handler in ascending level order until caught up **with overlap or idempotent jobs**, then attach WebSocket **without resetting the cursor**.
+3. **Contract-scoped ingestion** — If subscriptions are later narrowed per contract/account, REST backfill queries must apply the **same filters** as the SignalR invokes to avoid ingest drift.
+
+Official WebSocket parameter reference: TzKT **“SubscribeToTokenTransfers”** / **“SubscribeToBigMaps”** sections in the bundled API explorer (same content as hosted OpenAPI/HTML docs for `api.tzkt.io`).
+
 **Current routing** (by job `kind` on the token queue):
 
 - `mint` -> `IndexTokenMint`
