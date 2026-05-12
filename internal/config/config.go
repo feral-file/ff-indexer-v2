@@ -238,14 +238,17 @@ type WorkerMediaConfig struct {
 	Database   DatabaseConfig `mapstructure:"database"`
 	Jobs       JobsConfig     `mapstructure:"jobs"`
 	// Security mirrors AppConfig.security for media-worker outbound HTTP (URI resolution and downloads).
-	Security     SecurityConfig   `mapstructure:"security"`
-	MediaEnabled bool             `mapstructure:"media_enabled"`
-	URI          URIConfig        `mapstructure:"uri"`
-	Cloudflare   CloudflareConfig `mapstructure:"cloudflare"`
-	Rasterizer   RasterizerConfig `mapstructure:"rasterizer"`
-	Transform    TransformConfig  `mapstructure:"transform"`
-	MaxImageSize int64            `mapstructure:"max_image_size"`
-	MaxVideoSize int64            `mapstructure:"max_video_size"`
+	Security     SecurityConfig `mapstructure:"security"`
+	MediaEnabled bool           `mapstructure:"media_enabled"`
+	// VideoProcessingEnabled when true sends video/* URLs to the configured media provider (e.g. Cloudflare Stream).
+	// When false (default), video assets are skipped without upload or DB writes; image and SVG flows are unchanged.
+	VideoProcessingEnabled bool             `mapstructure:"video_processing_enabled"`
+	URI                    URIConfig        `mapstructure:"uri"`
+	Cloudflare             CloudflareConfig `mapstructure:"cloudflare"`
+	Rasterizer             RasterizerConfig `mapstructure:"rasterizer"`
+	Transform              TransformConfig  `mapstructure:"transform"`
+	MaxImageSize           int64            `mapstructure:"max_image_size"`
+	MaxVideoSize           int64            `mapstructure:"max_video_size"`
 }
 
 // MediaHealthSweeperConfig holds configuration for the media health sweeper
@@ -286,21 +289,22 @@ type SSRFAllowlistConfig struct {
 
 // AppConfig is the configuration for the single-process ff-indexer binary.
 type AppConfig struct {
-	BaseConfig         `mapstructure:",squash"`
-	Server             ServerConfig             `mapstructure:"server"`
-	Database           DatabaseConfig           `mapstructure:"database"`
-	Auth               AuthConfig               `mapstructure:"auth"`
-	Jobs               JobsConfig               `mapstructure:"jobs"`
-	MediaEnabled       bool                     `mapstructure:"media_enabled"`
-	Ethereum           EthereumConfig           `mapstructure:"ethereum"`
-	Tezos              TezosConfig              `mapstructure:"tezos"`
-	Vendors            VendorsConfig            `mapstructure:"vendors"`
-	URI                URIConfig                `mapstructure:"uri"`
-	RateLimiter        RateLimiterConfig        `mapstructure:"rate_limiter"`
-	Cloudflare         CloudflareConfig         `mapstructure:"cloudflare"`
-	Rasterizer         RasterizerConfig         `mapstructure:"rasterizer"`
-	Transform          TransformConfig          `mapstructure:"transform"`
-	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
+	BaseConfig             `mapstructure:",squash"`
+	Server                 ServerConfig             `mapstructure:"server"`
+	Database               DatabaseConfig           `mapstructure:"database"`
+	Auth                   AuthConfig               `mapstructure:"auth"`
+	Jobs                   JobsConfig               `mapstructure:"jobs"`
+	MediaEnabled           bool                     `mapstructure:"media_enabled"`
+	VideoProcessingEnabled bool                     `mapstructure:"video_processing_enabled"`
+	Ethereum               EthereumConfig           `mapstructure:"ethereum"`
+	Tezos                  TezosConfig              `mapstructure:"tezos"`
+	Vendors                VendorsConfig            `mapstructure:"vendors"`
+	URI                    URIConfig                `mapstructure:"uri"`
+	RateLimiter            RateLimiterConfig        `mapstructure:"rate_limiter"`
+	Cloudflare             CloudflareConfig         `mapstructure:"cloudflare"`
+	Rasterizer             RasterizerConfig         `mapstructure:"rasterizer"`
+	Transform              TransformConfig          `mapstructure:"transform"`
+	MediaHealthSweeper     MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
 
 	EthereumTokenSweepStartBlock uint64 `mapstructure:"ethereum_token_sweep_start_block"`
 	TezosTokenSweepStartBlock    uint64 `mapstructure:"tezos_token_sweep_start_block"`
@@ -463,17 +467,18 @@ func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
 // ToWorkerMediaConfig maps AppConfig for the media-indexing job worker.
 func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
 	return &WorkerMediaConfig{
-		BaseConfig:   a.BaseConfig,
-		Database:     a.Database,
-		Jobs:         a.Jobs,
-		Security:     a.Security,
-		MediaEnabled: a.MediaEnabled,
-		URI:          a.URI,
-		Cloudflare:   a.Cloudflare,
-		Rasterizer:   a.Rasterizer,
-		Transform:    a.Transform,
-		MaxImageSize: a.MaxImageSize,
-		MaxVideoSize: a.MaxVideoSize,
+		BaseConfig:             a.BaseConfig,
+		Database:               a.Database,
+		Jobs:                   a.Jobs,
+		Security:               a.Security,
+		MediaEnabled:           a.MediaEnabled,
+		VideoProcessingEnabled: a.VideoProcessingEnabled,
+		URI:                    a.URI,
+		Cloudflare:             a.Cloudflare,
+		Rasterizer:             a.Rasterizer,
+		Transform:              a.Transform,
+		MaxImageSize:           a.MaxImageSize,
+		MaxVideoSize:           a.MaxVideoSize,
 	}
 }
 
@@ -517,6 +522,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("jobs.media_worker.cancel_interval", 5*time.Second)
 
 	v.SetDefault("media_enabled", false)
+	v.SetDefault("video_processing_enabled", false)
 
 	// Chains
 	v.SetDefault("ethereum.chain_id", "eip155:1")
@@ -673,6 +679,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"jobs.media_worker.batch_size",
 		"jobs.media_worker.cancel_interval",
 		"media_enabled",
+		"video_processing_enabled",
 		// Vendors
 		"vendors.artblocks_url",
 		"vendors.feralfile_url",

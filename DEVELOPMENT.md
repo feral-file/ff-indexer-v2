@@ -96,6 +96,8 @@ FF_INDEXER_ETHEREUM_WEBSOCKET_URL=YOUR_ETHEREUM_WEBSOCKET_URL
 FF_INDEXER_CLOUDFLARE_ACCOUNT_ID=YOUR_ACCOUNT_ID
 FF_INDEXER_CLOUDFLARE_API_TOKEN=YOUR_API_TOKEN
 FF_INDEXER_MEDIA_ENABLED=false
+# Opt-in Cloudflare Stream uploads for video/*. Default false: skip videos; image/SVG unchanged.
+FF_INDEXER_VIDEO_PROCESSING_ENABLED=false
 
 # API authentication
 FF_INDEXER_AUTH_JWT_PUBLIC_KEY=YOUR_JWT_PUBKEY_PEM
@@ -134,7 +136,7 @@ go run ./cmd/ff-indexer -config config/config.yaml
 ```
 
 - **Without CGO** (`CGO_ENABLED=0`): the media job worker is not started; other subsystems run.
-- **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including the `media_index` queue worker when `FF_INDEXER_MEDIA_ENABLED=true`.
+- **With CGO** and libvips (see [README](README.md) / Docker image): full media pipeline including the `media_index` queue worker when `FF_INDEXER_MEDIA_ENABLED=true`. Set `FF_INDEXER_VIDEO_PROCESSING_ENABLED=true` only if you want `video/*` assets ingested to Cloudflare Stream; when unset or `false`, videos are skipped (no upload, no `media_assets` row) while images and SVG handling stay the same.
 - **With `FF_INDEXER_MEDIA_ENABLED=false`**: the media worker is intentionally disabled even in CGO/full builds.
 
 Media worker concurrency and poll settings use `FF_INDEXER_JOBS_MEDIA_WORKER_*` (see [config/.env](config/.env)).

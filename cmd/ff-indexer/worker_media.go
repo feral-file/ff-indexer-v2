@@ -101,7 +101,7 @@ func registerWorkerMedia(
 
 	dataURIChecker := uri.NewDataURIChecker()
 
-	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, dataURIChecker, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, imageTransformer, wcfg.MaxImageSize, wcfg.MaxVideoSize)
+	mediaProcessor := processor.NewProcessor(httpClient, uriResolver, dataURIChecker, mediaProvider, dataStore, svgRasterizer, fileSystem, ioAdapter, jsonAdapter, mediaDownloader, imageTransformer, wcfg.MaxImageSize, wcfg.MaxVideoSize, wcfg.VideoProcessingEnabled)
 
 	mediaExecutor := workflows.NewMediaExecutor(dataStore, mediaProcessor)
 	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)

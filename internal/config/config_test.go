@@ -284,6 +284,60 @@ FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
 	assert.False(t, cfg.ToWorkerMediaConfig().MediaEnabled)
 }
 
+func TestLoadAppConfig_VideoProcessingEnabledDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	yaml := `
+database:
+  host: localhost
+  user: u
+  password: p
+  dbname: db
+jobs:
+  token_queue: token_index
+  media_queue: media_index
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  api_url: https://api.tzkt.io
+  websocket_url: wss://ws.tzkt.io
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yaml), 0600))
+
+	cfg, err := LoadAppConfig(configPath, "")
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.VideoProcessingEnabled, "video_processing_enabled should default to false")
+	assert.False(t, cfg.ToWorkerMediaConfig().VideoProcessingEnabled, "WorkerMediaConfig should inherit false default")
+}
+
+func TestLoadAppConfig_VideoProcessingEnabledFromEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	envDir := filepath.Join(tmpDir, "env")
+	require.NoError(t, os.MkdirAll(envDir, 0750))
+
+	envContent := `FF_INDEXER_VIDEO_PROCESSING_ENABLED=true
+FF_INDEXER_DATABASE_HOST=localhost
+FF_INDEXER_DATABASE_USER=u
+FF_INDEXER_DATABASE_PASSWORD=p
+FF_INDEXER_DATABASE_DBNAME=db
+FF_INDEXER_ETHEREUM_RPC_URL=https://rpc.example.com
+FF_INDEXER_ETHEREUM_WEBSOCKET_URL=wss://ws.example.com
+FF_INDEXER_TEZOS_API_URL=https://api.tzkt.io
+FF_INDEXER_TEZOS_WEBSOCKET_URL=wss://ws.tzkt.io
+FF_INDEXER_JOBS_TOKEN_QUEUE=token_index
+`
+	require.NoError(t, os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0600))
+
+	cfg, err := LoadAppConfig("", envDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.True(t, cfg.VideoProcessingEnabled, "env var should enable video processing")
+	assert.True(t, cfg.ToWorkerMediaConfig().VideoProcessingEnabled, "WorkerMediaConfig should inherit enabled state")
+}
+
 func TestValidateSecurityConfig_allowlistDomainTooBroad(t *testing.T) {
 	cfg := &AppConfig{}
 	cfg.Security.SSRFProtection.Allowlist.Domains = []string{"com"}

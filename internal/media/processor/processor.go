@@ -69,11 +69,14 @@ type processor struct {
 	filesystem adapter.FileSystem
 
 	// Configuration
-	maxImageSize int64
-	maxVideoSize int64
+	maxImageSize           int64
+	maxVideoSize           int64
+	videoProcessingEnabled bool
 }
 
-// NewProcessor creates a new Processor instance
+// NewProcessor creates a new Processor instance.
+//
+// When videoProcessingEnabled is false, video/* sources are skipped after probe (no provider uploads, no DB row).
 func NewProcessor(
 	httpClient adapter.HTTPClient,
 	uriResolver uri.Resolver,
@@ -87,21 +90,23 @@ func NewProcessor(
 	dl downloader.Downloader,
 	trans transformer.Transformer,
 	maxImageSize int64,
-	maxVideoSize int64) Processor {
+	maxVideoSize int64,
+	videoProcessingEnabled bool) Processor {
 	return &processor{
-		httpClient:   httpClient,
-		uriResolver:  uriResolver,
-		dataChecker:  dataChecker,
-		provider:     provider,
-		store:        st,
-		rasterizer:   svgRasterizer,
-		filesystem:   filesystem,
-		io:           io,
-		json:         json,
-		downloader:   dl,
-		transformer:  trans,
-		maxImageSize: maxImageSize,
-		maxVideoSize: maxVideoSize,
+		httpClient:             httpClient,
+		uriResolver:            uriResolver,
+		dataChecker:            dataChecker,
+		provider:               provider,
+		store:                  st,
+		rasterizer:             svgRasterizer,
+		filesystem:             filesystem,
+		io:                     io,
+		json:                   json,
+		downloader:             dl,
+		transformer:            trans,
+		maxImageSize:           maxImageSize,
+		maxVideoSize:           maxVideoSize,
+		videoProcessingEnabled: videoProcessingEnabled,
 	}
 }
 
@@ -438,6 +443,12 @@ func (p *processor) Process(ctx context.Context, sourceURL string) error {
 		if probe.isDataURI {
 			logger.WarnCtx(ctx, "Video data URI is not supported", zap.String("mime_type", probe.contentType))
 			return domain.ErrUnsupportedMediaFile
+		}
+		if !p.videoProcessingEnabled {
+			logger.InfoCtx(ctx, "Video processing disabled, skipping video upload",
+				zap.String("sourceURL", sourceURL),
+				zap.String("mime_type", probe.contentType))
+			return nil
 		}
 		uploadResult, err = p.processVideo(ctx, sourceURL, probe, uploadMetadata)
 		if err != nil {
