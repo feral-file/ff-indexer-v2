@@ -5,6 +5,8 @@ package processor_test
 import (
 	"context"
 	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -120,8 +122,127 @@ func TestProcess_DataURIImage(t *testing.T) {
 		trans,
 		10*1024*1024,
 		10*1024*1024,
+		false,
 	)
 
 	err := proc.Process(ctx, testDataURIPNG)
 	require.NoError(t, err)
+}
+
+func TestProcess_VideoDisabled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx := context.Background()
+	jsonAdapter := adapter.NewJSON()
+	videoURL := "https://example.com/a.mp4"
+
+	httpClient := mocks.NewMockHTTPClient(ctrl)
+	uriResolver := mocks.NewMockURIResolver(ctrl)
+	dataChecker := mocks.NewMockDataURIChecker(ctrl)
+	st := mocks.NewMockStore(ctrl)
+	raster := mocks.NewMockRasterizer(ctrl)
+	fs := mocks.NewMockFileSystem(ctrl)
+	ioAdapter := mocks.NewMockIO(ctrl)
+	dl := mocks.NewMockDownloader(ctrl)
+	trans := mocks.NewMockTransformer(ctrl)
+	provider := mocks.NewMockMediaProvider(ctrl)
+
+	provider.EXPECT().Name().Return("cloudflare").AnyTimes()
+
+	httpClient.EXPECT().Head(gomock.Any(), videoURL).Return(&http.Response{
+		StatusCode:    http.StatusOK,
+		Header:        http.Header{"Content-Type": []string{"video/mp4"}},
+		ContentLength: 1024,
+		Body:          io.NopCloser(strings.NewReader("")),
+	}, nil)
+
+	proc := processor.NewProcessor(
+		httpClient,
+		uriResolver,
+		dataChecker,
+		provider,
+		st,
+		raster,
+		fs,
+		ioAdapter,
+		jsonAdapter,
+		dl,
+		trans,
+		10*1024*1024,
+		300*1024*1024,
+		false,
+	)
+
+	require.NoError(t, proc.Process(ctx, videoURL))
+}
+
+func TestProcess_VideoEnabled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx := context.Background()
+	jsonAdapter := adapter.NewJSON()
+	videoURL := "https://example.com/a.mp4"
+
+	httpClient := mocks.NewMockHTTPClient(ctrl)
+	uriResolver := mocks.NewMockURIResolver(ctrl)
+	dataChecker := mocks.NewMockDataURIChecker(ctrl)
+	st := mocks.NewMockStore(ctrl)
+	raster := mocks.NewMockRasterizer(ctrl)
+	fs := mocks.NewMockFileSystem(ctrl)
+	ioAdapter := mocks.NewMockIO(ctrl)
+	dl := mocks.NewMockDownloader(ctrl)
+	trans := mocks.NewMockTransformer(ctrl)
+	provider := mocks.NewMockMediaProvider(ctrl)
+
+	provider.EXPECT().Name().Return("cloudflare").AnyTimes()
+
+	httpClient.EXPECT().Head(gomock.Any(), videoURL).Return(&http.Response{
+		StatusCode:    http.StatusOK,
+		Header:        http.Header{"Content-Type": []string{"video/mp4"}},
+		ContentLength: 1024,
+		Body:          io.NopCloser(strings.NewReader("")),
+	}, nil)
+
+	provider.EXPECT().
+		UploadVideo(gomock.Any(), videoURL, gomock.Any()).
+		Return(&mediaprovider.UploadResult{
+			ProviderAssetID: "vid-1",
+			VariantURLs: map[string]string{
+				"hls": "https://customer.example.cloudflarestream.com/vid/manifest/video.m3u8",
+			},
+			ProviderMetadata: map[string]interface{}{
+				"media_type": "video",
+			},
+		}, nil)
+
+	st.EXPECT().
+		CreateMediaAsset(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateMediaAssetInput) (*schema.MediaAsset, error) {
+			require.Equal(t, videoURL, input.SourceURL)
+			require.NotNil(t, input.MimeType)
+			require.Equal(t, "video/mp4", *input.MimeType)
+			require.Equal(t, schema.StorageProviderCloudflare, input.Provider)
+			return &schema.MediaAsset{ID: 1}, nil
+		})
+
+	proc := processor.NewProcessor(
+		httpClient,
+		uriResolver,
+		dataChecker,
+		provider,
+		st,
+		raster,
+		fs,
+		ioAdapter,
+		jsonAdapter,
+		dl,
+		trans,
+		10*1024*1024,
+		300*1024*1024,
+		true,
+	)
+
+	require.NoError(t, proc.Process(ctx, videoURL))
 }
