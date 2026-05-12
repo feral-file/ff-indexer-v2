@@ -15,7 +15,7 @@ FF-Indexer v2 is a production-ready indexing service designed to capture and ind
 - **Real-time indexing** of blockchain events (mints, transfers, burns, metadata updates)
 - **Metadata resolution** from IPFS, Arweave, ONCHFS, and HTTP sources
 - **Metadata enrichment** from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File, Objkt, OpenSea)
-- **Media processing** with Cloudflare Images and Stream
+- **Media processing** with Cloudflare Images; **Cloudflare Stream (video)** only when `video_processing_enabled` / `FF_INDEXER_VIDEO_PROCESSING_ENABLED` is set (default off)
 - **Provenance tracking** with full blockchain event history
 - **Owner-based indexing** for wallet-based queries
 
@@ -65,7 +65,7 @@ go run ./cmd/ff-indexer -config config/config.yaml
 ```
 
 - Lightweight mode: `CGO_ENABLED=0`, media worker stub only.
-- Full media mode: `CGO_ENABLED=1`, `FF_INDEXER_MEDIA_ENABLED=true`, and Cloudflare media config.
+- Full media mode: `CGO_ENABLED=1`, `FF_INDEXER_MEDIA_ENABLED=true`, and Cloudflare credentials (`account_id`, `api_token`). Images and SVG are ingested to Cloudflare Images as before. **`video/*` URLs are not sent to Cloudflare Stream unless** `FF_INDEXER_VIDEO_PROCESSING_ENABLED=true` (or `video_processing_enabled: true` in YAML); when that flag is off (default), videos are skipped (no Stream API usage, no `media_assets` row for those jobs).
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
@@ -84,7 +84,7 @@ All of the following run inside the **`ff-indexer`** process (goroutines) by def
 
 - **Chain ingestion** - Ethereum and Tezos event subscriptions (TzKT for Tezos), ordered in-memory block buffers, monotonic durable cursors, and job enqueue at flush boundaries
 - **Worker core** — polls the `token_index` job queue
-- **Worker media** — polls the `media_index` job queue (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`)
+- **Worker media** — polls the `media_index` job queue (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`). Video upload to Stream is further gated by `FF_INDEXER_VIDEO_PROCESSING_ENABLED` (default `false`); see [DEVELOPMENT.md](DEVELOPMENT.md).
 - **API server** — REST and GraphQL
 - **Sweeper** — Media URL health checks
 
