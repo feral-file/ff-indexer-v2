@@ -105,11 +105,18 @@ func logMediaIndexFailure(ctx context.Context, url string, err error) {
 	)
 }
 
-// isExpectedMediaSourceTimeout reports whether err is the known transform-source fetch timeout.
+// isExpectedMediaSourceTimeout reports whether err is a known media-source fetch timeout.
 //
-// Reason: The transformer wraps HTTP GET failures with "failed to get response"; combining that
-// marker with context.DeadlineExceeded limits Sentry suppression to external media fetches instead
-// of every possible media workflow deadline, such as database or provider API timeouts.
+// Reason: Probe and transform both fetch externally hosted media and wrap HTTP failures with stable
+// source-fetch markers. Combining those markers with context.DeadlineExceeded limits Sentry
+// suppression to external media fetches instead of every possible media workflow deadline, such as
+// database or provider API timeouts.
 func isExpectedMediaSourceTimeout(err error) bool {
-	return errors.Is(err, context.DeadlineExceeded) && strings.Contains(err.Error(), "failed to get response")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	msg := err.Error()
+	return strings.Contains(msg, "failed to get response") ||
+		strings.Contains(msg, "failed to get content-type via partial GET")
 }
