@@ -4,7 +4,9 @@ package workflows
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -61,22 +63,60 @@ func (w *mediaWorkflows) IndexMultipleMediaWorkflow(ctx context.Context, urls []
 	return nil
 }
 
-// IndexMediaWorkflow handles the media processing for a single URL
-// This workflow uses a separate task queue with higher execution time
+// IndexMediaWorkflow handles media processing for a single URL.
+//
+// Reason: Media jobs should still fail when processing cannot finish so operators can inspect
+// jobs.last_error, but expected third-party source timeouts should not page engineers through Sentry.
+// Trade-offs: Known source-fetch timeouts are warning logs; unexpected failures remain error logs.
+// Constraints: Returning the original error preserves the worker's failed-job behavior.
 func (w *mediaWorkflows) IndexMediaWorkflow(ctx context.Context, url string) error {
 	logger.InfoCtx(ctx, "Starting media indexing", zap.String("url", url))
 
 	// Execute the media indexing activity
 	err := w.executor.IndexMediaFile(ctx, url)
 	if err != nil {
-		logger.ErrorCtx(ctx,
-			fmt.Errorf("failed to index media file"),
-			zap.Error(err),
-			zap.String("url", url),
-		)
+		logMediaIndexFailure(ctx, url, err)
 		return err
 	}
 
 	logger.InfoCtx(ctx, "Media indexed successfully", zap.String("url", url))
 	return nil
+}
+
+// logMediaIndexFailure records a failed media job at the appropriate operational severity.
+//
+// Reason: Sentry should capture unexpected application failures, not routine source gateway
+// timeouts from externally hosted media. Trade-offs: The job still fails and stores last_error,
+// so operators retain a durable signal without one Sentry event per unavailable media URL.
+func logMediaIndexFailure(ctx context.Context, url string, err error) {
+	if isExpectedMediaSourceTimeout(err) {
+		logger.WarnCtx(ctx,
+			"Media source fetch timed out during indexing",
+			zap.Error(err),
+			zap.String("url", url),
+		)
+		return
+	}
+
+	logger.ErrorCtx(ctx,
+		fmt.Errorf("failed to index media file"),
+		zap.Error(err),
+		zap.String("url", url),
+	)
+}
+
+// isExpectedMediaSourceTimeout reports whether err is a known media-source fetch timeout.
+//
+// Reason: Probe and transform both fetch externally hosted media and wrap HTTP failures with stable
+// source-fetch markers. Combining those markers with context.DeadlineExceeded limits Sentry
+// suppression to external media fetches instead of every possible media workflow deadline, such as
+// database or provider API timeouts.
+func isExpectedMediaSourceTimeout(err error) bool {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	msg := err.Error()
+	return strings.Contains(msg, "failed to get response") ||
+		strings.Contains(msg, "failed to get content-type via partial GET")
 }
