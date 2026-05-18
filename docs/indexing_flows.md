@@ -170,6 +170,8 @@ Content may be IPFS, Arweave, HTTP, or data URIs; results are persisted via the 
 
 - **`EnhanceTokenMetadata`** may call vendor APIs (Art Blocks, fxhash, OpenSea, …) and populate **`enrichment_sources`**; failures are **non-fatal**.
 
+For how **`artists`** and **`did:pkh`** values are chosen in resolve vs enrich (and how API display merges them), see [`artist_did_resolution.md`](artist_did_resolution.md).
+
 **Step 3 — Viewability**
 
 - **`CheckMediaURLsHealthAndUpdateViewability`** probes media URLs derived from resolved + enriched metadata, updates **`tokens.is_viewable`**, and drives webhook “viewable / unviewable” notifications.
@@ -221,6 +223,7 @@ flowchart TD
 
 ## 7. Related reading
 
+- [`docs/artist_did_resolution.md`](artist_did_resolution.md) — artist names, `did:pkh`, on-chain JSON vs vendor enrichment, display merge rules
 - [`docs/architecture.md`](architecture.md) — components, queues, cursor durability, media worker
 - [`docs/schema.md`](schema.md) — `tokens`, `token_metadata`, `enrichment_sources`, `watched_addresses`, `address_indexing_jobs`, `jobs`
 - [`api/openapi/openapi.yaml`](../api/openapi/openapi.yaml) — REST contracts for triggers above
