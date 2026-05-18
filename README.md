@@ -73,6 +73,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 
 - **[Agent Guide](AGENTS.md)** - Repository workflow, canonical verification, and PR/review contract for agents and contributors
 - **[Architecture](docs/architecture.md)** - System design, components, and data flow diagrams
+- **[Indexing flows](docs/indexing_flows.md)** - How chain events, address sweeps, token indexing, and metadata/media pipelines connect
 - **[Database Schema](docs/schema.md)** - Complete database schema and migration notes
 - **[Development Guide](DEVELOPMENT.md)** - Local development setup, seed data, and scripts
 - **[Contributing Guide](CONTRIBUTING.md)** - Setup, linting, testing, and PR process
