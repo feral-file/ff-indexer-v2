@@ -8,9 +8,8 @@
 // emitted again if they arrive very late; the runner must keep a monotonic cursor and tolerate
 // duplicate or replayed work via job keys and idempotent handlers.
 //
-// Known gap: fromLevel is not sent to TzKT—hub methods are filter-only, so the socket is live
-// after connect. Anything between the persisted cursor and chain head at connect needs REST
-// backfill (TODO(tezos-resume)); see docs/architecture.md (TzKT resume gap).
+// On subscribe, REST backfill from fromLevel through chain head runs before SignalR connect
+// because hub methods are live-only. See docs/architecture.md (TzKT resume).
 package tezos
 
 import (
@@ -119,26 +118,34 @@ func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzk
 	}, nil
 }
 
-// SubscribeEvents connects to TzKT for FA2 transfers and token_metadata bigmap updates.
-//
-// fromLevel is logged for ops only: TzKT subscribe calls take filters, not a start level, so this
-// is a live stream after connect. Gaps vs fromLevel need REST backfill — TODO(tezos-resume).
+// SubscribeEvents backfills historic levels via TzKT REST, then connects for FA2 transfers
+// and token_metadata bigmap updates over SignalR.
 func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler blockchain.EventHandler) error {
 	if c.connected {
 		logger.WarnCtx(ctx, "Already connected to TzKT SignalR")
 		return nil
 	}
 
-	logger.InfoCtx(ctx, "TzKT SignalR subscribing (live stream only; fromLevel recorded for ops — see docs/architecture.md TzKT resume gap)",
+	logger.InfoCtx(ctx, "TzKT subscribe starting with REST backfill before SignalR",
 		zap.String("chain", string(c.chainID)),
 		zap.Uint64("from_level", fromLevel))
+
+	c.handler = handler
+
+	backfilledTo, err := c.backfillHistoricLevels(ctx, fromLevel, 0, handler)
+	if err != nil {
+		return fmt.Errorf("REST backfill failed: %w", err)
+	}
+
+	logger.InfoCtx(ctx, "TzKT REST backfill complete, connecting SignalR",
+		zap.String("chain", string(c.chainID)),
+		zap.Uint64("from_level", fromLevel),
+		zap.Uint64("backfilled_to", backfilledTo))
 
 	subscriptionCtx, cancel := context.WithCancel(ctx)
 	c.ctx = subscriptionCtx
 	c.cancel = cancel
 
-	// Store handler for callback
-	c.handler = handler
 	c.streamCh = make(chan streamMessage, defaultEventBufferSize)
 	c.errCh = make(chan error, 1)
 
@@ -164,10 +171,7 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	// Wait for connection
 	c.clock.Sleep(time.Second)
 
-	// Subscribe to token transfers (live stream only — no historic fromLevel in TzKT API).
-	// TODO(tezos-resume): Before this, optionally page TzKT REST (/v1/tokens/transfers,
-	// bigmap updates APIs) from fromLevel to head, normalize through the same parsers, then
-	// connect here for a gap-free restart after crashes or long outages.
+	// Subscribe to token transfers (live stream after REST backfill through chain head).
 	sendErrChan := client.Send("SubscribeToTokenTransfers", map[string]interface{}{})
 	select {
 	case err := <-sendErrChan:

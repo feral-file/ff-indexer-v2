@@ -57,6 +57,21 @@ func (mr *MockTzKTClientMockRecorder) ChainID() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ChainID", reflect.TypeOf((*MockTzKTClient)(nil).ChainID))
 }
 
+// GetBigMapUpdatesByLevelRange mocks base method.
+func (m *MockTzKTClient) GetBigMapUpdatesByLevelRange(ctx context.Context, fromLevel, toLevel uint64, limit, offset int) ([]tezos.TzKTBigMapUpdate, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBigMapUpdatesByLevelRange", ctx, fromLevel, toLevel, limit, offset)
+	ret0, _ := ret[0].([]tezos.TzKTBigMapUpdate)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetBigMapUpdatesByLevelRange indicates an expected call of GetBigMapUpdatesByLevelRange.
+func (mr *MockTzKTClientMockRecorder) GetBigMapUpdatesByLevelRange(ctx, fromLevel, toLevel, limit, offset any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBigMapUpdatesByLevelRange", reflect.TypeOf((*MockTzKTClient)(nil).GetBigMapUpdatesByLevelRange), ctx, fromLevel, toLevel, limit, offset)
+}
+
 // GetContractDeployer mocks base method.
 func (m *MockTzKTClient) GetContractDeployer(ctx context.Context, contractAddress string) (string, error) {
 	m.ctrl.T.Helper()
@@ -190,6 +205,21 @@ func (m *MockTzKTClient) GetTokenTransfers(ctx context.Context, contractAddress,
 func (mr *MockTzKTClientMockRecorder) GetTokenTransfers(ctx, contractAddress, tokenID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenTransfers", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenTransfers), ctx, contractAddress, tokenID)
+}
+
+// GetTokenTransfersByLevelRange mocks base method.
+func (m *MockTzKTClient) GetTokenTransfersByLevelRange(ctx context.Context, fromLevel, toLevel uint64, limit, offset int) ([]tezos.TzKTTokenTransfer, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenTransfersByLevelRange", ctx, fromLevel, toLevel, limit, offset)
+	ret0, _ := ret[0].([]tezos.TzKTTokenTransfer)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenTransfersByLevelRange indicates an expected call of GetTokenTransfersByLevelRange.
+func (mr *MockTzKTClientMockRecorder) GetTokenTransfersByLevelRange(ctx, fromLevel, toLevel, limit, offset any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenTransfersByLevelRange", reflect.TypeOf((*MockTzKTClient)(nil).GetTokenTransfersByLevelRange), ctx, fromLevel, toLevel, limit, offset)
 }
 
 // GetTransactionsByID mocks base method.

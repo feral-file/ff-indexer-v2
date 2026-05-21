@@ -34,6 +34,14 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func expectEmptyBackfill(tzkt *mocks.MockTzKTClient, fromLevel, head uint64) {
+	tzkt.EXPECT().GetLatestBlock(gomock.Any()).Return(head, nil)
+	if fromLevel <= head {
+		tzkt.EXPECT().GetTokenTransfersByLevelRange(gomock.Any(), fromLevel, head, 1000, 0).Return(nil, nil)
+		tzkt.EXPECT().GetBigMapUpdatesByLevelRange(gomock.Any(), fromLevel, head, 1000, 0).Return(nil, nil)
+	}
+}
+
 func TestSubscribeEvents_StopsClientWhenSubscriptionFails(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -41,6 +49,9 @@ func TestSubscribeEvents_StopsClientWhenSubscriptionFails(t *testing.T) {
 	signalR := mocks.NewMockSignalR(ctrl)
 	client := mocks.NewMockSignalRClient(ctrl)
 	clock := mocks.NewMockClock(ctrl)
+	tzkt := mocks.NewMockTzKTClient(ctrl)
+
+	expectEmptyBackfill(tzkt, 123, 100)
 
 	sendErrCh := make(chan error, 1)
 	sendErrCh <- errors.New("subscribe failed")
@@ -56,10 +67,10 @@ func TestSubscribeEvents_StopsClientWhenSubscriptionFails(t *testing.T) {
 	subscriber, err := tezos.NewSubscriber(tezos.Config{
 		WebSocketURL: "wss://tzkt.example/ws",
 		ChainID:      domain.ChainTezosMainnet,
-	}, signalR, clock, mocks.NewMockTzKTClient(ctrl))
+	}, signalR, clock, tzkt)
 	require.NoError(t, err)
 
-	err = subscriber.SubscribeEvents(context.Background(), 123, nil)
+	err = subscriber.SubscribeEvents(context.Background(), 123, func(*domain.BlockchainEvent) error { return nil })
 	require.Error(t, err)
 	require.ErrorContains(t, err, "failed to subscribe to token transfers")
 }
@@ -76,6 +87,8 @@ func TestSubscribeEvents_emitsIncompleteLevelAfterQuietFeedTimeout(t *testing.T)
 	signalR := mocks.NewMockSignalR(ctrl)
 	client := mocks.NewMockSignalRClient(ctrl)
 	tzkt := mocks.NewMockTzKTClient(ctrl)
+
+	expectEmptyBackfill(tzkt, 1, 100)
 
 	sleepDone := make(chan struct{})
 	clock.EXPECT().Sleep(time.Second).Do(func(time.Duration) { close(sleepDone) }).Times(1)
@@ -194,6 +207,99 @@ func TestSubscribeEvents_emitsIncompleteLevelAfterQuietFeedTimeout(t *testing.T)
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for handler after quiet-feed level timeout")
 	}
+
+	cancel()
+	require.ErrorIs(t, <-errCh, context.Canceled)
+}
+
+func TestSubscribeEvents_backfillsGapBeforeLiveStream(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	signalR := mocks.NewMockSignalR(ctrl)
+	client := mocks.NewMockSignalRClient(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	tzkt := mocks.NewMockTzKTClient(ctrl)
+
+	const fromLevel = uint64(100)
+	const head = uint64(150)
+
+	tzkt.EXPECT().GetLatestBlock(gomock.Any()).Return(head, nil)
+	backfillTransfer := tezos.TzKTTokenTransfer{
+		Level: 120,
+		ID:    1,
+		Token: tezos.TzKTTokenInfo{
+			Standard: domain.StandardFA2,
+			Contract: tezos.TzKTContract{Address: "KT1Gap"},
+			TokenID:  "0",
+		},
+	}
+	tzkt.EXPECT().GetTokenTransfersByLevelRange(gomock.Any(), fromLevel, head, 1000, 0).
+		Return([]tezos.TzKTTokenTransfer{backfillTransfer}, nil)
+	tzkt.EXPECT().GetBigMapUpdatesByLevelRange(gomock.Any(), fromLevel, head, 1000, 0).
+		Return(nil, nil)
+
+	backfillEvt := &domain.BlockchainEvent{
+		BlockNumber:     120,
+		EventType:       domain.EventTypeTransfer,
+		ContractAddress: "KT1Gap",
+	}
+	tzkt.EXPECT().ParseTransfer(gomock.Any(), gomock.Any()).Return(backfillEvt, nil).Times(1)
+
+	subLongPoll := make(chan time.Time)
+	clock.EXPECT().After(15 * time.Second).Return(subLongPoll).AnyTimes()
+
+	signalRConnected := make(chan struct{})
+	signalR.EXPECT().NewClient(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, _ any) (adapter.SignalRClient, error) {
+			close(signalRConnected)
+			return client, nil
+		},
+	).Times(1)
+
+	client.EXPECT().Start()
+	clock.EXPECT().Sleep(time.Second)
+	okSend := func() <-chan error {
+		ch := make(chan error, 1)
+		ch <- nil
+		return ch
+	}
+	client.EXPECT().Send("SubscribeToTokenTransfers", gomock.Any()).Return(okSend()).Times(1)
+	client.EXPECT().Send("SubscribeToBigMaps", gomock.Any()).Return(okSend()).Times(1)
+	client.EXPECT().Stop().Times(1)
+
+	subscriber, err := tezos.NewSubscriber(tezos.Config{
+		WebSocketURL: "wss://tzkt.example/ws",
+		ChainID:      domain.ChainTezosMainnet,
+	}, signalR, clock, tzkt)
+	require.NoError(t, err)
+
+	var mu sync.Mutex
+	var seen []uint64
+	handler := func(evt *domain.BlockchainEvent) error {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, evt.BlockNumber)
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- subscriber.SubscribeEvents(ctx, fromLevel, handler)
+	}()
+
+	select {
+	case <-signalRConnected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for SignalR connect after backfill")
+	}
+
+	mu.Lock()
+	require.Equal(t, []uint64{120}, seen)
+	mu.Unlock()
 
 	cancel()
 	require.ErrorIs(t, <-errCh, context.Canceled)
