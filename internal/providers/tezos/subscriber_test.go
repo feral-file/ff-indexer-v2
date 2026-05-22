@@ -434,3 +434,92 @@ func TestSubscribeEvents_buffersLiveDuringBackfill(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, <-errCh, context.Canceled)
 }
+
+func TestSubscribeEvents_failsOnLiveBufferOverflowDuringBackfill(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	signalR := mocks.NewMockSignalR(ctrl)
+	client := mocks.NewMockSignalRClient(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	tzkt := mocks.NewMockTzKTClient(ctrl)
+
+	const fromLevel = uint64(100)
+	const head = uint64(150)
+	const bufSize = 2
+
+	var hub tzktSignalReceiver
+	backfillStarted := make(chan struct{})
+	subLongPoll := make(chan time.Time)
+	clock.EXPECT().After(15 * time.Second).Return(subLongPoll).AnyTimes()
+
+	signalR.EXPECT().NewClient(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, receiver any) (adapter.SignalRClient, error) {
+			hub = receiver.(tzktSignalReceiver)
+			return client, nil
+		},
+	).Times(1)
+
+	client.EXPECT().Start()
+	clock.EXPECT().Sleep(time.Second)
+	client.EXPECT().Send("SubscribeToTokenTransfers", gomock.Any()).Return(okSend()).Times(1)
+	client.EXPECT().Send("SubscribeToBigMaps", gomock.Any()).Return(okSend()).Times(1)
+	tzkt.EXPECT().GetLatestBlock(gomock.Any()).Return(head, nil)
+	tzkt.EXPECT().GetTokenTransfersByLevelRange(gomock.Any(), fromLevel, head, 1000, 0).
+		DoAndReturn(func(ctx context.Context, _, _ uint64, _, _ int) ([]tezos.TzKTTokenTransfer, error) {
+			close(backfillStarted)
+			for {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				time.Sleep(2 * time.Millisecond)
+			}
+		})
+	client.EXPECT().Stop().Times(1)
+
+	subscriber, err := tezos.NewSubscriber(tezos.Config{
+		WebSocketURL:    "wss://tzkt.example/ws",
+		ChainID:         domain.ChainTezosMainnet,
+		EventBufferSize: bufSize,
+	}, signalR, clock, tzkt)
+	require.NoError(t, err)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- subscriber.SubscribeEvents(context.Background(), fromLevel, func(*domain.BlockchainEvent) error {
+			return nil
+		})
+	}()
+
+	select {
+	case <-backfillStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for backfill to start")
+	}
+
+	liveTransfer := tezos.TzKTTokenTransfer{
+		Level: 151,
+		ID:    1,
+		Token: tezos.TzKTTokenInfo{
+			Standard: domain.StandardFA2,
+			Contract: tezos.TzKTContract{Address: "KT1Live"},
+			TokenID:  "0",
+		},
+	}
+	payload, err := json.Marshal([]tezos.TzKTTokenTransfer{liveTransfer})
+	require.NoError(t, err)
+	msg := tezos.TzKTMessage{Type: tezos.MessageTypeData, Data: payload}
+
+	for i := 0; i < bufSize; i++ {
+		hub.Transfers(msg)
+	}
+	hub.Transfers(msg)
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.ErrorIs(t, err, tezos.ErrLiveStreamBufferOverflow)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for overflow failure")
+	}
+}

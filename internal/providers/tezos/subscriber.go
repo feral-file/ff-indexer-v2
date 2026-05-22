@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -35,6 +36,10 @@ const (
 	defaultMaxBufferedLevels = 20               // Max buffered levels before force-flush (~5 min tolerance)
 	defaultLevelTimeout      = 60 * time.Second // Timeout for latest level completion
 )
+
+// ErrLiveStreamBufferOverflow is returned when streamCh fills before processStream starts.
+// The runner should reconnect; REST backfill will replay from the persisted cursor.
+var ErrLiveStreamBufferOverflow = errors.New("live stream buffer overflow during REST backfill")
 
 // streamProcessorState is the in-memory state for processStream (per-level buffers and high-water marks).
 type streamProcessorState struct {
@@ -59,6 +64,8 @@ func newStreamProcessorState() *streamProcessorState {
 type Config struct {
 	WebSocketURL string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
 	ChainID      domain.Chain // e.g., "tezos:mainnet"
+	// EventBufferSize is the streamCh capacity for live SignalR batches. Zero uses defaultEventBufferSize.
+	EventBufferSize int
 }
 
 // MessageType is the TzKT SignalR envelope kind.
@@ -79,19 +86,20 @@ type TzKTMessage struct {
 }
 
 type tzSubscriber struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wsURL      string
-	chainID    domain.Chain
-	client     adapter.SignalRClient
-	connected  bool
-	handler    blockchain.EventHandler
-	signalR    adapter.SignalR
-	clock      adapter.Clock
-	tzktClient TzKTClient
-	config     Config
-	streamCh   chan streamMessage
-	errCh      chan error
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wsURL            string
+	chainID          domain.Chain
+	client           adapter.SignalRClient
+	connected        bool
+	liveStreamActive atomic.Bool
+	handler          blockchain.EventHandler
+	signalR          adapter.SignalR
+	clock            adapter.Clock
+	tzktClient       TzKTClient
+	config           Config
+	streamCh         chan streamMessage
+	errCh            chan error
 }
 
 type streamMessage struct {
@@ -141,8 +149,13 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 	c.ctx = subscriptionCtx
 	c.cancel = cancel
 
-	c.streamCh = make(chan streamMessage, defaultEventBufferSize)
+	bufSize := c.config.EventBufferSize
+	if bufSize <= 0 {
+		bufSize = defaultEventBufferSize
+	}
+	c.streamCh = make(chan streamMessage, bufSize)
 	c.errCh = make(chan error, 1)
+	c.liveStreamActive.Store(false)
 
 	// Create SignalR client with connection
 	client, err := c.signalR.NewClient(subscriptionCtx, c.wsURL, c)
@@ -178,9 +191,20 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		zap.Uint64("from_level", fromLevel),
 		zap.Uint64("head_after_subscribe", headAfterSubscribe))
 
-	backfilledTo, err := c.backfillHistoricLevels(ctx, fromLevel, headAfterSubscribe, handler)
+	backfilledTo, err := c.backfillHistoricLevels(subscriptionCtx, fromLevel, headAfterSubscribe, handler)
 	if err != nil {
-		return fmt.Errorf("REST backfill failed: %w", err)
+		select {
+		case streamErr := <-c.errCh:
+			return fmt.Errorf("REST backfill interrupted: %w", streamErr)
+		default:
+			return fmt.Errorf("REST backfill failed: %w", err)
+		}
+	}
+
+	select {
+	case err := <-c.errCh:
+		return fmt.Errorf("REST backfill interrupted: %w", err)
+	default:
 	}
 
 	logger.InfoCtx(ctx, "TzKT REST backfill complete, starting live stream processing",
@@ -189,6 +213,7 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		zap.Uint64("backfilled_to", backfilledTo),
 		zap.Uint64("head_after_subscribe", headAfterSubscribe))
 
+	c.liveStreamActive.Store(true)
 	go c.processStream(subscriptionCtx)
 	c.connected = true
 
@@ -336,12 +361,37 @@ func (c *tzSubscriber) Close() {
 	}
 
 	c.connected = false
+	c.liveStreamActive.Store(false)
 	logger.InfoCtx(c.ctx, "TzKT WebSocket connection closed")
 }
 
 // enqueueStream sends a merged batch to processStream, or drops if the context is done.
+//
+// While REST backfill runs (liveStreamActive is false), enqueue is non-blocking. A full streamCh
+// reports ErrLiveStreamBufferOverflow and cancels subscribe so the runner can reconnect instead
+// of blocking SignalR callbacks indefinitely.
 func (c *tzSubscriber) enqueueStream(msg streamMessage) {
 	if c.streamCh == nil {
+		return
+	}
+
+	select {
+	case <-c.ctx.Done():
+		return
+	default:
+	}
+
+	if !c.liveStreamActive.Load() {
+		select {
+		case c.streamCh <- msg:
+		default:
+			err := fmt.Errorf("%w (capacity %d)", ErrLiveStreamBufferOverflow, cap(c.streamCh))
+			logger.ErrorCtx(c.ctx, err)
+			c.reportError(err)
+			if c.cancel != nil {
+				c.cancel()
+			}
+		}
 		return
 	}
 
