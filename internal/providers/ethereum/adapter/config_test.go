@@ -8,7 +8,10 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/contracts"
 )
+
+const cryptoPunksAddress = "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
 
 func TestLoadContractsConfig_Valid(t *testing.T) {
 	cfg, err := adapter.LoadContractsConfig(testContractFS(t, cryptopunksContractConfig))
@@ -88,6 +91,17 @@ func TestNewABIRegistry_LoadsABIs(t *testing.T) {
 	_, err = registry.Get("missing")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ABI not found")
+}
+
+func TestEmbeddedContractsConfig_LoadsCryptoPunks(t *testing.T) {
+	cfg, err := adapter.LoadContractsConfig(contracts.Files)
+	require.NoError(t, err)
+	require.Len(t, cfg.Contracts, 1)
+	require.Equal(t, "CryptoPunks", cfg.Contracts[0].Name)
+	require.Equal(t, domain.ChainEthereumMainnet, cfg.Contracts[0].Chain)
+	require.Equal(t, cryptoPunksAddress, cfg.Contracts[0].Address)
+	require.NotNil(t, cfg.Contracts[0].Constraints.TokenIDMax)
+	require.Equal(t, int64(9999), *cfg.Contracts[0].Constraints.TokenIDMax)
 }
 
 func TestNewAdapterRegistry_MissingABI(t *testing.T) {

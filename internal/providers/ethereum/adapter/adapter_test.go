@@ -34,7 +34,6 @@ func testContractFS(t *testing.T, contractsJSON string) fstest.MapFS {
 	return fstest.MapFS{
 		"contracts.json":        {Data: []byte(contractsJSON)},
 		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
-		"abis/erc721.json":      {Data: []byte(`[{"constant":true,"inputs":[{"name":"tokenId","type":"uint256"}],"name":"ownerOf","outputs":[{"name":"","type":"address"}],"type":"function"}]`)},
 	}
 }
 

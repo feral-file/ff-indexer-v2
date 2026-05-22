@@ -1,3 +1,29 @@
 {
-  "contracts": []
+  "contracts": [
+    {
+      "chain": "eip155:1",
+      "address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+      "name": "CryptoPunks",
+      "standard": "erc721",
+      "adapter": {
+        "existence": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"],
+          "success_condition": "address_nonzero"
+        },
+        "owner": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"]
+        },
+        "metadata": {
+          "source": "vendor_only"
+        }
+      },
+      "constraints": {
+        "token_id_max": 9999
+      }
+    }
+  ]
 }

@@ -1862,18 +1862,39 @@ func (f *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 // TokenExists checks if a token exists on the blockchain via the contract adapter registry.
 func (f *ethereumClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
 	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	logger.DebugCtx(ctx, "Routing token existence check through contract adapter",
+		zap.String("chain", string(f.chainID)),
+		zap.String("contract", contractAddress),
+		zap.String("standard", string(standard)),
+		zap.String("adapter_type", fmt.Sprintf("%T", adp)),
+	)
+
 	return adp.TokenExists(ctx, contractAddress, tokenNumber)
 }
 
 // TokenOwner resolves the token owner via the contract adapter registry.
 func (f *ethereumClient) TokenOwner(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
 	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	logger.DebugCtx(ctx, "Routing token owner lookup through contract adapter",
+		zap.String("chain", string(f.chainID)),
+		zap.String("contract", contractAddress),
+		zap.String("standard", string(standard)),
+		zap.String("adapter_type", fmt.Sprintf("%T", adp)),
+	)
+
 	return adp.TokenOwner(ctx, contractAddress, tokenNumber)
 }
 
 // TokenURI resolves on-chain metadata URI via the contract adapter registry.
 func (f *ethereumClient) TokenURI(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
 	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	logger.DebugCtx(ctx, "Routing token URI lookup through contract adapter",
+		zap.String("chain", string(f.chainID)),
+		zap.String("contract", contractAddress),
+		zap.String("standard", string(standard)),
+		zap.String("adapter_type", fmt.Sprintf("%T", adp)),
+	)
+
 	return adp.TokenURI(ctx, contractAddress, tokenNumber)
 }
 

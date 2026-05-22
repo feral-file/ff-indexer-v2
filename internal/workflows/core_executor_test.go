@@ -2636,6 +2636,50 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC721(t *testing.T)
 	assert.NoError(t, err)
 }
 
+func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_CryptoPunks(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		"1",
+	)
+	_, _, contractAddress, tokenNumber := tokenCID.Parse()
+	ownerAddr := "0x1234567890123456789012345678901234567890"
+
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(nil, nil)
+
+	mocks.ethClient.EXPECT().
+		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC721).
+		Return(true, nil)
+
+	mocks.ethClient.EXPECT().
+		TokenOwner(ctx, contractAddress, tokenNumber, domain.StandardERC721).
+		Return(ownerAddr, nil)
+
+	mocks.store.EXPECT().
+		CreateTokenWithProvenances(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenWithProvenancesInput) error {
+			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
+			assert.Equal(t, ownerAddr, *input.Token.CurrentOwner)
+			assert.False(t, input.Token.Burned)
+			assert.Len(t, input.Balances, 1)
+			assert.Equal(t, ownerAddr, input.Balances[0].OwnerAddress)
+			assert.Equal(t, "1", input.Balances[0].Quantity)
+			assert.Empty(t, input.Events)
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, nil)
+
+	assert.NoError(t, err)
+}
+
 func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC721_Burned(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)

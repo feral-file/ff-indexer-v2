@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io/fs"
 
+	"go.uber.org/zap"
+
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
 
 // StandardOperations defines the Ethereum client methods used by standard adapters.
@@ -51,6 +54,7 @@ func NewAdapterRegistry(
 		fallbackAdapter: NewFallbackAdapter(),
 	}
 
+	overridesByChain := make(map[domain.Chain]int)
 	for _, entry := range cfg.Contracts {
 		adp, err := BuildGenericAdapterFromConfig(entry, abiRegistry, ethClient)
 		if err != nil {
@@ -60,6 +64,14 @@ func NewAdapterRegistry(
 		key := contractKey(entry.Chain, entry.Address)
 		registry.contractAdapters[key] = adp
 		registry.contractConfigs[key] = entry
+		overridesByChain[entry.Chain]++
+	}
+
+	for chain, count := range overridesByChain {
+		logger.InfoCtx(context.Background(), "Loaded contract adapter overrides",
+			zap.String("chain", string(chain)),
+			zap.Int("count", count),
+		)
 	}
 
 	return registry, nil

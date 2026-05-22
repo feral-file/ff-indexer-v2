@@ -149,6 +149,29 @@ UpsertTokenMetadata (executor)
 PostgreSQL
 ```
 
+### Contract adapter system (Ethereum)
+
+Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which predates EIP-721) are handled through a **configuration-driven adapter registry** instead of hard-coded `ownerOf` / `tokenURI` assumptions.
+
+**Components:**
+
+- **`internal/providers/ethereum/contracts/contracts.json`** — Declarative overrides keyed by `(chain, contract_address)` with existence, owner, and metadata routing.
+- **`internal/providers/ethereum/contracts/abis/`** — ABI fragments referenced by override entries (embedded at build time).
+- **`internal/providers/ethereum/adapter/`** — `AdapterRegistry` lookup, `GenericAdapter` for configured contracts, and wrappers for standard ERC-721 / ERC-1155 client methods.
+- **Fallback adapter** — Unknown standards skip strict on-chain verification and rely on vendor enrichment where configured.
+
+**Lookup order:** configured contract override → standard adapter for the declared token standard → fallback adapter.
+
+**Routing behavior:**
+
+- **Token existence** and **owner lookup** during indexing call through the registry (`TokenExists`, `TokenOwner` on the Ethereum client).
+- **On-chain metadata** is skipped when an override marks `metadata.source: "vendor_only"`; the metadata resolver returns early and vendor enrichment (for example OpenSea) supplies display metadata.
+- **Token CID format is unchanged** — legacy contracts still use the `erc721` standard in external identifiers.
+
+**Observability:** adapter selection is logged at debug level with `adapter_type`. Override load counts are logged at startup.
+
+**Adding a legacy contract:** add an ABI file under `abis/`, add a `contracts.json` entry with method names and `${tokenId}` parameter placeholders, and verify with adapter unit tests plus a mocked client integration test.
+
 ### Media Processing
 
 ```text

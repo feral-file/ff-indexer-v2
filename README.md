@@ -10,7 +10,7 @@ A comprehensive NFT indexing system that tracks, processes, and provides access 
 
 FF-Indexer v2 is a production-ready indexing service designed to capture and index NFT data from multiple blockchain networks. It supports:
 
-- **Ethereum**: ERC-721 and ERC-1155 tokens
+- **Ethereum**: ERC-721 and ERC-1155 tokens, plus **legacy pre-EIP-721 contracts** configured through the contract adapter registry (for example CryptoPunks on mainnet)
 - **Tezos**: FA2 tokens
 - **Real-time indexing** of blockchain events (mints, transfers, burns, metadata updates)
 - **Metadata resolution** from IPFS, Arweave, ONCHFS, and HTTP sources
