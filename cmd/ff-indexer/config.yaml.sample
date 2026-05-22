@@ -82,8 +82,8 @@ tezos:
   websocket_url: https://api.tzkt.io/v1/ws
   chain_id: tezos:mainnet
   # start_level: Same semantics as ethereum.start_block for subscription intent.
-  # TzKT SignalR does not replay history by level — live stream only unless REST
-  # backfill is added (docs/architecture.md § TzKT WebSocket and resume gap).
+  # TzKT SignalR is live-only; on subscribe the indexer attaches SignalR first,
+  # REST-backfills fromLevel through a post-subscribe head snapshot, then processes live.
   start_level: 0
   block_head_ttl: 10
   block_head_stale_window: 60

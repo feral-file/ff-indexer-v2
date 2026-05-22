@@ -8,9 +8,9 @@
 // emitted again if they arrive very late; the runner must keep a monotonic cursor and tolerate
 // duplicate or replayed work via job keys and idempotent handlers.
 //
-// Known gap: fromLevel is not sent to TzKT—hub methods are filter-only, so the socket is live
-// after connect. Anything between the persisted cursor and chain head at connect needs REST
-// backfill (TODO(tezos-resume)); see docs/architecture.md (TzKT resume gap).
+// On subscribe, SignalR attaches first (live batches buffer in streamCh), then REST
+// backfills fromLevel through a post-subscribe head snapshot, then processStream
+// drains the buffer. See docs/architecture.md (TzKT REST resume).
 package tezos
 
 import (
@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -35,6 +36,10 @@ const (
 	defaultMaxBufferedLevels = 20               // Max buffered levels before force-flush (~5 min tolerance)
 	defaultLevelTimeout      = 60 * time.Second // Timeout for latest level completion
 )
+
+// ErrLiveStreamBufferOverflow is returned when streamCh fills before processStream starts.
+// The runner should reconnect; REST backfill will replay from the persisted cursor.
+var ErrLiveStreamBufferOverflow = errors.New("live stream buffer overflow during REST backfill")
 
 // streamProcessorState is the in-memory state for processStream (per-level buffers and high-water marks).
 type streamProcessorState struct {
@@ -59,6 +64,8 @@ func newStreamProcessorState() *streamProcessorState {
 type Config struct {
 	WebSocketURL string       // WebSocket URL (e.g., https://api.tzkt.io/v1/ws)
 	ChainID      domain.Chain // e.g., "tezos:mainnet"
+	// EventBufferSize is the streamCh capacity for live SignalR batches. Zero uses defaultEventBufferSize.
+	EventBufferSize int
 }
 
 // MessageType is the TzKT SignalR envelope kind.
@@ -79,19 +86,20 @@ type TzKTMessage struct {
 }
 
 type tzSubscriber struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wsURL      string
-	chainID    domain.Chain
-	client     adapter.SignalRClient
-	connected  bool
-	handler    blockchain.EventHandler
-	signalR    adapter.SignalR
-	clock      adapter.Clock
-	tzktClient TzKTClient
-	config     Config
-	streamCh   chan streamMessage
-	errCh      chan error
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wsURL            string
+	chainID          domain.Chain
+	client           adapter.SignalRClient
+	connected        bool
+	liveStreamActive atomic.Bool
+	handler          blockchain.EventHandler
+	signalR          adapter.SignalR
+	clock            adapter.Clock
+	tzktClient       TzKTClient
+	config           Config
+	streamCh         chan streamMessage
+	errCh            chan error
 }
 
 type streamMessage struct {
@@ -119,28 +127,35 @@ func NewSubscriber(cfg Config, signalR adapter.SignalR, clock adapter.Clock, tzk
 	}, nil
 }
 
-// SubscribeEvents connects to TzKT for FA2 transfers and token_metadata bigmap updates.
-//
-// fromLevel is logged for ops only: TzKT subscribe calls take filters, not a start level, so this
-// is a live stream after connect. Gaps vs fromLevel need REST backfill — TODO(tezos-resume).
+// SubscribeEvents connects SignalR first (buffering live batches), REST-backfills through
+// the post-subscribe chain head, then starts level-ordered live processing.
 func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, handler blockchain.EventHandler) error {
 	if c.connected {
 		logger.WarnCtx(ctx, "Already connected to TzKT SignalR")
 		return nil
 	}
 
-	logger.InfoCtx(ctx, "TzKT SignalR subscribing (live stream only; fromLevel recorded for ops — see docs/architecture.md TzKT resume gap)",
+	if handler == nil {
+		return fmt.Errorf("event handler is required")
+	}
+
+	logger.InfoCtx(ctx, "TzKT subscribe starting: SignalR attach, REST backfill, then live processing",
 		zap.String("chain", string(c.chainID)),
 		zap.Uint64("from_level", fromLevel))
+
+	c.handler = handler
 
 	subscriptionCtx, cancel := context.WithCancel(ctx)
 	c.ctx = subscriptionCtx
 	c.cancel = cancel
 
-	// Store handler for callback
-	c.handler = handler
-	c.streamCh = make(chan streamMessage, defaultEventBufferSize)
+	bufSize := c.config.EventBufferSize
+	if bufSize <= 0 {
+		bufSize = defaultEventBufferSize
+	}
+	c.streamCh = make(chan streamMessage, bufSize)
 	c.errCh = make(chan error, 1)
+	c.liveStreamActive.Store(false)
 
 	// Create SignalR client with connection
 	client, err := c.signalR.NewClient(subscriptionCtx, c.wsURL, c)
@@ -160,41 +175,45 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 
 	// Connect to SignalR hub
 	client.Start()
-
-	// Wait for connection
 	c.clock.Sleep(time.Second)
 
-	// Subscribe to token transfers (live stream only — no historic fromLevel in TzKT API).
-	// TODO(tezos-resume): Before this, optionally page TzKT REST (/v1/tokens/transfers,
-	// bigmap updates APIs) from fromLevel to head, normalize through the same parsers, then
-	// connect here for a gap-free restart after crashes or long outages.
-	sendErrChan := client.Send("SubscribeToTokenTransfers", map[string]interface{}{})
-	select {
-	case err := <-sendErrChan:
-		if err != nil {
-			return fmt.Errorf("failed to subscribe to token transfers: %w", err)
-		}
-	case <-c.clock.After(SUBSCRIBE_TIMEOUT):
-		// Timeout waiting for send
-		return fmt.Errorf("timeout waiting for token transfers subscription: %w", domain.ErrSubscriptionFailed)
+	if err := c.subscribeSignalRHubs(); err != nil {
+		return err
 	}
 
-	// Subscribe to big map updates for metadata changes
-	// Filter for token_metadata path to get only metadata-related updates
-	// Cross-feed ordering is handled by level-based buffering in processStream()
-	sendErrChan = client.Send("SubscribeToBigMaps", map[string]interface{}{
-		"path": "token_metadata",
-	})
-	select {
-	case err := <-sendErrChan:
-		if err != nil {
-			return fmt.Errorf("failed to subscribe to big maps: %w", err)
-		}
-	case <-c.clock.After(SUBSCRIBE_TIMEOUT):
-		// Timeout waiting for send
-		return fmt.Errorf("timeout waiting for big maps subscription: %w", domain.ErrSubscriptionFailed)
+	headAfterSubscribe, err := c.tzktClient.FetchLatestBlockUncached(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch fresh chain head after SignalR subscribe: %w", err)
 	}
 
+	logger.InfoCtx(ctx, "TzKT REST backfill starting after SignalR subscribe",
+		zap.String("chain", string(c.chainID)),
+		zap.Uint64("from_level", fromLevel),
+		zap.Uint64("head_after_subscribe", headAfterSubscribe))
+
+	backfilledTo, err := c.backfillHistoricLevels(subscriptionCtx, fromLevel, headAfterSubscribe, handler)
+	if err != nil {
+		select {
+		case streamErr := <-c.errCh:
+			return fmt.Errorf("REST backfill interrupted: %w", streamErr)
+		default:
+			return fmt.Errorf("REST backfill failed: %w", err)
+		}
+	}
+
+	select {
+	case err := <-c.errCh:
+		return fmt.Errorf("REST backfill interrupted: %w", err)
+	default:
+	}
+
+	logger.InfoCtx(ctx, "TzKT REST backfill complete, starting live stream processing",
+		zap.String("chain", string(c.chainID)),
+		zap.Uint64("from_level", fromLevel),
+		zap.Uint64("backfilled_to", backfilledTo),
+		zap.Uint64("head_after_subscribe", headAfterSubscribe))
+
+	c.liveStreamActive.Store(true)
 	go c.processStream(subscriptionCtx)
 	c.connected = true
 
@@ -207,6 +226,33 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		logger.InfoCtx(ctx, "TzKT WebSocket connection closed due to context done")
 		return ctx.Err()
 	}
+}
+
+// subscribeSignalRHubs registers live FA2 transfer and token_metadata bigmap subscriptions.
+func (c *tzSubscriber) subscribeSignalRHubs() error {
+	sendErrChan := c.client.Send("SubscribeToTokenTransfers", map[string]interface{}{})
+	select {
+	case err := <-sendErrChan:
+		if err != nil {
+			return fmt.Errorf("failed to subscribe to token transfers: %w", err)
+		}
+	case <-c.clock.After(SUBSCRIBE_TIMEOUT):
+		return fmt.Errorf("timeout waiting for token transfers subscription: %w", domain.ErrSubscriptionFailed)
+	}
+
+	sendErrChan = c.client.Send("SubscribeToBigMaps", map[string]interface{}{
+		"path": "token_metadata",
+	})
+	select {
+	case err := <-sendErrChan:
+		if err != nil {
+			return fmt.Errorf("failed to subscribe to big maps: %w", err)
+		}
+	case <-c.clock.After(SUBSCRIBE_TIMEOUT):
+		return fmt.Errorf("timeout waiting for big maps subscription: %w", domain.ErrSubscriptionFailed)
+	}
+
+	return nil
 }
 
 // Transfers is the SignalR callback named "transfers".
@@ -315,12 +361,37 @@ func (c *tzSubscriber) Close() {
 	}
 
 	c.connected = false
+	c.liveStreamActive.Store(false)
 	logger.InfoCtx(c.ctx, "TzKT WebSocket connection closed")
 }
 
 // enqueueStream sends a merged batch to processStream, or drops if the context is done.
+//
+// While REST backfill runs (liveStreamActive is false), enqueue is non-blocking. A full streamCh
+// reports ErrLiveStreamBufferOverflow and cancels subscribe so the runner can reconnect instead
+// of blocking SignalR callbacks indefinitely.
 func (c *tzSubscriber) enqueueStream(msg streamMessage) {
 	if c.streamCh == nil {
+		return
+	}
+
+	select {
+	case <-c.ctx.Done():
+		return
+	default:
+	}
+
+	if !c.liveStreamActive.Load() {
+		select {
+		case c.streamCh <- msg:
+		default:
+			err := fmt.Errorf("%w (capacity %d)", ErrLiveStreamBufferOverflow, cap(c.streamCh))
+			logger.ErrorCtx(c.ctx, err)
+			c.reportError(err)
+			if c.cancel != nil {
+				c.cancel()
+			}
+		}
 		return
 	}
 
@@ -559,8 +630,7 @@ func (c *tzSubscriber) handleTransfers(ctx context.Context, transfers []TzKTToke
 
 		event, err := c.tzktClient.ParseTransfer(ctx, &transfer)
 		if err != nil {
-			logger.ErrorCtx(ctx, errors.New("error parsing transfer"), zap.Error(err))
-			continue
+			return fmt.Errorf("failed to parse transfer at level %d (transfer ID %d): %w", transfer.Level, transfer.ID, err)
 		}
 		if event == nil || c.handler == nil {
 			continue
@@ -584,8 +654,7 @@ func (c *tzSubscriber) handleBigMapUpdates(ctx context.Context, updates []TzKTBi
 
 		event, err := c.tzktClient.ParseBigMapUpdate(ctx, &update)
 		if err != nil {
-			logger.ErrorCtx(ctx, errors.New("error parsing big map update"), zap.Error(err))
-			continue
+			return fmt.Errorf("failed to parse bigmap update at level %d (bigmap ID %d): %w", update.Level, update.ID, err)
 		}
 		if event == nil || c.handler == nil {
 			continue

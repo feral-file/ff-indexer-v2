@@ -161,6 +161,16 @@ type TzKTClient interface {
 	// GetLatestBlock retrieves the current latest block level
 	GetLatestBlock(ctx context.Context) (uint64, error)
 
+	// FetchLatestBlockUncached retrieves the latest block level directly from TzKT, bypassing any cache.
+	// Use this for critical operations that require the freshest possible block data (e.g., SignalR/backfill handoff).
+	FetchLatestBlockUncached(ctx context.Context) (uint64, error)
+
+	// GetTokenTransfersByLevelRange retrieves FA2 token transfers within an inclusive level range.
+	GetTokenTransfersByLevelRange(ctx context.Context, fromLevel, toLevel uint64, limit, offset int) ([]TzKTTokenTransfer, error)
+
+	// GetBigMapUpdatesByLevelRange retrieves token_metadata bigmap updates within an inclusive level range.
+	GetBigMapUpdatesByLevelRange(ctx context.Context, fromLevel, toLevel uint64, limit, offset int) ([]TzKTBigMapUpdate, error)
+
 	// GetContractDeployer retrieves the deployer address for a contract
 	GetContractDeployer(ctx context.Context, contractAddress string) (string, error)
 
@@ -679,6 +689,56 @@ func (c *tzktClient) getTransactionFromBitmapUpdate(ctx context.Context, updates
 // GetLatestBlock retrieves the current latest block level
 func (c *tzktClient) GetLatestBlock(ctx context.Context) (uint64, error) {
 	return c.blockProvider.GetLatestBlock(ctx)
+}
+
+// FetchLatestBlockUncached retrieves the latest block level directly from TzKT, bypassing cache.
+//
+// Reason: For critical handoff boundaries (e.g., SignalR subscribe + REST backfill), a stale
+// cached head can miss levels between the cached value and the actual subscription time.
+func (c *tzktClient) FetchLatestBlockUncached(ctx context.Context) (uint64, error) {
+	return c.blockProvider.FetchLatestBlockUncached(ctx)
+}
+
+// GetTokenTransfersByLevelRange retrieves token transfers within an inclusive level range.
+func (c *tzktClient) GetTokenTransfersByLevelRange(
+	ctx context.Context,
+	fromLevel, toLevel uint64,
+	limit, offset int,
+) ([]TzKTTokenTransfer, error) {
+	return ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTTokenTransfer, error) {
+		url := fmt.Sprintf(
+			"%s/v1/tokens/transfers?level.ge=%d&level.le=%d&sort.asc=level&limit=%d&offset=%d",
+			c.baseURL, fromLevel, toLevel, limit, offset,
+		)
+
+		var transfers []TzKTTokenTransfer
+		if err := c.httpClient.GetAndUnmarshal(ctx, url, &transfers); err != nil {
+			return nil, fmt.Errorf("failed to get token transfers in level range [%d, %d]: %w", fromLevel, toLevel, err)
+		}
+
+		return transfers, nil
+	})
+}
+
+// GetBigMapUpdatesByLevelRange retrieves token_metadata bigmap updates within an inclusive level range.
+func (c *tzktClient) GetBigMapUpdatesByLevelRange(
+	ctx context.Context,
+	fromLevel, toLevel uint64,
+	limit, offset int,
+) ([]TzKTBigMapUpdate, error) {
+	return ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]TzKTBigMapUpdate, error) {
+		url := fmt.Sprintf(
+			"%s/v1/bigmaps/updates?path=token_metadata&level.ge=%d&level.le=%d&sort.asc=level&limit=%d&offset=%d",
+			c.baseURL, fromLevel, toLevel, limit, offset,
+		)
+
+		var updates []TzKTBigMapUpdate
+		if err := c.httpClient.GetAndUnmarshal(ctx, url, &updates); err != nil {
+			return nil, fmt.Errorf("failed to get bigmap updates in level range [%d, %d]: %w", fromLevel, toLevel, err)
+		}
+
+		return updates, nil
+	})
 }
 
 // TzKTOrigination represents an origination operation from the TzKT API

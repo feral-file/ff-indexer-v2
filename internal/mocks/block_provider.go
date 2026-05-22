@@ -41,6 +41,21 @@ func (m *MockBlockProvider) EXPECT() *MockBlockProviderMockRecorder {
 	return m.recorder
 }
 
+// FetchLatestBlockUncached mocks base method.
+func (m *MockBlockProvider) FetchLatestBlockUncached(ctx context.Context) (uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchLatestBlockUncached", ctx)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchLatestBlockUncached indicates an expected call of FetchLatestBlockUncached.
+func (mr *MockBlockProviderMockRecorder) FetchLatestBlockUncached(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchLatestBlockUncached", reflect.TypeOf((*MockBlockProvider)(nil).FetchLatestBlockUncached), ctx)
+}
+
 // GetBlockTimestamp mocks base method.
 func (m *MockBlockProvider) GetBlockTimestamp(ctx context.Context, blockNumber uint64) (time.Time, error) {
 	m.ctrl.T.Helper()

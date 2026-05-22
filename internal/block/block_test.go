@@ -461,3 +461,66 @@ func TestBlockProvider_GetBlockTimestamp_ConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
+
+// Tests for FetchLatestBlockUncached
+
+func TestBlockProvider_FetchLatestBlockUncached_AlwaysFetchesFresh(t *testing.T) {
+	tm := setupTest(t)
+	defer tearDownTest(tm)
+
+	ctx := context.Background()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// First uncached fetch
+	tm.clock.EXPECT().Now().Return(now)
+	tm.fetcher.EXPECT().FetchLatestBlock(ctx).Return(uint64(1000), nil)
+
+	blockNum1, err1 := tm.provider.FetchLatestBlockUncached(ctx)
+	assert.NoError(t, err1)
+	assert.Equal(t, uint64(1000), blockNum1)
+
+	// Second uncached fetch - should fetch again, not use cache
+	tm.clock.EXPECT().Now().Return(now.Add(1 * time.Second))
+	tm.fetcher.EXPECT().FetchLatestBlock(ctx).Return(uint64(1100), nil)
+
+	blockNum2, err2 := tm.provider.FetchLatestBlockUncached(ctx)
+	assert.NoError(t, err2)
+	assert.Equal(t, uint64(1100), blockNum2) // Should return new value, not cached
+}
+
+func TestBlockProvider_FetchLatestBlockUncached_UpdatesCacheForGetLatestBlock(t *testing.T) {
+	tm := setupTest(t)
+	defer tearDownTest(tm)
+
+	ctx := context.Background()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// FetchLatestBlockUncached populates the cache
+	tm.clock.EXPECT().Now().Return(now)
+	tm.fetcher.EXPECT().FetchLatestBlock(ctx).Return(uint64(1000), nil)
+
+	blockNum1, err1 := tm.provider.FetchLatestBlockUncached(ctx)
+	assert.NoError(t, err1)
+	assert.Equal(t, uint64(1000), blockNum1)
+
+	// GetLatestBlock should now use the cache (within TTL)
+	tm.clock.EXPECT().Now().Return(now.Add(5 * time.Second))
+
+	blockNum2, err2 := tm.provider.GetLatestBlock(ctx)
+	assert.NoError(t, err2)
+	assert.Equal(t, uint64(1000), blockNum2) // Should return cached value from uncached fetch
+}
+
+func TestBlockProvider_FetchLatestBlockUncached_ReturnsErrorOnFetchFailure(t *testing.T) {
+	tm := setupTest(t)
+	defer tearDownTest(tm)
+
+	ctx := context.Background()
+	fetchError := errors.New("network error")
+	tm.fetcher.EXPECT().FetchLatestBlock(ctx).Return(uint64(0), fetchError)
+
+	blockNum, err := tm.provider.FetchLatestBlockUncached(ctx)
+	assert.Error(t, err)
+	assert.Equal(t, uint64(0), blockNum)
+	assert.Contains(t, err.Error(), "failed to fetch latest block uncached")
+}
