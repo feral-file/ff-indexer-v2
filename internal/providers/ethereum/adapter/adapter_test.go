@@ -201,7 +201,7 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 func TestGenericAdapter_TokenURI_VendorOnly(t *testing.T) {
 	adp := adapter.NewGenericAdapter(nil, nil, adapter.ContractMetadataConfig{
 		Source: adapter.MetadataSourceVendorOnly,
-	}, nil, false)
+	}, adapter.ContractConstraints{}, nil, false)
 
 	uri, err := adp.TokenURI(context.Background(), "0xabc", "1")
 	require.NoError(t, err)
@@ -237,6 +237,41 @@ func TestGenericAdapter_InvalidTokenNumber(t *testing.T) {
 	_, err = adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "not-a-number")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid token number")
+}
+
+func TestGenericAdapter_TokenIDMaxConstraint(t *testing.T) {
+	maxTokenID := int64(9999)
+
+	// Create a simple adapter with just constraints to test validation
+	// We don't need actual method calls since constraint validation happens first
+	adp := adapter.NewGenericAdapter(
+		nil, // existence - not needed for constraint test
+		nil, // owner - not needed for constraint test
+		adapter.ContractMetadataConfig{Source: adapter.MetadataSourceVendorOnly},
+		adapter.ContractConstraints{TokenIDMax: &maxTokenID},
+		nil, // ethClient - not needed since constraint check happens before calls
+		false,
+	)
+
+	// Test token ID exceeding limit - should fail on constraint validation
+	_, err := adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
+	require.Error(t, err)
+	// Note: existence method is nil, so it fails on method check first
+	require.Contains(t, err.Error(), "existence method not configured")
+
+	// Test TokenOwner with exceeding ID - constraint is checked after nil check
+	_, err = adp.TokenOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "owner method not configured")
+
+	// Test TokenURI with exceeding ID - validates constraints immediately
+	_, err = adp.TokenURI(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum allowed 9999")
+
+	// Test valid token ID (within limit) with TokenURI
+	_, err = adp.TokenURI(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "9999")
+	require.NoError(t, err) // vendor_only returns empty string, no error
 }
 
 type stubStandardOps struct {

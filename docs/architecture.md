@@ -165,12 +165,90 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 **Routing behavior:**
 
 - **Token existence** and **owner lookup** during indexing call through the registry (`TokenExists`, `TokenOwner` on the Ethereum client).
-- **On-chain metadata** is skipped when an override marks `metadata.source: "vendor_only"`; the metadata resolver returns early and vendor enrichment (for example OpenSea) supplies display metadata.
+- **On-chain metadata** is routed through the adapter registry via `TokenURI`, which calls either standard methods or configured overrides.
+- **On-chain metadata is skipped** when an override marks `metadata.source: "vendor_only"`; the metadata resolver returns early and vendor enrichment (for example OpenSea) supplies display metadata.
 - **Token CID format is unchanged** — legacy contracts still use the `erc721` standard in external identifiers.
 
 **Observability:** adapter selection is logged at debug level with `adapter_type`. Override load counts are logged at startup.
 
 **Adding a legacy contract:** add an ABI file under `abis/`, add a `contracts.json` entry with method names and `${tokenId}` parameter placeholders, and verify with adapter unit tests plus a mocked client integration test.
+
+#### contracts.json schema
+
+Each contract override entry defines method routing and optional constraints:
+
+```json
+{
+  "contracts": [
+    {
+      "chain": "eip155:1",
+      "address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+      "name": "CryptoPunks",
+      "standard": "erc721",
+      "adapter": {
+        "existence": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"],
+          "success_condition": "address_nonzero"
+        },
+        "owner": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"]
+        },
+        "metadata": {
+          "source": "vendor_only"
+        }
+      },
+      "constraints": {
+        "token_id_max": 9999
+      }
+    }
+  ]
+}
+```
+
+**Field semantics:**
+
+- **`chain`** — CAIP-2 chain identifier (`eip155:1` for Ethereum mainnet, `eip155:11155111` for Sepolia).
+- **`address`** — Contract address (checksummed or lowercase).
+- **`name`** — Human-readable contract name (used in logs and error messages).
+- **`standard`** — Token standard declared for external API/storage (`erc721`, `erc1155`).
+- **`adapter.existence.method`** — ABI method name used to check if a token exists.
+- **`adapter.existence.abi`** — ABI file name (without `.json`) from `contracts/abis/`.
+- **`adapter.existence.params`** — Parameter list; `${tokenId}` is replaced with the token ID as `uint256`.
+- **`adapter.existence.success_condition`** — How to interpret the result:
+  - `"no_revert"` — A successful call means the token exists.
+  - `"address_nonzero"` — A non-zero address return value means the token exists.
+- **`adapter.owner.method`** — ABI method name that returns the token owner address.
+- **`adapter.owner.abi`** — ABI file name for the owner method.
+- **`adapter.owner.params`** — Parameter list for the owner method.
+- **`adapter.metadata.source`** — Metadata routing strategy:
+  - `"vendor_only"` — Skip on-chain metadata fetch; rely on vendor enrichment (OpenSea, etc.).
+  - `"on_chain"` — Fetch metadata URI via the configured method (requires `adapter.metadata.method`).
+- **`adapter.metadata.method`** — (Optional) Method configuration for on-chain metadata URI lookup.
+- **`constraints.token_id_max`** — (Optional) Maximum valid token ID; calls with higher IDs fail immediately.
+
+**Validation:** At startup, the loader validates:
+
+- ABI file existence for all referenced `abi` fields.
+- Method names exist in their declared ABIs.
+- `success_condition` values are `"no_revert"` or `"address_nonzero"`.
+- `metadata.source` values are `"on_chain"` or `"vendor_only"`.
+- Contract addresses are valid hex and not duplicated.
+
+**Constraint enforcement:**
+
+- `token_id_max` is enforced in `TokenExists`, `TokenOwner`, and `TokenURI` before making contract calls.
+- Out-of-range token IDs return an error immediately without hitting the blockchain.
+- Standard adapters (ERC-721/ERC-1155) have no constraints by default.
+
+**Failure behavior:**
+
+- If an existence check reverts, the token is treated as non-existent (not an error).
+- If an owner lookup reverts during indexing, the workflow classifies the token as not found on-chain.
+- Config validation errors cause startup failure with a clear error message identifying the invalid entry.
 
 ### Media Processing
 

@@ -53,11 +53,12 @@ type MethodCall struct {
 
 // GenericAdapter executes configured contract calls for legacy or custom contracts.
 type GenericAdapter struct {
-	existence  *MethodCall
-	owner      *MethodCall
-	metadata   ContractMetadataConfig
-	ethClient  ethadapter.EthClient
-	provenance bool
+	existence   *MethodCall
+	owner       *MethodCall
+	metadata    ContractMetadataConfig
+	constraints ContractConstraints
+	ethClient   ethadapter.EthClient
+	provenance  bool
 }
 
 // ContractMetadataConfig holds metadata routing configuration for a contract adapter.
@@ -70,22 +71,30 @@ type ContractMetadataConfig struct {
 func NewGenericAdapter(
 	existence, owner *MethodCall,
 	metadata ContractMetadataConfig,
+	constraints ContractConstraints,
 	ethClient ethadapter.EthClient,
 	supportsProvenance bool,
 ) *GenericAdapter {
 	return &GenericAdapter{
-		existence:  existence,
-		owner:      owner,
-		metadata:   metadata,
-		ethClient:  ethClient,
-		provenance: supportsProvenance,
+		existence:   existence,
+		owner:       owner,
+		metadata:    metadata,
+		constraints: constraints,
+		ethClient:   ethClient,
+		provenance:  supportsProvenance,
 	}
 }
 
 // TokenExists checks token existence using the configured existence method.
+//
+// Constraints: If token_id_max is configured, token IDs exceeding the maximum are rejected immediately.
 func (a *GenericAdapter) TokenExists(ctx context.Context, contractAddress, tokenNumber string) (bool, error) {
 	if a.existence == nil {
 		return false, fmt.Errorf("existence method not configured")
+	}
+
+	if err := a.validateConstraints(tokenNumber); err != nil {
+		return false, err
 	}
 
 	result, err := a.callMethod(ctx, contractAddress, tokenNumber, a.existence)
@@ -100,9 +109,15 @@ func (a *GenericAdapter) TokenExists(ctx context.Context, contractAddress, token
 }
 
 // TokenOwner resolves the current owner using the configured owner method.
+//
+// Constraints: If token_id_max is configured, token IDs exceeding the maximum are rejected immediately.
 func (a *GenericAdapter) TokenOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	if a.owner == nil {
 		return "", fmt.Errorf("owner method not configured")
+	}
+
+	if err := a.validateConstraints(tokenNumber); err != nil {
+		return "", err
 	}
 
 	result, err := a.callMethod(ctx, contractAddress, tokenNumber, a.owner)
@@ -119,7 +134,13 @@ func (a *GenericAdapter) TokenOwner(ctx context.Context, contractAddress, tokenN
 }
 
 // TokenURI returns on-chain metadata when configured; vendor-only contracts return empty.
+//
+// Constraints: If token_id_max is configured, token IDs exceeding the maximum are rejected immediately.
 func (a *GenericAdapter) TokenURI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+	if err := a.validateConstraints(tokenNumber); err != nil {
+		return "", err
+	}
+
 	switch a.metadata.Source {
 	case MetadataSourceVendorOnly, "":
 		return "", nil
@@ -144,6 +165,25 @@ func (a *GenericAdapter) TokenURI(ctx context.Context, contractAddress, tokenNum
 // SupportsProvenance reports whether full on-chain provenance indexing is supported.
 func (a *GenericAdapter) SupportsProvenance() bool {
 	return a.provenance
+}
+
+// validateConstraints checks whether a token ID satisfies configured contract constraints.
+func (a *GenericAdapter) validateConstraints(tokenNumber string) error {
+	if a.constraints.TokenIDMax == nil {
+		return nil
+	}
+
+	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
+	if !ok {
+		return fmt.Errorf("invalid token number: %s", tokenNumber)
+	}
+
+	maxID := big.NewInt(*a.constraints.TokenIDMax)
+	if tokenID.Cmp(maxID) > 0 {
+		return fmt.Errorf("token ID %s exceeds maximum allowed %d", tokenNumber, *a.constraints.TokenIDMax)
+	}
+
+	return nil
 }
 
 func (a *GenericAdapter) callMethod(

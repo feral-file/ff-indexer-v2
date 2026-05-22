@@ -39,7 +39,7 @@ func NewAdapterRegistry(
 		return nil, fmt.Errorf("load ABI registry: %w", err)
 	}
 
-	cfg, err := LoadContractsConfig(fsys)
+	cfg, err := LoadContractsConfigWithABIRegistry(fsys, abiRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("load contracts config: %w", err)
 	}

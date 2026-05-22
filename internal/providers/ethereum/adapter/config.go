@@ -67,19 +67,46 @@ func LoadContractsConfig(fsys fs.FS) (*ContractsConfig, error) {
 		return nil, fmt.Errorf("parse contracts config: %w", err)
 	}
 
-	if err := validateContractsConfig(&cfg); err != nil {
+	// Load ABI registry for validation
+	abiRegistry, err := NewABIRegistry(fsys)
+	if err != nil {
+		return nil, fmt.Errorf("load ABI registry for validation: %w", err)
+	}
+
+	if err := validateContractsConfig(&cfg, abiRegistry); err != nil {
 		return nil, err
 	}
 
 	return &cfg, nil
 }
 
-func validateContractsConfig(cfg *ContractsConfig) error {
+// LoadContractsConfigWithABIRegistry reads and validates contracts.json using a pre-loaded ABI registry.
+//
+// Reason: Avoid loading the ABI registry twice during registry initialization.
+func LoadContractsConfigWithABIRegistry(fsys fs.FS, abiRegistry *ABIRegistry) (*ContractsConfig, error) {
+	content, err := fs.ReadFile(fsys, contractsFile)
+	if err != nil {
+		return nil, fmt.Errorf("read contracts config: %w", err)
+	}
+
+	var cfg ContractsConfig
+	if err := json.Unmarshal(content, &cfg); err != nil {
+		return nil, fmt.Errorf("parse contracts config: %w", err)
+	}
+
+	if err := validateContractsConfig(&cfg, abiRegistry); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+func validateContractsConfig(cfg *ContractsConfig, abiRegistry *ABIRegistry) error {
 	seen := make(map[string]struct{}, len(cfg.Contracts))
 
 	for i := range cfg.Contracts {
 		entry := &cfg.Contracts[i]
-		if err := validateContractEntry(entry); err != nil {
+		if err := validateContractEntry(entry, abiRegistry); err != nil {
 			return fmt.Errorf("contracts[%d]: %w", i, err)
 		}
 
@@ -93,7 +120,7 @@ func validateContractsConfig(cfg *ContractsConfig) error {
 	return nil
 }
 
-func validateContractEntry(entry *ContractConfig) error {
+func validateContractEntry(entry *ContractConfig, abiRegistry *ABIRegistry) error {
 	if entry.Chain == "" {
 		return fmt.Errorf("chain is required")
 	}
@@ -117,6 +144,67 @@ func validateContractEntry(entry *ContractConfig) error {
 	}
 	if entry.Adapter.Owner.ABI == "" {
 		return fmt.Errorf("adapter.owner.abi is required")
+	}
+
+	// Validate existence method configuration
+	if err := validateMethodConfig(entry.Adapter.Existence, abiRegistry, "adapter.existence"); err != nil {
+		return err
+	}
+
+	// Validate owner method configuration
+	if err := validateMethodConfig(entry.Adapter.Owner, abiRegistry, "adapter.owner"); err != nil {
+		return err
+	}
+
+	// Validate metadata configuration
+	if err := validateMetadataConfig(entry.Adapter.Metadata, abiRegistry); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateMethodConfig validates that a method exists in its declared ABI and has valid success condition.
+func validateMethodConfig(cfg MethodConfig, abiRegistry *ABIRegistry, fieldPath string) error {
+	contractABI, err := abiRegistry.Get(cfg.ABI)
+	if err != nil {
+		return fmt.Errorf("%s: ABI %q not found: %w", fieldPath, cfg.ABI, err)
+	}
+
+	if _, ok := contractABI.Methods[cfg.Method]; !ok {
+		return fmt.Errorf("%s: method %q not found in ABI %q", fieldPath, cfg.Method, cfg.ABI)
+	}
+
+	// Validate success condition if specified
+	if cfg.SuccessCondition != "" {
+		switch SuccessCondition(cfg.SuccessCondition) {
+		case SuccessNoRevert, SuccessAddressNonZero:
+			// Valid
+		default:
+			return fmt.Errorf("%s: invalid success_condition %q (allowed: no_revert, address_nonzero)", fieldPath, cfg.SuccessCondition)
+		}
+	}
+
+	return nil
+}
+
+// validateMetadataConfig validates metadata source and method configuration.
+func validateMetadataConfig(cfg MetadataConfig, abiRegistry *ABIRegistry) error {
+	// Validate metadata source
+	if cfg.Source != "" {
+		switch MetadataSource(cfg.Source) {
+		case MetadataSourceOnChain, MetadataSourceVendorOnly:
+			// Valid
+		default:
+			return fmt.Errorf("adapter.metadata.source: invalid value %q (allowed: on_chain, vendor_only)", cfg.Source)
+		}
+	}
+
+	// If on-chain metadata with method, validate the method
+	if cfg.Source == string(MetadataSourceOnChain) && cfg.Method != nil {
+		if err := validateMethodConfig(*cfg.Method, abiRegistry, "adapter.metadata.method"); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -183,6 +271,7 @@ func BuildGenericAdapterFromConfig(
 		existence,
 		owner,
 		metadata,
+		entry.Constraints,
 		ethClient,
 		false,
 	), nil

@@ -114,10 +114,10 @@ func TestResolver_Resolve_ERC721(t *testing.T) {
 		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
 		Return(false)
 
-	// Mock ERC721 token URI call
+	// Mock TokenURI call through adapter
 	mocks.ethClient.
 		EXPECT().
-		ERC721TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1", domain.StandardERC721).
 		Return("https://example.com/metadata.json", nil)
 
 	// Mock URI resolver to return the URI as-is
@@ -205,10 +205,10 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
 		Return(false)
 
-	// Mock ERC1155 URI call (with placeholder)
+	// Mock TokenURI call through adapter (with placeholder)
 	mocks.ethClient.
 		EXPECT().
-		ERC1155URI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1", domain.StandardERC1155).
 		Return("https://example.com/metadata/{id}.json", nil)
 
 	// Mock URI resolver (placeholder is replaced before calling Resolve)
@@ -401,11 +401,11 @@ func TestResolver_Resolve_DataURI(t *testing.T) {
 		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
 		Return(false)
 
-	// Mock ERC721 token URI call returning data URI
+	// Mock TokenURI call returning data URI through adapter
 	dataURI := "data:application/json;base64,eyJuYW1lIjoiVGVzdCBORlQifQ==" // {"name":"Test NFT"} in base64
 	mocks.ethClient.
 		EXPECT().
-		ERC721TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1", domain.StandardERC721).
 		Return(dataURI, nil)
 
 	// Mock JSON unmarshal for parsing data URI
@@ -493,10 +493,10 @@ func TestResolver_Resolve_EthereumNoOriginationFound(t *testing.T) {
 		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
 		Return(false)
 
-	// Mock ERC1155 URI call
+	// Mock TokenURI call through adapter
 	mocks.ethClient.
 		EXPECT().
-		ERC1155URI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1", domain.StandardERC1155).
 		Return("https://example.com/metadata.json", nil)
 
 	// Mock URI resolver for the metadata URL
