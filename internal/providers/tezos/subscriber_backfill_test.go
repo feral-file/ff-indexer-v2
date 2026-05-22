@@ -76,6 +76,13 @@ func (f *fakeBackfillTzKTClient) GetLatestBlock(context.Context) (uint64, error)
 	return f.head, nil
 }
 
+func (f *fakeBackfillTzKTClient) FetchLatestBlockUncached(context.Context) (uint64, error) {
+	if f.headErr != nil {
+		return 0, f.headErr
+	}
+	return f.head, nil
+}
+
 func (f *fakeBackfillTzKTClient) GetTokenTransfersByLevelRange(_ context.Context, _, _ uint64, _, offset int) ([]TzKTTokenTransfer, error) {
 	if f.transferPageErr != nil {
 		return nil, f.transferPageErr
@@ -383,4 +390,88 @@ func TestBackfillHistoricLevels_requiresHandler(t *testing.T) {
 	_, err := subscriber.backfillHistoricLevels(context.Background(), 100, 0, nil)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "backfill handler is required")
+}
+
+func TestBackfillHistoricLevels_failsOnTransferParseError(t *testing.T) {
+	parseErr := errors.New("mock parse failure")
+	subscriber := &tzSubscriber{
+		chainID: domain.ChainTezosMainnet,
+		tzktClient: &parseFailingTzKTClient{
+			fakeBackfillTzKTClient: &fakeBackfillTzKTClient{
+				head: 100,
+				transferPages: map[int][]TzKTTokenTransfer{
+					0: {{
+						Level: 100,
+						ID:    1,
+						Token: TzKTTokenInfo{Standard: domain.StandardFA2, Contract: TzKTContract{Address: "KT1"}, TokenID: "0"},
+					}},
+				},
+			},
+			transferParseErr: parseErr,
+		},
+		clock: adapter.NewClock(),
+	}
+
+	_, err := subscriber.backfillHistoricLevels(context.Background(), 100, 0, func(*domain.BlockchainEvent) error {
+		return nil
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "failed to parse transfer")
+	require.ErrorIs(t, err, parseErr)
+}
+
+func TestBackfillHistoricLevels_failsOnBigMapParseError(t *testing.T) {
+	parseErr := errors.New("mock bigmap parse failure")
+	subscriber := &tzSubscriber{
+		chainID: domain.ChainTezosMainnet,
+		tzktClient: &parseFailingTzKTClient{
+			fakeBackfillTzKTClient: &fakeBackfillTzKTClient{
+				head: 100,
+				bigmapPages: map[int][]TzKTBigMapUpdate{
+					0: {{
+						Level: 100,
+						ID:    1,
+						Path:  "token_metadata",
+						Contract: struct {
+							Address string `json:"address"`
+						}{Address: "KT1"},
+						Content: struct {
+							Hash  string      `json:"hash"`
+							Key   interface{} `json:"key"`
+							Value interface{} `json:"value"`
+						}{Key: "0"},
+					}},
+				},
+			},
+			bigmapParseErr: parseErr,
+		},
+		clock: adapter.NewClock(),
+	}
+
+	_, err := subscriber.backfillHistoricLevels(context.Background(), 100, 0, func(*domain.BlockchainEvent) error {
+		return nil
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "failed to parse bigmap update")
+	require.ErrorIs(t, err, parseErr)
+}
+
+type parseFailingTzKTClient struct {
+	*fakeBackfillTzKTClient
+	transferParseErr error
+	bigmapParseErr   error
+}
+
+func (c *parseFailingTzKTClient) ParseTransfer(ctx context.Context, transfer *TzKTTokenTransfer) (*domain.BlockchainEvent, error) {
+	if c.transferParseErr != nil {
+		return nil, c.transferParseErr
+	}
+	return c.fakeBackfillTzKTClient.ParseTransfer(ctx, transfer)
+}
+
+func (c *parseFailingTzKTClient) ParseBigMapUpdate(ctx context.Context, update *TzKTBigMapUpdate) (*domain.BlockchainEvent, error) {
+	if c.bigmapParseErr != nil {
+		return nil, c.bigmapParseErr
+	}
+	return c.fakeBackfillTzKTClient.ParseBigMapUpdate(ctx, update)
 }

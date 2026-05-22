@@ -181,9 +181,9 @@ func (c *tzSubscriber) SubscribeEvents(ctx context.Context, fromLevel uint64, ha
 		return err
 	}
 
-	headAfterSubscribe, err := c.tzktClient.GetLatestBlock(ctx)
+	headAfterSubscribe, err := c.tzktClient.FetchLatestBlockUncached(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get chain head after SignalR subscribe: %w", err)
+		return fmt.Errorf("failed to fetch fresh chain head after SignalR subscribe: %w", err)
 	}
 
 	logger.InfoCtx(ctx, "TzKT REST backfill starting after SignalR subscribe",
@@ -630,8 +630,7 @@ func (c *tzSubscriber) handleTransfers(ctx context.Context, transfers []TzKTToke
 
 		event, err := c.tzktClient.ParseTransfer(ctx, &transfer)
 		if err != nil {
-			logger.ErrorCtx(ctx, errors.New("error parsing transfer"), zap.Error(err))
-			continue
+			return fmt.Errorf("failed to parse transfer at level %d (transfer ID %d): %w", transfer.Level, transfer.ID, err)
 		}
 		if event == nil || c.handler == nil {
 			continue
@@ -655,8 +654,7 @@ func (c *tzSubscriber) handleBigMapUpdates(ctx context.Context, updates []TzKTBi
 
 		event, err := c.tzktClient.ParseBigMapUpdate(ctx, &update)
 		if err != nil {
-			logger.ErrorCtx(ctx, errors.New("error parsing big map update"), zap.Error(err))
-			continue
+			return fmt.Errorf("failed to parse bigmap update at level %d (bigmap ID %d): %w", update.Level, update.ID, err)
 		}
 		if event == nil || c.handler == nil {
 			continue

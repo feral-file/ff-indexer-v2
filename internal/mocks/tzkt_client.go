@@ -57,6 +57,21 @@ func (mr *MockTzKTClientMockRecorder) ChainID() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ChainID", reflect.TypeOf((*MockTzKTClient)(nil).ChainID))
 }
 
+// FetchLatestBlockUncached mocks base method.
+func (m *MockTzKTClient) FetchLatestBlockUncached(ctx context.Context) (uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FetchLatestBlockUncached", ctx)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FetchLatestBlockUncached indicates an expected call of FetchLatestBlockUncached.
+func (mr *MockTzKTClientMockRecorder) FetchLatestBlockUncached(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchLatestBlockUncached", reflect.TypeOf((*MockTzKTClient)(nil).FetchLatestBlockUncached), ctx)
+}
+
 // GetBigMapUpdatesByLevelRange mocks base method.
 func (m *MockTzKTClient) GetBigMapUpdatesByLevelRange(ctx context.Context, fromLevel, toLevel uint64, limit, offset int) ([]tezos.TzKTBigMapUpdate, error) {
 	m.ctrl.T.Helper()

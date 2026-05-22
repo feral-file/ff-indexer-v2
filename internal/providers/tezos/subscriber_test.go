@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 }
 
 func expectEmptyBackfill(tzkt *mocks.MockTzKTClient, fromLevel, head uint64) {
-	tzkt.EXPECT().GetLatestBlock(gomock.Any()).Return(head, nil)
+	tzkt.EXPECT().FetchLatestBlockUncached(gomock.Any()).Return(head, nil)
 	if fromLevel <= head {
 		tzkt.EXPECT().GetTokenTransfersByLevelRange(gomock.Any(), fromLevel, head, 1000, 0).Return(nil, nil)
 		tzkt.EXPECT().GetBigMapUpdatesByLevelRange(gomock.Any(), fromLevel, head, 1000, 0).Return(nil, nil)
@@ -236,7 +236,7 @@ func TestSubscribeEvents_backfillsGapBeforeLiveStream(t *testing.T) {
 	client.EXPECT().Send("SubscribeToTokenTransfers", gomock.Any()).Return(okSend()).Times(1)
 	client.EXPECT().Send("SubscribeToBigMaps", gomock.Any()).Return(okSend()).Times(1)
 
-	tzkt.EXPECT().GetLatestBlock(gomock.Any()).Return(head, nil)
+	tzkt.EXPECT().FetchLatestBlockUncached(gomock.Any()).Return(head, nil)
 	backfillTransfer := tezos.TzKTTokenTransfer{
 		Level: 120,
 		ID:    1,
@@ -344,7 +344,7 @@ func TestSubscribeEvents_buffersLiveDuringBackfill(t *testing.T) {
 	clock.EXPECT().Sleep(time.Second)
 	client.EXPECT().Send("SubscribeToTokenTransfers", gomock.Any()).Return(okSend()).Times(1)
 	client.EXPECT().Send("SubscribeToBigMaps", gomock.Any()).Return(okSend()).Times(1)
-	tzkt.EXPECT().GetLatestBlock(gomock.Any()).Return(head, nil)
+	tzkt.EXPECT().FetchLatestBlockUncached(gomock.Any()).Return(head, nil)
 
 	backfillTransfer := tezos.TzKTTokenTransfer{
 		Level: 120,
@@ -464,7 +464,7 @@ func TestSubscribeEvents_failsOnLiveBufferOverflowDuringBackfill(t *testing.T) {
 	clock.EXPECT().Sleep(time.Second)
 	client.EXPECT().Send("SubscribeToTokenTransfers", gomock.Any()).Return(okSend()).Times(1)
 	client.EXPECT().Send("SubscribeToBigMaps", gomock.Any()).Return(okSend()).Times(1)
-	tzkt.EXPECT().GetLatestBlock(gomock.Any()).Return(head, nil)
+	tzkt.EXPECT().FetchLatestBlockUncached(gomock.Any()).Return(head, nil)
 	tzkt.EXPECT().GetTokenTransfersByLevelRange(gomock.Any(), fromLevel, head, 1000, 0).
 		DoAndReturn(func(ctx context.Context, _, _ uint64, _, _ int) ([]tezos.TzKTTokenTransfer, error) {
 			close(backfillStarted)
@@ -521,5 +521,54 @@ func TestSubscribeEvents_failsOnLiveBufferOverflowDuringBackfill(t *testing.T) {
 		require.ErrorIs(t, err, tezos.ErrLiveStreamBufferOverflow)
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for overflow failure")
+	}
+}
+
+func TestSubscribeEvents_usesFreshHeadForHandoffBoundary(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	signalR := mocks.NewMockSignalR(ctrl)
+	client := mocks.NewMockSignalRClient(ctrl)
+	clock := mocks.NewMockClock(ctrl)
+	tzkt := mocks.NewMockTzKTClient(ctrl)
+
+	signalR.EXPECT().NewClient(gomock.Any(), "wss://tzkt.example/ws", gomock.Any()).Return(client, nil)
+	client.EXPECT().Start()
+	clock.EXPECT().Sleep(time.Second)
+	client.EXPECT().Send("SubscribeToTokenTransfers", gomock.Any()).Return(okSend())
+	clock.EXPECT().After(15 * time.Second).Return(make(chan time.Time))
+	client.EXPECT().Send("SubscribeToBigMaps", gomock.Any()).Return(okSend())
+	clock.EXPECT().After(15 * time.Second).Return(make(chan time.Time))
+
+	tzkt.EXPECT().FetchLatestBlockUncached(gomock.Any()).Return(uint64(150), nil)
+	tzkt.EXPECT().GetTokenTransfersByLevelRange(gomock.Any(), uint64(100), uint64(150), 1000, 0).Return(nil, nil)
+	tzkt.EXPECT().GetBigMapUpdatesByLevelRange(gomock.Any(), uint64(100), uint64(150), 1000, 0).Return(nil, nil)
+	client.EXPECT().Stop()
+
+	subscriber, err := tezos.NewSubscriber(tezos.Config{
+		WebSocketURL: "wss://tzkt.example/ws",
+		ChainID:      domain.ChainTezosMainnet,
+	}, signalR, clock, tzkt)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- subscriber.SubscribeEvents(ctx, 100, func(*domain.BlockchainEvent) error {
+			return nil
+		})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for subscription to stop")
 	}
 }

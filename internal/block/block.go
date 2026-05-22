@@ -34,6 +34,11 @@ type BlockProvider interface {
 	// GetLatestBlock returns the latest block number, potentially from cache
 	GetLatestBlock(ctx context.Context) (uint64, error)
 
+	// FetchLatestBlockUncached fetches the latest block number directly from the blockchain,
+	// bypassing any cache. Use this for critical operations that require the freshest possible
+	// block data (e.g., SignalR/backfill handoff boundaries).
+	FetchLatestBlockUncached(ctx context.Context) (uint64, error)
+
 	// GetBlockTimestamp returns the timestamp for a given block number, potentially from cache
 	GetBlockTimestamp(ctx context.Context, blockNumber uint64) (time.Time, error)
 }
@@ -115,6 +120,30 @@ func (p *blockProvider) GetLatestBlock(ctx context.Context) (uint64, error) {
 	}
 
 	// Update cache with fresh data
+	p.mu.Lock()
+	p.blockInfo = &BlockInfo{
+		Number:    blockNumber,
+		Timestamp: now,
+	}
+	p.mu.Unlock()
+
+	return blockNumber, nil
+}
+
+// FetchLatestBlockUncached fetches the latest block number directly, bypassing cache.
+//
+// Reason: For critical handoff boundaries (e.g., SignalR subscribe + REST backfill), a stale
+// cached head can cause data loss if levels between the cached value and the actual connection
+// time are missed. This method ensures we use the true chain state at the moment of the call.
+func (p *blockProvider) FetchLatestBlockUncached(ctx context.Context) (uint64, error) {
+	logger.DebugCtx(ctx, "Fetching latest block number from blockchain provider (uncached)")
+	blockNumber, err := p.fetcher.FetchLatestBlock(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch latest block uncached: %w", err)
+	}
+
+	// Update cache with the fresh data for future GetLatestBlock calls
+	now := p.clock.Now()
 	p.mu.Lock()
 	p.blockInfo = &BlockInfo{
 		Number:    blockNumber,

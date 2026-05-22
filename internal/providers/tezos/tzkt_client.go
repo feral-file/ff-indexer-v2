@@ -161,6 +161,10 @@ type TzKTClient interface {
 	// GetLatestBlock retrieves the current latest block level
 	GetLatestBlock(ctx context.Context) (uint64, error)
 
+	// FetchLatestBlockUncached retrieves the latest block level directly from TzKT, bypassing any cache.
+	// Use this for critical operations that require the freshest possible block data (e.g., SignalR/backfill handoff).
+	FetchLatestBlockUncached(ctx context.Context) (uint64, error)
+
 	// GetTokenTransfersByLevelRange retrieves FA2 token transfers within an inclusive level range.
 	GetTokenTransfersByLevelRange(ctx context.Context, fromLevel, toLevel uint64, limit, offset int) ([]TzKTTokenTransfer, error)
 
@@ -685,6 +689,14 @@ func (c *tzktClient) getTransactionFromBitmapUpdate(ctx context.Context, updates
 // GetLatestBlock retrieves the current latest block level
 func (c *tzktClient) GetLatestBlock(ctx context.Context) (uint64, error) {
 	return c.blockProvider.GetLatestBlock(ctx)
+}
+
+// FetchLatestBlockUncached retrieves the latest block level directly from TzKT, bypassing cache.
+//
+// Reason: For critical handoff boundaries (e.g., SignalR subscribe + REST backfill), a stale
+// cached head can miss levels between the cached value and the actual subscription time.
+func (c *tzktClient) FetchLatestBlockUncached(ctx context.Context) (uint64, error) {
+	return c.blockProvider.FetchLatestBlockUncached(ctx)
 }
 
 // GetTokenTransfersByLevelRange retrieves token transfers within an inclusive level range.
