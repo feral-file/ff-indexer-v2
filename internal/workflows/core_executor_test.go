@@ -2612,9 +2612,9 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC721(t *testing.T)
 		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC721).
 		Return(true, nil)
 
-	// Mock ERC721OwnerOf to return current owner
+	// Mock TokenOwner to return current owner
 	mocks.ethClient.EXPECT().
-		ERC721OwnerOf(ctx, contractAddress, tokenNumber).
+		TokenOwner(ctx, contractAddress, tokenNumber, domain.StandardERC721).
 		Return(ownerAddr, nil)
 
 	// Mock store CreateTokenWithProvenances
@@ -2655,9 +2655,9 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC721_Burned(t *tes
 		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC721).
 		Return(true, nil)
 
-	// Mock ERC721OwnerOf to return zero address (burned)
+	// Mock TokenOwner to return zero address (burned)
 	mocks.ethClient.EXPECT().
-		ERC721OwnerOf(ctx, contractAddress, tokenNumber).
+		TokenOwner(ctx, contractAddress, tokenNumber, domain.StandardERC721).
 		Return(domain.ETHEREUM_ZERO_ADDRESS, nil)
 
 	// Mock store CreateTokenWithProvenances
@@ -3069,7 +3069,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_WithOwner_TokenNotFoundOnCha
 	ownerAddress := "0xowner123"
 
 	mocks.ethClient.EXPECT().
-		ERC721OwnerOf(ctx, "0x1234567890123456789012345678901234567890", "1").
+		TokenOwner(ctx, "0x1234567890123456789012345678901234567890", "1", domain.StandardERC721).
 		Return("", ethereum.ErrExecutionReverted)
 
 	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, &ownerAddress)

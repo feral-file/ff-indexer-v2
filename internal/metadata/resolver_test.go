@@ -85,11 +85,34 @@ func tearDownTestResolver(mocks *testResolverMocks) {
 	mocks.ctrl.Finish()
 }
 
+func TestResolver_Resolve_VendorOnlyMetadata(t *testing.T) {
+	mocks := setupTestResolver(t)
+	defer tearDownTestResolver(mocks)
+
+	cryptoPunksAddress := "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, cryptoPunksAddress, "1")
+
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata(gomock.Any()).
+		Return(true)
+
+	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
 func TestResolver_Resolve_ERC721(t *testing.T) {
 	mocks := setupTestResolver(t)
 	defer tearDownTestResolver(mocks)
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
+
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
 
 	// Mock ERC721 token URI call
 	mocks.ethClient.
@@ -176,6 +199,11 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 	defer tearDownTestResolver(mocks)
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x0000000000000000000000000000000000000123", "1")
+
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
 
 	// Mock ERC1155 URI call (with placeholder)
 	mocks.ethClient.
@@ -350,6 +378,11 @@ func TestResolver_Resolve_UnsupportedStandard(t *testing.T) {
 	// Create a token CID with unsupported standard
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.ChainStandard("unsupported"), "0x0000000000000000000000000000000000000123", "1")
 
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
+
 	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
 
 	assert.Error(t, err)
@@ -362,6 +395,11 @@ func TestResolver_Resolve_DataURI(t *testing.T) {
 	defer tearDownTestResolver(mocks)
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
+
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
 
 	// Mock ERC721 token URI call returning data URI
 	dataURI := "data:application/json;base64,eyJuYW1lIjoiVGVzdCBORlQifQ==" // {"name":"Test NFT"} in base64
@@ -449,6 +487,11 @@ func TestResolver_Resolve_EthereumNoOriginationFound(t *testing.T) {
 	defer tearDownTestResolver(mocks)
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x0000000000000000000000000000000000000123", "1")
+
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
 
 	// Mock ERC1155 URI call
 	mocks.ethClient.

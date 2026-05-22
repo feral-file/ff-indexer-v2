@@ -971,8 +971,8 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 	case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
 		switch standard {
 		case domain.StandardERC721:
-			// For ERC721, use ownerOf to get the current single owner
-			owner, err := e.ethClient.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
+			// For ERC721, resolve owner via contract adapter (supports legacy contracts like CryptoPunks).
+			owner, err := e.ethClient.TokenOwner(ctx, contractAddress, tokenNumber, standard)
 			if err != nil {
 				if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
 					strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {

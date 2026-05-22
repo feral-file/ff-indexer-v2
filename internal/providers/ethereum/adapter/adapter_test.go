@@ -160,7 +160,7 @@ func TestGenericAdapter_TokenExists_Revert(t *testing.T) {
 	require.False(t, exists)
 }
 
-func TestGenericAdapter_GetOwner(t *testing.T) {
+func TestGenericAdapter_TokenOwner(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)
 
@@ -194,17 +194,17 @@ func TestGenericAdapter_GetOwner(t *testing.T) {
 	}, abiRegistry, mockClient)
 	require.NoError(t, err)
 
-	owner, err := adp.GetOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "1")
+	owner, err := adp.TokenOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "1")
 	require.NoError(t, err)
 	require.Equal(t, ownerAddr.Hex(), owner)
 }
 
-func TestGenericAdapter_GetMetadataURI_VendorOnly(t *testing.T) {
+func TestGenericAdapter_TokenURI_VendorOnly(t *testing.T) {
 	adp := adapter.NewGenericAdapter(nil, nil, adapter.ContractMetadataConfig{
 		Source: adapter.MetadataSourceVendorOnly,
 	}, nil, false)
 
-	uri, err := adp.GetMetadataURI(context.Background(), "0xabc", "1")
+	uri, err := adp.TokenURI(context.Background(), "0xabc", "1")
 	require.NoError(t, err)
 	require.Empty(t, uri)
 }

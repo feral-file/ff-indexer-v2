@@ -18,8 +18,8 @@ import (
 // ContractAdapter defines contract-specific token operations used by the Ethereum client.
 type ContractAdapter interface {
 	TokenExists(ctx context.Context, contractAddress, tokenNumber string) (bool, error)
-	GetOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error)
-	GetMetadataURI(ctx context.Context, contractAddress, tokenNumber string) (string, error)
+	TokenOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error)
+	TokenURI(ctx context.Context, contractAddress, tokenNumber string) (string, error)
 	SupportsProvenance() bool
 }
 
@@ -99,8 +99,8 @@ func (a *GenericAdapter) TokenExists(ctx context.Context, contractAddress, token
 	return evaluateSuccess(result, a.existence.SuccessCondition)
 }
 
-// GetOwner resolves the current owner using the configured owner method.
-func (a *GenericAdapter) GetOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+// TokenOwner resolves the current owner using the configured owner method.
+func (a *GenericAdapter) TokenOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	if a.owner == nil {
 		return "", fmt.Errorf("owner method not configured")
 	}
@@ -118,8 +118,8 @@ func (a *GenericAdapter) GetOwner(ctx context.Context, contractAddress, tokenNum
 	return owner.Hex(), nil
 }
 
-// GetMetadataURI returns on-chain metadata when configured; vendor-only contracts return empty.
-func (a *GenericAdapter) GetMetadataURI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+// TokenURI returns on-chain metadata when configured; vendor-only contracts return empty.
+func (a *GenericAdapter) TokenURI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	switch a.metadata.Source {
 	case MetadataSourceVendorOnly, "":
 		return "", nil

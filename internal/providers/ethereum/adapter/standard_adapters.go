@@ -27,13 +27,13 @@ func (a *ERC721StandardAdapter) TokenExists(ctx context.Context, contractAddress
 	return true, nil
 }
 
-// GetOwner returns the current ERC-721 owner.
-func (a *ERC721StandardAdapter) GetOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+// TokenOwner returns the current ERC-721 owner.
+func (a *ERC721StandardAdapter) TokenOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	return a.ops.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
 }
 
-// GetMetadataURI returns the ERC-721 tokenURI value.
-func (a *ERC721StandardAdapter) GetMetadataURI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+// TokenURI returns the ERC-721 tokenURI value.
+func (a *ERC721StandardAdapter) TokenURI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	return a.ops.ERC721TokenURI(ctx, contractAddress, tokenNumber)
 }
 
@@ -57,13 +57,13 @@ func (a *ERC1155StandardAdapter) TokenExists(ctx context.Context, contractAddres
 	return a.ops.ERC1155TokenExists(ctx, contractAddress, tokenNumber)
 }
 
-// GetOwner is unsupported for fungible ERC-1155 tokens.
-func (a *ERC1155StandardAdapter) GetOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+// TokenOwner is unsupported for fungible ERC-1155 tokens.
+func (a *ERC1155StandardAdapter) TokenOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	return "", fmt.Errorf("ERC1155 does not support single-owner lookup")
 }
 
-// GetMetadataURI returns the ERC-1155 uri value.
-func (a *ERC1155StandardAdapter) GetMetadataURI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
+// TokenURI returns the ERC-1155 uri value.
+func (a *ERC1155StandardAdapter) TokenURI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
 	return a.ops.ERC1155URI(ctx, contractAddress, tokenNumber)
 }
 
@@ -85,13 +85,13 @@ func (a *FallbackAdapter) TokenExists(_ context.Context, _, _ string) (bool, err
 	return true, nil
 }
 
-// GetOwner is unsupported for fallback contracts.
-func (a *FallbackAdapter) GetOwner(_ context.Context, _, _ string) (string, error) {
+// TokenOwner is unsupported for fallback contracts.
+func (a *FallbackAdapter) TokenOwner(_ context.Context, _, _ string) (string, error) {
 	return "", fmt.Errorf("owner lookup not supported for fallback adapter")
 }
 
-// GetMetadataURI skips on-chain metadata for fallback contracts.
-func (a *FallbackAdapter) GetMetadataURI(_ context.Context, _, _ string) (string, error) {
+// TokenURI skips on-chain metadata for fallback contracts.
+func (a *FallbackAdapter) TokenURI(_ context.Context, _, _ string) (string, error) {
 	return "", nil
 }
 

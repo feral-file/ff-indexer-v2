@@ -107,7 +107,15 @@ func (r *resolver) RawHash(metadata *NormalizedMetadata) ([]byte, []byte, error)
 }
 
 func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*NormalizedMetadata, error) {
-	_, standard, contractAddress, tokenNumber := tokenCID.Parse()
+	chainID, standard, contractAddress, tokenNumber := tokenCID.Parse()
+
+	// Skip on-chain metadata for vendor-only contracts (e.g. CryptoPunks); enrichment uses OpenSea.
+	if chainID == domain.ChainEthereumMainnet || chainID == domain.ChainEthereumSepolia {
+		if r.ethClient.IsVendorOnlyMetadata(contractAddress) {
+			return nil, nil
+		}
+	}
+
 	var metadataURI string
 	var err error
 

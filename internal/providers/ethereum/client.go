@@ -101,11 +101,14 @@ type EthereumClient interface {
 	// For ERC1155: checks mint and burn events in logs
 	TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error)
 
-	// GetOwnerViaAdapter resolves the token owner using the contract adapter registry.
-	GetOwnerViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error)
+	// TokenOwner resolves the token owner via the contract adapter registry.
+	TokenOwner(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error)
 
-	// GetMetadataURIViaAdapter resolves on-chain metadata using the contract adapter registry.
-	GetMetadataURIViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error)
+	// TokenURI resolves on-chain metadata URI via the contract adapter registry.
+	TokenURI(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error)
+
+	// IsVendorOnlyMetadata reports whether on-chain metadata fetch should be skipped for a contract.
+	IsVendorOnlyMetadata(contractAddress string) bool
 
 	// Close closes the connection
 	Close()
@@ -1862,16 +1865,21 @@ func (f *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 	return adp.TokenExists(ctx, contractAddress, tokenNumber)
 }
 
-// GetOwnerViaAdapter resolves the token owner using the contract adapter registry.
-func (f *ethereumClient) GetOwnerViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
+// TokenOwner resolves the token owner via the contract adapter registry.
+func (f *ethereumClient) TokenOwner(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
 	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
-	return adp.GetOwner(ctx, contractAddress, tokenNumber)
+	return adp.TokenOwner(ctx, contractAddress, tokenNumber)
 }
 
-// GetMetadataURIViaAdapter resolves on-chain metadata using the contract adapter registry.
-func (f *ethereumClient) GetMetadataURIViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
+// TokenURI resolves on-chain metadata URI via the contract adapter registry.
+func (f *ethereumClient) TokenURI(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
 	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
-	return adp.GetMetadataURI(ctx, contractAddress, tokenNumber)
+	return adp.TokenURI(ctx, contractAddress, tokenNumber)
+}
+
+// IsVendorOnlyMetadata reports whether on-chain metadata fetch should be skipped for a contract.
+func (f *ethereumClient) IsVendorOnlyMetadata(contractAddress string) bool {
+	return f.adapterRegistry.IsVendorOnlyMetadata(f.chainID, contractAddress)
 }
 
 // ERC1155TokenExists checks ERC1155 token existence via recent transfer scan and balance checks.

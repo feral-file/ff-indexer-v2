@@ -193,36 +193,6 @@ func (mr *MockEthereumProviderClientMockRecorder) GetLatestBlock(ctx any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestBlock", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetLatestBlock), ctx)
 }
 
-// GetMetadataURIViaAdapter mocks base method.
-func (m *MockEthereumProviderClient) GetMetadataURIViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetMetadataURIViaAdapter", ctx, contractAddress, tokenNumber, standard)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetMetadataURIViaAdapter indicates an expected call of GetMetadataURIViaAdapter.
-func (mr *MockEthereumProviderClientMockRecorder) GetMetadataURIViaAdapter(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMetadataURIViaAdapter", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetMetadataURIViaAdapter), ctx, contractAddress, tokenNumber, standard)
-}
-
-// GetOwnerViaAdapter mocks base method.
-func (m *MockEthereumProviderClient) GetOwnerViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetOwnerViaAdapter", ctx, contractAddress, tokenNumber, standard)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetOwnerViaAdapter indicates an expected call of GetOwnerViaAdapter.
-func (mr *MockEthereumProviderClientMockRecorder) GetOwnerViaAdapter(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOwnerViaAdapter", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetOwnerViaAdapter), ctx, contractAddress, tokenNumber, standard)
-}
-
 // GetTokenCIDsByOwnerAndBlockRange mocks base method.
 func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, requestedFromBlock, requestedToBlock uint64, limit int, order domain.BlockScanOrder, blacklist registry.BlacklistRegistry) (domain.TokenWithBlockRangeResult, error) {
 	m.ctrl.T.Helper()
@@ -251,6 +221,20 @@ func (m *MockEthereumProviderClient) GetTokenEvents(ctx context.Context, contrac
 func (mr *MockEthereumProviderClientMockRecorder) GetTokenEvents(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenEvents", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetTokenEvents), ctx, contractAddress, tokenNumber, standard)
+}
+
+// IsVendorOnlyMetadata mocks base method.
+func (m *MockEthereumProviderClient) IsVendorOnlyMetadata(contractAddress string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsVendorOnlyMetadata", contractAddress)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsVendorOnlyMetadata indicates an expected call of IsVendorOnlyMetadata.
+func (mr *MockEthereumProviderClientMockRecorder) IsVendorOnlyMetadata(contractAddress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsVendorOnlyMetadata", reflect.TypeOf((*MockEthereumProviderClient)(nil).IsVendorOnlyMetadata), contractAddress)
 }
 
 // ParseEventLog mocks base method.
@@ -296,4 +280,34 @@ func (m *MockEthereumProviderClient) TokenExists(ctx context.Context, contractAd
 func (mr *MockEthereumProviderClientMockRecorder) TokenExists(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TokenExists", reflect.TypeOf((*MockEthereumProviderClient)(nil).TokenExists), ctx, contractAddress, tokenNumber, standard)
+}
+
+// TokenOwner mocks base method.
+func (m *MockEthereumProviderClient) TokenOwner(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TokenOwner", ctx, contractAddress, tokenNumber, standard)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TokenOwner indicates an expected call of TokenOwner.
+func (mr *MockEthereumProviderClientMockRecorder) TokenOwner(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TokenOwner", reflect.TypeOf((*MockEthereumProviderClient)(nil).TokenOwner), ctx, contractAddress, tokenNumber, standard)
+}
+
+// TokenURI mocks base method.
+func (m *MockEthereumProviderClient) TokenURI(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TokenURI", ctx, contractAddress, tokenNumber, standard)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TokenURI indicates an expected call of TokenURI.
+func (mr *MockEthereumProviderClientMockRecorder) TokenURI(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TokenURI", reflect.TypeOf((*MockEthereumProviderClient)(nil).TokenURI), ctx, contractAddress, tokenNumber, standard)
 }
