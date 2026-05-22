@@ -84,7 +84,7 @@ The ingestion runner passes **`fromLevel`** into `EventSource.SubscribeEvents` (
 
 **Operational notes:**
 
-1. **Large gaps** — Backfill latency scales with outage length and TzKT rate limits; progress is logged at page boundaries. Live events during backfill accumulate in `streamCh` until step (4). If the buffer fills before backfill completes, subscribe fails with **`ErrLiveStreamBufferOverflow`** and the runner reconnects (REST replay from the persisted cursor).
+1. **Large gaps** — Backfill latency scales with outage length and TzKT rate limits; progress is logged at page boundaries and levels are emitted incrementally as pages arrive (bounded memory). Live events during backfill accumulate in `streamCh` until step (4). If the buffer fills before backfill completes, subscribe fails with **`ErrLiveStreamBufferOverflow`** and the runner reconnects (REST replay from the persisted cursor).
 2. **Handoff boundary** — REST covers `[fromLevel, headAfterSubscribe]`. Live processing covers levels delivered to `streamCh` after subscribe (typically `headAfterSubscribe+1` onward, with possible boundary overlap).
 3. **Contract-scoped ingestion** — If subscriptions are later narrowed per contract/account, REST backfill queries must apply the **same filters** as the SignalR invokes to avoid ingest drift.
 

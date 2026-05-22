@@ -189,6 +189,98 @@ func TestBackfillHistoricLevels_emitsLevelsInAscendingOrder(t *testing.T) {
 	require.Equal(t, []uint64{100, 101, 102}, seen)
 }
 
+func TestBackfillEmitCutoff_usesLowestPeekLevel(t *testing.T) {
+	require.Equal(t, uint64(101), backfillEmitCutoff(101, true, 105, true))
+	require.Equal(t, uint64(105), backfillEmitCutoff(110, true, 105, true))
+	require.Equal(t, uint64(110), backfillEmitCutoff(110, true, 0, false))
+	require.Equal(t, uint64(105), backfillEmitCutoff(0, false, 105, true))
+	require.Equal(t, backfillEmitAllLevels, backfillEmitCutoff(0, false, 0, false))
+}
+
+func TestBackfillHistoricLevels_emitsBeforeLaterTransferPagesFetched(t *testing.T) {
+	page1 := make([]TzKTTokenTransfer, backfillPageSize)
+	for i := uint64(0); i < backfillPageSize; i++ {
+		page1[i] = TzKTTokenTransfer{
+			Level: 100 + i,
+			ID:    i + 1,
+			Token: TzKTTokenInfo{Standard: domain.StandardFA2, Contract: TzKTContract{Address: "KT1"}, TokenID: "0"},
+		}
+	}
+	page2 := []TzKTTokenTransfer{{
+		Level: 1100,
+		ID:    999,
+		Token: TzKTTokenInfo{Standard: domain.StandardFA2, Contract: TzKTContract{Address: "KT1"}, TokenID: "0"},
+	}}
+
+	var ops []string
+	fake := &fakeBackfillTzKTClient{
+		head: 5000,
+		transferPages: map[int][]TzKTTokenTransfer{
+			0:                page1,
+			backfillPageSize: page2,
+		},
+		bigmapPages: map[int][]TzKTBigMapUpdate{
+			0: {{
+				Level: 5000,
+				Path:  "token_metadata",
+				ID:    1,
+				Contract: struct {
+					Address string `json:"address"`
+				}{Address: "KT1"},
+				Content: struct {
+					Hash  string      `json:"hash"`
+					Key   interface{} `json:"key"`
+					Value interface{} `json:"value"`
+				}{Key: "0"},
+			}},
+		},
+	}
+
+	subscriber := &tzSubscriber{
+		chainID: domain.ChainTezosMainnet,
+		tzktClient: &fetchTrackingBackfillClient{
+			fakeBackfillTzKTClient: fake,
+			onTransferPage: func(offset int) {
+				ops = append(ops, fmt.Sprintf("transfer-page:%d", offset))
+			},
+		},
+		clock: adapter.NewClock(),
+	}
+
+	_, err := subscriber.backfillHistoricLevels(context.Background(), 100, 0, func(evt *domain.BlockchainEvent) error {
+		ops = append(ops, fmt.Sprintf("emit:%d", evt.BlockNumber))
+		return nil
+	})
+	require.NoError(t, err)
+
+	emit100Idx := indexOf(ops, "emit:100")
+	transferPage2Idx := indexOf(ops, fmt.Sprintf("transfer-page:%d", backfillPageSize))
+	require.NotEqual(t, -1, emit100Idx)
+	require.NotEqual(t, -1, transferPage2Idx)
+	require.Less(t, emit100Idx, transferPage2Idx, "ops=%v", ops)
+}
+
+type fetchTrackingBackfillClient struct {
+	*fakeBackfillTzKTClient
+	onTransferPage func(offset int)
+}
+
+func (f *fetchTrackingBackfillClient) GetTokenTransfersByLevelRange(ctx context.Context, fromLevel, toLevel uint64, limit, offset int) ([]TzKTTokenTransfer, error) {
+	if f.onTransferPage != nil {
+		f.onTransferPage(offset)
+	}
+	return f.fakeBackfillTzKTClient.GetTokenTransfersByLevelRange(ctx, fromLevel, toLevel, limit, offset)
+}
+
+func indexOf(values []string, target string) int {
+	for i, v := range values {
+		if v == target {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestBackfillHistoricLevels_paginatesBothFeeds(t *testing.T) {
 	page1 := make([]TzKTTokenTransfer, backfillPageSize)
 	for i := uint64(0); i < backfillPageSize; i++ {
