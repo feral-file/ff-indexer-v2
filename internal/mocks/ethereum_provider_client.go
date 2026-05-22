@@ -193,6 +193,36 @@ func (mr *MockEthereumProviderClientMockRecorder) GetLatestBlock(ctx any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestBlock", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetLatestBlock), ctx)
 }
 
+// GetMetadataURIViaAdapter mocks base method.
+func (m *MockEthereumProviderClient) GetMetadataURIViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMetadataURIViaAdapter", ctx, contractAddress, tokenNumber, standard)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetMetadataURIViaAdapter indicates an expected call of GetMetadataURIViaAdapter.
+func (mr *MockEthereumProviderClientMockRecorder) GetMetadataURIViaAdapter(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMetadataURIViaAdapter", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetMetadataURIViaAdapter), ctx, contractAddress, tokenNumber, standard)
+}
+
+// GetOwnerViaAdapter mocks base method.
+func (m *MockEthereumProviderClient) GetOwnerViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetOwnerViaAdapter", ctx, contractAddress, tokenNumber, standard)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetOwnerViaAdapter indicates an expected call of GetOwnerViaAdapter.
+func (mr *MockEthereumProviderClientMockRecorder) GetOwnerViaAdapter(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetOwnerViaAdapter", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetOwnerViaAdapter), ctx, contractAddress, tokenNumber, standard)
+}
+
 // GetTokenCIDsByOwnerAndBlockRange mocks base method.
 func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, requestedFromBlock, requestedToBlock uint64, limit int, order domain.BlockScanOrder, blacklist registry.BlacklistRegistry) (domain.TokenWithBlockRangeResult, error) {
 	m.ctrl.T.Helper()

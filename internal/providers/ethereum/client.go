@@ -19,6 +19,8 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	contractadapter "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/contracts"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
@@ -99,25 +101,40 @@ type EthereumClient interface {
 	// For ERC1155: checks mint and burn events in logs
 	TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error)
 
+	// GetOwnerViaAdapter resolves the token owner using the contract adapter registry.
+	GetOwnerViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error)
+
+	// GetMetadataURIViaAdapter resolves on-chain metadata using the contract adapter registry.
+	GetMetadataURIViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error)
+
 	// Close closes the connection
 	Close()
 }
 
 type ethereumClient struct {
-	chainID       domain.Chain
-	client        adapter.EthClient
-	clock         adapter.Clock
-	blockProvider block.BlockProvider
+	chainID         domain.Chain
+	client          adapter.EthClient
+	clock           adapter.Clock
+	blockProvider   block.BlockProvider
+	adapterRegistry *contractadapter.AdapterRegistry
 }
 
-// NewClient creates a new Ethereum client with the provided dependencies
+// NewClient creates a new Ethereum client with the provided dependencies.
 func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock, blockProvider block.BlockProvider) EthereumClient {
-	return &ethereumClient{
+	ec := &ethereumClient{
 		chainID:       chainID,
 		client:        client,
 		clock:         clock,
 		blockProvider: blockProvider,
 	}
+
+	registry, err := contractadapter.NewAdapterRegistry(contracts.Files, client, ec)
+	if err != nil {
+		panic(fmt.Sprintf("failed to initialize contract adapter registry: %v", err))
+	}
+	ec.adapterRegistry = registry
+
+	return ec
 }
 
 // SubscribeFilterLogs subscribes to filter logs
@@ -1839,216 +1856,212 @@ func (f *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 	return "", ErrOriginationNotFound
 }
 
-// TokenExists checks if a token exists on the blockchain
-// For ERC721: uses ownerOf and catches execution revert errors
-// For ERC1155: checks recent transfers and balanceOf for multiple recipients
+// TokenExists checks if a token exists on the blockchain via the contract adapter registry.
 func (f *ethereumClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
-	switch standard {
-	case domain.StandardERC721:
-		// For ERC721, try to call ownerOf. If it reverts, the token doesn't exist.
-		_, err := f.ERC721OwnerOf(ctx, contractAddress, tokenNumber)
-		if err != nil {
-			// Check if it's an execution revert error (token doesn't exist)
-			if strings.Contains(err.Error(), "execution reverted") ||
-				strings.Contains(err.Error(), "nonexistent token") {
-				return false, nil
-			}
-			// Other errors should be propagated
-			return false, fmt.Errorf("failed to check ERC721 token existence: %w", err)
+	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	return adp.TokenExists(ctx, contractAddress, tokenNumber)
+}
+
+// GetOwnerViaAdapter resolves the token owner using the contract adapter registry.
+func (f *ethereumClient) GetOwnerViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
+	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	return adp.GetOwner(ctx, contractAddress, tokenNumber)
+}
+
+// GetMetadataURIViaAdapter resolves on-chain metadata using the contract adapter registry.
+func (f *ethereumClient) GetMetadataURIViaAdapter(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
+	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	return adp.GetMetadataURI(ctx, contractAddress, tokenNumber)
+}
+
+// ERC1155TokenExists checks ERC1155 token existence via recent transfer scan and balance checks.
+func (f *ethereumClient) ERC1155TokenExists(ctx context.Context, contractAddress, tokenNumber string) (bool, error) {
+	// For ERC1155, find recent transfers in the last 10M blocks and check balanceOf for multiple recipients.
+	// This avoids scanning entire history which can hit Infura's 10k log limitation.
+	//
+	// Strategy: Scan backward up to 10M blocks to find recent non-burn transfers,
+	// then call balanceOf on multiple recent recipients to handle partial burns and transfers.
+	// If no recent transfers found, assume token doesn't exist.
+	//
+	// FIXME: This approach has limitations:
+	// 1. May return false negatives for very old/inactive tokens (>10M blocks)
+	// 2. Only checks TransferSingle events (not TransferBatch) for performance
+	// 3. Limited to checking 5 most recent recipients (trade-off between accuracy and RPC calls)
+	// 4. Race condition: token could be transferred between our scan and balanceOf call (unlikely but possible)
+	//
+	// TODO: Potential improvements:
+	// - Implement on-demand re-indexing for historical tokens if they appear in provenance events
+	// - Support TransferBatch events for more complete coverage
+	// - Use indexed subgraph or archive node for better ERC1155 querying
+	// - Cache existence checks per token to avoid repeated scans
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
+	if !ok {
+		return false, fmt.Errorf("invalid token number: %s", tokenNumber)
+	}
+
+	contractAddr := common.HexToAddress(contractAddress)
+	zeroAddress := common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS)
+
+	// Get the latest block number using cached provider
+	latestBlock, err := f.GetLatestBlock(timeoutCtx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get latest block: %w", err)
+	}
+
+	// Scan backward up to 10M blocks
+	const maxBlockThreshold = uint64(10_000_000)
+	var fromBlock uint64
+	if latestBlock > maxBlockThreshold {
+		fromBlock = latestBlock - maxBlockThreshold
+	}
+
+	logger.InfoCtx(timeoutCtx, "Checking ERC1155 token existence via recent transfers",
+		zap.String("contract", contractAddress),
+		zap.String("tokenNumber", tokenNumber),
+		zap.Uint64("fromBlock", fromBlock),
+		zap.Uint64("toBlock", latestBlock),
+	)
+
+	// Query all TransferSingle events for this contract in the block range
+	query := ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(fromBlock),
+		ToBlock:   new(big.Int).SetUint64(latestBlock),
+		Addresses: []common.Address{contractAddr},
+		Topics: [][]common.Hash{
+			{transferSingleEventSignature}, // TransferSingle events only (most common)
+		},
+	}
+
+	logs, err := f.filterLogsWithPagination(timeoutCtx, query)
+	if err != nil && timeoutCtx.Err() != context.DeadlineExceeded {
+		return false, fmt.Errorf("failed to fetch transfer logs: %w", err)
+	}
+
+	// Collect recent unique recipients for this token ID (in reverse chronological order)
+	// We check multiple recipients to handle cases where:
+	// - Last recipient transferred tokens away (ERC1155 allows multiple holders)
+	// - Last recipient partially burned their balance (but others still hold tokens)
+	const maxRecipientsToCheck = 5
+	type recipientInfo struct {
+		address     common.Address
+		blockNumber uint64
+		logIndex    uint
+	}
+	var recentRecipients []recipientInfo
+	seenRecipients := make(map[common.Address]bool)
+
+	for _, vLog := range logs {
+		// TransferSingle: topics[0]=signature, topics[1]=operator, topics[2]=from, topics[3]=to
+		// Data contains: id (32 bytes) and value (32 bytes)
+		if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
+			continue
 		}
-		return true, nil
 
-	case domain.StandardERC1155:
-		// For ERC1155, find recent transfers in the last 10M blocks and check balanceOf for multiple recipients
-		// This avoids scanning entire history which can hit Infura's 10k log limitation
-		//
-		// Strategy: Scan backward up to 10M blocks to find recent non-burn transfers,
-		// then call balanceOf on multiple recent recipients to handle partial burns and transfers.
-		// If no recent transfers found, assume token doesn't exist.
-		//
-		// FIXME: This approach has limitations:
-		// 1. May return false negatives for very old/inactive tokens (>10M blocks)
-		// 2. Only checks TransferSingle events (not TransferBatch) for performance
-		// 3. Limited to checking 5 most recent recipients (trade-off between accuracy and RPC calls)
-		// 4. Race condition: token could be transferred between our scan and balanceOf call (unlikely but possible)
-		//
-		// TODO: Potential improvements:
-		// - Implement on-demand re-indexing for historical tokens if they appear in provenance events
-		// - Support TransferBatch events for more complete coverage
-		// - Use indexed subgraph or archive node for better ERC1155 querying
-		// - Cache existence checks per token to avoid repeated scans
-
-		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-
-		tokenID, ok := new(big.Int).SetString(tokenNumber, 10)
-		if !ok {
-			return false, fmt.Errorf("invalid token number: %s", tokenNumber)
+		// Extract token ID from data (first 32 bytes)
+		logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
+		if logTokenID.Cmp(tokenID) != 0 {
+			continue // Not the token we're looking for
 		}
 
-		contractAddr := common.HexToAddress(contractAddress)
-		zeroAddress := common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS)
+		// Extract recipient (to address)
+		toAddr := common.BytesToAddress(vLog.Topics[3].Bytes())
 
-		// Get the latest block number using cached provider
-		latestBlock, err := f.GetLatestBlock(timeoutCtx)
-		if err != nil {
-			return false, fmt.Errorf("failed to get latest block: %w", err)
+		// Skip burn events (to = 0x0)
+		if toAddr == zeroAddress {
+			continue
 		}
 
-		// Scan backward up to 10M blocks
-		const maxBlockThreshold = uint64(10_000_000)
-		var fromBlock uint64
-		if latestBlock > maxBlockThreshold {
-			fromBlock = latestBlock - maxBlockThreshold
+		// Add unique recipients (avoid checking same address multiple times)
+		if !seenRecipients[toAddr] {
+			recentRecipients = append(recentRecipients, recipientInfo{
+				address:     toAddr,
+				blockNumber: vLog.BlockNumber,
+				logIndex:    vLog.Index,
+			})
+			seenRecipients[toAddr] = true
 		}
+	}
 
-		logger.InfoCtx(timeoutCtx, "Checking ERC1155 token existence via recent transfers",
+	// If no recent transfers found in the scan window, assume token doesn't exist
+	// (or is so old/inactive that it's not worth indexing)
+	if len(recentRecipients) == 0 {
+		logger.InfoCtx(timeoutCtx, "No recent ERC1155 transfers found in scan window, assuming token doesn't exist",
 			zap.String("contract", contractAddress),
 			zap.String("tokenNumber", tokenNumber),
-			zap.Uint64("fromBlock", fromBlock),
-			zap.Uint64("toBlock", latestBlock),
-		)
-
-		// Query all TransferSingle events for this contract in the block range
-		query := ethereum.FilterQuery{
-			FromBlock: new(big.Int).SetUint64(fromBlock),
-			ToBlock:   new(big.Int).SetUint64(latestBlock),
-			Addresses: []common.Address{contractAddr},
-			Topics: [][]common.Hash{
-				{transferSingleEventSignature}, // TransferSingle events only (most common)
-			},
-		}
-
-		logs, err := f.filterLogsWithPagination(timeoutCtx, query)
-		if err != nil && timeoutCtx.Err() != context.DeadlineExceeded {
-			return false, fmt.Errorf("failed to fetch transfer logs: %w", err)
-		}
-
-		// Collect recent unique recipients for this token ID (in reverse chronological order)
-		// We check multiple recipients to handle cases where:
-		// - Last recipient transferred tokens away (ERC1155 allows multiple holders)
-		// - Last recipient partially burned their balance (but others still hold tokens)
-		const maxRecipientsToCheck = 5
-		type recipientInfo struct {
-			address     common.Address
-			blockNumber uint64
-			logIndex    uint
-		}
-		var recentRecipients []recipientInfo
-		seenRecipients := make(map[common.Address]bool)
-
-		for _, vLog := range logs {
-			// TransferSingle: topics[0]=signature, topics[1]=operator, topics[2]=from, topics[3]=to
-			// Data contains: id (32 bytes) and value (32 bytes)
-			if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
-				continue
-			}
-
-			// Extract token ID from data (first 32 bytes)
-			logTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
-			if logTokenID.Cmp(tokenID) != 0 {
-				continue // Not the token we're looking for
-			}
-
-			// Extract recipient (to address)
-			toAddr := common.BytesToAddress(vLog.Topics[3].Bytes())
-
-			// Skip burn events (to = 0x0)
-			if toAddr == zeroAddress {
-				continue
-			}
-
-			// Add unique recipients (avoid checking same address multiple times)
-			if !seenRecipients[toAddr] {
-				recentRecipients = append(recentRecipients, recipientInfo{
-					address:     toAddr,
-					blockNumber: vLog.BlockNumber,
-					logIndex:    vLog.Index,
-				})
-				seenRecipients[toAddr] = true
-			}
-		}
-
-		// If no recent transfers found in the scan window, assume token doesn't exist
-		// (or is so old/inactive that it's not worth indexing)
-		if len(recentRecipients) == 0 {
-			logger.InfoCtx(timeoutCtx, "No recent ERC1155 transfers found in scan window, assuming token doesn't exist",
-				zap.String("contract", contractAddress),
-				zap.String("tokenNumber", tokenNumber),
-				zap.Uint64("scannedBlocks", latestBlock-fromBlock),
-			)
-			return false, nil
-		}
-
-		// Sort recipients by block number + log index (most recent first)
-		// This ensures we check the most likely current holders first
-		for i := 0; i < len(recentRecipients)-1; i++ {
-			for j := i + 1; j < len(recentRecipients); j++ {
-				if recentRecipients[j].blockNumber > recentRecipients[i].blockNumber ||
-					(recentRecipients[j].blockNumber == recentRecipients[i].blockNumber &&
-						recentRecipients[j].logIndex > recentRecipients[i].logIndex) {
-					recentRecipients[i], recentRecipients[j] = recentRecipients[j], recentRecipients[i]
-				}
-			}
-		}
-
-		// Limit to top N most recent recipients to avoid too many RPC calls
-		if len(recentRecipients) > maxRecipientsToCheck {
-			recentRecipients = recentRecipients[:maxRecipientsToCheck]
-		}
-
-		logger.InfoCtx(timeoutCtx, "Found recent ERC1155 transfers, checking recipient balances",
-			zap.String("contract", contractAddress),
-			zap.String("tokenNumber", tokenNumber),
-			zap.Int("recipientsToCheck", len(recentRecipients)),
-		)
-
-		// Check balanceOf for each recipient until we find one with balance > 0
-		// This handles partial burns and transfers between holders
-		for i, recipient := range recentRecipients {
-			balanceStr, err := f.ERC1155BalanceOf(timeoutCtx, contractAddress, recipient.address.Hex(), tokenNumber)
-			if err != nil {
-				logger.WarnCtx(timeoutCtx, "Failed to check balance for recipient, trying next",
-					zap.String("recipient", recipient.address.Hex()),
-					zap.Int("recipientIndex", i),
-					zap.Error(err),
-				)
-				continue
-			}
-
-			// Parse balance string to big.Int
-			balance, ok := new(big.Int).SetString(balanceStr, 10)
-			if !ok {
-				logger.WarnCtx(timeoutCtx, "Invalid balance returned, trying next recipient",
-					zap.String("recipient", recipient.address.Hex()),
-					zap.String("balance", balanceStr),
-				)
-				continue
-			}
-
-			// If this recipient has a balance > 0, token exists!
-			if balance.Cmp(big.NewInt(0)) > 0 {
-				logger.InfoCtx(timeoutCtx, "ERC1155 token existence confirmed",
-					zap.String("contract", contractAddress),
-					zap.String("tokenNumber", tokenNumber),
-					zap.String("holder", recipient.address.Hex()),
-					zap.String("balance", balanceStr),
-				)
-				return true, nil
-			}
-		}
-
-		// All checked recipients have 0 balance - token likely doesn't exist or fully burned
-		logger.InfoCtx(timeoutCtx, "All recent recipients have zero balance, assuming token doesn't exist or fully burned",
-			zap.String("contract", contractAddress),
-			zap.String("tokenNumber", tokenNumber),
-			zap.Int("recipientsChecked", len(recentRecipients)),
+			zap.Uint64("scannedBlocks", latestBlock-fromBlock),
 		)
 		return false, nil
-
-	default:
-		return false, fmt.Errorf("unsupported standard: %s", standard)
 	}
+
+	// Sort recipients by block number + log index (most recent first)
+	// This ensures we check the most likely current holders first
+	for i := 0; i < len(recentRecipients)-1; i++ {
+		for j := i + 1; j < len(recentRecipients); j++ {
+			if recentRecipients[j].blockNumber > recentRecipients[i].blockNumber ||
+				(recentRecipients[j].blockNumber == recentRecipients[i].blockNumber &&
+					recentRecipients[j].logIndex > recentRecipients[i].logIndex) {
+				recentRecipients[i], recentRecipients[j] = recentRecipients[j], recentRecipients[i]
+			}
+		}
+	}
+
+	// Limit to top N most recent recipients to avoid too many RPC calls
+	if len(recentRecipients) > maxRecipientsToCheck {
+		recentRecipients = recentRecipients[:maxRecipientsToCheck]
+	}
+
+	logger.InfoCtx(timeoutCtx, "Found recent ERC1155 transfers, checking recipient balances",
+		zap.String("contract", contractAddress),
+		zap.String("tokenNumber", tokenNumber),
+		zap.Int("recipientsToCheck", len(recentRecipients)),
+	)
+
+	// Check balanceOf for each recipient until we find one with balance > 0
+	// This handles partial burns and transfers between holders
+	for i, recipient := range recentRecipients {
+		balanceStr, err := f.ERC1155BalanceOf(timeoutCtx, contractAddress, recipient.address.Hex(), tokenNumber)
+		if err != nil {
+			logger.WarnCtx(timeoutCtx, "Failed to check balance for recipient, trying next",
+				zap.String("recipient", recipient.address.Hex()),
+				zap.Int("recipientIndex", i),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Parse balance string to big.Int
+		balance, ok := new(big.Int).SetString(balanceStr, 10)
+		if !ok {
+			logger.WarnCtx(timeoutCtx, "Invalid balance returned, trying next recipient",
+				zap.String("recipient", recipient.address.Hex()),
+				zap.String("balance", balanceStr),
+			)
+			continue
+		}
+
+		// If this recipient has a balance > 0, token exists!
+		if balance.Cmp(big.NewInt(0)) > 0 {
+			logger.InfoCtx(timeoutCtx, "ERC1155 token existence confirmed",
+				zap.String("contract", contractAddress),
+				zap.String("tokenNumber", tokenNumber),
+				zap.String("holder", recipient.address.Hex()),
+				zap.String("balance", balanceStr),
+			)
+			return true, nil
+		}
+	}
+
+	// All checked recipients have 0 balance - token likely doesn't exist or fully burned
+	logger.InfoCtx(timeoutCtx, "All recent recipients have zero balance, assuming token doesn't exist or fully burned",
+		zap.String("contract", contractAddress),
+		zap.String("tokenNumber", tokenNumber),
+		zap.Int("recipientsChecked", len(recentRecipients)),
+	)
+	return false, nil
 }
 
 // Close closes the connection
