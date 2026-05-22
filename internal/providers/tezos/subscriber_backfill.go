@@ -18,12 +18,13 @@ type backfillStats struct {
 	levelCount    int
 }
 
-// backfillHistoricLevels pages TzKT REST from fromLevel through toLevel (or chain head when
-// toLevel is zero), merges transfers and token_metadata bigmap updates by level, and emits
-// them through handler in ascending level order before the live SignalR stream starts.
+// backfillHistoricLevels pages TzKT REST from fromLevel through toLevel (inclusive), merges
+// transfers and token_metadata bigmap updates by level, and emits them through handler in
+// ascending level order. Call after SignalR subscriptions are active; live batches for
+// levels above toLevel should remain in streamCh until processStream starts.
 //
 // Reason: TzKT hub subscriptions are live-only; REST backfill closes the resume gap after
-// downtime. Overlap with the websocket is tolerated via runner monotonic guards and job keys.
+// downtime. Boundary overlap with streamCh is tolerated via runner monotonic guards and job keys.
 //
 // Constraints: REST filters must stay aligned with SubscribeToTokenTransfers /
 // SubscribeToBigMaps filters when those are narrowed in the future.
@@ -36,34 +37,34 @@ func (c *tzSubscriber) backfillHistoricLevels(
 		return 0, fmt.Errorf("backfill handler is required")
 	}
 
-	head, err := c.tzktClient.GetLatestBlock(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get latest block for backfill: %w", err)
+	targetLevel := toLevel
+	if targetLevel == 0 {
+		head, err := c.tzktClient.GetLatestBlock(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get latest block for backfill: %w", err)
+		}
+		targetLevel = head
 	}
 
-	if toLevel == 0 || toLevel > head {
-		toLevel = head
-	}
-
-	if fromLevel > toLevel {
+	if fromLevel > targetLevel {
 		logger.InfoCtx(ctx, "Skipping TzKT REST backfill; fromLevel is at or past target head",
 			zap.String("chain", string(c.chainID)),
 			zap.Uint64("from_level", fromLevel),
-			zap.Uint64("to_level", toLevel))
-		return toLevel, nil
+			zap.Uint64("to_level", targetLevel))
+		return targetLevel, nil
 	}
 
-	logger.InfoCtx(ctx, "Starting TzKT REST backfill before SignalR subscription",
+	logger.InfoCtx(ctx, "Starting TzKT REST backfill after SignalR subscribe",
 		zap.String("chain", string(c.chainID)),
 		zap.Uint64("from_level", fromLevel),
-		zap.Uint64("to_level", toLevel))
+		zap.Uint64("to_level", targetLevel))
 
-	transfers, err := c.pageAllTransfersInRange(ctx, fromLevel, toLevel)
+	transfers, err := c.pageAllTransfersInRange(ctx, fromLevel, targetLevel)
 	if err != nil {
 		return 0, err
 	}
 
-	updates, err := c.pageAllBigMapUpdatesInRange(ctx, fromLevel, toLevel)
+	updates, err := c.pageAllBigMapUpdatesInRange(ctx, fromLevel, targetLevel)
 	if err != nil {
 		return 0, err
 	}
@@ -95,14 +96,14 @@ func (c *tzSubscriber) backfillHistoricLevels(
 	logger.InfoCtx(ctx, "TzKT REST backfill completed",
 		zap.String("chain", string(c.chainID)),
 		zap.Uint64("from_level", fromLevel),
-		zap.Uint64("to_level", toLevel),
+		zap.Uint64("to_level", targetLevel),
 		zap.Uint64("highest_emitted", highestEmitted),
 		zap.Int("levels", stats.levelCount),
 		zap.Int("transfers", stats.transferCount),
 		zap.Int("bigmaps", stats.bigmapCount))
 
 	if highestEmitted == 0 {
-		return toLevel, nil
+		return targetLevel, nil
 	}
 
 	return highestEmitted, nil

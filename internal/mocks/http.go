@@ -190,3 +190,41 @@ func (mr *MockHTTPClientMockRecorder) PostNoRetry(ctx, url, headers, body any) *
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PostNoRetry", reflect.TypeOf((*MockHTTPClient)(nil).PostNoRetry), ctx, url, headers, body)
 }
+
+// MockSSRFValidator is a mock of SSRFValidator interface.
+type MockSSRFValidator struct {
+	ctrl     *gomock.Controller
+	recorder *MockSSRFValidatorMockRecorder
+	isgomock struct{}
+}
+
+// MockSSRFValidatorMockRecorder is the mock recorder for MockSSRFValidator.
+type MockSSRFValidatorMockRecorder struct {
+	mock *MockSSRFValidator
+}
+
+// NewMockSSRFValidator creates a new mock instance.
+func NewMockSSRFValidator(ctrl *gomock.Controller) *MockSSRFValidator {
+	mock := &MockSSRFValidator{ctrl: ctrl}
+	mock.recorder = &MockSSRFValidatorMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockSSRFValidator) EXPECT() *MockSSRFValidatorMockRecorder {
+	return m.recorder
+}
+
+// ValidateHTTPURL mocks base method.
+func (m *MockSSRFValidator) ValidateHTTPURL(ctx context.Context, rawURL string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ValidateHTTPURL", ctx, rawURL)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ValidateHTTPURL indicates an expected call of ValidateHTTPURL.
+func (mr *MockSSRFValidatorMockRecorder) ValidateHTTPURL(ctx, rawURL any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ValidateHTTPURL", reflect.TypeOf((*MockSSRFValidator)(nil).ValidateHTTPURL), ctx, rawURL)
+}

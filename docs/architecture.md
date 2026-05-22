@@ -80,12 +80,12 @@ The ingestion runner passes **`fromLevel`** into `EventSource.SubscribeEvents` (
 
 **TzKT SignalR does not:** published hub methods **`SubscribeToTokenTransfers`** and **`SubscribeToBigMaps`** accept only **filter** arguments (e.g. `account`, `contract`, `tokenId` for transfers; `path`, `contract`, `tags`, `ptr` for bigmaps). They do **not** take a **starting level** or historical replay window. After connect, you receive **new** events only.
 
-**Resume behavior:** Before opening SignalR, the Tezos subscriber **pages TzKT REST** (`GET /v1/tokens/transfers` and `GET /v1/bigmaps/updates` with **`level.ge` / `level.le`** bounds) from **`fromLevel`** through the chain head snapshot at subscribe time. Events are parsed through the existing `TzKTClient` helpers and delivered to the ingestion handler in **ascending level order** (transfers then bigmaps per level, matching live stream ordering). SignalR then attaches for live events. **Overlap** at the handoff is tolerated via runner monotonic guards and idempotent job keys.
+**Resume behavior:** On subscribe, the Tezos provider (1) **attaches SignalR first** so live FA2/metadata batches buffer in `streamCh` while historic work runs, (2) snapshots chain head **after both hub subscriptions are confirmed**, (3) **pages TzKT REST** (`GET /v1/tokens/transfers` and `GET /v1/bigmaps/updates` with **`level.ge` / `level.le`** bounds) from **`fromLevel`** through that head, emitting in **ascending level order** (transfers then bigmaps per level), and (4) starts `processStream` to drain `streamCh` for levels **above** the REST boundary (plus any boundary overlap). Duplicate boundary levels are tolerated via runner monotonic guards and idempotent job keys.
 
 **Operational notes:**
 
-1. **Large gaps** — Backfill latency scales with outage length and TzKT rate limits; progress is logged at page boundaries.
-2. **Chain advance during backfill** — Backfill targets the head captured at start; levels produced after that snapshot are covered by the live socket (with deduplication).
+1. **Large gaps** — Backfill latency scales with outage length and TzKT rate limits; progress is logged at page boundaries. Live events during backfill accumulate in `streamCh` until step (4).
+2. **Handoff boundary** — REST covers `[fromLevel, headAfterSubscribe]`. Live processing covers levels delivered to `streamCh` after subscribe (typically `headAfterSubscribe+1` onward, with possible boundary overlap).
 3. **Contract-scoped ingestion** — If subscriptions are later narrowed per contract/account, REST backfill queries must apply the **same filters** as the SignalR invokes to avoid ingest drift.
 
 Official WebSocket parameter reference: TzKT **“SubscribeToTokenTransfers”** / **“SubscribeToBigMaps”** sections in the bundled API explorer (same content as hosted OpenAPI/HTML docs for `api.tzkt.io`).
