@@ -9,6 +9,8 @@ import (
 	goethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
@@ -125,4 +127,73 @@ func TestClient_AdapterRouting_CryptoPunks_MissingToken(t *testing.T) {
 	exists, err := client.TokenExists(context.Background(), cryptoPunksAddress, "9999", domain.StandardERC721)
 	require.NoError(t, err)
 	require.False(t, exists)
+}
+
+func TestClient_SupportsProvenance_CryptoPunksWithCustomEvents(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockEth := mocks.NewMockEthClient(ctrl)
+
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+	require.True(t, client.SupportsProvenance(cryptoPunksAddress, domain.StandardERC721))
+}
+
+func TestClient_ParseEventLog_CryptoPunksPunkTransfer(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockEth := mocks.NewMockEthClient(ctrl)
+
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+
+	fromAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	toAddr := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	punkIndex := big.NewInt(42)
+
+	vLog := types.Log{
+		Address: common.HexToAddress(cryptoPunksAddress),
+		Topics: []common.Hash{
+			crypto.Keccak256Hash([]byte("PunkTransfer(address,address,uint256)")),
+			common.BytesToHash(fromAddr.Bytes()),
+			common.BytesToHash(toAddr.Bytes()),
+		},
+		Data: common.LeftPadBytes(punkIndex.Bytes(), 32),
+	}
+
+	event, err := client.ParseEventLog(context.Background(), vLog)
+	require.NoError(t, err)
+	require.NotNil(t, event)
+	require.Equal(t, domain.StandardERC721, event.Standard)
+	require.Equal(t, domain.EventTypeTransfer, event.EventType)
+	require.Equal(t, "42", event.TokenNumber)
+	require.Equal(t, "1", event.Quantity)
+	require.NotNil(t, event.FromAddress)
+	require.NotNil(t, event.ToAddress)
+	require.Equal(t, fromAddr.Hex(), *event.FromAddress)
+	require.Equal(t, toAddr.Hex(), *event.ToAddress)
+}
+
+func TestClient_ParseEventLog_CryptoPunksAssign(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockEth := mocks.NewMockEthClient(ctrl)
+
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+
+	toAddr := common.HexToAddress("0x3333333333333333333333333333333333333333")
+	punkIndex := big.NewInt(7)
+
+	vLog := types.Log{
+		Address: common.HexToAddress(cryptoPunksAddress),
+		Topics: []common.Hash{
+			crypto.Keccak256Hash([]byte("Assign(address,uint256)")),
+			common.BytesToHash(toAddr.Bytes()),
+		},
+		Data: common.LeftPadBytes(punkIndex.Bytes(), 32),
+	}
+
+	event, err := client.ParseEventLog(context.Background(), vLog)
+	require.NoError(t, err)
+	require.NotNil(t, event)
+	require.Equal(t, domain.EventTypeMint, event.EventType)
+	require.Equal(t, "7", event.TokenNumber)
+	require.Nil(t, event.FromAddress)
+	require.NotNil(t, event.ToAddress)
+	require.Equal(t, toAddr.Hex(), *event.ToAddress)
 }

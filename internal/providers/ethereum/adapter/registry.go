@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+
 	"go.uber.org/zap"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -110,4 +113,42 @@ func (r *AdapterRegistry) SupportsProvenance(
 // ContractOverrideCount returns the number of configured contract overrides.
 func (r *AdapterRegistry) ContractOverrideCount() int {
 	return len(r.contractAdapters)
+}
+
+// GetContractAdapter returns a configured contract override adapter when present.
+func (r *AdapterRegistry) GetContractAdapter(chain domain.Chain, contractAddress string) (ContractAdapter, bool) {
+	key := contractKey(chain, contractAddress)
+	adp, ok := r.contractAdapters[key]
+	return adp, ok
+}
+
+// GetContractStandard returns the configured token standard for a contract override.
+func (r *AdapterRegistry) GetContractStandard(chain domain.Chain, contractAddress string) (domain.ChainStandard, bool) {
+	key := contractKey(chain, contractAddress)
+	entry, ok := r.contractConfigs[key]
+	if !ok {
+		return "", false
+	}
+	return entry.Standard, true
+}
+
+// GetAllCustomEventSignatures returns all custom event signatures across configured contracts.
+//
+// Reason: ethSubscriber needs a global topic filter that includes legacy contract events.
+func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
+	var signatures []common.Hash
+	seen := make(map[common.Hash]struct{})
+
+	for _, adp := range r.contractAdapters {
+		for _, eventCfg := range adp.GetProvenanceEventConfigs() {
+			sig := crypto.Keccak256Hash([]byte(eventCfg.Signature))
+			if _, exists := seen[sig]; exists {
+				continue
+			}
+			seen[sig] = struct{}{}
+			signatures = append(signatures, sig)
+		}
+	}
+
+	return signatures
 }

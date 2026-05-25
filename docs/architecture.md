@@ -166,7 +166,7 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 - **Token existence** and **owner lookup** during indexing call through the registry (`TokenExists`, `TokenOwner` on the Ethereum client).
 - **On-chain metadata** is routed through the adapter registry via `TokenURI`, which calls either standard methods or configured overrides.
 - **On-chain metadata is skipped** when an override marks `metadata.source: "vendor_only"`; the metadata resolver returns early and vendor enrichment (for example OpenSea) supplies display metadata.
-- **Full provenance indexing is skipped** when the selected adapter reports `SupportsProvenance() == false` (for example legacy contracts without standard ERC-721 Transfer events). Minimal adapter-backed owner resolution is preserved.
+- **Full provenance indexing is skipped** when the selected adapter reports `SupportsProvenance() == false` (for example legacy contracts without configured provenance events). When `adapter.events` is configured, full provenance indexing uses those custom event signatures instead of standard EIP Transfer events.
 - **Token CID format is unchanged** — legacy contracts still use the `erc721` standard in external identifiers.
 
 **Observability:** adapter selection is logged at debug level with `adapter_type`. Override load counts are logged at startup.
@@ -199,7 +199,30 @@ Each contract override entry defines method routing:
         },
         "metadata": {
           "source": "vendor_only"
-        }
+        },
+        "events": [
+          {
+            "signature": "PunkTransfer(address,address,uint256)",
+            "mapToStandardEvent": "transfer",
+            "indexedParams": ["from", "to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "from": "FromAddress",
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          },
+          {
+            "signature": "Assign(address,uint256)",
+            "mapToStandardEvent": "mint",
+            "indexedParams": ["to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          }
+        ]
       }
     }
   ]
@@ -225,6 +248,25 @@ Each contract override entry defines method routing:
   - `"vendor_only"` — Skip on-chain metadata fetch; rely on vendor enrichment (OpenSea, etc.).
   - `"on_chain"` — Fetch metadata URI via the configured method (requires `adapter.metadata.method`).
 - **`adapter.metadata.method`** — (Optional) Method configuration for on-chain metadata URI lookup.
+- **`adapter.events`** — (Optional) Custom provenance event definitions for legacy contracts. When present, enables full provenance indexing via configured event signatures.
+
+#### Custom provenance events for legacy contracts
+
+Legacy contracts may emit non-EIP event signatures (for example CryptoPunks `PunkTransfer` and `Assign`). Configure these under `adapter.events` so historical log crawling and live subscription can parse them into standard `BlockchainEvent` records.
+
+Each event entry defines:
+
+- **`signature`** — Solidity event signature string (for example `PunkTransfer(address,address,uint256)`). Used to compute the Keccak256 topic hash for log filtering.
+- **`mapToStandardEvent`** — Target event type: `transfer`, `mint`, `burn`, or `metadata_update`.
+- **`indexedParams`** — Parameter names in topic order (`topics[1:]`).
+- **`dataParams`** — Non-indexed parameter names in ABI data order (each assumed to be 32-byte `address` or `uint256` in v1).
+- **`parameterMappings`** — Maps each parameter name to a `BlockchainEvent` field: `FromAddress`, `ToAddress`, `TokenNumber`, or `Quantity`.
+
+**Runtime flow:**
+
+1. `GetTokenEvents` checks the adapter for custom events; if configured, it filters logs by those signatures and post-filters by token ID when the token ID is not indexed.
+2. `ParseEventLog` tries configured contract event parsing before falling back to standard EIP signatures.
+3. `ethSubscriber` merges all configured custom event signatures into its global WebSocket topic filter.
 
 **Validation:** At startup, the loader validates:
 
@@ -234,6 +276,7 @@ Each contract override entry defines method routing:
 - `metadata.source` values are `"on_chain"` or `"vendor_only"`.
 - When `metadata.source` is `"on_chain"`, `adapter.metadata.method` is required.
 - Contract addresses are valid hex and not duplicated.
+- Each configured event has a valid signature format, allowed `mapToStandardEvent`, and complete `parameterMappings` covering every listed indexed/data parameter.
 
 **Failure behavior:**
 

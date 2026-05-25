@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -112,6 +113,9 @@ type EthereumClient interface {
 
 	// SupportsProvenance reports whether full on-chain provenance indexing is supported for a contract.
 	SupportsProvenance(contractAddress string, standard domain.ChainStandard) bool
+
+	// ContractAdapterRegistry returns the loaded contract adapter registry.
+	ContractAdapterRegistry() *contractadapter.AdapterRegistry
 
 	// Close closes the connection
 	Close()
@@ -720,46 +724,72 @@ func (f *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 
 	contractAddr := common.HexToAddress(contractAddress)
 	var query ethereum.FilterQuery
+	var filterByTokenNumber bool
 
-	// Build filter query based on standard
-	switch standard {
-	case domain.StandardERC721:
-		// For ERC721, tokenId is indexed (topic[3]), so we can filter directly
-		tokenIDHash := common.BigToHash(tokenID)
-		query = ethereum.FilterQuery{
-			FromBlock: big.NewInt(0), // From genesis
-			ToBlock:   nil,           // To latest
-			Addresses: []common.Address{contractAddr},
-			Topics: [][]common.Hash{
-				{
-					transferEventSignature,       // Transfer events
-					metadataUpdateEventSignature, // MetadataUpdate events
-					//batchMetadataUpdateEventSignature, // FIXME: Handle batch metadata updates properly
-				},
-				nil,           // Any from address
-				nil,           // Any to address
-				{tokenIDHash}, // Specific token ID
-			},
+	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	if err != nil && !errors.Is(err, contractadapter.ErrUnsupportedContractStandard) {
+		return nil, fmt.Errorf("failed to get adapter for token events: %w", err)
+	}
+
+	customEvents := []contractadapter.EventConfig{}
+	if adp != nil {
+		customEvents = adp.GetProvenanceEventConfigs()
+	}
+
+	if len(customEvents) > 0 {
+		eventSignatures := make([]common.Hash, 0, len(customEvents))
+		for _, eventCfg := range customEvents {
+			eventSignatures = append(eventSignatures, crypto.Keccak256Hash([]byte(eventCfg.Signature)))
 		}
-
-	case domain.StandardERC1155:
-		// For ERC1155, token ID is in data, not topics, so we fetch all events for this contract
-		// and filter by token ID later
 		query = ethereum.FilterQuery{
 			FromBlock: big.NewInt(0),
 			ToBlock:   nil,
 			Addresses: []common.Address{contractAddr},
-			Topics: [][]common.Hash{
-				{
-					transferSingleEventSignature, // TransferSingle events
-					//transferBatchEventSignature,  // FIXME: Handle batch transfers properly
-					uriEventSignature, // URI events (metadata updates)
-				},
-			},
+			Topics:    [][]common.Hash{eventSignatures},
 		}
+		filterByTokenNumber = true
+	} else {
+		// Build filter query based on standard
+		switch standard {
+		case domain.StandardERC721:
+			// For ERC721, tokenId is indexed (topic[3]), so we can filter directly
+			tokenIDHash := common.BigToHash(tokenID)
+			query = ethereum.FilterQuery{
+				FromBlock: big.NewInt(0), // From genesis
+				ToBlock:   nil,           // To latest
+				Addresses: []common.Address{contractAddr},
+				Topics: [][]common.Hash{
+					{
+						transferEventSignature,       // Transfer events
+						metadataUpdateEventSignature, // MetadataUpdate events
+						//batchMetadataUpdateEventSignature, // FIXME: Handle batch metadata updates properly
+					},
+					nil,           // Any from address
+					nil,           // Any to address
+					{tokenIDHash}, // Specific token ID
+				},
+			}
 
-	default:
-		return nil, fmt.Errorf("unsupported token standard: %s", standard)
+		case domain.StandardERC1155:
+			// For ERC1155, token ID is in data, not topics, so we fetch all events for this contract
+			// and filter by token ID later
+			query = ethereum.FilterQuery{
+				FromBlock: big.NewInt(0),
+				ToBlock:   nil,
+				Addresses: []common.Address{contractAddr},
+				Topics: [][]common.Hash{
+					{
+						transferSingleEventSignature, // TransferSingle events
+						//transferBatchEventSignature,  // FIXME: Handle batch transfers properly
+						uriEventSignature, // URI events (metadata updates)
+					},
+				},
+			}
+			filterByTokenNumber = true
+
+		default:
+			return nil, fmt.Errorf("unsupported token standard: %s", standard)
+		}
 	}
 
 	// Fetch logs with pagination to handle Infura's 10k limitation
@@ -777,9 +807,13 @@ func (f *ethereumClient) GetTokenEvents(ctx context.Context, contractAddress, to
 			logger.WarnCtx(ctx, "Failed to parse event log", zap.Error(err))
 			continue
 		}
-		if event != nil {
-			events = append(events, *event)
+		if event == nil {
+			continue
 		}
+		if filterByTokenNumber && event.TokenNumber != tokenNumber {
+			continue
+		}
+		events = append(events, *event)
 	}
 
 	// Sort events by timestamp, then block number, then transaction index, then log index for deterministic ordering
@@ -1647,6 +1681,10 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 
 // parseLog parses an Ethereum log into a standardized blockchain event
 func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
+	if len(vLog.Topics) == 0 {
+		return nil, fmt.Errorf("event log has no topics")
+	}
+
 	blockHash := vLog.BlockHash.Hex()
 	event := &domain.BlockchainEvent{
 		Chain:           f.chainID,
@@ -1657,6 +1695,15 @@ func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 		TxIndex:         uint64(vLog.TxIndex),                     //nolint:gosec,G115
 		LogIndex:        uint64(vLog.Index),                       //nolint:gosec,G115
 		Timestamp:       time.Unix(int64(vLog.BlockTimestamp), 0), //nolint:gosec,G115
+	}
+
+	if adp, ok := f.adapterRegistry.GetContractAdapter(f.chainID, vLog.Address.Hex()); ok {
+		for _, eventCfg := range adp.GetProvenanceEventConfigs() {
+			expectedSignature := crypto.Keccak256Hash([]byte(eventCfg.Signature))
+			if vLog.Topics[0] == expectedSignature {
+				return f.parseCustomEventLog(ctx, vLog, eventCfg, event)
+			}
+		}
 	}
 
 	// Parse based on event signature
@@ -1770,6 +1817,141 @@ func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 	}
 
 	return event, nil
+}
+
+// parseCustomEventLog parses a configured legacy contract event into a blockchain event.
+//
+// Reason: Legacy contracts emit non-EIP event signatures that must be mapped declaratively.
+func (f *ethereumClient) parseCustomEventLog(
+	ctx context.Context,
+	vLog types.Log,
+	eventCfg contractadapter.EventConfig,
+	event *domain.BlockchainEvent,
+) (*domain.BlockchainEvent, error) {
+	if standard, ok := f.adapterRegistry.GetContractStandard(f.chainID, vLog.Address.Hex()); ok {
+		event.Standard = standard
+	}
+
+	event.EventType = eventCfg.MapToStandardEvent
+
+	indexedValues := make(map[string]any, len(eventCfg.IndexedParams))
+	topicIndex := 1
+	for _, paramName := range eventCfg.IndexedParams {
+		if topicIndex >= len(vLog.Topics) {
+			return nil, fmt.Errorf("insufficient topics for indexed parameter %s", paramName)
+		}
+		indexedValues[paramName] = vLog.Topics[topicIndex]
+		topicIndex++
+	}
+
+	dataValues := make(map[string]any, len(eventCfg.DataParams))
+	dataOffset := 0
+	for _, paramName := range eventCfg.DataParams {
+		if dataOffset+32 > len(vLog.Data) {
+			return nil, fmt.Errorf("insufficient data for parameter %s", paramName)
+		}
+		dataValues[paramName] = append([]byte(nil), vLog.Data[dataOffset:dataOffset+32]...)
+		dataOffset += 32
+	}
+
+	allValues := make(map[string]any, len(indexedValues)+len(dataValues))
+	for k, v := range indexedValues {
+		allValues[k] = v
+	}
+	for k, v := range dataValues {
+		allValues[k] = v
+	}
+
+	for paramName, eventField := range eventCfg.ParameterMappings {
+		val, ok := allValues[paramName]
+		if !ok {
+			return nil, fmt.Errorf("parameter %s not found in event data", paramName)
+		}
+		if err := applyCustomEventField(event, eventField, val); err != nil {
+			return nil, fmt.Errorf("map parameter %s: %w", paramName, err)
+		}
+	}
+
+	switch event.EventType {
+	case domain.EventTypeTransfer, domain.EventTypeMint, domain.EventTypeBurn:
+		if event.Quantity == "" {
+			event.Quantity = "1"
+		}
+	case domain.EventTypeMetadataUpdate:
+		if event.Quantity == "" {
+			event.Quantity = "1"
+		}
+	}
+
+	if event.EventType == domain.EventTypeTransfer {
+		event.EventType = domain.TransferEventType(event.FromAddress, event.ToAddress)
+	}
+
+	logger.DebugCtx(ctx, "Parsed custom contract event",
+		zap.String("contract", vLog.Address.Hex()),
+		zap.String("signature", eventCfg.Signature),
+		zap.String("eventType", string(event.EventType)),
+		zap.String("tokenNumber", event.TokenNumber),
+	)
+
+	return event, nil
+}
+
+func applyCustomEventField(event *domain.BlockchainEvent, eventField string, val any) error {
+	switch eventField {
+	case contractadapter.EventFieldFromAddress:
+		addr, err := decodeCustomEventAddress(val)
+		if err != nil {
+			return err
+		}
+		event.FromAddress = &addr
+	case contractadapter.EventFieldToAddress:
+		addr, err := decodeCustomEventAddress(val)
+		if err != nil {
+			return err
+		}
+		event.ToAddress = &addr
+	case contractadapter.EventFieldTokenNumber:
+		tokenNumber, err := decodeCustomEventUint256(val)
+		if err != nil {
+			return err
+		}
+		event.TokenNumber = tokenNumber
+	case contractadapter.EventFieldQuantity:
+		quantity, err := decodeCustomEventUint256(val)
+		if err != nil {
+			return err
+		}
+		event.Quantity = quantity
+	default:
+		return fmt.Errorf("unsupported event field %q", eventField)
+	}
+	return nil
+}
+
+func decodeCustomEventAddress(val any) (string, error) {
+	switch typed := val.(type) {
+	case common.Hash:
+		return common.BytesToAddress(typed.Bytes()).Hex(), nil
+	case []byte:
+		if len(typed) < common.AddressLength {
+			return "", fmt.Errorf("insufficient bytes for address")
+		}
+		return common.BytesToAddress(typed[len(typed)-common.AddressLength:]).Hex(), nil
+	default:
+		return "", fmt.Errorf("unsupported address value type %T", val)
+	}
+}
+
+func decodeCustomEventUint256(val any) (string, error) {
+	switch typed := val.(type) {
+	case common.Hash:
+		return new(big.Int).SetBytes(typed.Bytes()).String(), nil
+	case []byte:
+		return new(big.Int).SetBytes(typed).String(), nil
+	default:
+		return "", fmt.Errorf("unsupported uint256 value type %T", val)
+	}
 }
 
 // GetContractDeployer retrieves the deployer address for a contract
@@ -1922,6 +2104,11 @@ func (f *ethereumClient) SupportsProvenance(contractAddress string, standard dom
 		return false
 	}
 	return supported
+}
+
+// ContractAdapterRegistry returns the loaded contract adapter registry.
+func (f *ethereumClient) ContractAdapterRegistry() *contractadapter.AdapterRegistry {
+	return f.adapterRegistry
 }
 
 // ERC1155TokenExists checks ERC1155 token existence via recent transfer scan and balance checks.

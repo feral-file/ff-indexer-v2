@@ -12,6 +12,56 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapter"
 )
 
+const cryptopunksContractConfigWithEvents = `{
+  "contracts": [
+    {
+      "chain": "eip155:1",
+      "address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+      "name": "CryptoPunks",
+      "standard": "erc721",
+      "adapter": {
+        "existence": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"],
+          "success_condition": "address_nonzero"
+        },
+        "owner": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"]
+        },
+        "metadata": {
+          "source": "vendor_only"
+        },
+        "events": [
+          {
+            "signature": "PunkTransfer(address,address,uint256)",
+            "mapToStandardEvent": "transfer",
+            "indexedParams": ["from", "to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "from": "FromAddress",
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          },
+          {
+            "signature": "Assign(address,uint256)",
+            "mapToStandardEvent": "mint",
+            "indexedParams": ["to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}`
+
 const cryptopunksContractConfig = `{
   "contracts": [
     {
@@ -148,4 +198,47 @@ func TestAdapterRegistry_SupportsProvenance(t *testing.T) {
 		domain.StandardFA2,
 	)
 	require.ErrorIs(t, err, adapter.ErrUnsupportedContractStandard)
+}
+
+func TestAdapterRegistry_SupportsProvenance_WithCustomEvents(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+
+	registry, err := adapter.NewAdapterRegistry(
+		testContractFS(t, cryptopunksContractConfigWithEvents),
+		mockClient,
+		&stubStandardOps{},
+	)
+	require.NoError(t, err)
+
+	supported, err := registry.SupportsProvenance(
+		domain.ChainEthereumMainnet,
+		"0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		domain.StandardERC721,
+	)
+	require.NoError(t, err)
+	require.True(t, supported)
+
+	adp, err := registry.GetAdapter(
+		domain.ChainEthereumMainnet,
+		"0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		domain.StandardERC721,
+	)
+	require.NoError(t, err)
+	require.Len(t, adp.GetProvenanceEventConfigs(), 2)
+}
+
+func TestAdapterRegistry_GetAllCustomEventSignatures(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+
+	registry, err := adapter.NewAdapterRegistry(
+		testContractFS(t, cryptopunksContractConfigWithEvents),
+		mockClient,
+		&stubStandardOps{},
+	)
+	require.NoError(t, err)
+
+	signatures := registry.GetAllCustomEventSignatures()
+	require.Len(t, signatures, 2)
 }

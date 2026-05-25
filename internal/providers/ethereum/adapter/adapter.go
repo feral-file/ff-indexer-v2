@@ -21,6 +21,7 @@ type ContractAdapter interface {
 	TokenOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error)
 	TokenURI(ctx context.Context, contractAddress, tokenNumber string) (string, error)
 	SupportsProvenance() bool
+	GetProvenanceEventConfigs() []EventConfig
 }
 
 // SuccessCondition describes how to interpret a contract call result for existence checks.
@@ -53,11 +54,12 @@ type MethodCall struct {
 
 // GenericAdapter executes configured contract calls for legacy or custom contracts.
 type GenericAdapter struct {
-	existence  *MethodCall
-	owner      *MethodCall
-	metadata   ContractMetadataConfig
-	ethClient  ethadapter.EthClient
-	provenance bool
+	existence        *MethodCall
+	owner            *MethodCall
+	metadata         ContractMetadataConfig
+	ethClient        ethadapter.EthClient
+	provenance       bool
+	provenanceEvents []EventConfig
 }
 
 // ContractMetadataConfig holds metadata routing configuration for a contract adapter.
@@ -72,13 +74,15 @@ func NewGenericAdapter(
 	metadata ContractMetadataConfig,
 	ethClient ethadapter.EthClient,
 	supportsProvenance bool,
+	provenanceEvents []EventConfig,
 ) *GenericAdapter {
 	return &GenericAdapter{
-		existence:  existence,
-		owner:      owner,
-		metadata:   metadata,
-		ethClient:  ethClient,
-		provenance: supportsProvenance,
+		existence:        existence,
+		owner:            owner,
+		metadata:         metadata,
+		ethClient:        ethClient,
+		provenance:       supportsProvenance,
+		provenanceEvents: provenanceEvents,
 	}
 }
 
@@ -154,6 +158,11 @@ func (a *GenericAdapter) TokenURI(ctx context.Context, contractAddress, tokenNum
 // SupportsProvenance reports whether full on-chain provenance indexing is supported.
 func (a *GenericAdapter) SupportsProvenance() bool {
 	return a.provenance
+}
+
+// GetProvenanceEventConfigs returns configured custom provenance event definitions.
+func (a *GenericAdapter) GetProvenanceEventConfigs() []EventConfig {
+	return a.provenanceEvents
 }
 
 func (a *GenericAdapter) callMethod(

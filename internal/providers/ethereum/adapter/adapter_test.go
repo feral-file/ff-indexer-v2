@@ -201,7 +201,7 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 func TestGenericAdapter_TokenURI_VendorOnly(t *testing.T) {
 	adp := adapter.NewGenericAdapter(nil, nil, adapter.ContractMetadataConfig{
 		Source: adapter.MetadataSourceVendorOnly,
-	}, nil, false)
+	}, nil, false, nil)
 
 	uri, err := adp.TokenURI(context.Background(), "0xabc", "1")
 	require.NoError(t, err)

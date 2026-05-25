@@ -19,7 +19,30 @@
         },
         "metadata": {
           "source": "vendor_only"
-        }
+        },
+        "events": [
+          {
+            "signature": "PunkTransfer(address,address,uint256)",
+            "mapToStandardEvent": "transfer",
+            "indexedParams": ["from", "to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "from": "FromAddress",
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          },
+          {
+            "signature": "Assign(address,uint256)",
+            "mapToStandardEvent": "mint",
+            "indexedParams": ["to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          }
+        ]
       }
     }
   ]

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"regexp"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -11,6 +12,8 @@ import (
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
+
+var eventSignaturePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\([^)]+\)$`)
 
 const contractsFile = "contracts.json"
 
@@ -33,7 +36,25 @@ type AdapterConfig struct {
 	Existence MethodConfig   `json:"existence"`
 	Owner     MethodConfig   `json:"owner"`
 	Metadata  MetadataConfig `json:"metadata"`
+	Events    []EventConfig  `json:"events,omitempty"`
 }
+
+// EventConfig describes a custom event for provenance indexing.
+type EventConfig struct {
+	Signature          string            `json:"signature"`
+	MapToStandardEvent domain.EventType  `json:"mapToStandardEvent"`
+	IndexedParams      []string          `json:"indexedParams"`
+	DataParams         []string          `json:"dataParams"`
+	ParameterMappings  map[string]string `json:"parameterMappings"`
+}
+
+// Supported event field names for parameterMappings values.
+const (
+	EventFieldFromAddress = "FromAddress"
+	EventFieldToAddress   = "ToAddress"
+	EventFieldTokenNumber = "TokenNumber"
+	EventFieldQuantity    = "Quantity"
+)
 
 // MethodConfig describes a contract method call used by GenericAdapter.
 type MethodConfig struct {
@@ -155,6 +176,132 @@ func validateContractEntry(entry *ContractConfig, abiRegistry *ABIRegistry) erro
 		return err
 	}
 
+	seenSignatures := make(map[string]int)
+	for i, eventCfg := range entry.Adapter.Events {
+		if err := validateEventConfig(eventCfg, fmt.Sprintf("adapter.events[%d]", i)); err != nil {
+			return err
+		}
+		if prevIdx, exists := seenSignatures[eventCfg.Signature]; exists {
+			return fmt.Errorf("adapter.events[%d]: duplicate event signature %q (also defined at adapter.events[%d])", i, eventCfg.Signature, prevIdx)
+		}
+		seenSignatures[eventCfg.Signature] = i
+	}
+
+	return nil
+}
+
+func validateEventConfig(cfg EventConfig, fieldPath string) error {
+	if cfg.Signature == "" {
+		return fmt.Errorf("%s: signature is required", fieldPath)
+	}
+	if !eventSignaturePattern.MatchString(cfg.Signature) {
+		return fmt.Errorf("%s: invalid signature format %q", fieldPath, cfg.Signature)
+	}
+	if cfg.MapToStandardEvent == "" {
+		return fmt.Errorf("%s: mapToStandardEvent is required", fieldPath)
+	}
+	switch cfg.MapToStandardEvent {
+	case domain.EventTypeTransfer, domain.EventTypeMint, domain.EventTypeBurn, domain.EventTypeMetadataUpdate:
+	default:
+		return fmt.Errorf("%s: invalid mapToStandardEvent %q (allowed: transfer, mint, burn, metadata_update)", fieldPath, cfg.MapToStandardEvent)
+	}
+	if len(cfg.ParameterMappings) == 0 {
+		return fmt.Errorf("%s: parameterMappings is required", fieldPath)
+	}
+
+	paramNames := make(map[string]struct{}, len(cfg.IndexedParams)+len(cfg.DataParams))
+	for _, name := range cfg.IndexedParams {
+		if name == "" {
+			return fmt.Errorf("%s: empty parameter name in indexedParams", fieldPath)
+		}
+		if _, exists := paramNames[name]; exists {
+			return fmt.Errorf("%s: duplicate parameter name %q in indexedParams", fieldPath, name)
+		}
+		paramNames[name] = struct{}{}
+	}
+	for i, name := range cfg.DataParams {
+		if name == "" {
+			return fmt.Errorf("%s: empty parameter name in dataParams", fieldPath)
+		}
+		// Check for duplicates within dataParams FIRST (before checking paramNames)
+		for j := 0; j < i; j++ {
+			if cfg.DataParams[j] == name {
+				return fmt.Errorf("%s: duplicate parameter name %q in dataParams", fieldPath, name)
+			}
+		}
+		// Then check for duplicates across indexed/data
+		if _, existsInIndexed := paramNames[name]; existsInIndexed {
+			return fmt.Errorf("%s: duplicate parameter name %q across indexedParams and dataParams", fieldPath, name)
+		}
+		paramNames[name] = struct{}{}
+	}
+
+	usedTargetFields := make(map[string]string)
+	for paramName, eventField := range cfg.ParameterMappings {
+		if _, ok := paramNames[paramName]; !ok {
+			return fmt.Errorf("%s: parameterMappings references unknown parameter %q", fieldPath, paramName)
+		}
+		switch eventField {
+		case EventFieldFromAddress, EventFieldToAddress, EventFieldTokenNumber, EventFieldQuantity:
+		default:
+			return fmt.Errorf("%s: invalid parameterMappings target %q for parameter %q (allowed: FromAddress, ToAddress, TokenNumber, Quantity)", fieldPath, eventField, paramName)
+		}
+
+		if existingParam, exists := usedTargetFields[eventField]; exists {
+			return fmt.Errorf("%s: duplicate target field %q mapped from both %q and %q", fieldPath, eventField, existingParam, paramName)
+		}
+		usedTargetFields[eventField] = paramName
+	}
+
+	for paramName := range paramNames {
+		if _, ok := cfg.ParameterMappings[paramName]; !ok {
+			return fmt.Errorf("%s: parameter %q is not mapped in parameterMappings", fieldPath, paramName)
+		}
+	}
+
+	if err := validateSemanticRequirements(cfg, usedTargetFields, fieldPath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateSemanticRequirements(cfg EventConfig, mappedFields map[string]string, fieldPath string) error {
+	hasTokenNumber := mappedFields[EventFieldTokenNumber] != ""
+	hasToAddress := mappedFields[EventFieldToAddress] != ""
+	hasFromAddress := mappedFields[EventFieldFromAddress] != ""
+
+	switch cfg.MapToStandardEvent {
+	case domain.EventTypeTransfer:
+		if !hasTokenNumber {
+			return fmt.Errorf("%s: transfer events require TokenNumber mapping", fieldPath)
+		}
+		if !hasFromAddress {
+			return fmt.Errorf("%s: transfer events require FromAddress mapping", fieldPath)
+		}
+		if !hasToAddress {
+			return fmt.Errorf("%s: transfer events require ToAddress mapping", fieldPath)
+		}
+	case domain.EventTypeMint:
+		if !hasTokenNumber {
+			return fmt.Errorf("%s: mint events require TokenNumber mapping", fieldPath)
+		}
+		if !hasToAddress {
+			return fmt.Errorf("%s: mint events require ToAddress mapping", fieldPath)
+		}
+	case domain.EventTypeBurn:
+		if !hasTokenNumber {
+			return fmt.Errorf("%s: burn events require TokenNumber mapping", fieldPath)
+		}
+		if !hasFromAddress {
+			return fmt.Errorf("%s: burn events require FromAddress mapping", fieldPath)
+		}
+	case domain.EventTypeMetadataUpdate:
+		if !hasTokenNumber {
+			return fmt.Errorf("%s: metadata_update events require TokenNumber mapping", fieldPath)
+		}
+	}
+
 	return nil
 }
 
@@ -263,12 +410,15 @@ func BuildGenericAdapterFromConfig(
 		return nil, fmt.Errorf("metadata config: %w", err)
 	}
 
+	supportsProvenance := len(entry.Adapter.Events) > 0
+
 	return NewGenericAdapter(
 		existence,
 		owner,
 		metadata,
 		ethClient,
-		false,
+		supportsProvenance,
+		entry.Adapter.Events,
 	), nil
 }
 

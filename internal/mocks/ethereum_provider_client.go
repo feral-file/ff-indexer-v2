@@ -18,6 +18,7 @@ import (
 	gomock "go.uber.org/mock/gomock"
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
+	adapter "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapter"
 	registry "github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
@@ -55,6 +56,20 @@ func (m *MockEthereumProviderClient) Close() {
 func (mr *MockEthereumProviderClientMockRecorder) Close() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockEthereumProviderClient)(nil).Close))
+}
+
+// ContractAdapterRegistry mocks base method.
+func (m *MockEthereumProviderClient) ContractAdapterRegistry() *adapter.AdapterRegistry {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ContractAdapterRegistry")
+	ret0, _ := ret[0].(*adapter.AdapterRegistry)
+	return ret0
+}
+
+// ContractAdapterRegistry indicates an expected call of ContractAdapterRegistry.
+func (mr *MockEthereumProviderClientMockRecorder) ContractAdapterRegistry() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ContractAdapterRegistry", reflect.TypeOf((*MockEthereumProviderClient)(nil).ContractAdapterRegistry))
 }
 
 // ERC1155BalanceOf mocks base method.

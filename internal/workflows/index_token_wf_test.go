@@ -299,6 +299,27 @@ func TestIndexToken_Success_LegacyContract_SkipsFullProvenance(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIndexToken_Success_LegacyContract_WithEvents_RunsFullProvenance(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	const legacyContract = "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, legacyContract, "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(gomock.Any()).Return(true)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+	exec.EXPECT().IndexTokenWithFullProvenancesByTokenCID(gomock.Any(), tcid).Return(nil)
+
+	err := wf.IndexToken(ctx, tcid, nil)
+	require.NoError(t, err)
+}
+
 func TestIndexTokenFromEvent_LegacyContract_SkipsFullProvenance(t *testing.T) {
 	t.Parallel()
 	d := newCoreWfDeps(t, workflows.CoreWorkflowsConfig{

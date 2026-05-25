@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	contractadapter "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapter"
 )
 
 const (
@@ -29,9 +30,10 @@ type Config struct {
 }
 
 type ethSubscriber struct {
-	client  EthereumClient
-	chainID domain.Chain
-	cfg     Config
+	client          EthereumClient
+	chainID         domain.Chain
+	cfg             Config
+	adapterRegistry *contractadapter.AdapterRegistry
 }
 
 // Event signatures
@@ -58,27 +60,33 @@ var (
 )
 
 // NewSubscriber creates a new Ethereum event subscriber.
-func NewSubscriber(cfg Config, ethereumClient EthereumClient) (blockchain.EventSource, error) {
+func NewSubscriber(cfg Config, ethereumClient EthereumClient, adapterRegistry *contractadapter.AdapterRegistry) (blockchain.EventSource, error) {
 	return &ethSubscriber{
-		client:  ethereumClient,
-		chainID: cfg.ChainID,
-		cfg:     cfg,
+		client:          ethereumClient,
+		chainID:         cfg.ChainID,
+		cfg:             cfg,
+		adapterRegistry: adapterRegistry,
 	}, nil
 }
 
 // SubscribeEvents subscribes to ERC721/ERC1155 transfer and metadata update events
 func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler blockchain.EventHandler) error {
+	allEventSignatures := []common.Hash{
+		transferEventSignature,            // ERC20/ERC721 Transfer (will filter ERC20 in parseLog)
+		transferSingleEventSignature,      // ERC1155 TransferSingle
+		transferBatchEventSignature,       // ERC1155 TransferBatch
+		metadataUpdateEventSignature,      // EIP-4906 MetadataUpdate
+		batchMetadataUpdateEventSignature, // EIP-4906 BatchMetadataUpdate
+		uriEventSignature,                 // ERC1155 URI
+	}
+	if s.adapterRegistry != nil {
+		allEventSignatures = append(allEventSignatures, s.adapterRegistry.GetAllCustomEventSignatures()...)
+	}
+
 	query := ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(fromBlock),
 		Topics: [][]common.Hash{
-			{
-				transferEventSignature,            // ERC20/ERC721 Transfer (will filter ERC20 in parseLog)
-				transferSingleEventSignature,      // ERC1155 TransferSingle
-				transferBatchEventSignature,       // ERC1155 TransferBatch
-				metadataUpdateEventSignature,      // EIP-4906 MetadataUpdate
-				batchMetadataUpdateEventSignature, // EIP-4906 BatchMetadataUpdate
-				uriEventSignature,                 // ERC1155 URI
-			},
+			allEventSignatures,
 		},
 	}
 

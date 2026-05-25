@@ -42,6 +42,11 @@ func (a *ERC721StandardAdapter) SupportsProvenance() bool {
 	return true
 }
 
+// GetProvenanceEventConfigs returns no custom event overrides for standard ERC-721.
+func (a *ERC721StandardAdapter) GetProvenanceEventConfigs() []EventConfig {
+	return nil
+}
+
 // ERC1155StandardAdapter delegates to the existing ERC-1155 client methods.
 type ERC1155StandardAdapter struct {
 	ops StandardOperations
@@ -70,4 +75,9 @@ func (a *ERC1155StandardAdapter) TokenURI(ctx context.Context, contractAddress, 
 // SupportsProvenance reports that standard ERC-1155 provenance indexing is supported.
 func (a *ERC1155StandardAdapter) SupportsProvenance() bool {
 	return true
+}
+
+// GetProvenanceEventConfigs returns no custom event overrides for standard ERC-1155.
+func (a *ERC1155StandardAdapter) GetProvenanceEventConfigs() []EventConfig {
+	return nil
 }
