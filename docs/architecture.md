@@ -175,7 +175,7 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 
 #### contracts.json schema
 
-Each contract override entry defines method routing and optional constraints:
+Each contract override entry defines method routing:
 
 ```json
 {
@@ -200,9 +200,6 @@ Each contract override entry defines method routing and optional constraints:
         "metadata": {
           "source": "vendor_only"
         }
-      },
-      "constraints": {
-        "token_id_max": 9999
       }
     }
   ]
@@ -228,7 +225,6 @@ Each contract override entry defines method routing and optional constraints:
   - `"vendor_only"` — Skip on-chain metadata fetch; rely on vendor enrichment (OpenSea, etc.).
   - `"on_chain"` — Fetch metadata URI via the configured method (requires `adapter.metadata.method`).
 - **`adapter.metadata.method`** — (Optional) Method configuration for on-chain metadata URI lookup.
-- **`constraints.token_id_max`** — (Optional) Maximum valid token ID; calls with higher IDs fail immediately.
 
 **Validation:** At startup, the loader validates:
 
@@ -238,15 +234,10 @@ Each contract override entry defines method routing and optional constraints:
 - `metadata.source` values are `"on_chain"` or `"vendor_only"`.
 - Contract addresses are valid hex and not duplicated.
 
-**Constraint enforcement:**
-
-- `token_id_max` is enforced in `TokenExists`, `TokenOwner`, and `TokenURI` before making contract calls.
-- Out-of-range token IDs return an error immediately without hitting the blockchain.
-- Standard adapters (ERC-721/ERC-1155) have no constraints by default.
-
 **Failure behavior:**
 
 - If an existence check reverts, the token is treated as non-existent (not an error).
+- If an owner lookup returns zero address and existence uses `address_nonzero`, the adapter returns not-found instead of treating the token as burned.
 - If an owner lookup reverts during indexing, the workflow classifies the token as not found on-chain.
 - Config validation errors cause startup failure with a clear error message identifying the invalid entry.
 

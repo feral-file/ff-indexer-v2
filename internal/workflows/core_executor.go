@@ -974,7 +974,8 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 			// For ERC721, resolve owner via contract adapter (supports legacy contracts like CryptoPunks).
 			owner, err := e.ethClient.TokenOwner(ctx, contractAddress, tokenNumber, standard)
 			if err != nil {
-				if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
+				if errors.Is(err, domain.ErrTokenNotFoundOnChain) ||
+					strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
 					strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
 					// Token not found on chain (burned or contract self-destructed).
 					return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)

@@ -100,8 +100,6 @@ func TestEmbeddedContractsConfig_LoadsCryptoPunks(t *testing.T) {
 	require.Equal(t, "CryptoPunks", cfg.Contracts[0].Name)
 	require.Equal(t, domain.ChainEthereumMainnet, cfg.Contracts[0].Chain)
 	require.Equal(t, cryptoPunksAddress, cfg.Contracts[0].Address)
-	require.NotNil(t, cfg.Contracts[0].Constraints.TokenIDMax)
-	require.Equal(t, int64(9999), *cfg.Contracts[0].Constraints.TokenIDMax)
 }
 
 func TestNewAdapterRegistry_MissingABI(t *testing.T) {

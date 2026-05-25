@@ -201,11 +201,49 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 func TestGenericAdapter_TokenURI_VendorOnly(t *testing.T) {
 	adp := adapter.NewGenericAdapter(nil, nil, adapter.ContractMetadataConfig{
 		Source: adapter.MetadataSourceVendorOnly,
-	}, adapter.ContractConstraints{}, nil, false)
+	}, nil, false)
 
 	uri, err := adp.TokenURI(context.Background(), "0xabc", "1")
 	require.NoError(t, err)
 	require.Empty(t, uri)
+}
+
+func TestGenericAdapter_TokenOwner_ZeroAddressMeansNotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+
+	abiRegistry, err := adapter.NewABIRegistry(fstest.MapFS{
+		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
+	})
+	require.NoError(t, err)
+
+	mockClient.EXPECT().
+		CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
+		Return(common.LeftPadBytes(common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS).Bytes(), 32), nil)
+
+	adp, err := adapter.BuildGenericAdapterFromConfig(adapter.ContractConfig{
+		Chain:    domain.ChainEthereumMainnet,
+		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		Standard: domain.StandardERC721,
+		Adapter: adapter.AdapterConfig{
+			Existence: adapter.MethodConfig{
+				Method:           "punkIndexToAddress",
+				ABI:              "cryptopunks",
+				Params:           []string{"${tokenId}"},
+				SuccessCondition: "address_nonzero",
+			},
+			Owner: adapter.MethodConfig{
+				Method: "punkIndexToAddress",
+				ABI:    "cryptopunks",
+				Params: []string{"${tokenId}"},
+			},
+		},
+	}, abiRegistry, mockClient)
+	require.NoError(t, err)
+
+	_, err = adp.TokenOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
+	require.Error(t, err)
+	require.True(t, errors.Is(err, domain.ErrTokenNotFoundOnChain))
 }
 
 func TestGenericAdapter_InvalidTokenNumber(t *testing.T) {
@@ -237,41 +275,6 @@ func TestGenericAdapter_InvalidTokenNumber(t *testing.T) {
 	_, err = adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "not-a-number")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid token number")
-}
-
-func TestGenericAdapter_TokenIDMaxConstraint(t *testing.T) {
-	maxTokenID := int64(9999)
-
-	// Create a simple adapter with just constraints to test validation
-	// We don't need actual method calls since constraint validation happens first
-	adp := adapter.NewGenericAdapter(
-		nil, // existence - not needed for constraint test
-		nil, // owner - not needed for constraint test
-		adapter.ContractMetadataConfig{Source: adapter.MetadataSourceVendorOnly},
-		adapter.ContractConstraints{TokenIDMax: &maxTokenID},
-		nil, // ethClient - not needed since constraint check happens before calls
-		false,
-	)
-
-	// Test token ID exceeding limit - should fail on constraint validation
-	_, err := adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
-	require.Error(t, err)
-	// Note: existence method is nil, so it fails on method check first
-	require.Contains(t, err.Error(), "existence method not configured")
-
-	// Test TokenOwner with exceeding ID - constraint is checked after nil check
-	_, err = adp.TokenOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "owner method not configured")
-
-	// Test TokenURI with exceeding ID - validates constraints immediately
-	_, err = adp.TokenURI(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "exceeds maximum allowed 9999")
-
-	// Test valid token ID (within limit) with TokenURI
-	_, err = adp.TokenURI(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "9999")
-	require.NoError(t, err) // vendor_only returns empty string, no error
 }
 
 type stubStandardOps struct {

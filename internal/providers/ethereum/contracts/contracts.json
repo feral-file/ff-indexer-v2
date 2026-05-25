@@ -20,9 +20,6 @@
         "metadata": {
           "source": "vendor_only"
         }
-      },
-      "constraints": {
-        "token_id_max": 9999
       }
     }
   ]

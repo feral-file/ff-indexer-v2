@@ -21,12 +21,11 @@ type ContractsConfig struct {
 
 // ContractConfig describes a single contract override entry.
 type ContractConfig struct {
-	Chain       domain.Chain         `json:"chain"`
-	Address     string               `json:"address"`
-	Name        string               `json:"name"`
-	Standard    domain.ChainStandard `json:"standard"`
-	Adapter     AdapterConfig        `json:"adapter"`
-	Constraints ContractConstraints  `json:"constraints"`
+	Chain    domain.Chain         `json:"chain"`
+	Address  string               `json:"address"`
+	Name     string               `json:"name"`
+	Standard domain.ChainStandard `json:"standard"`
+	Adapter  AdapterConfig        `json:"adapter"`
 }
 
 // AdapterConfig holds declarative method routing for a contract.
@@ -48,11 +47,6 @@ type MethodConfig struct {
 type MetadataConfig struct {
 	Source string        `json:"source"`
 	Method *MethodConfig `json:"method,omitempty"`
-}
-
-// ContractConstraints holds optional validation constraints for contract entries.
-type ContractConstraints struct {
-	TokenIDMax *int64 `json:"token_id_max"`
 }
 
 // LoadContractsConfig reads and validates contracts.json from the provided filesystem.
@@ -271,7 +265,6 @@ func BuildGenericAdapterFromConfig(
 		existence,
 		owner,
 		metadata,
-		entry.Constraints,
 		ethClient,
 		false,
 	), nil
