@@ -70,6 +70,9 @@ type CoreExecutor interface {
 	// For ERC721 and FA2, address parameter is ignored and full provenance is always indexed
 	IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error
 
+	// SupportsTokenProvenance reports whether full on-chain provenance indexing is supported for a token.
+	SupportsTokenProvenance(tokenCID domain.TokenCID) bool
+
 	// GetEthereumTokenCIDsByOwnerWithinBlockRange retrieves token CIDs with block numbers for an owner within a block range.
 	// This is used to sweep tokens by block ranges for incremental indexing.
 	// limit is always applied; pass a very large value if you want "no cap". order controls scan direction for limit selection.
@@ -255,6 +258,21 @@ func (e *coreExecutor) verifyTokenExistsOnChain(ctx context.Context, tokenCID do
 
 	default:
 		return false, fmt.Errorf("unsupported chain: %s", chain)
+	}
+}
+
+// SupportsTokenProvenance reports whether full on-chain provenance indexing is supported for a token.
+//
+// Ethereum legacy contracts configured without standard Transfer-event provenance return false.
+// Tezos and other chains use their native event APIs and always support full provenance indexing.
+func (e *coreExecutor) SupportsTokenProvenance(tokenCID domain.TokenCID) bool {
+	chain, standard, contractAddress, _ := tokenCID.Parse()
+
+	switch chain {
+	case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
+		return e.ethClient.SupportsProvenance(contractAddress, standard)
+	default:
+		return true
 	}
 }
 

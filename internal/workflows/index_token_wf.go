@@ -225,9 +225,15 @@ func (w *coreWorkflows) IndexTokenFromEvent(ctx context.Context, event *domain.B
 	w.startIndexTokenMetadataAsync(ctx, event.TokenCID(), nil)
 
 	// Step 3: Start child workflow to index full provenance (fire and forget)
-	// If the token is an ERC1155 token, skip the full provenance indexing workflow
+	// ERC1155 event-driven indexing already captures balance deltas from the triggering event.
 	if event.Standard != domain.StandardERC1155 {
-		w.startIndexTokenProvenancesAsync(ctx, event.TokenCID(), nil)
+		if shouldIndexFullProvenance(event.TokenCID(), nil, w.executor) {
+			w.startIndexTokenProvenancesAsync(ctx, event.TokenCID(), nil)
+		} else {
+			logger.InfoCtx(ctx, "Skipping full provenance indexing; adapter does not support it",
+				zap.String("tokenCID", event.TokenCID().String()),
+			)
+		}
 	}
 
 	logger.InfoCtx(ctx, "Token indexing completed, metadata and provenances workflows started",
@@ -351,17 +357,17 @@ func (w *coreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID
 	}
 
 	// Step 3: Index full provenance (wait for completion).
-	// If the token is an ERC1155 token and address is provided, skip the full provenance indexing workflow
-	_, standard, _, _ := tokenCID.Parse()
-	if standard == domain.StandardERC1155 && address != nil {
-		logger.InfoCtx(ctx, "Skipping full provenance indexing for owner-specific ERC1155 token", zap.String("tokenCID", tokenCID.String()))
-	} else {
+	if shouldIndexFullProvenance(tokenCID, address, w.executor) {
 		if err := w.IndexTokenProvenances(ctx, tokenCID, address); err != nil {
 			logger.WarnCtx(ctx, "Full provenance indexing workflow failed",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
 			)
 		}
+	} else {
+		logger.InfoCtx(ctx, "Skipping full provenance indexing; adapter does not support it",
+			zap.String("tokenCID", tokenCID.String()),
+		)
 	}
 
 	logger.InfoCtx(ctx, "Token indexing completed, metadata and provenances workflows started",
@@ -369,6 +375,19 @@ func (w *coreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID
 	)
 
 	return nil
+}
+
+// shouldIndexFullProvenance reports whether the full provenance indexing workflow should run.
+//
+// Owner-specific ERC1155 indexing already captures the triggering owner's balance and events.
+// Legacy Ethereum contracts without standard Transfer-event provenance skip full provenance
+// so minimal adapter-backed owner resolution is not overwritten.
+func shouldIndexFullProvenance(tokenCID domain.TokenCID, address *string, executor CoreExecutor) bool {
+	_, standard, _, _ := tokenCID.Parse()
+	if standard == domain.StandardERC1155 && address != nil {
+		return false
+	}
+	return executor.SupportsTokenProvenance(tokenCID)
 }
 
 func (w *coreWorkflows) startIndexTokenMetadataAsync(ctx context.Context, tokenCID domain.TokenCID, address *string) {

@@ -20,12 +20,11 @@ type StandardOperations interface {
 	ERC1155TokenExists(ctx context.Context, contractAddress, tokenNumber string) (bool, error)
 }
 
-// AdapterRegistry routes contract calls to configured, standard, or fallback adapters.
+// AdapterRegistry routes contract calls to configured or standard adapters.
 type AdapterRegistry struct {
 	contractAdapters map[string]ContractAdapter
 	contractConfigs  map[string]ContractConfig
 	standardAdapters map[domain.ChainStandard]ContractAdapter
-	fallbackAdapter  ContractAdapter
 }
 
 // NewAdapterRegistry loads contract configuration and builds the adapter lookup table.
@@ -51,7 +50,6 @@ func NewAdapterRegistry(
 			domain.StandardERC721:  NewERC721StandardAdapter(ops),
 			domain.StandardERC1155: NewERC1155StandardAdapter(ops),
 		},
-		fallbackAdapter: NewFallbackAdapter(),
 	}
 
 	overridesByChain := make(map[domain.Chain]int)
@@ -79,20 +77,34 @@ func NewAdapterRegistry(
 
 // GetAdapter returns the adapter for a chain, contract, and token standard.
 //
-// Lookup order: configured contract override, standard adapter, fallback adapter.
+// Lookup order: configured contract override, then standard adapter for the declared token standard.
+// Returns ErrUnsupportedContractStandard when neither applies.
 func (r *AdapterRegistry) GetAdapter(
 	chain domain.Chain,
 	contractAddress string,
 	standard domain.ChainStandard,
-) ContractAdapter {
+) (ContractAdapter, error) {
 	key := contractKey(chain, contractAddress)
 	if adp, ok := r.contractAdapters[key]; ok {
-		return adp
+		return adp, nil
 	}
 	if adp, ok := r.standardAdapters[standard]; ok {
-		return adp
+		return adp, nil
 	}
-	return r.fallbackAdapter
+	return nil, ErrUnsupportedContractStandard
+}
+
+// SupportsProvenance reports whether full on-chain provenance indexing is supported for a contract.
+func (r *AdapterRegistry) SupportsProvenance(
+	chain domain.Chain,
+	contractAddress string,
+	standard domain.ChainStandard,
+) (bool, error) {
+	adp, err := r.GetAdapter(chain, contractAddress, standard)
+	if err != nil {
+		return false, err
+	}
+	return adp.SupportsProvenance(), nil
 }
 
 // ContractOverrideCount returns the number of configured contract overrides.

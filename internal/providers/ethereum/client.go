@@ -110,6 +110,9 @@ type EthereumClient interface {
 	// IsVendorOnlyMetadata reports whether on-chain metadata fetch should be skipped for a contract.
 	IsVendorOnlyMetadata(contractAddress string) bool
 
+	// SupportsProvenance reports whether full on-chain provenance indexing is supported for a contract.
+	SupportsProvenance(contractAddress string, standard domain.ChainStandard) bool
+
 	// Close closes the connection
 	Close()
 }
@@ -1861,7 +1864,10 @@ func (f *ethereumClient) GetContractDeployer(ctx context.Context, contractAddres
 
 // TokenExists checks if a token exists on the blockchain via the contract adapter registry.
 func (f *ethereumClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
-	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	if err != nil {
+		return false, err
+	}
 	logger.DebugCtx(ctx, "Routing token existence check through contract adapter",
 		zap.String("chain", string(f.chainID)),
 		zap.String("contract", contractAddress),
@@ -1874,7 +1880,10 @@ func (f *ethereumClient) TokenExists(ctx context.Context, contractAddress, token
 
 // TokenOwner resolves the token owner via the contract adapter registry.
 func (f *ethereumClient) TokenOwner(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
-	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	if err != nil {
+		return "", err
+	}
 	logger.DebugCtx(ctx, "Routing token owner lookup through contract adapter",
 		zap.String("chain", string(f.chainID)),
 		zap.String("contract", contractAddress),
@@ -1887,7 +1896,10 @@ func (f *ethereumClient) TokenOwner(ctx context.Context, contractAddress, tokenN
 
 // TokenURI resolves on-chain metadata URI via the contract adapter registry.
 func (f *ethereumClient) TokenURI(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (string, error) {
-	adp := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	if err != nil {
+		return "", err
+	}
 	logger.DebugCtx(ctx, "Routing token URI lookup through contract adapter",
 		zap.String("chain", string(f.chainID)),
 		zap.String("contract", contractAddress),
@@ -1901,6 +1913,15 @@ func (f *ethereumClient) TokenURI(ctx context.Context, contractAddress, tokenNum
 // IsVendorOnlyMetadata reports whether on-chain metadata fetch should be skipped for a contract.
 func (f *ethereumClient) IsVendorOnlyMetadata(contractAddress string) bool {
 	return f.adapterRegistry.IsVendorOnlyMetadata(f.chainID, contractAddress)
+}
+
+// SupportsProvenance reports whether full on-chain provenance indexing is supported for a contract.
+func (f *ethereumClient) SupportsProvenance(contractAddress string, standard domain.ChainStandard) bool {
+	supported, err := f.adapterRegistry.SupportsProvenance(f.chainID, contractAddress, standard)
+	if err != nil {
+		return false
+	}
+	return supported
 }
 
 // ERC1155TokenExists checks ERC1155 token existence via recent transfer scan and balance checks.

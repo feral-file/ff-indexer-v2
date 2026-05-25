@@ -1,6 +1,7 @@
 package workflows_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
@@ -18,6 +21,7 @@ func toStrPtr(s string) *string { return &s }
 // expectIndexTokenFullSuccess configures MockCoreExecutor for one successful IndexToken (MediaEnabled false in testTokenCore).
 func expectIndexTokenFullSuccess(m *mocks.MockCoreExecutor) {
 	m.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	m.EXPECT().SupportsTokenProvenance(gomock.Any()).Return(true)
 	m.EXPECT().ResolveTokenMetadata(gomock.Any(), gomock.Any()).Return(nil, nil)
 	m.EXPECT().EnhanceTokenMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 	m.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -158,6 +162,7 @@ func TestIndexTokenTransfer_TokenDoesNotExist(t *testing.T) {
 	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false).Times(2)
 	exec.EXPECT().CheckTokenExists(gomock.Any(), tcid).Return(false, nil)
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
 	// async metadata + provenance via job queue; Enqueue is AnyTimes
 
 	err := wf.IndexTokenTransfer(ctx, event)
@@ -233,6 +238,7 @@ func TestIndexTokenFromEvent_Success(t *testing.T) {
 	tcid := event.TokenCID()
 	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
 
 	err := wf.IndexTokenFromEvent(ctx, event)
 	require.NoError(t, err)
@@ -247,6 +253,7 @@ func TestIndexTokens_Success(t *testing.T) {
 	t2 := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2")
 	// errgroup can complete tokens in any order; use Times(2) per executor step.
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(2)
+	exec.EXPECT().SupportsTokenProvenance(gomock.Any()).Return(true).Times(2)
 	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), gomock.Any()).Return(nil, nil).Times(2)
 	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).Times(2)
 	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -269,6 +276,63 @@ func TestIndexToken_Success(t *testing.T) {
 	expectIndexTokenFullSuccess(exec)
 
 	err := wf.IndexToken(ctx, tcid, nil)
+	require.NoError(t, err)
+}
+
+func TestIndexToken_Success_LegacyContract_SkipsFullProvenance(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	const legacyContract = "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, legacyContract, "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(gomock.Any()).Return(false)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	err := wf.IndexToken(ctx, tcid, nil)
+	require.NoError(t, err)
+}
+
+func TestIndexTokenFromEvent_LegacyContract_SkipsFullProvenance(t *testing.T) {
+	t.Parallel()
+	d := newCoreWfDeps(t, workflows.CoreWorkflowsConfig{
+		TezosChainID:                 domain.ChainTezosMainnet,
+		EthereumChainID:              domain.ChainEthereumMainnet,
+		EthereumTokenSweepStartBlock: 0,
+		TezosTokenSweepStartBlock:    0,
+		TokenTaskQueue:               "token_index",
+		MediaTaskQueue:               "media_index",
+		MediaEnabled:                 false,
+	}, nil)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, jq, wf := d.Ctx, d.Exec, d.BlMock, d.MockJQ, d.Wf
+
+	const legacyContract = "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: legacyContract,
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeTransfer,
+		TxHash:          "0xabcd",
+		BlockNumber:     100,
+	}
+	bl.EXPECT().IsTokenCIDBlacklisted(gomock.Any()).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByBlockchainEvent(gomock.Any(), event).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(gomock.Any()).Return(false)
+	jq.EXPECT().Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.NotEqual(t, "IndexTokenProvenances", opts.Kind)
+			return nil, true, nil
+		}).AnyTimes()
+
+	err := wf.IndexTokenFromEvent(ctx, event)
 	require.NoError(t, err)
 }
 

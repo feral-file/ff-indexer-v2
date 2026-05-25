@@ -51,6 +51,23 @@ func TestLoadContractsConfig_MissingRequiredFields(t *testing.T) {
 	require.Contains(t, err.Error(), "adapter.owner.method is required")
 }
 
+func TestLoadContractsConfig_OnChainMetadataMissingMethod(t *testing.T) {
+	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"standard": "erc721",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"metadata": {"source": "on_chain"}
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adapter.metadata.method is required when source is on_chain")
+}
+
 func TestLoadContractsConfig_DuplicateEntries(t *testing.T) {
 	duplicateConfig := `{
 		"contracts": [

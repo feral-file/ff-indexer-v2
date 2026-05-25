@@ -40,12 +40,14 @@ func newOwnerWf(t *testing.T, cfg workflows.CoreWorkflowsConfig) *coreWfDeps {
 	stubJqAnyEnqueue(d.MockJQ)
 	// Owner paths index many token CIDs per test; allow all without tcid-specific EXPECTs.
 	d.BlMock.EXPECT().IsTokenCIDBlacklisted(gomock.Any()).Return(false).AnyTimes()
+	d.Exec.EXPECT().SupportsTokenProvenance(gomock.Any()).Return(true).AnyTimes()
 	return d
 }
 
 // stubSuccessfulIndexToken wires executor expectations for a successful in-process IndexToken (MediaEnabled off in ownerCfg).
 func stubSuccessfulIndexToken(exec *mocks.MockCoreExecutor) {
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	exec.EXPECT().SupportsTokenProvenance(gomock.Any()).Return(true).AnyTimes()
 	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), gomock.Any(), gomock.Any()).

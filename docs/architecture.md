@@ -158,15 +158,15 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 - **`internal/providers/ethereum/contracts/contracts.json`** — Declarative overrides keyed by `(chain, contract_address)` with existence, owner, and metadata routing.
 - **`internal/providers/ethereum/contracts/abis/`** — ABI fragments referenced by override entries (embedded at build time).
 - **`internal/providers/ethereum/adapter/`** — `AdapterRegistry` lookup, `GenericAdapter` for configured contracts, and wrappers for standard ERC-721 / ERC-1155 client methods.
-- **Fallback adapter** — Unknown standards skip strict on-chain verification and rely on vendor enrichment where configured.
 
-**Lookup order:** configured contract override → standard adapter for the declared token standard → fallback adapter.
+**Lookup order:** configured contract override → standard adapter for the declared token standard. Unsupported standards return an error at lookup time.
 
 **Routing behavior:**
 
 - **Token existence** and **owner lookup** during indexing call through the registry (`TokenExists`, `TokenOwner` on the Ethereum client).
 - **On-chain metadata** is routed through the adapter registry via `TokenURI`, which calls either standard methods or configured overrides.
 - **On-chain metadata is skipped** when an override marks `metadata.source: "vendor_only"`; the metadata resolver returns early and vendor enrichment (for example OpenSea) supplies display metadata.
+- **Full provenance indexing is skipped** when the selected adapter reports `SupportsProvenance() == false` (for example legacy contracts without standard ERC-721 Transfer events). Minimal adapter-backed owner resolution is preserved.
 - **Token CID format is unchanged** — legacy contracts still use the `erc721` standard in external identifiers.
 
 **Observability:** adapter selection is logged at debug level with `adapter_type`. Override load counts are logged at startup.
@@ -232,6 +232,7 @@ Each contract override entry defines method routing:
 - Method names exist in their declared ABIs.
 - `success_condition` values are `"no_revert"` or `"address_nonzero"`.
 - `metadata.source` values are `"on_chain"` or `"vendor_only"`.
+- When `metadata.source` is `"on_chain"`, `adapter.metadata.method` is required.
 - Contract addresses are valid hex and not duplicated.
 
 **Failure behavior:**

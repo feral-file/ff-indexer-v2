@@ -71,31 +71,3 @@ func (a *ERC1155StandardAdapter) TokenURI(ctx context.Context, contractAddress, 
 func (a *ERC1155StandardAdapter) SupportsProvenance() bool {
 	return true
 }
-
-// FallbackAdapter provides vendor-only soft verification for unsupported contracts.
-type FallbackAdapter struct{}
-
-// NewFallbackAdapter creates a fallback adapter for unknown contract types.
-func NewFallbackAdapter() *FallbackAdapter {
-	return &FallbackAdapter{}
-}
-
-// TokenExists optimistically assumes the token exists when no adapter is configured.
-func (a *FallbackAdapter) TokenExists(_ context.Context, _, _ string) (bool, error) {
-	return true, nil
-}
-
-// TokenOwner is unsupported for fallback contracts.
-func (a *FallbackAdapter) TokenOwner(_ context.Context, _, _ string) (string, error) {
-	return "", fmt.Errorf("owner lookup not supported for fallback adapter")
-}
-
-// TokenURI skips on-chain metadata for fallback contracts.
-func (a *FallbackAdapter) TokenURI(_ context.Context, _, _ string) (string, error) {
-	return "", nil
-}
-
-// SupportsProvenance reports that fallback contracts do not support provenance indexing.
-func (a *FallbackAdapter) SupportsProvenance() bool {
-	return false
-}

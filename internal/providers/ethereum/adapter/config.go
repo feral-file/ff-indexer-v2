@@ -194,8 +194,10 @@ func validateMetadataConfig(cfg MetadataConfig, abiRegistry *ABIRegistry) error 
 		}
 	}
 
-	// If on-chain metadata with method, validate the method
-	if cfg.Source == string(MetadataSourceOnChain) && cfg.Method != nil {
+	if MetadataSource(cfg.Source) == MetadataSourceOnChain {
+		if cfg.Method == nil {
+			return fmt.Errorf("adapter.metadata.method is required when source is on_chain")
+		}
 		if err := validateMethodConfig(*cfg.Method, abiRegistry, "adapter.metadata.method"); err != nil {
 			return err
 		}

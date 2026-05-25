@@ -267,6 +267,20 @@ func (mr *MockEthereumProviderClientMockRecorder) SubscribeFilterLogs(ctx, query
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeFilterLogs", reflect.TypeOf((*MockEthereumProviderClient)(nil).SubscribeFilterLogs), ctx, query, ch)
 }
 
+// SupportsProvenance mocks base method.
+func (m *MockEthereumProviderClient) SupportsProvenance(contractAddress string, standard domain.ChainStandard) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SupportsProvenance", contractAddress, standard)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// SupportsProvenance indicates an expected call of SupportsProvenance.
+func (mr *MockEthereumProviderClientMockRecorder) SupportsProvenance(contractAddress, standard any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SupportsProvenance", reflect.TypeOf((*MockEthereumProviderClient)(nil).SupportsProvenance), contractAddress, standard)
+}
+
 // TokenExists mocks base method.
 func (m *MockEthereumProviderClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
 	m.ctrl.T.Helper()
