@@ -1,20 +1,23 @@
-package adapter_test
+package registry_test
 
 import (
 	"testing"
-	"testing/fstest"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
+	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/contracts"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
 )
 
 const cryptoPunksAddress = "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
 
 func TestLoadContractsConfig_Valid(t *testing.T) {
-	cfg, err := adapter.LoadContractsConfig(testContractFS(t, cryptopunksContractConfig))
+	cfg, err := registry.LoadContractsConfig(testContractFS(t, cryptopunksContractConfig))
 	require.NoError(t, err)
 	require.Len(t, cfg.Contracts, 1)
 	require.Equal(t, "CryptoPunks", cfg.Contracts[0].Name)
@@ -22,21 +25,19 @@ func TestLoadContractsConfig_Valid(t *testing.T) {
 }
 
 func TestLoadContractsConfig_EmptyContracts(t *testing.T) {
-	cfg, err := adapter.LoadContractsConfig(testContractFS(t, `{"contracts": []}`))
+	cfg, err := registry.LoadContractsConfig(testContractFS(t, `{"contracts": []}`))
 	require.NoError(t, err)
 	require.Empty(t, cfg.Contracts)
 }
 
 func TestLoadContractsConfig_InvalidJSON(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(fstest.MapFS{
-		"contracts.json": {Data: []byte("{invalid")},
-	})
+	_, err := registry.LoadContractsConfig(testContractFS(t, "{invalid}"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "parse contracts config")
 }
 
 func TestLoadContractsConfig_MissingRequiredFields(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -52,7 +53,7 @@ func TestLoadContractsConfig_MissingRequiredFields(t *testing.T) {
 }
 
 func TestLoadContractsConfig_WithCustomEvents(t *testing.T) {
-	cfg, err := adapter.LoadContractsConfig(testContractFS(t, cryptopunksContractConfigWithEvents))
+	cfg, err := registry.LoadContractsConfig(testContractFS(t, cryptopunksContractConfigWithEvents))
 	require.NoError(t, err)
 	require.Len(t, cfg.Contracts, 1)
 	require.Len(t, cfg.Contracts[0].Adapter.Events, 2)
@@ -61,7 +62,7 @@ func TestLoadContractsConfig_WithCustomEvents(t *testing.T) {
 }
 
 func TestLoadContractsConfig_InvalidEventSignature(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -84,7 +85,7 @@ func TestLoadContractsConfig_InvalidEventSignature(t *testing.T) {
 }
 
 func TestLoadContractsConfig_MissingParameterMapping(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -110,7 +111,7 @@ func TestLoadContractsConfig_MissingParameterMapping(t *testing.T) {
 }
 
 func TestLoadContractsConfig_DuplicateTargetField(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -137,7 +138,7 @@ func TestLoadContractsConfig_DuplicateTargetField(t *testing.T) {
 }
 
 func TestLoadContractsConfig_DuplicateParameterName_AcrossIndexedAndData(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -163,7 +164,7 @@ func TestLoadContractsConfig_DuplicateParameterName_AcrossIndexedAndData(t *test
 }
 
 func TestLoadContractsConfig_DuplicateParameterName_WithinData(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -190,7 +191,7 @@ func TestLoadContractsConfig_DuplicateParameterName_WithinData(t *testing.T) {
 }
 
 func TestLoadContractsConfig_EmptyParameterName(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -216,7 +217,7 @@ func TestLoadContractsConfig_EmptyParameterName(t *testing.T) {
 }
 
 func TestLoadContractsConfig_MissingRequiredFieldForTransfer(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -242,7 +243,7 @@ func TestLoadContractsConfig_MissingRequiredFieldForTransfer(t *testing.T) {
 }
 
 func TestLoadContractsConfig_MissingRequiredFieldForMint(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -267,7 +268,7 @@ func TestLoadContractsConfig_MissingRequiredFieldForMint(t *testing.T) {
 }
 
 func TestLoadContractsConfig_MissingRequiredFieldForBurn(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -292,7 +293,7 @@ func TestLoadContractsConfig_MissingRequiredFieldForBurn(t *testing.T) {
 }
 
 func TestLoadContractsConfig_MissingRequiredFieldForMetadataUpdate(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -317,7 +318,7 @@ func TestLoadContractsConfig_MissingRequiredFieldForMetadataUpdate(t *testing.T)
 }
 
 func TestLoadContractsConfig_DuplicateEventSignature(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -357,7 +358,7 @@ func TestLoadContractsConfig_DuplicateEventSignature(t *testing.T) {
 }
 
 func TestLoadContractsConfig_OnChainMetadataMissingMethod(t *testing.T) {
-	_, err := adapter.LoadContractsConfig(testContractFS(t, `{
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
@@ -397,13 +398,13 @@ func TestLoadContractsConfig_DuplicateEntries(t *testing.T) {
 		]
 	}`
 
-	_, err := adapter.LoadContractsConfig(testContractFS(t, duplicateConfig))
+	_, err := registry.LoadContractsConfig(testContractFS(t, duplicateConfig))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "duplicate contract entry")
 }
 
 func TestNewABIRegistry_LoadsABIs(t *testing.T) {
-	registry, err := adapter.NewABIRegistry(testContractFS(t, `{"contracts": []}`))
+	registry, err := helpers.NewABIRegistry(testContractFS(t, `{"contracts": []}`))
 	require.NoError(t, err)
 
 	cryptopunks, err := registry.Get("cryptopunks")
@@ -416,7 +417,7 @@ func TestNewABIRegistry_LoadsABIs(t *testing.T) {
 }
 
 func TestEmbeddedContractsConfig_LoadsCryptoPunks(t *testing.T) {
-	cfg, err := adapter.LoadContractsConfig(contracts.Files)
+	cfg, err := registry.LoadContractsConfig(contracts.Files)
 	require.NoError(t, err)
 	require.Len(t, cfg.Contracts, 1)
 	require.Equal(t, "CryptoPunks", cfg.Contracts[0].Name)
@@ -426,7 +427,9 @@ func TestEmbeddedContractsConfig_LoadsCryptoPunks(t *testing.T) {
 }
 
 func TestNewAdapterRegistry_MissingABI(t *testing.T) {
-	_, err := adapter.NewAdapterRegistry(
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	_, err := registry.NewAdapterRegistry(
 		testContractFS(t, `{
 			"contracts": [{
 				"chain": "eip155:1",
@@ -438,8 +441,11 @@ func TestNewAdapterRegistry_MissingABI(t *testing.T) {
 				}
 			}]
 		}`),
+		mockClient,
+		ethadapter.NewClock(),
 		nil,
-		&stubStandardOps{},
+		helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), nil),
+		domain.ChainEthereumMainnet,
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ABI not found")

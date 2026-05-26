@@ -18,8 +18,8 @@ import (
 	gomock "go.uber.org/mock/gomock"
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
-	adapter "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapter"
-	registry "github.com/feral-file/ff-indexer-v2/internal/registry"
+	registry "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
+	registry0 "github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // MockEthereumProviderClient is a mock of EthereumClient interface.
@@ -59,10 +59,10 @@ func (mr *MockEthereumProviderClientMockRecorder) Close() *gomock.Call {
 }
 
 // ContractAdapterRegistry mocks base method.
-func (m *MockEthereumProviderClient) ContractAdapterRegistry() *adapter.AdapterRegistry {
+func (m *MockEthereumProviderClient) ContractAdapterRegistry() *registry.AdapterRegistry {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ContractAdapterRegistry")
-	ret0, _ := ret[0].(*adapter.AdapterRegistry)
+	ret0, _ := ret[0].(*registry.AdapterRegistry)
 	return ret0
 }
 
@@ -117,51 +117,6 @@ func (mr *MockEthereumProviderClientMockRecorder) ERC1155Balances(ctx, contractA
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC1155Balances", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC1155Balances), ctx, contractAddress, tokenNumber)
 }
 
-// ERC1155URI mocks base method.
-func (m *MockEthereumProviderClient) ERC1155URI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ERC1155URI", ctx, contractAddress, tokenNumber)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ERC1155URI indicates an expected call of ERC1155URI.
-func (mr *MockEthereumProviderClientMockRecorder) ERC1155URI(ctx, contractAddress, tokenNumber any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC1155URI", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC1155URI), ctx, contractAddress, tokenNumber)
-}
-
-// ERC721OwnerOf mocks base method.
-func (m *MockEthereumProviderClient) ERC721OwnerOf(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ERC721OwnerOf", ctx, contractAddress, tokenNumber)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ERC721OwnerOf indicates an expected call of ERC721OwnerOf.
-func (mr *MockEthereumProviderClientMockRecorder) ERC721OwnerOf(ctx, contractAddress, tokenNumber any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC721OwnerOf", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC721OwnerOf), ctx, contractAddress, tokenNumber)
-}
-
-// ERC721TokenURI mocks base method.
-func (m *MockEthereumProviderClient) ERC721TokenURI(ctx context.Context, contractAddress, tokenNumber string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ERC721TokenURI", ctx, contractAddress, tokenNumber)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ERC721TokenURI indicates an expected call of ERC721TokenURI.
-func (mr *MockEthereumProviderClientMockRecorder) ERC721TokenURI(ctx, contractAddress, tokenNumber any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC721TokenURI", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC721TokenURI), ctx, contractAddress, tokenNumber)
-}
-
 // GetContractDeployer mocks base method.
 func (m *MockEthereumProviderClient) GetContractDeployer(ctx context.Context, contractAddress string, minBlock uint64) (string, error) {
 	m.ctrl.T.Helper()
@@ -209,7 +164,7 @@ func (mr *MockEthereumProviderClientMockRecorder) GetLatestBlock(ctx any) *gomoc
 }
 
 // GetTokenCIDsByOwnerAndBlockRange mocks base method.
-func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, requestedFromBlock, requestedToBlock uint64, limit int, order domain.BlockScanOrder, blacklist registry.BlacklistRegistry) (domain.TokenWithBlockRangeResult, error) {
+func (m *MockEthereumProviderClient) GetTokenCIDsByOwnerAndBlockRange(ctx context.Context, ownerAddress string, requestedFromBlock, requestedToBlock uint64, limit int, order domain.BlockScanOrder, blacklist registry0.BlacklistRegistry) (domain.TokenWithBlockRangeResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetTokenCIDsByOwnerAndBlockRange", ctx, ownerAddress, requestedFromBlock, requestedToBlock, limit, order, blacklist)
 	ret0, _ := ret[0].(domain.TokenWithBlockRangeResult)

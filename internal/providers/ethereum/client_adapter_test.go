@@ -54,6 +54,7 @@ func mustParseABI(raw string) abi.ABI {
 func TestClient_AdapterRouting_CryptoPunks(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
 
 	ownerAddr := common.HexToAddress("0x1234567890123456789012345678901234567890")
 	punkCallData, err := cryptoPunksContractABI.Pack("punkIndexToAddress", big.NewInt(1))
@@ -69,7 +70,7 @@ func TestClient_AdapterRouting_CryptoPunks(t *testing.T) {
 		}).
 		Times(2)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 
 	exists, err := client.TokenExists(context.Background(), cryptoPunksAddress, "1", domain.StandardERC721)
 	require.NoError(t, err)
@@ -85,6 +86,7 @@ func TestClient_AdapterRouting_CryptoPunks(t *testing.T) {
 func TestClient_AdapterRouting_StandardERC721Regression(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
 
 	contractAddress := "0x0000000000000000000000000000000000000123"
 	ownerAddr := common.HexToAddress("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
@@ -101,7 +103,7 @@ func TestClient_AdapterRouting_StandardERC721Regression(t *testing.T) {
 		}).
 		Times(2)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 
 	exists, err := client.TokenExists(context.Background(), contractAddress, "42", domain.StandardERC721)
 	require.NoError(t, err)
@@ -117,12 +119,13 @@ func TestClient_AdapterRouting_StandardERC721Regression(t *testing.T) {
 func TestClient_AdapterRouting_CryptoPunks_MissingToken(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
 
 	mockEth.EXPECT().
 		CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(common.LeftPadBytes(common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS).Bytes(), 32), nil)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 
 	exists, err := client.TokenExists(context.Background(), cryptoPunksAddress, "9999", domain.StandardERC721)
 	require.NoError(t, err)
@@ -132,16 +135,18 @@ func TestClient_AdapterRouting_CryptoPunks_MissingToken(t *testing.T) {
 func TestClient_SupportsProvenance_CryptoPunksWithCustomEvents(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 	require.True(t, client.SupportsProvenance(cryptoPunksAddress, domain.StandardERC721))
 }
 
 func TestClient_ParseEventLog_CryptoPunksPunkTransfer(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 
 	fromAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	toAddr := common.HexToAddress("0x2222222222222222222222222222222222222222")
@@ -173,8 +178,9 @@ func TestClient_ParseEventLog_CryptoPunksPunkTransfer(t *testing.T) {
 func TestClient_ParseEventLog_CryptoPunksAssign(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), nil)
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
 
 	toAddr := common.HexToAddress("0x3333333333333333333333333333333333333333")
 	punkIndex := big.NewInt(7)

@@ -1,4 +1,4 @@
-package adapter_test
+package adapters_test
 
 import (
 	"context"
@@ -15,7 +15,9 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
 )
 
 const cryptopunksABI = `[
@@ -28,20 +30,11 @@ const cryptopunksABI = `[
   }
 ]`
 
-func testContractFS(t *testing.T, contractsJSON string) fstest.MapFS {
-	t.Helper()
-
-	return fstest.MapFS{
-		"contracts.json":        {Data: []byte(contractsJSON)},
-		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
-	}
-}
-
 func TestGenericAdapter_TokenExists_AddressNonZero(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)
 
-	abiRegistry, err := adapter.NewABIRegistry(fstest.MapFS{
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
 		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
 	})
 	require.NoError(t, err)
@@ -57,25 +50,25 @@ func TestGenericAdapter_TokenExists_AddressNonZero(t *testing.T) {
 			return common.LeftPadBytes(ownerAddr.Bytes(), 32), nil
 		})
 
-	existence, err := adapter.BuildGenericAdapterFromConfig(adapter.ContractConfig{
+	existence, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
 		Chain:    domain.ChainEthereumMainnet,
 		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
 		Standard: domain.StandardERC721,
-		Adapter: adapter.AdapterConfig{
-			Existence: adapter.MethodConfig{
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
 				ABI:              "cryptopunks",
 				Params:           []string{"${tokenId}"},
 				SuccessCondition: "address_nonzero",
 			},
-			Owner: adapter.MethodConfig{
+			Owner: registry.MethodConfig{
 				Method: "punkIndexToAddress",
 				ABI:    "cryptopunks",
 				Params: []string{"${tokenId}"},
 			},
-			Metadata: adapter.MetadataConfig{Source: "vendor_only"},
+			Metadata: registry.MetadataConfig{Source: "vendor_only"},
 		},
-	}, abiRegistry, mockClient)
+	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet, nil, nil)
 	require.NoError(t, err)
 
 	exists, err := existence.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "1")
@@ -87,7 +80,7 @@ func TestGenericAdapter_TokenExists_ZeroAddress(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)
 
-	abiRegistry, err := adapter.NewABIRegistry(fstest.MapFS{
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
 		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
 	})
 	require.NoError(t, err)
@@ -96,24 +89,24 @@ func TestGenericAdapter_TokenExists_ZeroAddress(t *testing.T) {
 		CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(common.LeftPadBytes(common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS).Bytes(), 32), nil)
 
-	adp, err := adapter.BuildGenericAdapterFromConfig(adapter.ContractConfig{
+	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
 		Chain:    domain.ChainEthereumMainnet,
 		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
 		Standard: domain.StandardERC721,
-		Adapter: adapter.AdapterConfig{
-			Existence: adapter.MethodConfig{
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
 				ABI:              "cryptopunks",
 				Params:           []string{"${tokenId}"},
 				SuccessCondition: "address_nonzero",
 			},
-			Owner: adapter.MethodConfig{
+			Owner: registry.MethodConfig{
 				Method: "punkIndexToAddress",
 				ABI:    "cryptopunks",
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, mockClient)
+	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet, nil, nil)
 	require.NoError(t, err)
 
 	exists, err := adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "9999")
@@ -125,7 +118,7 @@ func TestGenericAdapter_TokenExists_Revert(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)
 
-	abiRegistry, err := adapter.NewABIRegistry(fstest.MapFS{
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
 		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
 	})
 	require.NoError(t, err)
@@ -134,24 +127,24 @@ func TestGenericAdapter_TokenExists_Revert(t *testing.T) {
 		CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(nil, errors.New("execution reverted"))
 
-	adp, err := adapter.BuildGenericAdapterFromConfig(adapter.ContractConfig{
+	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
 		Chain:    domain.ChainEthereumMainnet,
 		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
 		Standard: domain.StandardERC721,
-		Adapter: adapter.AdapterConfig{
-			Existence: adapter.MethodConfig{
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
 				ABI:              "cryptopunks",
 				Params:           []string{"${tokenId}"},
 				SuccessCondition: "address_nonzero",
 			},
-			Owner: adapter.MethodConfig{
+			Owner: registry.MethodConfig{
 				Method: "punkIndexToAddress",
 				ABI:    "cryptopunks",
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, mockClient)
+	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet, nil, nil)
 	require.NoError(t, err)
 
 	exists, err := adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "1")
@@ -163,7 +156,7 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)
 
-	abiRegistry, err := adapter.NewABIRegistry(fstest.MapFS{
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
 		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
 	})
 	require.NoError(t, err)
@@ -173,24 +166,24 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 		CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(common.LeftPadBytes(ownerAddr.Bytes(), 32), nil)
 
-	adp, err := adapter.BuildGenericAdapterFromConfig(adapter.ContractConfig{
+	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
 		Chain:    domain.ChainEthereumMainnet,
 		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
 		Standard: domain.StandardERC721,
-		Adapter: adapter.AdapterConfig{
-			Existence: adapter.MethodConfig{
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
 				ABI:              "cryptopunks",
 				Params:           []string{"${tokenId}"},
 				SuccessCondition: "address_nonzero",
 			},
-			Owner: adapter.MethodConfig{
+			Owner: registry.MethodConfig{
 				Method: "punkIndexToAddress",
 				ABI:    "cryptopunks",
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, mockClient)
+	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet, nil, nil)
 	require.NoError(t, err)
 
 	owner, err := adp.TokenOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "1")
@@ -199,9 +192,21 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 }
 
 func TestGenericAdapter_TokenURI_VendorOnly(t *testing.T) {
-	adp := adapter.NewGenericAdapter(nil, nil, adapter.ContractMetadataConfig{
-		Source: adapter.MetadataSourceVendorOnly,
-	}, nil, false, nil)
+	adp := adapters.NewGenericAdapter(
+		domain.StandardERC721,
+		nil,
+		nil,
+		adapters.ContractMetadataConfig{
+			Source: adapters.MetadataSourceVendorOnly,
+		},
+		nil,
+		nil,
+		false,
+		nil,
+		domain.ChainEthereumMainnet,
+		nil,
+		nil,
+	)
 
 	uri, err := adp.TokenURI(context.Background(), "0xabc", "1")
 	require.NoError(t, err)
@@ -212,7 +217,7 @@ func TestGenericAdapter_TokenOwner_ZeroAddressMeansNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)
 
-	abiRegistry, err := adapter.NewABIRegistry(fstest.MapFS{
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
 		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
 	})
 	require.NoError(t, err)
@@ -221,24 +226,24 @@ func TestGenericAdapter_TokenOwner_ZeroAddressMeansNotFound(t *testing.T) {
 		CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(common.LeftPadBytes(common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS).Bytes(), 32), nil)
 
-	adp, err := adapter.BuildGenericAdapterFromConfig(adapter.ContractConfig{
+	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
 		Chain:    domain.ChainEthereumMainnet,
 		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
 		Standard: domain.StandardERC721,
-		Adapter: adapter.AdapterConfig{
-			Existence: adapter.MethodConfig{
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
 				ABI:              "cryptopunks",
 				Params:           []string{"${tokenId}"},
 				SuccessCondition: "address_nonzero",
 			},
-			Owner: adapter.MethodConfig{
+			Owner: registry.MethodConfig{
 				Method: "punkIndexToAddress",
 				ABI:    "cryptopunks",
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, mockClient)
+	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet, nil, nil)
 	require.NoError(t, err)
 
 	_, err = adp.TokenOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
@@ -247,29 +252,29 @@ func TestGenericAdapter_TokenOwner_ZeroAddressMeansNotFound(t *testing.T) {
 }
 
 func TestGenericAdapter_InvalidTokenNumber(t *testing.T) {
-	abiRegistry, err := adapter.NewABIRegistry(fstest.MapFS{
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
 		"abis/cryptopunks.json": {Data: []byte(cryptopunksABI)},
 	})
 	require.NoError(t, err)
 
-	adp, err := adapter.BuildGenericAdapterFromConfig(adapter.ContractConfig{
+	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
 		Chain:    domain.ChainEthereumMainnet,
 		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
 		Standard: domain.StandardERC721,
-		Adapter: adapter.AdapterConfig{
-			Existence: adapter.MethodConfig{
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
 				ABI:              "cryptopunks",
 				Params:           []string{"${tokenId}"},
 				SuccessCondition: "address_nonzero",
 			},
-			Owner: adapter.MethodConfig{
+			Owner: registry.MethodConfig{
 				Method: "punkIndexToAddress",
 				ABI:    "cryptopunks",
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, nil)
+	}, abiRegistry, nil, nil, domain.ChainEthereumMainnet, nil, nil)
 	require.NoError(t, err)
 
 	_, err = adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "not-a-number")
@@ -277,43 +282,30 @@ func TestGenericAdapter_InvalidTokenNumber(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid token number")
 }
 
-type stubStandardOps struct {
-	ownerOfCalled bool
-	owner         string
-	ownerErr      error
-}
-
-func (s *stubStandardOps) ERC721OwnerOf(_ context.Context, _, _ string) (string, error) {
-	s.ownerOfCalled = true
-	return s.owner, s.ownerErr
-}
-
-func (s *stubStandardOps) ERC721TokenURI(_ context.Context, _, _ string) (string, error) {
-	return "", nil
-}
-
-func (s *stubStandardOps) ERC1155URI(_ context.Context, _, _ string) (string, error) {
-	return "", nil
-}
-
-func (s *stubStandardOps) ERC1155TokenExists(_ context.Context, _, _ string) (bool, error) {
-	return false, nil
-}
-
-func TestERC721StandardAdapter_TokenExists(t *testing.T) {
+func TestERC721Adapter_TokenExists(t *testing.T) {
 	t.Run("exists", func(t *testing.T) {
-		ops := &stubStandardOps{owner: "0x1234567890123456789012345678901234567890"}
-		adp := adapter.NewERC721StandardAdapter(ops)
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockEthClient(ctrl)
+		ownerAddr := common.HexToAddress("0x1234567890123456789012345678901234567890")
+		mockClient.EXPECT().
+			CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
+			Return(common.LeftPadBytes(ownerAddr.Bytes(), 32), nil)
+
+		adp := adapters.NewERC721Adapter(mockClient, nil, domain.ChainEthereumMainnet, nil, nil)
 
 		exists, err := adp.TokenExists(context.Background(), "0xabc", "1")
 		require.NoError(t, err)
 		require.True(t, exists)
-		require.True(t, ops.ownerOfCalled)
 	})
 
 	t.Run("revert means missing", func(t *testing.T) {
-		ops := &stubStandardOps{ownerErr: fmt.Errorf("execution reverted")}
-		adp := adapter.NewERC721StandardAdapter(ops)
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockEthClient(ctrl)
+		mockClient.EXPECT().
+			CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
+			Return(nil, fmt.Errorf("execution reverted"))
+
+		adp := adapters.NewERC721Adapter(mockClient, nil, domain.ChainEthereumMainnet, nil, nil)
 
 		exists, err := adp.TokenExists(context.Background(), "0xabc", "1")
 		require.NoError(t, err)

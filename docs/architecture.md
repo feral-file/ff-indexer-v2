@@ -155,9 +155,14 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 
 **Components:**
 
-- **`internal/providers/ethereum/contracts/contracts.json`** — Declarative overrides keyed by `(chain, contract_address)` with existence, owner, and metadata routing.
+- **`internal/providers/ethereum/contracts/contracts.json`** — Declarative overrides keyed by `(chain, contract_address)` with existence, owner, metadata routing, and optional custom event mappings.
 - **`internal/providers/ethereum/contracts/abis/`** — ABI fragments referenced by override entries (embedded at build time).
-- **`internal/providers/ethereum/adapter/`** — `AdapterRegistry` lookup, `GenericAdapter` for configured contracts, and wrappers for standard ERC-721 / ERC-1155 client methods.
+- **`internal/providers/ethereum/client.go`** — Public gateway (`EthereumClient`): adapter-routed high-level ops, low-level ERC orchestrator methods, and contract-agnostic operations (deployer lookup, owner scans, subscriptions).
+- **`internal/providers/ethereum/registry/`** — `AdapterRegistry` loads `contracts.json`, routes lookups (override → standard fallback), and delegates event parsing to adapters.
+- **`internal/providers/ethereum/adapters/`** — `ERC721Adapter`, `ERC1155Adapter`, and config-driven `GenericAdapter` for legacy contracts; each adapter owns token ops and event parsing.
+- **`internal/providers/ethereum/helpers/`** — Shared RPC helpers (standard ERC-721/1155 calls), event signature constants, log pagination/retry, and ABI loading.
+
+**Dependency flow:** `Client → Registry → Adapters → Helpers → internal/adapter.EthClient (RPC)`. Standard adapters no longer callback into the client.
 
 **Lookup order:** configured contract override → standard adapter for the declared token standard. Unsupported standards return an error at lookup time.
 

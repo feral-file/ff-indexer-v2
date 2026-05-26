@@ -1,42 +1,41 @@
-package adapter
+// Package registry routes Ethereum contract requests to standard or configured adapters.
+package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-
+	"github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 )
-
-// StandardOperations defines the Ethereum client methods used by standard adapters.
-type StandardOperations interface {
-	ERC721OwnerOf(ctx context.Context, contractAddress, tokenNumber string) (string, error)
-	ERC721TokenURI(ctx context.Context, contractAddress, tokenNumber string) (string, error)
-	ERC1155URI(ctx context.Context, contractAddress, tokenNumber string) (string, error)
-	ERC1155TokenExists(ctx context.Context, contractAddress, tokenNumber string) (bool, error)
-}
 
 // AdapterRegistry routes contract calls to configured or standard adapters.
 type AdapterRegistry struct {
-	contractAdapters map[string]ContractAdapter
+	contractAdapters map[string]adapters.ContractAdapter
 	contractConfigs  map[string]ContractConfig
-	standardAdapters map[domain.ChainStandard]ContractAdapter
+	standardAdapters map[domain.ChainStandard]adapters.ContractAdapter
 }
 
 // NewAdapterRegistry loads contract configuration and builds the adapter lookup table.
 func NewAdapterRegistry(
 	fsys fs.FS,
 	ethClient ethadapter.EthClient,
-	ops StandardOperations,
+	clock ethadapter.Clock,
+	blockProvider block.BlockProvider,
+	pagination *helpers.PaginationHelper,
+	chainID domain.Chain,
 ) (*AdapterRegistry, error) {
-	abiRegistry, err := NewABIRegistry(fsys)
+	abiRegistry, err := helpers.NewABIRegistry(fsys)
 	if err != nil {
 		return nil, fmt.Errorf("load ABI registry: %w", err)
 	}
@@ -47,17 +46,17 @@ func NewAdapterRegistry(
 	}
 
 	registry := &AdapterRegistry{
-		contractAdapters: make(map[string]ContractAdapter, len(cfg.Contracts)),
+		contractAdapters: make(map[string]adapters.ContractAdapter, len(cfg.Contracts)),
 		contractConfigs:  make(map[string]ContractConfig, len(cfg.Contracts)),
-		standardAdapters: map[domain.ChainStandard]ContractAdapter{
-			domain.StandardERC721:  NewERC721StandardAdapter(ops),
-			domain.StandardERC1155: NewERC1155StandardAdapter(ops),
+		standardAdapters: map[domain.ChainStandard]adapters.ContractAdapter{
+			domain.StandardERC721:  adapters.NewERC721Adapter(ethClient, pagination, chainID, blockProvider, clock),
+			domain.StandardERC1155: adapters.NewERC1155Adapter(ethClient, pagination, chainID, blockProvider, clock),
 		},
 	}
 
 	overridesByChain := make(map[domain.Chain]int)
 	for _, entry := range cfg.Contracts {
-		adp, err := BuildGenericAdapterFromConfig(entry, abiRegistry, ethClient)
+		adp, err := BuildGenericAdapterFromConfig(entry, abiRegistry, ethClient, pagination, chainID, blockProvider, clock)
 		if err != nil {
 			return nil, fmt.Errorf("build adapter for %s: %w", entry.Name, err)
 		}
@@ -79,14 +78,11 @@ func NewAdapterRegistry(
 }
 
 // GetAdapter returns the adapter for a chain, contract, and token standard.
-//
-// Lookup order: configured contract override, then standard adapter for the declared token standard.
-// Returns ErrUnsupportedContractStandard when neither applies.
 func (r *AdapterRegistry) GetAdapter(
 	chain domain.Chain,
 	contractAddress string,
 	standard domain.ChainStandard,
-) (ContractAdapter, error) {
+) (adapters.ContractAdapter, error) {
 	key := contractKey(chain, contractAddress)
 	if adp, ok := r.contractAdapters[key]; ok {
 		return adp, nil
@@ -94,7 +90,7 @@ func (r *AdapterRegistry) GetAdapter(
 	if adp, ok := r.standardAdapters[standard]; ok {
 		return adp, nil
 	}
-	return nil, ErrUnsupportedContractStandard
+	return nil, adapters.ErrUnsupportedContractStandard
 }
 
 // SupportsProvenance reports whether full on-chain provenance indexing is supported for a contract.
@@ -116,7 +112,7 @@ func (r *AdapterRegistry) ContractOverrideCount() int {
 }
 
 // GetContractAdapter returns a configured contract override adapter when present.
-func (r *AdapterRegistry) GetContractAdapter(chain domain.Chain, contractAddress string) (ContractAdapter, bool) {
+func (r *AdapterRegistry) GetContractAdapter(chain domain.Chain, contractAddress string) (adapters.ContractAdapter, bool) {
 	key := contractKey(chain, contractAddress)
 	adp, ok := r.contractAdapters[key]
 	return adp, ok
@@ -133,15 +129,12 @@ func (r *AdapterRegistry) GetContractStandard(chain domain.Chain, contractAddres
 }
 
 // GetAllCustomEventSignatures returns all custom event signatures across configured contracts.
-//
-// Reason: ethSubscriber needs a global topic filter that includes legacy contract events.
 func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
 	var signatures []common.Hash
 	seen := make(map[common.Hash]struct{})
 
 	for _, adp := range r.contractAdapters {
-		for _, eventCfg := range adp.GetProvenanceEventConfigs() {
-			sig := crypto.Keccak256Hash([]byte(eventCfg.Signature))
+		for _, sig := range adp.GetEventSignatures() {
 			if _, exists := seen[sig]; exists {
 				continue
 			}
@@ -151,4 +144,39 @@ func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
 	}
 
 	return signatures
+}
+
+// GetStandardAdapter returns the standard adapter for a token standard.
+func (r *AdapterRegistry) GetStandardAdapter(standard domain.ChainStandard) (adapters.ContractAdapter, bool) {
+	adp, ok := r.standardAdapters[standard]
+	return adp, ok
+}
+
+// ParseEvent routes event parsing to the appropriate adapter.
+func (r *AdapterRegistry) ParseEvent(
+	ctx context.Context,
+	chain domain.Chain,
+	vLog types.Log,
+	event *domain.BlockchainEvent,
+) (*domain.BlockchainEvent, error) {
+	if adp, ok := r.GetContractAdapter(chain, vLog.Address.Hex()); ok {
+		parsed, err := adp.ParseEvent(ctx, vLog, event)
+		if err == nil || !errors.Is(err, adapters.ErrUnknownEvent) {
+			return parsed, err
+		}
+	}
+
+	for _, standard := range []domain.ChainStandard{domain.StandardERC721, domain.StandardERC1155} {
+		adp, ok := r.GetStandardAdapter(standard)
+		if !ok {
+			continue
+		}
+		for _, sig := range adp.GetEventSignatures() {
+			if len(vLog.Topics) > 0 && vLog.Topics[0] == sig {
+				return adp.ParseEvent(ctx, vLog, event)
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("unknown event signature: %s", vLog.Topics[0].Hex())
 }

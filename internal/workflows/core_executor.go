@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
+	ethhelpers "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -993,12 +993,12 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 			owner, err := e.ethClient.TokenOwner(ctx, contractAddress, tokenNumber, standard)
 			if err != nil {
 				if errors.Is(err, domain.ErrTokenNotFoundOnChain) ||
-					strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
-					strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
+					errors.Is(err, ethereum.ErrContractNotFound) ||
+					ethhelpers.IsExecutionRevert(err) {
 					// Token not found on chain (burned or contract self-destructed).
 					return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 				}
-				if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
+				if ethhelpers.IsOutOfGas(err) {
 					// Contract unreachable (e.g. exists but function is not callable).
 					// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
 					return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
@@ -1022,12 +1022,12 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 				// Get balance and events for this specific owner
 				balance, events, err := e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, *address)
 				if err != nil {
-					if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
-						strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
+					if errors.Is(err, ethereum.ErrContractNotFound) ||
+						ethhelpers.IsExecutionRevert(err) {
 						return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 					}
 
-					if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
+					if ethhelpers.IsOutOfGas(err) {
 						// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
 						return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
 					}
@@ -1100,12 +1100,12 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 				// This means we may get partial/incomplete balances for high-activity contracts
 				balances, err := e.ethClient.ERC1155Balances(ctx, contractAddress, tokenNumber)
 				if err != nil {
-					if strings.Contains(err.Error(), ethereum.ErrExecutionReverted.Error()) ||
-						strings.Contains(err.Error(), ethereum.ErrContractNotFound.Error()) {
+					if errors.Is(err, ethereum.ErrContractNotFound) ||
+						ethhelpers.IsExecutionRevert(err) {
 						return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 					}
 
-					if strings.Contains(err.Error(), ethereum.ErrOutOfGas.Error()) {
+					if ethhelpers.IsOutOfGas(err) {
 						// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
 						return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
 					}
