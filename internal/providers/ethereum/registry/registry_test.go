@@ -186,6 +186,15 @@ func TestAdapterRegistry_GetAdapter(t *testing.T) {
 		require.ErrorIs(t, err, adapters.ErrUnsupportedContractStandard)
 	})
 
+	t.Run("configured contract rejects mismatched standard", func(t *testing.T) {
+		_, err := reg.GetAdapter(
+			domain.ChainEthereumMainnet,
+			"0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			domain.StandardERC1155,
+		)
+		require.ErrorIs(t, err, adapters.ErrConfiguredStandardMismatch)
+	})
+
 	t.Run("vendor only metadata flag", func(t *testing.T) {
 		require.True(t, reg.IsVendorOnlyMetadata(
 			domain.ChainEthereumMainnet,

@@ -164,7 +164,7 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 
 **Dependency flow:** `Client → Registry → Adapters → Helpers → internal/adapter.EthClient (RPC)`. Standard adapters no longer callback into the client.
 
-**Lookup order:** configured contract override → standard adapter for the declared token standard. Unsupported standards return an error at lookup time.
+**Lookup order:** configured contract override (when the requested standard matches the configured entry) → standard adapter for the declared token standard. Unsupported standards and configured-standard mismatches return an error at lookup time.
 
 **Routing behavior:**
 
@@ -172,6 +172,7 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 - **On-chain metadata** is routed through the adapter registry via `TokenURI`, which calls either standard methods or configured overrides.
 - **On-chain metadata is skipped** when an override marks `metadata.source: "vendor_only"`; the metadata resolver returns early and vendor enrichment (for example OpenSea) supplies display metadata.
 - **Full provenance indexing is skipped** when the selected adapter reports `SupportsProvenance() == false` (for example legacy contracts without configured provenance events). When `adapter.events` is configured, full provenance indexing uses those custom event signatures instead of standard EIP Transfer events.
+- **Owner sweeps** use the global `ethereum_token_sweep_start_block` as the lower bound for all contracts, including configured legacy overrides. Tokens whose last ownership-changing event occurred before that block will not appear in owner sweeps until a later in-range event occurs. Lower the global setting when historical discovery before that block is required.
 - **Token CID format is unchanged** — legacy contracts still use the `erc721` standard in external identifiers.
 
 **Observability:** adapter selection is logged at debug level with `adapter_type`. Override load counts are logged at startup.
@@ -239,7 +240,7 @@ Each contract override entry defines method routing:
 - **`chain`** — CAIP-2 chain identifier (`eip155:1` for Ethereum mainnet, `eip155:11155111` for Sepolia).
 - **`address`** — Contract address (checksummed or lowercase).
 - **`name`** — Human-readable contract name (used in logs and error messages).
-- **`standard`** — Token standard declared for external API/storage (`erc721`, `erc1155`).
+- **`standard`** — Token standard declared for external API/storage (`erc721`, `erc1155`). Must match the standard in token CIDs at lookup time for configured overrides.
 - **`adapter.existence.method`** — ABI method name used to check if a token exists.
 - **`adapter.existence.abi`** — ABI file name (without `.json`) from `contracts/abis/`.
 - **`adapter.existence.params`** — Parameter list; `${tokenId}` is replaced with the token ID as `uint256`.
@@ -281,6 +282,7 @@ Each event entry defines:
 - `metadata.source` values are `"on_chain"` or `"vendor_only"`.
 - When `metadata.source` is `"on_chain"`, `adapter.metadata.method` is required.
 - Contract addresses are valid hex and not duplicated.
+- Configured `standard` values are `erc721` or `erc1155`.
 - Each configured event has a valid signature format, allowed `mapToStandardEvent`, and complete `parameterMappings` covering every listed indexed/data parameter.
 
 **Failure behavior:**

@@ -116,6 +116,11 @@ func validateContractEntry(entry *ContractConfig, abiRegistry *helpers.ABIRegist
 	if entry.Standard == "" {
 		return fmt.Errorf("standard is required")
 	}
+	switch entry.Standard {
+	case domain.StandardERC721, domain.StandardERC1155:
+	default:
+		return fmt.Errorf("unsupported standard %q (allowed: erc721, erc1155)", entry.Standard)
+	}
 	if entry.Adapter.Existence.Method == "" {
 		return fmt.Errorf("adapter.existence.method is required")
 	}

@@ -69,7 +69,7 @@ func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query e
 	currentFrom := new(big.Int).Set(fromBlock)
 	stepSize := h.calculateStepSize(timeoutCtx, query)
 
-	for currentFrom.Cmp(toBlock) < 0 {
+	for currentFrom.Cmp(toBlock) <= 0 {
 		select {
 		case <-timeoutCtx.Done():
 			logger.WarnCtx(ctx, "Context deadline exceeded during log pagination, returning partial logs",

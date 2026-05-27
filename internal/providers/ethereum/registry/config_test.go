@@ -52,6 +52,22 @@ func TestLoadContractsConfig_MissingRequiredFields(t *testing.T) {
 	require.Contains(t, err.Error(), "adapter.owner.method is required")
 }
 
+func TestLoadContractsConfig_UnsupportedStandard(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"standard": "erc20",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported standard")
+}
+
 func TestLoadContractsConfig_WithCustomEvents(t *testing.T) {
 	cfg, err := registry.LoadContractsConfig(testContractFS(t, cryptopunksContractConfigWithEvents))
 	require.NoError(t, err)

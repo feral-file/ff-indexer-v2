@@ -79,9 +79,10 @@ func NewAdapterRegistry(
 
 // GetAdapter returns the adapter for a chain, contract, and token standard.
 //
-// First checks for a configured contract override (from contracts.json), then falls back
-// to the standard adapter (ERC721 or ERC1155). Returns ErrUnsupportedContractStandard if
-// no adapter is found.
+// First checks for a configured contract override (from contracts.json) when the requested
+// standard matches the configured entry, then falls back to the standard adapter (ERC721 or
+// ERC1155). Returns ErrConfiguredStandardMismatch when an override exists but the requested
+// standard differs. Returns ErrUnsupportedContractStandard if no adapter is found.
 //
 // Contract addresses are normalized to lowercase for comparison.
 func (r *AdapterRegistry) GetAdapter(
@@ -91,6 +92,16 @@ func (r *AdapterRegistry) GetAdapter(
 ) (adapters.ContractAdapter, error) {
 	key := contractKey(chain, contractAddress)
 	if adp, ok := r.contractAdapters[key]; ok {
+		entry := r.contractConfigs[key]
+		if entry.Standard != standard {
+			return nil, fmt.Errorf(
+				"contract %s configured as %s, requested %s: %w",
+				entry.Name,
+				entry.Standard,
+				standard,
+				adapters.ErrConfiguredStandardMismatch,
+			)
+		}
 		return adp, nil
 	}
 	if adp, ok := r.standardAdapters[standard]; ok {
