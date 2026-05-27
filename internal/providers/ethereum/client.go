@@ -292,8 +292,25 @@ func (f *ethereumClient) SupportsProvenance(contractAddress string, standard dom
 
 // GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.
 //
-// Standard and configured contract adapters each compute ownership for the full requested range.
-// The client aggregates results, sorts by block order, and applies the global limit at block boundaries.
+// Reason: Adapter-centric ownership tracking enables parallel querying across all token standards
+// (ERC721, ERC1155, and configured legacy contracts) while maintaining clean separation of concerns.
+//
+// Trade-offs:
+//   - Each adapter processes the full block range independently, which may query more events than
+//     needed when the limit is small relative to the owner's holdings
+//   - For large ranges (>100k blocks) with small limits, consider chunking at the workflow layer
+//   - Correctness is prioritized over early-stop optimization: all adapters use their standard's
+//     ownership semantics consistently without client-side mixing
+//
+// Constraints:
+//   - Limit must be > 0 (validated on entry)
+//   - Limit is applied globally at block boundaries after aggregating all adapters' results
+//   - Blacklist filtering happens within each adapter, not after aggregation
+//   - EffectiveFromBlock/EffectiveToBlock report the actual range covered after applying the limit
+//
+// The function discovers standard ERC721/ERC1155 adapters and all configured contracts with
+// provenance events, queries them in parallel, aggregates results, sorts by block order, and
+// applies the limit. Returns all owned tokens within the effective range.
 func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	ctx context.Context,
 	ownerAddress string,
@@ -355,6 +372,8 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	}, nil
 }
 
+// sortTokensByBlockOrder sorts tokens by block number (respecting scan order), then by TokenCID.
+// TokenCID tiebreaker ensures deterministic ordering when multiple tokens are in the same block.
 func sortTokensByBlockOrder(tokens []domain.TokenWithBlock, order domain.BlockScanOrder) {
 	if order.Desc() {
 		sort.Slice(tokens, func(i, j int) bool {
@@ -374,6 +393,15 @@ func sortTokensByBlockOrder(tokens []domain.TokenWithBlock, order domain.BlockSc
 	})
 }
 
+// applyOwnerTokenLimit applies the global limit at block boundaries and adjusts the effective range.
+//
+// When the limit is reached mid-block, includes all tokens from that block to preserve atomicity.
+// This ensures the effective range always ends on a complete block boundary, not mid-block.
+//
+// For descending order, adjusts effectiveFromBlock to the cutoff block (earliest block kept).
+// For ascending order, adjusts effectiveToBlock to the cutoff block (latest block kept).
+//
+// Returns the limited token slice and the adjusted effective range bounds.
 func applyOwnerTokenLimit(
 	tokens []domain.TokenWithBlock,
 	limit int,

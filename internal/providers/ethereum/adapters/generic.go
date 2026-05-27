@@ -234,7 +234,16 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 }
 
 // GetTokensByOwner returns tokens owned by the address within the block range for this configured contract.
-// Ownership tracking uses the configured standard field: erc721 uses last-transfer-wins, erc1155 uses net balance.
+//
+// Queries custom provenance events from contracts.json, parses them into standardized events,
+// then applies ownership tracking based on the configured standard field:
+// - standard="erc721": last-transfer-wins logic
+// - standard="erc1155": balance-accumulation logic
+//
+// Logs warnings for events that fail to parse (schema mismatch or malformed data) but continues
+// processing remaining events. This prevents a single bad event from failing the entire scan.
+//
+// Returns empty result if no provenance events are configured.
 func (a *GenericAdapter) GetTokensByOwner(
 	ctx context.Context,
 	ownerAddress string,
@@ -291,6 +300,14 @@ func (a *GenericAdapter) GetTokensByOwner(
 	return trackOwnershipFromParsedEvents(a.chainID, a.standard, a.contractAddress, owner, events, blacklist), nil
 }
 
+// buildCustomOwnerTransferQueries constructs filter queries for configured provenance events
+// where the owner address appears in indexed from/to parameters.
+//
+// Only processes transfer/mint/burn events. Metadata update events do not affect ownership
+// and are skipped.
+//
+// Returns separate queries for each (event, topic position) combination to maximize parallelism.
+// Config validation ensures from/to addresses are indexed, so this always produces owner-scoped queries.
 func buildCustomOwnerTransferQueries(
 	provenanceEvents []EventConfig,
 	contractAddr common.Address,
@@ -318,6 +335,14 @@ func buildCustomOwnerTransferQueries(
 	return queries
 }
 
+// indexedAddressTopicIndices finds the topic positions of FromAddress and ToAddress in the event signature.
+//
+// Topic 0 is always the event signature hash. Indexed parameters occupy topics 1, 2, 3 in declaration order.
+// Returns (-1, -1) if the addresses are not indexed or not mapped.
+//
+// Example: PunkTransfer(address indexed from, address indexed to, uint256 punkIndex)
+// - from is at topic index 1
+// - to is at topic index 2
 func indexedAddressTopicIndices(eventCfg EventConfig) (fromIndex, toIndex int) {
 	fromIndex = -1
 	toIndex = -1
@@ -340,6 +365,9 @@ func indexedAddressTopicIndices(eventCfg EventConfig) (fromIndex, toIndex int) {
 	return fromIndex, toIndex
 }
 
+// buildCustomOwnerQuery constructs a filter query for a specific event signature and topic position.
+// The owner hash is placed at the specified topic index to filter for events where the owner
+// is the sender or recipient.
 func buildCustomOwnerQuery(
 	eventSig common.Hash,
 	contractAddr common.Address,

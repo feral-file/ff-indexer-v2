@@ -79,6 +79,12 @@ func NewAdapterRegistry(
 }
 
 // GetAdapter returns the adapter for a chain, contract, and token standard.
+//
+// First checks for a configured contract override (from contracts.json), then falls back
+// to the standard adapter (ERC721 or ERC1155). Returns ErrUnsupportedContractStandard if
+// no adapter is found.
+//
+// Contract addresses are normalized to lowercase for comparison.
 func (r *AdapterRegistry) GetAdapter(
 	chain domain.Chain,
 	contractAddress string,
@@ -95,6 +101,10 @@ func (r *AdapterRegistry) GetAdapter(
 }
 
 // SupportsProvenance reports whether full on-chain provenance indexing is supported for a contract.
+//
+// Returns true if the adapter can parse historical ownership events (Transfer, TransferSingle,
+// TransferBatch, or configured custom events). Returns false if only current-state queries
+// are available.
 func (r *AdapterRegistry) SupportsProvenance(
 	chain domain.Chain,
 	contractAddress string,
@@ -113,6 +123,8 @@ func (r *AdapterRegistry) ContractOverrideCount() int {
 }
 
 // GetContractAdapter returns a configured contract override adapter when present.
+// Returns (adapter, true) if a custom configuration exists for this chain+address.
+// Returns (nil, false) if no override is configured (caller should use standard adapter).
 func (r *AdapterRegistry) GetContractAdapter(chain domain.Chain, contractAddress string) (adapters.ContractAdapter, bool) {
 	key := contractKey(chain, contractAddress)
 	adp, ok := r.contractAdapters[key]
@@ -120,6 +132,8 @@ func (r *AdapterRegistry) GetContractAdapter(chain domain.Chain, contractAddress
 }
 
 // GetContractStandard returns the configured token standard for a contract override.
+// Returns (standard, true) if a configuration exists, (empty, false) otherwise.
+// This is used to determine which ownership tracking logic to apply for GenericAdapter.
 func (r *AdapterRegistry) GetContractStandard(chain domain.Chain, contractAddress string) (domain.ChainStandard, bool) {
 	key := contractKey(chain, contractAddress)
 	entry, ok := r.contractConfigs[key]
@@ -130,6 +144,8 @@ func (r *AdapterRegistry) GetContractStandard(chain domain.Chain, contractAddres
 }
 
 // GetAllCustomEventSignatures returns all custom event signatures across configured contracts.
+// Deduplicates signatures that appear in multiple contracts. Used by the subscriber to
+// filter logs before routing them to specific adapters.
 func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
 	var signatures []common.Hash
 	seen := make(map[common.Hash]struct{})
@@ -148,7 +164,12 @@ func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
 }
 
 // GetProvenanceContractsForChain returns configured contracts with provenance support for a chain.
-// The map keys are lowercase contract addresses.
+//
+// Only includes contracts that have custom events configured (SupportsProvenance() == true).
+// The map keys are lowercase contract addresses for consistent comparison.
+//
+// This is used by GetTokenCIDsByOwnerAndBlockRange to discover all GenericAdapters that
+// should be queried in parallel with standard ERC721/ERC1155 adapters.
 func (r *AdapterRegistry) GetProvenanceContractsForChain(chain domain.Chain) map[string]adapters.ContractAdapter {
 	result := make(map[string]adapters.ContractAdapter)
 
@@ -169,12 +190,21 @@ func (r *AdapterRegistry) GetProvenanceContractsForChain(chain domain.Chain) map
 }
 
 // GetStandardAdapter returns the standard adapter for a token standard.
+// Returns (adapter, true) for ERC721 or ERC1155, (nil, false) for unknown standards.
+// Used by the client to discover standard adapters for ownership queries.
 func (r *AdapterRegistry) GetStandardAdapter(standard domain.ChainStandard) (adapters.ContractAdapter, bool) {
 	adp, ok := r.standardAdapters[standard]
 	return adp, ok
 }
 
 // ParseEvent routes event parsing to the appropriate adapter.
+//
+// First tries configured contract overrides, then falls back to standard adapters based on
+// event signature matching. Returns the parsed event or ErrUnknownEvent if no adapter recognizes
+// the log.
+//
+// Contract overrides take priority to handle legacy contracts that emit standard-looking events
+// with non-standard semantics.
 func (r *AdapterRegistry) ParseEvent(
 	ctx context.Context,
 	chain domain.Chain,

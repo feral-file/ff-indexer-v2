@@ -16,7 +16,8 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
-// deduplicateLogs removes duplicate logs using block number, transaction hash, and log index.
+// deduplicateLogs removes duplicate logs that may appear when querying with overlapping filter topics.
+// Uses block number, transaction hash, and log index as the uniqueness key.
 func deduplicateLogs(logs []types.Log) []types.Log {
 	logMap := make(map[string]types.Log, len(logs))
 	for _, vLog := range logs {
@@ -31,7 +32,8 @@ func deduplicateLogs(logs []types.Log) []types.Log {
 	return result
 }
 
-// sortLogsAscending orders logs by block number then log index.
+// sortLogsAscending orders logs chronologically by block number, then by log index within the block.
+// Required for correct ownership tracking since later events override earlier ones.
 func sortLogsAscending(logs []types.Log) {
 	sort.Slice(logs, func(i, j int) bool {
 		if logs[i].BlockNumber != logs[j].BlockNumber {
@@ -41,7 +43,9 @@ func sortLogsAscending(logs []types.Log) {
 	})
 }
 
-// filterLogsInParallel executes filter queries concurrently and merges the results.
+// filterLogsInParallel executes multiple filter queries concurrently and merges the results.
+// All queries must succeed or the function returns an error.
+// Deduplication is the caller's responsibility after merging.
 func filterLogsInParallel(
 	ctx context.Context,
 	pagination *helpers.PaginationHelper,
@@ -76,6 +80,9 @@ func filterLogsInParallel(
 	return allLogs, nil
 }
 
+// tokenOwnershipState tracks the current ownership status and last-seen block for a token.
+// For ERC721, owned is a boolean derived from the last transfer's "to" address.
+// For ERC1155, owned is true when netBalance > 0 after accumulating all transfers.
 type tokenOwnershipState struct {
 	owned       bool
 	blockNumber uint64
@@ -83,17 +90,26 @@ type tokenOwnershipState struct {
 	netBalance  *big.Int
 }
 
+// isNewerOwnershipState returns true if vLog occurred after the existing state.
+// Uses block number as primary sort key, log index as tiebreaker.
 func isNewerOwnershipState(existing *tokenOwnershipState, vLog types.Log) bool {
 	return existing == nil ||
 		vLog.BlockNumber > existing.blockNumber ||
 		(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex)
 }
 
+// isTokenBlacklisted checks if the token is in the blacklist registry.
+// Returns false if blacklist is nil (no filtering).
 func isTokenBlacklisted(blacklist registry.BlacklistRegistry, tokenCID domain.TokenCID) bool {
 	return blacklist != nil && blacklist.IsTokenCIDBlacklisted(tokenCID)
 }
 
 // trackERC721OwnershipFromLogs applies last-transfer-wins ownership tracking for ERC721-style tokens.
+//
+// For each token, only the most recent Transfer event determines ownership. A token is owned if
+// the latest transfer's "to" address matches the owner. Transfers are compared by (block, logIndex).
+//
+// Skips logs that don't involve the owner (neither from nor to) and filters out blacklisted tokens.
 func trackERC721OwnershipFromLogs(
 	chainID domain.Chain,
 	owner common.Address,
@@ -135,6 +151,12 @@ func trackERC721OwnershipFromLogs(
 }
 
 // trackERC1155OwnershipFromLogs applies net-balance ownership tracking for ERC1155-style tokens.
+//
+// For each token, accumulates the net balance by processing TransferSingle and TransferBatch events.
+// A token is owned if the net balance > 0 after all transfers. Balance increases when the owner
+// receives tokens, decreases when the owner sends tokens.
+//
+// Skips logs that don't involve the owner and filters out blacklisted tokens.
 func trackERC1155OwnershipFromLogs(
 	chainID domain.Chain,
 	owner common.Address,
@@ -159,6 +181,8 @@ func trackERC1155OwnershipFromLogs(
 	return ownedTokensFromState(tokenMap)
 }
 
+// applyERC1155SingleTransfer processes an ERC1155 TransferSingle event and updates token ownership state.
+// Extracts tokenID and amount from event data, then adjusts the owner's balance.
 func applyERC1155SingleTransfer(
 	chainID domain.Chain,
 	owner common.Address,
@@ -186,6 +210,9 @@ func applyERC1155SingleTransfer(
 	applyERC1155BalanceChange(tokenMap, tokenCID, owner, fromAddr, toAddr, amount, vLog)
 }
 
+// applyERC1155BatchTransfer processes an ERC1155 TransferBatch event and updates token ownership state.
+// Decodes ABI-encoded arrays of token IDs and amounts from event data, then adjusts the owner's balance
+// for each token in the batch.
 func applyERC1155BatchTransfer(
 	chainID domain.Chain,
 	owner common.Address,
@@ -236,6 +263,10 @@ func applyERC1155BatchTransfer(
 	}
 }
 
+// applyERC1155BalanceChange updates the net balance for a token based on a transfer event.
+// Adds amount if owner is the recipient, subtracts if owner is the sender.
+// Updates owned status to true if netBalance > 0, false otherwise.
+// Records the block and log index if this event is newer than the existing state.
 func applyERC1155BalanceChange(
 	tokenMap map[domain.TokenCID]*tokenOwnershipState,
 	tokenCID domain.TokenCID,
@@ -263,6 +294,8 @@ func applyERC1155BalanceChange(
 	}
 }
 
+// ownedTokensFromState extracts owned tokens from the ownership state map.
+// Returns only tokens where state.owned is true, with their last-seen block numbers.
 func ownedTokensFromState(tokenMap map[domain.TokenCID]*tokenOwnershipState) []domain.TokenWithBlock {
 	result := make([]domain.TokenWithBlock, 0, len(tokenMap))
 	for tokenCID, state := range tokenMap {
@@ -277,7 +310,14 @@ func ownedTokensFromState(tokenMap map[domain.TokenCID]*tokenOwnershipState) []d
 }
 
 // trackOwnershipFromParsedEvents applies ownership tracking to parsed blockchain events.
-// The configured standard field determines whether last-transfer-wins or balance accumulation is used.
+//
+// The standard field (from contracts.json) determines which tracking logic to use:
+// - ERC721: last-transfer-wins
+// - ERC1155: balance-accumulation
+//
+// This function is used by GenericAdapter after parsing custom contract events into standardized
+// domain.BlockchainEvent structs. The caller is responsible for sorting events chronologically
+// before calling this function.
 func trackOwnershipFromParsedEvents(
 	chainID domain.Chain,
 	standard domain.ChainStandard,
@@ -296,6 +336,9 @@ func trackOwnershipFromParsedEvents(
 	}
 }
 
+// trackERC721OwnershipFromEvents applies last-transfer-wins tracking to parsed events.
+// Used by GenericAdapter for contracts configured with standard="erc721".
+// Only processes transfer/mint/burn events that involve the owner.
 func trackERC721OwnershipFromEvents(
 	chainID domain.Chain,
 	contractAddress string,
@@ -336,6 +379,10 @@ func trackERC721OwnershipFromEvents(
 	return ownedTokensFromState(tokenMap)
 }
 
+// trackERC1155OwnershipFromEvents applies balance-accumulation tracking to parsed events.
+// Used by GenericAdapter for contracts configured with standard="erc1155".
+// Only processes transfer/mint/burn events that involve the owner.
+// Logs a warning if quantity parsing fails, defaulting to 1 for that event.
 func trackERC1155OwnershipFromEvents(
 	chainID domain.Chain,
 	contractAddress string,
@@ -379,6 +426,8 @@ func trackERC1155OwnershipFromEvents(
 	return ownedTokensFromState(tokenMap)
 }
 
+// isOwnershipAffectingEvent returns true if the event type can change token ownership.
+// Only transfer, mint, and burn events affect ownership; metadata updates do not.
 func isOwnershipAffectingEvent(eventType domain.EventType) bool {
 	switch eventType {
 	case domain.EventTypeTransfer, domain.EventTypeMint, domain.EventTypeBurn:
@@ -388,6 +437,10 @@ func isOwnershipAffectingEvent(eventType domain.EventType) bool {
 	}
 }
 
+// ownershipAddressesFromEvent extracts from and to addresses from a parsed event.
+// Returns (from, to, true) if the event involves the owner as sender or recipient.
+// Returns (zero, zero, false) if neither address matches the owner.
+// Handles nil addresses (for mint: from=nil, for burn: to=nil).
 func ownershipAddressesFromEvent(event domain.BlockchainEvent, owner common.Address) (common.Address, common.Address, bool) {
 	var fromAddr common.Address
 	if event.FromAddress != nil {
