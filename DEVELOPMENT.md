@@ -378,7 +378,14 @@ Use this command before handing off a substantive change:
 make check
 ```
 
-It runs the `check` target in the `Makefile`: format imports (`goimports`), full-repo local lint (`golangci-lint` with CGO enabled), a lightweight `CGO_ENABLED=0` build plus `cmd/ff-indexer` tests, then `CGO_ENABLED=1` `go test -cover ./...`.
+It runs the `check` target in the `Makefile`: format imports (`goimports`), verify `gofmt -s` formatting (same as CI’s go fmt check), full-repo local lint (`golangci-lint` with CGO enabled), then `CGO_ENABLED=1` `go test -cover ./...`.
+
+To fix formatting issues before running checks:
+
+```bash
+make imports   # goimports (import order and grouping)
+make fmt       # gofmt -s -w (simplifications enforced in CI)
+```
 
 The lint profile is opinionated (complexity, length, doc expectations). For CI’s exact commands and package filters, see `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`.
 

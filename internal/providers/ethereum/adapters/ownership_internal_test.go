@@ -142,7 +142,7 @@ func erc1155SingleLog(
 		Index:       index,
 		Topics: []common.Hash{
 			helpers.ERC1155TransferSingleEventSignature,
-			common.Hash{},
+			{},
 			common.BytesToHash(from.Bytes()),
 			common.BytesToHash(to.Bytes()),
 		},

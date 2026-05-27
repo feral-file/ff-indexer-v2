@@ -256,6 +256,20 @@ imports: ## Format imports
 	@goimports -w -local "github.com/feral-file/ff-indexer-v2" .
 	@echo "$(COLOR_GREEN)✓ Imports formatted$(COLOR_RESET)"
 
+fmt: ## Apply gofmt -s formatting (matches CI go fmt check)
+	@echo "$(COLOR_BLUE)Formatting Go code...$(COLOR_RESET)"
+	@gofmt -s -w .
+	@echo "$(COLOR_GREEN)✓ Go code formatted$(COLOR_RESET)"
+
+fmt-check: ## Verify gofmt -s formatting (matches CI go fmt check)
+	@echo "$(COLOR_BLUE)Checking gofmt -s formatting...$(COLOR_RESET)"
+	@if [ "$$(gofmt -s -l . | wc -l | tr -d ' ')" -gt 0 ]; then \
+		echo "$(COLOR_YELLOW)Code is not formatted. Run 'make fmt' or 'gofmt -s -w .'$(COLOR_RESET)"; \
+		gofmt -s -l .; \
+		exit 1; \
+	fi
+	@echo "$(COLOR_GREEN)✓ gofmt check passed$(COLOR_RESET)"
+
 test: ## Run tests
 	@echo "$(COLOR_BLUE)Running tests...$(COLOR_RESET)"
 	@CGO_ENABLED=1 go test -cover ./...
@@ -267,7 +281,7 @@ test-lightweight-build: ## Verify the default CGO_ENABLED=0 app build and stub t
 	@CGO_ENABLED=0 go test ./cmd/ff-indexer/...
 	@echo "$(COLOR_GREEN)✓ Lightweight build passed$(COLOR_RESET)"
 
-check: imports lint-local test ## Format imports, local golangci-lint, lightweight (CGO=0) build + cmd tests, full (CGO=1) tests
+check: imports fmt-check lint-local test ## Format imports, verify gofmt -s, local golangci-lint, full (CGO=1) tests
 	@echo "$(COLOR_GREEN)✓ All checks passed$(COLOR_RESET)"
 
 ##@ Quick Start
