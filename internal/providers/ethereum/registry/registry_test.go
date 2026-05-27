@@ -122,7 +122,6 @@ func newTestRegistry(t *testing.T, mockClient *mocks.MockEthClient, fs fstest.Ma
 	reg, err := registry.NewAdapterRegistry(
 		fs,
 		mockClient,
-		ethadapter.NewClock(),
 		nil,
 		pagination,
 		domain.ChainEthereumMainnet,
@@ -285,8 +284,7 @@ func TestAdapterRegistry_ParseEvent_StandardERC721Transfer(t *testing.T) {
 	tokenID := big.NewInt(42)
 
 	vLog := typesLog(from, to, tokenID)
-	event := &domain.BlockchainEvent{Chain: domain.ChainEthereumMainnet}
-	parsed, err := reg.ParseEvent(context.Background(), domain.ChainEthereumMainnet, vLog, event)
+	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
 	require.NoError(t, err)
 	require.Equal(t, domain.StandardERC721, parsed.Standard)
 	require.Equal(t, "42", parsed.TokenNumber)

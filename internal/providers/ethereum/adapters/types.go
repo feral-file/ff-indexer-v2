@@ -61,18 +61,13 @@ type ContractAdapter interface {
 	// signatures of all configured events.
 	GetEventSignatures() []common.Hash
 
-	// ParseEvent decodes a raw log into a standardized blockchain event.
+	// ParseEvent decodes a raw log into a complete standardized blockchain event.
 	//
-	// The passed event struct may be partially populated (contract, block, log index).
-	// The adapter extracts from/to/tokenNumber and other fields, then returns the
-	// completed event or nil if the log is not relevant.
-	//
-	// Standard adapters parse ERC721/ERC1155 Transfer events. Generic adapters parse
-	// configured custom events and map them to standard event types using the configured
-	// parameterMappings in contracts.json.
+	// Timestamp and other metadata are read from the log (including vLog.BlockTimestamp).
+	// Chain is taken from the adapter's configured chain ID.
 	//
 	// Returns nil without error if the log does not match expected event shapes.
-	ParseEvent(ctx context.Context, vLog types.Log, event *domain.BlockchainEvent) (*domain.BlockchainEvent, error)
+	ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error)
 
 	// GetStandard returns the token standard this adapter implements.
 	//

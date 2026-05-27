@@ -655,7 +655,6 @@ func TestNewAdapterRegistry_MissingABI(t *testing.T) {
 			}]
 		}`),
 		mockClient,
-		ethadapter.NewClock(),
 		nil,
 		helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), nil),
 		domain.ChainEthereumMainnet,

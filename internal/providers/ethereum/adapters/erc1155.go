@@ -25,7 +25,6 @@ type ERC1155Adapter struct {
 	pagination    *helpers.PaginationHelper
 	chainID       domain.Chain
 	blockProvider block.BlockProvider
-	clock         ethadapter.Clock
 }
 
 // NewERC1155Adapter creates an adapter for standard ERC-1155 contracts.
@@ -34,14 +33,12 @@ func NewERC1155Adapter(
 	pagination *helpers.PaginationHelper,
 	chainID domain.Chain,
 	blockProvider block.BlockProvider,
-	clock ethadapter.Clock,
 ) *ERC1155Adapter {
 	return &ERC1155Adapter{
 		ethClient:     ethClient,
 		pagination:    pagination,
 		chainID:       chainID,
 		blockProvider: blockProvider,
-		clock:         clock,
 	}
 }
 
@@ -115,30 +112,7 @@ func (a *ERC1155Adapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	// Parse logs and convert to BlockchainEvent
 	events := make([]domain.BlockchainEvent, 0)
 	for _, vLog := range logs {
-		blockHash := vLog.BlockHash.Hex()
-
-		// Get block timestamp
-		timestamp, err := a.blockProvider.GetBlockTimestamp(ctx, vLog.BlockNumber)
-		if err != nil {
-			// Fallback to current time if timestamp fetch fails
-			timestamp = a.clock.Now()
-			logger.WarnCtx(ctx, "Failed to fetch block timestamp, using current time",
-				zap.Uint64("blockNumber", vLog.BlockNumber),
-				zap.Error(err))
-		}
-
-		event := &domain.BlockchainEvent{
-			Chain:           a.chainID,
-			ContractAddress: vLog.Address.Hex(),
-			TxHash:          vLog.TxHash.Hex(),
-			BlockNumber:     vLog.BlockNumber,
-			BlockHash:       &blockHash,
-			TxIndex:         uint64(vLog.TxIndex), //nolint:gosec,G115
-			LogIndex:        uint64(vLog.Index),   //nolint:gosec,G115
-			Timestamp:       timestamp,
-		}
-
-		parsed, err := a.ParseEvent(ctx, vLog, event)
+		parsed, err := a.ParseEvent(ctx, vLog)
 		if err != nil {
 			// Log error but continue processing
 			logger.WarnCtx(ctx, "Failed to parse event log", zap.Error(err))
@@ -234,10 +208,12 @@ func (a *ERC1155Adapter) GetTokensByOwner(
 }
 
 // ParseEvent parses standard ERC-1155 events.
-func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log, event *domain.BlockchainEvent) (*domain.BlockchainEvent, error) {
+func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 0 {
 		return nil, fmt.Errorf("event log has no topics")
 	}
+
+	base := helpers.BaseEventFromLog(a.chainID, vLog)
 
 	switch vLog.Topics[0] {
 	case helpers.ERC1155TransferSingleEventSignature:
@@ -248,6 +224,7 @@ func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log, event *
 			return nil, fmt.Errorf("invalid ERC1155 TransferSingle event: insufficient data")
 		}
 
+		event := base
 		event.Standard = domain.StandardERC1155
 		fromAddress := common.BytesToAddress(vLog.Topics[2].Bytes()).Hex()
 		event.FromAddress = &fromAddress
@@ -256,7 +233,7 @@ func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log, event *
 		event.TokenNumber = new(big.Int).SetBytes(vLog.Data[0:32]).String()
 		event.Quantity = new(big.Int).SetBytes(vLog.Data[32:64]).String()
 		event.EventType = domain.TransferEventType(event.FromAddress, event.ToAddress)
-		return event, nil
+		return &event, nil
 	case helpers.ERC1155TransferBatchEventSignature:
 		logger.DebugCtx(ctx, "Skipping ERC1155 TransferBatch event",
 			zap.String("contract", vLog.Address.Hex()),
@@ -266,11 +243,12 @@ func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log, event *
 		if len(vLog.Topics) != 2 {
 			return nil, fmt.Errorf("invalid URI event: expected 2 topics, got %d", len(vLog.Topics))
 		}
+		event := base
 		event.Standard = domain.StandardERC1155
 		event.TokenNumber = new(big.Int).SetBytes(vLog.Topics[1].Bytes()).String()
 		event.EventType = domain.EventTypeMetadataUpdate
 		event.Quantity = "1"
-		return event, nil
+		return &event, nil
 	default:
 		return nil, ErrUnknownEvent
 	}

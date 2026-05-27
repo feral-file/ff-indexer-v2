@@ -12,7 +12,6 @@ import (
 	"go.uber.org/zap"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
-	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
@@ -21,11 +20,9 @@ import (
 
 // ERC721Adapter handles standard ERC-721 token operations and event parsing.
 type ERC721Adapter struct {
-	ethClient     ethadapter.EthClient
-	pagination    *helpers.PaginationHelper
-	chainID       domain.Chain
-	blockProvider block.BlockProvider
-	clock         ethadapter.Clock
+	ethClient  ethadapter.EthClient
+	pagination *helpers.PaginationHelper
+	chainID    domain.Chain
 }
 
 // NewERC721Adapter creates an adapter for standard ERC-721 contracts.
@@ -33,15 +30,11 @@ func NewERC721Adapter(
 	ethClient ethadapter.EthClient,
 	pagination *helpers.PaginationHelper,
 	chainID domain.Chain,
-	blockProvider block.BlockProvider,
-	clock ethadapter.Clock,
 ) *ERC721Adapter {
 	return &ERC721Adapter{
-		ethClient:     ethClient,
-		pagination:    pagination,
-		chainID:       chainID,
-		blockProvider: blockProvider,
-		clock:         clock,
+		ethClient:  ethClient,
+		pagination: pagination,
+		chainID:    chainID,
 	}
 }
 
@@ -125,30 +118,7 @@ func (a *ERC721Adapter) GetTokenEvents(ctx context.Context, contractAddress, tok
 	// Parse logs and convert to BlockchainEvent
 	events := make([]domain.BlockchainEvent, 0)
 	for _, vLog := range logs {
-		blockHash := vLog.BlockHash.Hex()
-
-		// Get block timestamp
-		timestamp, err := a.blockProvider.GetBlockTimestamp(ctx, vLog.BlockNumber)
-		if err != nil {
-			// Fallback to current time if timestamp fetch fails
-			timestamp = a.clock.Now()
-			logger.WarnCtx(ctx, "Failed to fetch block timestamp, using current time",
-				zap.Uint64("blockNumber", vLog.BlockNumber),
-				zap.Error(err))
-		}
-
-		event := &domain.BlockchainEvent{
-			Chain:           a.chainID,
-			ContractAddress: vLog.Address.Hex(),
-			TxHash:          vLog.TxHash.Hex(),
-			BlockNumber:     vLog.BlockNumber,
-			BlockHash:       &blockHash,
-			TxIndex:         uint64(vLog.TxIndex), //nolint:gosec,G115
-			LogIndex:        uint64(vLog.Index),   //nolint:gosec,G115
-			Timestamp:       timestamp,
-		}
-
-		parsed, err := a.ParseEvent(ctx, vLog, event)
+		parsed, err := a.ParseEvent(ctx, vLog)
 		if err != nil {
 			// Log error but continue processing
 			logger.WarnCtx(ctx, "Failed to parse event log", zap.Error(err))
@@ -218,14 +188,16 @@ func (a *ERC721Adapter) GetTokensByOwner(
 }
 
 // ParseEvent parses standard ERC-721 and EIP-4906 events.
-func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log, event *domain.BlockchainEvent) (*domain.BlockchainEvent, error) {
+func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 0 {
 		return nil, fmt.Errorf("event log has no topics")
 	}
 
+	base := helpers.BaseEventFromLog(a.chainID, vLog)
+
 	switch vLog.Topics[0] {
 	case helpers.TransferEventSignature:
-		parsed, err := helpers.ParseERC721TransferLog(vLog, event)
+		parsed, err := helpers.ParseERC721TransferLog(vLog, base)
 		if err != nil {
 			return nil, err
 		}
@@ -243,11 +215,12 @@ func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log, event *d
 		if len(vLog.Data) < 32 {
 			return nil, fmt.Errorf("invalid MetadataUpdate event: insufficient data")
 		}
+		event := base
 		event.Standard = domain.StandardERC721
 		event.TokenNumber = new(big.Int).SetBytes(vLog.Data[0:32]).String()
 		event.EventType = domain.EventTypeMetadataUpdate
 		event.Quantity = "1"
-		return event, nil
+		return &event, nil
 	case helpers.EIP4906BatchMetadataUpdateEventSignature:
 		if len(vLog.Topics) != 1 {
 			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: expected 1 topic, got %d", len(vLog.Topics))
@@ -257,12 +230,13 @@ func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log, event *d
 		}
 		fromTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
 		toTokenID := new(big.Int).SetBytes(vLog.Data[32:64])
+		event := base
 		event.Standard = domain.StandardERC721
 		event.TokenNumber = fromTokenID.String()
 		event.ToTokenNumber = toTokenID.String()
 		event.EventType = domain.EventTypeMetadataUpdateRange
 		event.Quantity = "1"
-		return event, nil
+		return &event, nil
 	default:
 		return nil, ErrUnknownEvent
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
-	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -139,7 +138,6 @@ func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clo
 	registry, err := contractregistry.NewAdapterRegistry(
 		contracts.Files,
 		client,
-		clock,
 		blockProvider,
 		ec.pagination,
 		chainID,
@@ -213,19 +211,7 @@ func (f *ethereumClient) ParseEventLog(ctx context.Context, vLog types.Log) (*do
 		return nil, fmt.Errorf("event log has no topics")
 	}
 
-	blockHash := vLog.BlockHash.Hex()
-	event := &domain.BlockchainEvent{
-		Chain:           f.chainID,
-		ContractAddress: vLog.Address.Hex(),
-		TxHash:          vLog.TxHash.Hex(),
-		BlockNumber:     vLog.BlockNumber,
-		BlockHash:       &blockHash,
-		TxIndex:         uint64(vLog.TxIndex),                     //nolint:gosec,G115
-		LogIndex:        uint64(vLog.Index),                       //nolint:gosec,G115
-		Timestamp:       time.Unix(int64(vLog.BlockTimestamp), 0), //nolint:gosec,G115
-	}
-
-	return f.adapterRegistry.ParseEvent(ctx, f.chainID, vLog, event)
+	return f.adapterRegistry.ParseEvent(ctx, vLog, f.chainID)
 }
 
 // TokenExists checks if a token exists on the blockchain via the contract adapter registry.

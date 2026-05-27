@@ -14,7 +14,6 @@ import (
 	"go.uber.org/zap"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
-	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
@@ -33,8 +32,6 @@ type GenericAdapter struct {
 	provenance       bool
 	provenanceEvents []EventConfig
 	chainID          domain.Chain
-	blockProvider    block.BlockProvider
-	clock            ethadapter.Clock
 }
 
 // NewGenericAdapter builds a GenericAdapter from parsed contract configuration.
@@ -48,8 +45,6 @@ func NewGenericAdapter(
 	supportsProvenance bool,
 	provenanceEvents []EventConfig,
 	chainID domain.Chain,
-	blockProvider block.BlockProvider,
-	clock ethadapter.Clock,
 ) *GenericAdapter {
 	return &GenericAdapter{
 		contractAddress:  contractAddress,
@@ -62,8 +57,6 @@ func NewGenericAdapter(
 		provenance:       supportsProvenance,
 		provenanceEvents: provenanceEvents,
 		chainID:          chainID,
-		blockProvider:    blockProvider,
-		clock:            clock,
 	}
 }
 
@@ -178,30 +171,7 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	// Parse logs and convert to BlockchainEvent
 	events := make([]domain.BlockchainEvent, 0)
 	for _, vLog := range logs {
-		blockHash := vLog.BlockHash.Hex()
-
-		// Get block timestamp
-		timestamp, err := a.blockProvider.GetBlockTimestamp(ctx, vLog.BlockNumber)
-		if err != nil {
-			// Fallback to current time if timestamp fetch fails
-			timestamp = a.clock.Now()
-			logger.WarnCtx(ctx, "Failed to fetch block timestamp, using current time",
-				zap.Uint64("blockNumber", vLog.BlockNumber),
-				zap.Error(err))
-		}
-
-		event := &domain.BlockchainEvent{
-			Chain:           a.chainID,
-			ContractAddress: vLog.Address.Hex(),
-			TxHash:          vLog.TxHash.Hex(),
-			BlockNumber:     vLog.BlockNumber,
-			BlockHash:       &blockHash,
-			TxIndex:         uint64(vLog.TxIndex), //nolint:gosec,G115
-			LogIndex:        uint64(vLog.Index),   //nolint:gosec,G115
-			Timestamp:       timestamp,
-		}
-
-		parsed, err := a.ParseEvent(ctx, vLog, event)
+		parsed, err := a.ParseEvent(ctx, vLog)
 		if err != nil {
 			// Log error but continue processing
 			logger.WarnCtx(ctx, "Failed to parse event log", zap.Error(err))
@@ -270,14 +240,7 @@ func (a *GenericAdapter) GetTokensByOwner(
 
 	events := make([]domain.BlockchainEvent, 0, len(logs))
 	for _, vLog := range logs {
-		event := &domain.BlockchainEvent{
-			Chain:           a.chainID,
-			ContractAddress: a.contractAddress,
-			BlockNumber:     vLog.BlockNumber,
-			LogIndex:        uint64(vLog.Index), //nolint:gosec,G115
-		}
-
-		parsed, err := a.ParseEvent(ctx, vLog, event)
+		parsed, err := a.ParseEvent(ctx, vLog)
 		if err != nil {
 			logger.WarnCtx(ctx, "Failed to parse event in ownership scan",
 				zap.String("contract", a.contractAddress),
@@ -388,7 +351,7 @@ func buildCustomOwnerQuery(
 }
 
 // ParseEvent parses a configured legacy contract event into a blockchain event.
-func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log, event *domain.BlockchainEvent) (*domain.BlockchainEvent, error) {
+func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 0 {
 		return nil, fmt.Errorf("event log has no topics")
 	}
@@ -398,7 +361,7 @@ func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log, event *
 		if vLog.Topics[0] != expectedSignature {
 			continue
 		}
-		return parseConfiguredEvent(ctx, vLog, eventCfg, a.standard, event)
+		return parseConfiguredEvent(ctx, vLog, eventCfg, a.standard, a.chainID)
 	}
 
 	return nil, ErrUnknownEvent
@@ -409,11 +372,10 @@ func parseConfiguredEvent(
 	vLog types.Log,
 	eventCfg EventConfig,
 	standard domain.ChainStandard,
-	event *domain.BlockchainEvent,
+	chain domain.Chain,
 ) (*domain.BlockchainEvent, error) {
-	if event.Standard == "" {
-		event.Standard = standard
-	}
+	event := helpers.BaseEventFromLog(chain, vLog)
+	event.Standard = standard
 	event.EventType = eventCfg.MapToStandardEvent
 
 	indexedValues := make(map[string]any, len(eventCfg.IndexedParams))
@@ -449,7 +411,7 @@ func parseConfiguredEvent(
 		if !ok {
 			return nil, fmt.Errorf("parameter %s not found in event data", paramName)
 		}
-		if err := applyCustomEventField(event, eventField, val); err != nil {
+		if err := applyCustomEventField(&event, eventField, val); err != nil {
 			return nil, fmt.Errorf("map parameter %s: %w", paramName, err)
 		}
 	}
@@ -476,7 +438,7 @@ func parseConfiguredEvent(
 		zap.String("tokenNumber", event.TokenNumber),
 	)
 
-	return event, nil
+	return &event, nil
 }
 
 func applyCustomEventField(event *domain.BlockchainEvent, eventField string, val any) error {

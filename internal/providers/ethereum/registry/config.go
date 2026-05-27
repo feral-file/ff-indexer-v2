@@ -10,7 +10,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
-	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
@@ -393,8 +392,6 @@ func BuildGenericAdapterFromConfig(
 	ethClient ethadapter.EthClient,
 	pagination *helpers.PaginationHelper,
 	chainID domain.Chain,
-	blockProvider block.BlockProvider,
-	clock ethadapter.Clock,
 ) (adapters.ContractAdapter, error) {
 	existence, err := buildMethodCall(entry.Adapter.Existence, abiRegistry)
 	if err != nil {
@@ -424,8 +421,6 @@ func BuildGenericAdapterFromConfig(
 		supportsProvenance,
 		entry.Adapter.Events,
 		chainID,
-		blockProvider,
-		clock,
 	), nil
 }
 

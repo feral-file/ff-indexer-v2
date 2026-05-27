@@ -1,8 +1,13 @@
 package helpers
 
 import (
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 )
 
 // Standard event topic signatures used across adapters, client, and subscriber.
@@ -36,4 +41,27 @@ func StandardEventSignatures() []common.Hash {
 		EIP4906BatchMetadataUpdateEventSignature,
 		ERC1155URIEventSignature,
 	}
+}
+
+// BaseEventFromLog builds log-derived metadata fields shared by all parsed events.
+func BaseEventFromLog(chain domain.Chain, vLog types.Log) domain.BlockchainEvent {
+	blockHash := vLog.BlockHash.Hex()
+	return domain.BlockchainEvent{
+		Chain:           chain,
+		ContractAddress: vLog.Address.Hex(),
+		TxHash:          vLog.TxHash.Hex(),
+		BlockNumber:     vLog.BlockNumber,
+		BlockHash:       &blockHash,
+		TxIndex:         uint64(vLog.TxIndex), //nolint:gosec,G115
+		LogIndex:        uint64(vLog.Index),   //nolint:gosec,G115
+		Timestamp:       logBlockTime(vLog),
+	}
+}
+
+// logBlockTime returns the block time encoded on the log via BlockTimestamp.
+func logBlockTime(vLog types.Log) time.Time {
+	if vLog.BlockTimestamp == 0 {
+		return time.Time{}
+	}
+	return time.Unix(int64(vLog.BlockTimestamp), 0) //nolint:gosec,G115
 }

@@ -31,7 +31,6 @@ type AdapterRegistry struct {
 func NewAdapterRegistry(
 	fsys fs.FS,
 	ethClient ethadapter.EthClient,
-	clock ethadapter.Clock,
 	blockProvider block.BlockProvider,
 	pagination *helpers.PaginationHelper,
 	chainID domain.Chain,
@@ -50,14 +49,14 @@ func NewAdapterRegistry(
 		contractAdapters: make(map[string]adapters.ContractAdapter, len(cfg.Contracts)),
 		contractConfigs:  make(map[string]ContractConfig, len(cfg.Contracts)),
 		standardAdapters: map[domain.ChainStandard]adapters.ContractAdapter{
-			domain.StandardERC721:  adapters.NewERC721Adapter(ethClient, pagination, chainID, blockProvider, clock),
-			domain.StandardERC1155: adapters.NewERC1155Adapter(ethClient, pagination, chainID, blockProvider, clock),
+			domain.StandardERC721:  adapters.NewERC721Adapter(ethClient, pagination, chainID),
+			domain.StandardERC1155: adapters.NewERC1155Adapter(ethClient, pagination, chainID, blockProvider),
 		},
 	}
 
 	overridesByChain := make(map[domain.Chain]int)
 	for _, entry := range cfg.Contracts {
-		adp, err := BuildGenericAdapterFromConfig(entry, abiRegistry, ethClient, pagination, chainID, blockProvider, clock)
+		adp, err := BuildGenericAdapterFromConfig(entry, abiRegistry, ethClient, pagination, chainID)
 		if err != nil {
 			return nil, fmt.Errorf("build adapter for %s: %w", entry.Name, err)
 		}
@@ -207,12 +206,11 @@ func (r *AdapterRegistry) GetStandardAdapter(standard domain.ChainStandard) (ada
 // with non-standard semantics.
 func (r *AdapterRegistry) ParseEvent(
 	ctx context.Context,
-	chain domain.Chain,
 	vLog types.Log,
-	event *domain.BlockchainEvent,
+	chain domain.Chain,
 ) (*domain.BlockchainEvent, error) {
 	if adp, ok := r.GetContractAdapter(chain, vLog.Address.Hex()); ok {
-		parsed, err := adp.ParseEvent(ctx, vLog, event)
+		parsed, err := adp.ParseEvent(ctx, vLog)
 		if err == nil || !errors.Is(err, adapters.ErrUnknownEvent) {
 			return parsed, err
 		}
@@ -225,7 +223,7 @@ func (r *AdapterRegistry) ParseEvent(
 		}
 		for _, sig := range adp.GetEventSignatures() {
 			if len(vLog.Topics) > 0 && vLog.Topics[0] == sig {
-				return adp.ParseEvent(ctx, vLog, event)
+				return adp.ParseEvent(ctx, vLog)
 			}
 		}
 	}

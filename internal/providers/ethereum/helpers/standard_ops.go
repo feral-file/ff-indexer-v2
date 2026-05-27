@@ -361,8 +361,9 @@ func ERC1155TokenExists(
 	return false, nil
 }
 
-// ParseERC721TransferLog parses an ERC721 Transfer event log.
-func ParseERC721TransferLog(vLog types.Log, event *domain.BlockchainEvent) (*domain.BlockchainEvent, error) {
+// ParseERC721TransferLog parses an ERC721 Transfer event log into base, filling semantic fields.
+// base must already contain log-derived metadata from helpers.BaseEventFromLog.
+func ParseERC721TransferLog(vLog types.Log, base domain.BlockchainEvent) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 3 {
 		return nil, nil
 	}
@@ -370,6 +371,7 @@ func ParseERC721TransferLog(vLog types.Log, event *domain.BlockchainEvent) (*dom
 		return nil, fmt.Errorf("invalid Transfer event: expected 3 or 4 topics, got %d", len(vLog.Topics))
 	}
 
+	event := base
 	event.Standard = domain.StandardERC721
 	fromAddress := common.BytesToAddress(vLog.Topics[1].Bytes()).Hex()
 	event.FromAddress = &fromAddress
@@ -378,7 +380,7 @@ func ParseERC721TransferLog(vLog types.Log, event *domain.BlockchainEvent) (*dom
 	event.TokenNumber = new(big.Int).SetBytes(vLog.Topics[3].Bytes()).String()
 	event.Quantity = "1"
 	event.EventType = domain.TransferEventType(event.FromAddress, event.ToAddress)
-	return event, nil
+	return &event, nil
 }
 
 // ParseERC1155TransferBatch parses a TransferBatch event and extracts transfers for a specific token ID.
