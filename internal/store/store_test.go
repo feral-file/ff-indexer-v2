@@ -2252,6 +2252,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.Len(t, resultsMixedInclude, 1)
 	})
 }
+
 // =============================================================================
 // Test: Token Metadata
 // =============================================================================
