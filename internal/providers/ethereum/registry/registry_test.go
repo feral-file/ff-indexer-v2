@@ -263,6 +263,18 @@ func TestAdapterRegistry_GetAllCustomEventSignatures(t *testing.T) {
 	require.Len(t, signatures, 2)
 }
 
+func TestAdapterRegistry_GetProvenanceContractsForChain(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+
+	reg := newTestRegistry(t, mockClient, testContractFS(t, cryptopunksContractConfigWithEvents))
+
+	contracts := reg.GetProvenanceContractsForChain(domain.ChainEthereumMainnet)
+	require.Len(t, contracts, 1)
+	require.Contains(t, contracts, "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb")
+	require.True(t, contracts["0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"].SupportsProvenance())
+}
+
 func TestAdapterRegistry_ParseEvent_StandardERC721Transfer(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)

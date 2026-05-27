@@ -17,6 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/contracts"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 	contractregistry "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
@@ -87,9 +88,12 @@ type EthereumClient interface {
 	SupportsProvenance(contractAddress string, standard domain.ChainStandard) bool
 
 	// GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.
-	// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver.
-	// limit is always applied; pass a very large value if you want "no cap". order controls scan direction for limit selection.
+	// It queries standard ERC721/ERC1155 adapters and configured generic contract adapters, then aggregates
+	// ownership across all standards. limit is applied globally at block boundaries after aggregation.
 	// Returns effectiveFromBlock/effectiveToBlock for the range actually used after limiting.
+	//
+	// Each adapter processes the full requested block range independently. For large ranges with small
+	// limits, consider chunking at the workflow layer.
 	GetTokenCIDsByOwnerAndBlockRange(
 		ctx context.Context,
 		ownerAddress string,
@@ -151,10 +155,6 @@ func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clo
 // SubscribeFilterLogs subscribes to filter logs
 func (f *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
 	return f.client.SubscribeFilterLogs(ctx, query, ch)
-}
-
-func (f *ethereumClient) filterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
-	return f.pagination.FilterLogsWithPagination(ctx, query)
 }
 
 // GetLatestBlock returns the latest block number using the cached provider
@@ -291,10 +291,9 @@ func (f *ethereumClient) SupportsProvenance(contractAddress string, standard dom
 }
 
 // GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.
-// It queries both ERC721 and ERC1155 transfer events where the address is either sender or receiver.
-// limit is respected strictly and must be > 0 (caller should pass a very large value to mimic no limit).
-// If limit is reached during a block, the scan finishes that block and stops afterward.
-// The result reflects only the scanned portion of the requested range.
+//
+// Standard and configured contract adapters each compute ownership for the full requested range.
+// The client aggregates results, sorts by block order, and applies the global limit at block boundaries.
 func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	ctx context.Context,
 	ownerAddress string,
@@ -308,395 +307,107 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 		return domain.TokenWithBlockRangeResult{}, fmt.Errorf("limit must be > 0")
 	}
 
-	owner := common.HexToAddress(ownerAddress)
-	ownerHash := common.BytesToHash(owner.Bytes())
+	configuredAdapters := f.adapterRegistry.GetProvenanceContractsForChain(f.chainID)
+	adaptersToQuery := make([]adapters.ContractAdapter, 0, 2+len(configuredAdapters))
 
-	// Define all query configurations
-	// We need to query both ERC721 and ERC1155 transfers where the address is either sender or receiver
-	queries := []ethereum.FilterQuery{
-		// ERC721 Transfer where address is `from` (topic[1])
-		{
-			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
-			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
-			Topics: [][]common.Hash{
-				{helpers.TransferEventSignature}, // Transfer event
-				{ownerHash},                      // from address
-			},
-		},
-		// ERC721 Transfer where address is `to` (topic[2])
-		{
-			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
-			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
-			Topics: [][]common.Hash{
-				{helpers.TransferEventSignature}, // Transfer event
-				nil,                              // any from address
-				{ownerHash},                      // to address
-			},
-		},
-		// ERC1155 TransferSingle where address is `from` (topic[2])
-		{
-			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
-			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
-			Topics: [][]common.Hash{
-				{helpers.ERC1155TransferSingleEventSignature}, // TransferSingle event
-				nil,         // any operator
-				{ownerHash}, // from address
-			},
-		},
-		// ERC1155 TransferSingle where address is `to` (topic[3])
-		{
-			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
-			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
-			Topics: [][]common.Hash{
-				{helpers.ERC1155TransferSingleEventSignature}, // TransferSingle event
-				nil,         // any operator
-				nil,         // any from address
-				{ownerHash}, // to address
-			},
-		},
-		// ERC1155 TransferBatch where address is `from` (topic[2])
-		{
-			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
-			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
-			Topics: [][]common.Hash{
-				{helpers.ERC1155TransferBatchEventSignature}, // TransferBatch event
-				nil,         // any operator
-				{ownerHash}, // from address
-			},
-		},
-		// ERC1155 TransferBatch where address is `to` (topic[3])
-		{
-			FromBlock: new(big.Int).SetUint64(requestedFromBlock),
-			ToBlock:   new(big.Int).SetUint64(requestedToBlock),
-			Topics: [][]common.Hash{
-				{helpers.ERC1155TransferBatchEventSignature}, // TransferBatch event
-				nil,         // any operator
-				nil,         // any from address
-				{ownerHash}, // to address
-			},
-		},
+	if erc721Adapter, ok := f.adapterRegistry.GetStandardAdapter(domain.StandardERC721); ok {
+		adaptersToQuery = append(adaptersToQuery, erc721Adapter)
+	}
+	if erc1155Adapter, ok := f.adapterRegistry.GetStandardAdapter(domain.StandardERC1155); ok {
+		adaptersToQuery = append(adaptersToQuery, erc1155Adapter)
+	}
+	for _, adapter := range configuredAdapters {
+		adaptersToQuery = append(adaptersToQuery, adapter)
 	}
 
-	type queryResult struct {
-		logs []types.Log
-		err  error
+	type adapterResult struct {
+		tokens []domain.TokenWithBlock
+		err    error
 	}
 
-	// Execute all queries in parallel
-	resultsCh := make(chan queryResult, len(queries))
-	for _, q := range queries {
-		go func(query ethereum.FilterQuery) {
-			logs, err := f.filterLogsWithPagination(ctx, query)
-			resultsCh <- queryResult{logs: logs, err: err}
-		}(q)
+	resultsCh := make(chan adapterResult, len(adaptersToQuery))
+	for _, adp := range adaptersToQuery {
+		go func(adapter adapters.ContractAdapter) {
+			tokens, err := adapter.GetTokensByOwner(ctx, ownerAddress, requestedFromBlock, requestedToBlock, blacklist)
+			resultsCh <- adapterResult{tokens: tokens, err: err}
+		}(adp)
 	}
 
-	// Collect all results and merge logs
-	var allLogs []types.Log
-	for range queries {
+	var allTokens []domain.TokenWithBlock
+	for range adaptersToQuery {
 		result := <-resultsCh
 		if result.err != nil {
-			return domain.TokenWithBlockRangeResult{}, fmt.Errorf("failed to query logs: %w", result.err)
+			return domain.TokenWithBlockRangeResult{}, fmt.Errorf("adapter ownership query failed: %w", result.err)
 		}
-		allLogs = append(allLogs, result.logs...)
+		allTokens = append(allTokens, result.tokens...)
 	}
 
-	// Deduplicate logs for safer ownership tracking
-	// Use a map with unique key: blockNumber + txHash + logIndex
-	logMap := make(map[string]types.Log)
-	for _, vLog := range allLogs {
-		key := fmt.Sprintf("%d-%s-%d", vLog.BlockNumber, vLog.TxHash.Hex(), vLog.Index)
-		logMap[key] = vLog
-	}
+	sortTokensByBlockOrder(allTokens, order)
 
-	// Convert back to slice and sort chronologically
-	allLogs = make([]types.Log, 0, len(logMap))
-	for _, vLog := range logMap {
-		allLogs = append(allLogs, vLog)
-	}
-
-	// Sort logs by block number and log index based on requested order.
-	// This ensures deterministic processing order for limit selection.
-	if order.Desc() {
-		sort.Slice(allLogs, func(i, j int) bool {
-			if allLogs[i].BlockNumber != allLogs[j].BlockNumber {
-				return allLogs[i].BlockNumber > allLogs[j].BlockNumber
-			}
-			return allLogs[i].Index > allLogs[j].Index
-		})
-	} else {
-		sort.Slice(allLogs, func(i, j int) bool {
-			if allLogs[i].BlockNumber != allLogs[j].BlockNumber {
-				return allLogs[i].BlockNumber < allLogs[j].BlockNumber
-			}
-			return allLogs[i].Index < allLogs[j].Index
-		})
-	}
-
-	// Track balance changes per token to determine ownership at the end of the processed range.
-	// For ERC721: map stores the last transfer log (to determine final owner).
-	// For ERC1155: map stores net balance change (incoming - outgoing).
-	type tokenBalance struct {
-		standard    domain.ChainStandard
-		lastLog     *types.Log // For ERC721: last transfer log
-		netBalance  *big.Int   // For ERC1155: net balance change
-		blockNumber uint64     // Block number of last update
-		logIndex    uint       // Log index of last update
-		owned       bool       // True if owner holds token at end of processed range
-	}
-
-	updateHeldCount := func(prevOwned, newOwned bool, heldCount *int) {
-		if prevOwned == newOwned {
-			return
-		}
-		if newOwned {
-			*heldCount = *heldCount + 1
-		} else {
-			*heldCount = *heldCount - 1
-		}
-	}
-
-	isNewer := func(existing *tokenBalance, vLog types.Log) bool {
-		return existing == nil ||
-			vLog.BlockNumber > existing.blockNumber ||
-			(vLog.BlockNumber == existing.blockNumber && vLog.Index > existing.logIndex)
-	}
-
-	tokensFromBalance := func(balanceMap map[domain.TokenCID]*tokenBalance) []domain.TokenWithBlock {
-		tokensWithBlocks := make([]domain.TokenWithBlock, 0, len(balanceMap))
-		for tokenCID, balance := range balanceMap {
-			if balance.owned {
-				tokensWithBlocks = append(tokensWithBlocks, domain.TokenWithBlock{
-					TokenCID:    tokenCID,
-					BlockNumber: balance.blockNumber,
-				})
-			}
-		}
-		return tokensWithBlocks
-	}
-
-	balanceMap := make(map[domain.TokenCID]*tokenBalance)
-	heldCount := 0
 	effectiveFromBlock := requestedFromBlock
 	effectiveToBlock := requestedToBlock
-
-	effectiveBoundary := &effectiveToBlock
-	if order.Desc() {
-		effectiveBoundary = &effectiveFromBlock
-	}
-
-	for logIndex := 0; logIndex < len(allLogs); {
-		blockNumber := allLogs[logIndex].BlockNumber
-
-		for logIndex < len(allLogs) && allLogs[logIndex].BlockNumber == blockNumber {
-			vLog := allLogs[logIndex]
-			logIndex++
-
-			if len(vLog.Topics) < 1 {
-				continue
-			}
-
-			switch vLog.Topics[0] {
-			case helpers.TransferEventSignature:
-				// ERC721 Transfer (4 topics: signature, from, to, tokenId)
-				// Skip ERC20 (3 topics)
-				if len(vLog.Topics) != 4 {
-					continue
-				}
-
-				fromAddr := common.BytesToAddress(vLog.Topics[1].Bytes())
-				toAddr := common.BytesToAddress(vLog.Topics[2].Bytes())
-
-				// Skip if neither from nor to is the owner
-				if fromAddr != owner && toAddr != owner {
-					continue
-				}
-
-				tokenID := new(big.Int).SetBytes(vLog.Topics[3].Bytes())
-				tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC721, vLog.Address.Hex(), tokenID.String())
-
-				// Skip if token is blacklisted
-				if blacklist != nil && blacklist.IsTokenCIDBlacklisted(tokenCID) {
-					continue
-				}
-
-				existing := balanceMap[tokenCID]
-				if isNewer(existing, vLog) {
-					prevOwned := false
-					if existing != nil {
-						prevOwned = existing.owned
-					}
-					logCopy := vLog
-					newOwned := toAddr == owner
-
-					if existing == nil {
-						balanceMap[tokenCID] = &tokenBalance{
-							standard:    domain.StandardERC721,
-							lastLog:     &logCopy,
-							blockNumber: vLog.BlockNumber,
-							logIndex:    vLog.Index,
-							owned:       newOwned,
-						}
-					} else {
-						existing.lastLog = &logCopy
-						existing.blockNumber = vLog.BlockNumber
-						existing.logIndex = vLog.Index
-						existing.owned = newOwned
-					}
-
-					updateHeldCount(prevOwned, newOwned, &heldCount)
-				}
-
-			case helpers.ERC1155TransferSingleEventSignature:
-				// ERC1155 TransferSingle (4 topics: signature, operator, from, to; data contains tokenId and value)
-				if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
-					continue
-				}
-
-				fromAddr := common.BytesToAddress(vLog.Topics[2].Bytes())
-				toAddr := common.BytesToAddress(vLog.Topics[3].Bytes())
-
-				// Skip if neither from nor to is the owner
-				if fromAddr != owner && toAddr != owner {
-					continue
-				}
-
-				// Parse token ID and amount from data
-				tokenID := new(big.Int).SetBytes(vLog.Data[0:32])
-				amount := new(big.Int).SetBytes(vLog.Data[32:64])
-
-				tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
-
-				// Skip if token is blacklisted
-				if blacklist != nil && blacklist.IsTokenCIDBlacklisted(tokenCID) {
-					continue
-				}
-
-				existing := balanceMap[tokenCID]
-				if existing == nil {
-					existing = &tokenBalance{
-						standard:   domain.StandardERC1155,
-						netBalance: big.NewInt(0),
-					}
-					balanceMap[tokenCID] = existing
-				}
-
-				prevOwned := existing.netBalance.Sign() > 0
-				if toAddr == owner {
-					existing.netBalance.Add(existing.netBalance, amount)
-				}
-				if fromAddr == owner {
-					existing.netBalance.Sub(existing.netBalance, amount)
-				}
-				newOwned := existing.netBalance.Sign() > 0
-				existing.owned = newOwned
-				updateHeldCount(prevOwned, newOwned, &heldCount)
-
-				if isNewer(existing, vLog) {
-					existing.blockNumber = vLog.BlockNumber
-					existing.logIndex = vLog.Index
-				}
-
-			case helpers.ERC1155TransferBatchEventSignature:
-				// ERC1155 TransferBatch (4 topics: signature, operator, from, to; data contains tokenIds and values arrays)
-				if len(vLog.Topics) != 4 || len(vLog.Data) < 64 {
-					continue
-				}
-
-				fromAddr := common.BytesToAddress(vLog.Topics[2].Bytes())
-				toAddr := common.BytesToAddress(vLog.Topics[3].Bytes())
-
-				// Skip if neither from nor to is the owner
-				if fromAddr != owner && toAddr != owner {
-					continue
-				}
-
-				// Parse arrays from data - ABI encoding of two arrays (ids and values)
-				// Data format: [offset_ids, offset_values, length_ids, ...ids..., length_values, ...values...]
-				if len(vLog.Data) < 128 {
-					continue
-				}
-
-				// Read array lengths and data offsets
-				idsOffset := new(big.Int).SetBytes(vLog.Data[0:32]).Uint64()
-				valuesOffset := new(big.Int).SetBytes(vLog.Data[32:64]).Uint64()
-
-				if idsOffset+32 > uint64(len(vLog.Data)) || valuesOffset+32 > uint64(len(vLog.Data)) {
-					continue
-				}
-
-				idsLength := new(big.Int).SetBytes(vLog.Data[idsOffset : idsOffset+32]).Uint64()
-				valuesLength := new(big.Int).SetBytes(vLog.Data[valuesOffset : valuesOffset+32]).Uint64()
-
-				if idsLength != valuesLength {
-					continue
-				}
-
-				idsStart := idsOffset + 32
-				valuesStart := valuesOffset + 32
-
-				if idsStart+idsLength*32 > uint64(len(vLog.Data)) || valuesStart+valuesLength*32 > uint64(len(vLog.Data)) {
-					continue
-				}
-
-				// Process each token in the batch
-				for j := range idsLength {
-					idStart := idsStart + j*32
-					valueStart := valuesStart + j*32
-
-					tokenID := new(big.Int).SetBytes(vLog.Data[idStart : idStart+32])
-					amount := new(big.Int).SetBytes(vLog.Data[valueStart : valueStart+32])
-
-					tokenCID := domain.NewTokenCID(f.chainID, domain.StandardERC1155, vLog.Address.Hex(), tokenID.String())
-
-					// Skip if token is blacklisted
-					if blacklist != nil && blacklist.IsTokenCIDBlacklisted(tokenCID) {
-						continue
-					}
-
-					existing := balanceMap[tokenCID]
-					if existing == nil {
-						existing = &tokenBalance{
-							standard:   domain.StandardERC1155,
-							netBalance: big.NewInt(0),
-						}
-						balanceMap[tokenCID] = existing
-					}
-
-					prevOwned := existing.netBalance.Sign() > 0
-					if toAddr == owner {
-						existing.netBalance.Add(existing.netBalance, amount)
-					}
-					if fromAddr == owner {
-						existing.netBalance.Sub(existing.netBalance, amount)
-					}
-					newOwned := existing.netBalance.Sign() > 0
-					existing.owned = newOwned
-					updateHeldCount(prevOwned, newOwned, &heldCount)
-
-					if isNewer(existing, vLog) {
-						existing.blockNumber = vLog.BlockNumber
-						existing.logIndex = vLog.Index
-					}
-				}
-			}
-		}
-
-		if heldCount >= limit {
-			// Only truncate if there are more logs beyond this block; if this is the last
-			// block present in the result set, we've effectively scanned the whole requested range.
-			if logIndex < len(allLogs) {
-				*effectiveBoundary = blockNumber
-				break
-			}
-		}
-	}
+	allTokens, effectiveFromBlock, effectiveToBlock = applyOwnerTokenLimit(allTokens, limit, order, effectiveFromBlock, effectiveToBlock)
 
 	return domain.TokenWithBlockRangeResult{
-		Tokens:             tokensFromBalance(balanceMap),
+		Tokens:             allTokens,
 		EffectiveFromBlock: effectiveFromBlock,
 		EffectiveToBlock:   effectiveToBlock,
 	}, nil
+}
+
+func sortTokensByBlockOrder(tokens []domain.TokenWithBlock, order domain.BlockScanOrder) {
+	if order.Desc() {
+		sort.Slice(tokens, func(i, j int) bool {
+			if tokens[i].BlockNumber != tokens[j].BlockNumber {
+				return tokens[i].BlockNumber > tokens[j].BlockNumber
+			}
+			return tokens[i].TokenCID < tokens[j].TokenCID
+		})
+		return
+	}
+
+	sort.Slice(tokens, func(i, j int) bool {
+		if tokens[i].BlockNumber != tokens[j].BlockNumber {
+			return tokens[i].BlockNumber < tokens[j].BlockNumber
+		}
+		return tokens[i].TokenCID < tokens[j].TokenCID
+	})
+}
+
+func applyOwnerTokenLimit(
+	tokens []domain.TokenWithBlock,
+	limit int,
+	order domain.BlockScanOrder,
+	effectiveFromBlock uint64,
+	effectiveToBlock uint64,
+) ([]domain.TokenWithBlock, uint64, uint64) {
+	if len(tokens) <= limit {
+		return tokens, effectiveFromBlock, effectiveToBlock
+	}
+
+	tokenCount := 0
+	var lastBlock uint64
+	cutoffIndex := len(tokens)
+
+	for i, token := range tokens {
+		if i > 0 && token.BlockNumber != lastBlock && tokenCount >= limit {
+			cutoffIndex = i
+			break
+		}
+		lastBlock = token.BlockNumber
+		tokenCount++
+	}
+
+	if cutoffIndex < len(tokens) {
+		cutoffBlock := tokens[cutoffIndex-1].BlockNumber
+		if order.Desc() {
+			effectiveFromBlock = cutoffBlock
+		} else {
+			effectiveToBlock = cutoffBlock
+		}
+	}
+
+	return tokens[:cutoffIndex], effectiveFromBlock, effectiveToBlock
 }
 
 // GetContractDeployer retrieves the deployer address for a contract

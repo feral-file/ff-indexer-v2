@@ -141,7 +141,7 @@ func validateContractEntry(entry *ContractConfig, abiRegistry *helpers.ABIRegist
 
 	seenSignatures := make(map[string]int)
 	for i, eventCfg := range entry.Adapter.Events {
-		if err := validateEventConfig(eventCfg, fmt.Sprintf("adapter.events[%d]", i)); err != nil {
+		if err := validateEventConfig(eventCfg, entry.Standard, fmt.Sprintf("adapter.events[%d]", i)); err != nil {
 			return err
 		}
 		if prevIdx, exists := seenSignatures[eventCfg.Signature]; exists {
@@ -153,7 +153,7 @@ func validateContractEntry(entry *ContractConfig, abiRegistry *helpers.ABIRegist
 	return nil
 }
 
-func validateEventConfig(cfg adapters.EventConfig, fieldPath string) error {
+func validateEventConfig(cfg adapters.EventConfig, standard domain.ChainStandard, fieldPath string) error {
 	if cfg.Signature == "" {
 		return fmt.Errorf("%s: signature is required", fieldPath)
 	}
@@ -220,13 +220,32 @@ func validateEventConfig(cfg adapters.EventConfig, fieldPath string) error {
 		}
 	}
 
-	return validateSemanticRequirements(cfg, usedTargetFields, fieldPath)
+	// Build set of indexed parameter names for provenance validation
+	indexedParams := make(map[string]bool, len(cfg.IndexedParams))
+	for _, param := range cfg.IndexedParams {
+		indexedParams[param] = true
+	}
+
+	return validateSemanticRequirements(cfg, usedTargetFields, indexedParams, standard, fieldPath)
 }
 
-func validateSemanticRequirements(cfg adapters.EventConfig, mappedFields map[string]string, fieldPath string) error {
+func validateSemanticRequirements(
+	cfg adapters.EventConfig,
+	mappedFields map[string]string,
+	indexedParams map[string]bool,
+	standard domain.ChainStandard,
+	fieldPath string,
+) error {
 	hasTokenNumber := mappedFields[adapters.EventFieldTokenNumber] != ""
 	hasToAddress := mappedFields[adapters.EventFieldToAddress] != ""
 	hasFromAddress := mappedFields[adapters.EventFieldFromAddress] != ""
+	hasQuantity := mappedFields[adapters.EventFieldQuantity] != ""
+
+	// Helper to check if a mapped field comes from an indexed parameter
+	isIndexed := func(field string) bool {
+		paramName, exists := mappedFields[field]
+		return exists && indexedParams[paramName]
+	}
 
 	switch cfg.MapToStandardEvent {
 	case domain.EventTypeTransfer:
@@ -239,6 +258,17 @@ func validateSemanticRequirements(cfg adapters.EventConfig, mappedFields map[str
 		if !hasToAddress {
 			return fmt.Errorf("%s: transfer events require ToAddress mapping", fieldPath)
 		}
+		// For ERC1155-style contracts, Quantity is required for accurate balance tracking
+		if standard == domain.StandardERC1155 && !hasQuantity {
+			return fmt.Errorf("%s: transfer events for ERC1155-style contracts require Quantity mapping", fieldPath)
+		}
+		// For ownership tracking, FromAddress and ToAddress must be indexed
+		if !isIndexed(adapters.EventFieldFromAddress) {
+			return fmt.Errorf("%s: transfer events require FromAddress to be an indexed parameter for ownership tracking", fieldPath)
+		}
+		if !isIndexed(adapters.EventFieldToAddress) {
+			return fmt.Errorf("%s: transfer events require ToAddress to be an indexed parameter for ownership tracking", fieldPath)
+		}
 	case domain.EventTypeMint:
 		if !hasTokenNumber {
 			return fmt.Errorf("%s: mint events require TokenNumber mapping", fieldPath)
@@ -246,12 +276,28 @@ func validateSemanticRequirements(cfg adapters.EventConfig, mappedFields map[str
 		if !hasToAddress {
 			return fmt.Errorf("%s: mint events require ToAddress mapping", fieldPath)
 		}
+		// For ERC1155-style contracts, Quantity is required for accurate balance tracking
+		if standard == domain.StandardERC1155 && !hasQuantity {
+			return fmt.Errorf("%s: mint events for ERC1155-style contracts require Quantity mapping", fieldPath)
+		}
+		// For ownership tracking, ToAddress must be indexed
+		if !isIndexed(adapters.EventFieldToAddress) {
+			return fmt.Errorf("%s: mint events require ToAddress to be an indexed parameter for ownership tracking", fieldPath)
+		}
 	case domain.EventTypeBurn:
 		if !hasTokenNumber {
 			return fmt.Errorf("%s: burn events require TokenNumber mapping", fieldPath)
 		}
 		if !hasFromAddress {
 			return fmt.Errorf("%s: burn events require FromAddress mapping", fieldPath)
+		}
+		// For ERC1155-style contracts, Quantity is required for accurate balance tracking
+		if standard == domain.StandardERC1155 && !hasQuantity {
+			return fmt.Errorf("%s: burn events for ERC1155-style contracts require Quantity mapping", fieldPath)
+		}
+		// For ownership tracking, FromAddress must be indexed
+		if !isIndexed(adapters.EventFieldFromAddress) {
+			return fmt.Errorf("%s: burn events require FromAddress to be an indexed parameter for ownership tracking", fieldPath)
 		}
 	case domain.EventTypeMetadataUpdate:
 		if !hasTokenNumber {
@@ -368,6 +414,7 @@ func BuildGenericAdapterFromConfig(
 	supportsProvenance := len(entry.Adapter.Events) > 0
 
 	return adapters.NewGenericAdapter(
+		entry.Address,
 		entry.Standard,
 		existence,
 		owner,

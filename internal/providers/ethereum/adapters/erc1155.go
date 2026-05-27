@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // ERC1155Adapter handles standard ERC-1155 token operations and event parsing.
@@ -167,6 +168,69 @@ func (a *ERC1155Adapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	})
 
 	return events, nil
+}
+
+// GetTokensByOwner returns ERC1155 tokens owned by the address within the block range.
+func (a *ERC1155Adapter) GetTokensByOwner(
+	ctx context.Context,
+	ownerAddress string,
+	fromBlock uint64,
+	toBlock uint64,
+	blacklist registry.BlacklistRegistry,
+) ([]domain.TokenWithBlock, error) {
+	owner := common.HexToAddress(ownerAddress)
+	ownerHash := common.BytesToHash(owner.Bytes())
+
+	queries := []ethereum.FilterQuery{
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{helpers.ERC1155TransferSingleEventSignature},
+				nil,
+				{ownerHash},
+			},
+		},
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{helpers.ERC1155TransferSingleEventSignature},
+				nil,
+				nil,
+				{ownerHash},
+			},
+		},
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{helpers.ERC1155TransferBatchEventSignature},
+				nil,
+				{ownerHash},
+			},
+		},
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{helpers.ERC1155TransferBatchEventSignature},
+				nil,
+				nil,
+				{ownerHash},
+			},
+		},
+	}
+
+	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query ERC1155 logs: %w", err)
+	}
+
+	logs = deduplicateLogs(logs)
+	sortLogsAscending(logs)
+
+	return trackERC1155OwnershipFromLogs(a.chainID, owner, logs, blacklist), nil
 }
 
 // ParseEvent parses standard ERC-1155 events.

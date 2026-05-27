@@ -18,10 +18,12 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // GenericAdapter executes configured contract calls for legacy or custom contracts.
 type GenericAdapter struct {
+	contractAddress  string
 	standard         domain.ChainStandard
 	existence        *MethodCall
 	owner            *MethodCall
@@ -37,6 +39,7 @@ type GenericAdapter struct {
 
 // NewGenericAdapter builds a GenericAdapter from parsed contract configuration.
 func NewGenericAdapter(
+	contractAddress string,
 	standard domain.ChainStandard,
 	existence, owner *MethodCall,
 	metadata ContractMetadataConfig,
@@ -49,6 +52,7 @@ func NewGenericAdapter(
 	clock ethadapter.Clock,
 ) *GenericAdapter {
 	return &GenericAdapter{
+		contractAddress:  contractAddress,
 		standard:         standard,
 		existence:        existence,
 		owner:            owner,
@@ -227,6 +231,132 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	})
 
 	return events, nil
+}
+
+// GetTokensByOwner returns tokens owned by the address within the block range for this configured contract.
+// Ownership tracking uses the configured standard field: erc721 uses last-transfer-wins, erc1155 uses net balance.
+func (a *GenericAdapter) GetTokensByOwner(
+	ctx context.Context,
+	ownerAddress string,
+	fromBlock uint64,
+	toBlock uint64,
+	blacklist registry.BlacklistRegistry,
+) ([]domain.TokenWithBlock, error) {
+	if len(a.provenanceEvents) == 0 {
+		return nil, nil
+	}
+
+	owner := common.HexToAddress(ownerAddress)
+	ownerHash := common.BytesToHash(owner.Bytes())
+	contractAddr := common.HexToAddress(a.contractAddress)
+
+	queries := buildCustomOwnerTransferQueries(a.provenanceEvents, contractAddr, ownerHash, fromBlock, toBlock)
+	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query configured contract logs: %w", err)
+	}
+
+	logs = deduplicateLogs(logs)
+	sortLogsAscending(logs)
+
+	events := make([]domain.BlockchainEvent, 0, len(logs))
+	for _, vLog := range logs {
+		event := &domain.BlockchainEvent{
+			Chain:           a.chainID,
+			ContractAddress: a.contractAddress,
+			BlockNumber:     vLog.BlockNumber,
+			LogIndex:        uint64(vLog.Index), //nolint:gosec,G115
+		}
+
+		parsed, err := a.ParseEvent(ctx, vLog, event)
+		if err != nil {
+			logger.WarnCtx(ctx, "Failed to parse event in ownership scan",
+				zap.String("contract", a.contractAddress),
+				zap.Uint64("block", vLog.BlockNumber),
+				zap.Uint("logIndex", vLog.Index),
+				zap.Error(err))
+			continue
+		}
+		if parsed == nil {
+			logger.WarnCtx(ctx, "ParseEvent returned nil in ownership scan",
+				zap.String("contract", a.contractAddress),
+				zap.Uint64("block", vLog.BlockNumber),
+				zap.Uint("logIndex", vLog.Index))
+			continue
+		}
+
+		events = append(events, *parsed)
+	}
+
+	return trackOwnershipFromParsedEvents(a.chainID, a.standard, a.contractAddress, owner, events, blacklist), nil
+}
+
+func buildCustomOwnerTransferQueries(
+	provenanceEvents []EventConfig,
+	contractAddr common.Address,
+	ownerHash common.Hash,
+	fromBlock, toBlock uint64,
+) []ethereum.FilterQuery {
+	var queries []ethereum.FilterQuery
+
+	for _, eventCfg := range provenanceEvents {
+		if !isOwnershipAffectingEvent(eventCfg.MapToStandardEvent) {
+			continue
+		}
+
+		eventSig := crypto.Keccak256Hash([]byte(eventCfg.Signature))
+		fromIndex, toIndex := indexedAddressTopicIndices(eventCfg)
+
+		if fromIndex > 0 {
+			queries = append(queries, buildCustomOwnerQuery(eventSig, contractAddr, ownerHash, fromIndex, fromBlock, toBlock))
+		}
+		if toIndex > 0 {
+			queries = append(queries, buildCustomOwnerQuery(eventSig, contractAddr, ownerHash, toIndex, fromBlock, toBlock))
+		}
+	}
+
+	return queries
+}
+
+func indexedAddressTopicIndices(eventCfg EventConfig) (fromIndex, toIndex int) {
+	fromIndex = -1
+	toIndex = -1
+
+	for i, paramName := range eventCfg.IndexedParams {
+		target, ok := eventCfg.ParameterMappings[paramName]
+		if !ok {
+			continue
+		}
+
+		topicIndex := i + 1
+		switch target {
+		case EventFieldFromAddress:
+			fromIndex = topicIndex
+		case EventFieldToAddress:
+			toIndex = topicIndex
+		}
+	}
+
+	return fromIndex, toIndex
+}
+
+func buildCustomOwnerQuery(
+	eventSig common.Hash,
+	contractAddr common.Address,
+	ownerHash common.Hash,
+	ownerTopicIndex int,
+	fromBlock, toBlock uint64,
+) ethereum.FilterQuery {
+	topics := make([][]common.Hash, ownerTopicIndex+1)
+	topics[0] = []common.Hash{eventSig}
+	topics[ownerTopicIndex] = []common.Hash{ownerHash}
+
+	return ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(fromBlock),
+		ToBlock:   new(big.Int).SetUint64(toBlock),
+		Addresses: []common.Address{contractAddr},
+		Topics:    topics,
+	}
 }
 
 // ParseEvent parses a configured legacy contract event into a blockchain event.

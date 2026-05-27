@@ -403,6 +403,219 @@ func TestLoadContractsConfig_DuplicateEntries(t *testing.T) {
 	require.Contains(t, err.Error(), "duplicate contract entry")
 }
 
+func TestLoadContractsConfig_TransferAddressNotIndexed_FromAddress(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"standard": "erc721",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"events": [{
+					"signature": "Transfer(address,address,uint256)",
+					"mapToStandardEvent": "transfer",
+					"indexedParams": ["to"],
+					"dataParams": ["from", "tokenId"],
+					"parameterMappings": {
+						"from": "FromAddress",
+						"to": "ToAddress",
+						"tokenId": "TokenNumber"
+					}
+				}]
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "transfer events require FromAddress to be an indexed parameter for ownership tracking")
+}
+
+func TestLoadContractsConfig_TransferAddressNotIndexed_ToAddress(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"standard": "erc721",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"events": [{
+					"signature": "Transfer(address,address,uint256)",
+					"mapToStandardEvent": "transfer",
+					"indexedParams": ["from"],
+					"dataParams": ["to", "tokenId"],
+					"parameterMappings": {
+						"from": "FromAddress",
+						"to": "ToAddress",
+						"tokenId": "TokenNumber"
+					}
+				}]
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "transfer events require ToAddress to be an indexed parameter for ownership tracking")
+}
+
+func TestLoadContractsConfig_MintAddressNotIndexed(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"standard": "erc721",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"events": [{
+					"signature": "Mint(address,uint256)",
+					"mapToStandardEvent": "mint",
+					"indexedParams": [],
+					"dataParams": ["to", "tokenId"],
+					"parameterMappings": {
+						"to": "ToAddress",
+						"tokenId": "TokenNumber"
+					}
+				}]
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mint events require ToAddress to be an indexed parameter for ownership tracking")
+}
+
+func TestLoadContractsConfig_BurnAddressNotIndexed(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"standard": "erc721",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"events": [{
+					"signature": "Burn(address,uint256)",
+					"mapToStandardEvent": "burn",
+					"indexedParams": [],
+					"dataParams": ["from", "tokenId"],
+					"parameterMappings": {
+						"from": "FromAddress",
+						"tokenId": "TokenNumber"
+					}
+				}]
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "burn events require FromAddress to be an indexed parameter for ownership tracking")
+}
+
+func TestLoadContractsConfig_ERC1155TransferMissingQuantity(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xd07dc4262bcdbf85190c01c996b4c06a461d2430",
+			"standard": "erc1155",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"events": [{
+					"signature": "Transfer(address,address,uint256)",
+					"mapToStandardEvent": "transfer",
+					"indexedParams": ["from", "to"],
+					"dataParams": ["tokenId"],
+					"parameterMappings": {
+						"from": "FromAddress",
+						"to": "ToAddress",
+						"tokenId": "TokenNumber"
+					}
+				}]
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "transfer events for ERC1155-style contracts require Quantity mapping")
+}
+
+func TestLoadContractsConfig_ERC1155MintMissingQuantity(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xd07dc4262bcdbf85190c01c996b4c06a461d2430",
+			"standard": "erc1155",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"events": [{
+					"signature": "Mint(address,uint256)",
+					"mapToStandardEvent": "mint",
+					"indexedParams": ["to"],
+					"dataParams": ["tokenId"],
+					"parameterMappings": {
+						"to": "ToAddress",
+						"tokenId": "TokenNumber"
+					}
+				}]
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mint events for ERC1155-style contracts require Quantity mapping")
+}
+
+func TestLoadContractsConfig_ERC1155BurnMissingQuantity(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xd07dc4262bcdbf85190c01c996b4c06a461d2430",
+			"standard": "erc1155",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"events": [{
+					"signature": "Burn(address,uint256)",
+					"mapToStandardEvent": "burn",
+					"indexedParams": ["from"],
+					"dataParams": ["tokenId"],
+					"parameterMappings": {
+						"from": "FromAddress",
+						"tokenId": "TokenNumber"
+					}
+				}]
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "burn events for ERC1155-style contracts require Quantity mapping")
+}
+
+func TestLoadContractsConfig_ERC721DoesNotRequireQuantity(t *testing.T) {
+	// This should pass - ERC721 doesn't require Quantity
+	cfg, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"standard": "erc721",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"events": [{
+					"signature": "Transfer(address,address,uint256)",
+					"mapToStandardEvent": "transfer",
+					"indexedParams": ["from", "to"],
+					"dataParams": ["tokenId"],
+					"parameterMappings": {
+						"from": "FromAddress",
+						"to": "ToAddress",
+						"tokenId": "TokenNumber"
+					}
+				}]
+			}
+		}]
+	}`))
+	require.NoError(t, err)
+	require.Len(t, cfg.Contracts, 1)
+}
+
 func TestNewABIRegistry_LoadsABIs(t *testing.T) {
 	registry, err := helpers.NewABIRegistry(testContractFS(t, `{"contracts": []}`))
 	require.NoError(t, err)

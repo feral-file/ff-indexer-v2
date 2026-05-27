@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -144,6 +145,27 @@ func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
 	}
 
 	return signatures
+}
+
+// GetProvenanceContractsForChain returns configured contracts with provenance support for a chain.
+// The map keys are lowercase contract addresses.
+func (r *AdapterRegistry) GetProvenanceContractsForChain(chain domain.Chain) map[string]adapters.ContractAdapter {
+	result := make(map[string]adapters.ContractAdapter)
+
+	for key, entry := range r.contractConfigs {
+		if entry.Chain != chain {
+			continue
+		}
+
+		adp, ok := r.contractAdapters[key]
+		if !ok || !adp.SupportsProvenance() {
+			continue
+		}
+
+		result[strings.ToLower(common.HexToAddress(entry.Address).Hex())] = adp
+	}
+
+	return result
 }
 
 // GetStandardAdapter returns the standard adapter for a token standard.

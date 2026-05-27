@@ -1,4 +1,5 @@
 {
+  "$comment": "The standard field determines ownership tracking for configured contracts: erc721 uses last-transfer-wins, erc1155 uses net-balance accumulation.",
   "contracts": [
     {
       "chain": "eip155:1",

@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // ERC721Adapter handles standard ERC-721 token operations and event parsing.
@@ -172,6 +173,48 @@ func (a *ERC721Adapter) GetTokenEvents(ctx context.Context, contractAddress, tok
 	})
 
 	return events, nil
+}
+
+// GetTokensByOwner returns ERC721 tokens owned by the address within the block range.
+func (a *ERC721Adapter) GetTokensByOwner(
+	ctx context.Context,
+	ownerAddress string,
+	fromBlock uint64,
+	toBlock uint64,
+	blacklist registry.BlacklistRegistry,
+) ([]domain.TokenWithBlock, error) {
+	owner := common.HexToAddress(ownerAddress)
+	ownerHash := common.BytesToHash(owner.Bytes())
+
+	queries := []ethereum.FilterQuery{
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{helpers.TransferEventSignature},
+				{ownerHash},
+			},
+		},
+		{
+			FromBlock: new(big.Int).SetUint64(fromBlock),
+			ToBlock:   new(big.Int).SetUint64(toBlock),
+			Topics: [][]common.Hash{
+				{helpers.TransferEventSignature},
+				nil,
+				{ownerHash},
+			},
+		},
+	}
+
+	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query ERC721 logs: %w", err)
+	}
+
+	logs = deduplicateLogs(logs)
+	sortLogsAscending(logs)
+
+	return trackERC721OwnershipFromLogs(a.chainID, owner, logs, blacklist), nil
 }
 
 // ParseEvent parses standard ERC-721 and EIP-4906 events.

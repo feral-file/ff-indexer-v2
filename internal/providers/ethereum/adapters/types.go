@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
 // ContractAdapter defines contract-specific token operations and event parsing.
@@ -23,6 +24,22 @@ type ContractAdapter interface {
 	// GetTokenEvents fetches all historical events for a specific token
 	// Returns events in ascending order of timestamp
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string) ([]domain.BlockchainEvent, error)
+
+	// GetTokensByOwner returns all tokens owned by the address within the block range.
+	//
+	// Each adapter handles query construction, deduplication, sorting, and standard-specific
+	// ownership tracking internally. ERC721 uses last-transfer-wins; ERC1155 uses net balance.
+	// Configured contracts use the standard field from contracts.json to select tracking logic.
+	//
+	// Returns all owned tokens with block numbers. Does not apply any limit; the caller
+	// aggregates across adapters and applies global limits.
+	GetTokensByOwner(
+		ctx context.Context,
+		ownerAddress string,
+		fromBlock uint64,
+		toBlock uint64,
+		blacklist registry.BlacklistRegistry,
+	) ([]domain.TokenWithBlock, error)
 }
 
 // SuccessCondition describes how to interpret a contract call result for existence checks.
