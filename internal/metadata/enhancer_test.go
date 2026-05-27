@@ -19,6 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 // testEnhancerMocks contains all the mocks needed for testing the enhancer
@@ -86,7 +87,7 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://artblocks.io"),
+			URL:  types.StringPtr("https://artblocks.io"),
 		},
 	}
 
@@ -96,7 +97,7 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 		Name:          "Fidenza",
 		ArtistName:    "Tyler Hobbs",
 		ArtistAddress: "0x1234567890123456789012345678901234567890",
-		Description:   stringPtr("A generative art project"),
+		Description:   types.StringPtr("A generative art project"),
 	}
 	mocks.artblocksClient.
 		EXPECT().
@@ -161,7 +162,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://artblocks.io"),
+			URL:  types.StringPtr("https://artblocks.io"),
 		},
 	}
 
@@ -223,7 +224,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://artblocks.io"),
+			URL:  types.StringPtr("https://artblocks.io"),
 		},
 	}
 
@@ -232,7 +233,7 @@ func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {
 		Name:          "Fidenza",
 		ArtistName:    "Tyler Hobbs",
 		ArtistAddress: "", // Empty artist address
-		Description:   stringPtr("A generative art project"),
+		Description:   types.StringPtr("A generative art project"),
 	}
 	mocks.artblocksClient.
 		EXPECT().
@@ -283,7 +284,7 @@ func TestEnhancer_Enhance_ArtBlocks_NonEthereumChain(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://artblocks.io"),
+			URL:  types.StringPtr("https://artblocks.io"),
 		},
 	}
 
@@ -334,7 +335,7 @@ func TestEnhancer_Enhance_NoPublisherName(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: nil,
-			URL:  stringPtr("https://example.com"),
+			URL:  types.StringPtr("https://example.com"),
 		},
 	}
 
@@ -364,7 +365,7 @@ func TestEnhancer_Enhance_UnsupportedPublisher(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://example.com"),
+			URL:  types.StringPtr("https://example.com"),
 		},
 	}
 
@@ -394,7 +395,7 @@ func TestEnhancer_Enhance_ArtBlocks_InvalidTokenID(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://artblocks.io"),
+			URL:  types.StringPtr("https://artblocks.io"),
 		},
 	}
 
@@ -421,7 +422,7 @@ func TestEnhancer_Enhance_ArtBlocks_APIError(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://artblocks.io"),
+			URL:  types.StringPtr("https://artblocks.io"),
 		},
 	}
 
@@ -452,7 +453,7 @@ func TestEnhancer_Enhance_ArtBlocks_MarshalError(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://artblocks.io"),
+			URL:  types.StringPtr("https://artblocks.io"),
 		},
 	}
 
@@ -546,7 +547,7 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://feralfile.com"),
+			URL:  types.StringPtr("https://feralfile.com"),
 		},
 	}
 
@@ -628,7 +629,7 @@ func TestEnhancer_Enhance_FeralFile_ImageMedium(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://feralfile.com"),
+			URL:  types.StringPtr("https://feralfile.com"),
 		},
 	}
 
@@ -708,7 +709,7 @@ func TestEnhancer_Enhance_FeralFile_MayaManStarQuest(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://feralfile.com"),
+			URL:  types.StringPtr("https://feralfile.com"),
 		},
 	}
 
@@ -793,7 +794,7 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://fxhash.xyz"),
+			URL:  types.StringPtr("https://fxhash.xyz"),
 		},
 	}
 
@@ -879,7 +880,7 @@ func TestEnhancer_Enhance_Objkt_MinimalFields(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://example.com"),
+			URL:  types.StringPtr("https://example.com"),
 		},
 	}
 
@@ -932,7 +933,7 @@ func TestEnhancer_Enhance_Objkt_MultipleCreators(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://fxhash.xyz"),
+			URL:  types.StringPtr("https://fxhash.xyz"),
 		},
 	}
 
@@ -997,7 +998,7 @@ func TestEnhancer_Enhance_Objkt_CreatorWithoutAlias(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://fxhash.xyz"),
+			URL:  types.StringPtr("https://fxhash.xyz"),
 		},
 	}
 
@@ -1050,7 +1051,7 @@ func TestEnhancer_Enhance_Objkt_InvalidTezosAddress(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://fxhash.xyz"),
+			URL:  types.StringPtr("https://fxhash.xyz"),
 		},
 	}
 
@@ -1101,7 +1102,7 @@ func TestEnhancer_Enhance_Objkt_APIError(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://fxhash.xyz"),
+			URL:  types.StringPtr("https://fxhash.xyz"),
 		},
 	}
 
@@ -1131,7 +1132,7 @@ func TestEnhancer_Enhance_Objkt_MarshalError(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://fxhash.xyz"),
+			URL:  types.StringPtr("https://fxhash.xyz"),
 		},
 	}
 
@@ -1173,7 +1174,7 @@ func TestEnhancer_Enhance_Objkt_FeralFileNotAffected(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://feralfile.com"),
+			URL:  types.StringPtr("https://feralfile.com"),
 		},
 	}
 
@@ -1243,7 +1244,7 @@ func TestEnhancer_Enhance_Objkt_NonTezosChain(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://example.com"),
+			URL:  types.StringPtr("https://example.com"),
 		},
 	}
 
@@ -1567,7 +1568,7 @@ func TestEnhancer_Enhance_Objkt_URIResolverSuccess(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://fxhash.xyz"),
+			URL:  types.StringPtr("https://fxhash.xyz"),
 		},
 	}
 
@@ -1640,7 +1641,7 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 		},
 		Publisher: &metadata.Publisher{
 			Name: &publisherName,
-			URL:  stringPtr("https://fxhash.xyz"),
+			URL:  types.StringPtr("https://fxhash.xyz"),
 		},
 	}
 
@@ -1698,9 +1699,4 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 	// Verify that fallback default gateway URLs are used when URI resolver fails
 	assert.Equal(t, "https://ipfs.io/ipfs/QmTest123", *result.ImageURL)
 	assert.Equal(t, "https://ipfs.io/ipfs/QmTest456", *result.AnimationURL)
-}
-
-// Helper function to create string pointers
-func stringPtr(s string) *string {
-	return &s
 }

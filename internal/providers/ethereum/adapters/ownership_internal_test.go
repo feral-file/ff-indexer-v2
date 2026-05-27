@@ -10,6 +10,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
+	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
 func TestTrackERC721OwnershipFromLogs_LastTransferWins(t *testing.T) {
@@ -91,14 +92,14 @@ func TestTrackOwnershipFromParsedEvents_GenericERC721(t *testing.T) {
 		{
 			EventType:   domain.EventTypeMint,
 			TokenNumber: "1",
-			ToAddress:   ptr(owner.Hex()),
+			ToAddress:   internalTypes.StringPtr(owner.Hex()),
 			BlockNumber: 100,
 			LogIndex:    1,
 		},
 		{
 			EventType:   domain.EventTypeTransfer,
 			TokenNumber: "1",
-			FromAddress: ptr(owner.Hex()),
+			FromAddress: internalTypes.StringPtr(owner.Hex()),
 			ToAddress:   &other,
 			BlockNumber: 200,
 			LogIndex:    2,
@@ -147,8 +148,4 @@ func erc1155SingleLog(
 		},
 		Data: data,
 	}
-}
-
-func ptr(s string) *string {
-	return &s
 }

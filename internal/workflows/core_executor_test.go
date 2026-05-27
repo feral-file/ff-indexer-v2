@@ -22,6 +22,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
@@ -94,11 +95,6 @@ func setupTestExecutor(t *testing.T) *testExecutorMocks {
 // tearDownTestExecutor cleans up the test mocks
 func tearDownTestExecutor(mocks *testExecutorMocks) {
 	mocks.ctrl.Finish()
-}
-
-// Helper functions
-func stringPtr(s string) *string {
-	return &s
 }
 
 // ====================================================================================
@@ -203,7 +199,7 @@ func TestCreateTokenMint_Success_ERC721(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -256,7 +252,7 @@ func TestCreateTokenMint_Success_ERC1155(t *testing.T) {
 		Quantity:        "5",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -304,7 +300,7 @@ func TestCreateTokenMint_Success_FA2(t *testing.T) {
 		Quantity:        "3",
 		TxHash:          "op123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("block123"),
+		BlockHash:       types.StringPtr("block123"),
 		Timestamp:       timestamp,
 	}
 
@@ -371,7 +367,7 @@ func TestCreateTokenMint_JSONMarshalError(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -407,7 +403,7 @@ func TestCreateTokenMint_ERC1155BalanceError(t *testing.T) {
 		Quantity:        "5",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -450,7 +446,7 @@ func TestCreateTokenMint_StoreError(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -497,7 +493,7 @@ func TestUpdateTokenTransfer_Success(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -572,7 +568,7 @@ func TestUpdateTokenTransfer_MarshalError(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -608,7 +604,7 @@ func TestUpdateTokenTransfer_StoreError(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -655,7 +651,7 @@ func TestUpdateTokenBurn_Success(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -726,7 +722,7 @@ func TestUpdateTokenBurn_MarshalError(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -762,7 +758,7 @@ func TestUpdateTokenBurn_StoreError(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -807,7 +803,7 @@ func TestCreateMetadataUpdate_Success(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -873,7 +869,7 @@ func TestCreateMetadataUpdate_MarshalError(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -907,7 +903,7 @@ func TestCreateMetadataUpdate_StoreError(t *testing.T) {
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -1471,8 +1467,8 @@ func TestEnhanceTokenMetadata_Success(t *testing.T) {
 	enhancedMetadata := &metadata.EnhancedMetadata{
 		Vendor:     schema.VendorArtBlocks,
 		VendorJSON: []byte(`{"artist":"Artist Name"}`),
-		Name:       stringPtr("Enhanced NFT Name"),
-		ImageURL:   stringPtr("https://vendor.com/image.png"),
+		Name:       types.StringPtr("Enhanced NFT Name"),
+		ImageURL:   types.StringPtr("https://vendor.com/image.png"),
 		Artists: []metadata.Artist{
 			{DID: "did:example:artist1", Name: "Artist 1"},
 		},
@@ -2320,7 +2316,7 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_Success_ERC721_TokenE
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -2375,7 +2371,7 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_Success_ERC721_TokenN
 		Quantity:        "1",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -2423,7 +2419,7 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_Success_ERC1155(t *te
 		Quantity:        "5",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -2494,7 +2490,7 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_Success_FA2(t *testin
 		Quantity:        "2",
 		TxHash:          "op123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("block123"),
+		BlockHash:       types.StringPtr("block123"),
 		Timestamp:       timestamp,
 	}
 
@@ -2565,7 +2561,7 @@ func TestIndexTokenWithMinimalProvenancesByBlockchainEvent_BalanceFetchError(t *
 		Quantity:        "5",
 		TxHash:          "0xtx123",
 		BlockNumber:     100,
-		BlockHash:       stringPtr("0xblock123"),
+		BlockHash:       types.StringPtr("0xblock123"),
 		Timestamp:       timestamp,
 	}
 
@@ -2881,8 +2877,8 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner(t 
 			ContractAddress: contractAddress,
 			TokenNumber:     tokenNumber,
 			EventType:       domain.EventTypeMint,
-			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-			ToAddress:       stringPtr(ownerAddress),
+			FromAddress:     types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+			ToAddress:       types.StringPtr(ownerAddress),
 			Quantity:        "5",
 			TxHash:          "0xtx1",
 			BlockNumber:     100,
@@ -2939,8 +2935,8 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_Mu
 			ContractAddress: contractAddress,
 			TokenNumber:     tokenNumber,
 			EventType:       domain.EventTypeMint,
-			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-			ToAddress:       stringPtr(ownerAddress),
+			FromAddress:     types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+			ToAddress:       types.StringPtr(ownerAddress),
 			Quantity:        "5",
 			TxHash:          "0xtx1",
 			BlockNumber:     100,
@@ -2954,8 +2950,8 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_Mu
 			ContractAddress: contractAddress,
 			TokenNumber:     tokenNumber,
 			EventType:       domain.EventTypeTransfer,
-			FromAddress:     stringPtr("0xother"),
-			ToAddress:       stringPtr(ownerAddress),
+			FromAddress:     types.StringPtr("0xother"),
+			ToAddress:       types.StringPtr(ownerAddress),
 			Quantity:        "5",
 			TxHash:          "0xtx2",
 			BlockNumber:     150,
@@ -3014,8 +3010,8 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_Ze
 			ContractAddress: contractAddress,
 			TokenNumber:     tokenNumber,
 			EventType:       domain.EventTypeMint,
-			FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-			ToAddress:       stringPtr(ownerAddress),
+			FromAddress:     types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+			ToAddress:       types.StringPtr(ownerAddress),
 			Quantity:        "5",
 			TxHash:          "0xtx1",
 			BlockNumber:     100,
@@ -3029,8 +3025,8 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155_WithOwner_Ze
 			ContractAddress: contractAddress,
 			TokenNumber:     tokenNumber,
 			EventType:       domain.EventTypeTransfer,
-			FromAddress:     stringPtr(ownerAddress),
-			ToAddress:       stringPtr("0xother"),
+			FromAddress:     types.StringPtr(ownerAddress),
+			ToAddress:       types.StringPtr("0xother"),
 			Quantity:        "5",
 			TxHash:          "0xtx2",
 			BlockNumber:     150,
@@ -3161,8 +3157,8 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721(t *testing.T) {
 		ContractAddress: contractAddress,
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeMint,
-		FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-		ToAddress:       stringPtr("0xowner1"),
+		FromAddress:     types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+		ToAddress:       types.StringPtr("0xowner1"),
 		Quantity:        "1",
 		TxHash:          "0xtx1",
 		BlockNumber:     100,
@@ -3174,8 +3170,8 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721(t *testing.T) {
 		ContractAddress: contractAddress,
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeTransfer,
-		FromAddress:     stringPtr("0xowner1"),
-		ToAddress:       stringPtr("0xowner2"),
+		FromAddress:     types.StringPtr("0xowner1"),
+		ToAddress:       types.StringPtr("0xowner2"),
 		Quantity:        "1",
 		TxHash:          "0xtx2",
 		BlockNumber:     150,
@@ -3232,8 +3228,8 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721_Burned(t *testin
 		ContractAddress: contractAddress,
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeMint,
-		FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-		ToAddress:       stringPtr("0xowner1"),
+		FromAddress:     types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+		ToAddress:       types.StringPtr("0xowner1"),
 		Quantity:        "1",
 		TxHash:          "0xtx1",
 		BlockNumber:     100,
@@ -3245,8 +3241,8 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721_Burned(t *testin
 		ContractAddress: contractAddress,
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeBurn,
-		FromAddress:     stringPtr("0xowner1"),
-		ToAddress:       stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+		FromAddress:     types.StringPtr("0xowner1"),
+		ToAddress:       types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
 		Quantity:        "1",
 		TxHash:          "0xtx2",
 		BlockNumber:     150,
@@ -3302,8 +3298,8 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC1155_Burned(t *testi
 		ContractAddress: contractAddress,
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeMint,
-		FromAddress:     stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
-		ToAddress:       stringPtr("0xowner1"),
+		FromAddress:     types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+		ToAddress:       types.StringPtr("0xowner1"),
 		Quantity:        "10",
 		TxHash:          "0xtx1",
 		BlockNumber:     100,
@@ -3315,8 +3311,8 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC1155_Burned(t *testi
 		ContractAddress: contractAddress,
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeBurn,
-		FromAddress:     stringPtr("0xowner1"),
-		ToAddress:       stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+		FromAddress:     types.StringPtr("0xowner1"),
+		ToAddress:       types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
 		Quantity:        "10",
 		TxHash:          "0xtx2",
 		BlockNumber:     150,
@@ -3389,7 +3385,7 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2(t *testing.T) {
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeMint,
 		FromAddress:     nil,
-		ToAddress:       stringPtr("tz1owner1"),
+		ToAddress:       types.StringPtr("tz1owner1"),
 		Quantity:        "5",
 		TxHash:          "op1",
 		BlockNumber:     100,
@@ -3452,7 +3448,7 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2_Burned(t *testing.T
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeMint,
 		FromAddress:     nil,
-		ToAddress:       stringPtr("tz1owner1"),
+		ToAddress:       types.StringPtr("tz1owner1"),
 		Quantity:        "5",
 		TxHash:          "op1",
 		BlockNumber:     100,
@@ -3464,7 +3460,7 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_FA2_Burned(t *testing.T
 		ContractAddress: contractAddress,
 		TokenNumber:     tokenNumber,
 		EventType:       domain.EventTypeBurn,
-		FromAddress:     stringPtr("tz1owner1"),
+		FromAddress:     types.StringPtr("tz1owner1"),
 		ToAddress:       nil,
 		Quantity:        "5",
 		TxHash:          "op2",

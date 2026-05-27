@@ -13,10 +13,9 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
-
-func toStrPtr(s string) *string { return &s }
 
 // expectIndexTokenFullSuccess configures MockCoreExecutor for one successful IndexToken (MediaEnabled false in testTokenCore).
 func expectIndexTokenFullSuccess(m *mocks.MockCoreExecutor) {
@@ -58,7 +57,7 @@ func TestIndexTokenMint_Success(t *testing.T) {
 		ContractAddress: "0x1234567890123456789012345678901234567890",
 		TokenNumber:     "1",
 		EventType:       domain.EventTypeMint,
-		ToAddress:       toStrPtr("0xtoaddr"),
+		ToAddress:       types.StringPtr("0xtoaddr"),
 		TxHash:          "0xabcd",
 		BlockNumber:     100,
 		Quantity:        "1",
@@ -128,8 +127,8 @@ func TestIndexTokenTransfer_TokenExists(t *testing.T) {
 		ContractAddress: "0x1234567890123456789012345678901234567890",
 		TokenNumber:     "1",
 		EventType:       domain.EventTypeTransfer,
-		FromAddress:     toStrPtr("0xfrom"),
-		ToAddress:       toStrPtr("0xto"),
+		FromAddress:     types.StringPtr("0xfrom"),
+		ToAddress:       types.StringPtr("0xto"),
 		TxHash:          "0xabcd",
 		BlockNumber:     100,
 		Quantity:        "1",
@@ -182,7 +181,7 @@ func TestIndexTokenBurn_Success(t *testing.T) {
 		ContractAddress: "0x1234567890123456789012345678901234567890",
 		TokenNumber:     "1",
 		EventType:       domain.EventTypeBurn,
-		FromAddress:     toStrPtr("0xfrom"),
+		FromAddress:     types.StringPtr("0xfrom"),
 		TxHash:          "0xabcd",
 		BlockNumber:     100,
 		Quantity:        "1",
