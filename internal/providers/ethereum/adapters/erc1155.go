@@ -213,7 +213,10 @@ func (a *ERC1155Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domai
 		return nil, fmt.Errorf("event log has no topics")
 	}
 
-	base := helpers.BaseEventFromLog(a.chainID, vLog)
+	base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
+	if err != nil {
+		return nil, err
+	}
 
 	switch vLog.Topics[0] {
 	case helpers.ERC1155TransferSingleEventSignature:

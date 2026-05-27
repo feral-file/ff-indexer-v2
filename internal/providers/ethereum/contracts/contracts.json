@@ -42,6 +42,17 @@
               "to": "ToAddress",
               "punkIndex": "TokenNumber"
             }
+          },
+          {
+            "signature": "PunkBought(uint256,uint256,address,address)",
+            "mapToStandardEvent": "transfer",
+            "indexedParams": ["punkIndex", "fromAddress", "toAddress"],
+            "dataParams": [],
+            "parameterMappings": {
+              "punkIndex": "TokenNumber",
+              "fromAddress": "FromAddress",
+              "toAddress": "ToAddress"
+            }
           }
         ]
       }

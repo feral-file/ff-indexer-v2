@@ -63,7 +63,7 @@ type ContractAdapter interface {
 
 	// ParseEvent decodes a raw log into a complete standardized blockchain event.
 	//
-	// Timestamp and other metadata are read from the log (including vLog.BlockTimestamp).
+	// Timestamp is resolved from the log when present; otherwise BlockProvider lookup is used.
 	// Chain is taken from the adapter's configured chain ID.
 	//
 	// Returns nil without error if the log does not match expected event shapes.

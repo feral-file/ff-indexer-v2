@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
@@ -29,6 +30,7 @@ type GenericAdapter struct {
 	metadata         ContractMetadataConfig
 	ethClient        ethadapter.EthClient
 	pagination       *helpers.PaginationHelper
+	blockProvider    block.BlockProvider
 	provenance       bool
 	provenanceEvents []EventConfig
 	chainID          domain.Chain
@@ -42,6 +44,7 @@ func NewGenericAdapter(
 	metadata ContractMetadataConfig,
 	ethClient ethadapter.EthClient,
 	pagination *helpers.PaginationHelper,
+	blockProvider block.BlockProvider,
 	supportsProvenance bool,
 	provenanceEvents []EventConfig,
 	chainID domain.Chain,
@@ -54,6 +57,7 @@ func NewGenericAdapter(
 		metadata:         metadata,
 		ethClient:        ethClient,
 		pagination:       pagination,
+		blockProvider:    blockProvider,
 		provenance:       supportsProvenance,
 		provenanceEvents: provenanceEvents,
 		chainID:          chainID,
@@ -242,12 +246,7 @@ func (a *GenericAdapter) GetTokensByOwner(
 	for _, vLog := range logs {
 		parsed, err := a.ParseEvent(ctx, vLog)
 		if err != nil {
-			logger.WarnCtx(ctx, "Failed to parse event in ownership scan",
-				zap.String("contract", a.contractAddress),
-				zap.Uint64("block", vLog.BlockNumber),
-				zap.Uint("logIndex", vLog.Index),
-				zap.Error(err))
-			continue
+			return nil, fmt.Errorf("parse event at block %d log %d: %w", vLog.BlockNumber, vLog.Index, err)
 		}
 		if parsed == nil {
 			logger.WarnCtx(ctx, "ParseEvent returned nil in ownership scan",
@@ -361,7 +360,7 @@ func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log) (*domai
 		if vLog.Topics[0] != expectedSignature {
 			continue
 		}
-		return parseConfiguredEvent(ctx, vLog, eventCfg, a.standard, a.chainID)
+		return parseConfiguredEvent(ctx, vLog, eventCfg, a.standard, a.chainID, a.blockProvider)
 	}
 
 	return nil, ErrUnknownEvent
@@ -373,8 +372,12 @@ func parseConfiguredEvent(
 	eventCfg EventConfig,
 	standard domain.ChainStandard,
 	chain domain.Chain,
+	blockProvider block.BlockProvider,
 ) (*domain.BlockchainEvent, error) {
-	event := helpers.BaseEventFromLog(chain, vLog)
+	event, err := helpers.BaseEventFromLog(ctx, chain, vLog, blockProvider)
+	if err != nil {
+		return nil, err
+	}
 	event.Standard = standard
 	event.EventType = eventCfg.MapToStandardEvent
 

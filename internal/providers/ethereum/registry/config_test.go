@@ -56,7 +56,7 @@ func TestLoadContractsConfig_WithCustomEvents(t *testing.T) {
 	cfg, err := registry.LoadContractsConfig(testContractFS(t, cryptopunksContractConfigWithEvents))
 	require.NoError(t, err)
 	require.Len(t, cfg.Contracts, 1)
-	require.Len(t, cfg.Contracts[0].Adapter.Events, 2)
+	require.Len(t, cfg.Contracts[0].Adapter.Events, 3)
 	require.Equal(t, "PunkTransfer(address,address,uint256)", cfg.Contracts[0].Adapter.Events[0].Signature)
 	require.Equal(t, domain.EventTypeTransfer, cfg.Contracts[0].Adapter.Events[0].MapToStandardEvent)
 }
@@ -636,7 +636,7 @@ func TestEmbeddedContractsConfig_LoadsCryptoPunks(t *testing.T) {
 	require.Equal(t, "CryptoPunks", cfg.Contracts[0].Name)
 	require.Equal(t, domain.ChainEthereumMainnet, cfg.Contracts[0].Chain)
 	require.Equal(t, cryptoPunksAddress, cfg.Contracts[0].Address)
-	require.Len(t, cfg.Contracts[0].Adapter.Events, 2)
+	require.Len(t, cfg.Contracts[0].Adapter.Events, 3)
 }
 
 func TestNewAdapterRegistry_MissingABI(t *testing.T) {

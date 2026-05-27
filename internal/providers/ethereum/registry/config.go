@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
@@ -391,6 +392,7 @@ func BuildGenericAdapterFromConfig(
 	abiRegistry *helpers.ABIRegistry,
 	ethClient ethadapter.EthClient,
 	pagination *helpers.PaginationHelper,
+	blockProvider block.BlockProvider,
 	chainID domain.Chain,
 ) (adapters.ContractAdapter, error) {
 	existence, err := buildMethodCall(entry.Adapter.Existence, abiRegistry)
@@ -418,6 +420,7 @@ func BuildGenericAdapterFromConfig(
 		metadata,
 		ethClient,
 		pagination,
+		blockProvider,
 		supportsProvenance,
 		entry.Adapter.Events,
 		chainID,

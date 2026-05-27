@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
@@ -20,21 +21,24 @@ import (
 
 // ERC721Adapter handles standard ERC-721 token operations and event parsing.
 type ERC721Adapter struct {
-	ethClient  ethadapter.EthClient
-	pagination *helpers.PaginationHelper
-	chainID    domain.Chain
+	ethClient     ethadapter.EthClient
+	pagination    *helpers.PaginationHelper
+	blockProvider block.BlockProvider
+	chainID       domain.Chain
 }
 
 // NewERC721Adapter creates an adapter for standard ERC-721 contracts.
 func NewERC721Adapter(
 	ethClient ethadapter.EthClient,
 	pagination *helpers.PaginationHelper,
+	blockProvider block.BlockProvider,
 	chainID domain.Chain,
 ) *ERC721Adapter {
 	return &ERC721Adapter{
-		ethClient:  ethClient,
-		pagination: pagination,
-		chainID:    chainID,
+		ethClient:     ethClient,
+		pagination:    pagination,
+		blockProvider: blockProvider,
+		chainID:       chainID,
 	}
 }
 
@@ -193,7 +197,10 @@ func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain
 		return nil, fmt.Errorf("event log has no topics")
 	}
 
-	base := helpers.BaseEventFromLog(a.chainID, vLog)
+	base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
+	if err != nil {
+		return nil, err
+	}
 
 	switch vLog.Topics[0] {
 	case helpers.TransferEventSignature:

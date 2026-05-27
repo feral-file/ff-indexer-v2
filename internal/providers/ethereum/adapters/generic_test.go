@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
@@ -70,7 +71,7 @@ func TestGenericAdapter_TokenExists_AddressNonZero(t *testing.T) {
 			},
 			Metadata: registry.MetadataConfig{Source: "vendor_only"},
 		},
-	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet)
+	}, abiRegistry, mockClient, nil, nil, domain.ChainEthereumMainnet)
 	require.NoError(t, err)
 
 	exists, err := existence.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "1")
@@ -108,7 +109,7 @@ func TestGenericAdapter_TokenExists_ZeroAddress(t *testing.T) {
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet)
+	}, abiRegistry, mockClient, nil, nil, domain.ChainEthereumMainnet)
 	require.NoError(t, err)
 
 	exists, err := adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "9999")
@@ -146,7 +147,7 @@ func TestGenericAdapter_TokenExists_Revert(t *testing.T) {
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet)
+	}, abiRegistry, mockClient, nil, nil, domain.ChainEthereumMainnet)
 	require.NoError(t, err)
 
 	exists, err := adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "1")
@@ -185,7 +186,7 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet)
+	}, abiRegistry, mockClient, nil, nil, domain.ChainEthereumMainnet)
 	require.NoError(t, err)
 
 	owner, err := adp.TokenOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "1")
@@ -202,6 +203,7 @@ func TestGenericAdapter_TokenURI_VendorOnly(t *testing.T) {
 		adapters.ContractMetadataConfig{
 			Source: adapters.MetadataSourceVendorOnly,
 		},
+		nil,
 		nil,
 		nil,
 		false,
@@ -244,7 +246,7 @@ func TestGenericAdapter_TokenOwner_ZeroAddressMeansNotFound(t *testing.T) {
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet)
+	}, abiRegistry, mockClient, nil, nil, domain.ChainEthereumMainnet)
 	require.NoError(t, err)
 
 	_, err = adp.TokenOwner(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "10000")
@@ -275,7 +277,7 @@ func TestGenericAdapter_InvalidTokenNumber(t *testing.T) {
 				Params: []string{"${tokenId}"},
 			},
 		},
-	}, abiRegistry, nil, nil, domain.ChainEthereumMainnet)
+	}, abiRegistry, nil, nil, nil, domain.ChainEthereumMainnet)
 	require.NoError(t, err)
 
 	_, err = adp.TokenExists(context.Background(), "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb", "not-a-number")
@@ -292,7 +294,7 @@ func TestERC721Adapter_TokenExists(t *testing.T) {
 			CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
 			Return(common.LeftPadBytes(ownerAddr.Bytes(), 32), nil)
 
-		adp := adapters.NewERC721Adapter(mockClient, nil, domain.ChainEthereumMainnet)
+		adp := adapters.NewERC721Adapter(mockClient, nil, nil, domain.ChainEthereumMainnet)
 
 		exists, err := adp.TokenExists(context.Background(), "0xabc", "1")
 		require.NoError(t, err)
@@ -306,7 +308,7 @@ func TestERC721Adapter_TokenExists(t *testing.T) {
 			CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
 			Return(nil, fmt.Errorf("execution reverted"))
 
-		adp := adapters.NewERC721Adapter(mockClient, nil, domain.ChainEthereumMainnet)
+		adp := adapters.NewERC721Adapter(mockClient, nil, nil, domain.ChainEthereumMainnet)
 
 		exists, err := adp.TokenExists(context.Background(), "0xabc", "1")
 		require.NoError(t, err)
@@ -425,7 +427,7 @@ func TestGenericAdapter_GetTokensByOwner(t *testing.T) {
 					},
 				},
 			},
-		}, abiRegistry, mockClient, pagination, domain.ChainEthereumMainnet)
+		}, abiRegistry, mockClient, pagination, nil, domain.ChainEthereumMainnet)
 		require.NoError(t, err)
 
 		tokens, err := adp.GetTokensByOwner(context.Background(), owner.Hex(), 0, 300, nil)
@@ -436,6 +438,100 @@ func TestGenericAdapter_GetTokensByOwner(t *testing.T) {
 		_, _, _, tokenNumber := tokens[0].TokenCID.Parse()
 		require.Equal(t, "5", tokenNumber)
 		require.Equal(t, uint64(100), tokens[0].BlockNumber)
+	})
+
+	t.Run("PunkBought marketplace purchase ownership", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockClient := mocks.NewMockEthClient(ctrl)
+
+		const cryptopunksBoughtABI = `[
+			{
+				"anonymous": false,
+				"inputs": [
+					{"indexed": true, "name": "punkIndex", "type": "uint256"},
+					{"indexed": false, "name": "value", "type": "uint256"},
+					{"indexed": true, "name": "fromAddress", "type": "address"},
+					{"indexed": true, "name": "toAddress", "type": "address"}
+				],
+				"name": "PunkBought",
+				"type": "event"
+			}
+		]`
+
+		abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
+			"abis/cryptopunks.json":        {Data: []byte(cryptopunksABI)},
+			"abis/cryptopunks_bought.json": {Data: []byte(cryptopunksBoughtABI)},
+		})
+		require.NoError(t, err)
+
+		pagination := helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), nil)
+
+		contractAddr := "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+		owner := common.HexToAddress("0x1111111111111111111111111111111111111111")
+		seller := common.HexToAddress("0x2222222222222222222222222222222222222222")
+		boughtSig := crypto.Keccak256Hash([]byte("PunkBought(uint256,uint256,address,address)"))
+
+		mockClient.EXPECT().
+			FilterLogs(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+				ownerHash := common.BytesToHash(owner.Bytes())
+				if len(q.Topics) >= 4 && q.Topics[3] != nil && len(q.Topics[3]) > 0 && q.Topics[3][0] == ownerHash {
+					return []types.Log{{
+						Address:     common.HexToAddress(contractAddr),
+						BlockNumber: 250,
+						Topics: []common.Hash{
+							boughtSig,
+							common.BigToHash(big.NewInt(88)),
+							common.BytesToHash(seller.Bytes()),
+							ownerHash,
+						},
+						Data:  common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
+						Index: 0,
+					}}, nil
+				}
+				return nil, nil
+			}).AnyTimes()
+
+		adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
+			Chain:    domain.ChainEthereumMainnet,
+			Address:  contractAddr,
+			Standard: domain.StandardERC721,
+			Adapter: registry.AdapterConfig{
+				Existence: registry.MethodConfig{
+					Method:           "punkIndexToAddress",
+					ABI:              "cryptopunks",
+					Params:           []string{"${tokenId}"},
+					SuccessCondition: "address_nonzero",
+				},
+				Owner: registry.MethodConfig{
+					Method: "punkIndexToAddress",
+					ABI:    "cryptopunks",
+					Params: []string{"${tokenId}"},
+				},
+				Metadata: registry.MetadataConfig{Source: "vendor_only"},
+				Events: []adapters.EventConfig{
+					{
+						Signature:          "PunkBought(uint256,uint256,address,address)",
+						MapToStandardEvent: domain.EventTypeTransfer,
+						IndexedParams:      []string{"punkIndex", "fromAddress", "toAddress"},
+						DataParams:         []string{},
+						ParameterMappings: map[string]string{
+							"punkIndex":   "TokenNumber",
+							"fromAddress": "FromAddress",
+							"toAddress":   "ToAddress",
+						},
+					},
+				},
+			},
+		}, abiRegistry, mockClient, pagination, nil, domain.ChainEthereumMainnet)
+		require.NoError(t, err)
+
+		tokens, err := adp.GetTokensByOwner(context.Background(), owner.Hex(), 0, 300, nil)
+		require.NoError(t, err)
+		require.Len(t, tokens, 1)
+		_, _, _, tokenNumber := tokens[0].TokenCID.Parse()
+		require.Equal(t, "88", tokenNumber)
+		require.Equal(t, uint64(250), tokens[0].BlockNumber)
 	})
 
 	t.Run("no provenance events returns empty", func(t *testing.T) {
@@ -466,7 +562,7 @@ func TestGenericAdapter_GetTokensByOwner(t *testing.T) {
 				Metadata: registry.MetadataConfig{Source: "vendor_only"},
 				Events:   []adapters.EventConfig{}, // No events
 			},
-		}, abiRegistry, mockClient, nil, domain.ChainEthereumMainnet)
+		}, abiRegistry, mockClient, nil, nil, domain.ChainEthereumMainnet)
 		require.NoError(t, err)
 
 		tokens, err := adp.GetTokensByOwner(context.Background(), "0x1111111111111111111111111111111111111111", 0, 100, nil)

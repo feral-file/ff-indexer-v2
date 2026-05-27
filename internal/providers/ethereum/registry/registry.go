@@ -49,14 +49,14 @@ func NewAdapterRegistry(
 		contractAdapters: make(map[string]adapters.ContractAdapter, len(cfg.Contracts)),
 		contractConfigs:  make(map[string]ContractConfig, len(cfg.Contracts)),
 		standardAdapters: map[domain.ChainStandard]adapters.ContractAdapter{
-			domain.StandardERC721:  adapters.NewERC721Adapter(ethClient, pagination, chainID),
+			domain.StandardERC721:  adapters.NewERC721Adapter(ethClient, pagination, blockProvider, chainID),
 			domain.StandardERC1155: adapters.NewERC1155Adapter(ethClient, pagination, chainID, blockProvider),
 		},
 	}
 
 	overridesByChain := make(map[domain.Chain]int)
 	for _, entry := range cfg.Contracts {
-		adp, err := BuildGenericAdapterFromConfig(entry, abiRegistry, ethClient, pagination, chainID)
+		adp, err := BuildGenericAdapterFromConfig(entry, abiRegistry, ethClient, pagination, blockProvider, chainID)
 		if err != nil {
 			return nil, fmt.Errorf("build adapter for %s: %w", entry.Name, err)
 		}

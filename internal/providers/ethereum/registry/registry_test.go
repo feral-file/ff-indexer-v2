@@ -72,6 +72,17 @@ const cryptopunksContractConfigWithEvents = `{
               "to": "ToAddress",
               "punkIndex": "TokenNumber"
             }
+          },
+          {
+            "signature": "PunkBought(uint256,uint256,address,address)",
+            "mapToStandardEvent": "transfer",
+            "indexedParams": ["punkIndex", "fromAddress", "toAddress"],
+            "dataParams": [],
+            "parameterMappings": {
+              "punkIndex": "TokenNumber",
+              "fromAddress": "FromAddress",
+              "toAddress": "ToAddress"
+            }
           }
         ]
       }
@@ -249,7 +260,7 @@ func TestAdapterRegistry_SupportsProvenance_WithCustomEvents(t *testing.T) {
 		domain.StandardERC721,
 	)
 	require.NoError(t, err)
-	require.Len(t, adp.GetEventSignatures(), 2)
+	require.Len(t, adp.GetEventSignatures(), 3)
 }
 
 func TestAdapterRegistry_GetAllCustomEventSignatures(t *testing.T) {
@@ -259,7 +270,7 @@ func TestAdapterRegistry_GetAllCustomEventSignatures(t *testing.T) {
 	reg := newTestRegistry(t, mockClient, testContractFS(t, cryptopunksContractConfigWithEvents))
 
 	signatures := reg.GetAllCustomEventSignatures()
-	require.Len(t, signatures, 2)
+	require.Len(t, signatures, 3)
 }
 
 func TestAdapterRegistry_GetProvenanceContractsForChain(t *testing.T) {
