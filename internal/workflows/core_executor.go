@@ -1303,6 +1303,12 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 		}
 	}
 
+	if chain == domain.ChainEthereumMainnet || chain == domain.ChainEthereumSepolia {
+		if err := e.applySingleOwnerOnChainFallback(ctx, contractAddress, tokenNumber, standard, ethOwnershipModel, &currentOwner, &burned); err != nil {
+			return fmt.Errorf("resolve single-owner on-chain fallback: %w", err)
+		}
+	}
+
 	// Prepare input for creating/updating token with all provenance data
 	input := store.CreateTokenWithProvenancesInput{
 		Token: store.CreateTokenInput{
@@ -1360,6 +1366,45 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 		return fmt.Errorf("failed to create token with full provenances: %w", err)
 	}
 
+	return nil
+}
+
+// applySingleOwnerOnChainFallback uses adapter TokenOwner when event-derived ownership is
+// missing or marked burned. This protects configured legacy contracts whose historical logs
+// can disagree with current on-chain state (for example corrupted CryptoPunks PunkBought logs).
+func (e *coreExecutor) applySingleOwnerOnChainFallback(
+	ctx context.Context,
+	contractAddress, tokenNumber string,
+	standard domain.ChainStandard,
+	ownershipModel ethadapters.OwnershipModel,
+	currentOwner **string,
+	burned *bool,
+) error {
+	if ownershipModel != ethadapters.OwnershipSingleOwner {
+		return nil
+	}
+	if currentOwner == nil || burned == nil {
+		return nil
+	}
+	if !*burned && !types.StringNilOrEmpty(*currentOwner) && **currentOwner != domain.ETHEREUM_ZERO_ADDRESS {
+		return nil
+	}
+
+	owner, err := e.ethClient.TokenOwner(ctx, contractAddress, tokenNumber, standard)
+	if err != nil {
+		if errors.Is(err, domain.ErrTokenNotFoundOnChain) ||
+			errors.Is(err, ethereum.ErrContractNotFound) ||
+			ethhelpers.IsExecutionRevert(err) {
+			return nil
+		}
+		return err
+	}
+	if owner == "" || owner == domain.ETHEREUM_ZERO_ADDRESS {
+		return nil
+	}
+
+	*currentOwner = &owner
+	*burned = false
 	return nil
 }
 

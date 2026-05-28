@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -3289,6 +3291,10 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721_Burned(t *testin
 		GetTokenEvents(ctx, contractAddress, tokenNumber, domain.StandardERC721).
 		Return(events, nil)
 
+	mocks.ethClient.EXPECT().
+		TokenOwner(ctx, contractAddress, tokenNumber, domain.StandardERC721).
+		Return("", domain.ErrTokenNotFoundOnChain)
+
 	// Mock JSON marshal for each event
 	mocks.json.EXPECT().
 		Marshal(gomock.Any()).
@@ -3315,6 +3321,59 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC721_Burned(t *testin
 	err := mocks.executor.IndexTokenWithFullProvenancesByTokenCID(ctx, tokenCID)
 
 	assert.NoError(t, err)
+}
+
+func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerUsesOnChainFallbackWhenEventsBurned(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	normalizedContract := common.HexToAddress(contractAddress).Hex()
+	tokenNumber := "6690"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, contractAddress, tokenNumber)
+	seller := "0xc480fb0ebea2591470f571436926785be5ebcd22"
+	buyer := "0x9df6a358688ccdc2a955568a05aacac7a998a319"
+
+	// Simulates a corrupted acceptBid PunkBought that would otherwise mark the token burned.
+	brokenTransfer := domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC721,
+		ContractAddress: normalizedContract,
+		TokenNumber:     tokenNumber,
+		EventType:       domain.EventTypeTransfer,
+		FromAddress:     types.StringPtr(seller),
+		ToAddress:       types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+		Quantity:        "0",
+		TxHash:          "0x6ea422c6920d55742ae58afb8310cf8663f3709ebc7ef4589120f2675f343972",
+		BlockNumber:     13633896,
+		Timestamp:       time.Now(),
+	}
+
+	mocks.ethClient.EXPECT().
+		GetTokenEvents(ctx, normalizedContract, tokenNumber, domain.StandardERC721).
+		Return([]domain.BlockchainEvent{brokenTransfer}, nil)
+
+	mocks.ethClient.EXPECT().
+		TokenOwner(ctx, normalizedContract, tokenNumber, domain.StandardERC721).
+		Return(buyer, nil)
+
+	mocks.json.EXPECT().
+		Marshal(gomock.Any()).
+		Return([]byte(`{"event":"test"}`), nil)
+
+	mocks.store.EXPECT().
+		CreateTokenWithProvenances(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.CreateTokenWithProvenancesInput) error {
+			require.Equal(t, buyer, *input.Token.CurrentOwner)
+			require.False(t, input.Token.Burned)
+			require.Len(t, input.Balances, 1)
+			require.Equal(t, buyer, input.Balances[0].OwnerAddress)
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithFullProvenancesByTokenCID(ctx, tokenCID)
+	require.NoError(t, err)
 }
 
 func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC1155_Burned(t *testing.T) {

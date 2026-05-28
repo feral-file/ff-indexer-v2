@@ -309,6 +309,12 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 		events = append(events, *parsed)
 	}
 
+	var repairErr error
+	events, repairErr = a.repairBrokenPunkBoughtEvents(ctx, events)
+	if repairErr != nil {
+		return nil, repairErr
+	}
+
 	events = deduplicateOwnershipEvents(events)
 
 	// Sort events by block number, transaction index, and log index for deterministic ordering
@@ -396,6 +402,12 @@ func (a *GenericAdapter) GetTokensByOwner(
 		}
 
 		events = append(events, *parsed)
+	}
+
+	var repairErr error
+	events, repairErr = a.repairBrokenPunkBoughtEvents(ctx, events)
+	if repairErr != nil {
+		return nil, repairErr
 	}
 
 	events = deduplicateOwnershipEvents(events)
@@ -501,7 +513,14 @@ func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log) (*domai
 		if vLog.Topics[0] != expectedSignature {
 			continue
 		}
-		return parseConfiguredEvent(ctx, vLog, eventCfg, a.cidStandard, a.chainID, a.blockProvider)
+		parsed, err := parseConfiguredEvent(ctx, vLog, eventCfg, a.cidStandard, a.chainID, a.blockProvider)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.repairBrokenPunkBoughtEvent(ctx, parsed, vLog.TxHash); err != nil {
+			return nil, err
+		}
+		return parsed, nil
 	}
 
 	return nil, ErrUnknownEvent
@@ -571,9 +590,9 @@ func parseConfiguredEvent(
 		}
 	}
 
-	if event.EventType == domain.EventTypeTransfer {
-		event.EventType = domain.TransferEventType(event.FromAddress, event.ToAddress)
-	}
+	// Configured legacy events keep mapToStandardEvent as declared in contracts.json.
+	// Do not reclassify via TransferEventType: CryptoPunks PunkBought can carry zero toAddress
+	// before receipt repair, and mint/burn are modeled as separate configured events.
 
 	logger.DebugCtx(ctx, "Parsed custom contract event",
 		zap.String("contract", vLog.Address.Hex()),
