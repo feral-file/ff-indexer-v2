@@ -570,3 +570,140 @@ func TestGenericAdapter_GetTokensByOwner(t *testing.T) {
 		require.Empty(t, tokens)
 	})
 }
+
+func TestGenericAdapter_GetTokenEvents_DeduplicatesDuplicateTransferSources(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+	mockBlock.EXPECT().GetLatestBlock(gomock.Any()).Return(uint64(1_000_000), nil).AnyTimes()
+
+	const cryptopunksEventsABI = `[
+		{
+			"anonymous": false,
+			"inputs": [
+				{"indexed": true, "name": "from", "type": "address"},
+				{"indexed": true, "name": "to", "type": "address"},
+				{"indexed": false, "name": "punkIndex", "type": "uint256"}
+			],
+			"name": "PunkTransfer",
+			"type": "event"
+		},
+		{
+			"anonymous": false,
+			"inputs": [
+				{"indexed": true, "name": "punkIndex", "type": "uint256"},
+				{"indexed": false, "name": "value", "type": "uint256"},
+				{"indexed": true, "name": "fromAddress", "type": "address"},
+				{"indexed": true, "name": "toAddress", "type": "address"}
+			],
+			"name": "PunkBought",
+			"type": "event"
+		}
+	]`
+
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
+		"abis/cryptopunks.json":        {Data: []byte(cryptopunksABI)},
+		"abis/cryptopunks_events.json": {Data: []byte(cryptopunksEventsABI)},
+	})
+	require.NoError(t, err)
+
+	pagination := helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), mockBlock)
+
+	contractAddr := "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	seller := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	buyer := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	txHash := common.HexToHash("0xabc123")
+	punkIndex := big.NewInt(42)
+
+	punkBoughtSig := crypto.Keccak256Hash([]byte("PunkBought(uint256,uint256,address,address)"))
+	punkTransferSig := crypto.Keccak256Hash([]byte("PunkTransfer(address,address,uint256)"))
+
+	mockClient.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		Return([]types.Log{
+			{
+				Address:     common.HexToAddress(contractAddr),
+				BlockNumber: 500,
+				TxHash:      txHash,
+				TxIndex:     1,
+				Index:       0,
+				Topics: []common.Hash{
+					punkBoughtSig,
+					common.BigToHash(punkIndex),
+					common.BytesToHash(seller.Bytes()),
+					common.BytesToHash(buyer.Bytes()),
+				},
+				Data: common.LeftPadBytes(big.NewInt(1_000_000_000_000_000_000).Bytes(), 32),
+			},
+			{
+				Address:     common.HexToAddress(contractAddr),
+				BlockNumber: 500,
+				TxHash:      txHash,
+				TxIndex:     1,
+				Index:       1,
+				Topics: []common.Hash{
+					punkTransferSig,
+					common.BytesToHash(seller.Bytes()),
+					common.BytesToHash(buyer.Bytes()),
+				},
+				Data: common.LeftPadBytes(punkIndex.Bytes(), 32),
+			},
+		}, nil).AnyTimes()
+
+	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        contractAddr,
+		OwnershipModel: adapters.OwnershipSingleOwner,
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
+				Method:           "punkIndexToAddress",
+				ABI:              "cryptopunks",
+				Params:           []string{"${tokenId}"},
+				SuccessCondition: "address_nonzero",
+			},
+			Owner: registry.MethodConfig{
+				Method: "punkIndexToAddress",
+				ABI:    "cryptopunks",
+				Params: []string{"${tokenId}"},
+			},
+			Metadata: registry.MetadataConfig{Source: "vendor_only"},
+			Events: []adapters.EventConfig{
+				{
+					Signature:          "PunkTransfer(address,address,uint256)",
+					MapToStandardEvent: domain.EventTypeTransfer,
+					IndexedParams:      []string{"from", "to"},
+					DataParams:         []string{"punkIndex"},
+					ParameterMappings: map[string]string{
+						"from":      "FromAddress",
+						"to":        "ToAddress",
+						"punkIndex": "TokenNumber",
+					},
+				},
+				{
+					Signature:          "PunkBought(uint256,uint256,address,address)",
+					MapToStandardEvent: domain.EventTypeTransfer,
+					IndexedParams:      []string{"punkIndex", "fromAddress", "toAddress"},
+					DataParams:         []string{},
+					ParameterMappings: map[string]string{
+						"punkIndex":   "TokenNumber",
+						"fromAddress": "FromAddress",
+						"toAddress":   "ToAddress",
+					},
+				},
+			},
+		},
+	}, abiRegistry, mockClient, pagination, nil, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+
+	events, err := adp.GetTokenEvents(context.Background(), contractAddr, "42")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, domain.EventTypeTransfer, events[0].EventType)
+	require.Equal(t, "42", events[0].TokenNumber)
+	require.Equal(t, txHash.Hex(), events[0].TxHash)
+	require.NotNil(t, events[0].FromAddress)
+	require.NotNil(t, events[0].ToAddress)
+	require.Equal(t, seller.Hex(), *events[0].FromAddress)
+	require.Equal(t, buyer.Hex(), *events[0].ToAddress)
+	require.Equal(t, uint64(0), events[0].LogIndex)
+}

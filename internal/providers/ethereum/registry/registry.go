@@ -171,13 +171,31 @@ func (r *AdapterRegistry) GetContractCIDStandard(chain domain.Chain, contractAdd
 }
 
 // GetAllCustomEventSignatures returns all custom event signatures across configured contracts.
-// Deduplicates signatures that appear in multiple contracts. Used by the subscriber to
-// filter logs before routing them to specific adapters.
+// Deduplicates signatures that appear in multiple contracts.
 func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
+	return r.collectCustomEventSignatures(nil)
+}
+
+// GetCustomEventSignaturesForChain returns custom event signatures for configured contracts on a chain.
+// Used by the subscriber so custom legacy topics are not subscribed on unrelated networks.
+func (r *AdapterRegistry) GetCustomEventSignaturesForChain(chain domain.Chain) []common.Hash {
+	return r.collectCustomEventSignatures(&chain)
+}
+
+func (r *AdapterRegistry) collectCustomEventSignatures(chain *domain.Chain) []common.Hash {
 	var signatures []common.Hash
 	seen := make(map[common.Hash]struct{})
 
-	for _, adp := range r.contractAdapters {
+	for key, entry := range r.contractConfigs {
+		if chain != nil && entry.Chain != *chain {
+			continue
+		}
+
+		adp, ok := r.contractAdapters[key]
+		if !ok {
+			continue
+		}
+
 		for _, sig := range adp.GetEventSignatures() {
 			if _, exists := seen[sig]; exists {
 				continue
@@ -188,6 +206,22 @@ func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
 	}
 
 	return signatures
+}
+
+// IsConfiguredContract reports whether chain+address has a configured contract override.
+func (r *AdapterRegistry) IsConfiguredContract(chain domain.Chain, contractAddress string) bool {
+	_, ok := r.GetContractAdapter(chain, contractAddress)
+	return ok
+}
+
+// IsKnownCustomEventSignatureForChain reports whether topic0 matches a configured legacy signature on chain.
+func (r *AdapterRegistry) IsKnownCustomEventSignatureForChain(chain domain.Chain, topic common.Hash) bool {
+	for _, sig := range r.GetCustomEventSignaturesForChain(chain) {
+		if sig == topic {
+			return true
+		}
+	}
+	return false
 }
 
 // GetProvenanceContractsForChain returns configured contracts with provenance support for a chain.
@@ -254,6 +288,18 @@ func (r *AdapterRegistry) ParseEvent(
 				return adp.ParseEvent(ctx, vLog)
 			}
 		}
+	}
+
+	if len(vLog.Topics) > 0 &&
+		r.IsKnownCustomEventSignatureForChain(chain, vLog.Topics[0]) &&
+		!r.IsConfiguredContract(chain, vLog.Address.Hex()) {
+		logger.DebugCtx(ctx, "Skipping custom legacy signature from unconfigured contract",
+			zap.String("chain", string(chain)),
+			zap.String("signature", vLog.Topics[0].Hex()),
+			zap.String("address", vLog.Address.Hex()),
+			zap.Uint64("block", vLog.BlockNumber),
+			zap.Uint("logIndex", vLog.Index))
+		return nil, nil
 	}
 
 	return nil, fmt.Errorf("unknown event signature: %s", vLog.Topics[0].Hex())

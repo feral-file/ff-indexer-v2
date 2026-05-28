@@ -48,7 +48,7 @@ func NewSubscriber(cfg Config, ethereumClient EthereumClient, adapterRegistry *c
 func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler blockchain.EventHandler) error {
 	allEventSignatures := helpers.StandardEventSignatures()
 	if s.adapterRegistry != nil {
-		allEventSignatures = append(allEventSignatures, s.adapterRegistry.GetAllCustomEventSignatures()...)
+		allEventSignatures = append(allEventSignatures, s.adapterRegistry.GetCustomEventSignaturesForChain(s.chainID)...)
 	}
 
 	query := ethereum.FilterQuery{

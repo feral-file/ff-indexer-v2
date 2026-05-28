@@ -566,3 +566,61 @@ func applyAddressBalanceDelta(balances map[string]*big.Int, address string, delt
 	}
 	current.Add(current, delta)
 }
+
+// deduplicateOwnershipEvents removes duplicate ownership-affecting events that describe the same
+// transfer in one transaction (for example CryptoPunks PunkBought and PunkTransfer in the same tx).
+//
+// The dedupe key matches provenance_events uniqueness: chain, tx hash, token, from, to, event type.
+// When duplicates exist, the earliest log (lowest block/tx/log index) is kept.
+func deduplicateOwnershipEvents(events []domain.BlockchainEvent) []domain.BlockchainEvent {
+	if len(events) <= 1 {
+		return events
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].BlockNumber != events[j].BlockNumber {
+			return events[i].BlockNumber < events[j].BlockNumber
+		}
+		if events[i].TxIndex != events[j].TxIndex {
+			return events[i].TxIndex < events[j].TxIndex
+		}
+		return events[i].LogIndex < events[j].LogIndex
+	})
+
+	seen := make(map[string]struct{})
+	result := make([]domain.BlockchainEvent, 0, len(events))
+	for _, event := range events {
+		if !isOwnershipAffectingEvent(event.EventType) {
+			result = append(result, event)
+			continue
+		}
+
+		key := ownershipEventDedupeKey(event)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, event)
+	}
+
+	return result
+}
+
+func ownershipEventDedupeKey(event domain.BlockchainEvent) string {
+	from := ""
+	if event.FromAddress != nil {
+		from = domain.NormalizeAddress(*event.FromAddress)
+	}
+	to := ""
+	if event.ToAddress != nil {
+		to = domain.NormalizeAddress(*event.ToAddress)
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		event.Chain,
+		event.TxHash,
+		event.TokenNumber,
+		from,
+		to,
+		event.EventType,
+	)
+}

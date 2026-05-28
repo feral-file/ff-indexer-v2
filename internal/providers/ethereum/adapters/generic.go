@@ -235,6 +235,8 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 		events = append(events, *parsed)
 	}
 
+	events = deduplicateOwnershipEvents(events)
+
 	// Sort events by block number, transaction index, and log index for deterministic ordering
 	sort.SliceStable(events, func(i, j int) bool {
 		if events[i].BlockNumber != events[j].BlockNumber {
@@ -321,6 +323,8 @@ func (a *GenericAdapter) GetTokensByOwner(
 
 		events = append(events, *parsed)
 	}
+
+	events = deduplicateOwnershipEvents(events)
 
 	return trackOwnershipFromParsedEvents(a.chainID, a.cidStandard, a.contractAddress, owner, events, blacklist), nil
 }

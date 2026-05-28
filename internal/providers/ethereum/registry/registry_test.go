@@ -284,6 +284,45 @@ func TestAdapterRegistry_GetAllCustomEventSignatures(t *testing.T) {
 	require.Len(t, signatures, 3)
 }
 
+func TestAdapterRegistry_GetCustomEventSignaturesForChain(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+
+	reg := newTestRegistry(t, mockClient, testContractFS(t, cryptopunksContractConfigWithEvents))
+
+	mainnetSigs := reg.GetCustomEventSignaturesForChain(domain.ChainEthereumMainnet)
+	require.Len(t, mainnetSigs, 3)
+
+	otherChainSigs := reg.GetCustomEventSignaturesForChain(domain.Chain("eip155:5"))
+	require.Empty(t, otherChainSigs)
+}
+
+func TestAdapterRegistry_ParseEvent_SkipsUnconfiguredCustomSignatureAddress(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+
+	reg := newTestRegistry(t, mockClient, testContractFS(t, cryptopunksContractConfigWithEvents))
+
+	punkTransferSig := reg.GetCustomEventSignaturesForChain(domain.ChainEthereumMainnet)[0]
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	punkIndex := big.NewInt(42)
+
+	vLog := types.Log{
+		Address: common.HexToAddress("0x9999999999999999999999999999999999999999"),
+		Topics: []common.Hash{
+			punkTransferSig,
+			common.BytesToHash(from.Bytes()),
+			common.BytesToHash(to.Bytes()),
+		},
+		Data: common.LeftPadBytes(punkIndex.Bytes(), 32),
+	}
+
+	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+	require.Nil(t, parsed)
+}
+
 func TestAdapterRegistry_GetProvenanceContractsForChain(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)
