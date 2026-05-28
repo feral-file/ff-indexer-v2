@@ -73,51 +73,6 @@ func (mr *MockEthereumProviderClientMockRecorder) ContractAdapterRegistry() *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ContractAdapterRegistry", reflect.TypeOf((*MockEthereumProviderClient)(nil).ContractAdapterRegistry))
 }
 
-// ERC1155BalanceOf mocks base method.
-func (m *MockEthereumProviderClient) ERC1155BalanceOf(ctx context.Context, contractAddress, ownerAddress, tokenNumber string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ERC1155BalanceOf", ctx, contractAddress, ownerAddress, tokenNumber)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ERC1155BalanceOf indicates an expected call of ERC1155BalanceOf.
-func (mr *MockEthereumProviderClientMockRecorder) ERC1155BalanceOf(ctx, contractAddress, ownerAddress, tokenNumber any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC1155BalanceOf", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC1155BalanceOf), ctx, contractAddress, ownerAddress, tokenNumber)
-}
-
-// ERC1155BalanceOfBatch mocks base method.
-func (m *MockEthereumProviderClient) ERC1155BalanceOfBatch(ctx context.Context, contractAddress, tokenNumber string, addresses []string) (map[string]string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ERC1155BalanceOfBatch", ctx, contractAddress, tokenNumber, addresses)
-	ret0, _ := ret[0].(map[string]string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ERC1155BalanceOfBatch indicates an expected call of ERC1155BalanceOfBatch.
-func (mr *MockEthereumProviderClientMockRecorder) ERC1155BalanceOfBatch(ctx, contractAddress, tokenNumber, addresses any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC1155BalanceOfBatch", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC1155BalanceOfBatch), ctx, contractAddress, tokenNumber, addresses)
-}
-
-// ERC1155Balances mocks base method.
-func (m *MockEthereumProviderClient) ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ERC1155Balances", ctx, contractAddress, tokenNumber)
-	ret0, _ := ret[0].(map[string]string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ERC1155Balances indicates an expected call of ERC1155Balances.
-func (mr *MockEthereumProviderClientMockRecorder) ERC1155Balances(ctx, contractAddress, tokenNumber any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ERC1155Balances", reflect.TypeOf((*MockEthereumProviderClient)(nil).ERC1155Balances), ctx, contractAddress, tokenNumber)
-}
-
 // GetContractDeployer mocks base method.
 func (m *MockEthereumProviderClient) GetContractDeployer(ctx context.Context, contractAddress string, minBlock uint64) (string, error) {
 	m.ctrl.T.Helper()
@@ -131,22 +86,6 @@ func (m *MockEthereumProviderClient) GetContractDeployer(ctx context.Context, co
 func (mr *MockEthereumProviderClientMockRecorder) GetContractDeployer(ctx, contractAddress, minBlock any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetContractDeployer", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetContractDeployer), ctx, contractAddress, minBlock)
-}
-
-// GetERC1155BalanceAndEventsForOwner mocks base method.
-func (m *MockEthereumProviderClient) GetERC1155BalanceAndEventsForOwner(ctx context.Context, contractAddress, tokenNumber, ownerAddress string) (string, []domain.BlockchainEvent, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetERC1155BalanceAndEventsForOwner", ctx, contractAddress, tokenNumber, ownerAddress)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].([]domain.BlockchainEvent)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// GetERC1155BalanceAndEventsForOwner indicates an expected call of GetERC1155BalanceAndEventsForOwner.
-func (mr *MockEthereumProviderClientMockRecorder) GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, ownerAddress any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetERC1155BalanceAndEventsForOwner", reflect.TypeOf((*MockEthereumProviderClient)(nil).GetERC1155BalanceAndEventsForOwner), ctx, contractAddress, tokenNumber, ownerAddress)
 }
 
 // GetLatestBlock mocks base method.

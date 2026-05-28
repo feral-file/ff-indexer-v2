@@ -33,7 +33,6 @@ var ErrOriginationNotFound = errors.New("origination not found")
 //
 // Callers interact only with this interface. Internally, methods fall into a few roles:
 //   - Infrastructure: thin RPC/block wrappers used by ingestion and orchestration code.
-//   - Low-level ERC-1155: standard balance helpers (no adapter routing; kept for existing callers).
 //   - Adapter-routed: contract/standard-aware operations delegated to registry → adapters.
 //   - Cross-standard orchestration: multi-standard log scans that stay on the client today.
 //   - Contract lifecycle & registry introspection: deployer lookup and adapter registry access.
@@ -45,22 +44,6 @@ type EthereumClient interface {
 
 	// GetLatestBlock returns the latest block number
 	GetLatestBlock(ctx context.Context) (uint64, error)
-
-	// ERC1155BalanceOf fetches the balance of a specific token ID for an owner from an ERC1155 contract
-	ERC1155BalanceOf(ctx context.Context, contractAddress, ownerAddress, tokenNumber string) (string, error)
-
-	// ERC1155BalanceOfBatch fetches balances for multiple addresses for a specific token ID from an ERC1155 contract
-	// Handles chunking internally to respect RPC limits (default 200 addresses per chunk)
-	// Returns a map of address -> balance string
-	ERC1155BalanceOfBatch(ctx context.Context, contractAddress, tokenNumber string, addresses []string) (map[string]string, error)
-
-	// ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events
-	ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error)
-
-	// GetERC1155BalanceAndEventsForOwner fetches the current balance and transfer events for a specific ERC1155 token and owner
-	// This is optimized for owner-specific indexing by filtering events where owner is sender or receiver
-	// Supports both TransferSingle and TransferBatch events
-	GetERC1155BalanceAndEventsForOwner(ctx context.Context, contractAddress, tokenNumber, ownerAddress string) (balance string, events []domain.BlockchainEvent, err error)
 
 	// TokenBalances fetches all holder balances via the contract adapter registry.
 	TokenBalances(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (map[string]string, error)
@@ -171,41 +154,6 @@ func (f *ethereumClient) SubscribeFilterLogs(ctx context.Context, query ethereum
 // GetLatestBlock returns the latest block number using the cached provider
 func (f *ethereumClient) GetLatestBlock(ctx context.Context) (uint64, error) {
 	return f.blockProvider.GetLatestBlock(ctx)
-}
-
-// ERC1155BalanceOf fetches the balance of a specific token ID for an owner from an ERC1155 contract
-func (f *ethereumClient) ERC1155BalanceOf(ctx context.Context, contractAddress, ownerAddress, tokenNumber string) (string, error) {
-	return helpers.ERC1155BalanceOf(ctx, f.client, contractAddress, ownerAddress, tokenNumber)
-}
-
-// ERC1155BalanceOfBatch fetches balances for multiple addresses for a specific token ID from an ERC1155 contract
-// It uses the ERC1155 balanceOfBatch function which allows querying multiple address-token pairs in a single RPC call
-// Handles chunking internally to respect RPC limits (200 address-token pairs per chunk by default)
-// Returns a map of address -> balance string (only includes addresses with non-zero balances)
-func (f *ethereumClient) ERC1155BalanceOfBatch(ctx context.Context, contractAddress, tokenNumber string, addresses []string) (map[string]string, error) {
-	return helpers.ERC1155BalanceOfBatch(ctx, f.client, contractAddress, tokenNumber, addresses)
-}
-
-// ERC1155Balances calculates all current ERC1155 token balances by replaying transfer events.
-func (f *ethereumClient) ERC1155Balances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error) {
-	return helpers.ERC1155ReplayBalances(ctx, f.pagination, f.blockProvider, contractAddress, tokenNumber)
-}
-
-// GetERC1155BalanceAndEventsForOwner fetches the current balance and transfer events for a specific ERC1155 token and owner.
-// This is optimized for owner-specific indexing by filtering events where owner is sender or receiver.
-// Supports both TransferSingle and TransferBatch events.
-func (f *ethereumClient) GetERC1155BalanceAndEventsForOwner(ctx context.Context, contractAddress, tokenNumber, ownerAddress string) (string, []domain.BlockchainEvent, error) {
-	return helpers.ERC1155BalanceAndEventsForOwner(
-		ctx,
-		f.client,
-		f.pagination,
-		f.blockProvider,
-		f.chainID,
-		f.clock.Now,
-		contractAddress,
-		tokenNumber,
-		ownerAddress,
-	)
 }
 
 // GetTokenEvents fetches all historical events for a specific token by routing to the appropriate adapter.

@@ -2767,7 +2767,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_Success_ERC1155(t *testing.T
 		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
 		Return(true, nil)
 
-	// Mock ERC1155Balances to return balances map
+	// Mock TokenBalances to return balances map
 	balances := map[string]string{
 		"0xowner1": "10",
 		"0xowner2": "5",
@@ -2881,7 +2881,7 @@ func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155Timeout(t *testing.T)
 		TokenExists(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
 		Return(true, nil)
 
-	// Mock ERC1155Balances to return timeout error (but with partial balances)
+	// Mock TokenBalances to return timeout error
 	mocks.ethClient.EXPECT().
 		TokenBalances(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
 		Return(nil, context.DeadlineExceeded)
