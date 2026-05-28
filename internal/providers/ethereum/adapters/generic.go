@@ -221,9 +221,7 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	for _, vLog := range logs {
 		parsed, err := a.ParseEvent(ctx, vLog)
 		if err != nil {
-			// Log error but continue processing
-			logger.WarnCtx(ctx, "Failed to parse event log", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("parse event log at block %d index %d: %w", vLog.BlockNumber, vLog.Index, err)
 		}
 		if parsed == nil {
 			continue
@@ -251,7 +249,31 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	return events, nil
 }
 
-// GetTokensByOwner returns tokens owned by the address within the block range for this configured contract.
+// GetOwnerLogs fetches configured provenance event logs where the owner is sender or recipient.
+func (a *GenericAdapter) GetOwnerLogs(
+	ctx context.Context,
+	ownerAddress string,
+	fromBlock uint64,
+	toBlock uint64,
+) ([]types.Log, error) {
+	if len(a.provenanceEvents) == 0 {
+		return nil, nil
+	}
+
+	owner := common.HexToAddress(ownerAddress)
+	ownerHash := common.BytesToHash(owner.Bytes())
+	contractAddr := common.HexToAddress(a.contractAddress)
+
+	queries := buildCustomOwnerTransferQueries(a.provenanceEvents, contractAddr, ownerHash, fromBlock, toBlock)
+	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query configured contract logs: %w", err)
+	}
+
+	return logs, nil
+}
+
+// GetTokensByOwner returns tokens owned by the address at the end of the block range for this configured contract.
 //
 // Queries custom provenance events from contracts.json, parses them into standardized events,
 // then applies ownership tracking based on the configured standard field:
@@ -274,13 +296,10 @@ func (a *GenericAdapter) GetTokensByOwner(
 	}
 
 	owner := common.HexToAddress(ownerAddress)
-	ownerHash := common.BytesToHash(owner.Bytes())
-	contractAddr := common.HexToAddress(a.contractAddress)
 
-	queries := buildCustomOwnerTransferQueries(a.provenanceEvents, contractAddr, ownerHash, fromBlock, toBlock)
-	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
+	logs, err := a.GetOwnerLogs(ctx, ownerAddress, fromBlock, toBlock)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query configured contract logs: %w", err)
+		return nil, err
 	}
 
 	logs = deduplicateLogs(logs)

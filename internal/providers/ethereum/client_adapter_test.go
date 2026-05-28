@@ -373,6 +373,50 @@ func TestClient_GetTokenCIDsByOwnerAndBlockRange_TimestampLookupFailure(t *testi
 		nil,
 	)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "adapter ownership query failed")
+	require.Contains(t, err.Error(), "owner ownership replay failed")
+	require.Contains(t, err.Error(), "resolve block timestamp")
+}
+
+func TestClient_GetTokenEvents_ParseErrorFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+
+	contract := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	tokenID := common.BigToHash(big.NewInt(1))
+
+	mockBlock.EXPECT().
+		GetLatestBlock(gomock.Any()).
+		Return(uint64(1000), nil)
+
+	mockEth.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		Return([]types.Log{{
+			Address:     contract,
+			BlockNumber: 500,
+			BlockHash:   common.HexToHash("0xabc"),
+			TxHash:      common.HexToHash("0xdef"),
+			Index:       1,
+			Topics: []common.Hash{
+				crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)")),
+				common.BytesToHash(common.HexToAddress("0x1111111111111111111111111111111111111111").Bytes()),
+				common.BytesToHash(common.HexToAddress("0x2222222222222222222222222222222222222222").Bytes()),
+				tokenID,
+			},
+		}}, nil)
+
+	mockBlock.EXPECT().
+		GetBlockTimestamp(gomock.Any(), uint64(500)).
+		Return(time.Time{}, context.DeadlineExceeded)
+
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+
+	_, err := client.GetTokenEvents(
+		context.Background(),
+		contract.Hex(),
+		"1",
+		domain.StandardERC721,
+	)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "resolve block timestamp")
 }

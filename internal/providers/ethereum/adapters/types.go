@@ -121,32 +121,21 @@ type ContractAdapter interface {
 	// the full provenance chain for a token.
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string) ([]domain.BlockchainEvent, error)
 
-	// GetTokensByOwner returns all tokens owned by the address within the block range.
+	// GetOwnerLogs fetches raw ownership-affecting logs for an owner within a block range.
 	//
-	// Reason: Full adapter-centric ownership tracking where each adapter handles its own
-	// standard-specific query and tracking logic, enabling parallel execution and clean
-	// separation of concerns.
+	// The client merges logs from all adapters and runs unified replay with a global held-token
+	// limit. Adapters do not apply limits or compute final ownership snapshots.
+	GetOwnerLogs(
+		ctx context.Context,
+		ownerAddress string,
+		fromBlock uint64,
+		toBlock uint64,
+	) ([]types.Log, error)
+
+	// GetTokensByOwner returns tokens owned by the address at the end of the block range.
 	//
-	// Constraints:
-	// - Each adapter processes the entire block range independently (no stop-early optimization)
-	// - Does not apply any limit; the caller aggregates across all adapters and applies
-	//   global limits at block boundaries
-	// - Blacklist filtering is applied during tracking, not after aggregation
-	//
-	// Trade-offs:
-	// - Simplicity: Each adapter owns its complete ownership logic without client coordination
-	// - Performance: Processes full range even when limit is small; caller should chunk large
-	//   ranges at the workflow layer if this becomes expensive
-	// - Correctness: Ensures each standard's ownership semantics (last-transfer-wins vs
-	//   balance-accumulation) are consistently applied without client-side mixing
-	//
-	// Ownership semantics:
-	// - ERC721: last-transfer-wins (owned if most recent Transfer has to==owner)
-	// - ERC1155: balance-accumulation (owned if net balance > 0 after all transfers)
-	// - Configured contracts: use standard field from contracts.json to select logic
-	//
-	// Returns all owned tokens with their block numbers. The block number represents the
-	// last observed ownership-affecting event for that token within the range.
+	// Convenience wrapper for adapter tests: GetOwnerLogs followed by full-range replay without
+	// a global limit. Production owner scans use client-side ReplayOwnerTokensWithLimit instead.
 	GetTokensByOwner(
 		ctx context.Context,
 		ownerAddress string,

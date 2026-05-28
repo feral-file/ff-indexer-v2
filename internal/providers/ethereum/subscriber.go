@@ -10,8 +10,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 
-	"go.uber.org/zap"
-
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
@@ -79,9 +77,11 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 			return fmt.Errorf("subscription error: %w", err)
 		case vLog := <-logs:
 			event, err := s.client.ParseEventLog(ctx, vLog)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				logger.ErrorCtx(ctx, errors.New("error parsing log"), zap.Error(err))
-				continue
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return ctx.Err()
+				}
+				return fmt.Errorf("parse log at block %d index %d: %w", vLog.BlockNumber, vLog.Index, err)
 			}
 
 			if event == nil {

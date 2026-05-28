@@ -146,9 +146,7 @@ func (a *ERC1155Adapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	for _, vLog := range logs {
 		parsed, err := a.ParseEvent(ctx, vLog)
 		if err != nil {
-			// Log error but continue processing
-			logger.WarnCtx(ctx, "Failed to parse event log", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("parse event log at block %d index %d: %w", vLog.BlockNumber, vLog.Index, err)
 		}
 		if parsed == nil {
 			continue
@@ -176,14 +174,13 @@ func (a *ERC1155Adapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	return events, nil
 }
 
-// GetTokensByOwner returns ERC1155 tokens owned by the address within the block range.
-func (a *ERC1155Adapter) GetTokensByOwner(
+// GetOwnerLogs fetches ERC-1155 transfer logs where the owner is sender or recipient.
+func (a *ERC1155Adapter) GetOwnerLogs(
 	ctx context.Context,
 	ownerAddress string,
 	fromBlock uint64,
 	toBlock uint64,
-	blacklist registry.BlacklistRegistry,
-) ([]domain.TokenWithBlock, error) {
+) ([]types.Log, error) {
 	owner := common.HexToAddress(ownerAddress)
 	ownerHash := common.BytesToHash(owner.Bytes())
 
@@ -231,6 +228,24 @@ func (a *ERC1155Adapter) GetTokensByOwner(
 	logs, err := filterLogsInParallel(ctx, a.pagination, queries)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ERC1155 logs: %w", err)
+	}
+
+	return logs, nil
+}
+
+// GetTokensByOwner returns ERC1155 tokens owned by the address at the end of the block range.
+func (a *ERC1155Adapter) GetTokensByOwner(
+	ctx context.Context,
+	ownerAddress string,
+	fromBlock uint64,
+	toBlock uint64,
+	blacklist registry.BlacklistRegistry,
+) ([]domain.TokenWithBlock, error) {
+	owner := common.HexToAddress(ownerAddress)
+
+	logs, err := a.GetOwnerLogs(ctx, ownerAddress, fromBlock, toBlock)
+	if err != nil {
+		return nil, err
 	}
 
 	logs = deduplicateLogs(logs)

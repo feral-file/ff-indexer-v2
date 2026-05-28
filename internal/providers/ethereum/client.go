@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strings"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -83,12 +84,9 @@ type EthereumClient interface {
 	SupportsProvenance(contractAddress string, standard domain.ChainStandard) bool
 
 	// GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.
-	// It queries standard ERC721/ERC1155 adapters and configured generic contract adapters, then aggregates
-	// ownership across all standards. limit is applied globally at block boundaries after aggregation.
-	// Returns effectiveFromBlock/effectiveToBlock for the range actually used after limiting.
-	//
-	// Each adapter processes the full requested block range independently. For large ranges with small
-	// limits, consider chunking at the workflow layer.
+	// It queries standard ERC721/ERC1155 adapters and configured generic contract adapters, merges logs,
+	// and replays ownership with a single global held-token limit. Returns effectiveFromBlock/effectiveToBlock
+	// for the range actually covered after limiting.
 	GetTokenCIDsByOwnerAndBlockRange(
 		ctx context.Context,
 		ownerAddress string,
@@ -274,25 +272,18 @@ func (f *ethereumClient) OwnerBalanceAndEvents(
 
 // GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.
 //
-// Reason: Adapter-centric ownership tracking enables parallel querying across all token standards
-// (ERC721, ERC1155, and configured legacy contracts) while maintaining clean separation of concerns.
+// Reason: Unified client-side replay preserves global heldCount semantics across ERC-721, ERC-1155,
+// and configured legacy contracts. Adapters only fetch owner-scoped logs.
 //
 // Trade-offs:
-//   - Each adapter processes the full block range independently, which may query more events than
-//     needed when the limit is small relative to the owner's holdings
+//   - All adapter logs for the requested range are fetched before early-stop can trim replay work
 //   - For large ranges (>100k blocks) with small limits, consider chunking at the workflow layer
-//   - Correctness is prioritized over early-stop optimization: all adapters use their standard's
-//     ownership semantics consistently without client-side mixing
 //
 // Constraints:
 //   - Limit must be > 0 (validated on entry)
-//   - Limit is applied globally at block boundaries after aggregating all adapters' results
-//   - Blacklist filtering happens within each adapter, not after aggregation
-//   - EffectiveFromBlock/EffectiveToBlock report the actual range covered after applying the limit
-//
-// The function discovers standard ERC721/ERC1155 adapters and all configured contracts with
-// provenance events, queries them in parallel, aggregates results, sorts by block order, and
-// applies the limit. Returns all owned tokens within the effective range.
+//   - Limit stops replay at a block boundary once heldCount reaches limit
+//   - Blacklist filtering happens during replay, not after aggregation
+//   - EffectiveFromBlock/EffectiveToBlock report the replay range after applying the limit
 func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	ctx context.Context,
 	ownerAddress string,
@@ -306,6 +297,7 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 		return domain.TokenWithBlockRangeResult{}, fmt.Errorf("limit must be > 0")
 	}
 
+	owner := common.HexToAddress(ownerAddress)
 	configuredAdapters := f.adapterRegistry.GetProvenanceContractsForChain(f.chainID)
 	adaptersToQuery := make([]adapters.ContractAdapter, 0, 2+len(configuredAdapters))
 
@@ -320,38 +312,75 @@ func (f *ethereumClient) GetTokenCIDsByOwnerAndBlockRange(
 	}
 
 	type adapterResult struct {
-		tokens []domain.TokenWithBlock
-		err    error
+		logs []types.Log
+		err  error
 	}
 
 	resultsCh := make(chan adapterResult, len(adaptersToQuery))
 	for _, adp := range adaptersToQuery {
 		go func(adapter adapters.ContractAdapter) {
-			tokens, err := adapter.GetTokensByOwner(ctx, ownerAddress, requestedFromBlock, requestedToBlock, blacklist)
-			resultsCh <- adapterResult{tokens: tokens, err: err}
+			logs, err := adapter.GetOwnerLogs(ctx, ownerAddress, requestedFromBlock, requestedToBlock)
+			resultsCh <- adapterResult{logs: logs, err: err}
 		}(adp)
 	}
 
-	var allTokens []domain.TokenWithBlock
+	var allLogs []types.Log
 	for range adaptersToQuery {
 		result := <-resultsCh
 		if result.err != nil {
-			return domain.TokenWithBlockRangeResult{}, fmt.Errorf("adapter ownership query failed: %w", result.err)
+			return domain.TokenWithBlockRangeResult{}, fmt.Errorf("adapter owner log query failed: %w", result.err)
 		}
-		allTokens = append(allTokens, result.tokens...)
+		allLogs = append(allLogs, result.logs...)
 	}
 
-	sortTokensByBlockOrder(allTokens, order)
+	allLogs = deduplicateOwnerLogs(allLogs)
 
-	effectiveFromBlock := requestedFromBlock
-	effectiveToBlock := requestedToBlock
-	allTokens, effectiveFromBlock, effectiveToBlock = applyOwnerTokenLimit(allTokens, limit, order, effectiveFromBlock, effectiveToBlock)
+	configuredStandards := make(map[string]domain.ChainStandard, len(configuredAdapters))
+	for contractAddr := range configuredAdapters {
+		if standard, ok := f.adapterRegistry.GetContractCIDStandard(f.chainID, contractAddr); ok {
+			configuredStandards[strings.ToLower(common.HexToAddress(contractAddr).Hex())] = standard
+		}
+	}
+
+	replayResult, err := adapters.ReplayOwnerTokensWithLimit(ctx, adapters.OwnerReplayParams{
+		ChainID:                     f.chainID,
+		Owner:                       owner,
+		Logs:                        allLogs,
+		Blacklist:                   blacklist,
+		Limit:                       limit,
+		Order:                       order,
+		RequestedFromBlock:          requestedFromBlock,
+		RequestedToBlock:            requestedToBlock,
+		ConfiguredContractStandards: configuredStandards,
+		ParseLog: func(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
+			return f.adapterRegistry.ParseEvent(ctx, vLog, f.chainID)
+		},
+	})
+	if err != nil {
+		return domain.TokenWithBlockRangeResult{}, fmt.Errorf("owner ownership replay failed: %w", err)
+	}
+
+	sortTokensByBlockOrder(replayResult.Tokens, order)
 
 	return domain.TokenWithBlockRangeResult{
-		Tokens:             allTokens,
-		EffectiveFromBlock: effectiveFromBlock,
-		EffectiveToBlock:   effectiveToBlock,
+		Tokens:             replayResult.Tokens,
+		EffectiveFromBlock: replayResult.EffectiveFromBlock,
+		EffectiveToBlock:   replayResult.EffectiveToBlock,
 	}, nil
+}
+
+func deduplicateOwnerLogs(logs []types.Log) []types.Log {
+	logMap := make(map[string]types.Log, len(logs))
+	for _, vLog := range logs {
+		key := fmt.Sprintf("%d-%s-%d", vLog.BlockNumber, vLog.TxHash.Hex(), vLog.Index)
+		logMap[key] = vLog
+	}
+
+	result := make([]types.Log, 0, len(logMap))
+	for _, vLog := range logMap {
+		result = append(result, vLog)
+	}
+	return result
 }
 
 // sortTokensByBlockOrder sorts tokens by block number (respecting scan order), then by TokenCID.
