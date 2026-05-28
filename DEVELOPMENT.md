@@ -378,7 +378,7 @@ Use this command before handing off a substantive change:
 make check
 ```
 
-It runs the `check` target in the `Makefile`: format imports (`goimports`), verify `gofmt -s` formatting (same as CI’s go fmt check), full-repo local lint (`golangci-lint` with CGO enabled), then `CGO_ENABLED=1` `go test -cover ./...`.
+It runs the `check` target in the `Makefile`: format imports (`goimports`), verify `gofmt -s` formatting (same as CI’s go fmt check), full-repo local lint (`golangci-lint` with CGO enabled), then `CGO_ENABLED=1` `go test -cover ./...` (same package set CI exercises, including `cmd/ff-indexer`).
 
 To fix formatting issues before running checks:
 

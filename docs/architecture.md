@@ -164,7 +164,7 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 
 **Dependency flow:** `Client → Registry → Adapters → Helpers → internal/adapter.EthClient (RPC)`. Standard adapters no longer callback into the client.
 
-**Lookup order:** configured contract override by `(chain, contract_address)` first → standard adapter for the declared token standard. When a configured override is selected, a CID standard mismatch between the token CID and the auto-derived standard logs a warning but still returns the configured adapter. Unsupported standards return an error at lookup time.
+**Lookup order:** configured contract override by `(chain, contract_address)` first → standard adapter for the declared token standard. When a configured override is selected, a CID standard mismatch between the token CID and the auto-derived standard returns `ErrConfiguredStandardMismatch` at lookup time. Unsupported standards return an error at lookup time.
 
 **Routing behavior:**
 

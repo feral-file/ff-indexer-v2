@@ -115,6 +115,10 @@ func applyOwnerLog(
 		return nil
 	}
 
+	if _, ok := params.ConfiguredContractStandards[strings.ToLower(vLog.Address.Hex())]; ok {
+		return applyOwnerConfiguredContractLog(ctx, params, vLog, tokenMap, heldCount)
+	}
+
 	switch vLog.Topics[0] {
 	case helpers.TransferEventSignature:
 		if len(vLog.Topics) == 4 {

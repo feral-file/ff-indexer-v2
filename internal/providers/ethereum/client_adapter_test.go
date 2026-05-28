@@ -20,6 +20,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	ethprovider "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
+	ethadapters "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 )
 
 const cryptoPunksAddress = "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
@@ -83,6 +84,18 @@ func TestClient_AdapterRouting_CryptoPunks(t *testing.T) {
 	require.Equal(t, ownerAddr.Hex(), owner)
 
 	require.True(t, client.IsVendorOnlyMetadata(cryptoPunksAddress))
+}
+
+func TestClient_TokenOwner_RejectsConfiguredStandardMismatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockEth := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+
+	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+
+	_, err := client.TokenOwner(context.Background(), cryptoPunksAddress, "1", domain.StandardERC1155)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ethadapters.ErrConfiguredStandardMismatch)
 }
 
 func TestClient_AdapterRouting_StandardERC721Regression(t *testing.T) {

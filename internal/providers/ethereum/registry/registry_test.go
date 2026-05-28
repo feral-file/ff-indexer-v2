@@ -186,15 +186,13 @@ func TestAdapterRegistry_GetAdapter(t *testing.T) {
 		require.ErrorIs(t, err, adapters.ErrUnsupportedContractStandard)
 	})
 
-	t.Run("configured contract returns adapter despite CID standard mismatch", func(t *testing.T) {
-		adp, err := reg.GetAdapter(
+	t.Run("configured contract rejects CID standard mismatch", func(t *testing.T) {
+		_, err := reg.GetAdapter(
 			domain.ChainEthereumMainnet,
 			"0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
 			domain.StandardERC1155,
 		)
-		require.NoError(t, err)
-		require.NotNil(t, adp)
-		require.Equal(t, adapters.OwnershipSingleOwner, adp.OwnershipModel())
+		require.ErrorIs(t, err, adapters.ErrConfiguredStandardMismatch)
 	})
 
 	t.Run("vendor only metadata flag", func(t *testing.T) {

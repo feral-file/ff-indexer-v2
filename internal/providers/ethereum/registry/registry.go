@@ -102,9 +102,10 @@ func NewAdapterRegistry(
 // GetAdapter returns the adapter for a chain, contract, and token standard.
 //
 // Configured contract overrides are resolved by (chain, address) first. When the requested
-// CID standard differs from the configured contract's derived CID standard, a warning is
-// logged and the configured adapter is still returned. Falls back to standard adapters
-// when no override exists. Returns ErrUnsupportedContractStandard if no adapter is found.
+// CID standard differs from the configured contract's derived CID standard, lookup fails
+// with ErrConfiguredStandardMismatch so callers cannot persist externally invalid token rows.
+// Falls back to standard adapters when no override exists. Returns ErrUnsupportedContractStandard
+// if no adapter is found.
 func (r *AdapterRegistry) GetAdapter(
 	chain domain.Chain,
 	contractAddress string,
@@ -115,11 +116,8 @@ func (r *AdapterRegistry) GetAdapter(
 		entry := r.contractConfigs[key]
 		expectedStandard := entry.CIDStandard()
 		if expectedStandard != standard {
-			logger.WarnCtx(context.Background(), "CID standard mismatch for configured contract; using configured adapter",
-				zap.String("contract", entry.Name),
-				zap.String("expectedStandard", string(expectedStandard)),
-				zap.String("requestedStandard", string(standard)),
-			)
+			return nil, fmt.Errorf("configured contract %q expects standard %q, got %q: %w",
+				entry.Name, expectedStandard, standard, adapters.ErrConfiguredStandardMismatch)
 		}
 		return adp, nil
 	}
