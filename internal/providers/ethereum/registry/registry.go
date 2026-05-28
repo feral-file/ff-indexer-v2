@@ -65,6 +65,28 @@ func NewAdapterRegistry(
 		registry.contractAdapters[key] = adp
 		registry.contractConfigs[key] = entry
 		overridesByChain[entry.Chain]++
+
+		if entry.OwnershipModel == adapters.OwnershipSingleOwner && len(entry.Adapter.Events) == 0 {
+			logger.WarnCtx(context.Background(),
+				"Legacy contract configured with limited indexing mode (no provenance events)",
+				zap.String("contract", entry.Name),
+				zap.String("address", entry.Address),
+				zap.String("chain", string(entry.Chain)),
+				zap.String("ownership_model", string(entry.OwnershipModel)),
+				zap.String("indexing_mode", "current_state_only"),
+				zap.Strings("disabled_capabilities", []string{
+					"address_owner_sweeps",
+					"realtime_event_ingestion",
+					"full_provenance_history",
+					"ownership_change_webhooks",
+				}),
+				zap.Strings("supported_capabilities", []string{
+					"explicit_token_indexing",
+					"current_owner_snapshot",
+					"metadata_indexing",
+				}),
+			)
+		}
 	}
 
 	for chain, count := range overridesByChain {

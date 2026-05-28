@@ -176,6 +176,33 @@ Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which p
 - **Owner sweeps** use the global `ethereum_token_sweep_start_block` as the lower bound for all contracts, including configured legacy overrides. Tokens whose last ownership-changing event occurred before that block will not appear in owner sweeps until a later in-range event occurs. Lower the global setting when historical discovery before that block is required.
 - **Token CID format is unchanged** — legacy contracts still use the `erc721` standard in external identifiers.
 
+#### Limited indexing mode (legacy contracts without events)
+
+Legacy contract overrides can omit `adapter.events`. Whether that is allowed depends on `ownership_model`:
+
+| `ownership_model` | Without `adapter.events` | Startup behavior |
+|---|---|---|
+| `single_owner` | Allowed | **Warn** — contract loads in **current-state-only** mode |
+| `multi_holder` | **Rejected** | **Fail** — config validation error at startup |
+
+**Why:** `single_owner` contracts can still answer “who holds token *N* now?” via configured `existence` / `owner` contract calls when a token CID is explicitly indexed. `multi_holder` balance indexing replays provenance logs; without configured events there is no supported path to discover holders or compute balances for legacy overrides.
+
+**Capabilities in current-state-only mode** (`single_owner`, no events, `SupportsProvenance() == false`):
+
+| Capability | Supported |
+|---|---|
+| Explicit token indexing (`POST /api/v1/tokens/index`) | Yes |
+| Current owner snapshot via contract call | Yes |
+| Metadata indexing (vendor-only or on-chain URI) | Yes |
+| Address owner sweeps / “what does this wallet hold?” | No |
+| Real-time event ingestion for this contract | No |
+| Full provenance history / ownership timelines | No |
+| Ownership-change webhooks from chain events | No |
+
+At startup, each `single_owner` override without events logs a warning identifying the contract, `indexing_mode=current_state_only`, and the disabled vs supported capability lists above.
+
+**When a contract emits no on-chain events at all:** configure `existence` and `owner` methods only if explicit token-ID indexing is sufficient. Do not add the contract under `multi_holder` without mappable provenance events. If the contract also lacks callable owner/existence methods, it is out of scope for this indexer’s event-and-state model.
+
 **Observability:** adapter selection is logged at debug level with `adapter_type`. Override load counts are logged at startup.
 
 **Adding a legacy contract:** add an ABI file under `abis/`, add a `contracts.json` entry with method names and `${tokenId}` parameter placeholders, and verify with adapter unit tests plus a mocked client integration test.
@@ -255,7 +282,7 @@ Each contract override entry defines method routing:
   - `"vendor_only"` — Skip on-chain metadata fetch; rely on vendor enrichment (OpenSea, etc.).
   - `"on_chain"` — Fetch metadata URI via the configured method (requires `adapter.metadata.method`).
 - **`adapter.metadata.method`** — (Optional) Method configuration for on-chain metadata URI lookup.
-- **`adapter.events`** — (Optional) Custom provenance event definitions for legacy contracts. When present, enables full provenance indexing via configured event signatures.
+- **`adapter.events`** — (Optional for `single_owner`, **required** for `multi_holder`) Custom provenance event definitions for legacy contracts. When present, enables full provenance indexing, owner sweeps, and live ingestion via configured event signatures. When omitted on `single_owner` contracts, the override loads in **current-state-only** mode (see [Limited indexing mode](#limited-indexing-mode-legacy-contracts-without-events)).
 
 #### Custom provenance events for legacy contracts
 
@@ -284,6 +311,7 @@ Each event entry defines:
 - When `metadata.source` is `"on_chain"`, `adapter.metadata.method` is required.
 - Contract addresses are valid hex and not duplicated.
 - Configured `ownership_model` values are `single_owner` or `multi_holder`.
+- `adapter.events` is **required** when `ownership_model` is `multi_holder`.
 - Each configured event has a valid signature format, allowed `mapToStandardEvent`, and complete `parameterMappings` covering every listed indexed/data parameter.
 
 **Failure behavior:**

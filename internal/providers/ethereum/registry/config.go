@@ -164,6 +164,15 @@ func validateContractEntry(entry *ContractConfig, abiRegistry *helpers.ABIRegist
 		seenSignatures[eventCfg.Signature] = i
 	}
 
+	// multi_holder balance indexing replays provenance logs; without configured events there is no
+	// supported path to discover holders or compute balances for legacy overrides.
+	if entry.OwnershipModel == adapters.OwnershipMultiHolder && len(entry.Adapter.Events) == 0 {
+		return fmt.Errorf(
+			"adapter.events is required for ownership_model %q (multi-holder balance indexing replays provenance events)",
+			entry.OwnershipModel,
+		)
+	}
+
 	return nil
 }
 

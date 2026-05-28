@@ -604,6 +604,52 @@ func TestLoadContractsConfig_ERC1155BurnMissingQuantity(t *testing.T) {
 	require.Contains(t, err.Error(), "burn events for ERC1155-style contracts require Quantity mapping")
 }
 
+func TestLoadContractsConfig_MultiHolderRequiresEvents(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "multi_holder",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adapter.events is required for ownership_model \"multi_holder\"")
+}
+
+func TestLoadContractsConfig_SingleOwnerWithoutEventsAllowed(t *testing.T) {
+	cfg, err := registry.LoadContractsConfig(testContractFS(t, cryptopunksContractConfig))
+	require.NoError(t, err)
+	require.Len(t, cfg.Contracts, 1)
+	require.Empty(t, cfg.Contracts[0].Adapter.Events)
+}
+
+func TestNewAdapterRegistry_SingleOwnerWithoutEventsLoads(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+
+	reg, err := registry.NewAdapterRegistry(
+		testContractFS(t, cryptopunksContractConfig),
+		mockClient,
+		nil,
+		helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), nil),
+		domain.ChainEthereumMainnet,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, reg.ContractOverrideCount())
+
+	supported, err := reg.SupportsProvenance(
+		domain.ChainEthereumMainnet,
+		cryptoPunksAddress,
+		domain.StandardERC721,
+	)
+	require.NoError(t, err)
+	require.False(t, supported)
+}
+
 func TestLoadContractsConfig_ERC721DoesNotRequireQuantity(t *testing.T) {
 	// This should pass - ERC721 doesn't require Quantity
 	cfg, err := registry.LoadContractsConfig(testContractFS(t, `{
