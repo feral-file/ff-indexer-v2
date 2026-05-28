@@ -130,6 +130,8 @@ This is the canonical local verification entrypoint. It runs, in order: `imports
 
 The lint profile enforces cyclomatic and cognitive complexity, function and file length, and doc quality expectations for the code it analyzes.
 
+**Note on lightweight mode:** The repository supports a CGO-disabled lightweight Docker mode for deployment. Local verification via `make check` runs `CGO_ENABLED=1` tests, which provide full code coverage. The `test-lightweight-build` Makefile target is available for optional lightweight build verification but is not part of the standard `make check` workflow or CI pipeline. Lightweight mode compatibility is verified through Docker builds rather than separate test runs.
+
 CI still defines its own exact steps in `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`. Run additional targeted generation or build checks when relevant. If you cannot run the full expected verification, say so explicitly.
 
 ## Review and done

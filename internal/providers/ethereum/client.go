@@ -47,7 +47,24 @@ type EthereumClient interface {
 	GetLatestBlock(ctx context.Context) (uint64, error)
 
 	// TokenBalances fetches all holder balances via the contract adapter registry.
+	//
+	// Best-effort owner-discovery path; for accurate full-provenance balances use
+	// TokenBalancesForAddresses instead.
 	TokenBalances(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (map[string]string, error)
+
+	// TokenBalancesForAddresses fetches balances for specific addresses via the adapter registry.
+	//
+	// ERC1155 uses balanceOfBatch. ERC721 checks whether a requested address is the
+	// current owner. Configured contracts use configured owner lookup or event replay.
+	//
+	// Intended for full provenance indexing where accuracy matters.
+	// Returns map[ownerAddress]balance, excluding zero balances.
+	TokenBalancesForAddresses(
+		ctx context.Context,
+		contractAddress, tokenNumber string,
+		standard domain.ChainStandard,
+		addresses []string,
+	) (map[string]string, error)
 
 	// OwnerBalanceAndEvents fetches owner-specific balance and events via the adapter registry.
 	OwnerBalanceAndEvents(
@@ -59,16 +76,16 @@ type EthereumClient interface {
 	// OwnershipModel reports single-owner vs multi-holder semantics for a contract.
 	OwnershipModel(contractAddress string, standard domain.ChainStandard) (adapters.OwnershipModel, error)
 
-	// GetTokenEvents fetches all historical events for a specific token
-	// Returns events in ascending order of timestamp
+	// GetTokenEvents fetches historical events for a specific token via the adapter registry.
+	// Returns events in ascending block/log order.
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) ([]domain.BlockchainEvent, error)
 
-	// ParseEventLog parses an Ethereum log into a standardized blockchain event
+	// ParseEventLog parses an Ethereum log into a standardized blockchain event.
+	//
+	// Returns (nil, nil) for intentionally skipped logs.
 	ParseEventLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error)
 
-	// TokenExists checks if a token exists on the blockchain
-	// For ERC721: uses ownerOf and catches execution revert errors
-	// For ERC1155: checks mint and burn events in logs
+	// TokenExists checks whether a token exists via the contract adapter registry.
 	TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error)
 
 	// TokenOwner resolves the token owner via the contract adapter registry.
@@ -81,6 +98,8 @@ type EthereumClient interface {
 	IsVendorOnlyMetadata(contractAddress string) bool
 
 	// SupportsProvenance reports whether full on-chain provenance indexing is supported for a contract.
+	//
+	// Returns false when adapter lookup fails.
 	SupportsProvenance(contractAddress string, standard domain.ChainStandard) bool
 
 	// GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.
@@ -255,6 +274,20 @@ func (f *ethereumClient) TokenBalances(
 		return nil, err
 	}
 	return adp.GetTokenBalances(ctx, contractAddress, tokenNumber)
+}
+
+// TokenBalancesForAddresses routes address-scoped balance queries through the adapter registry.
+func (f *ethereumClient) TokenBalancesForAddresses(
+	ctx context.Context,
+	contractAddress, tokenNumber string,
+	standard domain.ChainStandard,
+	addresses []string,
+) (map[string]string, error) {
+	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	if err != nil {
+		return nil, err
+	}
+	return adp.GetTokenBalancesForAddresses(ctx, contractAddress, tokenNumber, addresses)
 }
 
 // OwnerBalanceAndEvents fetches owner-specific balance and events via the adapter registry.

@@ -49,12 +49,10 @@ type ContractAdapter interface {
 
 	// TokenOwner returns the current owner address for a token.
 	//
-	// For ERC721, this calls ownerOf. For ERC1155, this calls balanceOf and returns
-	// the holder if balance > 0. For configured contracts, this calls the configured
-	// owner method from contracts.json.
-	//
-	// Returns the zero address if the token does not exist or has been burned.
-	// The caller must normalize the returned address to lowercase for comparison.
+	// ERC721 calls ownerOf and may error on revert. ERC1155 returns an error because
+	// single-owner lookup is unsupported. Configured contracts call the configured
+	// owner method; zero owner with address_nonzero existence semantics returns
+	// domain.ErrTokenNotFoundOnChain.
 	TokenOwner(ctx context.Context, contractAddress, tokenNumber string) (string, error)
 
 	// TokenURI returns the metadata URI for a token.
@@ -88,37 +86,59 @@ type ContractAdapter interface {
 	// Timestamp is resolved from the log when present; otherwise BlockProvider lookup is used.
 	// Chain is taken from the adapter's configured chain ID.
 	//
-	// Returns nil without error if the log does not match expected event shapes.
+	// Returns (nil, nil) for intentionally skipped logs (e.g. ERC20 Transfer, ERC1155
+	// TransferBatch). Generic adapters return ErrUnknownEvent when topic0 is unrecognized.
 	ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error)
 
-	// GetStandard returns the token standard this adapter implements.
+	// GetStandard returns the chain standard label for this adapter.
 	//
-	// Used by the client to construct TokenCIDs and by the generic adapter to select
-	// ownership tracking logic (ERC721: last-transfer-wins, ERC1155: balance accumulation).
+	// Standard adapters return ERC721 or ERC1155. Generic adapters return the CID
+	// standard derived from ownership_model.
 	GetStandard() domain.ChainStandard
 
 	// OwnershipModel returns whether this adapter uses single-owner or multi-holder semantics.
 	OwnershipModel() OwnershipModel
 
 	// GetTokenBalances fetches current balances for all holders of a token.
-	// Only applicable for multi_holder adapters. Returns map[ownerAddress]balance.
+	//
+	// Only supported for multi_holder adapters. ERC1155 uses best-effort event replay;
+	// generic multi_holder adapters replay configured events. Single-owner adapters
+	// return an error.
 	GetTokenBalances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error)
 
+	// GetTokenBalancesForAddresses fetches balances for a specific set of addresses.
+	//
+	// ERC1155 uses balanceOfBatch for on-chain accuracy. ERC721 returns "1" when a
+	// requested address is the current owner. Configured contracts use the configured
+	// owner method for single_owner or replay configured events for multi_holder.
+	//
+	// Intended for full provenance indexing where accuracy matters, unlike
+	// GetTokenBalances which is best-effort for owner discovery.
+	//
+	// Returns map[ownerAddress]balance, excluding zero balances.
+	GetTokenBalancesForAddresses(
+		ctx context.Context,
+		contractAddress, tokenNumber string,
+		addresses []string,
+	) (map[string]string, error)
+
 	// GetOwnerBalanceAndEvents fetches balance and ownership-affecting events for one owner.
-	// Only applicable for multi_holder adapters.
+	//
+	// Only supported for multi_holder adapters. ERC1155 combines on-chain balanceOf with
+	// historical TransferSingle/TransferBatch logs. Generic multi_holder adapters replay
+	// configured events only.
 	GetOwnerBalanceAndEvents(
 		ctx context.Context,
 		contractAddress, tokenNumber, ownerAddress string,
 	) (balance string, events []domain.BlockchainEvent, err error)
 
-	// GetTokenEvents fetches all historical events for a specific token.
+	// GetTokenEvents fetches historical events for a specific token.
 	//
-	// Queries Transfer/TransferSingle/TransferBatch events (or configured custom events)
-	// for the given token from contract deployment to latest block, then parses them
-	// into standardized events.
+	// Standard adapters query from genesis to latest and filter by token ID. ERC1155 token
+	// history currently includes TransferSingle and URI events only (TransferBatch is not
+	// parsed yet). Generic adapters query configured custom events.
 	//
-	// Returns events in ascending timestamp order. The caller can use this to build
-	// the full provenance chain for a token.
+	// Returns events in ascending block/log order.
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string) ([]domain.BlockchainEvent, error)
 
 	// GetOwnerLogs fetches raw ownership-affecting logs for an owner within a block range.

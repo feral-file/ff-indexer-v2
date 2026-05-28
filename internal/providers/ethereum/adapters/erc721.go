@@ -57,6 +57,51 @@ func (a *ERC721Adapter) GetTokenBalances(_ context.Context, _, _ string) (map[st
 	return nil, fmt.Errorf("GetTokenBalances not supported for single-owner tokens")
 }
 
+// GetTokenBalancesForAddresses checks if any provided address is the current owner.
+//
+// For ERC-721 single-owner tokens, returns {"owner": "1"} if one of the addresses
+// matches the current owner, otherwise returns an empty map.
+//
+// Reason: Full provenance indexing queries all addresses discovered from events;
+// this method allows consistent adapter-based balance queries for both ERC-721 and ERC-1155.
+//
+// Trade-offs: Makes an ownerOf call regardless of address list size (always single owner).
+//
+// Constraints: Returns at most one entry (single owner), or empty if token is burned/non-existent.
+func (a *ERC721Adapter) GetTokenBalancesForAddresses(
+	ctx context.Context,
+	contractAddress, tokenNumber string,
+	addresses []string,
+) (map[string]string, error) {
+	if len(addresses) == 0 {
+		return make(map[string]string), nil
+	}
+
+	// Get current owner
+	owner, err := helpers.ERC721OwnerOf(ctx, a.ethClient, contractAddress, tokenNumber)
+	if err != nil {
+		if helpers.IsExecutionRevert(err) {
+			// Token doesn't exist or is burned
+			return make(map[string]string), nil
+		}
+		return nil, fmt.Errorf("failed to get ERC721 owner: %w", err)
+	}
+
+	// Normalize for comparison
+	ownerLower := common.HexToAddress(owner).Hex()
+
+	// Check if current owner is in the address list
+	for _, addr := range addresses {
+		addrLower := common.HexToAddress(addr).Hex()
+		if addrLower == ownerLower && ownerLower != domain.ETHEREUM_ZERO_ADDRESS {
+			return map[string]string{ownerLower: "1"}, nil
+		}
+	}
+
+	// Current owner is not in the provided address list
+	return make(map[string]string), nil
+}
+
 // GetOwnerBalanceAndEvents is unsupported for single-owner ERC-721 tokens.
 func (a *ERC721Adapter) GetOwnerBalanceAndEvents(
 	_ context.Context, _, _, _ string,
@@ -224,9 +269,30 @@ func (a *ERC721Adapter) GetTokensByOwner(
 }
 
 // ParseEvent parses standard ERC-721 and EIP-4906 events.
+//
+// ERC20 transfers are identified and skipped BEFORE timestamp lookup to prevent
+// irrelevant ERC20 activity from tearing down the subscription when timestamp
+// lookups fail. ERC20 Transfer(address,address,uint256) has 3 topics; ERC721
+// Transfer(address,address,uint256) has 4 topics (indexed tokenId).
 func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 0 {
 		return nil, fmt.Errorf("event log has no topics")
+	}
+
+	// For Transfer events, identify and skip ERC20 BEFORE BaseEventFromLog.
+	// This prevents transient timestamp lookup failures from crashing the
+	// subscription on irrelevant ERC20 noise.
+	if vLog.Topics[0] == helpers.TransferEventSignature {
+		if len(vLog.Topics) == 3 {
+			// ERC20 Transfer - skip without error
+			logger.DebugCtx(ctx, "Skipping ERC20 transfer event (pre-parse)",
+				zap.String("contract", vLog.Address.Hex()),
+				zap.String("txHash", vLog.TxHash.Hex()))
+			return nil, nil
+		}
+		if len(vLog.Topics) != 4 {
+			return nil, fmt.Errorf("invalid Transfer event: expected 3 or 4 topics, got %d", len(vLog.Topics))
+		}
 	}
 
 	base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
@@ -236,15 +302,10 @@ func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain
 
 	switch vLog.Topics[0] {
 	case helpers.TransferEventSignature:
+		// Topic count already validated above - this is ERC721
 		parsed, err := helpers.ParseERC721TransferLog(vLog, base)
 		if err != nil {
 			return nil, err
-		}
-		if parsed == nil {
-			logger.DebugCtx(ctx, "Skipping ERC20 transfer event",
-				zap.String("contract", vLog.Address.Hex()),
-				zap.String("txHash", vLog.TxHash.Hex()))
-			return nil, nil
 		}
 		return parsed, nil
 	case helpers.EIP4906MetadataUpdateEventSignature:

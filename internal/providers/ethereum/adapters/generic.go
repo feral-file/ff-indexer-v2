@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"sort"
@@ -161,6 +162,79 @@ func (a *GenericAdapter) GetTokenBalances(
 	}
 
 	return replayBalancesFromEvents(events), nil
+}
+
+// GetTokenBalancesForAddresses fetches balances for specific addresses.
+//
+// For single-owner contracts: checks if any address matches the current owner.
+// For multi-holder contracts: replays events filtered by provided addresses.
+//
+// Reason: Legacy contracts may not have balanceOf/balanceOfBatch methods, so we
+// use the configured owner method for single-owner or event replay for multi-holder.
+//
+// Trade-offs: Multi-holder replay may miss transfers outside event coverage, but
+// this is consistent with configured contract limitations. Full provenance using
+// legacy multi-holder contracts should ensure events are properly configured.
+//
+// Constraints: Depends on configured custom events for multi-holder accuracy.
+func (a *GenericAdapter) GetTokenBalancesForAddresses(
+	ctx context.Context,
+	contractAddress, tokenNumber string,
+	addresses []string,
+) (map[string]string, error) {
+	if len(addresses) == 0 {
+		return make(map[string]string), nil
+	}
+
+	switch a.ownershipModel {
+	case OwnershipSingleOwner:
+		// For single-owner, check if current owner is in the address list
+		owner, err := a.TokenOwner(ctx, contractAddress, tokenNumber)
+		if err != nil {
+			if helpers.IsExecutionRevert(err) || errors.Is(err, domain.ErrTokenNotFoundOnChain) {
+				// Token doesn't exist or is burned
+				return make(map[string]string), nil
+			}
+			return nil, fmt.Errorf("failed to get token owner: %w", err)
+		}
+
+		ownerLower := common.HexToAddress(owner).Hex()
+		for _, addr := range addresses {
+			addrLower := common.HexToAddress(addr).Hex()
+			if addrLower == ownerLower && ownerLower != domain.ETHEREUM_ZERO_ADDRESS {
+				return map[string]string{ownerLower: "1"}, nil
+			}
+		}
+		return make(map[string]string), nil
+
+	case OwnershipMultiHolder:
+		// For multi-holder, replay events and filter by addresses
+		events, err := a.GetTokenEvents(ctx, contractAddress, tokenNumber)
+		if err != nil {
+			return nil, err
+		}
+
+		// Create address lookup map for efficient filtering
+		addressMap := make(map[string]bool)
+		for _, addr := range addresses {
+			addressMap[common.HexToAddress(addr).Hex()] = true
+		}
+
+		// Replay balances and filter by requested addresses
+		allBalances := replayBalancesFromEvents(events)
+		filtered := make(map[string]string)
+		for addr, balance := range allBalances {
+			addrLower := common.HexToAddress(addr).Hex()
+			if addressMap[addrLower] {
+				filtered[addrLower] = balance
+			}
+		}
+
+		return filtered, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported ownership model: %s", a.ownershipModel)
+	}
 }
 
 // GetOwnerBalanceAndEvents replays configured custom events for one owner and token.

@@ -1237,9 +1237,22 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 
 		switch ownershipModel {
 		case ethadapters.OwnershipMultiHolder:
-			allBalances, err = e.ethClient.TokenBalances(ctx, contractAddress, tokenNumber, standard)
-			if err != nil {
-				return fmt.Errorf("failed to get token balances from Ethereum: %w", err)
+			// For full provenance, query accurate on-chain balances for all addresses
+			// discovered from events. Use TokenBalancesForAddresses (which calls balanceOfBatch
+			// for ERC-1155) instead of TokenBalances (which uses best-effort event replay with
+			// 10M block limits, 30s timeouts, and ignores TransferBatch).
+			if len(addressSet) > 0 {
+				addresses := make([]string, 0, len(addressSet))
+				for addr := range addressSet {
+					addresses = append(addresses, addr)
+				}
+
+				allBalances, err = e.ethClient.TokenBalancesForAddresses(ctx, contractAddress, tokenNumber, standard, addresses)
+				if err != nil {
+					return fmt.Errorf("failed to get token balances for addresses: %w", err)
+				}
+			} else {
+				allBalances = make(map[string]string)
 			}
 		case ethadapters.OwnershipSingleOwner:
 			// Single-owner ownership is determined from the latest transfer event.

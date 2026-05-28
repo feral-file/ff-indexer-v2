@@ -61,6 +61,43 @@ func (a *ERC1155Adapter) GetTokenBalances(
 	return helpers.ERC1155ReplayBalances(ctx, a.pagination, a.blockProvider, contractAddress, tokenNumber)
 }
 
+// GetTokenBalancesForAddresses fetches accurate on-chain balances for specific addresses.
+//
+// Uses the ERC-1155 balanceOfBatch contract call for accuracy, unlike GetTokenBalances
+// which uses best-effort event replay. This method is designed for full provenance indexing
+// where complete accuracy is required.
+//
+// Reason: Full provenance requires accurate current state via on-chain queries, not
+// best-effort replay which has 10M block limits, 30s timeouts, and ignores TransferBatch.
+//
+// Trade-offs: Slightly more expensive (RPC calls) but provides 100% accurate balances.
+//
+// Constraints: Returns only non-zero balances. Processes 200 addresses per batch call.
+func (a *ERC1155Adapter) GetTokenBalancesForAddresses(
+	ctx context.Context,
+	contractAddress, tokenNumber string,
+	addresses []string,
+) (map[string]string, error) {
+	if len(addresses) == 0 {
+		return make(map[string]string), nil
+	}
+
+	allBalances, err := helpers.ERC1155BalanceOfBatch(ctx, a.ethClient, contractAddress, tokenNumber, addresses)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ERC1155 balances for addresses: %w", err)
+	}
+
+	// Filter out zero balances
+	filtered := make(map[string]string)
+	for addr, balance := range allBalances {
+		if balance != "0" {
+			filtered[addr] = balance
+		}
+	}
+
+	return filtered, nil
+}
+
 // GetOwnerBalanceAndEvents fetches balance and events for a specific ERC-1155 owner.
 func (a *ERC1155Adapter) GetOwnerBalanceAndEvents(
 	ctx context.Context,

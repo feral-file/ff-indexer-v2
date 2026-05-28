@@ -44,7 +44,7 @@ func NewSubscriber(cfg Config, ethereumClient EthereumClient, adapterRegistry *c
 	}, nil
 }
 
-// SubscribeEvents subscribes to ERC721/ERC1155 transfer and metadata update events
+// SubscribeEvents subscribes to standard ERC721/ERC1155 events and configured legacy signatures for this chain.
 func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler blockchain.EventHandler) error {
 	allEventSignatures := helpers.StandardEventSignatures()
 	if s.adapterRegistry != nil {

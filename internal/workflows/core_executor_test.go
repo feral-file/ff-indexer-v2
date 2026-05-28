@@ -3359,10 +3359,10 @@ func TestIndexTokenWithFullProvenancesByTokenCID_Success_ERC1155_Burned(t *testi
 		GetTokenEvents(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
 		Return(events, nil)
 
-	// Mock TokenBalances for all addresses in events (will return empty map for burned token with 0 balance)
+	// Mock TokenBalancesForAddresses for addresses discovered from events
 	// The function fetches balances for all addresses in events, even if ultimately burned
 	mocks.ethClient.EXPECT().
-		TokenBalances(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
+		TokenBalancesForAddresses(ctx, contractAddress, tokenNumber, domain.StandardERC1155, []string{"0xowner1"}).
 		Return(map[string]string{}, nil) // Empty map because balance is 0 (filtered out)
 
 	// Mock JSON marshal for each event
@@ -3426,7 +3426,7 @@ func TestIndexTokenWithFullProvenancesByTokenCID_OwnershipModelOverridesCIDStand
 		Return(ethadapters.OwnershipMultiHolder, nil)
 
 	mocks.ethClient.EXPECT().
-		TokenBalances(ctx, contractAddress, tokenNumber, domain.StandardERC721).
+		TokenBalancesForAddresses(ctx, contractAddress, tokenNumber, domain.StandardERC721, []string{"0xowner1"}).
 		Return(map[string]string{"0xowner1": "5"}, nil)
 
 	mocks.json.EXPECT().

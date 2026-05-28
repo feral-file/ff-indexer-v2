@@ -363,12 +363,13 @@ func ERC1155TokenExists(
 
 // ParseERC721TransferLog parses an ERC721 Transfer event log into base, filling semantic fields.
 // base must already contain log-derived metadata from helpers.BaseEventFromLog.
+//
+// Assumes topic count has been validated by caller (ERC721Adapter.ParseEvent now validates
+// before calling this). ERC20 transfers (3 topics) are filtered earlier to prevent timestamp
+// lookup failures from affecting subscription reliability.
 func ParseERC721TransferLog(vLog types.Log, base domain.BlockchainEvent) (*domain.BlockchainEvent, error) {
-	if len(vLog.Topics) == 3 {
-		return nil, nil
-	}
 	if len(vLog.Topics) != 4 {
-		return nil, fmt.Errorf("invalid Transfer event: expected 3 or 4 topics, got %d", len(vLog.Topics))
+		return nil, fmt.Errorf("invalid ERC721 Transfer event: expected 4 topics, got %d", len(vLog.Topics))
 	}
 
 	event := base

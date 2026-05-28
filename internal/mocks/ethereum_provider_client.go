@@ -237,6 +237,21 @@ func (mr *MockEthereumProviderClientMockRecorder) TokenBalances(ctx, contractAdd
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TokenBalances", reflect.TypeOf((*MockEthereumProviderClient)(nil).TokenBalances), ctx, contractAddress, tokenNumber, standard)
 }
 
+// TokenBalancesForAddresses mocks base method.
+func (m *MockEthereumProviderClient) TokenBalancesForAddresses(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard, addresses []string) (map[string]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TokenBalancesForAddresses", ctx, contractAddress, tokenNumber, standard, addresses)
+	ret0, _ := ret[0].(map[string]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TokenBalancesForAddresses indicates an expected call of TokenBalancesForAddresses.
+func (mr *MockEthereumProviderClientMockRecorder) TokenBalancesForAddresses(ctx, contractAddress, tokenNumber, standard, addresses any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TokenBalancesForAddresses", reflect.TypeOf((*MockEthereumProviderClient)(nil).TokenBalancesForAddresses), ctx, contractAddress, tokenNumber, standard, addresses)
+}
+
 // TokenExists mocks base method.
 func (m *MockEthereumProviderClient) TokenExists(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (bool, error) {
 	m.ctrl.T.Helper()
