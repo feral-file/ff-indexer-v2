@@ -59,7 +59,7 @@ Hard and soft constraints for **FF Indexer v2**. Agents and engineers should tre
 
 - **`ownership_model` drives indexing semantics** — For entries in `internal/providers/ethereum/contracts/contracts.json`, `ownership_model` (`single_owner` | `multi_holder`) determines how balances and provenance are indexed. It is separate from the token CID label.
 - **CID standard is auto-derived and immutable per contract** — `single_owner` maps to `erc721` in token CIDs and API `standard` fields; `multi_holder` maps to `erc1155`. Operators do not set `erc721`/`erc1155` in `contracts.json`.
-- **Adapter routing is contract-first** — When a contract address has a configured override, the registry returns that adapter regardless of whether the token CID standard matches the derived label; mismatches are logged as warnings.
+- **Adapter routing enforces configured standard match** — When a contract address has a configured override, the registry validates that the requested token standard matches the configured `ownership_model`. Mismatches return `ErrConfiguredStandardMismatch` and fail the operation to prevent incorrect indexing semantics.
 
 ## Deployment constraints
 

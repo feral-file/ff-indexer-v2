@@ -117,6 +117,38 @@ func erc721TransferLog(
 	}
 }
 
+func erc1155TransferSingleLog(
+	contract common.Address,
+	blockNumber uint64,
+	index uint,
+	from, to common.Address,
+	tokenID *big.Int,
+	value *big.Int,
+) types.Log {
+	// TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
+	// Topic[0]: event signature
+	// Topic[1]: operator (indexed)
+	// Topic[2]: from (indexed)
+	// Topic[3]: to (indexed)
+	// Data: id (uint256) + value (uint256)
+	data := make([]byte, 64)
+	tokenID.FillBytes(data[0:32])
+	value.FillBytes(data[32:64])
+
+	return types.Log{
+		Address:     contract,
+		BlockNumber: blockNumber,
+		Index:       index,
+		Topics: []common.Hash{
+			helpers.ERC1155TransferSingleEventSignature,
+			common.BytesToHash(from.Bytes()), // operator = from for simplicity
+			common.BytesToHash(from.Bytes()),
+			common.BytesToHash(to.Bytes()),
+		},
+		Data: data,
+	}
+}
+
 func TestReplayOwnerTokensWithLimit_ConfiguredContractWinsOverStandardTransfer(t *testing.T) {
 	t.Parallel()
 
