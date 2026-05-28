@@ -9,7 +9,6 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -46,6 +45,9 @@ func NewSubscriber(cfg Config, ethereumClient EthereumClient, adapterRegistry *c
 }
 
 // SubscribeEvents subscribes to standard ERC721/ERC1155 events and configured legacy signatures for this chain.
+//
+// Parse failures for indexable logs stop the subscription so ingestion can retry from the durable
+// cursor. Intentionally ignored logs are returned as (nil, nil) from ParseEventLog and skipped.
 func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler blockchain.EventHandler) error {
 	allEventSignatures := helpers.StandardEventSignatures()
 	if s.adapterRegistry != nil {
@@ -82,13 +84,7 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 				if errors.Is(err, context.Canceled) {
 					return ctx.Err()
 				}
-				logger.WarnCtx(ctx, "Skipping unparseable live log",
-					zap.Uint64("block", vLog.BlockNumber),
-					zap.Uint("log_index", vLog.Index),
-					zap.String("tx_hash", vLog.TxHash.Hex()),
-					zap.Error(err),
-				)
-				continue
+				return fmt.Errorf("parse log at block %d index %d: %w", vLog.BlockNumber, vLog.Index, err)
 			}
 
 			if event == nil {

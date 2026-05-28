@@ -2,9 +2,11 @@ package registry_test
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -12,6 +14,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	ethadapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/block"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
@@ -127,13 +130,22 @@ func testContractFS(t *testing.T, contractsJSON string) fstest.MapFS {
 }
 
 func newTestRegistry(t *testing.T, mockClient *mocks.MockEthClient, fs fstest.MapFS) *registry.AdapterRegistry {
+	return newTestRegistryWithBlockProvider(t, mockClient, nil, fs)
+}
+
+func newTestRegistryWithBlockProvider(
+	t *testing.T,
+	mockClient *mocks.MockEthClient,
+	blockProvider block.BlockProvider,
+	fs fstest.MapFS,
+) *registry.AdapterRegistry {
 	t.Helper()
 
-	pagination := helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), nil)
+	pagination := helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), blockProvider)
 	reg, err := registry.NewAdapterRegistry(
 		fs,
 		mockClient,
-		nil,
+		blockProvider,
 		pagination,
 		domain.ChainEthereumMainnet,
 	)
@@ -347,6 +359,57 @@ func TestAdapterRegistry_ParseEvent_StandardERC721Transfer(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.StandardERC721, parsed.Standard)
 	require.Equal(t, "42", parsed.TokenNumber)
+}
+
+func TestAdapterRegistry_ParseEvent_SkipsERC20Transfer(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+	reg := newTestRegistryWithBlockProvider(t, mockClient, mockBlock, testContractFS(t, `{"contracts": []}`))
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	vLog := types.Log{
+		Address:     common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		BlockNumber: 100,
+		Topics: []common.Hash{
+			helpers.TransferEventSignature,
+			common.BytesToHash(from.Bytes()),
+			common.BytesToHash(to.Bytes()),
+		},
+	}
+
+	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+	require.Nil(t, parsed)
+}
+
+func TestAdapterRegistry_ParseEvent_TimestampLookupFails(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+	reg := newTestRegistryWithBlockProvider(t, mockClient, mockBlock, testContractFS(t, `{"contracts": []}`))
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	tokenID := big.NewInt(42)
+	vLog := typesLog(from, to, tokenID)
+	vLog.BlockNumber = 100
+
+	timestampErr := errors.New("boom")
+	mockBlock.EXPECT().
+		GetBlockTimestamp(gomock.Any(), uint64(100)).
+		Return(time.Time{}, timestampErr)
+
+	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+	require.Error(t, err)
+	require.Nil(t, parsed)
+	require.ErrorIs(t, err, timestampErr)
+	require.Contains(t, err.Error(), "resolve block timestamp for block 100")
 }
 
 // typesLog builds a minimal ERC721 Transfer log for tests.

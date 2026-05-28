@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"sort"
 
@@ -562,12 +563,8 @@ func parseConfiguredEvent(
 	}
 
 	allValues := make(map[string]any, len(indexedValues)+len(dataValues))
-	for k, v := range indexedValues {
-		allValues[k] = v
-	}
-	for k, v := range dataValues {
-		allValues[k] = v
-	}
+	maps.Copy(allValues, indexedValues)
+	maps.Copy(allValues, dataValues)
 
 	for paramName, eventField := range eventCfg.ParameterMappings {
 		val, ok := allValues[paramName]

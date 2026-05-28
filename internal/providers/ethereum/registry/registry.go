@@ -259,8 +259,9 @@ func (r *AdapterRegistry) GetStandardAdapter(standard domain.ChainStandard) (ada
 // ParseEvent routes event parsing to the appropriate adapter.
 //
 // Configured contract overrides are tried first, then standard adapters matched by topic0.
-// Returns (nil, nil) for custom legacy signatures from unconfigured addresses.
-// Returns an error when no adapter recognizes the log.
+// Returns (nil, nil) for intentionally ignored logs (ERC-20 Transfer noise, custom legacy
+// signatures from unconfigured addresses). Returns an error when an indexable log cannot
+// be parsed so live ingestion can retry from the durable cursor.
 func (r *AdapterRegistry) ParseEvent(
 	ctx context.Context,
 	vLog types.Log,
