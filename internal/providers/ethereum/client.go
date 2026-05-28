@@ -62,6 +62,19 @@ type EthereumClient interface {
 	// Supports both TransferSingle and TransferBatch events
 	GetERC1155BalanceAndEventsForOwner(ctx context.Context, contractAddress, tokenNumber, ownerAddress string) (balance string, events []domain.BlockchainEvent, err error)
 
+	// TokenBalances fetches all holder balances via the contract adapter registry.
+	TokenBalances(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (map[string]string, error)
+
+	// OwnerBalanceAndEvents fetches owner-specific balance and events via the adapter registry.
+	OwnerBalanceAndEvents(
+		ctx context.Context,
+		contractAddress, tokenNumber, ownerAddress string,
+		standard domain.ChainStandard,
+	) (balance string, events []domain.BlockchainEvent, err error)
+
+	// OwnershipModel reports single-owner vs multi-holder semantics for a contract.
+	OwnershipModel(contractAddress string, standard domain.ChainStandard) (adapters.OwnershipModel, error)
+
 	// GetTokenEvents fetches all historical events for a specific token
 	// Returns events in ascending order of timestamp
 	GetTokenEvents(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) ([]domain.BlockchainEvent, error)
@@ -274,6 +287,41 @@ func (f *ethereumClient) SupportsProvenance(contractAddress string, standard dom
 		return false
 	}
 	return supported
+}
+
+// OwnershipModel reports single-owner vs multi-holder semantics via the adapter registry.
+func (f *ethereumClient) OwnershipModel(contractAddress string, standard domain.ChainStandard) (adapters.OwnershipModel, error) {
+	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	if err != nil {
+		return "", err
+	}
+	return adp.OwnershipModel(), nil
+}
+
+// TokenBalances fetches all holder balances via the contract adapter registry.
+func (f *ethereumClient) TokenBalances(
+	ctx context.Context,
+	contractAddress, tokenNumber string,
+	standard domain.ChainStandard,
+) (map[string]string, error) {
+	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	if err != nil {
+		return nil, err
+	}
+	return adp.GetTokenBalances(ctx, contractAddress, tokenNumber)
+}
+
+// OwnerBalanceAndEvents fetches owner-specific balance and events via the adapter registry.
+func (f *ethereumClient) OwnerBalanceAndEvents(
+	ctx context.Context,
+	contractAddress, tokenNumber, ownerAddress string,
+	standard domain.ChainStandard,
+) (string, []domain.BlockchainEvent, error) {
+	adp, err := f.adapterRegistry.GetAdapter(f.chainID, contractAddress, standard)
+	if err != nil {
+		return "", nil, err
+	}
+	return adp.GetOwnerBalanceAndEvents(ctx, contractAddress, tokenNumber, ownerAddress)
 }
 
 // GetTokenCIDsByOwnerAndBlockRange retrieves token CIDs with block numbers for an owner within a block range.

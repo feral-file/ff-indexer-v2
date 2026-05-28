@@ -18,6 +18,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
+	ethadapters "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	ethhelpers "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -319,30 +320,41 @@ func (e *coreExecutor) CreateTokenMint(ctx context.Context, event *domain.Blockc
 		OwnerAddress: *event.ToAddress,
 		Quantity:     event.Quantity,
 	}
-	// For erc1155 & fa2, the balance should be fetched again
-	// to ensure the balance is correct.
-	// erc1155 & fa2 can be minted multiple times for the same token.
-	switch event.Standard {
-	case domain.StandardFA2:
-		balance, err := e.tzktClient.GetTokenOwnerBalance(
-			ctx,
-			event.ContractAddress,
-			event.TokenNumber,
-			*event.ToAddress)
-		if err != nil {
-			return fmt.Errorf("failed to get FA2 token balance: %w", err)
+
+	// For multi-holder tokens (ERC1155, FA2), fetch current balance to handle multiple mints.
+	// Single-owner tokens (ERC721) use the event quantity directly.
+	switch event.Chain {
+	case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
+		if event.Standard == domain.StandardFA2 {
+			balance, err := e.tzktClient.GetTokenOwnerBalance(
+				ctx,
+				event.ContractAddress,
+				event.TokenNumber,
+				*event.ToAddress)
+			if err != nil {
+				return fmt.Errorf("failed to get FA2 token balance: %w", err)
+			}
+			input.Balance.Quantity = balance
 		}
-		input.Balance.Quantity = balance
-	case domain.StandardERC1155:
-		balance, err := e.ethClient.ERC1155BalanceOf(
-			ctx,
-			event.ContractAddress,
-			*event.ToAddress,
-			event.TokenNumber)
+
+	case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
+		ownershipModel, err := e.ethClient.OwnershipModel(event.ContractAddress, event.Standard)
 		if err != nil {
-			return fmt.Errorf("failed to get ERC1155 token balance: %w", err)
+			return fmt.Errorf("failed to resolve ownership model: %w", err)
 		}
-		input.Balance.Quantity = balance
+
+		if ownershipModel == ethadapters.OwnershipMultiHolder {
+			balance, _, err := e.ethClient.OwnerBalanceAndEvents(
+				ctx,
+				event.ContractAddress,
+				event.TokenNumber,
+				*event.ToAddress,
+				event.Standard)
+			if err != nil {
+				return fmt.Errorf("failed to get token balance: %w", err)
+			}
+			input.Balance.Quantity = balance
+		}
 	}
 
 	// Create the token atomically with balance and provenance event
@@ -912,7 +924,7 @@ func (e *coreExecutor) fetchOwnerBalanceAndEvents(ctx context.Context, event *do
 		return balance, nil, err
 
 	case domain.StandardERC1155:
-		return e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, event.ContractAddress, event.TokenNumber, address)
+		return e.ethClient.OwnerBalanceAndEvents(ctx, event.ContractAddress, event.TokenNumber, address, event.Standard)
 
 	case domain.StandardERC721:
 		// ERC721: to address always has balance of 1
@@ -987,24 +999,25 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 		}
 
 	case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
-		switch standard {
-		case domain.StandardERC721:
-			// For ERC721, resolve owner via contract adapter (supports legacy contracts like CryptoPunks).
+		ownershipModel, err := e.ethClient.OwnershipModel(contractAddress, standard)
+		if err != nil {
+			return fmt.Errorf("failed to resolve ownership model: %w", err)
+		}
+
+		switch ownershipModel {
+		case ethadapters.OwnershipSingleOwner:
 			owner, err := e.ethClient.TokenOwner(ctx, contractAddress, tokenNumber, standard)
 			if err != nil {
 				if errors.Is(err, domain.ErrTokenNotFoundOnChain) ||
 					errors.Is(err, ethereum.ErrContractNotFound) ||
 					ethhelpers.IsExecutionRevert(err) {
-					// Token not found on chain (burned or contract self-destructed).
 					return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 				}
 				if ethhelpers.IsOutOfGas(err) {
-					// Contract unreachable (e.g. exists but function is not callable).
-					// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
 					return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
 				}
 
-				return fmt.Errorf("failed to get ERC721 owner: %w", err)
+				return fmt.Errorf("failed to get token owner: %w", err)
 			} else if owner != "" && owner != domain.ETHEREUM_ZERO_ADDRESS {
 				input.Token.CurrentOwner = &owner
 				input.Balances = append(input.Balances, store.CreateBalanceInput{
@@ -1015,12 +1028,9 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 				input.Token.Burned = true
 			}
 
-		case domain.StandardERC1155:
-			// For ERC1155, choose between full indexing (all owners) or owner-specific indexing
+		case ethadapters.OwnershipMultiHolder:
 			if address != nil {
-				// OWNER-SPECIFIC PATH: Efficient indexing for one owner only
-				// Get balance and events for this specific owner
-				balance, events, err := e.ethClient.GetERC1155BalanceAndEventsForOwner(ctx, contractAddress, tokenNumber, *address)
+				balance, events, err := e.ethClient.OwnerBalanceAndEvents(ctx, contractAddress, tokenNumber, *address, standard)
 				if err != nil {
 					if errors.Is(err, ethereum.ErrContractNotFound) ||
 						ethhelpers.IsExecutionRevert(err) {
@@ -1028,30 +1038,27 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 					}
 
 					if ethhelpers.IsOutOfGas(err) {
-						// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
 						return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
 					}
 
-					return fmt.Errorf("failed to get ERC1155 balance and events for owner: %w", err)
+					return fmt.Errorf("failed to get token balance and events for owner: %w", err)
 				}
 
 				if !types.IsPositiveNumeric(balance) {
 					return fmt.Errorf("balance is not a positive numeric value: %w", domain.ErrBalanceIsNotAPositiveNumericValue)
 				}
 
-				logger.InfoCtx(ctx, "Indexing ERC1155 token for specific owner",
+				logger.InfoCtx(ctx, "Indexing multi-holder token for specific owner",
 					zap.String("tokenCID", tokenCID.String()),
 					zap.String("owner", *address),
 					zap.String("balance", balance),
 					zap.Int("eventCount", len(events)),
 				)
 
-				// Convert blockchain events to store input
 				storeEvents := make([]store.CreateProvenanceEventInput, 0, len(events))
 				for _, evt := range events {
 					blockHash := evt.BlockHash
 
-					// Marshal event data for indexing
 					rawEventData, err := e.json.Marshal(evt)
 					if err != nil {
 						return fmt.Errorf("failed to marshal event: %w", err)
@@ -1071,7 +1078,6 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 					})
 				}
 
-				// Use UpsertTokenBalanceForOwner for partial update
 				ownerInput := store.UpsertTokenBalanceForOwnerInput{
 					Token: store.CreateTokenInput{
 						TokenCID:        tokenCID.String(),
@@ -1079,8 +1085,8 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 						Standard:        standard,
 						ContractAddress: contractAddress,
 						TokenNumber:     tokenNumber,
-						CurrentOwner:    nil,   // ERC1155 doesn't have single owner
-						Burned:          false, // Can't determine from one owner's perspective
+						CurrentOwner:    nil,
+						Burned:          false,
 					},
 					OwnerAddress: *address,
 					Quantity:     balance,
@@ -1092,40 +1098,33 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 				}
 
 				return nil
+			}
 
-			} else {
-				// FULL INDEXING PATH: Get all owners' balances (existing logic)
-				// For ERC1155, use ERC1155Balances to calculate balances from events
-				// FIXME: ERC1155Balances has a 30-second timeout and 10M block limit to prevent indefinite blocking
-				// This means we may get partial/incomplete balances for high-activity contracts
-				balances, err := e.ethClient.ERC1155Balances(ctx, contractAddress, tokenNumber)
-				if err != nil {
-					if errors.Is(err, ethereum.ErrContractNotFound) ||
-						ethhelpers.IsExecutionRevert(err) {
-						return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
-					}
-
-					if ethhelpers.IsOutOfGas(err) {
-						// FIXME: This could be strict so we may need a better approach to categorize contract if function is not callable.
-						return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
-					}
-
-					return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
+			balances, err := e.ethClient.TokenBalances(ctx, contractAddress, tokenNumber, standard)
+			if err != nil {
+				if errors.Is(err, ethereum.ErrContractNotFound) ||
+					ethhelpers.IsExecutionRevert(err) {
+					return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
 				}
 
-				// Convert balances map to CreateBalanceInput slice
-				for addr, balance := range balances {
-					if types.IsPositiveNumeric(balance) {
-						input.Balances = append(input.Balances, store.CreateBalanceInput{
-							OwnerAddress: addr,
-							Quantity:     balance,
-						})
-					}
+				if ethhelpers.IsOutOfGas(err) {
+					return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
+				}
+
+				return fmt.Errorf("failed to get token balances from Ethereum: %w", err)
+			}
+
+			for addr, balance := range balances {
+				if types.IsPositiveNumeric(balance) {
+					input.Balances = append(input.Balances, store.CreateBalanceInput{
+						OwnerAddress: addr,
+						Quantity:     balance,
+					})
 				}
 			}
 
 		default:
-			return fmt.Errorf("unsupported standard: %s", standard)
+			return fmt.Errorf("unsupported ownership model: %s", ownershipModel)
 		}
 
 	default:
@@ -1186,6 +1185,7 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 	allBalances := make(map[string]string)
 	var allEvents []domain.BlockchainEvent
 	var err error
+	var ethOwnershipModel ethadapters.OwnershipModel
 
 	switch chain {
 	case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
@@ -1214,6 +1214,12 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 			return fmt.Errorf("failed to fetch token events from Ethereum: %w", err)
 		}
 
+		ownershipModel, omErr := e.ethClient.OwnershipModel(contractAddress, standard)
+		if omErr != nil {
+			return fmt.Errorf("failed to resolve ownership model: %w", omErr)
+		}
+		ethOwnershipModel = ownershipModel
+
 		// Fetch current balances for all unique addresses in the events
 		addressSet := make(map[string]bool)
 		for _, evt := range allEvents {
@@ -1229,22 +1235,16 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 			}
 		}
 
-		switch standard {
-		case domain.StandardERC1155:
-			// Convert addressSet to slice for batch query
-			addresses := make([]string, 0, len(addressSet))
-			for addr := range addressSet {
-				addresses = append(addresses, addr)
-			}
-
-			// Use batch balance query for efficiency
-			allBalances, err = e.ethClient.ERC1155BalanceOfBatch(ctx, contractAddress, tokenNumber, addresses)
+		switch ownershipModel {
+		case ethadapters.OwnershipMultiHolder:
+			allBalances, err = e.ethClient.TokenBalances(ctx, contractAddress, tokenNumber, standard)
 			if err != nil {
-				return fmt.Errorf("failed to get ERC1155 balances from Ethereum: %w", err)
+				return fmt.Errorf("failed to get token balances from Ethereum: %w", err)
 			}
-		case domain.StandardERC721:
-			// Skip fetching balance for ERC721 tokens
-			// ERC721 ownership is determined from the latest transfer event
+		case ethadapters.OwnershipSingleOwner:
+			// Single-owner ownership is determined from the latest transfer event.
+		default:
+			return fmt.Errorf("unsupported ownership model: %s", ownershipModel)
 		}
 
 	default:
@@ -1264,16 +1264,24 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 				evt.EventType == domain.EventTypeMint {
 				currentOwner = evt.CurrentOwner()
 
-				switch evt.Standard {
-				case domain.StandardERC721:
-					// For ERC721, the token is burned if the burn event is found
-					if evt.EventType == domain.EventTypeBurn {
-						burned = true
+				switch chain {
+				case domain.ChainTezosMainnet, domain.ChainTezosGhostnet:
+					switch evt.Standard {
+					case domain.StandardFA2:
+						if len(allBalances) == 0 {
+							burned = true
+						}
 					}
-				case domain.StandardFA2, domain.StandardERC1155:
-					// For ERC1155 & FA2, the token is burned if there are no balances
-					if len(allBalances) == 0 {
-						burned = true
+				case domain.ChainEthereumMainnet, domain.ChainEthereumSepolia:
+					switch ethOwnershipModel {
+					case ethadapters.OwnershipSingleOwner:
+						if evt.EventType == domain.EventTypeBurn {
+							burned = true
+						}
+					case ethadapters.OwnershipMultiHolder:
+						if len(allBalances) == 0 {
+							burned = true
+						}
 					}
 				}
 
@@ -1297,8 +1305,10 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 		Events:   []store.CreateProvenanceEventInput{},
 	}
 
-	// For ERC721, the token is owned by a single address, so we can add the current owner with a balance of 1
-	if standard == domain.StandardERC721 && currentOwner != nil && !burned {
+	// For single-owner Ethereum tokens, ownership is one address; add balance of 1 for the current owner.
+	if (chain == domain.ChainEthereumMainnet || chain == domain.ChainEthereumSepolia) &&
+		ethOwnershipModel == ethadapters.OwnershipSingleOwner &&
+		currentOwner != nil && !burned {
 		allBalances = map[string]string{
 			*currentOwner: "1",
 		}

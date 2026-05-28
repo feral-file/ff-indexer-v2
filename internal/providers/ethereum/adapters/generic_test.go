@@ -54,9 +54,9 @@ func TestGenericAdapter_TokenExists_AddressNonZero(t *testing.T) {
 		})
 
 	existence, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-		Chain:    domain.ChainEthereumMainnet,
-		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-		Standard: domain.StandardERC721,
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		OwnershipModel: adapters.OwnershipSingleOwner,
 		Adapter: registry.AdapterConfig{
 			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
@@ -93,9 +93,9 @@ func TestGenericAdapter_TokenExists_ZeroAddress(t *testing.T) {
 		Return(common.LeftPadBytes(common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS).Bytes(), 32), nil)
 
 	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-		Chain:    domain.ChainEthereumMainnet,
-		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-		Standard: domain.StandardERC721,
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		OwnershipModel: adapters.OwnershipSingleOwner,
 		Adapter: registry.AdapterConfig{
 			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
@@ -131,9 +131,9 @@ func TestGenericAdapter_TokenExists_Revert(t *testing.T) {
 		Return(nil, errors.New("execution reverted"))
 
 	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-		Chain:    domain.ChainEthereumMainnet,
-		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-		Standard: domain.StandardERC721,
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		OwnershipModel: adapters.OwnershipSingleOwner,
 		Adapter: registry.AdapterConfig{
 			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
@@ -170,9 +170,9 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 		Return(common.LeftPadBytes(ownerAddr.Bytes(), 32), nil)
 
 	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-		Chain:    domain.ChainEthereumMainnet,
-		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-		Standard: domain.StandardERC721,
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		OwnershipModel: adapters.OwnershipSingleOwner,
 		Adapter: registry.AdapterConfig{
 			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
@@ -197,7 +197,7 @@ func TestGenericAdapter_TokenOwner(t *testing.T) {
 func TestGenericAdapter_TokenURI_VendorOnly(t *testing.T) {
 	adp := adapters.NewGenericAdapter(
 		"0xabc",
-		domain.StandardERC721,
+		adapters.OwnershipSingleOwner,
 		nil,
 		nil,
 		adapters.ContractMetadataConfig{
@@ -230,9 +230,9 @@ func TestGenericAdapter_TokenOwner_ZeroAddressMeansNotFound(t *testing.T) {
 		Return(common.LeftPadBytes(common.HexToAddress(domain.ETHEREUM_ZERO_ADDRESS).Bytes(), 32), nil)
 
 	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-		Chain:    domain.ChainEthereumMainnet,
-		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-		Standard: domain.StandardERC721,
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		OwnershipModel: adapters.OwnershipSingleOwner,
 		Adapter: registry.AdapterConfig{
 			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
@@ -261,9 +261,9 @@ func TestGenericAdapter_InvalidTokenNumber(t *testing.T) {
 	require.NoError(t, err)
 
 	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-		Chain:    domain.ChainEthereumMainnet,
-		Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-		Standard: domain.StandardERC721,
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+		OwnershipModel: adapters.OwnershipSingleOwner,
 		Adapter: registry.AdapterConfig{
 			Existence: registry.MethodConfig{
 				Method:           "punkIndexToAddress",
@@ -397,9 +397,9 @@ func TestGenericAdapter_GetTokensByOwner(t *testing.T) {
 			}).AnyTimes()
 
 		adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-			Chain:    domain.ChainEthereumMainnet,
-			Address:  contractAddr,
-			Standard: domain.StandardERC721,
+			Chain:          domain.ChainEthereumMainnet,
+			Address:        contractAddr,
+			OwnershipModel: adapters.OwnershipSingleOwner,
 			Adapter: registry.AdapterConfig{
 				Existence: registry.MethodConfig{
 					Method:           "punkIndexToAddress",
@@ -493,9 +493,9 @@ func TestGenericAdapter_GetTokensByOwner(t *testing.T) {
 			}).AnyTimes()
 
 		adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-			Chain:    domain.ChainEthereumMainnet,
-			Address:  contractAddr,
-			Standard: domain.StandardERC721,
+			Chain:          domain.ChainEthereumMainnet,
+			Address:        contractAddr,
+			OwnershipModel: adapters.OwnershipSingleOwner,
 			Adapter: registry.AdapterConfig{
 				Existence: registry.MethodConfig{
 					Method:           "punkIndexToAddress",
@@ -544,9 +544,9 @@ func TestGenericAdapter_GetTokensByOwner(t *testing.T) {
 		require.NoError(t, err)
 
 		adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
-			Chain:    domain.ChainEthereumMainnet,
-			Address:  "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			Standard: domain.StandardERC721,
+			Chain:          domain.ChainEthereumMainnet,
+			Address:        "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			OwnershipModel: adapters.OwnershipSingleOwner,
 			Adapter: registry.AdapterConfig{
 				Existence: registry.MethodConfig{
 					Method:           "punkIndexToAddress",

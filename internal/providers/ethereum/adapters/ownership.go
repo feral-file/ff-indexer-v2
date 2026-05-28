@@ -458,3 +458,111 @@ func ownershipAddressesFromEvent(event domain.BlockchainEvent, owner common.Addr
 
 	return fromAddr, toAddr, true
 }
+
+// replayBalancesFromEvents computes net holder balances from ownership-affecting parsed events.
+func replayBalancesFromEvents(events []domain.BlockchainEvent) map[string]string {
+	balances := make(map[string]*big.Int)
+
+	for _, event := range events {
+		if !isOwnershipAffectingEvent(event.EventType) {
+			continue
+		}
+
+		amount, ok := eventQuantityAmount(event)
+		if !ok {
+			continue
+		}
+
+		if event.FromAddress != nil && *event.FromAddress != "" && *event.FromAddress != domain.ETHEREUM_ZERO_ADDRESS {
+			applyAddressBalanceDelta(balances, *event.FromAddress, new(big.Int).Neg(amount))
+		}
+		if event.ToAddress != nil && *event.ToAddress != "" && *event.ToAddress != domain.ETHEREUM_ZERO_ADDRESS {
+			applyAddressBalanceDelta(balances, *event.ToAddress, amount)
+		}
+	}
+
+	result := make(map[string]string, len(balances))
+	for addr, balance := range balances {
+		if balance.Sign() > 0 {
+			result[addr] = balance.String()
+		}
+	}
+
+	return result
+}
+
+// replayOwnerBalanceFromEvents computes net balance for one owner from parsed events.
+func replayOwnerBalanceFromEvents(ownerAddress string, events []domain.BlockchainEvent) string {
+	owner := common.HexToAddress(ownerAddress)
+	balance := big.NewInt(0)
+
+	for _, event := range events {
+		if !isOwnershipAffectingEvent(event.EventType) {
+			continue
+		}
+
+		fromAddr, toAddr, ok := ownershipAddressesFromEvent(event, owner)
+		if !ok {
+			continue
+		}
+
+		amount, ok := eventQuantityAmount(event)
+		if !ok {
+			continue
+		}
+
+		if toAddr == owner {
+			balance.Add(balance, amount)
+		}
+		if fromAddr == owner {
+			balance.Sub(balance, amount)
+		}
+	}
+
+	if balance.Sign() <= 0 {
+		return "0"
+	}
+
+	return balance.String()
+}
+
+// filterOwnerEvents returns ownership-affecting events where the owner is sender or recipient.
+func filterOwnerEvents(events []domain.BlockchainEvent, ownerAddress string) []domain.BlockchainEvent {
+	owner := common.HexToAddress(ownerAddress)
+	filtered := make([]domain.BlockchainEvent, 0, len(events))
+
+	for _, event := range events {
+		if !isOwnershipAffectingEvent(event.EventType) {
+			continue
+		}
+		if _, _, ok := ownershipAddressesFromEvent(event, owner); ok {
+			filtered = append(filtered, event)
+		}
+	}
+
+	return filtered
+}
+
+func eventQuantityAmount(event domain.BlockchainEvent) (*big.Int, bool) {
+	quantity := event.Quantity
+	if quantity == "" {
+		quantity = "1"
+	}
+
+	amount, ok := new(big.Int).SetString(quantity, 10)
+	if !ok {
+		return nil, false
+	}
+
+	return amount, true
+}
+
+func applyAddressBalanceDelta(balances map[string]*big.Int, address string, delta *big.Int) {
+	normalized := domain.NormalizeAddress(address)
+	current, ok := balances[normalized]
+	if !ok {
+		current = big.NewInt(0)
+		balances[normalized] = current
+	}
+	current.Add(current, delta)
+}

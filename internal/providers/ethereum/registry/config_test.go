@@ -41,7 +41,7 @@ func TestLoadContractsConfig_MissingRequiredFields(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "", "abi": "cryptopunks", "params": ["${tokenId}"]}
@@ -57,7 +57,7 @@ func TestLoadContractsConfig_UnsupportedStandard(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc20",
+			"ownership_model": "erc20",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
@@ -65,7 +65,7 @@ func TestLoadContractsConfig_UnsupportedStandard(t *testing.T) {
 		}]
 	}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported standard")
+	require.Contains(t, err.Error(), "unsupported ownership_model")
 }
 
 func TestLoadContractsConfig_WithCustomEvents(t *testing.T) {
@@ -82,7 +82,7 @@ func TestLoadContractsConfig_InvalidEventSignature(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -105,7 +105,7 @@ func TestLoadContractsConfig_MissingParameterMapping(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -131,7 +131,7 @@ func TestLoadContractsConfig_DuplicateTargetField(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -158,7 +158,7 @@ func TestLoadContractsConfig_DuplicateParameterName_AcrossIndexedAndData(t *test
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -184,7 +184,7 @@ func TestLoadContractsConfig_DuplicateParameterName_WithinData(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -211,7 +211,7 @@ func TestLoadContractsConfig_EmptyParameterName(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -237,7 +237,7 @@ func TestLoadContractsConfig_MissingRequiredFieldForTransfer(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -263,7 +263,7 @@ func TestLoadContractsConfig_MissingRequiredFieldForMint(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -288,7 +288,7 @@ func TestLoadContractsConfig_MissingRequiredFieldForBurn(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -313,7 +313,7 @@ func TestLoadContractsConfig_MissingRequiredFieldForMetadataUpdate(t *testing.T)
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -338,7 +338,7 @@ func TestLoadContractsConfig_DuplicateEventSignature(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -378,7 +378,7 @@ func TestLoadContractsConfig_OnChainMetadataMissingMethod(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -396,7 +396,7 @@ func TestLoadContractsConfig_DuplicateEntries(t *testing.T) {
 			{
 				"chain": "eip155:1",
 				"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-				"standard": "erc721",
+				"ownership_model": "single_owner",
 				"adapter": {
 					"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 					"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
@@ -405,7 +405,7 @@ func TestLoadContractsConfig_DuplicateEntries(t *testing.T) {
 			{
 				"chain": "eip155:1",
 				"address": "0xB47e3Cd837dDF8e4c57F05d70Ab865de6e193BBB",
-				"standard": "erc721",
+				"ownership_model": "single_owner",
 				"adapter": {
 					"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 					"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
@@ -424,7 +424,7 @@ func TestLoadContractsConfig_TransferAddressNotIndexed_FromAddress(t *testing.T)
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -451,7 +451,7 @@ func TestLoadContractsConfig_TransferAddressNotIndexed_ToAddress(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -478,7 +478,7 @@ func TestLoadContractsConfig_MintAddressNotIndexed(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -504,7 +504,7 @@ func TestLoadContractsConfig_BurnAddressNotIndexed(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -530,7 +530,7 @@ func TestLoadContractsConfig_ERC1155TransferMissingQuantity(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xd07dc4262bcdbf85190c01c996b4c06a461d2430",
-			"standard": "erc1155",
+			"ownership_model": "multi_holder",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -557,7 +557,7 @@ func TestLoadContractsConfig_ERC1155MintMissingQuantity(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xd07dc4262bcdbf85190c01c996b4c06a461d2430",
-			"standard": "erc1155",
+			"ownership_model": "multi_holder",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -583,7 +583,7 @@ func TestLoadContractsConfig_ERC1155BurnMissingQuantity(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xd07dc4262bcdbf85190c01c996b4c06a461d2430",
-			"standard": "erc1155",
+			"ownership_model": "multi_holder",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -610,7 +610,7 @@ func TestLoadContractsConfig_ERC721DoesNotRequireQuantity(t *testing.T) {
 		"contracts": [{
 			"chain": "eip155:1",
 			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-			"standard": "erc721",
+			"ownership_model": "single_owner",
 			"adapter": {
 				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
 				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
@@ -663,7 +663,7 @@ func TestNewAdapterRegistry_MissingABI(t *testing.T) {
 			"contracts": [{
 				"chain": "eip155:1",
 				"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
-				"standard": "erc721",
+				"ownership_model": "single_owner",
 				"adapter": {
 					"existence": {"method": "punkIndexToAddress", "abi": "missing", "params": ["${tokenId}"]},
 					"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}

@@ -47,6 +47,23 @@ func (a *ERC721Adapter) GetStandard() domain.ChainStandard {
 	return domain.StandardERC721
 }
 
+// OwnershipModel returns single-owner semantics for ERC-721 tokens.
+func (a *ERC721Adapter) OwnershipModel() OwnershipModel {
+	return OwnershipSingleOwner
+}
+
+// GetTokenBalances is unsupported for single-owner ERC-721 tokens.
+func (a *ERC721Adapter) GetTokenBalances(_ context.Context, _, _ string) (map[string]string, error) {
+	return nil, fmt.Errorf("GetTokenBalances not supported for single-owner tokens")
+}
+
+// GetOwnerBalanceAndEvents is unsupported for single-owner ERC-721 tokens.
+func (a *ERC721Adapter) GetOwnerBalanceAndEvents(
+	_ context.Context, _, _, _ string,
+) (string, []domain.BlockchainEvent, error) {
+	return "", nil, fmt.Errorf("GetOwnerBalanceAndEvents not supported for single-owner tokens")
+}
+
 // TokenExists checks existence via ownerOf, treating execution reverts as non-existence.
 func (a *ERC721Adapter) TokenExists(ctx context.Context, contractAddress, tokenNumber string) (bool, error) {
 	_, err := helpers.ERC721OwnerOf(ctx, a.ethClient, contractAddress, tokenNumber)

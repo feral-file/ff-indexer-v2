@@ -79,12 +79,10 @@ func NewAdapterRegistry(
 
 // GetAdapter returns the adapter for a chain, contract, and token standard.
 //
-// First checks for a configured contract override (from contracts.json) when the requested
-// standard matches the configured entry, then falls back to the standard adapter (ERC721 or
-// ERC1155). Returns ErrConfiguredStandardMismatch when an override exists but the requested
-// standard differs. Returns ErrUnsupportedContractStandard if no adapter is found.
-//
-// Contract addresses are normalized to lowercase for comparison.
+// Configured contract overrides are resolved by (chain, address) first. When the requested
+// CID standard differs from the configured contract's derived CID standard, a warning is
+// logged and the configured adapter is still returned. Falls back to standard adapters
+// when no override exists. Returns ErrUnsupportedContractStandard if no adapter is found.
 func (r *AdapterRegistry) GetAdapter(
 	chain domain.Chain,
 	contractAddress string,
@@ -93,13 +91,12 @@ func (r *AdapterRegistry) GetAdapter(
 	key := contractKey(chain, contractAddress)
 	if adp, ok := r.contractAdapters[key]; ok {
 		entry := r.contractConfigs[key]
-		if entry.Standard != standard {
-			return nil, fmt.Errorf(
-				"contract %s configured as %s, requested %s: %w",
-				entry.Name,
-				entry.Standard,
-				standard,
-				adapters.ErrConfiguredStandardMismatch,
+		expectedStandard := entry.CIDStandard()
+		if expectedStandard != standard {
+			logger.WarnCtx(context.Background(), "CID standard mismatch for configured contract; using configured adapter",
+				zap.String("contract", entry.Name),
+				zap.String("expectedStandard", string(expectedStandard)),
+				zap.String("requestedStandard", string(standard)),
 			)
 		}
 		return adp, nil
@@ -141,16 +138,14 @@ func (r *AdapterRegistry) GetContractAdapter(chain domain.Chain, contractAddress
 	return adp, ok
 }
 
-// GetContractStandard returns the configured token standard for a contract override.
-// Returns (standard, true) if a configuration exists, (empty, false) otherwise.
-// This is used to determine which ownership tracking logic to apply for GenericAdapter.
-func (r *AdapterRegistry) GetContractStandard(chain domain.Chain, contractAddress string) (domain.ChainStandard, bool) {
+// GetContractCIDStandard returns the derived CID standard for a configured contract override.
+func (r *AdapterRegistry) GetContractCIDStandard(chain domain.Chain, contractAddress string) (domain.ChainStandard, bool) {
 	key := contractKey(chain, contractAddress)
 	entry, ok := r.contractConfigs[key]
 	if !ok {
 		return "", false
 	}
-	return entry.Standard, true
+	return entry.CIDStandard(), true
 }
 
 // GetAllCustomEventSignatures returns all custom event signatures across configured contracts.

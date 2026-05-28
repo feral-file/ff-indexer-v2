@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -45,6 +46,37 @@ func NewERC1155Adapter(
 // GetStandard returns the ERC-1155 chain standard.
 func (a *ERC1155Adapter) GetStandard() domain.ChainStandard {
 	return domain.StandardERC1155
+}
+
+// OwnershipModel returns multi-holder semantics for ERC-1155 tokens.
+func (a *ERC1155Adapter) OwnershipModel() OwnershipModel {
+	return OwnershipMultiHolder
+}
+
+// GetTokenBalances fetches all holder balances by replaying standard ERC-1155 transfer events.
+func (a *ERC1155Adapter) GetTokenBalances(
+	ctx context.Context,
+	contractAddress, tokenNumber string,
+) (map[string]string, error) {
+	return helpers.ERC1155ReplayBalances(ctx, a.pagination, a.blockProvider, contractAddress, tokenNumber)
+}
+
+// GetOwnerBalanceAndEvents fetches balance and events for a specific ERC-1155 owner.
+func (a *ERC1155Adapter) GetOwnerBalanceAndEvents(
+	ctx context.Context,
+	contractAddress, tokenNumber, ownerAddress string,
+) (string, []domain.BlockchainEvent, error) {
+	return helpers.ERC1155BalanceAndEventsForOwner(
+		ctx,
+		a.ethClient,
+		a.pagination,
+		a.blockProvider,
+		a.chainID,
+		time.Now,
+		contractAddress,
+		tokenNumber,
+		ownerAddress,
+	)
 }
 
 // TokenExists checks existence via recent transfer scan and balance checks.

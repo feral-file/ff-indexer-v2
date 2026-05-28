@@ -24,7 +24,8 @@ import (
 // GenericAdapter executes configured contract calls for legacy or custom contracts.
 type GenericAdapter struct {
 	contractAddress  string
-	standard         domain.ChainStandard
+	ownershipModel   OwnershipModel
+	cidStandard      domain.ChainStandard
 	existence        *MethodCall
 	owner            *MethodCall
 	metadata         ContractMetadataConfig
@@ -39,7 +40,7 @@ type GenericAdapter struct {
 // NewGenericAdapter builds a GenericAdapter from parsed contract configuration.
 func NewGenericAdapter(
 	contractAddress string,
-	standard domain.ChainStandard,
+	ownershipModel OwnershipModel,
 	existence, owner *MethodCall,
 	metadata ContractMetadataConfig,
 	ethClient ethadapter.EthClient,
@@ -51,7 +52,8 @@ func NewGenericAdapter(
 ) *GenericAdapter {
 	return &GenericAdapter{
 		contractAddress:  contractAddress,
-		standard:         standard,
+		ownershipModel:   ownershipModel,
+		cidStandard:      CIDStandardFromOwnershipModel(ownershipModel),
 		existence:        existence,
 		owner:            owner,
 		metadata:         metadata,
@@ -64,9 +66,14 @@ func NewGenericAdapter(
 	}
 }
 
-// GetStandard returns the configured token standard for this contract override.
+// GetStandard returns the CID/API standard label derived from ownership_model.
 func (a *GenericAdapter) GetStandard() domain.ChainStandard {
-	return a.standard
+	return a.cidStandard
+}
+
+// OwnershipModel returns the configured ownership semantics for this contract.
+func (a *GenericAdapter) OwnershipModel() OwnershipModel {
+	return a.ownershipModel
 }
 
 // TokenExists checks token existence using the configured existence method.
@@ -137,6 +144,43 @@ func (a *GenericAdapter) TokenURI(ctx context.Context, contractAddress, tokenNum
 // SupportsProvenance reports whether full on-chain provenance indexing is supported.
 func (a *GenericAdapter) SupportsProvenance() bool {
 	return a.provenance
+}
+
+// GetTokenBalances replays configured custom events to compute all holder balances for a token.
+func (a *GenericAdapter) GetTokenBalances(
+	ctx context.Context,
+	contractAddress, tokenNumber string,
+) (map[string]string, error) {
+	if a.ownershipModel != OwnershipMultiHolder {
+		return nil, fmt.Errorf("GetTokenBalances not supported for single-owner contracts")
+	}
+
+	events, err := a.GetTokenEvents(ctx, contractAddress, tokenNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	return replayBalancesFromEvents(events), nil
+}
+
+// GetOwnerBalanceAndEvents replays configured custom events for one owner and token.
+func (a *GenericAdapter) GetOwnerBalanceAndEvents(
+	ctx context.Context,
+	contractAddress, tokenNumber, ownerAddress string,
+) (string, []domain.BlockchainEvent, error) {
+	if a.ownershipModel != OwnershipMultiHolder {
+		return "", nil, fmt.Errorf("GetOwnerBalanceAndEvents not supported for single-owner contracts")
+	}
+
+	events, err := a.GetTokenEvents(ctx, contractAddress, tokenNumber)
+	if err != nil {
+		return "", nil, err
+	}
+
+	ownerEvents := filterOwnerEvents(events, ownerAddress)
+	balance := replayOwnerBalanceFromEvents(ownerAddress, events)
+
+	return balance, ownerEvents, nil
 }
 
 // GetEventSignatures returns configured custom event topic hashes.
@@ -259,7 +303,7 @@ func (a *GenericAdapter) GetTokensByOwner(
 		events = append(events, *parsed)
 	}
 
-	return trackOwnershipFromParsedEvents(a.chainID, a.standard, a.contractAddress, owner, events, blacklist), nil
+	return trackOwnershipFromParsedEvents(a.chainID, a.cidStandard, a.contractAddress, owner, events, blacklist), nil
 }
 
 // buildCustomOwnerTransferQueries constructs filter queries for configured provenance events
@@ -360,7 +404,7 @@ func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log) (*domai
 		if vLog.Topics[0] != expectedSignature {
 			continue
 		}
-		return parseConfiguredEvent(ctx, vLog, eventCfg, a.standard, a.chainID, a.blockProvider)
+		return parseConfiguredEvent(ctx, vLog, eventCfg, a.cidStandard, a.chainID, a.blockProvider)
 	}
 
 	return nil, ErrUnknownEvent

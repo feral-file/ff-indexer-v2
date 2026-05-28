@@ -125,6 +125,82 @@ func TestIndexedAddressTopicIndices(t *testing.T) {
 	require.Equal(t, 2, toIndex)
 }
 
+func TestReplayBalancesFromEvents(t *testing.T) {
+	t.Parallel()
+
+	from := "0x1111111111111111111111111111111111111111"
+	to := "0x2222222222222222222222222222222222222222"
+
+	events := []domain.BlockchainEvent{
+		{
+			EventType:   domain.EventTypeMint,
+			ToAddress:   &to,
+			TokenNumber: "1",
+			Quantity:    "5",
+		},
+		{
+			EventType:   domain.EventTypeTransfer,
+			FromAddress: &to,
+			ToAddress:   &from,
+			TokenNumber: "1",
+			Quantity:    "2",
+		},
+	}
+
+	balances := replayBalancesFromEvents(events)
+	require.Equal(t, map[string]string{
+		domain.NormalizeAddress(from): "2",
+		domain.NormalizeAddress(to):   "3",
+	}, balances)
+}
+
+func TestReplayOwnerBalanceFromEvents(t *testing.T) {
+	t.Parallel()
+
+	owner := "0x2222222222222222222222222222222222222222"
+	other := "0x1111111111111111111111111111111111111111"
+
+	events := []domain.BlockchainEvent{
+		{
+			EventType:   domain.EventTypeMint,
+			ToAddress:   &owner,
+			TokenNumber: "1",
+			Quantity:    "5",
+		},
+		{
+			EventType:   domain.EventTypeTransfer,
+			FromAddress: &owner,
+			ToAddress:   &other,
+			TokenNumber: "1",
+			Quantity:    "2",
+		},
+	}
+
+	require.Equal(t, "3", replayOwnerBalanceFromEvents(owner, events))
+}
+
+func TestGenericAdapter_GetTokenBalances_UnsupportedForSingleOwner(t *testing.T) {
+	t.Parallel()
+
+	adp := NewGenericAdapter(
+		"0xabc",
+		OwnershipSingleOwner,
+		nil,
+		nil,
+		ContractMetadataConfig{Source: MetadataSourceVendorOnly},
+		nil,
+		nil,
+		nil,
+		false,
+		nil,
+		domain.ChainEthereumMainnet,
+	)
+
+	_, err := adp.GetTokenBalances(t.Context(), "0xabc", "1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not supported for single-owner")
+}
+
 func erc1155SingleLog(
 	contract common.Address,
 	blockNumber uint64,

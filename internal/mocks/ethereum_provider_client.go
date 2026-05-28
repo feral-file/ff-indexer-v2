@@ -18,6 +18,7 @@ import (
 	gomock "go.uber.org/mock/gomock"
 
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
+	adapters "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	registry "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
 	registry0 "github.com/feral-file/ff-indexer-v2/internal/registry"
 )
@@ -207,6 +208,37 @@ func (mr *MockEthereumProviderClientMockRecorder) IsVendorOnlyMetadata(contractA
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsVendorOnlyMetadata", reflect.TypeOf((*MockEthereumProviderClient)(nil).IsVendorOnlyMetadata), contractAddress)
 }
 
+// OwnerBalanceAndEvents mocks base method.
+func (m *MockEthereumProviderClient) OwnerBalanceAndEvents(ctx context.Context, contractAddress, tokenNumber, ownerAddress string, standard domain.ChainStandard) (string, []domain.BlockchainEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OwnerBalanceAndEvents", ctx, contractAddress, tokenNumber, ownerAddress, standard)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].([]domain.BlockchainEvent)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// OwnerBalanceAndEvents indicates an expected call of OwnerBalanceAndEvents.
+func (mr *MockEthereumProviderClientMockRecorder) OwnerBalanceAndEvents(ctx, contractAddress, tokenNumber, ownerAddress, standard any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OwnerBalanceAndEvents", reflect.TypeOf((*MockEthereumProviderClient)(nil).OwnerBalanceAndEvents), ctx, contractAddress, tokenNumber, ownerAddress, standard)
+}
+
+// OwnershipModel mocks base method.
+func (m *MockEthereumProviderClient) OwnershipModel(contractAddress string, standard domain.ChainStandard) (adapters.OwnershipModel, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OwnershipModel", contractAddress, standard)
+	ret0, _ := ret[0].(adapters.OwnershipModel)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// OwnershipModel indicates an expected call of OwnershipModel.
+func (mr *MockEthereumProviderClientMockRecorder) OwnershipModel(contractAddress, standard any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OwnershipModel", reflect.TypeOf((*MockEthereumProviderClient)(nil).OwnershipModel), contractAddress, standard)
+}
+
 // ParseEventLog mocks base method.
 func (m *MockEthereumProviderClient) ParseEventLog(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	m.ctrl.T.Helper()
@@ -249,6 +281,21 @@ func (m *MockEthereumProviderClient) SupportsProvenance(contractAddress string, 
 func (mr *MockEthereumProviderClientMockRecorder) SupportsProvenance(contractAddress, standard any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SupportsProvenance", reflect.TypeOf((*MockEthereumProviderClient)(nil).SupportsProvenance), contractAddress, standard)
+}
+
+// TokenBalances mocks base method.
+func (m *MockEthereumProviderClient) TokenBalances(ctx context.Context, contractAddress, tokenNumber string, standard domain.ChainStandard) (map[string]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TokenBalances", ctx, contractAddress, tokenNumber, standard)
+	ret0, _ := ret[0].(map[string]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// TokenBalances indicates an expected call of TokenBalances.
+func (mr *MockEthereumProviderClientMockRecorder) TokenBalances(ctx, contractAddress, tokenNumber, standard any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TokenBalances", reflect.TypeOf((*MockEthereumProviderClient)(nil).TokenBalances), ctx, contractAddress, tokenNumber, standard)
 }
 
 // TokenExists mocks base method.

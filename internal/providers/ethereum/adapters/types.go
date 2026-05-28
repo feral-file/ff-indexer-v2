@@ -12,6 +12,28 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 )
 
+// OwnershipModel distinguishes single-owner vs multi-holder token semantics for indexing.
+type OwnershipModel string
+
+const (
+	// OwnershipSingleOwner uses last-transfer-wins ownership tracking (ERC-721-shaped).
+	OwnershipSingleOwner OwnershipModel = "single_owner"
+	// OwnershipMultiHolder uses balance-accumulation ownership tracking (ERC-1155-shaped).
+	OwnershipMultiHolder OwnershipModel = "multi_holder"
+)
+
+// CIDStandardFromOwnershipModel maps ownership semantics to the token CID/API standard label.
+func CIDStandardFromOwnershipModel(model OwnershipModel) domain.ChainStandard {
+	switch model {
+	case OwnershipMultiHolder:
+		return domain.StandardERC1155
+	case OwnershipSingleOwner:
+		return domain.StandardERC721
+	default:
+		return domain.StandardERC721
+	}
+}
+
 // ContractAdapter defines contract-specific token operations and event parsing.
 //
 // Each adapter encapsulates the logic for a specific token standard or custom contract,
@@ -74,6 +96,20 @@ type ContractAdapter interface {
 	// Used by the client to construct TokenCIDs and by the generic adapter to select
 	// ownership tracking logic (ERC721: last-transfer-wins, ERC1155: balance accumulation).
 	GetStandard() domain.ChainStandard
+
+	// OwnershipModel returns whether this adapter uses single-owner or multi-holder semantics.
+	OwnershipModel() OwnershipModel
+
+	// GetTokenBalances fetches current balances for all holders of a token.
+	// Only applicable for multi_holder adapters. Returns map[ownerAddress]balance.
+	GetTokenBalances(ctx context.Context, contractAddress, tokenNumber string) (map[string]string, error)
+
+	// GetOwnerBalanceAndEvents fetches balance and ownership-affecting events for one owner.
+	// Only applicable for multi_holder adapters.
+	GetOwnerBalanceAndEvents(
+		ctx context.Context,
+		contractAddress, tokenNumber, ownerAddress string,
+	) (balance string, events []domain.BlockchainEvent, err error)
 
 	// GetTokenEvents fetches all historical events for a specific token.
 	//

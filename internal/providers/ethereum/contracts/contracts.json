@@ -1,11 +1,11 @@
 {
-  "$comment": "The standard field determines ownership tracking for configured contracts: erc721 uses last-transfer-wins, erc1155 uses net-balance accumulation.",
+  "$comment": "ownership_model determines indexing semantics: single_owner=last-transfer-wins, multi_holder=balance-accumulation. Token CID standard (erc721/erc1155) is auto-derived.",
   "contracts": [
     {
       "chain": "eip155:1",
       "address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
       "name": "CryptoPunks",
-      "standard": "erc721",
+      "ownership_model": "single_owner",
       "adapter": {
         "existence": {
           "method": "punkIndexToAddress",

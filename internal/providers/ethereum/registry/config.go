@@ -27,11 +27,17 @@ type ContractsConfig struct {
 
 // ContractConfig describes a single contract override entry.
 type ContractConfig struct {
-	Chain    domain.Chain         `json:"chain"`
-	Address  string               `json:"address"`
-	Name     string               `json:"name"`
-	Standard domain.ChainStandard `json:"standard"`
-	Adapter  AdapterConfig        `json:"adapter"`
+	Chain          domain.Chain            `json:"chain"`
+	Address        string                  `json:"address"`
+	Name           string                  `json:"name"`
+	OwnershipModel adapters.OwnershipModel `json:"ownership_model"`
+	Adapter        AdapterConfig           `json:"adapter"`
+}
+
+// CIDStandard returns the token standard label used in Token CIDs and API responses.
+// Derived from ownership_model: single_owner -> erc721, multi_holder -> erc1155.
+func (c *ContractConfig) CIDStandard() domain.ChainStandard {
+	return adapters.CIDStandardFromOwnershipModel(c.OwnershipModel)
 }
 
 // AdapterConfig holds declarative method routing for a contract.
@@ -113,13 +119,16 @@ func validateContractEntry(entry *ContractConfig, abiRegistry *helpers.ABIRegist
 	if !common.IsHexAddress(entry.Address) {
 		return fmt.Errorf("invalid address: %s", entry.Address)
 	}
-	if entry.Standard == "" {
-		return fmt.Errorf("standard is required")
+	if entry.OwnershipModel == "" {
+		return fmt.Errorf("ownership_model is required")
 	}
-	switch entry.Standard {
-	case domain.StandardERC721, domain.StandardERC1155:
+	switch entry.OwnershipModel {
+	case adapters.OwnershipSingleOwner, adapters.OwnershipMultiHolder:
 	default:
-		return fmt.Errorf("unsupported standard %q (allowed: erc721, erc1155)", entry.Standard)
+		return fmt.Errorf(
+			"unsupported ownership_model %q (allowed: single_owner, multi_holder)",
+			entry.OwnershipModel,
+		)
 	}
 	if entry.Adapter.Existence.Method == "" {
 		return fmt.Errorf("adapter.existence.method is required")
@@ -146,7 +155,7 @@ func validateContractEntry(entry *ContractConfig, abiRegistry *helpers.ABIRegist
 
 	seenSignatures := make(map[string]int)
 	for i, eventCfg := range entry.Adapter.Events {
-		if err := validateEventConfig(eventCfg, entry.Standard, fmt.Sprintf("adapter.events[%d]", i)); err != nil {
+		if err := validateEventConfig(eventCfg, entry.CIDStandard(), fmt.Sprintf("adapter.events[%d]", i)); err != nil {
 			return err
 		}
 		if prevIdx, exists := seenSignatures[eventCfg.Signature]; exists {
@@ -419,7 +428,7 @@ func BuildGenericAdapterFromConfig(
 
 	return adapters.NewGenericAdapter(
 		entry.Address,
-		entry.Standard,
+		entry.OwnershipModel,
 		existence,
 		owner,
 		metadata,
