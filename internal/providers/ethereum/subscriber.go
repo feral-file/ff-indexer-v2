@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -81,7 +82,13 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 				if errors.Is(err, context.Canceled) {
 					return ctx.Err()
 				}
-				return fmt.Errorf("parse log at block %d index %d: %w", vLog.BlockNumber, vLog.Index, err)
+				logger.WarnCtx(ctx, "Skipping unparseable live log",
+					zap.Uint64("block", vLog.BlockNumber),
+					zap.Uint("log_index", vLog.Index),
+					zap.String("tx_hash", vLog.TxHash.Hex()),
+					zap.Error(err),
+				)
+				continue
 			}
 
 			if event == nil {

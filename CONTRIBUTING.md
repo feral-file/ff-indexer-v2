@@ -91,7 +91,7 @@ The canonical pre-review verification command is:
 make check
 ```
 
-This runs import formatting, full-repo `golangci-lint` (with CGO), a lightweight `CGO_ENABLED=0` build and `cmd/ff-indexer` tests, then `CGO_ENABLED=1` `go test -cover ./...`. See the `check` target in the `Makefile` for the exact dependency chain.
+This runs import formatting (`goimports`), `gofmt -s` verification, full-repo `golangci-lint` (with CGO enabled), then `CGO_ENABLED=1` `go test -cover ./...`. See the `check` target in the `Makefile` for the exact dependency chain. Optional lightweight build verification is available via `make test-lightweight-build` but is not part of `make check` or CI.
 
 The lint profile checks cyclomatic and cognitive complexity, function and file length, and doc quality.
 

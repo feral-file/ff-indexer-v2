@@ -17,7 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 )
 
-func TestSubscribeEvents_ParseErrorFails(t *testing.T) {
+func TestSubscribeEvents_ParseErrorSkipped(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
@@ -32,6 +32,7 @@ func TestSubscribeEvents_ParseErrorFails(t *testing.T) {
 	subErrCh := make(chan error, 1)
 	mockSub := &mockSubscription{errCh: subErrCh}
 
+	var handlerCalls int
 	mockClient.EXPECT().
 		SubscribeFilterLogs(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
@@ -41,20 +42,39 @@ func TestSubscribeEvents_ParseErrorFails(t *testing.T) {
 					Index:       1,
 					Topics:      []common.Hash{helpers.TransferEventSignature},
 				}
-				cancel()
+				ch <- types.Log{
+					BlockNumber: 101,
+					Index:       2,
+					Topics:      []common.Hash{helpers.TransferEventSignature},
+				}
 			}()
 			return mockSub, nil
 		})
 
 	parseErr := errors.New("resolve block timestamp for block 100: get block timestamp: boom")
-	mockClient.EXPECT().
-		ParseEventLog(gomock.Any(), gomock.Any()).
-		Return(nil, parseErr)
+	gomock.InOrder(
+		mockClient.EXPECT().
+			ParseEventLog(gomock.Any(), gomock.Any()).
+			Return(nil, parseErr),
+		mockClient.EXPECT().
+			ParseEventLog(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(context.Context, types.Log) (*domain.BlockchainEvent, error) {
+				cancel()
+				return &domain.BlockchainEvent{
+					Chain:       domain.ChainEthereumMainnet,
+					EventType:   domain.EventTypeTransfer,
+					TokenNumber: "1",
+					TxHash:      "0xabc",
+				}, nil
+			}),
+	)
 
-	err = subscriber.SubscribeEvents(ctx, 1, func(*domain.BlockchainEvent) error { return nil })
-	require.Error(t, err)
-	require.ErrorIs(t, err, parseErr)
-	require.Contains(t, err.Error(), "parse log at block 100 index 1")
+	err = subscriber.SubscribeEvents(ctx, 1, func(*domain.BlockchainEvent) error {
+		handlerCalls++
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 1, handlerCalls)
 }
 
 func TestSubscribeEvents_SkipsNilParsedEvent(t *testing.T) {
