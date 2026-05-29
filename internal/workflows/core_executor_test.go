@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -307,17 +306,125 @@ func TestCreateTokenMint_Success_ERC1155(t *testing.T) {
 		OwnershipModel(event.ContractAddress, domain.StandardERC1155).
 		Return(ethadapters.OwnershipMultiHolder, nil)
 
+	// The code normalizes addresses to checksummed format before calling TokenBalancesForAddresses
+	normalizedAddr := common.HexToAddress(toAddr).Hex()
 	mocks.ethClient.EXPECT().
-		TokenBalancesForAddresses(ctx, event.ContractAddress, event.TokenNumber, domain.StandardERC1155, []string{toAddr}).
+		TokenBalancesForAddresses(ctx, event.ContractAddress, event.TokenNumber, domain.StandardERC1155, []string{normalizedAddr}).
 		Return(map[string]string{
-			strings.ToLower(toAddr): "10", // Current balance is 10 after minting 5
+			normalizedAddr: "10", // Current balance is 10 (checksummed key, different from mint quantity 5)
 		}, nil)
 
 	// Mock store CreateTokenMint
 	mocks.store.EXPECT().
 		CreateTokenMint(ctx, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, input store.CreateTokenMintInput) error {
-			assert.Equal(t, "10", input.Balance.Quantity) // Should use fetched balance
+			assert.Equal(t, "10", input.Balance.Quantity) // Should use fetched balance, not event quantity
+			return nil
+		})
+
+	err := mocks.executor.CreateTokenMint(ctx, event)
+
+	assert.NoError(t, err)
+}
+
+func TestCreateTokenMint_Success_ERC1155_AbsentBalance(t *testing.T) {
+	mocks := setupTestExecutor(t, withoutDefaultOwnershipModel())
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	fromAddr := "0x0000000000000000000000000000000000000000"
+	toAddr := "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	timestamp := time.Now()
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		FromAddress:     &fromAddr,
+		ToAddress:       &toAddr,
+		Quantity:        "5",
+		TxHash:          "0xtx123",
+		BlockNumber:     100,
+		BlockHash:       types.StringPtr("0xblock123"),
+		Timestamp:       timestamp,
+	}
+
+	rawEventData := []byte(`{"chain":"eip155:1"}`)
+
+	mocks.json.EXPECT().
+		Marshal(event).
+		Return(rawEventData, nil)
+
+	mocks.ethClient.EXPECT().
+		OwnershipModel(event.ContractAddress, domain.StandardERC1155).
+		Return(ethadapters.OwnershipMultiHolder, nil)
+
+	// Return empty balance map (address not found)
+	normalizedAddr := common.HexToAddress(toAddr).Hex()
+	mocks.ethClient.EXPECT().
+		TokenBalancesForAddresses(ctx, event.ContractAddress, event.TokenNumber, domain.StandardERC1155, []string{normalizedAddr}).
+		Return(map[string]string{}, nil) // Empty map, balance not found
+
+	mocks.store.EXPECT().
+		CreateTokenMint(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenMintInput) error {
+			assert.Equal(t, "5", input.Balance.Quantity) // Should fallback to event quantity
+			return nil
+		})
+
+	err := mocks.executor.CreateTokenMint(ctx, event)
+
+	assert.NoError(t, err)
+}
+
+func TestCreateTokenMint_Success_ERC1155_ZeroBalance(t *testing.T) {
+	mocks := setupTestExecutor(t, withoutDefaultOwnershipModel())
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	fromAddr := "0x0000000000000000000000000000000000000000"
+	toAddr := "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	timestamp := time.Now()
+
+	event := &domain.BlockchainEvent{
+		Chain:           domain.ChainEthereumMainnet,
+		Standard:        domain.StandardERC1155,
+		ContractAddress: "0x1234567890123456789012345678901234567890",
+		TokenNumber:     "1",
+		EventType:       domain.EventTypeMint,
+		FromAddress:     &fromAddr,
+		ToAddress:       &toAddr,
+		Quantity:        "5",
+		TxHash:          "0xtx123",
+		BlockNumber:     100,
+		BlockHash:       types.StringPtr("0xblock123"),
+		Timestamp:       timestamp,
+	}
+
+	rawEventData := []byte(`{"chain":"eip155:1"}`)
+
+	mocks.json.EXPECT().
+		Marshal(event).
+		Return(rawEventData, nil)
+
+	mocks.ethClient.EXPECT().
+		OwnershipModel(event.ContractAddress, domain.StandardERC1155).
+		Return(ethadapters.OwnershipMultiHolder, nil)
+
+	// Return zero balance (address transferred all tokens away)
+	normalizedAddr := common.HexToAddress(toAddr).Hex()
+	mocks.ethClient.EXPECT().
+		TokenBalancesForAddresses(ctx, event.ContractAddress, event.TokenNumber, domain.StandardERC1155, []string{normalizedAddr}).
+		Return(map[string]string{
+			normalizedAddr: "0", // Zero balance, not event quantity
+		}, nil)
+
+	mocks.store.EXPECT().
+		CreateTokenMint(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenMintInput) error {
+			assert.Equal(t, "0", input.Balance.Quantity) // Should use zero balance, not fallback to event quantity
 			return nil
 		})
 
@@ -434,7 +541,7 @@ func TestCreateTokenMint_ERC1155BalanceError(t *testing.T) {
 
 	ctx := context.Background()
 	fromAddr := domain.ETHEREUM_ZERO_ADDRESS
-	toAddr := "0xowner123"
+	toAddr := "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
 	timestamp := time.Now()
 
 	event := &domain.BlockchainEvent{
@@ -465,8 +572,10 @@ func TestCreateTokenMint_ERC1155BalanceError(t *testing.T) {
 		OwnershipModel(event.ContractAddress, domain.StandardERC1155).
 		Return(ethadapters.OwnershipMultiHolder, nil)
 
+	// The code normalizes addresses to checksummed format before calling TokenBalancesForAddresses
+	normalizedAddr := common.HexToAddress(toAddr).Hex()
 	mocks.ethClient.EXPECT().
-		TokenBalancesForAddresses(ctx, event.ContractAddress, event.TokenNumber, domain.StandardERC1155, []string{toAddr}).
+		TokenBalancesForAddresses(ctx, event.ContractAddress, event.TokenNumber, domain.StandardERC1155, []string{normalizedAddr}).
 		Return(nil, balanceErr)
 
 	err := mocks.executor.CreateTokenMint(ctx, event)

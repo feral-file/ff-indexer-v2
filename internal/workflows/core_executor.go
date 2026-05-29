@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -357,16 +357,21 @@ func (e *coreExecutor) CreateTokenMint(ctx context.Context, event *domain.Blockc
 			//
 			// Constraints: Only needed for multi-holder mints where multiple mints to the same owner
 			// can accumulate balance. Single-owner mints use event quantity directly.
+			//
+			// Normalize the address to checksummed format to match adapter return keys.
+			// Both standard and generic adapters return checksummed keys (generic explicitly via
+			// common.HexToAddress().Hex(), standard implicitly by preserving the passed format).
+			normalizedAddr := common.HexToAddress(*event.ToAddress).Hex()
 			balances, err := e.ethClient.TokenBalancesForAddresses(
 				ctx,
 				event.ContractAddress,
 				event.TokenNumber,
 				event.Standard,
-				[]string{*event.ToAddress})
+				[]string{normalizedAddr})
 			if err != nil {
 				return fmt.Errorf("failed to get token balances: %w", err)
 			}
-			if balance, ok := balances[strings.ToLower(*event.ToAddress)]; ok {
+			if balance, ok := balances[normalizedAddr]; ok {
 				input.Balance.Quantity = balance
 			} else {
 				// If balance is not found, fallback to event quantity
