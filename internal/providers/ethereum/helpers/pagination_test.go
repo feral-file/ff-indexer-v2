@@ -264,3 +264,46 @@ func TestFilterLogsWithPagination_AdaptiveHalvingStillCoversRange(t *testing.T) 
 	require.NoError(t, err)
 	requireContiguousCoverage(t, queriedRanges, fromBlock, toBlock)
 }
+
+// TestFilterLogsWithPagination_OneBlockTooManyResultsReturnsError tests that when a single-block
+// query returns "too many results", pagination returns an explicit error instead of partial success.
+func TestFilterLogsWithPagination_OneBlockTooManyResultsReturnsError(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockClock := mocks.NewMockClock(ctrl)
+	mockClock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+
+	const (
+		fromBlock uint64 = 100
+		toBlock   uint64 = 100 // Single block
+	)
+
+	// Every query for block 100 returns "too many results", even for a single block
+	mockClient.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		DoAndReturn(func(_ context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+			from := query.FromBlock.Uint64()
+			to := query.ToBlock.Uint64()
+
+			// Even a single-block query returns too many results
+			if from == 100 && to == 100 {
+				return nil, fmt.Errorf("query returned more than 10000 results")
+			}
+
+			return nil, nil
+		})
+
+	pagination := helpers.NewPaginationHelper(mockClient, mockClock, nil)
+	logs, err := pagination.FilterLogsWithPagination(context.Background(), ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(fromBlock),
+		ToBlock:   new(big.Int).SetUint64(toBlock),
+	})
+
+	// Should return an error, not empty logs
+	require.Error(t, err)
+	require.Nil(t, logs)
+	require.Contains(t, err.Error(), "too many results in single block 100")
+}

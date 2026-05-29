@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -344,16 +345,33 @@ func (e *coreExecutor) CreateTokenMint(ctx context.Context, event *domain.Blockc
 		}
 
 		if ownershipModel == ethadapters.OwnershipMultiHolder {
-			balance, _, err := e.ethClient.OwnerBalanceAndEvents(
+			// For multi-holder mints, fetch current on-chain balance only (no event replay).
+			// Use TokenBalancesForAddresses which calls balanceOf/balanceOfBatch for accuracy.
+			//
+			// Reason: OwnerBalanceAndEvents triggers full event replay from genesis for ERC-1155,
+			// turning live mint ingestion into a provenance path. TokenBalancesForAddresses uses
+			// direct on-chain balance queries.
+			//
+			// Trade-offs: One RPC call per mint vs. full historical log scan. Balance accuracy is
+			// preserved because the mint event already happened on-chain before this ingestion.
+			//
+			// Constraints: Only needed for multi-holder mints where multiple mints to the same owner
+			// can accumulate balance. Single-owner mints use event quantity directly.
+			balances, err := e.ethClient.TokenBalancesForAddresses(
 				ctx,
 				event.ContractAddress,
 				event.TokenNumber,
-				*event.ToAddress,
-				event.Standard)
+				event.Standard,
+				[]string{*event.ToAddress})
 			if err != nil {
-				return fmt.Errorf("failed to get token balance: %w", err)
+				return fmt.Errorf("failed to get token balances: %w", err)
 			}
-			input.Balance.Quantity = balance
+			if balance, ok := balances[strings.ToLower(*event.ToAddress)]; ok {
+				input.Balance.Quantity = balance
+			} else {
+				// If balance is not found, fallback to event quantity
+				input.Balance.Quantity = event.Quantity
+			}
 		}
 	}
 
@@ -1369,9 +1387,20 @@ func (e *coreExecutor) IndexTokenWithFullProvenancesByTokenCID(ctx context.Conte
 	return nil
 }
 
-// applySingleOwnerOnChainFallback uses adapter TokenOwner when event-derived ownership is
-// missing or marked burned. This protects configured legacy contracts whose historical logs
-// can disagree with current on-chain state (for example corrupted CryptoPunks PunkBought logs).
+// applySingleOwnerOnChainFallback ensures current owner state comes from the adapter for single-owner tokens.
+//
+// For configured single-owner Ethereum contracts, the adapter TokenOwner() method is the source of truth
+// for current ownership state. Parsed events provide provenance history but should not overwrite the
+// adapter-resolved current owner.
+//
+// Reason: Legacy contracts may have incomplete or corrupted event histories. The adapter's current-state
+// query (e.g., CryptoPunks punkIndexToAddress) is authoritative.
+//
+// Trade-offs: Adds one RPC call per full-provenance single-owner token indexing, but ensures correctness
+// for configured contracts where event parsing cannot be trusted as the sole source of current state.
+//
+// Constraints: Only applies to Ethereum single_owner contracts. Multi-holder balance is already fetched
+// via TokenBalancesForAddresses, and Tezos uses TzKT balances as the source of truth.
 func (e *coreExecutor) applySingleOwnerOnChainFallback(
 	ctx context.Context,
 	contractAddress, tokenNumber string,
@@ -1386,20 +1415,24 @@ func (e *coreExecutor) applySingleOwnerOnChainFallback(
 	if currentOwner == nil || burned == nil {
 		return nil
 	}
-	if !*burned && !types.StringNilOrEmpty(*currentOwner) && **currentOwner != domain.ETHEREUM_ZERO_ADDRESS {
-		return nil
-	}
 
+	// For configured single-owner contracts, ALWAYS use adapter TokenOwner as the authoritative
+	// current state, regardless of event-derived ownership.
 	owner, err := e.ethClient.TokenOwner(ctx, contractAddress, tokenNumber, standard)
 	if err != nil {
 		if errors.Is(err, domain.ErrTokenNotFoundOnChain) ||
 			errors.Is(err, ethereum.ErrContractNotFound) ||
 			ethhelpers.IsExecutionRevert(err) {
+			// Token doesn't exist or is burned
+			*currentOwner = nil
+			*burned = true
 			return nil
 		}
 		return err
 	}
 	if owner == "" || owner == domain.ETHEREUM_ZERO_ADDRESS {
+		*currentOwner = nil
+		*burned = true
 		return nil
 	}
 

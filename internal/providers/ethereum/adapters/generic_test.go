@@ -815,3 +815,174 @@ func TestGenericAdapter_GetTokenEvents_RepairsBrokenAcceptBidPunkBought(t *testi
 	require.Equal(t, domain.EventTypeTransfer, events[0].EventType)
 	require.Equal(t, buyer.Hex(), *events[0].ToAddress)
 }
+
+// TestGenericAdapter_GetTokensByOwner_CorruptedPunkBoughtBuyerDiscovery tests that owner sweeps
+// can discover CryptoPunks buyers even when the PunkBought log has zero indexed toAddress.
+// This uses the internal Transfer(seller, buyer, 1) event to find the real buyer.
+func TestGenericAdapter_GetTokensByOwner_CorruptedPunkBoughtBuyerDiscovery(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+	mockBlock.EXPECT().GetLatestBlock(gomock.Any()).Return(uint64(20_000_000), nil).AnyTimes()
+	mockBlock.EXPECT().GetBlockTimestamp(gomock.Any(), uint64(13633896)).Return(time.Unix(1_700_000_000, 0), nil)
+
+	const cryptopunksEventsABI = `[
+		{
+			"anonymous": false,
+			"inputs": [
+				{"indexed": true, "name": "punkIndex", "type": "uint256"},
+				{"indexed": false, "name": "value", "type": "uint256"},
+				{"indexed": true, "name": "fromAddress", "type": "address"},
+				{"indexed": true, "name": "toAddress", "type": "address"}
+			],
+			"name": "PunkBought",
+			"type": "event"
+		}
+	]`
+
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
+		"abis/cryptopunks.json":        {Data: []byte(cryptopunksABI)},
+		"abis/cryptopunks_events.json": {Data: []byte(cryptopunksEventsABI)},
+	})
+	require.NoError(t, err)
+
+	pagination := helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), mockBlock)
+
+	contractAddr := "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	seller := common.HexToAddress("0xc480fb0ebea2591470f571436926785be5ebcd22")
+	buyer := common.HexToAddress("0x9df6a358688ccdc2a955568a05aacac7a998a319")
+	txHash := common.HexToHash("0x6ea422c6920d55742ae58afb8310cf8663f3709ebc7ef4589120f2675f343972")
+	punkBoughtSig := crypto.Keccak256Hash([]byte("PunkBought(uint256,uint256,address,address)"))
+
+	// When querying for PunkBought with buyer in indexed toAddress (topic[3]), return nothing
+	// because the corrupted log has zero in that position.
+	// When querying for PunkBought with seller in indexed fromAddress (topic[2]), return the
+	// corrupted PunkBought log (this is how we discover it for seller-side queries, which
+	// we'll then filter/repair based on the buyer).
+	// When querying for internal Transfer with buyer in topic[2], return the internal Transfer log.
+	mockClient.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+			// Check if this is a PunkBought query with seller in topic[2]
+			if len(q.Topics) >= 3 && len(q.Topics[0]) > 0 && q.Topics[0][0] == punkBoughtSig {
+				if len(q.Topics) >= 3 && q.Topics[2] != nil && len(q.Topics[2]) > 0 {
+					// Query for seller in fromAddress (topic[2])
+					if q.Topics[2][0] == common.BytesToHash(seller.Bytes()) {
+						// Return the corrupted PunkBought log
+						return []types.Log{{
+							Address:     common.HexToAddress(contractAddr),
+							BlockNumber: 13633896,
+							TxHash:      txHash,
+							TxIndex:     1,
+							Index:       0,
+							Topics: []common.Hash{
+								punkBoughtSig,
+								common.BigToHash(big.NewInt(6690)),
+								common.BytesToHash(seller.Bytes()),
+								{}, // Zero toAddress in indexed topic
+							},
+							Data: common.Hash{}.Bytes(),
+						}}, nil
+					}
+				}
+			}
+
+			// Check if this is the internal Transfer query (topic[0] = Transfer, topic[2] = buyer)
+			if len(q.Topics) == 3 && q.Topics[0][0] == helpers.TransferEventSignature {
+				if q.Topics[2] != nil && len(q.Topics[2]) > 0 && q.Topics[2][0] == common.BytesToHash(buyer.Bytes()) {
+					// Return the internal Transfer log
+					return []types.Log{{
+						Address:     common.HexToAddress(contractAddr),
+						BlockNumber: 13633896,
+						TxHash:      txHash,
+						TxIndex:     1,
+						Index:       1,
+						Topics: []common.Hash{
+							helpers.TransferEventSignature,
+							common.BytesToHash(seller.Bytes()),
+							common.BytesToHash(buyer.Bytes()),
+						},
+						Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
+					}}, nil
+				}
+			}
+
+			// All other queries return nothing
+			return nil, nil
+		}).AnyTimes()
+
+	// When repair code fetches the receipt, provide both the corrupted PunkBought and internal Transfer
+	mockClient.EXPECT().
+		TransactionReceipt(gomock.Any(), txHash).
+		Return(&types.Receipt{Logs: []*types.Log{
+			{
+				Address:     common.HexToAddress(contractAddr),
+				BlockNumber: 13633896,
+				TxHash:      txHash,
+				TxIndex:     1,
+				Index:       0,
+				Topics: []common.Hash{
+					punkBoughtSig,
+					common.BigToHash(big.NewInt(6690)),
+					common.BytesToHash(seller.Bytes()),
+					{}, // Zero toAddress in indexed topic
+				},
+				Data: common.Hash{}.Bytes(),
+			},
+			{
+				Address:     common.HexToAddress(contractAddr),
+				BlockNumber: 13633896,
+				TxHash:      txHash,
+				TxIndex:     1,
+				Index:       1,
+				Topics: []common.Hash{
+					helpers.TransferEventSignature,
+					common.BytesToHash(seller.Bytes()),
+					common.BytesToHash(buyer.Bytes()),
+				},
+				Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
+			},
+		}}, nil).Times(2) // Called twice: once in GetOwnerLogs, once in repair
+
+	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        contractAddr,
+		OwnershipModel: adapters.OwnershipSingleOwner,
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
+				Method:           "punkIndexToAddress",
+				ABI:              "cryptopunks",
+				Params:           []string{"${tokenId}"},
+				SuccessCondition: "address_nonzero",
+			},
+			Owner: registry.MethodConfig{
+				Method: "punkIndexToAddress",
+				ABI:    "cryptopunks",
+				Params: []string{"${tokenId}"},
+			},
+			Metadata: registry.MetadataConfig{Source: "vendor_only"},
+			Events: []adapters.EventConfig{{
+				Signature:          "PunkBought(uint256,uint256,address,address)",
+				MapToStandardEvent: domain.EventTypeTransfer,
+				IndexedParams:      []string{"punkIndex", "fromAddress", "toAddress"},
+				ParameterMappings: map[string]string{
+					"punkIndex":   "TokenNumber",
+					"fromAddress": "FromAddress",
+					"toAddress":   "ToAddress",
+				},
+			}},
+		},
+	}, abiRegistry, mockClient, pagination, mockBlock, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+
+	// Query for tokens owned by the buyer
+	tokens, err := adp.GetTokensByOwner(context.Background(), buyer.Hex(), 0, 20_000_000, nil)
+	require.NoError(t, err)
+
+	// Should discover punk #6690 via the internal Transfer event, even though the PunkBought
+	// log has zero in the indexed toAddress position
+	require.Len(t, tokens, 1)
+	_, _, _, tokenNumber := tokens[0].TokenCID.Parse()
+	require.Equal(t, "6690", tokenNumber)
+	require.Equal(t, uint64(13633896), tokens[0].BlockNumber)
+}

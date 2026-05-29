@@ -211,9 +211,14 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 			return nil, err
 		}
 
+		// Cannot split further - return explicit error
+		if currentFrom.Cmp(currentTo) == 0 {
+			return nil, fmt.Errorf("too many results in single block %d: %w", currentFrom.Uint64(), err)
+		}
+
 		currentStepSize = currentStepSize / 2
 		if currentStepSize == 0 {
-			return allLogs, nil
+			return nil, fmt.Errorf("step size exhausted at block range [%d, %d]: %w", currentFrom.Uint64(), currentTo.Uint64(), err)
 		}
 
 		h.clock.Sleep(time.Second)
