@@ -169,12 +169,6 @@ func (r *AdapterRegistry) GetContractCIDStandard(chain domain.Chain, contractAdd
 	return entry.CIDStandard(), true
 }
 
-// GetAllCustomEventSignatures returns all custom event signatures across configured contracts.
-// Deduplicates signatures that appear in multiple contracts.
-func (r *AdapterRegistry) GetAllCustomEventSignatures() []common.Hash {
-	return r.collectCustomEventSignatures(nil)
-}
-
 // GetCustomEventSignaturesForChain returns custom event signatures for configured contracts on a chain.
 // Used by the subscriber so custom legacy topics are not subscribed on unrelated networks.
 func (r *AdapterRegistry) GetCustomEventSignaturesForChain(chain domain.Chain) []common.Hash {

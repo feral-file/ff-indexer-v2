@@ -284,16 +284,6 @@ func TestAdapterRegistry_SupportsProvenance_WithCustomEvents(t *testing.T) {
 	require.Len(t, adp.GetEventSignatures(), 3)
 }
 
-func TestAdapterRegistry_GetAllCustomEventSignatures(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mockClient := mocks.NewMockEthClient(ctrl)
-
-	reg := newTestRegistry(t, mockClient, testContractFS(t, cryptopunksContractConfigWithEvents))
-
-	signatures := reg.GetAllCustomEventSignatures()
-	require.Len(t, signatures, 3)
-}
-
 func TestAdapterRegistry_GetCustomEventSignaturesForChain(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := mocks.NewMockEthClient(ctrl)
