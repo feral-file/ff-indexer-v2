@@ -1110,3 +1110,122 @@ func TestGenericAdapter_GetTokenEvents_UnrelatedCorruptedPunkBoughtDoesNotFailFi
 	require.NotNil(t, events[0].ToAddress)
 	require.Equal(t, buyer2.Hex(), *events[0].ToAddress)
 }
+
+// TestGenericAdapter_ParseEvent_RepairsCorruptedPunkBoughtInline verifies that the public
+// ParseEvent method (used by live subscription) repairs corrupted CryptoPunks PunkBought events
+// inline by fetching the transaction receipt and extracting the buyer from the internal Transfer log.
+func TestGenericAdapter_ParseEvent_RepairsCorruptedPunkBoughtInline(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockBlock := mocks.NewMockBlockProvider(ctrl)
+	mockBlock.EXPECT().GetLatestBlock(gomock.Any()).Return(uint64(20_000_000), nil).AnyTimes()
+	mockBlock.EXPECT().GetBlockTimestamp(gomock.Any(), uint64(13633896)).Return(time.Unix(1_700_000_000, 0), nil)
+
+	const cryptopunksEventsABI = `[
+		{
+			"anonymous": false,
+			"inputs": [
+				{"indexed": true, "name": "punkIndex", "type": "uint256"},
+				{"indexed": false, "name": "value", "type": "uint256"},
+				{"indexed": true, "name": "fromAddress", "type": "address"},
+				{"indexed": true, "name": "toAddress", "type": "address"}
+			],
+			"name": "PunkBought",
+			"type": "event"
+		}
+	]`
+
+	abiRegistry, err := helpers.NewABIRegistry(fstest.MapFS{
+		"abis/cryptopunks.json":        {Data: []byte(cryptopunksABI)},
+		"abis/cryptopunks_events.json": {Data: []byte(cryptopunksEventsABI)},
+	})
+	require.NoError(t, err)
+
+	pagination := helpers.NewPaginationHelper(mockClient, ethadapter.NewClock(), mockBlock)
+
+	contractAddr := "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	seller := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	buyer := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	txHash := common.HexToHash("0xabc123")
+	punkBoughtSig := crypto.Keccak256Hash([]byte("PunkBought(uint256,uint256,address,address)"))
+	transferSig := crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
+
+	// Corrupted PunkBought log with zero toAddress
+	corruptedLog := types.Log{
+		Address:     common.HexToAddress(contractAddr),
+		BlockNumber: 13633896,
+		TxHash:      txHash,
+		TxIndex:     100,
+		Index:       5,
+		Topics: []common.Hash{
+			punkBoughtSig,
+			common.BigToHash(big.NewInt(7804)),
+			common.BytesToHash(seller.Bytes()),
+			{}, // Zero toAddress - corrupted
+		},
+		Data: common.Hash{}.Bytes(),
+	}
+
+	// Mock TransactionReceipt returns internal Transfer log with real buyer
+	mockClient.EXPECT().
+		TransactionReceipt(gomock.Any(), txHash).
+		Return(&types.Receipt{
+			Logs: []*types.Log{
+				{
+					Address: common.HexToAddress(contractAddr),
+					Topics: []common.Hash{
+						transferSig,
+						common.BytesToHash(seller.Bytes()),
+						common.BytesToHash(buyer.Bytes()),
+					},
+					Data: common.LeftPadBytes(big.NewInt(1).Bytes(), 32),
+				},
+			},
+		}, nil)
+
+	adp, err := registry.BuildGenericAdapterFromConfig(registry.ContractConfig{
+		Chain:          domain.ChainEthereumMainnet,
+		Address:        contractAddr,
+		OwnershipModel: adapters.OwnershipSingleOwner,
+		Adapter: registry.AdapterConfig{
+			Existence: registry.MethodConfig{
+				Method:           "punkIndexToAddress",
+				ABI:              "cryptopunks",
+				Params:           []string{"${tokenId}"},
+				SuccessCondition: "address_nonzero",
+			},
+			Owner: registry.MethodConfig{
+				Method: "punkIndexToAddress",
+				ABI:    "cryptopunks",
+				Params: []string{"${tokenId}"},
+			},
+			Metadata: registry.MetadataConfig{Source: "vendor_only"},
+			Events: []adapters.EventConfig{{
+				Signature:          "PunkBought(uint256,uint256,address,address)",
+				MapToStandardEvent: domain.EventTypeTransfer,
+				IndexedParams:      []string{"punkIndex", "fromAddress", "toAddress"},
+				DataParams:         []string{"value"},
+				ParameterMappings: map[string]string{
+					"punkIndex":   "TokenNumber",
+					"fromAddress": "FromAddress",
+					"toAddress":   "ToAddress",
+				},
+			}},
+		},
+	}, abiRegistry, mockClient, pagination, mockBlock, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+
+	// Call ParseEvent directly (simulating live subscription path)
+	event, err := adp.ParseEvent(context.Background(), corruptedLog)
+	require.NoError(t, err)
+	require.NotNil(t, event)
+
+	// Verify event was repaired with buyer from internal Transfer
+	require.Equal(t, domain.EventTypeTransfer, event.EventType)
+	require.Equal(t, "7804", event.TokenNumber)
+	require.NotNil(t, event.FromAddress)
+	require.Equal(t, seller.Hex(), *event.FromAddress)
+	require.NotNil(t, event.ToAddress)
+	require.Equal(t, buyer.Hex(), *event.ToAddress)
+	require.Equal(t, "1", event.Quantity)
+}

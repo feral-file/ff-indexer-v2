@@ -294,8 +294,9 @@ func (a *GenericAdapter) GetTokenEvents(ctx context.Context, contractAddress, to
 	// Parse logs and convert to BlockchainEvent
 	events := make([]domain.BlockchainEvent, 0)
 	for _, vLog := range logs {
-		parsed, err := a.ParseEvent(ctx, vLog)
-		if err != nil {
+		parsed, err := a.parseEventInternal(ctx, vLog)
+		// ErrNeedsRepair is expected for corrupted PunkBought - collect and batch-repair later
+		if err != nil && !errors.Is(err, ErrNeedsRepair) {
 			return nil, fmt.Errorf("parse event log at block %d index %d: %w", vLog.BlockNumber, vLog.Index, err)
 		}
 		if parsed == nil {
@@ -478,8 +479,9 @@ func (a *GenericAdapter) GetTokensByOwner(
 
 	events := make([]domain.BlockchainEvent, 0, len(logs))
 	for _, vLog := range logs {
-		parsed, err := a.ParseEvent(ctx, vLog)
-		if err != nil {
+		parsed, err := a.parseEventInternal(ctx, vLog)
+		// ErrNeedsRepair is expected for corrupted PunkBought - collect and batch-repair later
+		if err != nil && !errors.Is(err, ErrNeedsRepair) {
 			return nil, fmt.Errorf("parse event at block %d log %d: %w", vLog.BlockNumber, vLog.Index, err)
 		}
 		if parsed == nil {
@@ -631,10 +633,39 @@ func buildInternalTransferBuyerQuery(
 }
 
 // ParseEvent parses a configured legacy contract event into a blockchain event.
+// For live subscription paths, this method repairs corrupted CryptoPunks PunkBought events inline.
+// For batch paths, callers should use parseEventInternal and batch-repair for efficiency.
 //
 // Returns (nil, nil) for intentionally skipped logs:
 // - CryptoPunks internal Transfer(seller, buyer, 1) logs used only for buyer discovery
 func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
+	event, err := a.parseEventInternal(ctx, vLog)
+	if err != nil && !errors.Is(err, ErrNeedsRepair) {
+		return nil, err
+	}
+	if event == nil {
+		return nil, nil
+	}
+
+	// If event needs repair (corrupted CryptoPunks PunkBought), repair inline for live path
+	if errors.Is(err, ErrNeedsRepair) {
+		repaired, repairErr := a.repairSinglePunkBoughtEvent(ctx, event)
+		if repairErr != nil {
+			return nil, fmt.Errorf("repair event at block %d tx %s: %w", event.BlockNumber, event.TxHash, repairErr)
+		}
+		return repaired, nil
+	}
+
+	return event, nil
+}
+
+// parseEventInternal parses a configured legacy contract event into a blockchain event.
+// Returns ErrNeedsRepair when the event is a corrupted CryptoPunks PunkBought that requires
+// transaction receipt lookup to restore the buyer address.
+//
+// Returns (nil, nil) for intentionally skipped logs:
+// - CryptoPunks internal Transfer(seller, buyer, 1) logs used only for buyer discovery
+func (a *GenericAdapter) parseEventInternal(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 0 {
 		return nil, fmt.Errorf("event log has no topics")
 	}
@@ -661,7 +692,12 @@ func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log) (*domai
 		if err != nil {
 			return nil, err
 		}
-		// Skip single-event repair here; batch repair after token filtering handles this
+
+		// Check if this event needs repair (corrupted CryptoPunks PunkBought)
+		if needsPunkBoughtRepair(*parsed) {
+			return parsed, ErrNeedsRepair
+		}
+
 		return parsed, nil
 	}
 

@@ -18,3 +18,7 @@ var ErrUnconfiguredContract = errors.New("known signature from unconfigured cont
 // ErrUnexpectedEvent is returned when the event filter sent us a log that no adapter recognizes.
 // This indicates a potential filter misconfiguration and should be error-logged but tolerated.
 var ErrUnexpectedEvent = errors.New("unexpected event signature")
+
+// ErrNeedsRepair is returned by parseEventInternal when a parsed event requires post-parse repair
+// (e.g., corrupted CryptoPunks PunkBought events with zero toAddress/value that need receipt lookup).
+var ErrNeedsRepair = errors.New("event needs repair")

@@ -77,6 +77,38 @@ func (a *GenericAdapter) repairBrokenPunkBoughtEvents(
 	return events, nil
 }
 
+// repairSinglePunkBoughtEvent repairs a single corrupted PunkBought event by fetching
+// its transaction receipt and restoring the buyer address from the internal Transfer log.
+// Used by the live subscription path where events arrive one at a time.
+func (a *GenericAdapter) repairSinglePunkBoughtEvent(
+	ctx context.Context,
+	event *domain.BlockchainEvent,
+) (*domain.BlockchainEvent, error) {
+	if event == nil || !a.hasPunkBoughtEvent() || a.ethClient == nil {
+		return event, nil
+	}
+
+	if !needsPunkBoughtRepair(*event) {
+		return event, nil
+	}
+
+	receipt, err := a.ethClient.TransactionReceipt(ctx, common.HexToHash(event.TxHash))
+	if err != nil {
+		return nil, fmt.Errorf("fetch receipt for PunkBought repair tx %s: %w", event.TxHash, err)
+	}
+
+	receiptLogs := receiptLogsAsValues(receipt.Logs)
+	contractAddr := common.HexToAddress(a.contractAddress)
+
+	repaired := *event
+	if !repairPunkBoughtFromReceiptLogs(receiptLogs, &repaired, contractAddr) {
+		return nil, fmt.Errorf("missing internal Transfer buyer for PunkBought at block %d tx %s",
+			event.BlockNumber, event.TxHash)
+	}
+
+	return &repaired, nil
+}
+
 // repairPunkBoughtFromReceiptLogs restores buyer/recipient on a corrupted PunkBought event
 // using CryptoPunks' internal ERC20-style Transfer(seller, buyer, 1) log from the same tx.
 //
