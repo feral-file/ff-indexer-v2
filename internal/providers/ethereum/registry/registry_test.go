@@ -329,7 +329,7 @@ func TestAdapterRegistry_ParseEvent_SkipsUnconfiguredCustomSignatureAddress(t *t
 	}
 
 	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, adapters.ErrUnconfiguredContract)
 	require.Nil(t, parsed)
 }
 

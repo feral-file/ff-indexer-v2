@@ -139,7 +139,10 @@ type ethereumClient struct {
 }
 
 // NewClient constructs the Ethereum gateway: RPC client, pagination helper, and adapter registry.
-func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock, blockProvider block.BlockProvider) EthereumClient {
+//
+// Returns an error if the contract adapter registry cannot be initialized (config validation failure,
+// missing ABI files, etc.). Callers must handle this error to prevent silent startup failures.
+func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clock, blockProvider block.BlockProvider) (EthereumClient, error) {
 	ec := &ethereumClient{
 		chainID:       chainID,
 		client:        client,
@@ -156,11 +159,11 @@ func NewClient(chainID domain.Chain, client adapter.EthClient, clock adapter.Clo
 		chainID,
 	)
 	if err != nil {
-		panic(fmt.Sprintf("failed to initialize contract adapter registry: %v", err))
+		return nil, fmt.Errorf("failed to initialize contract adapter registry: %w", err)
 	}
 	ec.adapterRegistry = registry
 
-	return ec
+	return ec, nil
 }
 
 // SubscribeFilterLogs subscribes to filter logs

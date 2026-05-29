@@ -73,7 +73,8 @@ func TestClient_AdapterRouting_CryptoPunks(t *testing.T) {
 		}).
 		Times(2)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
 	exists, err := client.TokenExists(context.Background(), cryptoPunksAddress, "1", domain.StandardERC721)
 	require.NoError(t, err)
@@ -91,9 +92,10 @@ func TestClient_TokenOwner_RejectsConfiguredStandardMismatch(t *testing.T) {
 	mockEth := mocks.NewMockEthClient(ctrl)
 	mockBlock := mocks.NewMockBlockProvider(ctrl)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
-	_, err := client.TokenOwner(context.Background(), cryptoPunksAddress, "1", domain.StandardERC1155)
+	_, err = client.TokenOwner(context.Background(), cryptoPunksAddress, "1", domain.StandardERC1155)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ethadapters.ErrConfiguredStandardMismatch)
 }
@@ -118,7 +120,8 @@ func TestClient_AdapterRouting_StandardERC721Regression(t *testing.T) {
 		}).
 		Times(2)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
 	exists, err := client.TokenExists(context.Background(), contractAddress, "42", domain.StandardERC721)
 	require.NoError(t, err)
@@ -148,7 +151,8 @@ func TestClient_AdapterRouting_CryptoPunks_OutOfRangeToken(t *testing.T) {
 		CallContract(gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(nil, errors.New("execution reverted"))
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
 	exists, err := client.TokenExists(context.Background(), cryptoPunksAddress, "10000", domain.StandardERC721)
 	require.NoError(t, err)
@@ -160,7 +164,8 @@ func TestClient_SupportsProvenance_CryptoPunksWithCustomEvents(t *testing.T) {
 	mockEth := mocks.NewMockEthClient(ctrl)
 	mockBlock := mocks.NewMockBlockProvider(ctrl)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 	require.True(t, client.SupportsProvenance(cryptoPunksAddress, domain.StandardERC721))
 }
 
@@ -171,7 +176,8 @@ func TestClient_ParseEventLog_CryptoPunksPunkTransfer(t *testing.T) {
 	expectedTimestamp := time.Unix(1_700_000_000, 0)
 	expectBlockTimestamps(t, mockBlock, expectedTimestamp)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
 	fromAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	toAddr := common.HexToAddress("0x2222222222222222222222222222222222222222")
@@ -210,7 +216,8 @@ func TestClient_ParseEventLog_CryptoPunksAssign(t *testing.T) {
 	mockBlock := mocks.NewMockBlockProvider(ctrl)
 	expectBlockTimestamps(t, mockBlock, time.Unix(1_700_000_001, 0))
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
 	toAddr := common.HexToAddress("0x3333333333333333333333333333333333333333")
 	punkIndex := big.NewInt(7)
@@ -244,7 +251,8 @@ func TestClient_ParseEventLog_CryptoPunksPunkBought(t *testing.T) {
 	expectedTimestamp := time.Unix(1_700_000_002, 0)
 	expectBlockTimestamps(t, mockBlock, expectedTimestamp)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
 	fromAddr := common.HexToAddress("0x4444444444444444444444444444444444444444")
 	toAddr := common.HexToAddress("0x5555555555555555555555555555555555555555")
@@ -316,7 +324,8 @@ func TestClient_GetTokenCIDsByOwnerAndBlockRange_ConfiguredLegacyContract(t *tes
 		}).
 		AnyTimes()
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
 	result, err := client.GetTokenCIDsByOwnerAndBlockRange(
 		context.Background(),
@@ -374,9 +383,10 @@ func TestClient_GetTokenCIDsByOwnerAndBlockRange_TimestampLookupFailure(t *testi
 		}).
 		AnyTimes()
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
-	_, err := client.GetTokenCIDsByOwnerAndBlockRange(
+	_, err = client.GetTokenCIDsByOwnerAndBlockRange(
 		context.Background(),
 		owner.Hex(),
 		0,
@@ -422,9 +432,10 @@ func TestClient_GetTokenEvents_ParseErrorFails(t *testing.T) {
 		GetBlockTimestamp(gomock.Any(), uint64(500)).
 		Return(time.Time{}, context.DeadlineExceeded)
 
-	client := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	client, err := ethprovider.NewClient(domain.ChainEthereumMainnet, mockEth, adapter.NewClock(), mockBlock)
+	require.NoError(t, err)
 
-	_, err := client.GetTokenEvents(
+	_, err = client.GetTokenEvents(
 		context.Background(),
 		contract.Hex(),
 		"1",

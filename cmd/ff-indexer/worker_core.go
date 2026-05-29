@@ -69,7 +69,10 @@ func registerWorkerCore(
 			StaleWindow:       cfg.Ethereum.BlockHeadStaleWindow * time.Second,
 			BlockTimestampTTL: 0,
 		}, clockAdapter)
-	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
+	ethereumClient, err := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initialize ethereum client: %w", err)
+	}
 
 	tzBlockFetcher := tezos.NewTezosBlockFetcher(cfg.Tezos.APIURL, httpClient, clockAdapter)
 	tzBlockProvider := block.NewBlockProvider(tzBlockFetcher,

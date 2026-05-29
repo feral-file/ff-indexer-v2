@@ -44,7 +44,10 @@ func runEthereumIngestion(
 			StaleWindow:       cfg.Ethereum.BlockHeadStaleWindow * time.Second,
 			BlockTimestampTTL: 0,
 		}, clockAdapter)
-	ethereumClient := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
+	ethereumClient, err := ethereum.NewClient(cfg.Ethereum.ChainID, adapterEthClient, clockAdapter, ethBlockProvider)
+	if err != nil {
+		return fmt.Errorf("initialize ethereum client: %w", err)
+	}
 
 	source, err := ethereum.NewSubscriber(ethereum.Config{
 		WebSocketURL: cfg.Ethereum.WebSocketURL,

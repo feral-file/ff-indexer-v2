@@ -9,10 +9,12 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 	contractregistry "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
 )
@@ -84,6 +86,27 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 				if errors.Is(err, context.Canceled) {
 					return ctx.Err()
 				}
+
+				// Expected: Known custom signature from unconfigured contract
+				if errors.Is(err, adapters.ErrUnconfiguredContract) {
+					logger.DebugCtx(ctx, "Skipping known custom signature from unconfigured contract",
+						zap.String("signature", vLog.Topics[0].Hex()),
+						zap.String("address", vLog.Address.Hex()),
+						zap.Uint64("block", vLog.BlockNumber))
+					continue
+				}
+
+				// Unexpected: Filter sent us something no adapter recognizes
+				if errors.Is(err, adapters.ErrUnexpectedEvent) {
+					logger.ErrorCtx(ctx, errors.New("filter sent unexpected event signature - possible misconfiguration"),
+						zap.String("signature", vLog.Topics[0].Hex()),
+						zap.String("address", vLog.Address.Hex()),
+						zap.Uint64("block", vLog.BlockNumber),
+						zap.Error(err))
+					continue
+				}
+
+				// Fatal errors (timestamp lookup, malformed data, etc.)
 				return fmt.Errorf("parse log at block %d index %d: %w", vLog.BlockNumber, vLog.Index, err)
 			}
 

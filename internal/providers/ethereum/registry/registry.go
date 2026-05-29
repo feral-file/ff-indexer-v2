@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -214,12 +215,7 @@ func (r *AdapterRegistry) IsConfiguredContract(chain domain.Chain, contractAddre
 
 // IsKnownCustomEventSignatureForChain reports whether topic0 matches a configured legacy signature on chain.
 func (r *AdapterRegistry) IsKnownCustomEventSignatureForChain(chain domain.Chain, topic common.Hash) bool {
-	for _, sig := range r.GetCustomEventSignaturesForChain(chain) {
-		if sig == topic {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.GetCustomEventSignaturesForChain(chain), topic)
 }
 
 // GetProvenanceContractsForChain returns configured contracts with provenance support for a chain.
@@ -259,9 +255,10 @@ func (r *AdapterRegistry) GetStandardAdapter(standard domain.ChainStandard) (ada
 // ParseEvent routes event parsing to the appropriate adapter.
 //
 // Configured contract overrides are tried first, then standard adapters matched by topic0.
-// Returns (nil, nil) for intentionally ignored logs (ERC-20 Transfer noise, custom legacy
-// signatures from unconfigured addresses). Returns an error when an indexable log cannot
-// be parsed so live ingestion can retry from the durable cursor.
+// Returns ErrUnconfiguredContract for known custom signatures from unconfigured contracts
+// (expected noise, should be debug-logged and skipped). Returns ErrUnexpectedEvent for
+// unknown signatures (indicates filter problem, should be error-logged but tolerated).
+// Other errors (timestamp lookup, malformed data) remain fatal for live ingestion.
 func (r *AdapterRegistry) ParseEvent(
 	ctx context.Context,
 	vLog types.Log,
@@ -286,17 +283,13 @@ func (r *AdapterRegistry) ParseEvent(
 		}
 	}
 
+	// Known custom signature from unconfigured contract - expected noise
 	if len(vLog.Topics) > 0 &&
 		r.IsKnownCustomEventSignatureForChain(chain, vLog.Topics[0]) &&
 		!r.IsConfiguredContract(chain, vLog.Address.Hex()) {
-		logger.DebugCtx(ctx, "Skipping custom legacy signature from unconfigured contract",
-			zap.String("chain", string(chain)),
-			zap.String("signature", vLog.Topics[0].Hex()),
-			zap.String("address", vLog.Address.Hex()),
-			zap.Uint64("block", vLog.BlockNumber),
-			zap.Uint("logIndex", vLog.Index))
-		return nil, nil
+		return nil, adapters.ErrUnconfiguredContract
 	}
 
-	return nil, fmt.Errorf("unknown event signature: %s", vLog.Topics[0].Hex())
+	// Unknown signature - shouldn't happen if filter is correct
+	return nil, adapters.ErrUnexpectedEvent
 }
