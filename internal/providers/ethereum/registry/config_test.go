@@ -2,6 +2,7 @@ package registry_test
 
 import (
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -723,4 +724,259 @@ func TestNewAdapterRegistry_MissingABI(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ABI not found")
+}
+
+func TestLoadContractsConfig_InvalidParameterCount(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "single_owner",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}", "${owner}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adapter.existence: method \"punkIndexToAddress\" expects 1 parameters, got 2")
+}
+
+func TestLoadContractsConfig_UnsupportedPlaceholder(t *testing.T) {
+	_, err := registry.LoadContractsConfig(testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "single_owner",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${unsupported}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
+			}
+		}]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported placeholder \"${unsupported}\"")
+	require.Contains(t, err.Error(), "allowed: ${tokenId}")
+}
+
+func TestLoadContractsConfig_OwnerMethodWrongReturnType(t *testing.T) {
+	// Create a custom ABI with a method that returns uint256 instead of address
+	customABI := `[
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "badOwnerMethod",
+			"outputs": [{"name": "", "type": "uint256"}],
+			"type": "function"
+		}
+	]`
+
+	fs := testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "single_owner",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]},
+				"owner": {"method": "badOwnerMethod", "abi": "custom", "params": ["${tokenId}"]}
+			}
+		}]
+	}`)
+	fs["abis/custom.json"] = &fstest.MapFile{Data: []byte(customABI)}
+
+	_, err := registry.LoadContractsConfig(fs)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adapter.owner: method \"badOwnerMethod\" must return address, got uint256")
+}
+
+func TestLoadContractsConfig_ExistenceMethodWrongReturnType(t *testing.T) {
+	// Create a custom ABI with a method that returns bool instead of address
+	customABI := `[
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "badExistenceMethod",
+			"outputs": [{"name": "", "type": "bool"}],
+			"type": "function"
+		}
+	]`
+
+	fs := testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "single_owner",
+			"adapter": {
+				"existence": {"method": "badExistenceMethod", "abi": "custom", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
+			}
+		}]
+	}`)
+	fs["abis/custom.json"] = &fstest.MapFile{Data: []byte(customABI)}
+
+	_, err := registry.LoadContractsConfig(fs)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adapter.existence: method \"badExistenceMethod\" must return address, got bool")
+}
+
+func TestLoadContractsConfig_MethodMultipleOutputs(t *testing.T) {
+	// Create a custom ABI with a method that returns multiple values
+	customABI := `[
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "multiOutputMethod",
+			"outputs": [
+				{"name": "owner", "type": "address"},
+				{"name": "exists", "type": "bool"}
+			],
+			"type": "function"
+		}
+	]`
+
+	fs := testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "single_owner",
+			"adapter": {
+				"existence": {"method": "multiOutputMethod", "abi": "custom", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "cryptopunks", "params": ["${tokenId}"]}
+			}
+		}]
+	}`)
+	fs["abis/custom.json"] = &fstest.MapFile{Data: []byte(customABI)}
+
+	_, err := registry.LoadContractsConfig(fs)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adapter.existence: method \"multiOutputMethod\" must return exactly one value, got 2")
+}
+
+func TestLoadContractsConfig_OnChainMetadataWrongReturnType(t *testing.T) {
+	// Create a custom ABI with a method that returns uint256 instead of string
+	customABI := `[
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "badMetadataMethod",
+			"outputs": [{"name": "", "type": "uint256"}],
+			"type": "function"
+		},
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "punkIndexToAddress",
+			"outputs": [{"name": "", "type": "address"}],
+			"type": "function"
+		}
+	]`
+
+	fs := testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "single_owner",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "custom", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "custom", "params": ["${tokenId}"]},
+				"metadata": {
+					"source": "on_chain",
+					"method": {"method": "badMetadataMethod", "abi": "custom", "params": ["${tokenId}"]}
+				}
+			}
+		}]
+	}`)
+	fs["abis/custom.json"] = &fstest.MapFile{Data: []byte(customABI)}
+
+	_, err := registry.LoadContractsConfig(fs)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adapter.metadata.method: method \"badMetadataMethod\" must return string, got uint256")
+}
+
+func TestLoadContractsConfig_OnChainMetadataMultipleOutputs(t *testing.T) {
+	// Create a custom ABI with a method that returns multiple values
+	customABI := `[
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "multiOutputMetadata",
+			"outputs": [
+				{"name": "uri", "type": "string"},
+				{"name": "exists", "type": "bool"}
+			],
+			"type": "function"
+		},
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "punkIndexToAddress",
+			"outputs": [{"name": "", "type": "address"}],
+			"type": "function"
+		}
+	]`
+
+	fs := testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "single_owner",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "custom", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "custom", "params": ["${tokenId}"]},
+				"metadata": {
+					"source": "on_chain",
+					"method": {"method": "multiOutputMetadata", "abi": "custom", "params": ["${tokenId}"]}
+				}
+			}
+		}]
+	}`)
+	fs["abis/custom.json"] = &fstest.MapFile{Data: []byte(customABI)}
+
+	_, err := registry.LoadContractsConfig(fs)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "adapter.metadata.method: method \"multiOutputMetadata\" must return exactly one value, got 2")
+}
+
+func TestLoadContractsConfig_ValidOnChainMetadata(t *testing.T) {
+	// Create a custom ABI with valid methods
+	customABI := `[
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "tokenURI",
+			"outputs": [{"name": "", "type": "string"}],
+			"type": "function"
+		},
+		{
+			"constant": true,
+			"inputs": [{"name": "index", "type": "uint256"}],
+			"name": "punkIndexToAddress",
+			"outputs": [{"name": "", "type": "address"}],
+			"type": "function"
+		}
+	]`
+
+	fs := testContractFS(t, `{
+		"contracts": [{
+			"chain": "eip155:1",
+			"address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+			"ownership_model": "single_owner",
+			"adapter": {
+				"existence": {"method": "punkIndexToAddress", "abi": "custom", "params": ["${tokenId}"]},
+				"owner": {"method": "punkIndexToAddress", "abi": "custom", "params": ["${tokenId}"]},
+				"metadata": {
+					"source": "on_chain",
+					"method": {"method": "tokenURI", "abi": "custom", "params": ["${tokenId}"]}
+				}
+			}
+		}]
+	}`)
+	fs["abis/custom.json"] = &fstest.MapFile{Data: []byte(customABI)}
+
+	cfg, err := registry.LoadContractsConfig(fs)
+	require.NoError(t, err)
+	require.Len(t, cfg.Contracts, 1)
+	require.Equal(t, "on_chain", cfg.Contracts[0].Adapter.Metadata.Source)
+	require.NotNil(t, cfg.Contracts[0].Adapter.Metadata.Method)
+	require.Equal(t, "tokenURI", cfg.Contracts[0].Adapter.Metadata.Method.Method)
 }

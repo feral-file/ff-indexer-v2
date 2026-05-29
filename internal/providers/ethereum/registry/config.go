@@ -337,8 +337,42 @@ func validateMethodConfig(cfg MethodConfig, abiRegistry *helpers.ABIRegistry, fi
 		return fmt.Errorf("%s: ABI %q not found: %w", fieldPath, cfg.ABI, err)
 	}
 
-	if _, ok := contractABI.Methods[cfg.Method]; !ok {
+	method, ok := contractABI.Methods[cfg.Method]
+	if !ok {
 		return fmt.Errorf("%s: method %q not found in ABI %q", fieldPath, cfg.Method, cfg.ABI)
+	}
+
+	// Validate parameter count matches ABI inputs
+	if len(cfg.Params) != len(method.Inputs) {
+		return fmt.Errorf("%s: method %q expects %d parameters, got %d",
+			fieldPath, cfg.Method, len(method.Inputs), len(cfg.Params))
+	}
+
+	// Validate parameter placeholders are supported
+	supportedPlaceholders := map[string]bool{
+		"${tokenId}": true,
+	}
+	for i, param := range cfg.Params {
+		if strings.HasPrefix(param, "${") && strings.HasSuffix(param, "}") {
+			if !supportedPlaceholders[param] {
+				return fmt.Errorf("%s: unsupported placeholder %q in params[%d] (allowed: ${tokenId})",
+					fieldPath, param, i)
+			}
+		}
+	}
+
+	// Validate return types for specific method roles
+	// Owner and existence methods must return a single address
+	if strings.Contains(fieldPath, "owner") || strings.Contains(fieldPath, "existence") {
+		if len(method.Outputs) != 1 {
+			return fmt.Errorf("%s: method %q must return exactly one value, got %d",
+				fieldPath, cfg.Method, len(method.Outputs))
+		}
+		outputType := method.Outputs[0].Type.String()
+		if outputType != "address" {
+			return fmt.Errorf("%s: method %q must return address, got %s",
+				fieldPath, cfg.Method, outputType)
+		}
 	}
 
 	if cfg.SuccessCondition != "" {
@@ -367,6 +401,28 @@ func validateMetadataConfig(cfg MetadataConfig, abiRegistry *helpers.ABIRegistry
 		}
 		if err := validateMethodConfig(*cfg.Method, abiRegistry, "adapter.metadata.method"); err != nil {
 			return err
+		}
+
+		// Validate metadata method returns string
+		contractABI, err := abiRegistry.Get(cfg.Method.ABI)
+		if err != nil {
+			return fmt.Errorf("adapter.metadata.method: ABI %q not found: %w", cfg.Method.ABI, err)
+		}
+
+		method, ok := contractABI.Methods[cfg.Method.Method]
+		if !ok {
+			return fmt.Errorf("adapter.metadata.method: method %q not found in ABI", cfg.Method.Method)
+		}
+
+		if len(method.Outputs) != 1 {
+			return fmt.Errorf("adapter.metadata.method: method %q must return exactly one value, got %d",
+				cfg.Method.Method, len(method.Outputs))
+		}
+
+		outputType := method.Outputs[0].Type.String()
+		if outputType != "string" {
+			return fmt.Errorf("adapter.metadata.method: method %q must return string, got %s",
+				cfg.Method.Method, outputType)
 		}
 	}
 
