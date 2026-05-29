@@ -153,6 +153,8 @@ PostgreSQL
 
 Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which predates EIP-721) are handled through a **configuration-driven adapter registry** instead of hard-coded `ownerOf` / `tokenURI` assumptions.
 
+**Developer guide:** [`ethereum_contract_adapters.md`](ethereum_contract_adapters.md) — end-to-end flows (startup, lookup, ingestion, owner sweeps, provenance modes, contributor checklist).
+
 **Components:**
 
 - **`internal/providers/ethereum/contracts/contracts.json`** — Declarative overrides keyed by `(chain, contract_address)` with existence, owner, metadata routing, and optional custom event mappings.
