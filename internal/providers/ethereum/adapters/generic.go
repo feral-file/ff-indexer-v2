@@ -661,9 +661,7 @@ func (a *GenericAdapter) ParseEvent(ctx context.Context, vLog types.Log) (*domai
 		if err != nil {
 			return nil, err
 		}
-		if err := a.repairBrokenPunkBoughtEvent(ctx, parsed, vLog.TxHash); err != nil {
-			return nil, err
-		}
+		// Skip single-event repair here; batch repair after token filtering handles this
 		return parsed, nil
 	}
 

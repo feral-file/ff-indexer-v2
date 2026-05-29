@@ -371,12 +371,14 @@ func (e *coreExecutor) CreateTokenMint(ctx context.Context, event *domain.Blockc
 			if err != nil {
 				return fmt.Errorf("failed to get token balances: %w", err)
 			}
-			if balance, ok := balances[normalizedAddr]; ok {
-				input.Balance.Quantity = balance
-			} else {
-				// If balance is not found, fallback to event quantity
-				input.Balance.Quantity = event.Quantity
+			balance, ok := balances[normalizedAddr]
+			if !ok {
+				// Balance not found: token was likely minted then fully transferred/burned
+				// before this mint activity ran. Database does not allow zero balances.
+				return fmt.Errorf("balance not found for minted token %s:%s:%s holder %s (likely fully transferred/burned before mint activity)",
+					event.Chain, event.ContractAddress, event.TokenNumber, normalizedAddr)
 			}
+			input.Balance.Quantity = balance
 		}
 	}
 

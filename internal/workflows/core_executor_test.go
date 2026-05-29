@@ -327,7 +327,7 @@ func TestCreateTokenMint_Success_ERC1155(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestCreateTokenMint_Success_ERC1155_AbsentBalance(t *testing.T) {
+func TestCreateTokenMint_Error_ERC1155_AbsentBalance(t *testing.T) {
 	mocks := setupTestExecutor(t, withoutDefaultOwnershipModel())
 	defer tearDownTestExecutor(mocks)
 
@@ -361,22 +361,18 @@ func TestCreateTokenMint_Success_ERC1155_AbsentBalance(t *testing.T) {
 		OwnershipModel(event.ContractAddress, domain.StandardERC1155).
 		Return(ethadapters.OwnershipMultiHolder, nil)
 
-	// Return empty balance map (address not found)
+	// Return empty balance map (address not found) - edge case where token was
+	// minted then fully transferred/burned before mint activity ran
 	normalizedAddr := common.HexToAddress(toAddr).Hex()
 	mocks.ethClient.EXPECT().
 		TokenBalancesForAddresses(ctx, event.ContractAddress, event.TokenNumber, domain.StandardERC1155, []string{normalizedAddr}).
 		Return(map[string]string{}, nil) // Empty map, balance not found
 
-	mocks.store.EXPECT().
-		CreateTokenMint(ctx, gomock.Any()).
-		DoAndReturn(func(ctx context.Context, input store.CreateTokenMintInput) error {
-			assert.Equal(t, "5", input.Balance.Quantity) // Should fallback to event quantity
-			return nil
-		})
-
 	err := mocks.executor.CreateTokenMint(ctx, event)
 
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "balance not found for minted token")
+	assert.Contains(t, err.Error(), "likely fully transferred/burned before mint activity")
 }
 
 func TestCreateTokenMint_Success_ERC1155_ZeroBalance(t *testing.T) {
