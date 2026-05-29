@@ -553,7 +553,9 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 			Order("last_tx_index DESC").
 			Order("id DESC") // Tiebreaker for deterministic results when timestamps & tx_index are equal
 
-		query = query.Joins("JOIN (?) AS top ON top.token_id = tokens.id", subQuery)
+		// LEFT JOIN so tokens with a balance but no owner-specific provenance row are still returned
+		// (e.g. minimal indexing before full provenance backfill). NULL timestamps sort last.
+		query = query.Joins("LEFT JOIN (?) AS top ON top.token_id = tokens.id", subQuery)
 	}
 
 	// Apply viewability filter

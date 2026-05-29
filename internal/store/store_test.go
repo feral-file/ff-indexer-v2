@@ -2062,6 +2062,76 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		assert.Equal(t, token1Data.ID, foundTokens[2], "token1 should be third (lowest tx_index)")
 	})
 
+	t.Run("owner filter with latest provenance sort includes tokens without provenance events", func(t *testing.T) {
+		owner := "0xnoprovenance000000000000000000000000001"
+		contractAddress := "0x0000000000000000000000000000000000080001"
+		tokenNumber := "1"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+		// Token indexed with balance only (minimal provenance path: no events, no token_ownership_provenance)
+		err := store.CreateTokenWithProvenances(ctx, CreateTokenWithProvenancesInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC1155,
+				ContractAddress: contractAddress,
+				TokenNumber:     tokenNumber,
+			},
+			Balances: []CreateBalanceInput{
+				{OwnerAddress: owner, Quantity: "1"},
+			},
+			Events: []CreateProvenanceEventInput{},
+		})
+		require.NoError(t, err)
+
+		tokenWithoutProvenance, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+		require.NotNil(t, tokenWithoutProvenance)
+
+		// Token with provenance for the same owner (should sort before the eventless token)
+		tokenWithProvenance := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0x0000000000000000000000000000000000080002",
+			"2",
+			owner,
+		)
+		tokenWithProvenance.ProvenanceEvent.Timestamp = time.Now().UTC().Add(-1 * time.Hour)
+		err = store.CreateTokenMint(ctx, tokenWithProvenance)
+		require.NoError(t, err)
+
+		tokenWithProvenanceData, err := store.GetTokenByTokenCID(ctx, tokenWithProvenance.Token.TokenCID)
+		require.NoError(t, err)
+
+		tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			Owners:            []string{owner},
+			Limit:             10,
+			IncludeUnviewable: true,
+			SortBy:            TokenSortByLatestProvenance,
+			SortOrder:         SortOrderDesc,
+		})
+		require.NoError(t, err)
+
+		var foundWithoutProvenance, foundWithProvenance bool
+		var testTokenOrder []uint64
+		for _, token := range tokens {
+			if token.ID == tokenWithoutProvenance.ID {
+				foundWithoutProvenance = true
+				testTokenOrder = append(testTokenOrder, token.ID)
+			}
+			if token.ID == tokenWithProvenanceData.ID {
+				foundWithProvenance = true
+				testTokenOrder = append(testTokenOrder, token.ID)
+			}
+		}
+
+		assert.True(t, foundWithoutProvenance, "token with balance but no provenance should be included")
+		assert.True(t, foundWithProvenance, "token with provenance should be included")
+		require.Len(t, testTokenOrder, 2, "both test tokens should appear in owner-filtered results")
+		assert.Equal(t, tokenWithProvenanceData.ID, testTokenOrder[0], "token with provenance should sort before token without")
+		assert.Equal(t, tokenWithoutProvenance.ID, testTokenOrder[1], "token without provenance should sort last (NULLS LAST)")
+	})
+
 	t.Run("IncludeBrokenMedia flag filters tokens by media health", func(t *testing.T) {
 		// Create tokens with different media health scenarios
 		healthyAnimAddr := "0x0000000000000000000000000000000000050001"
