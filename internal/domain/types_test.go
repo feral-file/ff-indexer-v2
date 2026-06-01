@@ -1145,7 +1145,7 @@ func TestNormalizeAddresses(t *testing.T) {
 	}
 }
 
-// Helper function for tests
+// stringPtr duplicates types.StringPtr; kept local because internal/types imports domain (import cycle).
 func stringPtr(s string) *string {
 	return &s
 }

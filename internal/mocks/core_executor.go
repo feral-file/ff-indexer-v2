@@ -370,6 +370,20 @@ func (mr *MockCoreExecutorMockRecorder) ResolveTokenMetadata(ctx, tokenCID any) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveTokenMetadata", reflect.TypeOf((*MockCoreExecutor)(nil).ResolveTokenMetadata), ctx, tokenCID)
 }
 
+// SupportsTokenProvenance mocks base method.
+func (m *MockCoreExecutor) SupportsTokenProvenance(tokenCID domain.TokenCID) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SupportsTokenProvenance", tokenCID)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// SupportsTokenProvenance indicates an expected call of SupportsTokenProvenance.
+func (mr *MockCoreExecutorMockRecorder) SupportsTokenProvenance(tokenCID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SupportsTokenProvenance", reflect.TypeOf((*MockCoreExecutor)(nil).SupportsTokenProvenance), tokenCID)
+}
+
 // UpdateIndexingBlockRangeForAddress mocks base method.
 func (m *MockCoreExecutor) UpdateIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain, minBlock, maxBlock uint64) error {
 	m.ctrl.T.Helper()

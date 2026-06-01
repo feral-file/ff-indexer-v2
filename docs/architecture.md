@@ -149,6 +149,180 @@ UpsertTokenMetadata (executor)
 PostgreSQL
 ```
 
+### Contract adapter system (Ethereum)
+
+Legacy and non-standard Ethereum contracts (for example **CryptoPunks**, which predates EIP-721) are handled through a **configuration-driven adapter registry** instead of hard-coded `ownerOf` / `tokenURI` assumptions.
+
+**Developer guide:** [`ethereum_contract_adapters.md`](ethereum_contract_adapters.md) — end-to-end flows (startup, lookup, ingestion, owner sweeps, provenance modes, contributor checklist).
+
+**Components:**
+
+- **`internal/providers/ethereum/contracts/contracts.json`** — Declarative overrides keyed by `(chain, contract_address)` with existence, owner, metadata routing, and optional custom event mappings.
+- **`internal/providers/ethereum/contracts/abis/`** — ABI fragments referenced by override entries (embedded at build time).
+- **`internal/providers/ethereum/client.go`** — Public gateway (`EthereumClient`): adapter-routed high-level ops, low-level ERC orchestrator methods, and contract-agnostic operations (deployer lookup, owner scans, subscriptions).
+- **`internal/providers/ethereum/registry/`** — `AdapterRegistry` loads `contracts.json`, routes lookups (override → standard fallback), and delegates event parsing to adapters.
+- **`internal/providers/ethereum/adapters/`** — `ERC721Adapter`, `ERC1155Adapter`, and config-driven `GenericAdapter` for legacy contracts; each adapter owns token ops and event parsing.
+- **`internal/providers/ethereum/helpers/`** — Shared RPC helpers (standard ERC-721/1155 calls), event signature constants, log pagination/retry, and ABI loading.
+
+**Dependency flow:** `Client → Registry → Adapters → Helpers → internal/adapter.EthClient (RPC)`. Standard adapters no longer callback into the client.
+
+**Lookup order:** configured contract override by `(chain, contract_address)` first → standard adapter for the declared token standard. When a configured override is selected, a CID standard mismatch between the token CID and the auto-derived standard returns `ErrConfiguredStandardMismatch` at lookup time. Unsupported standards return an error at lookup time.
+
+**Routing behavior:**
+
+- **Token existence** and **owner lookup** during indexing call through the registry (`TokenExists`, `TokenOwner` on the Ethereum client).
+- **Balance indexing** (minimal and full provenance paths) routes through adapter `OwnershipModel()` — `single_owner` uses last-transfer-wins owner lookup; `multi_holder` uses `GetTokenBalances` / `GetOwnerBalanceAndEvents` on the selected adapter (including configured custom events for legacy contracts).
+- **On-chain metadata** is routed through the adapter registry via `TokenURI`, which calls either standard methods or configured overrides.
+- **On-chain metadata is skipped** when an override marks `metadata.source: "vendor_only"`; the metadata resolver returns early and vendor enrichment (for example OpenSea) supplies display metadata.
+- **Full provenance indexing is skipped** when the selected adapter reports `SupportsProvenance() == false` (for example legacy contracts without configured provenance events). When `adapter.events` is configured, full provenance indexing uses those custom event signatures instead of standard EIP Transfer events.
+- **Owner sweeps** use the global `ethereum_token_sweep_start_block` as the lower bound for all contracts, including configured legacy overrides. Tokens whose last ownership-changing event occurred before that block will not appear in owner sweeps until a later in-range event occurs. Lower the global setting when historical discovery before that block is required.
+- **Token CID format is unchanged** — legacy contracts still use the `erc721` standard in external identifiers.
+
+#### Limited indexing mode (legacy contracts without events)
+
+Legacy contract overrides can omit `adapter.events`. Whether that is allowed depends on `ownership_model`:
+
+| `ownership_model` | Without `adapter.events` | Startup behavior |
+|---|---|---|
+| `single_owner` | Allowed | **Warn** — contract loads in **current-state-only** mode |
+| `multi_holder` | **Rejected** | **Fail** — config validation error at startup |
+
+**Why:** `single_owner` contracts can still answer “who holds token *N* now?” via configured `existence` / `owner` contract calls when a token CID is explicitly indexed. `multi_holder` balance indexing replays provenance logs; without configured events there is no supported path to discover holders or compute balances for legacy overrides.
+
+**Capabilities in current-state-only mode** (`single_owner`, no events, `SupportsProvenance() == false`):
+
+| Capability | Supported |
+|---|---|
+| Explicit token indexing (`POST /api/v1/tokens/index`) | Yes |
+| Current owner snapshot via contract call | Yes |
+| Metadata indexing (vendor-only or on-chain URI) | Yes |
+| Address owner sweeps / “what does this wallet hold?” | No |
+| Real-time event ingestion for this contract | No |
+| Full provenance history / ownership timelines | No |
+| Ownership-change webhooks from chain events | No |
+
+At startup, each `single_owner` override without events logs a warning identifying the contract, `indexing_mode=current_state_only`, and the disabled vs supported capability lists above.
+
+**When a contract emits no on-chain events at all:** configure `existence` and `owner` methods only if explicit token-ID indexing is sufficient. Do not add the contract under `multi_holder` without mappable provenance events. If the contract also lacks callable owner/existence methods, it is out of scope for this indexer’s event-and-state model.
+
+**Observability:** adapter selection is logged at debug level with `adapter_type`. Override load counts are logged at startup.
+
+**Adding a legacy contract:** add an ABI file under `abis/`, add a `contracts.json` entry with method names and `${tokenId}` parameter placeholders, and verify with adapter unit tests plus a mocked client integration test.
+
+#### contracts.json schema
+
+Each contract override entry defines method routing:
+
+```json
+{
+  "contracts": [
+    {
+      "chain": "eip155:1",
+      "address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+      "name": "CryptoPunks",
+      "ownership_model": "single_owner",
+      "adapter": {
+        "existence": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"],
+          "success_condition": "address_nonzero"
+        },
+        "owner": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"]
+        },
+        "metadata": {
+          "source": "vendor_only"
+        },
+        "events": [
+          {
+            "signature": "PunkTransfer(address,address,uint256)",
+            "mapToStandardEvent": "transfer",
+            "indexedParams": ["from", "to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "from": "FromAddress",
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          },
+          {
+            "signature": "Assign(address,uint256)",
+            "mapToStandardEvent": "mint",
+            "indexedParams": ["to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+**Field semantics:**
+
+- **`chain`** — CAIP-2 chain identifier (`eip155:1` for Ethereum mainnet, `eip155:11155111` for Sepolia).
+- **`address`** — Contract address (checksummed or lowercase).
+- **`name`** — Human-readable contract name (used in logs and error messages).
+- **`ownership_model`** — Indexing semantics for this contract: `single_owner` (last-transfer-wins, one holder at a time) or `multi_holder` (balance accumulation across holders). The token CID/API standard label (`erc721` or `erc1155`) is **auto-derived** from this field (`single_owner` → `erc721`, `multi_holder` → `erc1155`); it is not configured explicitly.
+- **`adapter.existence.method`** — ABI method name used to check if a token exists.
+- **`adapter.existence.abi`** — ABI file name (without `.json`) from `contracts/abis/`.
+- **`adapter.existence.params`** — Parameter list; `${tokenId}` is replaced with the token ID as `uint256`.
+- **`adapter.existence.success_condition`** — How to interpret the result:
+  - `"no_revert"` — A successful call means the token exists.
+  - `"address_nonzero"` — A non-zero address return value means the token exists.
+- **`adapter.owner.method`** — ABI method name that returns the token owner address.
+- **`adapter.owner.abi`** — ABI file name for the owner method.
+- **`adapter.owner.params`** — Parameter list for the owner method.
+- **`adapter.metadata.source`** — Metadata routing strategy:
+  - `"vendor_only"` — Skip on-chain metadata fetch; rely on vendor enrichment (OpenSea, etc.).
+  - `"on_chain"` — Fetch metadata URI via the configured method (requires `adapter.metadata.method`).
+- **`adapter.metadata.method`** — (Optional) Method configuration for on-chain metadata URI lookup.
+- **`adapter.events`** — (Optional for `single_owner`, **required** for `multi_holder`) Custom provenance event definitions for legacy contracts. When present, enables full provenance indexing, owner sweeps, and live ingestion via configured event signatures. When omitted on `single_owner` contracts, the override loads in **current-state-only** mode (see [Limited indexing mode](#limited-indexing-mode-legacy-contracts-without-events)).
+
+#### Custom provenance events for legacy contracts
+
+Legacy contracts may emit non-EIP event signatures (for example CryptoPunks `PunkTransfer` and `Assign`). Configure these under `adapter.events` so historical log crawling and live subscription can parse them into standard `BlockchainEvent` records.
+
+Each event entry defines:
+
+- **`signature`** — Solidity event signature string (for example `PunkTransfer(address,address,uint256)`). Used to compute the Keccak256 topic hash for log filtering.
+- **`mapToStandardEvent`** — Target event type: `transfer`, `mint`, `burn`, or `metadata_update`.
+- **`indexedParams`** — Parameter names in topic order (`topics[1:]`).
+- **`dataParams`** — Non-indexed parameter names in ABI data order (each assumed to be 32-byte `address` or `uint256` in v1).
+- **`parameterMappings`** — Maps each parameter name to a `BlockchainEvent` field: `FromAddress`, `ToAddress`, `TokenNumber`, or `Quantity`.
+
+**Runtime flow:**
+
+1. `GetTokenEvents` checks the adapter for custom events; if configured, it filters logs by those signatures and post-filters by token ID when the token ID is not indexed.
+2. `ParseEventLog` tries configured contract event parsing before falling back to standard EIP signatures.
+3. `ethSubscriber` merges all configured custom event signatures into its global WebSocket topic filter.
+
+**Validation:** At startup, the loader validates:
+
+- ABI file existence for all referenced `abi` fields.
+- Method names exist in their declared ABIs.
+- `success_condition` values are `"no_revert"` or `"address_nonzero"`.
+- `metadata.source` values are `"on_chain"` or `"vendor_only"`.
+- When `metadata.source` is `"on_chain"`, `adapter.metadata.method` is required.
+- Contract addresses are valid hex and not duplicated.
+- Configured `ownership_model` values are `single_owner` or `multi_holder`.
+- `adapter.events` is **required** when `ownership_model` is `multi_holder`.
+- Each configured event has a valid signature format, allowed `mapToStandardEvent`, and complete `parameterMappings` covering every listed indexed/data parameter.
+
+**Failure behavior:**
+
+- If an existence check reverts, the token is treated as non-existent (not an error).
+- If an owner lookup returns zero address and existence uses `address_nonzero`, the adapter returns not-found instead of treating the token as burned.
+- If an owner lookup reverts during indexing, the workflow classifies the token as not found on-chain.
+- Config validation errors cause startup failure with a clear error message identifying the invalid entry.
+
 ### Media Processing
 
 ```text

@@ -85,16 +85,39 @@ func tearDownTestResolver(mocks *testResolverMocks) {
 	mocks.ctrl.Finish()
 }
 
+func TestResolver_Resolve_VendorOnlyMetadata(t *testing.T) {
+	mocks := setupTestResolver(t)
+	defer tearDownTestResolver(mocks)
+
+	cryptoPunksAddress := "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, cryptoPunksAddress, "1")
+
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata(gomock.Any()).
+		Return(true)
+
+	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
 func TestResolver_Resolve_ERC721(t *testing.T) {
 	mocks := setupTestResolver(t)
 	defer tearDownTestResolver(mocks)
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
-	// Mock ERC721 token URI call
 	mocks.ethClient.
 		EXPECT().
-		ERC721TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
+
+	// Mock TokenURI call through adapter
+	mocks.ethClient.
+		EXPECT().
+		TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1", domain.StandardERC721).
 		Return("https://example.com/metadata.json", nil)
 
 	// Mock URI resolver to return the URI as-is
@@ -177,10 +200,15 @@ func TestResolver_Resolve_ERC1155(t *testing.T) {
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x0000000000000000000000000000000000000123", "1")
 
-	// Mock ERC1155 URI call (with placeholder)
 	mocks.ethClient.
 		EXPECT().
-		ERC1155URI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
+
+	// Mock TokenURI call through adapter (with placeholder)
+	mocks.ethClient.
+		EXPECT().
+		TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1", domain.StandardERC1155).
 		Return("https://example.com/metadata/{id}.json", nil)
 
 	// Mock URI resolver (placeholder is replaced before calling Resolve)
@@ -350,6 +378,11 @@ func TestResolver_Resolve_UnsupportedStandard(t *testing.T) {
 	// Create a token CID with unsupported standard
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.ChainStandard("unsupported"), "0x0000000000000000000000000000000000000123", "1")
 
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
+
 	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
 
 	assert.Error(t, err)
@@ -363,11 +396,16 @@ func TestResolver_Resolve_DataURI(t *testing.T) {
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "1")
 
-	// Mock ERC721 token URI call returning data URI
+	mocks.ethClient.
+		EXPECT().
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
+
+	// Mock TokenURI call returning data URI through adapter
 	dataURI := "data:application/json;base64,eyJuYW1lIjoiVGVzdCBORlQifQ==" // {"name":"Test NFT"} in base64
 	mocks.ethClient.
 		EXPECT().
-		ERC721TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1", domain.StandardERC721).
 		Return(dataURI, nil)
 
 	// Mock JSON unmarshal for parsing data URI
@@ -450,10 +488,15 @@ func TestResolver_Resolve_EthereumNoOriginationFound(t *testing.T) {
 
 	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x0000000000000000000000000000000000000123", "1")
 
-	// Mock ERC1155 URI call
 	mocks.ethClient.
 		EXPECT().
-		ERC1155URI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
+		IsVendorOnlyMetadata("0x0000000000000000000000000000000000000123").
+		Return(false)
+
+	// Mock TokenURI call through adapter
+	mocks.ethClient.
+		EXPECT().
+		TokenURI(gomock.Any(), "0x0000000000000000000000000000000000000123", "1", domain.StandardERC1155).
 		Return("https://example.com/metadata.json", nil)
 
 	// Mock URI resolver for the metadata URL

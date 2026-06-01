@@ -126,9 +126,11 @@ Primary verification command:
 make check
 ```
 
-This is the canonical local verification entrypoint. It runs, in order: `imports` (`goimports`), `lint-local` (full-repo `golangci-lint` with CGO enabled), `test-lightweight-build` (`CGO_ENABLED=0` build plus `cmd/ff-indexer` tests), and `test` (`CGO_ENABLED=1` `go test -cover ./...`).
+This is the canonical local verification entrypoint. It runs, in order: `imports` (`goimports`), `fmt-check` (`gofmt -s -l`, matching CI’s go fmt check), `lint-local` (full-repo `golangci-lint` with CGO enabled), and `test` (`CGO_ENABLED=1` `go test -cover ./...`). Run `make fmt` to apply `gofmt -s -w` fixes when `fmt-check` fails.
 
 The lint profile enforces cyclomatic and cognitive complexity, function and file length, and doc quality expectations for the code it analyzes.
+
+**Note on lightweight mode:** The repository supports a CGO-disabled lightweight Docker mode for deployment (`make build`, default `quickstart`). Canonical verification (`make check` and CI) uses `CGO_ENABLED=1` tests and, in CI, a full-media Docker build (`CGO_ENABLED=1`). Run `make test-lightweight-build` manually when you need to verify the lightweight binary and stub media path; it is not part of `make check` or CI.
 
 CI still defines its own exact steps in `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`. Run additional targeted generation or build checks when relevant. If you cannot run the full expected verification, say so explicitly.
 

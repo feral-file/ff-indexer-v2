@@ -9,13 +9,14 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
-
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/blockchain"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
+	contractregistry "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
 )
 
 const (
@@ -29,56 +30,36 @@ type Config struct {
 }
 
 type ethSubscriber struct {
-	client  EthereumClient
-	chainID domain.Chain
-	cfg     Config
+	client          EthereumClient
+	chainID         domain.Chain
+	cfg             Config
+	adapterRegistry *contractregistry.AdapterRegistry
 }
 
-// Event signatures
-var (
-	// Transfer event signature - shared by ERC20 and ERC721
-	// ERC20: Transfer(address indexed from, address indexed to, uint256 value) - 3 topics
-	// ERC721: Transfer(address indexed from, address indexed to, uint256 indexed tokenId) - 4 topics
-	transferEventSignature = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
-
-	// ERC1155 TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)
-	transferSingleEventSignature = crypto.Keccak256Hash([]byte("TransferSingle(address,address,address,uint256,uint256)"))
-
-	// ERC1155 TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)
-	transferBatchEventSignature = crypto.Keccak256Hash([]byte("TransferBatch(address,address,address,uint256[],uint256[])"))
-
-	// EIP-4906 MetadataUpdate(uint256 _tokenId)
-	metadataUpdateEventSignature = crypto.Keccak256Hash([]byte("MetadataUpdate(uint256)"))
-
-	// EIP-4906 BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId)
-	batchMetadataUpdateEventSignature = crypto.Keccak256Hash([]byte("BatchMetadataUpdate(uint256,uint256)"))
-
-	// ERC1155 URI(string _value, uint256 indexed _id)
-	uriEventSignature = crypto.Keccak256Hash([]byte("URI(string,uint256)"))
-)
-
 // NewSubscriber creates a new Ethereum event subscriber.
-func NewSubscriber(cfg Config, ethereumClient EthereumClient) (blockchain.EventSource, error) {
+func NewSubscriber(cfg Config, ethereumClient EthereumClient, adapterRegistry *contractregistry.AdapterRegistry) (blockchain.EventSource, error) {
 	return &ethSubscriber{
-		client:  ethereumClient,
-		chainID: cfg.ChainID,
-		cfg:     cfg,
+		client:          ethereumClient,
+		chainID:         cfg.ChainID,
+		cfg:             cfg,
+		adapterRegistry: adapterRegistry,
 	}, nil
 }
 
-// SubscribeEvents subscribes to ERC721/ERC1155 transfer and metadata update events
+// SubscribeEvents subscribes to standard ERC721/ERC1155 events and configured legacy signatures for this chain.
+//
+// Parse failures for indexable logs stop the subscription so ingestion can retry from the durable
+// cursor. Intentionally ignored logs are returned as (nil, nil) from ParseEventLog and skipped.
 func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, handler blockchain.EventHandler) error {
+	allEventSignatures := helpers.StandardEventSignatures()
+	if s.adapterRegistry != nil {
+		allEventSignatures = append(allEventSignatures, s.adapterRegistry.GetCustomEventSignaturesForChain(s.chainID)...)
+	}
+
 	query := ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(fromBlock),
 		Topics: [][]common.Hash{
-			{
-				transferEventSignature,            // ERC20/ERC721 Transfer (will filter ERC20 in parseLog)
-				transferSingleEventSignature,      // ERC1155 TransferSingle
-				transferBatchEventSignature,       // ERC1155 TransferBatch
-				metadataUpdateEventSignature,      // EIP-4906 MetadataUpdate
-				batchMetadataUpdateEventSignature, // EIP-4906 BatchMetadataUpdate
-				uriEventSignature,                 // ERC1155 URI
-			},
+			allEventSignatures,
 		},
 	}
 
@@ -101,9 +82,32 @@ func (s *ethSubscriber) SubscribeEvents(ctx context.Context, fromBlock uint64, h
 			return fmt.Errorf("subscription error: %w", err)
 		case vLog := <-logs:
 			event, err := s.client.ParseEventLog(ctx, vLog)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				logger.ErrorCtx(ctx, errors.New("error parsing log"), zap.Error(err))
-				continue
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return ctx.Err()
+				}
+
+				// Expected: Known custom signature from unconfigured contract
+				if errors.Is(err, adapters.ErrUnconfiguredContract) {
+					logger.DebugCtx(ctx, "Skipping known custom signature from unconfigured contract",
+						zap.String("signature", vLog.Topics[0].Hex()),
+						zap.String("address", vLog.Address.Hex()),
+						zap.Uint64("block", vLog.BlockNumber))
+					continue
+				}
+
+				// Unexpected: Filter sent us something no adapter recognizes
+				if errors.Is(err, adapters.ErrUnexpectedEvent) {
+					logger.ErrorCtx(ctx, errors.New("filter sent unexpected event signature - possible misconfiguration"),
+						zap.String("signature", vLog.Topics[0].Hex()),
+						zap.String("address", vLog.Address.Hex()),
+						zap.Uint64("block", vLog.BlockNumber),
+						zap.Error(err))
+					continue
+				}
+
+				// Fatal errors (timestamp lookup, malformed data, etc.)
+				return fmt.Errorf("parse log at block %d index %d: %w", vLog.BlockNumber, vLog.Index, err)
 			}
 
 			if event == nil {

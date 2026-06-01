@@ -1,0 +1,61 @@
+{
+  "$comment": "ownership_model determines indexing semantics: single_owner=last-transfer-wins, multi_holder=balance-accumulation. Token CID standard (erc721/erc1155) is auto-derived.",
+  "contracts": [
+    {
+      "chain": "eip155:1",
+      "address": "0xb47e3cd837ddf8e4c57f05d70ab865de6e193bbb",
+      "name": "CryptoPunks",
+      "ownership_model": "single_owner",
+      "adapter": {
+        "existence": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"],
+          "success_condition": "address_nonzero"
+        },
+        "owner": {
+          "method": "punkIndexToAddress",
+          "abi": "cryptopunks",
+          "params": ["${tokenId}"]
+        },
+        "metadata": {
+          "source": "vendor_only"
+        },
+        "events": [
+          {
+            "signature": "PunkTransfer(address,address,uint256)",
+            "mapToStandardEvent": "transfer",
+            "indexedParams": ["from", "to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "from": "FromAddress",
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          },
+          {
+            "signature": "Assign(address,uint256)",
+            "mapToStandardEvent": "mint",
+            "indexedParams": ["to"],
+            "dataParams": ["punkIndex"],
+            "parameterMappings": {
+              "to": "ToAddress",
+              "punkIndex": "TokenNumber"
+            }
+          },
+          {
+            "signature": "PunkBought(uint256,uint256,address,address)",
+            "mapToStandardEvent": "transfer",
+            "indexedParams": ["punkIndex", "fromAddress", "toAddress"],
+            "dataParams": [],
+            "parameterMappings": {
+              "punkIndex": "TokenNumber",
+              "fromAddress": "FromAddress",
+              "toAddress": "ToAddress"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

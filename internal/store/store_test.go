@@ -925,7 +925,7 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 				{
 					Chain:       domain.ChainEthereumMainnet,
 					EventType:   schema.ProvenanceEventTypeMint,
-					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					FromAddress: types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
 					ToAddress:   &ownerAddress,
 					Quantity:    "10",
 					TxHash:      "0xtx1",
@@ -1000,7 +1000,7 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 				{
 					Chain:       domain.ChainEthereumMainnet,
 					EventType:   schema.ProvenanceEventTypeTransfer,
-					FromAddress: stringPtr("0xother"),
+					FromAddress: types.StringPtr("0xother"),
 					ToAddress:   &owner1,
 					Quantity:    "10",
 					TxHash:      "0xtx2",
@@ -1130,7 +1130,7 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 				{
 					Chain:       domain.ChainEthereumMainnet,
 					EventType:   schema.ProvenanceEventTypeMint,
-					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					FromAddress: types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
 					ToAddress:   &ownerAddress,
 					Quantity:    "10",
 					TxHash:      "0xtx6",
@@ -1158,7 +1158,7 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 				{
 					Chain:       domain.ChainEthereumMainnet,
 					EventType:   schema.ProvenanceEventTypeMint,
-					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					FromAddress: types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
 					ToAddress:   &ownerAddress,
 					Quantity:    "10",
 					TxHash:      "0xtx6", // Same tx hash
@@ -1245,7 +1245,7 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 				{
 					Chain:       domain.ChainEthereumMainnet,
 					EventType:   schema.ProvenanceEventTypeMint,
-					FromAddress: stringPtr(domain.ETHEREUM_ZERO_ADDRESS),
+					FromAddress: types.StringPtr(domain.ETHEREUM_ZERO_ADDRESS),
 					ToAddress:   &ownerAddress,
 					Quantity:    "10",
 					TxHash:      "0xtx7",
@@ -1255,7 +1255,7 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 				{
 					Chain:       domain.ChainEthereumMainnet,
 					EventType:   schema.ProvenanceEventTypeTransfer,
-					FromAddress: stringPtr("0xother1"),
+					FromAddress: types.StringPtr("0xother1"),
 					ToAddress:   &ownerAddress,
 					Quantity:    "10",
 					TxHash:      "0xtx8",
@@ -1265,7 +1265,7 @@ func testUpsertTokenBalanceForOwner(t *testing.T, store Store) {
 				{
 					Chain:       domain.ChainEthereumMainnet,
 					EventType:   schema.ProvenanceEventTypeTransfer,
-					FromAddress: stringPtr("0xother2"),
+					FromAddress: types.StringPtr("0xother2"),
 					ToAddress:   &ownerAddress,
 					Quantity:    "10",
 					TxHash:      "0xtx9",
@@ -1869,7 +1869,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 				Quantity:    "1",
 				TxHash:      "0xtransfer1to2",
 				BlockNumber: 2000,
-				BlockHash:   stringPtr("0xblockhash2000"),
+				BlockHash:   types.StringPtr("0xblockhash2000"),
 				Raw:         []byte(`{"tx_hash":"0xtransfer1to2","block_number":2000,"tx_index":1}`),
 				Timestamp:   transferTime1,
 			},
@@ -1898,7 +1898,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 				Quantity:    "1",
 				TxHash:      "0xtransfer3to2",
 				BlockNumber: 2001,
-				BlockHash:   stringPtr("0xblockhash2001"),
+				BlockHash:   types.StringPtr("0xblockhash2001"),
 				Raw:         []byte(`{"tx_hash":"0xtransfer3to2","block_number":2001,"tx_index":1}`),
 				Timestamp:   transferTime2,
 			},
@@ -2321,11 +2321,6 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.Len(t, resultsMixedInclude, 1)
 	})
-}
-
-// stringPtr is a helper to create a string pointer
-func stringPtr(s string) *string {
-	return &s
 }
 
 // =============================================================================

@@ -107,15 +107,22 @@ func (r *resolver) RawHash(metadata *NormalizedMetadata) ([]byte, []byte, error)
 }
 
 func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*NormalizedMetadata, error) {
-	_, standard, contractAddress, tokenNumber := tokenCID.Parse()
+	chainID, standard, contractAddress, tokenNumber := tokenCID.Parse()
+
+	// Skip on-chain metadata for vendor-only contracts (e.g. CryptoPunks); enrichment uses OpenSea.
+	if chainID == domain.ChainEthereumMainnet || chainID == domain.ChainEthereumSepolia {
+		if r.ethClient.IsVendorOnlyMetadata(contractAddress) {
+			return nil, nil
+		}
+	}
+
 	var metadataURI string
 	var err error
 
 	switch standard {
-	case domain.StandardERC721:
-		metadataURI, err = r.ethClient.ERC721TokenURI(ctx, contractAddress, tokenNumber)
-	case domain.StandardERC1155:
-		metadataURI, err = r.ethClient.ERC1155URI(ctx, contractAddress, tokenNumber)
+	case domain.StandardERC721, domain.StandardERC1155:
+		// Route Ethereum metadata lookup through TokenURI adapter to support legacy contracts
+		metadataURI, err = r.ethClient.TokenURI(ctx, contractAddress, tokenNumber, standard)
 	case domain.StandardFA2:
 		// For Tezos FA2, TzKT API provides metadata directly
 		metadata, err := r.tzClient.GetTokenMetadata(ctx, contractAddress, tokenNumber)

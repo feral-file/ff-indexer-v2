@@ -14,6 +14,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
@@ -154,7 +155,7 @@ func TestURLChecker_Check(t *testing.T) {
 					AnyTimes()
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    stringPtr("https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"),
+			expectedURL:    types.StringPtr("https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"),
 			expectedError:  nil,
 		},
 		{
@@ -225,7 +226,7 @@ func TestURLChecker_Check(t *testing.T) {
 					AnyTimes()
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    stringPtr("https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
+			expectedURL:    types.StringPtr("https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
 			expectedError:  nil,
 		},
 		{
@@ -293,7 +294,7 @@ func TestURLChecker_Check(t *testing.T) {
 					AnyTimes()
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    stringPtr("https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
+			expectedURL:    types.StringPtr("https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
 			expectedError:  nil,
 		},
 		{
@@ -307,7 +308,7 @@ func TestURLChecker_Check(t *testing.T) {
 			setupMocks:     func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
-			expectedError:  stringPtr("only HTTP/HTTPS URLs are supported"),
+			expectedError:  types.StringPtr("only HTTP/HTTPS URLs are supported"),
 		},
 		{
 			name: "invalid URL format",
@@ -320,7 +321,7 @@ func TestURLChecker_Check(t *testing.T) {
 			setupMocks:     func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
-			expectedError:  stringPtr("invalid URL format"),
+			expectedError:  types.StringPtr("invalid URL format"),
 		},
 		{
 			name: "IPFS gateway - no working gateway",
@@ -366,7 +367,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
-			expectedError:  stringPtr("no working IPFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"),
+			expectedError:  types.StringPtr("no working IPFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"),
 		},
 		{
 			name: "Arweave gateway - no working gateway",
@@ -403,7 +404,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
-			expectedError:  stringPtr("no working Arweave gateway found for TX: sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
+			expectedError:  types.StringPtr("no working Arweave gateway found for TX: sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
 		},
 		{
 			name: "OnChFS gateway - no working gateway",
@@ -444,7 +445,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
-			expectedError:  stringPtr("no working OnChFS gateway found for hash: a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
+			expectedError:  types.StringPtr("no working OnChFS gateway found for hash: a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
 		},
 		{
 			name: "regular HTTPS URL - HEAD fails, GET with Range succeeds with 206",
@@ -610,7 +611,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
-			expectedError:  stringPtr("HTTP 404"),
+			expectedError:  types.StringPtr("HTTP 404"),
 		},
 		{
 			name: "regular HTTPS URL - transient error from GET with Range",
@@ -635,7 +636,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusTransientError,
 			expectedURL:    nil,
-			expectedError:  stringPtr("temporary network error"),
+			expectedError:  types.StringPtr("temporary network error"),
 		},
 		{
 			name: "regular HTTPS URL - non-retryable error from GET with Range",
@@ -660,7 +661,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
-			expectedError:  stringPtr("assert.AnError"),
+			expectedError:  types.StringPtr("assert.AnError"),
 		},
 		{
 			name: "regular HTTPS URL - GET with Range returns 429, transient error",
@@ -692,7 +693,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusTransientError,
 			expectedURL:    nil,
-			expectedError:  stringPtr("rate limited (429)"),
+			expectedError:  types.StringPtr("rate limited (429)"),
 		},
 		{
 			name: "regular HTTPS URL - GET without Range returns 429, transient error",
@@ -740,7 +741,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusTransientError,
 			expectedURL:    nil,
-			expectedError:  stringPtr("rate limited (429)"),
+			expectedError:  types.StringPtr("rate limited (429)"),
 		},
 		{
 			name: "regular HTTPS URL - transient error from GET without Range",
@@ -780,7 +781,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusTransientError,
 			expectedURL:    nil,
-			expectedError:  stringPtr("temporary network error"),
+			expectedError:  types.StringPtr("temporary network error"),
 		},
 	}
 
@@ -813,10 +814,6 @@ func TestURLChecker_Check(t *testing.T) {
 			}
 		})
 	}
-}
-
-func stringPtr(s string) *string {
-	return &s
 }
 
 func TestURLChecker_dnsResolutionFailed_notMarkedAsSSRFBlocked(t *testing.T) {

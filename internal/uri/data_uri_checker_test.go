@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
@@ -125,25 +126,25 @@ func TestDataURIChecker_Check(t *testing.T) {
 			name:        "missing data: prefix",
 			dataURI:     "image/png;base64," + validPNGBase64,
 			expectValid: false,
-			expectError: strPtr("invalid data URI: must start with 'data:'"),
+			expectError: types.StringPtr("invalid data URI: must start with 'data:'"),
 		},
 		{
 			name:        "missing comma separator",
 			dataURI:     "data:image/png;base64" + validPNGBase64,
 			expectValid: false,
-			expectError: strPtr("invalid data URI format: missing comma separator"),
+			expectError: types.StringPtr("invalid data URI format: missing comma separator"),
 		},
 		{
 			name:        "empty data",
 			dataURI:     "data:image/png;base64,",
 			expectValid: false,
-			expectError: strPtr("invalid data URI: empty data"),
+			expectError: types.StringPtr("invalid data URI: empty data"),
 		},
 		{
 			name:        "invalid base64 encoding",
 			dataURI:     "data:image/png;base64,!!!invalid!!!",
 			expectValid: false,
-			expectError: strPtr("failed to decode base64: illegal base64 data at input byte 0"),
+			expectError: types.StringPtr("failed to decode base64: illegal base64 data at input byte 0"),
 		},
 		{
 			name:                   "unsupported mime type - text",
@@ -163,7 +164,7 @@ func TestDataURIChecker_Check(t *testing.T) {
 			name:                   "mime type mismatch - declared PNG but is JPEG",
 			dataURI:                "data:image/png;base64," + validJPEGBase64,
 			expectValid:            false,
-			expectError:            strPtr("mime type mismatch: declared image/png but detected image/jpeg"),
+			expectError:            types.StringPtr("mime type mismatch: declared image/png but detected image/jpeg"),
 			expectMimeType:         "image/jpeg",
 			expectDeclaredMimeType: "image/png",
 		},
@@ -171,7 +172,7 @@ func TestDataURIChecker_Check(t *testing.T) {
 			name:                   "mime type mismatch - declared image but content is text",
 			dataURI:                "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("not an image")),
 			expectValid:            false,
-			expectError:            strPtr("mime type mismatch: declared image/png but detected text/plain; charset=utf-8"),
+			expectError:            types.StringPtr("mime type mismatch: declared image/png but detected text/plain; charset=utf-8"),
 			expectMimeType:         "text/plain; charset=utf-8",
 			expectDeclaredMimeType: "image/png",
 		},
@@ -181,7 +182,7 @@ func TestDataURIChecker_Check(t *testing.T) {
 			expectValid:            false,
 			expectMimeType:         "image/png",
 			expectDeclaredMimeType: "text/plain",
-			expectError:            strPtr("mime type mismatch: declared text/plain but detected image/png"),
+			expectError:            types.StringPtr("mime type mismatch: declared text/plain but detected image/png"),
 		},
 		{
 			name:                   "valid PNG with charset parameter",
@@ -272,25 +273,25 @@ func TestDataURIChecker_Check(t *testing.T) {
 			name:        "empty HTML content",
 			dataURI:     "data:text/html;base64,",
 			expectValid: false,
-			expectError: strPtr("invalid data URI: empty data"),
+			expectError: types.StringPtr("invalid data URI: empty data"),
 		},
 		{
 			name:        "empty JSON content",
 			dataURI:     "data:application/json;base64,",
 			expectValid: false,
-			expectError: strPtr("invalid data URI: empty data"),
+			expectError: types.StringPtr("invalid data URI: empty data"),
 		},
 		{
 			name:        "unsupported mime type - audio",
 			dataURI:     "data:audio/mp3;base64," + base64.StdEncoding.EncodeToString([]byte("fake audio")),
 			expectValid: false,
-			expectError: strPtr("unsupported mime type: audio/mp3 (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
+			expectError: types.StringPtr("unsupported mime type: audio/mp3 (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
 		},
 		{
 			name:        "unsupported mime type - application/xml",
 			dataURI:     "data:application/xml;base64," + base64.StdEncoding.EncodeToString([]byte("<root></root>")),
 			expectValid: false,
-			expectError: strPtr("unsupported mime type: application/xml (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
+			expectError: types.StringPtr("unsupported mime type: application/xml (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
 		},
 	}
 
@@ -399,9 +400,4 @@ func TestDataURIChecker_Check_EdgeCases(t *testing.T) {
 			assert.Equal(t, tt.expectValid, result.Valid, "Valid mismatch")
 		})
 	}
-}
-
-// Helper function to create string pointers
-func strPtr(s string) *string {
-	return &s
 }

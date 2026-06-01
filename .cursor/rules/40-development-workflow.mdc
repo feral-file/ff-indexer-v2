@@ -45,7 +45,7 @@ Primary verification command:
 make check
 ```
 
-This is the canonical local verification entrypoint (see the `check` target in the `Makefile`: imports, local lint, lightweight build, full tests).
+This is the canonical local verification entrypoint (see the `check` target in the `Makefile`: imports, gofmt -s check, local lint, full tests).
 
 CI defines its own steps in `.github/workflows/`. If the full verification path cannot be run, state that clearly, explain the blocker, and report what was run instead.
 

@@ -95,7 +95,8 @@ func TestGetTokenCIDsByOwnerAndBlockRange_Integration(t *testing.T) {
 		clock,
 	)
 
-	client := NewClient(domain.ChainEthereumMainnet, ethClient, clock, blockProvider)
+	client, err := NewClient(domain.ChainEthereumMainnet, ethClient, clock, blockProvider)
+	require.NoError(t, err)
 
 	for _, tc := range testCases {
 		tc := tc

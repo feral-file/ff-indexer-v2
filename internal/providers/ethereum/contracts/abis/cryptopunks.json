@@ -1,0 +1,9 @@
+[
+  {
+    "constant": true,
+    "inputs": [{"name": "index", "type": "uint256"}],
+    "name": "punkIndexToAddress",
+    "outputs": [{"name": "", "type": "address"}],
+    "type": "function"
+  }
+]

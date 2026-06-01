@@ -223,6 +223,7 @@ flowchart TD
 
 ## 7. Related reading
 
+- [`docs/ethereum_contract_adapters.md`](ethereum_contract_adapters.md) — configured legacy Ethereum contracts (pre-ERC-721/1155), adapter registry, and what owner sweeps / provenance can do
 - [`docs/artist_did_resolution.md`](artist_did_resolution.md) — artist names, `did:pkh`, on-chain JSON vs vendor enrichment, display merge rules
 - [`docs/architecture.md`](architecture.md) — components, queues, cursor durability, media worker
 - [`docs/schema.md`](schema.md) — `tokens`, `token_metadata`, `enrichment_sources`, `watched_addresses`, `address_indexing_jobs`, `jobs`

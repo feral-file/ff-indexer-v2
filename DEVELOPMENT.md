@@ -378,9 +378,18 @@ Use this command before handing off a substantive change:
 make check
 ```
 
-It runs the `check` target in the `Makefile`: format imports (`goimports`), full-repo local lint (`golangci-lint` with CGO enabled), a lightweight `CGO_ENABLED=0` build plus `cmd/ff-indexer` tests, then `CGO_ENABLED=1` `go test -cover ./...`.
+It runs the `check` target in the `Makefile`: format imports (`goimports`), verify `gofmt -s` formatting (same as CI’s go fmt check), full-repo local lint (`golangci-lint` with CGO enabled), then `CGO_ENABLED=1` `go test -cover ./...` (same package set CI exercises, including `cmd/ff-indexer`).
+
+To fix formatting issues before running checks:
+
+```bash
+make imports   # goimports (import order and grouping)
+make fmt       # gofmt -s -w (simplifications enforced in CI)
+```
 
 The lint profile is opinionated (complexity, length, doc expectations). For CI’s exact commands and package filters, see `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`.
+
+Optional lightweight verification (CGO-disabled binary and stub media path) is **not** part of `make check` or CI. Run `make test-lightweight-build` when you change code that must remain compatible with the default lightweight Docker deployment.
 
 Some packages need PostgreSQL or Docker (for example `internal/store` may use `TEST_DB_*` against a local DB or testcontainers when `TEST_DB_HOST` is unset). Start infrastructure with `make up-infra` when tests require Postgres, and set `TEST_DB_*` if you use an external database instead of the default container path.
 
