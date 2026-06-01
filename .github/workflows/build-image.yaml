@@ -1,4 +1,4 @@
-name: Build Image DO
+name: Build Image
 
 on:
   workflow_dispatch:
