@@ -2914,9 +2914,37 @@ func (s *pgStore) GetTokenChangesByOwnerSinceCheckpoint(ctx context.Context, own
 	return events, nil
 }
 
-// createTokenEvent inserts a token event into the token_events table
-// Should be called within a transaction after ownership or attribute changes
+// isOwnershipTokenEventType reports whether the event type is acquired or released.
+func isOwnershipTokenEventType(eventType schema.TokenEventType) bool {
+	return eventType == schema.EventTypeAcquired || eventType == schema.EventTypeReleased
+}
+
+// ownershipTokenEventTxHash returns metadata tx_hash when present (used for uniqueness).
+func ownershipTokenEventTxHash(metadata []byte) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var meta struct {
+		TxHash string `json:"tx_hash"`
+	}
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		return ""
+	}
+	return meta.TxHash
+}
+
+// createTokenEvent inserts a token event into the token_events table.
+// Should be called within a transaction after ownership or attribute changes.
+//
+// Acquired/released rows with owner_address and metadata.tx_hash use ON CONFLICT DO NOTHING
+// against token_events_ownership_unique so concurrent ingestion stays idempotent.
 func (s *pgStore) createTokenEvent(tx *gorm.DB, tokenID uint64, eventType schema.TokenEventType, ownerAddress *string, occurredAt time.Time, metadata []byte) error {
+	if isOwnershipTokenEventType(eventType) && ownerAddress != nil {
+		if txHash := ownershipTokenEventTxHash(metadata); txHash != "" {
+			return s.createOwnershipTokenEventIdempotent(tx, tokenID, eventType, *ownerAddress, occurredAt, metadata)
+		}
+	}
+
 	event := schema.TokenEvent{
 		TokenID:      tokenID,
 		EventType:    eventType,
@@ -2927,6 +2955,28 @@ func (s *pgStore) createTokenEvent(tx *gorm.DB, tokenID uint64, eventType schema
 
 	if err := tx.Create(&event).Error; err != nil {
 		return fmt.Errorf("failed to create token event: %w", err)
+	}
+
+	return nil
+}
+
+// createOwnershipTokenEventIdempotent inserts acquired/released rows guarded by token_events_ownership_unique.
+// Requires migration 017 (token_events_ownership_unique index) to have been applied.
+// If the index does not exist, this will fail with a clear Postgres error.
+func (s *pgStore) createOwnershipTokenEventIdempotent(tx *gorm.DB, tokenID uint64, eventType schema.TokenEventType, ownerAddress string, occurredAt time.Time, metadata []byte) error {
+	err := tx.Exec(`
+		INSERT INTO token_events (token_id, event_type, owner_address, occurred_at, metadata)
+		VALUES (?, ?, ?, ?, ?::jsonb)
+		ON CONFLICT (token_id, owner_address, event_type, (metadata->>'tx_hash'))
+		WHERE event_type IN ('acquired', 'released')
+		  AND owner_address IS NOT NULL
+		  AND (metadata->>'tx_hash') IS NOT NULL
+		DO NOTHING`,
+		tokenID, string(eventType), ownerAddress, occurredAt, metadata,
+	).Error
+
+	if err != nil {
+		return fmt.Errorf("failed to create ownership token event (requires migration 017 with token_events_ownership_unique index): %w", err)
 	}
 
 	return nil

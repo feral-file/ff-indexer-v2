@@ -170,6 +170,48 @@ Migrations are stored in `db/migrations/`. Apply migrations:
 psql -h localhost -U postgres -d ff_indexer -f db/migrations/001.sql
 ```
 
+**⚠️ CRITICAL: Migration ordering for deployments**
+
+Some migrations introduce database constraints that application code depends on (e.g., unique indexes with `ON CONFLICT` clauses). **You MUST run migrations before deploying new application code.**
+
+**Required deployment sequence:**
+
+1. **Stop or pause** traffic to the application (optional for blue-green deployments)
+2. **Run migrations** on all database instances
+3. **Wait for migration completion** across all replicas/shards
+4. **Verify migrations** succeeded (check indexes/constraints exist)
+5. **Deploy** the new application version
+6. **Resume** traffic
+
+**Migration 017 (token_events uniqueness) - REQUIRED:**
+
+This migration adds the `token_events_ownership_unique` partial index that application code depends on for idempotent ownership event insertion.
+
+- **If migration has NOT run:** Application will fail at runtime with PostgreSQL error:
+  ```
+  ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)
+  ```
+- **If app deploys before migration:** All ownership event inserts will fail, breaking token indexing
+- **There is NO fallback:** The application will explicitly fail to prevent data corruption
+
+**Migration verification:**
+
+```bash
+# Verify migration 017 index exists
+psql -h localhost -U postgres -d ff_indexer -c "\d token_events_ownership_unique"
+
+# Or check in SQL
+SELECT indexname, indexdef 
+FROM pg_indexes 
+WHERE tablename = 'token_events' 
+  AND indexname = 'token_events_ownership_unique';
+```
+
+**For production deployments:**
+- Use blue-green deployment strategy to avoid downtime
+- Run migrations on blue environment, verify, then switch traffic
+- Or schedule maintenance window for migration + deployment
+
 ### Reset Database
 
 To reset the database (WARNING: deletes all data):
