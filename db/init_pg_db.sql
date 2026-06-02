@@ -374,6 +374,13 @@ CREATE INDEX idx_token_events_created_id ON token_events(created_at ASC, id ASC)
 -- Index for broadcast events by token_id (optimizes JOIN with balances table for scalability)
 CREATE INDEX idx_token_events_token_created ON token_events(token_id, created_at ASC, id ASC) WHERE owner_address IS NULL;
 
+-- One acquired/released event per token-owner-transfer (tx_hash in metadata); idempotent ingestion
+CREATE UNIQUE INDEX token_events_ownership_unique
+ON token_events (token_id, owner_address, event_type, (metadata->>'tx_hash'))
+WHERE event_type IN ('acquired', 'released')
+  AND owner_address IS NOT NULL
+  AND (metadata->>'tx_hash') IS NOT NULL;
+
 -- Provenance Events table indexes
 CREATE INDEX idx_provenance_events_token_id ON provenance_events (token_id);
 CREATE INDEX idx_provenance_events_chain ON provenance_events (chain);

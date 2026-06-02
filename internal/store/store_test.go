@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -93,6 +95,22 @@ func buildTestProvenanceEventWithTime(chain domain.Chain, eventType schema.Prove
 	}
 }
 
+// countOwnershipTokenEventsForOwner counts acquired/released token_events for a token-owner pair.
+func countOwnershipTokenEventsForOwner(t *testing.T, store Store, owner string, tokenID uint64, eventType schema.TokenEventType) int {
+	t.Helper()
+
+	events, err := store.GetTokenChangesByOwnerSinceCheckpoint(context.Background(), owner, time.Time{}, 0, 1000)
+	require.NoError(t, err)
+
+	n := 0
+	for _, evt := range events {
+		if evt.TokenID == tokenID && evt.EventType == eventType {
+			n++
+		}
+	}
+	return n
+}
+
 // buildTestTokenMint creates a complete token mint input
 func buildTestTokenMint(chain domain.Chain, standard domain.ChainStandard, contract, tokenNum string, owner string) CreateTokenMintInput {
 	token := buildTestToken(chain, standard, contract, tokenNum)
@@ -162,39 +180,6 @@ func testCreateTokenMint(t *testing.T, store Store) {
 		assert.Equal(t, uint64(1), eventTotal)
 	})
 
-	t.Run("duplicate event with same token and addresses should be idempotent", func(t *testing.T) {
-		input := buildTestTokenMint(
-			domain.ChainEthereumMainnet,
-			domain.StandardERC721,
-			"0x2222222222222222222222222222222222222222",
-			"1",
-			"0xowner2222222222222222222222222222222222222",
-		)
-
-		// First mint - should succeed
-		err := store.CreateTokenMint(ctx, input)
-		require.NoError(t, err)
-
-		token1, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
-		require.NoError(t, err)
-		require.NotNil(t, token1)
-
-		// Try to create the SAME token with the SAME tx hash and addresses
-		// This should succeed (idempotent behavior) but not create duplicates
-		input2 := input
-
-		// This should succeed without creating duplicate records
-		// The conflict resolution handles both token and provenance event duplicates gracefully
-		err = store.CreateTokenMint(ctx, input2)
-		require.NoError(t, err)
-
-		// Verify the token still has exactly one provenance event (no duplicates created)
-		events, total, err := store.GetTokenProvenanceEvents(ctx, token1.ID, 10, 0, false)
-		require.NoError(t, err)
-		assert.Equal(t, uint64(1), total)
-		assert.Len(t, events, 1)
-	})
-
 	t.Run("mint ERC1155 token with quantity > 1", func(t *testing.T) {
 		input := buildTestTokenMint(
 			domain.ChainEthereumMainnet,
@@ -245,6 +230,328 @@ func testCreateTokenMint(t *testing.T, store Store) {
 		assert.NotNil(t, token)
 		assert.Equal(t, domain.ChainTezosMainnet, token.Chain)
 		assert.Equal(t, domain.StandardFA2, token.Standard)
+	})
+}
+
+// =============================================================================
+// Test: Ownership token_events idempotency (issue #46)
+// =============================================================================
+
+// testOwnershipTokenEventIdempotency guards against duplicate acquired/released token_events.
+// Mint-retry tests alone cannot catch the bug because duplicate provenance inserts return before
+// updateOwnershipPeriods runs; the concurrent subtest uses committed transactions on testDB.
+func testOwnershipTokenEventIdempotency(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	t.Run("duplicate provenance on mint retry is idempotent for provenance rows only", func(t *testing.T) {
+		input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0x2222222222222222222222222222222222222222",
+			"1",
+			"0xowner2222222222222222222222222222222222222",
+		)
+
+		err := store.CreateTokenMint(ctx, input)
+		require.NoError(t, err)
+
+		token1, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token1)
+
+		acquiredBeforeRetry := countOwnershipTokenEventsForOwner(t, store, input.Balance.OwnerAddress, token1.ID, schema.EventTypeAcquired)
+		require.Equal(t, 1, acquiredBeforeRetry)
+
+		// Second mint with identical provenance: provenance insert is skipped (ID == 0) and the
+		// handler returns before updateOwnershipPeriods — so this never exercises token_events dedup.
+		err = store.CreateTokenMint(ctx, input)
+		require.NoError(t, err)
+
+		events, total, err := store.GetTokenProvenanceEvents(ctx, token1.ID, 10, 0, false)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), total)
+		assert.Len(t, events, 1)
+
+		acquiredAfterRetry := countOwnershipTokenEventsForOwner(t, store, input.Balance.OwnerAddress, token1.ID, schema.EventTypeAcquired)
+		assert.Equal(t, acquiredBeforeRetry, acquiredAfterRetry)
+	})
+
+	t.Run("distinct provenance rows same tx_hash yield one acquired token_event", func(t *testing.T) {
+		owner := "0xowner3333333333333333333333333333333333333"
+		contract := "0x3333333333333333333333333333333333333333"
+		tokenNum := "1"
+		txHash := "0xsametxhash3333333333333333333333333333333333333333333333333333"
+		tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, contract, tokenNum)
+		zero := domain.ETHEREUM_ZERO_ADDRESS
+
+		err := store.CreateTokenWithProvenances(ctx, CreateTokenWithProvenancesInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC721,
+				ContractAddress: contract,
+				TokenNumber:     tokenNum,
+				CurrentOwner:    &owner,
+			},
+			Balances: []CreateBalanceInput{{OwnerAddress: owner, Quantity: "1"}},
+			Events:   nil,
+		})
+		require.NoError(t, err)
+
+		token, err := store.GetTokenByTokenCID(ctx, tokenCID.String())
+		require.NoError(t, err)
+
+		// Two provenance rows that share tx_hash and to_address but differ in from_address (allowed by
+		// provenance_events_unique). Both run updateOwnershipPeriods in one transaction.
+		err = store.UpsertTokenBalanceForOwner(ctx, UpsertTokenBalanceForOwnerInput{
+			Token: CreateTokenInput{
+				TokenCID:        tokenCID.String(),
+				Chain:           domain.ChainEthereumMainnet,
+				Standard:        domain.StandardERC721,
+				ContractAddress: contract,
+				TokenNumber:     tokenNum,
+				CurrentOwner:    &owner,
+			},
+			OwnerAddress: owner,
+			Quantity:     "1",
+			Events: []CreateProvenanceEventInput{
+				buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeTransfer,
+					&zero,
+					&owner,
+					"1",
+					txHash,
+					100,
+				),
+				buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeTransfer,
+					nil,
+					&owner,
+					"1",
+					txHash,
+					100,
+				),
+			},
+		})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, countOwnershipTokenEventsForOwner(t, store, owner, token.ID, schema.EventTypeAcquired),
+			"same transfer tx_hash must not produce multiple acquired token_events for one owner")
+	})
+
+	t.Run("concurrent updateOwnershipPeriods yields one acquired row", func(t *testing.T) {
+		if testDB == nil {
+			t.Skip("requires PostgreSQL test database from pg_test TestMain")
+		}
+
+		pg, ok := store.(*pgStore)
+		require.True(t, ok, "concurrent ownership token_event test requires PostgreSQL store")
+
+		owner := "0xowner4444444444444444444444444444444444444"
+		input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0x4444444444444444444444444444444444444444",
+			"1",
+			owner,
+		)
+
+		setupTx := testDB.Begin()
+		require.NoError(t, setupTx.Error)
+		setupStore := NewPGStore(setupTx)
+
+		require.NoError(t, setupStore.CreateTokenMint(ctx, input))
+
+		token, err := setupStore.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+
+		var prov schema.ProvenanceEvent
+		require.NoError(t, setupTx.WithContext(ctx).
+			Where("token_id = ?", token.ID).
+			First(&prov).Error)
+
+		require.NoError(t, setupTx.WithContext(ctx).
+			Where("token_id = ? AND event_type IN ?", token.ID, []string{
+				string(schema.EventTypeAcquired),
+				string(schema.EventTypeReleased),
+			}).
+			Delete(&schema.TokenEvent{}).Error)
+
+		require.NoError(t, setupTx.Commit().Error)
+
+		t.Cleanup(func() {
+			_ = testDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				if err := tx.Where("token_id = ?", token.ID).Delete(&schema.TokenEvent{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("token_id = ?", token.ID).Delete(&schema.ProvenanceEvent{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("token_id = ?", token.ID).Delete(&schema.Balance{}).Error; err != nil {
+					return err
+				}
+				return tx.Where("id = ?", token.ID).Delete(&schema.Token{}).Error
+			})
+		})
+
+		const workers = 24
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		errs := make(chan error, workers)
+
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs <- testDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+					return pg.updateOwnershipPeriods(ctx, tx, &prov, domain.StandardERC721)
+				})
+			}()
+		}
+
+		close(start)
+		wg.Wait()
+		close(errs)
+
+		for err := range errs {
+			require.NoError(t, err)
+		}
+
+		var acquiredCount int64
+		require.NoError(t, testDB.WithContext(ctx).
+			Model(&schema.TokenEvent{}).
+			Where("token_id = ? AND owner_address = ? AND event_type = ?",
+				token.ID, owner, schema.EventTypeAcquired).
+			Count(&acquiredCount).Error)
+
+		assert.Equal(t, int64(1), acquiredCount,
+			"concurrent updateOwnershipPeriods for the same transfer must leave exactly one acquired row")
+	})
+
+	t.Run("concurrent updateOwnershipPeriods yields one released row", func(t *testing.T) {
+		if testDB == nil {
+			t.Skip("requires PostgreSQL test database from pg_test TestMain")
+		}
+
+		pg, ok := store.(*pgStore)
+		require.True(t, ok, "concurrent ownership token_event test requires PostgreSQL store")
+
+		owner1 := "0xowner5555555555555555555555555555555555555"
+		owner2 := "0xowner6666666666666666666666666666666666666"
+		input := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			"0x5555555555555555555555555555555555555555",
+			"2",
+			owner1,
+		)
+
+		setupTx := testDB.Begin()
+		require.NoError(t, setupTx.Error)
+		setupStore := NewPGStore(setupTx)
+
+		require.NoError(t, setupStore.CreateTokenMint(ctx, input))
+
+		token, err := setupStore.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+
+		// For ERC721 released logic: must have a prior acquired event for owner1.
+		// Create that directly before setting up the transfer provenance.
+		acquiredMeta, _ := json.Marshal(schema.AcquisitionMetadata{TxHash: "0xminthash", Quantity: "1"})
+		require.NoError(t, setupTx.Create(&schema.TokenEvent{
+			TokenID:      token.ID,
+			EventType:    schema.EventTypeAcquired,
+			OwnerAddress: &owner1,
+			OccurredAt:   time.Now().UTC().Add(-1 * time.Hour),
+			Metadata:     acquiredMeta,
+		}).Error)
+
+		// Create a transfer event from owner1 to owner2
+		blockNum := uint64(200)
+		transferEvent := schema.ProvenanceEvent{
+			TokenID:     token.ID,
+			Chain:       domain.ChainEthereumMainnet,
+			EventType:   schema.ProvenanceEventTypeTransfer,
+			FromAddress: &owner1,
+			ToAddress:   &owner2,
+			Quantity:    types.StringPtr("1"),
+			TxHash:      types.StringPtr("0xtransferhash555"),
+			BlockNumber: &blockNum,
+			Timestamp:   time.Now().UTC(),
+		}
+		require.NoError(t, setupTx.Create(&transferEvent).Error)
+
+		// Remove released/acquired rows for the transfer so workers start from empty log for *this transfer*
+		require.NoError(t, setupTx.WithContext(ctx).
+			Where("token_id = ? AND event_type IN ? AND (metadata->>'tx_hash') = ?", token.ID, []string{
+				string(schema.EventTypeAcquired),
+				string(schema.EventTypeReleased),
+			}, "0xtransferhash555").
+			Delete(&schema.TokenEvent{}).Error)
+
+		require.NoError(t, setupTx.Commit().Error)
+
+		t.Cleanup(func() {
+			_ = testDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				if err := tx.Where("token_id = ?", token.ID).Delete(&schema.TokenEvent{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("token_id = ?", token.ID).Delete(&schema.ProvenanceEvent{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("token_id = ?", token.ID).Delete(&schema.Balance{}).Error; err != nil {
+					return err
+				}
+				return tx.Where("id = ?", token.ID).Delete(&schema.Token{}).Error
+			})
+		})
+
+		const workers = 24
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		errs := make(chan error, workers)
+
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs <- testDB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+					return pg.updateOwnershipPeriods(ctx, tx, &transferEvent, domain.StandardERC721)
+				})
+			}()
+		}
+
+		close(start)
+		wg.Wait()
+		close(errs)
+
+		for err := range errs {
+			require.NoError(t, err)
+		}
+
+		var releasedCount int64
+		require.NoError(t, testDB.WithContext(ctx).
+			Model(&schema.TokenEvent{}).
+			Where("token_id = ? AND owner_address = ? AND event_type = ?",
+				token.ID, owner1, schema.EventTypeReleased).
+			Count(&releasedCount).Error)
+
+		assert.Equal(t, int64(1), releasedCount,
+			"concurrent updateOwnershipPeriods for the same transfer must leave exactly one released row")
+
+		var acquiredCount int64
+		require.NoError(t, testDB.WithContext(ctx).
+			Model(&schema.TokenEvent{}).
+			Where("token_id = ? AND owner_address = ? AND event_type = ?",
+				token.ID, owner2, schema.EventTypeAcquired).
+			Count(&acquiredCount).Error)
+
+		assert.Equal(t, int64(1), acquiredCount,
+			"concurrent updateOwnershipPeriods for the same transfer must leave exactly one acquired row for new owner")
 	})
 }
 
@@ -6184,6 +6491,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		fn   func(*testing.T, Store)
 	}{
 		{"CreateTokenMint", testCreateTokenMint},
+		{"OwnershipTokenEventIdempotency", testOwnershipTokenEventIdempotency},
 		{"UpdateTokenTransfer", testUpdateTokenTransfer},
 		{"UpdateTokenBurn", testUpdateTokenBurn},
 		{"CreateTokenWithProvenances", testCreateTokenWithProvenances},
