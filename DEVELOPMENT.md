@@ -187,11 +187,46 @@ Some migrations introduce database constraints that application code depends on 
 
 This migration adds the `token_events_ownership_unique` partial index that application code depends on for idempotent ownership event insertion.
 
+**⚠️ CRITICAL: Traffic must be paused for migration 017**
+
+Unlike most migrations, **you MUST pause or stop write traffic** before running migration 017. This is required because:
+
+1. **Race condition risk**: If writes continue between dedup (`017_dedup.sql`) and unique index creation (`017.sql`), new duplicates can be introduced, causing the unique index creation to fail.
+2. **Write blocking**: `CREATE UNIQUE INDEX` (non-concurrent) in `017.sql` blocks writes during index build on large tables.
+
+**Deployment sequence for migration 017:**
+
+1. **STOP write traffic** (pause indexer workers, drain queues, or use maintenance mode)
+2. Run `017_dedup.sql` if `token_events` is large or has known duplicates
+3. Run `017.sql` immediately after dedup completes
+4. Verify index exists (see verification commands below)
+5. Deploy new application version
+6. **RESUME write traffic**
+
+**Large databases (recommended when `token_events` has many rows or known duplicates):**
+
+Run the batched dedup script **before** `017.sql`. It deletes duplicate `acquired`/`released` rows in batches (default 50,000 per batch) and `COMMIT`s between batches so one huge `DELETE` does not hold locks for the full table scan.
+
+```bash
+# 1. Batched dedup (no wrapping BEGIN; commits per batch)
+psql -h localhost -U postgres -d ff_indexer -f db/migrations/017_dedup.sql
+
+# 2. Unique index (transactional)
+psql -h localhost -U postgres -d ff_indexer -f db/migrations/017.sql
+```
+
+**IMPORTANT:** `017_dedup.sql` performs its own transaction control (`COMMIT` per batch). Migration runners that auto-wrap files in `BEGIN`/`COMMIT` transactions must disable that wrapping for this file, or the procedure will fail.
+
+**Small databases or fresh installs:**
+
+Fresh installs from `init_pg_db.sql` can run `017.sql` directly if there are no duplicate ownership rows. Traffic pause is still required due to write blocking during index build.
+
 - **If migration has NOT run:** Application will fail at runtime with PostgreSQL error:
   ```
   ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)
   ```
 - **If app deploys before migration:** All ownership event inserts will fail, breaking token indexing
+- **If `017.sql` runs before dedup when duplicates exist:** `CREATE UNIQUE INDEX` fails; run `017_dedup.sql` then retry `017.sql`
 - **There is NO fallback:** The application will explicitly fail to prevent data corruption
 
 **Migration verification:**
@@ -205,6 +240,16 @@ SELECT indexname, indexdef
 FROM pg_indexes 
 WHERE tablename = 'token_events' 
   AND indexname = 'token_events_ownership_unique';
+
+# Optional: confirm no duplicate ownership keys remain
+SELECT token_id, owner_address, event_type, metadata->>'tx_hash' AS tx_hash, COUNT(*) AS n
+FROM token_events
+WHERE event_type IN ('acquired', 'released')
+  AND owner_address IS NOT NULL
+  AND metadata->>'tx_hash' IS NOT NULL
+GROUP BY 1, 2, 3, 4
+HAVING COUNT(*) > 1
+LIMIT 5;
 ```
 
 **For production deployments:**
