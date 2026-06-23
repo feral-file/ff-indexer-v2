@@ -150,6 +150,24 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 				}
 			}
 		case types.ExpansionMediaAsset:
+			// When display is also requested, pre-populate the health-filtered display before
+			// expandMediaAssets runs. expandMediaAssets is called inside this loop while
+			// tokenDTO.Display is only set in the post-loop block; without pre-population,
+			// display-derived media assets would be silently omitted.
+			// Ensure metadata and enrichment are available first (display needs both).
+			if containsExpansion(expansions, types.ExpansionDisplay) {
+				if tokenDTO.Metadata == nil {
+					if err := e.expandMetadata(ctx, tokenDTO, token.ID); err != nil {
+						return nil, err
+					}
+				}
+				if tokenDTO.EnrichmentSource == nil {
+					if err := e.expandEnrichmentSource(ctx, tokenDTO, token.ID); err != nil {
+						return nil, err
+					}
+				}
+				e.populateHealthFilteredDisplay(ctx, tokenDTO, token.ID)
+			}
 			if err := e.expandMediaAssets(ctx, tokenDTO, expansions); err != nil {
 				return nil, err
 			}
@@ -158,21 +176,11 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 		expansionMap[exp] = true
 	}
 
-	// Populate display field if requested and clean up internal data if not explicitly requested
+	// Populate display field if requested and clean up internal data if not explicitly requested.
+	// populateHealthFilteredDisplay is idempotent: if media_asset expansion already ran first and
+	// pre-populated the field, this is a no-op — no extra DB round trip.
 	if expansionMap[types.ExpansionDisplay] {
-		// Merge the data into display field
-		tokenDTO.Display = dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
-
-		// Apply health-aware URL filtering: replace or remove URLs that are not confirmed healthy
-		// in token_media_health so FF1 never receives a dead or unverified gateway URL.
-		// Fetch health rows only when display is requested — avoids an extra query otherwise.
-		// On query error we pass nil rows: ApplyHealthyMediaURLs treats that as "no data yet" and
-		// returns the merged display unchanged (same behavior as the GetTokens bulk path).
-		healthByToken, err := e.store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{token.ID})
-		if err != nil {
-			logger.ErrorCtx(ctx, err, zap.String("token_cid", tokenDTO.TokenCID))
-		}
-		tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, healthByToken[token.ID])
+		e.populateHealthFilteredDisplay(ctx, tokenDTO, token.ID)
 
 		// Replace any data URI image/animation URLs with the public variant from media_assets
 		if err := e.resolveDisplayDataURIs(ctx, []dto.TokenResponse{*tokenDTO}); err != nil {
@@ -905,6 +913,37 @@ func mediaAssetLookupKey(url string) string {
 		return ""
 	}
 	return internalTypes.MD5Hash(url)
+}
+
+// populateHealthFilteredDisplay merges metadata and enrichment source into tokenDTO.Display and
+// applies health filtering against token_media_health so only confirmed-healthy URLs are served.
+//
+// It is idempotent: if tokenDTO.Display is already set the call is a no-op, which allows callers
+// to call it from multiple code paths without incurring a second DB round trip.
+//
+// On a health-query error the function logs and proceeds — ApplyHealthyMediaURLs with nil rows
+// returns the merged display unchanged (passthrough). This preserves availability when the
+// token_media_health table is temporarily unavailable and is an intentional trade-off.
+func (e *executor) populateHealthFilteredDisplay(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64) {
+	if tokenDTO.Display != nil {
+		return
+	}
+	tokenDTO.Display = dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
+	healthByToken, err := e.store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenID})
+	if err != nil {
+		logger.ErrorCtx(ctx, err, zap.String("token_cid", tokenDTO.TokenCID))
+	}
+	tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, healthByToken[tokenID])
+}
+
+// containsExpansion reports whether exp appears in the expansions slice.
+func containsExpansion(expansions []types.Expansion, exp types.Expansion) bool {
+	for _, e := range expansions {
+		if e == exp {
+			return true
+		}
+	}
+	return false
 }
 
 // expandMediaAssets expands both metadata and enrichment source media assets (unified approach)
