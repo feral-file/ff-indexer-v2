@@ -5984,6 +5984,83 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.Empty(t, tokenIDs)
 	})
+
+	t.Run("GetTokenMediaHealthByTokenIDs returns empty map for no IDs", func(t *testing.T) {
+		result, err := store.GetTokenMediaHealthByTokenIDs(ctx, nil)
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("GetTokenMediaHealthByTokenIDs returns rows keyed by token ID", func(t *testing.T) {
+		animURL := "https://ipfs.feralfile.com/ipfs/QmHealthTestAnim"
+		imgURL := "https://ipfs.filebase.io/ipfs/QmHealthTestImg"
+
+		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000300001", "1", "0xownerH")
+		err := store.CreateTokenMint(ctx, token)
+		require.NoError(t, err)
+		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+		require.NoError(t, err)
+
+		metaJSON, _ := json.Marshal(map[string]interface{}{"animation_url": animURL, "image": imgURL})
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenData.ID,
+			OriginJSON:      metaJSON,
+			LatestJSON:      metaJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			AnimationURL:    &animURL,
+			ImageURL:        &imgURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		errMsg := "404 Not Found"
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL, schema.MediaHealthStatusBroken, &errMsg)
+		require.NoError(t, err)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		result, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenData.ID})
+		require.NoError(t, err)
+
+		rows, ok := result[tokenData.ID]
+		require.True(t, ok, "expected health rows for token")
+		require.Len(t, rows, 2)
+
+		statusByURL := make(map[string]schema.MediaHealthStatus)
+		for _, row := range rows {
+			statusByURL[row.MediaURL] = row.HealthStatus
+		}
+		assert.Equal(t, schema.MediaHealthStatusBroken, statusByURL[animURL])
+		assert.Equal(t, schema.MediaHealthStatusHealthy, statusByURL[imgURL])
+	})
+
+	t.Run("GetTokenMediaHealthByTokenIDs excludes rows for other tokens", func(t *testing.T) {
+		imgURL := "https://ipfs.filebase.io/ipfs/QmHealthTestOtherToken"
+
+		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000300002", "2", "0xownerH2")
+		err := store.CreateTokenMint(ctx, token)
+		require.NoError(t, err)
+		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+		require.NoError(t, err)
+
+		metaJSON, _ := json.Marshal(map[string]interface{}{"image": imgURL})
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenData.ID,
+			OriginJSON:      metaJSON,
+			LatestJSON:      metaJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imgURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, schema.MediaHealthStatusHealthy, nil)
+		require.NoError(t, err)
+
+		// Query with a different (non-existent) token ID
+		result, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenData.ID + 99999})
+		require.NoError(t, err)
+		assert.Empty(t, result, "should not return rows for a different token")
+	})
 }
 
 // =============================================================================

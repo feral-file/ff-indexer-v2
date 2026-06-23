@@ -567,6 +567,21 @@ func (mr *MockStoreMockRecorder) GetTokenIDsByMediaURL(ctx, url any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenIDsByMediaURL", reflect.TypeOf((*MockStore)(nil).GetTokenIDsByMediaURL), ctx, url)
 }
 
+// GetTokenMediaHealthByTokenIDs mocks base method.
+func (m *MockStore) GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64][]schema.TokenMediaHealth, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenMediaHealthByTokenIDs", ctx, tokenIDs)
+	ret0, _ := ret[0].(map[uint64][]schema.TokenMediaHealth)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenMediaHealthByTokenIDs indicates an expected call of GetTokenMediaHealthByTokenIDs.
+func (mr *MockStoreMockRecorder) GetTokenMediaHealthByTokenIDs(ctx, tokenIDs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMediaHealthByTokenIDs", reflect.TypeOf((*MockStore)(nil).GetTokenMediaHealthByTokenIDs), ctx, tokenIDs)
+}
+
 // GetTokenMetadataByTokenCID mocks base method.
 func (m *MockStore) GetTokenMetadataByTokenCID(ctx context.Context, tokenCID string) (*schema.TokenMetadata, error) {
 	m.ctrl.T.Helper()

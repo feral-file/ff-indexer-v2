@@ -2646,6 +2646,29 @@ func (s *pgStore) GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint
 	return tokens, nil
 }
 
+// GetTokenMediaHealthByTokenIDs returns all health rows for the given token IDs, keyed by token ID.
+// Used by the API display layer to apply health-aware URL selection so broken gateway URLs are
+// never served to clients (see ApplyHealthyMediaURLs in the dto package).
+// Returns an empty map when tokenIDs is empty.
+func (s *pgStore) GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64][]schema.TokenMediaHealth, error) {
+	if len(tokenIDs) == 0 {
+		return map[uint64][]schema.TokenMediaHealth{}, nil
+	}
+
+	var rows []schema.TokenMediaHealth
+	if err := s.db.WithContext(ctx).
+		Where("token_id IN ?", tokenIDs).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("failed to get token media health by token IDs: %w", err)
+	}
+
+	result := make(map[uint64][]schema.TokenMediaHealth, len(tokenIDs))
+	for _, row := range rows {
+		result[row.TokenID] = append(result[row.TokenID], row)
+	}
+	return result, nil
+}
+
 // UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
 func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error {
 	urlHash := types.MD5Hash(url)

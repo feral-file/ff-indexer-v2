@@ -5130,6 +5130,142 @@ func TestCheckMediaURLsHealthAndUpdateViewability_ViewabilityInfoNotFound(t *tes
 	assert.Contains(t, err.Error(), "token viewability info not found")
 }
 
+// ====================================================================================
+// CheckMediaURLsHealthAndUpdateViewability – WorkingURL propagation (Gap 1 fix)
+// ====================================================================================
+
+// TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_Propagates verifies that when
+// url_checker returns a WorkingURL (alternative gateway resolved), we call
+// UpdateMediaURLAndPropagate instead of UpdateTokenMediaHealthByURL, and the returned
+// HealthyURLs contains the working URL – not the original dead gateway URL.
+func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_Propagates(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	// Use a representative Tezos FA2 token CID matching the #96 repro pattern (not a credential).
+	tokenCID := "tezos-mainnet:fa2:KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE:468134" //nolint:gosec
+	// Repro: dead feralfile IPFS gateway URL
+	deadURL := "https://ipfs.feralfile.com/ipfs/QmPjZona8QEqqvSK5wfx5Wr9aCeVrow3kisRjU1yHQZdtd"
+	// Working alternate resolved by url_checker
+	workingURL := "https://ipfs.filebase.io/ipfs/QmPjZona8QEqqvSK5wfx5Wr9aCeVrow3kisRjU1yHQZdtd"
+
+	mocks.urlChecker.EXPECT().
+		Check(ctx, deadURL).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: &workingURL,
+		})
+
+	// Expect propagation (not a simple health update on the dead URL)
+	mocks.store.EXPECT().
+		UpdateMediaURLAndPropagate(ctx, deadURL, workingURL).
+		Return(nil)
+
+	token := &schema.Token{ID: 1, TokenCID: tokenCID}
+	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID).Return(token, nil)
+
+	changes := []store.TokenViewabilityChange{
+		{TokenID: token.ID, TokenCID: tokenCID, OldViewable: false, NewViewable: true},
+	}
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{token.ID}).Return(changes, nil)
+
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{deadURL})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.IsViewable)
+	// HealthyURLs must contain the working URL so downstream media indexing targets it
+	assert.Equal(t, []string{workingURL}, result.HealthyURLs)
+}
+
+// TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_FallsBackToMarkHealthy
+// verifies that a propagation failure is non-fatal: the function falls back to marking the
+// original URL healthy and still returns a successful result.
+func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_FallsBackToMarkHealthy(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "tezos-mainnet:fa2:KT1TEST:1" //nolint:gosec
+	originalURL := "https://ipfs.feralfile.com/ipfs/QmTEST1234"
+	workingURL := "https://ipfs.filebase.io/ipfs/QmTEST1234"
+
+	mocks.urlChecker.EXPECT().
+		Check(ctx, originalURL).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: &workingURL,
+		})
+
+	// Propagation fails
+	mocks.store.EXPECT().
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		Return(fmt.Errorf("db error"))
+
+	// Fallback: mark original URL healthy
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, originalURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	token := &schema.Token{ID: 2, TokenCID: tokenCID}
+	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID).Return(token, nil)
+
+	changes := []store.TokenViewabilityChange{
+		{TokenID: token.ID, TokenCID: tokenCID, OldViewable: false, NewViewable: true},
+	}
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{token.ID}).Return(changes, nil)
+
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{originalURL})
+
+	// Non-fatal: should still succeed
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.IsViewable)
+	// HealthyURLs contains the working URL even when propagation failed
+	assert.Equal(t, []string{workingURL}, result.HealthyURLs)
+}
+
+// TestCheckMediaURLsHealthAndUpdateViewability_WorkingURLSameAsOriginal_NoPropagation verifies
+// that when WorkingURL equals the original URL, we treat it as a normal healthy result
+// (no propagation call – same behavior as before the fix).
+func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURLSameAsOriginal_NoPropagation(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+	imageURL := "https://example.com/image.jpg"
+	// WorkingURL == original – no propagation expected
+	sameURL := imageURL
+
+	mocks.urlChecker.EXPECT().
+		Check(ctx, imageURL).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: &sameURL,
+		})
+
+	// No UpdateMediaURLAndPropagate call expected – only the normal health update
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		Return(nil)
+
+	token := &schema.Token{ID: 3, TokenCID: tokenCID}
+	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID).Return(token, nil)
+
+	changes := []store.TokenViewabilityChange{
+		{TokenID: token.ID, TokenCID: tokenCID, OldViewable: false, NewViewable: true},
+	}
+	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{token.ID}).Return(changes, nil)
+
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{imageURL})
+
+	assert.NoError(t, err)
+	assert.True(t, result.IsViewable)
+	assert.Equal(t, []string{imageURL}, result.HealthyURLs)
+}
+
 // TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerAdapterAuthority tests that for
 // configured single-owner Ethereum contracts, the adapter TokenOwner() method is the source
 // of truth for current ownership, even when parsed events indicate a different owner.

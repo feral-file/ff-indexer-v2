@@ -163,6 +163,17 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 		// Merge the data into display field
 		tokenDTO.Display = dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
 
+		// Apply health-aware URL filtering: replace or remove URLs that are broken according to
+		// token_media_health so FF1 never receives a dead gateway URL from display.animation_url.
+		// Fetch health rows only when display is requested — avoids an extra query otherwise.
+		healthByToken, err := e.store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{token.ID})
+		if err != nil {
+			// Non-fatal: log and continue with the merged (unfiltered) display.
+			logger.ErrorCtx(ctx, err, zap.String("token_cid", tokenDTO.TokenCID))
+		} else {
+			tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, healthByToken[token.ID])
+		}
+
 		// Replace any data URI image/animation URLs with the public variant from media_assets
 		if err := e.resolveDisplayDataURIs(ctx, []dto.TokenResponse{*tokenDTO}); err != nil {
 			return nil, err
@@ -270,6 +281,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	var bulkOwnerProvenancesTotals map[uint64]uint64
 	var bulkEnrichmentSources map[uint64]*schema.EnrichmentSource
 	var bulkMetadata map[uint64]*schema.TokenMetadata
+	var bulkMediaHealth map[uint64][]schema.TokenMediaHealth
 	var allMediaSourceURLs []string
 
 	// Map to track which expansions were requested
@@ -316,8 +328,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 				}
 			}
 		case types.ExpansionDisplay:
-			// Display expansion requires metadata and enrichment_source internally
-			// Fetch them if not already fetched
+			// Display expansion requires metadata, enrichment_source, and media health internally.
+			// Fetch them all if not already fetched.
 			if bulkMetadata == nil {
 				bulkMetadata, err = e.store.GetTokenMetadataByTokenIDs(ctx, tokenIDsForBulk)
 				if err != nil {
@@ -328,6 +340,15 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 				bulkEnrichmentSources, err = e.store.GetEnrichmentSourcesByTokenIDs(ctx, tokenIDsForBulk)
 				if err != nil {
 					return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get enrichment sources: %v", err))
+				}
+			}
+			if bulkMediaHealth == nil {
+				// Bulk-fetch health rows in one query to avoid N+1 when iterating tokens.
+				bulkMediaHealth, err = e.store.GetTokenMediaHealthByTokenIDs(ctx, tokenIDsForBulk)
+				if err != nil {
+					// Non-fatal: log and proceed without health filtering.
+					logger.ErrorCtx(ctx, err)
+					bulkMediaHealth = map[uint64][]schema.TokenMediaHealth{}
 				}
 			}
 		}
@@ -455,8 +476,10 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 			metadataForDisplay := dto.MapTokenMetadataToDTO(metadata)
 			enrichmentForDisplay := dto.MapEnrichmentSourceToDTO(enrichment)
 
-			// Merge into display field
+			// Merge into display field, then apply health-aware URL filtering so broken
+			// gateway URLs are never served to FF1 clients.
 			tokenDTO.Display = dto.MergeTokenDisplay(metadataForDisplay, enrichmentForDisplay)
+			tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, bulkMediaHealth[token.ID])
 
 			// Collect media URLs from display field if media_asset was requested
 			if expansionMap[types.ExpansionMediaAsset] && tokenDTO.Display != nil {
