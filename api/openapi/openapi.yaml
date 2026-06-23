@@ -102,15 +102,18 @@ paths:
         - `owners` - Include paginated owner information
         - `provenance_events` - Include paginated provenance events
         - `enrichment_source` - Include vendor enrichment data
-        - `display` - Include unified display field (merges metadata and enrichment source, with enrichment taking precedence)
+        - `display` - Include unified display field. Merges metadata and enrichment source (enrichment
+          takes precedence), then applies health filtering: only URLs whose `token_media_health` row is
+          `healthy` are returned. URLs with `broken` or `unknown` (unverified) status are omitted.
+          If no health rows exist yet for a token the raw merged value is returned unchanged.
         - `media_asset` - Include media assets based on requested expansions
         
         **Note**: The `media_asset` expansion behavior depends on other requested expansions:
         - With `metadata` only: includes media assets from metadata
         - With `enrichment_source` only: includes media assets from enrichment source
-        - With `display` only: includes media assets for URLs in the merged display (respects enrichment precedence)
+        - With `display` only: includes media assets for the health-filtered display URLs only
         - With `metadata` + `enrichment_source`: includes media assets from both sources
-        - With `metadata` + `display`: includes media from metadata + display merged URLs
+        - With `metadata` + `display`: includes media from metadata + health-filtered display URLs
         - Without any source expansion: returns empty array
         
         ## Sub-resource Pagination
@@ -258,16 +261,19 @@ paths:
         - `owners` - Include owner information (first 20 items per token)
         - `provenance_events` - Include provenance events (first 20 items per token, ordered by timestamp DESC)
         - `enrichment_source` - Include vendor enrichment data
-        - `display` - Include unified display field (merges metadata and enrichment source, with enrichment taking precedence)
+        - `display` - Include unified display field. Merges metadata and enrichment source (enrichment
+          takes precedence), then applies health filtering: only URLs whose `token_media_health` row is
+          `healthy` are returned. URLs with `broken` or `unknown` (unverified) status are omitted.
+          If no health rows exist yet for a token the raw merged value is returned unchanged.
         - `media_asset` - Include media assets based on requested expansions
         - `owner_provenances` - Include owner provenance history (fixed page size per token; not available on GET /tokens/{cid})
         
         **Note**: The `media_asset` expansion behavior depends on other requested expansions:
         - With `metadata` only: includes media assets from metadata
         - With `enrichment_source` only: includes media assets from enrichment source
-        - With `display` only: includes media assets for URLs in the merged display (respects enrichment precedence)
+        - With `display` only: includes media assets for the health-filtered display URLs only
         - With `metadata` + `enrichment_source`: includes media assets from both sources
-        - With `metadata` + `display`: includes media from metadata + display merged URLs
+        - With `metadata` + `display`: includes media from metadata + health-filtered display URLs
         - Without any source expansion: returns empty array
         
         **Important**: For list queries, `owners` and `provenance_events` return a fixed cap of items per token. Use `GET /api/v1/tokens/{cid}` for paginated owners and provenance events.

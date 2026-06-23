@@ -149,9 +149,11 @@ func TestApplyHealthyMediaURLs_AllAnimationsBroken_NilsField(t *testing.T) {
 	assert.Nil(t, result.AnimationURL, "all broken animations must result in nil field")
 }
 
-// TestApplyHealthyMediaURLs_UnknownStatus_AnimationKept verifies that "unknown" status rows
-// do not suppress the URL — only "broken" rows suppress it.
-func TestApplyHealthyMediaURLs_UnknownStatus_AnimationKept(t *testing.T) {
+// TestApplyHealthyMediaURLs_UnknownStatus_AnimationOmitted verifies that "unknown" health rows
+// suppress the URL just like "broken" rows do. A URL is only surfaced once the health probe has
+// confirmed it is reachable (health_status = "healthy"). Returning an unverified URL would be a
+// false positive — the URL may be broken and FF1 would render a black screen.
+func TestApplyHealthyMediaURLs_UnknownStatus_AnimationOmitted(t *testing.T) {
 	animURL := "https://ipfs.feralfile.com/ipfs/QmUnchecked"
 	display := &dto.TokenDisplayResponse{
 		AnimationURL: ptr(animURL),
@@ -163,10 +165,7 @@ func TestApplyHealthyMediaURLs_UnknownStatus_AnimationKept(t *testing.T) {
 
 	result := dto.ApplyHealthyMediaURLs(display, rows)
 
-	// Unknown (not yet probed) means we have a row but it hasn't passed health check yet.
-	// We omit it because "unknown" is not "healthy" per the selection rule.
-	// This is consistent with not silently hiding tokens but also not serving unverified URLs.
-	assert.Nil(t, result.AnimationURL)
+	assert.Nil(t, result.AnimationURL, "unverified (unknown) animation URL must be omitted from display")
 }
 
 // ====================================================================================

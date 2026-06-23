@@ -163,16 +163,16 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 		// Merge the data into display field
 		tokenDTO.Display = dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
 
-		// Apply health-aware URL filtering: replace or remove URLs that are broken according to
-		// token_media_health so FF1 never receives a dead gateway URL from display.animation_url.
+		// Apply health-aware URL filtering: replace or remove URLs that are not confirmed healthy
+		// in token_media_health so FF1 never receives a dead or unverified gateway URL.
 		// Fetch health rows only when display is requested — avoids an extra query otherwise.
+		// On query error we pass nil rows: ApplyHealthyMediaURLs treats that as "no data yet" and
+		// returns the merged display unchanged (same behavior as the GetTokens bulk path).
 		healthByToken, err := e.store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{token.ID})
 		if err != nil {
-			// Non-fatal: log and continue with the merged (unfiltered) display.
 			logger.ErrorCtx(ctx, err, zap.String("token_cid", tokenDTO.TokenCID))
-		} else {
-			tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, healthByToken[token.ID])
 		}
+		tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, healthByToken[token.ID])
 
 		// Replace any data URI image/animation URLs with the public variant from media_assets
 		if err := e.resolveDisplayDataURIs(ctx, []dto.TokenResponse{*tokenDTO}); err != nil {
@@ -1016,10 +1016,11 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 	}
 
 	// Collect media URLs from display if both display and media_asset are requested.
+	// Use tokenDTO.Display (already health-filtered) rather than re-running MergeTokenDisplay,
+	// so media assets are consistent with what is actually surfaced in the display field.
 	if expansionMap[types.ExpansionDisplay] && expansionMap[types.ExpansionMediaAsset] {
-		localDisplay := dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
-		if localDisplay != nil {
-			for _, url := range localDisplay.MediaURLs() {
+		if tokenDTO.Display != nil {
+			for _, url := range tokenDTO.Display.MediaURLs() {
 				mediaURLsMap[url] = true
 			}
 		}

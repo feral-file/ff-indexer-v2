@@ -18,8 +18,10 @@ import "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 // Constraints:
 //   - If healthRows is empty (no rows yet probed) the display is returned unchanged so tokens
 //     that have never been health-checked are not silently hidden.
-//   - Only rows with health_status = "broken" are filtered out; "unknown" rows are kept to
-//     avoid hiding tokens whose URLs have not been checked yet.
+//   - Only URLs whose health row is explicitly "healthy" are served. Both "broken" and "unknown"
+//     rows suppress the URL. "unknown" rows are treated as unconfirmed — returning an unverified
+//     URL would be a false positive, because the health state is indeterminate and the URL may
+//     well be broken. A URL is only surfaced once the health probe has confirmed it is reachable.
 func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.TokenMediaHealth) *TokenDisplayResponse {
 	if display == nil {
 		return nil
@@ -60,11 +62,12 @@ func ApplyHealthyMediaURLs(display *TokenDisplayResponse, healthRows []schema.To
 			metaURL := urlBySource[schema.MediaHealthSourceMetadataAnimation]
 			out.AnimationURL = &metaURL
 		default:
-			// All known animation URLs are broken — omit rather than serve a dead URL.
+			// No confirmed-healthy animation URL found. This covers both "broken" (known dead)
+			// and "unknown" (not yet probed) — omit rather than serve an unverified URL.
 			out.AnimationURL = nil
 		}
 	}
-	// If no animation health rows exist, keep the merged value unchanged (unchecked).
+	// If no animation health rows exist at all, keep the merged value unchanged (unchecked).
 
 	// --- image_url ---
 	// Precedence: enrichment-image > metadata-image > nil
