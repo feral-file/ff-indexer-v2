@@ -609,9 +609,19 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 	return enhanced, nil
 }
 
-// CheckMediaURLsHealthAndUpdateViewability checks media URLs in parallel and updates token viewability
-// This combines URL health checking with viewability computation and DB update
-// Returns a result struct containing viewability status and list of healthy URLs
+// CheckMediaURLsHealthAndUpdateViewability checks media URLs in parallel and updates token viewability.
+// This combines URL health checking with viewability computation and DB update.
+// Returns a result struct containing viewability status and list of healthy URLs.
+//
+// Reason: When the original URL resolves via an alternative gateway (WorkingURL != ""), we propagate
+// the working URL atomically (token_media_health + metadata/enrichment tables) so the API serves
+// reachable URLs instead of dead gateway URLs. This mirrors the sweeper's behavior and prevents the
+// false-positive: viewable=true while display.animation_url is a broken gateway URL.
+//
+// Trade-offs: UpdateMediaURLAndPropagate is non-fatal — if propagation fails, the original URL is
+// marked broken (its true health state) and excluded from healthyURLs. The sweeper will eventually
+// retry UpdateMediaURLAndPropagate and fix the state. Marking it healthy would feed
+// BatchUpdateTokensViewability with false data, recreating the viewable=true + broken URL bug (#96).
 func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (*MediaHealthCheckResult, error) {
 	logger.InfoCtx(ctx, "Checking media health and updating viewability",
 		zap.String("token_cid", tokenCID),
@@ -630,6 +640,7 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 	// Use goroutines to check URLs in parallel
 	type urlResult struct {
 		url          string
+		workingURL   *string // non-nil when an alternative gateway resolved successfully
 		healthStatus schema.MediaHealthStatus
 		lastError    *string
 	}
@@ -644,6 +655,7 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 			defer wg.Done()
 
 			var status schema.MediaHealthStatus
+			var workingURL *string
 			var errMsg *string
 
 			if types.IsDataURI(u) {
@@ -659,6 +671,12 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 				switch result.Status {
 				case uri.HealthStatusHealthy:
 					status = schema.MediaHealthStatusHealthy
+					// Capture the working URL if the checker resolved an alternative gateway.
+					// This happens when the original IPFS/Arweave/OnChFS gateway URL is dead
+					// but the CID is still reachable via another configured gateway.
+					if result.WorkingURL != nil && *result.WorkingURL != u {
+						workingURL = result.WorkingURL
+					}
 				case uri.HealthStatusBroken:
 					status = schema.MediaHealthStatusBroken
 				default:
@@ -669,6 +687,7 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 
 			resultsChan <- urlResult{
 				url:          u,
+				workingURL:   workingURL,
 				healthStatus: status,
 				lastError:    errMsg,
 			}
@@ -686,14 +705,48 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 	for result := range resultsChan {
 		healthStatuses[result.url] = result.healthStatus
 
-		// Collect healthy URLs
 		if result.healthStatus == schema.MediaHealthStatusHealthy {
-			healthyURLs = append(healthyURLs, result.url)
-		}
-
-		// Update media health in database
-		if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, result.healthStatus, result.lastError); err != nil {
-			logger.ErrorCtx(ctx, err, zap.String("url", result.url))
+			if result.workingURL != nil {
+				// Alternative gateway found: propagate the working URL atomically across
+				// token_media_health, token_metadata, and enrichment_sources so the API
+				// immediately serves the reachable URL. This is the same logic as the sweeper.
+				logger.InfoCtx(ctx, "Found working alternative URL during indexing health check",
+					zap.String("token_cid", tokenCID),
+					zap.String("original_url", result.url),
+					zap.String("working_url", *result.workingURL),
+				)
+				if err := e.store.UpdateMediaURLAndPropagate(ctx, result.url, *result.workingURL); err != nil {
+					logger.ErrorCtx(ctx, err,
+						zap.String("url", result.url),
+						zap.String("working_url", *result.workingURL),
+					)
+					// Propagation failed: mark the original URL as broken (it is broken — the
+					// direct probe failed and only the alternate gateway succeeded). Do NOT mark
+					// it healthy and do NOT add the working URL to healthyURLs.
+					// Reason: promoting a known-broken URL to healthy would feed
+					// BatchUpdateTokensViewability with false data, making viewable=true while
+					// the read path still serves the dead gateway URL — reproducing bug #96.
+					// The sweeper will retry UpdateMediaURLAndPropagate and fix the state.
+					if err2 := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusBroken, nil); err2 != nil {
+						logger.ErrorCtx(ctx, err2, zap.String("url", result.url))
+					}
+				} else {
+					// Propagation succeeded: the working URL is now canonical in health table,
+					// metadata, and enrichment_sources. Use it for downstream media indexing.
+					healthyURLs = append(healthyURLs, *result.workingURL)
+				}
+			} else {
+				// Original URL is directly reachable
+				if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusHealthy, nil); err != nil {
+					logger.ErrorCtx(ctx, err, zap.String("url", result.url))
+				}
+				healthyURLs = append(healthyURLs, result.url)
+			}
+		} else {
+			// Update media health in database for broken/unknown URLs
+			if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, result.healthStatus, result.lastError); err != nil {
+				logger.ErrorCtx(ctx, err, zap.String("url", result.url))
+			}
 		}
 	}
 

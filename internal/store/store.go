@@ -326,6 +326,9 @@ type Store interface {
 	GetTokenIDsByMediaURL(ctx context.Context, url string) ([]uint64, error)
 	// GetTokensViewabilityByIDs returns viewability status for a specific set of token IDs
 	GetTokensViewabilityByIDs(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityInfo, error)
+	// GetTokenMediaHealthByTokenIDs returns all health rows keyed by token ID.
+	// Used by the API display layer to serve health-aware URLs instead of raw metadata URLs.
+	GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64][]schema.TokenMediaHealth, error)
 	// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
 	UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error
 	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction

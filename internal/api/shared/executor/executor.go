@@ -150,6 +150,26 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 				}
 			}
 		case types.ExpansionMediaAsset:
+			// When display is also requested, pre-populate the health-filtered display before
+			// expandMediaAssets runs. expandMediaAssets is called inside this loop while
+			// tokenDTO.Display is only set in the post-loop block; without pre-population,
+			// display-derived media assets would be silently omitted.
+			// Ensure metadata and enrichment are available first (display needs both).
+			if containsExpansion(expansions, types.ExpansionDisplay) {
+				if tokenDTO.Metadata == nil {
+					if err := e.expandMetadata(ctx, tokenDTO, token.ID); err != nil {
+						return nil, err
+					}
+				}
+				if tokenDTO.EnrichmentSource == nil {
+					if err := e.expandEnrichmentSource(ctx, tokenDTO, token.ID); err != nil {
+						return nil, err
+					}
+				}
+				if err := e.populateHealthFilteredDisplay(ctx, tokenDTO, token.ID); err != nil {
+					return nil, err
+				}
+			}
 			if err := e.expandMediaAssets(ctx, tokenDTO, expansions); err != nil {
 				return nil, err
 			}
@@ -158,10 +178,13 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 		expansionMap[exp] = true
 	}
 
-	// Populate display field if requested and clean up internal data if not explicitly requested
+	// Populate display field if requested and clean up internal data if not explicitly requested.
+	// populateHealthFilteredDisplay is idempotent: if media_asset expansion already ran first and
+	// pre-populated the field, this is a no-op — no extra DB round trip.
 	if expansionMap[types.ExpansionDisplay] {
-		// Merge the data into display field
-		tokenDTO.Display = dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
+		if err := e.populateHealthFilteredDisplay(ctx, tokenDTO, token.ID); err != nil {
+			return nil, err
+		}
 
 		// Replace any data URI image/animation URLs with the public variant from media_assets
 		if err := e.resolveDisplayDataURIs(ctx, []dto.TokenResponse{*tokenDTO}); err != nil {
@@ -270,6 +293,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	var bulkOwnerProvenancesTotals map[uint64]uint64
 	var bulkEnrichmentSources map[uint64]*schema.EnrichmentSource
 	var bulkMetadata map[uint64]*schema.TokenMetadata
+	var bulkMediaHealth map[uint64][]schema.TokenMediaHealth
 	var allMediaSourceURLs []string
 
 	// Map to track which expansions were requested
@@ -316,8 +340,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 				}
 			}
 		case types.ExpansionDisplay:
-			// Display expansion requires metadata and enrichment_source internally
-			// Fetch them if not already fetched
+			// Display expansion requires metadata, enrichment_source, and media health internally.
+			// Fetch them all if not already fetched.
 			if bulkMetadata == nil {
 				bulkMetadata, err = e.store.GetTokenMetadataByTokenIDs(ctx, tokenIDsForBulk)
 				if err != nil {
@@ -328,6 +352,13 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 				bulkEnrichmentSources, err = e.store.GetEnrichmentSourcesByTokenIDs(ctx, tokenIDsForBulk)
 				if err != nil {
 					return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get enrichment sources: %v", err))
+				}
+			}
+			if bulkMediaHealth == nil {
+				// Bulk-fetch health rows in one query to avoid N+1 when iterating tokens.
+				bulkMediaHealth, err = e.store.GetTokenMediaHealthByTokenIDs(ctx, tokenIDsForBulk)
+				if err != nil {
+					return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token media health: %v", err))
 				}
 			}
 		}
@@ -354,6 +385,25 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 				continue
 			}
 			allMediaSourceURLs = append(allMediaSourceURLs, enrichment.MediaURLs()...)
+		}
+	}
+
+	// Pre-compute health-filtered display URLs and add them to the bulk source URL set.
+	// ApplyHealthyMediaURLs reads the URL directly from token_media_health.media_url, which can
+	// diverge from raw metadata/enrichment URLs during the narrow window between a propagation
+	// transaction commit and the metadata bulk read (two separate queries, no shared snapshot).
+	// Adding display URLs here ensures GetMediaAssetsBySourceURLs includes them so that
+	// collectMediaAssetDTOsFromMap can satisfy the display+media_asset contract.
+	// The per-token loop re-runs MergeTokenDisplay+ApplyHealthyMediaURLs cheaply (no extra DB calls).
+	if expansionMap[types.ExpansionDisplay] && expansionMap[types.ExpansionMediaAsset] {
+		for _, token := range tokens {
+			metaDTO := dto.MapTokenMetadataToDTO(bulkMetadata[token.ID])
+			enrichDTO := dto.MapEnrichmentSourceToDTO(bulkEnrichmentSources[token.ID])
+			preDisplay := dto.MergeTokenDisplay(metaDTO, enrichDTO)
+			preDisplay = dto.ApplyHealthyMediaURLs(preDisplay, bulkMediaHealth[token.ID])
+			if preDisplay != nil {
+				allMediaSourceURLs = append(allMediaSourceURLs, preDisplay.MediaURLs()...)
+			}
 		}
 	}
 
@@ -455,8 +505,10 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 			metadataForDisplay := dto.MapTokenMetadataToDTO(metadata)
 			enrichmentForDisplay := dto.MapEnrichmentSourceToDTO(enrichment)
 
-			// Merge into display field
+			// Merge into display field, then apply health-aware URL filtering so broken
+			// gateway URLs are never served to FF1 clients.
 			tokenDTO.Display = dto.MergeTokenDisplay(metadataForDisplay, enrichmentForDisplay)
+			tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, bulkMediaHealth[token.ID])
 
 			// Collect media URLs from display field if media_asset was requested
 			if expansionMap[types.ExpansionMediaAsset] && tokenDTO.Display != nil {
@@ -884,6 +936,38 @@ func mediaAssetLookupKey(url string) string {
 	return internalTypes.MD5Hash(url)
 }
 
+// populateHealthFilteredDisplay merges metadata and enrichment source into tokenDTO.Display and
+// applies health filtering against token_media_health so only confirmed-healthy URLs are served.
+//
+// It is idempotent: if tokenDTO.Display is already set the call is a no-op, which allows callers
+// to call it from multiple code paths without incurring a second DB round trip.
+//
+// Health state is a correctness dependency of display: a failure here should propagate like any
+// other expansion DB failure (metadata, enrichment) rather than silently fall back to serving
+// stale or broken URLs. Callers must check the returned error.
+func (e *executor) populateHealthFilteredDisplay(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64) error {
+	if tokenDTO.Display != nil {
+		return nil
+	}
+	tokenDTO.Display = dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
+	healthByToken, err := e.store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenID})
+	if err != nil {
+		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token media health: %v", err))
+	}
+	tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, healthByToken[tokenID])
+	return nil
+}
+
+// containsExpansion reports whether exp appears in the expansions slice.
+func containsExpansion(expansions []types.Expansion, exp types.Expansion) bool {
+	for _, e := range expansions {
+		if e == exp {
+			return true
+		}
+	}
+	return false
+}
+
 // expandMediaAssets expands both metadata and enrichment source media assets (unified approach)
 // It respects the original expansion request to determine which media sources to include
 func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenResponse, expansions []types.Expansion) error {
@@ -933,6 +1017,19 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 		if tokenDTO.EnrichmentSource != nil {
 			sourceURLs = append(sourceURLs, tokenDTO.EnrichmentSource.MediaURLs()...)
 		}
+	}
+
+	// Add health-filtered display URLs to the DB lookup so that media assets are always
+	// fetchable for any URL that ApplyHealthyMediaURLs selected from token_media_health.media_url.
+	// ApplyHealthyMediaURLs reads the URL directly from the health row, which can differ from the
+	// raw metadata/enrichment URL during the narrow window between a propagation transaction commit
+	// and the metadata bulk read. Without this, media assets for health-row URLs that are absent
+	// from metadata/enrichment are never queried, so collectMediaAssetDTOsFromMap returns nothing
+	// for them — contradicting the OpenAPI contract that display+media_asset surfaces assets for
+	// the health-filtered display URLs.
+	// populateHealthFilteredDisplay must be called before expandMediaAssets for this to be effective.
+	if expansionMap[types.ExpansionDisplay] && tokenDTO.Display != nil {
+		sourceURLs = append(sourceURLs, tokenDTO.Display.MediaURLs()...)
 	}
 
 	if len(sourceURLs) == 0 {
@@ -993,10 +1090,11 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 	}
 
 	// Collect media URLs from display if both display and media_asset are requested.
+	// Use tokenDTO.Display (already health-filtered) rather than re-running MergeTokenDisplay,
+	// so media assets are consistent with what is actually surfaced in the display field.
 	if expansionMap[types.ExpansionDisplay] && expansionMap[types.ExpansionMediaAsset] {
-		localDisplay := dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
-		if localDisplay != nil {
-			for _, url := range localDisplay.MediaURLs() {
+		if tokenDTO.Display != nil {
+			for _, url := range tokenDTO.Display.MediaURLs() {
 				mediaURLsMap[url] = true
 			}
 		}
