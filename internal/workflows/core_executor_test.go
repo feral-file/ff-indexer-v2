@@ -4848,6 +4848,10 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testi
 	assert.Equal(t, 0, len(result.HealthyURLs))
 }
 
+// TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList verifies that when there are no media
+// URLs the function still persists is_viewable=false via BatchUpdateTokensViewability.
+// Previously the function returned early without touching the DB, leaving a stale is_viewable=true
+// value uncorrected for tokens that lost all media URLs between indexing runs.
 func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
@@ -4856,7 +4860,27 @@ func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList(t *testing.T) {
 	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
 	mediaURLs := []string{}
 
-	// No URLs to check, should return false
+	token := &schema.Token{
+		ID:       uint64(123),
+		TokenCID: tokenCID,
+	}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// No health rows exist for this token, so BatchUpdateTokensViewability computes
+	// is_viewable=false. It was previously true (stale), so a change is recorded.
+	changes := []store.TokenViewabilityChange{
+		{
+			TokenID:     token.ID,
+			TokenCID:    tokenCID,
+			OldViewable: true,
+			NewViewable: false,
+		},
+	}
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return(changes, nil)
 
 	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, mediaURLs)
 
@@ -4866,29 +4890,70 @@ func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList(t *testing.T) {
 	assert.Equal(t, 0, len(result.HealthyURLs))
 }
 
+// TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList_AlreadyUnviewable verifies that when
+// the token is already unviewable and there are no URLs, the function returns false without error.
+func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList_AlreadyUnviewable(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+
+	token := &schema.Token{ID: uint64(456), TokenCID: tokenCID}
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(token, nil)
+
+	// No change — token was already is_viewable=false.
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{token.ID}).
+		Return([]store.TokenViewabilityChange{}, nil)
+
+	viewabilityInfo := []store.TokenViewabilityInfo{{TokenID: token.ID, TokenCID: tokenCID, IsViewable: false}}
+	mocks.store.EXPECT().
+		GetTokensViewabilityByIDs(ctx, []uint64{token.ID}).
+		Return(viewabilityInfo, nil)
+
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.False(t, result.IsViewable)
+	assert.Empty(t, result.HealthyURLs)
+}
+
+// TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList_TokenNotFound verifies that when there
+// are no media URLs and the token does not exist, the function returns ErrTokenNotFound.
+func TestCheckMediaURLsHealthAndUpdateViewability_EmptyURLList_TokenNotFound(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
+
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID).
+		Return(nil, nil)
+
+	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{})
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, domain.ErrTokenNotFound, err)
+}
+
+// TestCheckMediaURLsHealthAndUpdateViewability_TokenNotFound verifies that when the token does not
+// exist in the DB, the function returns ErrTokenNotFound without probing any URLs.
+// The token lookup is now the first DB operation so URL checks never run.
 func TestCheckMediaURLsHealthAndUpdateViewability_TokenNotFound(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
 	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
-	imageURL := "https://example.com/image.jpg"
-	mediaURLs := []string{imageURL}
+	mediaURLs := []string{"https://example.com/image.jpg"}
 
-	// Mock URL health check
-	mocks.urlChecker.EXPECT().
-		Check(ctx, imageURL).
-		Return(uri.HealthCheckResult{
-			Status: uri.HealthStatusHealthy,
-			Error:  nil,
-		})
-
-	// Mock database update for media health
-	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
-		Return(nil)
-
-	// Mock token retrieval - not found
+	// Token lookup is now first; URL checks never run.
 	mocks.store.EXPECT().
 		GetTokenByTokenCID(ctx, tokenCID).
 		Return(nil, nil)
@@ -4900,30 +4965,18 @@ func TestCheckMediaURLsHealthAndUpdateViewability_TokenNotFound(t *testing.T) {
 	assert.Equal(t, domain.ErrTokenNotFound, err)
 }
 
+// TestCheckMediaURLsHealthAndUpdateViewability_GetTokenError verifies that a DB error on the token
+// lookup is returned immediately without probing any URLs.
 func TestCheckMediaURLsHealthAndUpdateViewability_GetTokenError(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
 	ctx := context.Background()
 	tokenCID := "ethereum-mainnet:erc721:0x1234567890123456789012345678901234567890:1"
-	imageURL := "https://example.com/image.jpg"
-	mediaURLs := []string{imageURL}
+	mediaURLs := []string{"https://example.com/image.jpg"}
 	dbError := errors.New("database connection error")
 
-	// Mock URL health check
-	mocks.urlChecker.EXPECT().
-		Check(ctx, imageURL).
-		Return(uri.HealthCheckResult{
-			Status: uri.HealthStatusHealthy,
-			Error:  nil,
-		})
-
-	// Mock database update for media health
-	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
-		Return(nil)
-
-	// Mock token retrieval - error
+	// Token lookup is now first; URL checks never run.
 	mocks.store.EXPECT().
 		GetTokenByTokenCID(ctx, tokenCID).
 		Return(nil, dbError)
