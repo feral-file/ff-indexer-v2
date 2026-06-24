@@ -103,9 +103,12 @@ paths:
         - `provenance_events` - Include paginated provenance events
         - `enrichment_source` - Include vendor enrichment data
         - `display` - Include unified display field. Merges metadata and enrichment source (enrichment
-          takes precedence), then applies health filtering: only URLs whose `token_media_health` row is
-          `healthy` are returned. URLs with `broken` or `unknown` (unverified) status are omitted.
-          If no health rows exist yet for a token the raw merged value is returned unchanged.
+          takes precedence), then applies health filtering per media-source group: for each URL field
+          (`animation_url`, `image_url`), only a URL whose `token_media_health` row is `healthy` is
+          returned. URLs with `broken` or `unknown` (unverified) status are omitted. If no health rows
+          exist yet for a given field's source groups the raw merged value for that field is returned
+          unchanged (i.e. filtering is per-field, not token-wide — an `image_url` health row does not
+          affect `animation_url` pass-through and vice versa).
         - `media_asset` - Include media assets based on requested expansions
         
         **Note**: The `media_asset` expansion behavior depends on other requested expansions:
@@ -262,9 +265,12 @@ paths:
         - `provenance_events` - Include provenance events (first 20 items per token, ordered by timestamp DESC)
         - `enrichment_source` - Include vendor enrichment data
         - `display` - Include unified display field. Merges metadata and enrichment source (enrichment
-          takes precedence), then applies health filtering: only URLs whose `token_media_health` row is
-          `healthy` are returned. URLs with `broken` or `unknown` (unverified) status are omitted.
-          If no health rows exist yet for a token the raw merged value is returned unchanged.
+          takes precedence), then applies health filtering per media-source group: for each URL field
+          (`animation_url`, `image_url`), only a URL whose `token_media_health` row is `healthy` is
+          returned. URLs with `broken` or `unknown` (unverified) status are omitted. If no health rows
+          exist yet for a given field's source groups the raw merged value for that field is returned
+          unchanged (i.e. filtering is per-field, not token-wide — an `image_url` health row does not
+          affect `animation_url` pass-through and vice versa).
         - `media_asset` - Include media assets based on requested expansions
         - `owner_provenances` - Include owner provenance history (fixed page size per token; not available on GET /tokens/{cid})
         

@@ -2,6 +2,7 @@ package executor_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -369,4 +370,69 @@ func TestGetToken_DisplayAndMediaAsset_ReverseExpansionOrder(t *testing.T) {
 	assert.Len(t, result.MediaAssets, 1)
 	assert.Equal(t, f.healthyURL, result.MediaAssets[0].SourceURL,
 		"media asset source URL must match the health-filtered display URL")
+}
+
+// TestGetToken_DisplayExpansion_HealthQueryFailure verifies that a GetTokenMediaHealthByTokenIDs
+// failure causes GetToken to return an error rather than silently passing through stale or
+// broken display URLs. Health state is a correctness dependency of the display expansion, so
+// its failure must be handled like metadata/enrichment DB failures.
+func TestGetToken_DisplayExpansion_HealthQueryFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	f := newDisplayMediaAssetFixture()
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	mockStore.EXPECT().
+		GetTokenByTokenCID(gomock.Any(), f.normalizedCID).
+		Return(f.token, nil)
+	mockStore.EXPECT().
+		GetTokenMetadataByTokenID(gomock.Any(), f.tokenID).
+		Return(f.metadata, nil).
+		AnyTimes()
+	mockStore.EXPECT().
+		GetEnrichmentSourceByTokenID(gomock.Any(), f.tokenID).
+		Return(f.enrichment, nil).
+		AnyTimes()
+	mockStore.EXPECT().
+		GetTokenMediaHealthByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
+		Return(nil, errors.New("connection timeout"))
+
+	result, err := exec.GetToken(context.Background(), f.rawCID,
+		[]types.Expansion{types.ExpansionDisplay}, nil, nil, nil, nil, nil)
+
+	require.Error(t, err, "GetToken must propagate health query failure as an error")
+	assert.Nil(t, result, "result must be nil on health query failure")
+}
+
+// TestGetTokens_DisplayExpansion_HealthQueryFailure verifies that a GetTokenMediaHealthByTokenIDs
+// failure causes GetTokens to return an error. The list path must behave consistently with the
+// single-token path and with other expansion DB failures (metadata, enrichment).
+func TestGetTokens_DisplayExpansion_HealthQueryFailure(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	f := newHealthOnlyFixture()
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	mockStore.EXPECT().
+		GetTokensByFilter(gomock.Any(), gomock.Any()).
+		Return([]schema.Token{*f.token}, nil)
+	mockStore.EXPECT().
+		GetTokenMetadataByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
+		Return(map[uint64]*schema.TokenMetadata{f.tokenID: f.metadata}, nil)
+	mockStore.EXPECT().
+		GetEnrichmentSourcesByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
+		Return(map[uint64]*schema.EnrichmentSource{}, nil)
+	mockStore.EXPECT().
+		GetTokenMediaHealthByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
+		Return(nil, errors.New("connection timeout"))
+
+	result, err := exec.GetTokens(context.Background(),
+		nil, nil, nil, nil, []uint64{f.tokenID}, nil,
+		nil, nil, nil, nil, nil,
+		[]types.Expansion{types.ExpansionDisplay})
+
+	require.Error(t, err, "GetTokens must propagate health query failure as an error")
+	assert.Nil(t, result, "result must be nil on health query failure")
 }

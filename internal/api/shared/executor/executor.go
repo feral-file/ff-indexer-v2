@@ -166,7 +166,9 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 						return nil, err
 					}
 				}
-				e.populateHealthFilteredDisplay(ctx, tokenDTO, token.ID)
+				if err := e.populateHealthFilteredDisplay(ctx, tokenDTO, token.ID); err != nil {
+					return nil, err
+				}
 			}
 			if err := e.expandMediaAssets(ctx, tokenDTO, expansions); err != nil {
 				return nil, err
@@ -180,7 +182,9 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	// populateHealthFilteredDisplay is idempotent: if media_asset expansion already ran first and
 	// pre-populated the field, this is a no-op — no extra DB round trip.
 	if expansionMap[types.ExpansionDisplay] {
-		e.populateHealthFilteredDisplay(ctx, tokenDTO, token.ID)
+		if err := e.populateHealthFilteredDisplay(ctx, tokenDTO, token.ID); err != nil {
+			return nil, err
+		}
 
 		// Replace any data URI image/animation URLs with the public variant from media_assets
 		if err := e.resolveDisplayDataURIs(ctx, []dto.TokenResponse{*tokenDTO}); err != nil {
@@ -354,9 +358,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 				// Bulk-fetch health rows in one query to avoid N+1 when iterating tokens.
 				bulkMediaHealth, err = e.store.GetTokenMediaHealthByTokenIDs(ctx, tokenIDsForBulk)
 				if err != nil {
-					// Non-fatal: log and proceed without health filtering.
-					logger.ErrorCtx(ctx, err)
-					bulkMediaHealth = map[uint64][]schema.TokenMediaHealth{}
+					return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token media health: %v", err))
 				}
 			}
 		}
@@ -940,19 +942,20 @@ func mediaAssetLookupKey(url string) string {
 // It is idempotent: if tokenDTO.Display is already set the call is a no-op, which allows callers
 // to call it from multiple code paths without incurring a second DB round trip.
 //
-// On a health-query error the function logs and proceeds — ApplyHealthyMediaURLs with nil rows
-// returns the merged display unchanged (passthrough). This preserves availability when the
-// token_media_health table is temporarily unavailable and is an intentional trade-off.
-func (e *executor) populateHealthFilteredDisplay(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64) {
+// Health state is a correctness dependency of display: a failure here should propagate like any
+// other expansion DB failure (metadata, enrichment) rather than silently fall back to serving
+// stale or broken URLs. Callers must check the returned error.
+func (e *executor) populateHealthFilteredDisplay(ctx context.Context, tokenDTO *dto.TokenResponse, tokenID uint64) error {
 	if tokenDTO.Display != nil {
-		return
+		return nil
 	}
 	tokenDTO.Display = dto.MergeTokenDisplay(tokenDTO.Metadata, tokenDTO.EnrichmentSource)
 	healthByToken, err := e.store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenID})
 	if err != nil {
-		logger.ErrorCtx(ctx, err, zap.String("token_cid", tokenDTO.TokenCID))
+		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get token media health: %v", err))
 	}
 	tokenDTO.Display = dto.ApplyHealthyMediaURLs(tokenDTO.Display, healthByToken[tokenID])
+	return nil
 }
 
 // containsExpansion reports whether exp appears in the expansions slice.
