@@ -5179,10 +5179,15 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_Propagates(t *testi
 	assert.Equal(t, []string{workingURL}, result.HealthyURLs)
 }
 
-// TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_FallsBackToMarkHealthy
-// verifies that a propagation failure is non-fatal: the function falls back to marking the
-// original URL healthy and still returns a successful result.
-func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_FallsBackToMarkHealthy(t *testing.T) {
+// TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_FallsBackToMarkBroken
+// verifies that when UpdateMediaURLAndPropagate fails, the original URL is recorded as broken
+// (not healthy) and no URL is added to HealthyURLs.
+//
+// Reason: the original URL failed the direct probe; only the alternate gateway worked.
+// Promoting the broken original to "healthy" would cause BatchUpdateTokensViewability to set
+// viewable=true while the read path still serves the dead gateway URL, reproducing bug #96.
+// The sweeper will retry propagation and fix the state.
+func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_FallsBackToMarkBroken(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
@@ -5203,27 +5208,30 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_Fall
 		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
 		Return(fmt.Errorf("db error"))
 
-	// Fallback: mark original URL healthy
+	// Fallback: mark original URL BROKEN (not healthy) — it failed the direct probe
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, originalURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, originalURL, schema.MediaHealthStatusBroken, nil).
 		Return(nil)
 
 	token := &schema.Token{ID: 2, TokenCID: tokenCID}
 	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID).Return(token, nil)
 
+	// No healthy URLs → viewability not promoted based on the broken original URL.
+	// BatchUpdateTokensViewability is still called (it re-derives viewability from health rows).
 	changes := []store.TokenViewabilityChange{
-		{TokenID: token.ID, TokenCID: tokenCID, OldViewable: false, NewViewable: true},
+		{TokenID: token.ID, TokenCID: tokenCID, OldViewable: false, NewViewable: false},
 	}
 	mocks.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{token.ID}).Return(changes, nil)
 
 	result, err := mocks.executor.CheckMediaURLsHealthAndUpdateViewability(ctx, tokenCID, []string{originalURL})
 
-	// Non-fatal: should still succeed
+	// Non-fatal: should still complete without error
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.True(t, result.IsViewable)
-	// HealthyURLs contains the working URL even when propagation failed
-	assert.Equal(t, []string{workingURL}, result.HealthyURLs)
+	// Token stays non-viewable: the broken original must not be promoted
+	assert.False(t, result.IsViewable)
+	// HealthyURLs is empty: propagation failed, no confirmed-healthy URL persisted
+	assert.Empty(t, result.HealthyURLs)
 }
 
 // TestCheckMediaURLsHealthAndUpdateViewability_WorkingURLSameAsOriginal_NoPropagation verifies

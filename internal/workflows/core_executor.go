@@ -719,13 +719,21 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						zap.String("url", result.url),
 						zap.String("working_url", *result.workingURL),
 					)
-					// Non-fatal: fall back to marking the original URL healthy so viewability
-					// is still updated. The sweeper will eventually propagate the correct URL.
-					if err2 := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusHealthy, nil); err2 != nil {
+					// Propagation failed: mark the original URL as broken (it is broken — the
+					// direct probe failed and only the alternate gateway succeeded). Do NOT mark
+					// it healthy and do NOT add the working URL to healthyURLs.
+					// Reason: promoting a known-broken URL to healthy would feed
+					// BatchUpdateTokensViewability with false data, making viewable=true while
+					// the read path still serves the dead gateway URL — reproducing bug #96.
+					// The sweeper will retry UpdateMediaURLAndPropagate and fix the state.
+					if err2 := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusBroken, nil); err2 != nil {
 						logger.ErrorCtx(ctx, err2, zap.String("url", result.url))
 					}
+				} else {
+					// Propagation succeeded: the working URL is now canonical in health table,
+					// metadata, and enrichment_sources. Use it for downstream media indexing.
+					healthyURLs = append(healthyURLs, *result.workingURL)
 				}
-				healthyURLs = append(healthyURLs, *result.workingURL)
 			} else {
 				// Original URL is directly reachable
 				if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusHealthy, nil); err != nil {
