@@ -1515,13 +1515,13 @@ components:
       description: |
         Unified token display data: merges metadata and enrichment source (enrichment takes
         precedence), then applies per-field health filtering via `token_media_health`.
-        
+
         For each URL field (`animation_url`, `image_url`), only a URL with a `healthy` health row
         is returned; `broken` and `unknown` (unverified) rows suppress the field. If no health
         rows exist yet for a field's source groups, the raw merged value for that field is returned
         unchanged (filtering is per-field — an `image_url` health row does not affect
         `animation_url` pass-through and vice versa).
-        
+
         Populated when the `display` expansion is requested. When `display` is requested without
         explicit `metadata` or `enrichment_source` expansions, those fields are null in the
         response but their data is merged (and health-filtered) into this display field.
