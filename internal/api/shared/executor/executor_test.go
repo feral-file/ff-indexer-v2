@@ -137,6 +137,180 @@ func (f *displayMediaAssetFixture) setupMocks(mockStore *mocks.MockStore) {
 		Return([]schema.MediaAsset{f.mediaAsset}, nil)
 }
 
+// containsURL returns a Matcher that verifies a []string argument contains target.
+// Used to assert GetMediaAssetsBySourceURLs is called with a URL that may only exist in
+// token_media_health.media_url (not in raw metadata/enrichment), which is the scenario our
+// fix must handle.
+func containsURL(target string) gomock.Matcher {
+	return gomock.Cond(func(x any) bool {
+		urls, ok := x.([]string)
+		if !ok {
+			return false
+		}
+		for _, u := range urls {
+			if u == target {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// healthOnlyFixture represents the scenario where ApplyHealthyMediaURLs selects a URL that
+// exists only in token_media_health.media_url and NOT in raw metadata or enrichment sources.
+//
+// This simulates the PostgreSQL READ COMMITTED race window: the API reads metadata before a
+// propagation transaction commits (metadata still has originalURL) but reads the health table
+// after it commits (health row already has workingURL). ApplyHealthyMediaURLs then sets
+// display.animation_url = workingURL, which would be absent from the media asset source URL
+// set built from raw metadata — causing collectMediaAssetDTOsFromMap to return nothing for it
+// without the fix that adds tokenDTO.Display.MediaURLs() to the DB lookup.
+type healthOnlyFixture struct {
+	tokenID       uint64
+	normalizedCID string
+	originalURL   string // stale/broken URL still in metadata
+	workingURL    string // healthy URL only in health table
+	token         *schema.Token
+	metadata      *schema.TokenMetadata
+	healthRows    map[uint64][]schema.TokenMediaHealth
+	mediaAsset    schema.MediaAsset
+}
+
+func newHealthOnlyFixture() *healthOnlyFixture {
+	const tokenID = uint64(43)
+	const rawCID = "eip155:1:erc721:0xdef456:2" //nolint:gosec
+	normalizedCID := domain.TokenCID(rawCID).Normalized().String()
+	originalURL := "https://ipfs.feralfile.com/ipfs/QmSTALE"
+	workingURL := "https://ipfs.io/ipfs/QmWORKING"
+
+	return &healthOnlyFixture{
+		tokenID:       tokenID,
+		normalizedCID: normalizedCID,
+		originalURL:   originalURL,
+		workingURL:    workingURL,
+		token: &schema.Token{
+			ID:         tokenID,
+			TokenCID:   normalizedCID,
+			Chain:      "eip155:1",
+			Standard:   "erc721",
+			IsViewable: true,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		},
+		metadata: &schema.TokenMetadata{
+			TokenID:      tokenID,
+			AnimationURL: ptrStr(originalURL), // stale; health row has workingURL
+		},
+		healthRows: map[uint64][]schema.TokenMediaHealth{
+			tokenID: {
+				{
+					TokenID:      tokenID,
+					MediaURL:     workingURL,
+					MediaSource:  schema.MediaHealthSourceMetadataAnimation,
+					HealthStatus: schema.MediaHealthStatusHealthy,
+				},
+			},
+		},
+		mediaAsset: schema.MediaAsset{
+			ID:            2,
+			SourceURL:     workingURL,
+			SourceURLHash: internalTypes.MD5Hash(workingURL),
+			Provider:      "cloudflare",
+		},
+	}
+}
+
+// TestGetToken_DisplayAndMediaAsset_HealthOnlyURL verifies the fix for the media asset
+// lookup miss when the display URL comes only from token_media_health (not from raw
+// metadata/enrichment). The fix appends tokenDTO.Display.MediaURLs() to the source URL
+// set in expandMediaAssets before the DB fetch, ensuring the media asset is found.
+func TestGetToken_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	f := newHealthOnlyFixture()
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	mockStore.EXPECT().
+		GetTokenByTokenCID(gomock.Any(), f.normalizedCID).
+		Return(f.token, nil)
+	mockStore.EXPECT().
+		GetTokenMetadataByTokenID(gomock.Any(), f.tokenID).
+		Return(f.metadata, nil).
+		AnyTimes()
+	mockStore.EXPECT().
+		GetEnrichmentSourceByTokenID(gomock.Any(), f.tokenID).
+		Return(nil, nil).
+		AnyTimes()
+	mockStore.EXPECT().
+		GetTokenMediaHealthByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
+		Return(f.healthRows, nil)
+	// workingURL exists only in the health table, not in raw metadata. The fix must add it
+	// to the DB lookup. If it does not, this expectation will fail (missing call).
+	mockStore.EXPECT().
+		GetMediaAssetsBySourceURLs(gomock.Any(), containsURL(f.workingURL)).
+		Return([]schema.MediaAsset{f.mediaAsset}, nil)
+
+	const rawCID = "eip155:1:erc721:0xdef456:2" //nolint:gosec
+	result, err := exec.GetToken(context.Background(), rawCID,
+		[]types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset},
+		nil, nil, nil, nil, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Display, "display must be populated")
+	assert.Equal(t, f.workingURL, *result.Display.AnimationURL,
+		"display.animation_url must be the URL from the health table, not the stale metadata URL")
+	require.NotNil(t, result.MediaAssets, "media_assets must be populated")
+	assert.Len(t, result.MediaAssets, 1, "exactly one media asset expected for the working URL")
+	assert.Equal(t, f.workingURL, result.MediaAssets[0].SourceURL,
+		"media asset source URL must match the health-filtered display URL")
+}
+
+// TestGetTokens_DisplayAndMediaAsset_HealthOnlyURL verifies the list-path analog: the bulk
+// pre-compute loop in GetTokens adds health-filtered display URLs to allMediaSourceURLs before
+// GetMediaAssetsBySourceURLs is called, so the media asset map contains the workingURL entry.
+func TestGetTokens_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	f := newHealthOnlyFixture()
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	mockStore.EXPECT().
+		GetTokensByFilter(gomock.Any(), gomock.Any()).
+		Return([]schema.Token{*f.token}, nil)
+	mockStore.EXPECT().
+		GetTokenMetadataByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
+		Return(map[uint64]*schema.TokenMetadata{f.tokenID: f.metadata}, nil)
+	mockStore.EXPECT().
+		GetEnrichmentSourcesByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
+		Return(map[uint64]*schema.EnrichmentSource{}, nil)
+	mockStore.EXPECT().
+		GetTokenMediaHealthByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
+		Return(f.healthRows, nil)
+	// The pre-compute loop must have added workingURL to allMediaSourceURLs.
+	mockStore.EXPECT().
+		GetMediaAssetsBySourceURLs(gomock.Any(), containsURL(f.workingURL)).
+		Return([]schema.MediaAsset{f.mediaAsset}, nil)
+
+	result, err := exec.GetTokens(context.Background(),
+		nil, nil, nil, nil, []uint64{f.tokenID}, nil,
+		nil, nil, nil, nil, nil,
+		[]types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Tokens, 1)
+	tok := result.Tokens[0]
+	require.NotNil(t, tok.Display, "display must be populated")
+	assert.Equal(t, f.workingURL, *tok.Display.AnimationURL,
+		"display.animation_url must be the health-table URL (workingURL)")
+	require.NotNil(t, tok.MediaAssets, "media_assets must be populated")
+	assert.Len(t, tok.MediaAssets, 1)
+	assert.Equal(t, f.workingURL, tok.MediaAssets[0].SourceURL)
+}
+
 // TestGetToken_DisplayAndMediaAsset_HealthFiltered verifies the fix for the regression where
 // display+media_asset expansion could return zero display-derived media assets because
 // expandMediaAssets ran before tokenDTO.Display was populated.

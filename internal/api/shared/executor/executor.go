@@ -386,6 +386,25 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		}
 	}
 
+	// Pre-compute health-filtered display URLs and add them to the bulk source URL set.
+	// ApplyHealthyMediaURLs reads the URL directly from token_media_health.media_url, which can
+	// diverge from raw metadata/enrichment URLs during the narrow window between a propagation
+	// transaction commit and the metadata bulk read (two separate queries, no shared snapshot).
+	// Adding display URLs here ensures GetMediaAssetsBySourceURLs includes them so that
+	// collectMediaAssetDTOsFromMap can satisfy the display+media_asset contract.
+	// The per-token loop re-runs MergeTokenDisplay+ApplyHealthyMediaURLs cheaply (no extra DB calls).
+	if expansionMap[types.ExpansionDisplay] && expansionMap[types.ExpansionMediaAsset] {
+		for _, token := range tokens {
+			metaDTO := dto.MapTokenMetadataToDTO(bulkMetadata[token.ID])
+			enrichDTO := dto.MapEnrichmentSourceToDTO(bulkEnrichmentSources[token.ID])
+			preDisplay := dto.MergeTokenDisplay(metaDTO, enrichDTO)
+			preDisplay = dto.ApplyHealthyMediaURLs(preDisplay, bulkMediaHealth[token.ID])
+			if preDisplay != nil {
+				allMediaSourceURLs = append(allMediaSourceURLs, preDisplay.MediaURLs()...)
+			}
+		}
+	}
+
 	// Fetch media assets in bulk if needed
 	var mediaAssetsMap map[string]schema.MediaAsset
 	if len(allMediaSourceURLs) > 0 {
@@ -995,6 +1014,19 @@ func (e *executor) expandMediaAssets(ctx context.Context, tokenDTO *dto.TokenRes
 		if tokenDTO.EnrichmentSource != nil {
 			sourceURLs = append(sourceURLs, tokenDTO.EnrichmentSource.MediaURLs()...)
 		}
+	}
+
+	// Add health-filtered display URLs to the DB lookup so that media assets are always
+	// fetchable for any URL that ApplyHealthyMediaURLs selected from token_media_health.media_url.
+	// ApplyHealthyMediaURLs reads the URL directly from the health row, which can differ from the
+	// raw metadata/enrichment URL during the narrow window between a propagation transaction commit
+	// and the metadata bulk read. Without this, media assets for health-row URLs that are absent
+	// from metadata/enrichment are never queried, so collectMediaAssetDTOsFromMap returns nothing
+	// for them — contradicting the OpenAPI contract that display+media_asset surfaces assets for
+	// the health-filtered display URLs.
+	// populateHealthFilteredDisplay must be called before expandMediaAssets for this to be effective.
+	if expansionMap[types.ExpansionDisplay] && tokenDTO.Display != nil {
+		sourceURLs = append(sourceURLs, tokenDTO.Display.MediaURLs()...)
 	}
 
 	if len(sourceURLs) == 0 {

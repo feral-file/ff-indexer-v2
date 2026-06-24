@@ -618,9 +618,10 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 // reachable URLs instead of dead gateway URLs. This mirrors the sweeper's behavior and prevents the
 // false-positive: viewable=true while display.animation_url is a broken gateway URL.
 //
-// Trade-offs: UpdateMediaURLAndPropagate is non-fatal — if propagation fails the original URL is
-// marked healthy as a fallback. The sweeper will eventually re-probe and fix the URL. The healthy
-// URL list always reflects what is actually reachable.
+// Trade-offs: UpdateMediaURLAndPropagate is non-fatal — if propagation fails, the original URL is
+// marked broken (its true health state) and excluded from healthyURLs. The sweeper will eventually
+// retry UpdateMediaURLAndPropagate and fix the state. Marking it healthy would feed
+// BatchUpdateTokensViewability with false data, recreating the viewable=true + broken URL bug (#96).
 func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Context, tokenCID string, mediaURLs []string) (*MediaHealthCheckResult, error) {
 	logger.InfoCtx(ctx, "Checking media health and updating viewability",
 		zap.String("token_cid", tokenCID),
