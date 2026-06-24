@@ -1392,7 +1392,13 @@ components:
           anyOf:
             - $ref: '#/components/schemas/TokenDisplayResponse'
             - type: "null"
-          description: Unified display field merging metadata and enrichment source (requires display expansion). Enrichment source takes precedence over metadata when both have the same field.
+          description: |
+            Unified display field (requires `display` expansion). Merges metadata and enrichment
+            source (enrichment takes precedence), then applies per-field health filtering via
+            `token_media_health`: for each URL field (`animation_url`, `image_url`), only a URL
+            with a `healthy` health row is returned; `broken` and `unknown` rows suppress the
+            field. If no health rows exist yet for a field's source groups, the raw merged value
+            for that field is returned unchanged.
         media_assets:
           anyOf:
             - type: array
@@ -1400,14 +1406,14 @@ components:
                 $ref: '#/components/schemas/MediaAssetResponse'
             - type: "null"
           description: |
-            Unified media assets array (requires media_asset expansion).
+            Unified media assets array (requires `media_asset` expansion).
             
             Content depends on which other expansions are requested:
             - With `metadata`: includes media assets from metadata
             - With `enrichment_source`: includes media assets from enrichment source  
-            - With `display`: includes only media assets for URLs in the merged display field
+            - With `display`: includes media assets for the health-filtered display URLs only
             - With `metadata` + `enrichment_source`: includes media from both sources
-            - With `metadata` + `display`: includes media from metadata + display merged URLs
+            - With `metadata` + `display`: includes media from metadata + health-filtered display URLs
             - Without any source expansion: returns empty array
 
     TokenMetadataResponse:
@@ -1507,21 +1513,33 @@ components:
     TokenDisplayResponse:
       type: object
       description: |
-        Unified token display data that merges metadata and enrichment source.
-        Enrichment source takes precedence over metadata when both have the same field.
+        Unified token display data: merges metadata and enrichment source (enrichment takes
+        precedence), then applies per-field health filtering via `token_media_health`.
         
-        This field is populated when the `display` expansion is requested.
-        When `display` is requested without explicit `metadata` or `enrichment_source` expansions,
-        the individual metadata and enrichment_source fields will be null (cleaned up),
-        but their data is merged into this display field.
+        For each URL field (`animation_url`, `image_url`), only a URL with a `healthy` health row
+        is returned; `broken` and `unknown` (unverified) rows suppress the field. If no health
+        rows exist yet for a field's source groups, the raw merged value for that field is returned
+        unchanged (filtering is per-field — an `image_url` health row does not affect
+        `animation_url` pass-through and vice versa).
+        
+        Populated when the `display` expansion is requested. When `display` is requested without
+        explicit `metadata` or `enrichment_source` expansions, those fields are null in the
+        response but their data is merged (and health-filtered) into this display field.
       properties:
         image_url:
           type: [string, "null"]
-          description: Primary image URL (from enrichment source if available, otherwise from metadata)
+          description: |
+            Primary image URL after merge and health filtering. Precedence: enrichment-image if
+            healthy, else metadata-image if healthy, else omitted (`null`) when health rows exist
+            but none are `healthy`. Raw merged value returned when no image health rows exist yet.
           example: "https://example.com/image.png"
         animation_url:
           type: [string, "null"]
-          description: Animation/video URL (from enrichment source if available, otherwise from metadata)
+          description: |
+            Animation/video URL after merge and health filtering. Precedence: enrichment-animation
+            if healthy, else metadata-animation if healthy, else omitted (`null`) when health rows
+            exist but none are `healthy`. Raw merged value returned when no animation health rows
+            exist yet.
           example: "https://example.com/animation.mp4"
         name:
           type: [string, "null"]
