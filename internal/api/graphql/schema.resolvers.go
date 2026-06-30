@@ -354,7 +354,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
@@ -403,7 +403,37 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", *sortOrder))
 	}
 
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+	var releaseIDPtr *int64
+	if releaseID != nil {
+		if *releaseID <= 0 {
+			return nil, apierrors.NewValidationError("Invalid release_id: must be a positive integer")
+		}
+		id := int64(*releaseID)
+		releaseIDPtr = &id
+	}
+
+	if sortBy != nil && *sortBy == types.TokenSortByMintNumber && releaseIDPtr == nil {
+		return nil, apierrors.NewValidationError("sort_by=mint_number requires release_id")
+	}
+
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+}
+
+// Release is the resolver for the release field.
+func (r *queryResolver) Release(ctx context.Context, id int) (*dto.ReleaseResponse, error) {
+	if id <= 0 {
+		return nil, apierrors.NewValidationError("Invalid release id")
+	}
+
+	release, err := r.executor.GetRelease(ctx, int64(id))
+	if err != nil {
+		return nil, err
+	}
+	if release == nil {
+		return nil, apierrors.NewNotFoundError("Release not found")
+	}
+
+	return release, nil
 }
 
 // JobStatus is the resolver for the jobStatus field.
@@ -512,6 +542,29 @@ func (r *queryResolver) SyncCollection(ctx context.Context, address string, chec
 	return response, nil
 }
 
+// Members is the resolver for the members field.
+func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+	if obj == nil {
+		return nil, apierrors.NewValidationError("Release is required")
+	}
+
+	if sortOrder != nil && !sortOrder.Valid() {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", *sortOrder))
+	}
+
+	expansions := autoDetectTokenExpansions(ctx)
+	releaseID := obj.ID
+	sortBy := types.TokenSortByMintNumber
+	includeUnviewable := false
+
+	if sortOrder == nil {
+		defaultOrder := types.OrderAsc
+		sortOrder = &defaultOrder
+	}
+
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
+}
+
 // EventID is the resolver for the event_id field.
 func (r *syncCheckpointResolver) EventID(ctx context.Context, obj *dto.SyncCheckpoint) (Uint64, error) {
 	return Uint64(obj.EventID), nil
@@ -618,6 +671,9 @@ func (r *Resolver) ProvenanceEvent() ProvenanceEventResolver { return &provenanc
 // Query returns QueryResolver implementation.
 func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
+// Release returns ReleaseResolver implementation.
+func (r *Resolver) Release() ReleaseResolver { return &releaseResolver{r} }
+
 // SyncCheckpoint returns SyncCheckpointResolver implementation.
 func (r *Resolver) SyncCheckpoint() SyncCheckpointResolver { return &syncCheckpointResolver{r} }
 
@@ -644,6 +700,7 @@ type paginatedOwnersResolver struct{ *Resolver }
 type paginatedProvenanceEventsResolver struct{ *Resolver }
 type provenanceEventResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
+type releaseResolver struct{ *Resolver }
 type syncCheckpointResolver struct{ *Resolver }
 type tokenResolver struct{ *Resolver }
 type tokenEventResolver struct{ *Resolver }

@@ -116,6 +116,13 @@ func newDisplayMediaAssetFixture() *displayMediaAssetFixture {
 	}
 }
 
+func expectNoReleaseMembership(mockStore *mocks.MockStore, tokenIDs []uint64) {
+	mockStore.EXPECT().
+		GetReleaseMembersByTokenIDs(gomock.Any(), tokenIDs).
+		Return(map[uint64]*schema.ReleaseMember{}, nil).
+		AnyTimes()
+}
+
 func (f *displayMediaAssetFixture) setupMocks(mockStore *mocks.MockStore) {
 	mockStore.EXPECT().
 		GetTokenByTokenCID(gomock.Any(), f.normalizedCID).
@@ -136,6 +143,7 @@ func (f *displayMediaAssetFixture) setupMocks(mockStore *mocks.MockStore) {
 	mockStore.EXPECT().
 		GetMediaAssetsBySourceURLs(gomock.Any(), gomock.Any()).
 		Return([]schema.MediaAsset{f.mediaAsset}, nil)
+	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 }
 
 // containsURL returns a Matcher that verifies a []string argument contains target.
@@ -251,6 +259,7 @@ func TestGetToken_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
 	mockStore.EXPECT().
 		GetMediaAssetsBySourceURLs(gomock.Any(), containsURL(f.workingURL)).
 		Return([]schema.MediaAsset{f.mediaAsset}, nil)
+	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 
 	const rawCID = "eip155:1:erc721:0xdef456:2" //nolint:gosec
 	result, err := exec.GetToken(context.Background(), rawCID,
@@ -294,9 +303,10 @@ func TestGetTokens_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
 	mockStore.EXPECT().
 		GetMediaAssetsBySourceURLs(gomock.Any(), containsURL(f.workingURL)).
 		Return([]schema.MediaAsset{f.mediaAsset}, nil)
+	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 
 	result, err := exec.GetTokens(context.Background(),
-		nil, nil, nil, nil, []uint64{f.tokenID}, nil,
+		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
 		nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset})
 
@@ -397,6 +407,7 @@ func TestGetToken_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 	mockStore.EXPECT().
 		GetTokenMediaHealthByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
 		Return(nil, errors.New("connection timeout"))
+	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 
 	result, err := exec.GetToken(context.Background(), f.rawCID,
 		[]types.Expansion{types.ExpansionDisplay}, nil, nil, nil, nil, nil)
@@ -429,7 +440,7 @@ func TestGetTokens_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 		Return(nil, errors.New("connection timeout"))
 
 	result, err := exec.GetTokens(context.Background(),
-		nil, nil, nil, nil, []uint64{f.tokenID}, nil,
+		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
 		nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay})
 

@@ -57,6 +57,7 @@ type ListTokensQueryParams struct {
 	TokenNumbers      []string       `form:"token_number"`
 	TokenIDs          []uint64       `form:"token_id"`
 	TokenCIDs         []string       `form:"token_cid"`
+	ReleaseID         *int64         `form:"release_id"`
 	IncludeUnviewable bool           `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
 
 	// Pagination
@@ -124,6 +125,14 @@ func (p *ListTokensQueryParams) Validate() error {
 	// Validate sort_by
 	if !p.SortBy.Valid() {
 		return apierrors.NewValidationError(fmt.Sprintf("Invalid sort_by: %s. Must be a valid sort field", p.SortBy))
+	}
+
+	if p.ReleaseID != nil && *p.ReleaseID <= 0 {
+		return apierrors.NewValidationError("Invalid release_id: must be a positive integer")
+	}
+
+	if p.SortBy == types.TokenSortByMintNumber && p.ReleaseID == nil {
+		return apierrors.NewValidationError("sort_by=mint_number requires release_id")
 	}
 
 	// Validate sort_order

@@ -11,6 +11,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
@@ -25,8 +26,12 @@ type Handler interface {
 	GetToken(c *gin.Context)
 
 	// ListTokens retrieves tokens with optional filters
-	// GET /api/v1/tokens?owner=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_number=<number1>,<number2>&token_id=<id1>,<id2>&token_cid=<cid1>,<cid2>&limit=<limit>&offset=<offset>&expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
+	// GET /api/v1/tokens?owner=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_number=<number1>,<number2>&token_id=<id1>,<id2>&token_cid=<cid1>,<cid2>&release_id=<id>&limit=<limit>&offset=<offset>&expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	ListTokens(c *gin.Context)
+
+	// GetRelease retrieves a release by internal id with mint-ordered member tokens
+	// GET /api/v1/releases/:id?limit=<limit>&offset=<offset>&sort_order=<order>&expand=...
+	GetRelease(c *gin.Context)
 
 	// TriggerTokenIndexing triggers indexing for tokens by CIDs (open, no authentication required)
 	// POST /api/v1/tokens/index
@@ -174,6 +179,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 		queryParams.TokenNumbers,
 		queryParams.TokenIDs,
 		queryParams.TokenCIDs,
+		queryParams.ReleaseID,
 		limit,
 		offset,
 		includeUnviewable,
@@ -186,6 +192,66 @@ func (h *handler) ListTokens(c *gin.Context) {
 		respondInternalError(c, err, "Failed to list tokens")
 		return
 	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// GetRelease retrieves a release by internal id with mint-ordered member tokens
+func (h *handler) GetRelease(c *gin.Context) {
+	releaseIDStr := c.Param("id")
+	releaseID, err := strconv.ParseInt(releaseIDStr, 10, 64)
+	if err != nil || releaseID <= 0 {
+		respondValidationError(c, "Invalid release id")
+		return
+	}
+
+	queryParams, err := ParseGetReleaseQuery(c)
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+	if err := queryParams.Validate(); err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	limit := &queryParams.Limit
+	offset := &queryParams.Offset
+	sortOrder := &queryParams.SortOrder
+
+	response, err := h.executor.GetRelease(c.Request.Context(), releaseID)
+	if err != nil {
+		respondInternalError(c, err, "Failed to get release")
+		return
+	}
+	if response == nil {
+		respondNotFound(c, "Release not found")
+		return
+	}
+
+	sortBy := types.TokenSortByMintNumber
+	includeUnviewable := false
+	members, err := h.executor.GetTokens(
+		c.Request.Context(),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		&releaseID,
+		limit,
+		offset,
+		&includeUnviewable,
+		&sortBy,
+		sortOrder,
+		queryParams.Expansions,
+	)
+	if err != nil {
+		respondInternalError(c, err, "Failed to get release members")
+		return
+	}
+	response.Members = members
 
 	c.JSON(http.StatusOK, response)
 }

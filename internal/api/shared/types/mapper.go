@@ -11,6 +11,8 @@ func ToStoreTokenSortBy(sortBy TokenSortBy) store.TokenSortBy {
 		return store.TokenSortByCreatedAt
 	case TokenLatestProvenance:
 		return store.TokenSortByLatestProvenance
+	case TokenSortByMintNumber:
+		return store.TokenSortByMintNumber
 	default:
 		return store.TokenSortByCreatedAt
 	}

@@ -86,6 +86,30 @@ CREATE TABLE enrichment_sources (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Releases table - Cross-vendor release abstraction (FF series, AB project)
+CREATE TABLE releases (
+    id BIGSERIAL PRIMARY KEY,
+    vendor vendor_type NOT NULL,
+    vendor_release_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (vendor, vendor_release_id)
+);
+
+-- Release Members table - Ordered member tokens for a release
+CREATE TABLE release_members (
+    id BIGSERIAL PRIMARY KEY,
+    release_id BIGINT NOT NULL REFERENCES releases (id) ON DELETE CASCADE,
+    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
+    mint_number BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (release_id, token_id),
+    UNIQUE (release_id, mint_number),
+    UNIQUE (token_id)
+);
+
+CREATE INDEX release_members_release_id_mint_number_idx ON release_members (release_id, mint_number);
+
 -- Media Assets table - Reference mapping between original URLs and provider URLs
 CREATE TABLE media_assets (
     id BIGSERIAL PRIMARY KEY,
@@ -529,6 +553,11 @@ CREATE TRIGGER update_jobs_updated_at
     BEFORE UPDATE ON jobs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to releases
+CREATE TRIGGER update_releases_updated_at
+    BEFORE UPDATE ON releases
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ============================================================================
 -- INITIAL DATA
 -- ============================================================================
@@ -550,6 +579,9 @@ COMMENT ON TABLE tokens IS 'Primary entity for tracking tokens across all suppor
 COMMENT ON TABLE balances IS 'Tracks ownership quantities for multi-edition tokens (ERC1155, FA2)';
 COMMENT ON TABLE token_metadata IS 'Stores original and enriched metadata for tokens';
 COMMENT ON TABLE enrichment_sources IS 'Stores enriched metadata from vendor APIs (Art Blocks, fxhash, Foundation, SuperRare, Feral File) with both raw and normalized data';
+COMMENT ON TABLE releases IS 'Cross-vendor release (FF series, AB project) with stable internal id and external vendor_release_id';
+COMMENT ON TABLE release_members IS 'Ordered member tokens for a release; mint_number is authoritative and 1-based';
+COMMENT ON COLUMN releases.vendor_release_id IS 'External release key: FF seriesID UUID or AB {contract}-{projectID}';
 COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
 COMMENT ON TABLE token_media_health IS 'Tracks health check status for media URLs associated with tokens. Includes source information to distinguish between metadata/enrichment and image/animation URLs. Automatically synchronized when token_metadata or enrichment_sources are updated.';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';

@@ -33,6 +33,17 @@ type Artwork struct {
 	ThumbnailURI string `json:"thumbnailURI"`
 	PreviewURI   string `json:"previewURI"`
 	Series       Series `json:"series"`
+	SeriesID     string `json:"seriesID"`
+	Index        int64  `json:"index"`
+}
+
+// SeriesIDOrFallback returns the stable FF series identifier.
+// Prefer the artwork-level seriesID; fall back to the nested series ID when present.
+func (a *Artwork) SeriesIDOrFallback() string {
+	if a.SeriesID != "" {
+		return a.SeriesID
+	}
+	return a.Series.ID
 }
 
 // CanonicalName returns the canonical name for an artwork
@@ -48,6 +59,7 @@ func (a *Artwork) CanonicalName() string {
 
 // Series represents a series (collection) in Feral File
 type Series struct {
+	ID          string `json:"ID"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Medium      string `json:"medium"`

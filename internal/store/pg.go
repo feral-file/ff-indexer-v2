@@ -541,6 +541,15 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		sortOrder = SortOrderDesc // Default
 	}
 
+	needsReleaseJoin := filter.ReleaseID != nil || sortBy == TokenSortByMintNumber
+	if needsReleaseJoin {
+		if filter.ReleaseID != nil {
+			query = query.Joins("JOIN release_members ON release_members.token_id = tokens.id AND release_members.release_id = ?", *filter.ReleaseID)
+		} else {
+			query = query.Joins("LEFT JOIN release_members ON release_members.token_id = tokens.id")
+		}
+	}
+
 	// If filtering by owners and sorting by last_owner_provenance_timestamp,
 	// join with token_ownership_provenance for owner-specific sorting
 	if len(filter.Owners) > 0 && sortBy == TokenSortByLatestProvenance {
@@ -612,6 +621,13 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 			query = query.Order("tokens.created_at ASC").Order("tokens.id ASC")
 		} else {
 			query = query.Order("tokens.created_at DESC").Order("tokens.id DESC")
+		}
+	case TokenSortByMintNumber:
+		// Sort by authoritative mint number from release_members. NULLs sort last.
+		if sortOrder == SortOrderAsc {
+			query = query.Order("release_members.mint_number ASC NULLS LAST").Order("tokens.id ASC")
+		} else {
+			query = query.Order("release_members.mint_number DESC NULLS LAST").Order("tokens.id DESC")
 		}
 	default:
 		// Default to created_at desc
@@ -1123,6 +1139,99 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 
 		return nil
 	})
+}
+
+// UpsertRelease creates or returns an existing release for a vendor release id.
+func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string) (*schema.Release, error) {
+	release := schema.Release{
+		Vendor:          vendor,
+		VendorReleaseID: vendorReleaseID,
+	}
+
+	err := s.db.WithContext(ctx).
+		Where("vendor = ? AND vendor_release_id = ?", vendor, vendorReleaseID).
+		Assign(map[string]interface{}{
+			"updated_at": gorm.Expr("now()"),
+		}).
+		FirstOrCreate(&release).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to upsert release: %w", err)
+	}
+
+	return &release, nil
+}
+
+// UpsertReleaseMember associates a token with a release at the given mint number.
+// Each token belongs to at most one release; conflicts on token_id update release_id and mint_number.
+func (s *pgStore) UpsertReleaseMember(ctx context.Context, releaseID int64, tokenID uint64, mintNumber int64) error {
+	member := schema.ReleaseMember{
+		ReleaseID:  releaseID,
+		TokenID:    tokenID,
+		MintNumber: mintNumber,
+	}
+
+	err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "token_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"release_id", "mint_number"}),
+		}).
+		Create(&member).Error
+	if err != nil {
+		return fmt.Errorf("failed to upsert release member: %w", err)
+	}
+
+	return nil
+}
+
+// GetReleaseByID retrieves a release by internal id.
+func (s *pgStore) GetReleaseByID(ctx context.Context, id int64) (*schema.Release, error) {
+	var release schema.Release
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&release).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get release: %w", err)
+	}
+	return &release, nil
+}
+
+// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
+func (s *pgStore) GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error) {
+	if len(tokenIDs) == 0 {
+		return map[uint64]*schema.ReleaseMember{}, nil
+	}
+
+	var members []schema.ReleaseMember
+	if err := s.db.WithContext(ctx).Where("token_id IN ?", tokenIDs).Find(&members).Error; err != nil {
+		return nil, fmt.Errorf("failed to get release members: %w", err)
+	}
+
+	result := make(map[uint64]*schema.ReleaseMember, len(members))
+	for i := range members {
+		member := members[i]
+		result[member.TokenID] = &member
+	}
+	return result, nil
+}
+
+// ListEnrichmentSourcesByVendors returns enrichment sources for the given vendors in stable id order.
+func (s *pgStore) ListEnrichmentSourcesByVendors(ctx context.Context, vendors []schema.Vendor, limit int, offset uint64) ([]schema.EnrichmentSource, error) {
+	if len(vendors) == 0 {
+		return []schema.EnrichmentSource{}, nil
+	}
+
+	var sources []schema.EnrichmentSource
+	query := s.db.WithContext(ctx).
+		Where("vendor IN ?", vendors).
+		Order("token_id ASC").
+		Limit(limit).
+		Offset(int(offset)) //nolint:gosec,G115
+
+	if err := query.Find(&sources).Error; err != nil {
+		return nil, fmt.Errorf("failed to list enrichment sources: %w", err)
+	}
+	return sources, nil
 }
 
 // UpdateTokenBurn updates a token as burned with associated balance update and provenance event in a single transaction

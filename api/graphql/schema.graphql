@@ -17,6 +17,7 @@ enum Order {
 enum TokenSortBy {
   created_at
   latest_provenance
+  mint_number
 }
 
 # MediaAssetVariantKey enumeration for variant URL keys
@@ -177,6 +178,8 @@ type Token {
   burned: Boolean!
   viewable: Boolean!
   last_provenance_timestamp: Time
+  release_id: Int
+  mint_number: Int
   created_at: Time!
   updated_at: Time!
   display: TokenDisplay
@@ -193,6 +196,14 @@ type TokenList {
   items: [Token!]!
   offset: Uint64
   total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
+}
+
+# Cross-vendor release (FF series, AB project)
+type Release {
+  id: Int!
+  vendor: String!
+  vendor_release_id: String!
+  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc): TokenList!
 }
 
 # Result of triggering indexing
@@ -252,12 +263,17 @@ type Query {
     token_numbers: [String!]
     token_ids: [Uint64!]
     token_cids: [String!]
+    release_id: Int
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
   ): TokenList
+
+  # Get a release by internal id with mint-ordered members
+  # Equivalent to: GET /api/v1/releases/:id
+  release(id: Int!): Release
 
   # Get job status by job id
   # Equivalent to: GET /api/v1/jobs/:job_id

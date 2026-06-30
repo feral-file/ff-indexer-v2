@@ -602,6 +602,16 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 		return nil, fmt.Errorf("failed to upsert enrichment source: %w", err)
 	}
 
+	if enhanced.Release != nil {
+		release, err := e.store.UpsertRelease(ctx, enhanced.Vendor, enhanced.Release.VendorReleaseID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upsert release: %w", err)
+		}
+		if err := e.store.UpsertReleaseMember(ctx, release.ID, token.ID, enhanced.Release.MintNumber); err != nil {
+			return nil, fmt.Errorf("failed to upsert release member: %w", err)
+		}
+	}
+
 	logger.InfoCtx(ctx, "Successfully enhanced token metadata",
 		zap.String("tokenCID", tokenCID.String()),
 		zap.String("vendor", string(enhanced.Vendor)))

@@ -34,7 +34,10 @@ type Executor interface {
 	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions (bulk: fixed sub-page sizes for owners/provenance per token).
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+
+	// GetRelease retrieves a release by internal id without member tokens.
+	GetRelease(ctx context.Context, releaseID int64) (*dto.ReleaseResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens by their CIDs.
 	// Returns a queue job id for tracking.
@@ -116,6 +119,9 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 
 	// Map to DTO
 	tokenDTO := dto.MapTokenToDTO(token)
+	if err := e.applyReleaseMembership(ctx, []*dto.TokenResponse{tokenDTO}); err != nil {
+		return nil, err
+	}
 
 	// Handle expansions
 	for _, exp := range expansions {
@@ -203,7 +209,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -259,6 +265,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		TokenIDs:          tokenIDs,
 		Chains:            chains,
 		TokenCIDs:         tokenCIDs,
+		ReleaseID:         releaseID,
 		IncludeUnviewable: *includeUnviewable,
 		SortBy:            storeSortBy,
 		SortOrder:         storeSortOrder,
@@ -542,6 +549,14 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		if err := e.resolveDisplayDataURIs(ctx, tokenDTOs); err != nil {
 			return nil, err
 		}
+	}
+
+	tokenPtrs := make([]*dto.TokenResponse, len(tokenDTOs))
+	for i := range tokenDTOs {
+		tokenPtrs[i] = &tokenDTOs[i]
+	}
+	if err := e.applyReleaseMembership(ctx, tokenPtrs); err != nil {
+		return nil, err
 	}
 
 	// Build response with pagination
@@ -1431,4 +1446,54 @@ func (e *executor) SyncCollection(ctx context.Context, address string, checkpoin
 		NextCheckpoint: nextCheckpoint,
 		ServerTime:     serverTime,
 	}, nil
+}
+
+func (e *executor) GetRelease(ctx context.Context, releaseID int64) (*dto.ReleaseResponse, error) {
+	release, err := e.store.GetReleaseByID(ctx, releaseID)
+	if err != nil {
+		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get release: %v", err))
+	}
+	if release == nil {
+		return nil, nil
+	}
+
+	return &dto.ReleaseResponse{
+		ID:              release.ID,
+		Vendor:          string(release.Vendor),
+		VendorReleaseID: release.VendorReleaseID,
+	}, nil
+}
+
+func (e *executor) applyReleaseMembership(ctx context.Context, tokens []*dto.TokenResponse) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	tokenIDs := make([]uint64, 0, len(tokens))
+	for _, token := range tokens {
+		if token != nil {
+			tokenIDs = append(tokenIDs, token.ID)
+		}
+	}
+
+	members, err := e.store.GetReleaseMembersByTokenIDs(ctx, tokenIDs)
+	if err != nil {
+		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get release members: %v", err))
+	}
+
+	for _, token := range tokens {
+		if token == nil {
+			continue
+		}
+		member, ok := members[token.ID]
+		if !ok || member == nil {
+			continue
+		}
+		releaseID := member.ReleaseID
+		mintNumber := member.MintNumber
+		token.ReleaseID = &releaseID
+		token.MintNumber = &mintNumber
+	}
+
+	return nil
 }

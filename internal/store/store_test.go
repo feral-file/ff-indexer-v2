@@ -6561,6 +6561,67 @@ func testJobQueue(t *testing.T, store Store) {
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
 
+func testReleaseOperations(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	tokenInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000009999",
+		"1000001",
+		"0xrelease100000000000000000000000000000000001",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput))
+	token1, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token1)
+
+	tokenInput2 := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000009999",
+		"1000003",
+		"0xrelease200000000000000000000000000000000002",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput2))
+	token2, err := store.GetTokenByTokenCID(ctx, tokenInput2.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token2)
+
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000009999-1")
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.NotZero(t, release.ID)
+
+	require.NoError(t, store.UpsertReleaseMember(ctx, release.ID, token1.ID, 1))
+	require.NoError(t, store.UpsertReleaseMember(ctx, release.ID, token2.ID, 3))
+
+	releaseID := release.ID
+	tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		ReleaseID:         &releaseID,
+		SortBy:            TokenSortByMintNumber,
+		SortOrder:         SortOrderAsc,
+		Limit:             10,
+		IncludeUnviewable: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, tokens, 2)
+	assert.Equal(t, token1.ID, tokens[0].ID)
+	assert.Equal(t, token2.ID, tokens[1].ID)
+
+	members, err := store.GetReleaseMembersByTokenIDs(ctx, []uint64{token1.ID, token2.ID})
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+	assert.Equal(t, int64(1), members[token1.ID].MintNumber)
+	assert.Equal(t, int64(3), members[token2.ID].MintNumber)
+
+	fetched, err := store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.Equal(t, schema.VendorArtBlocks, fetched.Vendor)
+	assert.Equal(t, "0x0000000000000000000000000000000000009999-1", fetched.VendorReleaseID)
+}
+
 // RunStoreTests runs all store contract subtests against initDB.
 func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func(t *testing.T)) {
 	tests := []struct {
@@ -6577,6 +6638,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByCIDs", testGetTokensByCIDs},
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
+		{"ReleaseOperations", testReleaseOperations},
 		{"UpsertTokenMetadata", testUpsertTokenMetadata},
 		{"GetTokenMetadataByTokenID", testGetTokenMetadataByTokenID},
 		{"GetTokenMetadataByTokenIDs", testGetTokenMetadataByTokenIDs},

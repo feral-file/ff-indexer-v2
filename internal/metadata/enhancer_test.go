@@ -144,6 +144,9 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	assert.Equal(t, "Tyler Hobbs", result.Artists[0].Name)
 	assert.NotEmpty(t, result.Artists[0].DID)
 	assert.NotNil(t, result.MimeType)
+	assert.NotNil(t, result.Release)
+	assert.Equal(t, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1", result.Release.VendorReleaseID)
+	assert.Equal(t, int64(5), result.Release.MintNumber)
 }
 
 func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
@@ -557,7 +560,10 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 		Name:         "Money Vortex: Binaural Beats",
 		ThumbnailURI: "previews/test/thumbnail.jpg",
 		PreviewURI:   "previews/test/preview.html",
+		SeriesID:     "series-uuid",
+		Index:        4,
 		Series: feralfile.Series{
+			ID:          "series-uuid",
 			Medium:      "software",
 			Description: "Test description",
 			Artist: feralfile.Artist{
@@ -613,6 +619,9 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 	assert.Equal(t, "Steve Pikelny", result.Artists[0].Name)
 	expectedDID := domain.NewDID("0x47144372eb383466d18fc91db9cd0396aa6c87a4", domain.ChainEthereumMainnet)
 	assert.Equal(t, expectedDID, result.Artists[0].DID)
+	assert.NotNil(t, result.Release)
+	assert.Equal(t, "series-uuid", result.Release.VendorReleaseID)
+	assert.Equal(t, int64(5), result.Release.MintNumber)
 }
 
 func TestEnhancer_Enhance_FeralFile_ImageMedium(t *testing.T) {

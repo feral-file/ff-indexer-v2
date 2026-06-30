@@ -221,6 +221,18 @@ psql -h localhost -U postgres -d ff_indexer -f db/migrations/017.sql
 
 Fresh installs from `init_pg_db.sql` can run `017.sql` directly if there are no duplicate ownership rows. Traffic pause is still required due to write blocking during index build.
 
+### Migration 018: releases and release_members
+
+Migration `018.sql` adds the cross-vendor release abstraction (`releases`, `release_members`) used for mint-ordered series/project membership. Fresh installs pick this up from `db/init_pg_db.sql` automatically.
+
+After applying migration 018 on an existing database, backfill release rows from existing enrichment data:
+
+```bash
+go run ./cmd/backfill-releases --config config/config.yaml
+```
+
+Optional flags: `--batch-size 500` (default). The command is safe to re-run; release and member rows are upserted idempotently.
+
 - **If migration has NOT run:** Application will fail at runtime with PostgreSQL error:
   ```
   ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)

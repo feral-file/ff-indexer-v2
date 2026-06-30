@@ -22,6 +22,12 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
+// ReleaseInfo carries release membership data extracted during vendor enrichment.
+type ReleaseInfo struct {
+	VendorReleaseID string
+	MintNumber      int64
+}
+
 // EnhancedMetadata represents metadata enhanced from vendor APIs
 type EnhancedMetadata struct {
 	Vendor       schema.Vendor
@@ -32,6 +38,7 @@ type EnhancedMetadata struct {
 	AnimationURL *string
 	Artists      []Artist
 	MimeType     *string
+	Release      *ReleaseInfo
 }
 
 // Enhancer defines the interface for enhancing metadata from vendors
@@ -201,6 +208,11 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 		enhanced.ImageURL = &i
 	}
 
+	enhanced.Release = &ReleaseInfo{
+		VendorReleaseID: projectIDStr,
+		MintNumber:      mintNumber,
+	}
+
 	return enhanced, nil
 }
 
@@ -286,6 +298,13 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, chain domain.Chain, con
 				DID:  artistDID,
 				Name: artwork.Series.Artist.AlumniAccount.Alias,
 			},
+		}
+	}
+
+	if seriesID := artwork.SeriesIDOrFallback(); seriesID != "" {
+		enhanced.Release = &ReleaseInfo{
+			VendorReleaseID: seriesID,
+			MintNumber:      artwork.Index + 1,
 		}
 	}
 

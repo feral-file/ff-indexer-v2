@@ -16,11 +16,12 @@ type TokenSortBy string
 const (
 	TokenSortByCreatedAt        TokenSortBy = "created_at"
 	TokenSortByLatestProvenance TokenSortBy = "latest_provenance"
+	TokenSortByMintNumber       TokenSortBy = "mint_number"
 )
 
 // Valid checks if a token sort by is valid
 func (t TokenSortBy) Valid() bool {
-	return t == TokenSortByCreatedAt || t == TokenSortByLatestProvenance
+	return t == TokenSortByCreatedAt || t == TokenSortByLatestProvenance || t == TokenSortByMintNumber
 }
 
 // SortOrder enumeration for sorting
@@ -172,6 +173,7 @@ type TokenQueryFilter struct {
 	TokenNumbers      []string
 	TokenIDs          []uint64
 	TokenCIDs         []string
+	ReleaseID         *int64
 	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
 	SortBy            TokenSortBy // Sort field: created_at or last_owner_provenance_timestamp
 	SortOrder         SortOrder   // Sort order: asc or desc
@@ -315,6 +317,21 @@ type Store interface {
 	GetEnrichmentSourceByTokenCID(ctx context.Context, tokenCID string) (*schema.EnrichmentSource, error)
 	// UpsertEnrichmentSource creates or updates an enrichment source
 	UpsertEnrichmentSource(ctx context.Context, input CreateEnrichmentSourceInput) error
+
+	// =============================================================================
+	// Release Operations
+	// =============================================================================
+
+	// UpsertRelease creates or returns an existing release for a vendor release id.
+	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string) (*schema.Release, error)
+	// UpsertReleaseMember associates a token with a release at the given mint number.
+	UpsertReleaseMember(ctx context.Context, releaseID int64, tokenID uint64, mintNumber int64) error
+	// GetReleaseByID retrieves a release by internal id.
+	GetReleaseByID(ctx context.Context, id int64) (*schema.Release, error)
+	// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
+	GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error)
+	// ListEnrichmentSourcesByVendors returns enrichment sources for the given vendors in stable id order.
+	ListEnrichmentSourcesByVendors(ctx context.Context, vendors []schema.Vendor, limit int, offset uint64) ([]schema.EnrichmentSource, error)
 
 	// =============================================================================
 	// Token Media Health Operations
