@@ -47,6 +47,8 @@ servers:
 tags:
   - name: tokens
     description: Token data and metadata operations
+  - name: releases
+    description: Cross-vendor release (FF series, AB project) lookup with mint-ordered member tokens
   - name: collections
     description: Collection sync and state management operations
   - name: workflows

@@ -47,10 +47,18 @@ type ffVendorArtwork struct {
 }
 
 // Run backfills all artblocks and feralfile enrichment sources.
+//
+// Best-effort: per-row failures are logged and counted rather than aborting the run,
+// so a transient API error or malformed vendor JSON does not prevent other tokens from
+// being processed. However, a non-nil error is returned when any row fails so that the
+// caller (cmd/backfill-releases) exits non-zero and the operator can detect partial
+// backfills and re-run. The returned int is always the number of successfully processed
+// rows regardless of failures.
 func (b *Backfiller) Run(ctx context.Context) (int, error) {
 	vendors := []schema.Vendor{schema.VendorArtBlocks, schema.VendorFeralFile}
 	var offset uint64
 	processed := 0
+	var failed int
 
 	for {
 		sources, err := b.store.ListEnrichmentSourcesByVendors(ctx, vendors, b.batchSize, offset)
@@ -67,6 +75,7 @@ func (b *Backfiller) Run(ctx context.Context) (int, error) {
 					zap.Uint64("token_id", source.TokenID),
 					zap.String("vendor", string(source.Vendor)),
 					zap.Error(err))
+				failed++
 				continue
 			}
 			processed++
@@ -76,6 +85,10 @@ func (b *Backfiller) Run(ctx context.Context) (int, error) {
 			break
 		}
 		offset += uint64(len(sources))
+	}
+
+	if failed > 0 {
+		return processed, fmt.Errorf("partial backfill: %d succeeded, %d failed", processed, failed)
 	}
 
 	return processed, nil

@@ -1142,6 +1142,13 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 }
 
 // UpsertRelease creates or returns an existing release for a vendor release id.
+//
+// Uses INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()
+// RETURNING id so the operation is atomic under concurrent callers. FirstOrCreate is
+// intentionally avoided here: it issues a SELECT then INSERT in two separate statements,
+// which causes a unique-constraint race when multiple workers index tokens from the same
+// new release simultaneously — one call would get a constraint violation instead of the
+// existing row. The ON CONFLICT path is idempotent and always returns the canonical row id.
 func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string) (*schema.Release, error) {
 	release := schema.Release{
 		Vendor:          vendor,
@@ -1149,11 +1156,13 @@ func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendo
 	}
 
 	err := s.db.WithContext(ctx).
-		Where("vendor = ? AND vendor_release_id = ?", vendor, vendorReleaseID).
-		Assign(map[string]interface{}{
-			"updated_at": gorm.Expr("now()"),
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "vendor"}, {Name: "vendor_release_id"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"updated_at": gorm.Expr("now()"),
+			}),
 		}).
-		FirstOrCreate(&release).Error
+		Create(&release).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to upsert release: %w", err)
 	}

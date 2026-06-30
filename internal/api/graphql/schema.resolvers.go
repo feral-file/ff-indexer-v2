@@ -555,7 +555,10 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 	expansions := autoDetectTokenExpansions(ctx)
 	releaseID := obj.ID
 	sortBy := types.TokenSortByMintNumber
-	includeUnviewable := false
+	// Release membership is a data relationship, not a viewability gate — all members
+	// are returned so the list is stable across viewability state changes. This mirrors
+	// the REST GET /api/v1/releases/{id} contract.
+	includeUnviewable := true
 
 	if sortOrder == nil {
 		defaultOrder := types.OrderAsc

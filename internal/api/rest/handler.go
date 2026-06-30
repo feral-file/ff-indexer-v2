@@ -229,8 +229,13 @@ func (h *handler) GetRelease(c *gin.Context) {
 		return
 	}
 
+	// Release membership is a data relationship, not a viewability gate.
+	// All members are returned regardless of is_viewable so the list is stable
+	// across viewability state changes (tokens may be unviewable temporarily during
+	// media processing). Callers that need only publicly visible tokens should use
+	// GET /api/v1/tokens?release_id=... with include_unviewable omitted (default false).
 	sortBy := types.TokenSortByMintNumber
-	includeUnviewable := false
+	includeUnviewable := true
 	members, err := h.executor.GetTokens(
 		c.Request.Context(),
 		nil,

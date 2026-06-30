@@ -22,6 +22,8 @@ The database includes the following main tables:
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
+- `releases` - Cross-vendor release abstraction (Feral File series, Art Blocks projects) with stable internal id (migration 018)
+- `release_members` - Ordered token membership within a release; `mint_number` is authoritative and 1-based (migration 018)
 - `watched_addresses` - Addresses being monitored for indexing
 - `jobs` - Postgres-backed durable job queue (token and media work units)
 - `address_indexing_jobs` - Address-level indexing job status tracking
@@ -314,6 +316,56 @@ Materialized view tracking the most recent provenance event per token-owner pair
 
 ---
 
+### releases
+
+Cross-vendor release abstraction that gives Feral File series and Art Blocks projects a stable internal id with mint-ordered members. Added in migration 018.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Stable internal release identifier (primary key) |
+| vendor | vendor_type | Source platform (`artblocks`, `feralfile`) |
+| vendor_release_id | TEXT | External release key: FF seriesID UUID or AB `{contract}-{projectID}` |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp (bumped on every upsert via trigger) |
+
+**Unique Constraints**:
+- `(vendor, vendor_release_id)` (unique) — the upsert conflict target
+
+**Triggers**:
+- `update_releases_updated_at` — automatically bumps `updated_at` on row update
+
+**Note**: `UpsertRelease` uses `INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now() RETURNING id` to be safe under concurrent token workers. `release_members` has no `updated_at`; membership rows are immutable once written (overwritten in full by the ON CONFLICT path on `token_id`).
+
+---
+
+### release_members
+
+Ordered token membership within a release. Each token belongs to at most one release; `mint_number` is the authoritative 1-based edition order within the release. Added in migration 018.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Internal row identifier (primary key) |
+| release_id | BIGINT | Foreign key to `releases.id` (CASCADE delete) |
+| token_id | BIGINT | Foreign key to `tokens.id` (CASCADE delete) |
+| mint_number | BIGINT | Authoritative 1-based mint/edition order within the release |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+
+**Unique Constraints**:
+- `(token_id)` (unique) — a token belongs to at most one release; conflict target for `UpsertReleaseMember`
+- `(release_id, token_id)` (unique)
+- `(release_id, mint_number)` (unique)
+
+**Indexes**:
+- `release_members_release_id_mint_number_idx` on `(release_id, mint_number)` — supports ordered member listing
+
+**Relationships**:
+- Many-to-one with `releases` (FK `release_id`)
+- Many-to-one with `tokens` (FK `token_id`)
+
+**Note**: `release_members` is intentionally `created_at`-only (no `updated_at`, no trigger). When a token's membership changes, the existing row is replaced via `ON CONFLICT (token_id) DO UPDATE`.
+
+---
+
 ### watched_addresses
 
 For owner-based indexing functionality with budgeted indexing mode support.
@@ -579,7 +631,11 @@ tokens (1)
   ├── (N) provenance_events
   ├── (N) token_events
   ├── (N) enrichment_sources
-  └── (N) token_media_health
+  ├── (N) token_media_health
+  └── (0..1) release_members → releases
+
+releases (1)
+  └── (N) release_members
 
 webhook_clients (1)
   └── (N) webhook_deliveries
@@ -612,6 +668,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_address_indexing_jobs_updated_at`
 - `update_token_media_health_updated_at`
 - `update_jobs_updated_at`
+- `update_releases_updated_at` — added in migration 018 (`releases` table only; `release_members` has no `updated_at` by design)
 
 ## Migrations
 
@@ -628,8 +685,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 
 Migrations should be placed in `db/migrations/` directory with sequential numbering:
 - `001.sql` - Historical: introduced `token_ownership_periods` (removed in `015.sql`).
-- `002.sql` - Future changes
-- etc.
+- `018.sql` - Adds `releases` and `release_members` tables for cross-vendor release abstraction with mint-ordered members, plus the `update_releases_updated_at` trigger.
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data
