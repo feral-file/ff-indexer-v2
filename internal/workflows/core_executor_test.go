@@ -1664,6 +1664,59 @@ func TestEnhanceTokenMetadata_Success(t *testing.T) {
 	assert.Equal(t, enhancedMetadata, result)
 }
 
+func TestEnhanceTokenMetadata_PersistsReleaseMembership(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+
+	normalizedMetadata := &metadata.NormalizedMetadata{
+		Name:  "Test NFT",
+		Image: "https://example.com/image.png",
+	}
+
+	token := &schema.Token{
+		ID:       1,
+		TokenCID: tokenCID.String(),
+	}
+
+	enhancedMetadata := &metadata.EnhancedMetadata{
+		Vendor:     schema.VendorArtBlocks,
+		VendorJSON: []byte(`{"artist":"Artist Name"}`),
+		Name:       types.StringPtr("Enhanced NFT Name"),
+		Release: &metadata.ReleaseInfo{
+			VendorReleaseID: "0x1234567890123456789012345678901234567890-1",
+			MintNumber:      5,
+		},
+	}
+
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(token, nil)
+	mocks.metadataEnhancer.EXPECT().
+		Enhance(ctx, tokenCID, normalizedMetadata).
+		Return(enhancedMetadata, nil)
+	hash := []byte("vendorhash123")
+	mocks.metadataEnhancer.EXPECT().
+		VendorJsonHash(enhancedMetadata).
+		Return(hash, nil)
+	mocks.store.EXPECT().
+		UpsertEnrichmentSource(ctx, gomock.Any()).
+		Return(nil)
+	mocks.store.EXPECT().
+		UpsertRelease(ctx, schema.VendorArtBlocks, "0x1234567890123456789012345678901234567890-1").
+		Return(&schema.Release{ID: 99}, nil)
+	mocks.store.EXPECT().
+		UpsertReleaseMember(ctx, uint64(99), token.ID, int64(5)).
+		Return(nil)
+
+	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
+
+	assert.NoError(t, err)
+	assert.Equal(t, enhancedMetadata, result)
+}
+
 func TestEnhanceTokenMetadata_NoEnhancementAvailable(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)

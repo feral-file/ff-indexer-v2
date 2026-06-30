@@ -223,7 +223,7 @@ func TestConcurrentUpsertRelease(t *testing.T) {
 	store := NewPGStore(testDB)
 
 	var wg sync.WaitGroup
-	ids := make([]int64, concurrency)
+	ids := make([]uint64, concurrency)
 	errs := make([]error, concurrency)
 
 	for i := range concurrency {

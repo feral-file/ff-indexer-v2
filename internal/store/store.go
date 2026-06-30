@@ -173,7 +173,7 @@ type TokenQueryFilter struct {
 	TokenNumbers      []string
 	TokenIDs          []uint64
 	TokenCIDs         []string
-	ReleaseID         *int64
+	ReleaseID         *uint64
 	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
 	SortBy            TokenSortBy // Sort field: created_at or last_owner_provenance_timestamp
 	SortOrder         SortOrder   // Sort order: asc or desc
@@ -325,9 +325,9 @@ type Store interface {
 	// UpsertRelease creates or returns an existing release for a vendor release id.
 	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string) (*schema.Release, error)
 	// UpsertReleaseMember associates a token with a release at the given mint number.
-	UpsertReleaseMember(ctx context.Context, releaseID int64, tokenID uint64, mintNumber int64) error
+	UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error
 	// GetReleaseByID retrieves a release by internal id.
-	GetReleaseByID(ctx context.Context, id int64) (*schema.Release, error)
+	GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error)
 	// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
 	GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error)
 	// ListEnrichmentSourcesByVendors returns enrichment sources for the given vendors in stable id order.

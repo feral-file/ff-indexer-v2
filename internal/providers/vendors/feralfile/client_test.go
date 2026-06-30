@@ -246,6 +246,30 @@ func TestClient_GetArtwork_URLFormat(t *testing.T) {
 }
 
 // TestArtwork_CanonicalName tests the CanonicalName method
+func TestArtwork_SeriesIDOrFallback(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prefers top-level seriesID", func(t *testing.T) {
+		artwork := feralfile.Artwork{
+			SeriesID: "series-top",
+			Series: feralfile.Series{
+				ID: "series-nested",
+			},
+		}
+		assert.Equal(t, "series-top", artwork.SeriesIDOrFallback())
+	})
+
+	t.Run("falls back to nested series ID", func(t *testing.T) {
+		artwork := feralfile.Artwork{
+			Series: feralfile.Series{
+				ID: "series-nested",
+			},
+		}
+		assert.Equal(t, "series-nested", artwork.SeriesIDOrFallback())
+	})
+}
+
+// TestArtwork_CanonicalName tests the CanonicalName method
 func TestArtwork_CanonicalName(t *testing.T) {
 	tests := []struct {
 		name     string

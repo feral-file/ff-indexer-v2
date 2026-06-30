@@ -478,7 +478,7 @@ func (mr *MockStoreMockRecorder) GetQuotaInfo(ctx, address, chain any) *gomock.C
 }
 
 // GetReleaseByID mocks base method.
-func (m *MockStore) GetReleaseByID(ctx context.Context, id int64) (*schema.Release, error) {
+func (m *MockStore) GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetReleaseByID", ctx, id)
 	ret0, _ := ret[0].(*schema.Release)
@@ -1171,7 +1171,7 @@ func (mr *MockStoreMockRecorder) UpsertRelease(ctx, vendor, vendorReleaseID any)
 }
 
 // UpsertReleaseMember mocks base method.
-func (m *MockStore) UpsertReleaseMember(ctx context.Context, releaseID int64, tokenID uint64, mintNumber int64) error {
+func (m *MockStore) UpsertReleaseMember(ctx context.Context, releaseID, tokenID uint64, mintNumber int64) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpsertReleaseMember", ctx, releaseID, tokenID, mintNumber)
 	ret0, _ := ret[0].(error)

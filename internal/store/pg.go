@@ -1172,7 +1172,7 @@ func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendo
 
 // UpsertReleaseMember associates a token with a release at the given mint number.
 // Each token belongs to at most one release; conflicts on token_id update release_id and mint_number.
-func (s *pgStore) UpsertReleaseMember(ctx context.Context, releaseID int64, tokenID uint64, mintNumber int64) error {
+func (s *pgStore) UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error {
 	member := schema.ReleaseMember{
 		ReleaseID:  releaseID,
 		TokenID:    tokenID,
@@ -1193,7 +1193,7 @@ func (s *pgStore) UpsertReleaseMember(ctx context.Context, releaseID int64, toke
 }
 
 // GetReleaseByID retrieves a release by internal id.
-func (s *pgStore) GetReleaseByID(ctx context.Context, id int64) (*schema.Release, error) {
+func (s *pgStore) GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error) {
 	var release schema.Release
 	err := s.db.WithContext(ctx).Where("id = ?", id).First(&release).Error
 	if err != nil {

@@ -199,8 +199,8 @@ func (h *handler) ListTokens(c *gin.Context) {
 // GetRelease retrieves a release by internal id with mint-ordered member tokens
 func (h *handler) GetRelease(c *gin.Context) {
 	releaseIDStr := c.Param("id")
-	releaseID, err := strconv.ParseInt(releaseIDStr, 10, 64)
-	if err != nil || releaseID <= 0 {
+	releaseID, err := strconv.ParseUint(releaseIDStr, 10, 64)
+	if err != nil || releaseID == 0 {
 		respondValidationError(c, "Invalid release id")
 		return
 	}

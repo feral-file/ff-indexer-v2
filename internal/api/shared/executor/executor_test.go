@@ -447,3 +447,74 @@ func TestGetTokens_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 	require.Error(t, err, "GetTokens must propagate health query failure as an error")
 	assert.Nil(t, result, "result must be nil on health query failure")
 }
+
+func TestGetRelease_Found(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	mockStore.EXPECT().
+		GetReleaseByID(gomock.Any(), uint64(7)).
+		Return(&schema.Release{
+			ID:              7,
+			Vendor:          schema.VendorArtBlocks,
+			VendorReleaseID: "0xabc-1",
+		}, nil)
+
+	result, err := exec.GetRelease(context.Background(), 7)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, uint64(7), result.ID)
+	assert.Equal(t, string(schema.VendorArtBlocks), result.Vendor)
+	assert.Equal(t, "0xabc-1", result.VendorReleaseID)
+}
+
+func TestGetRelease_NotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	mockStore.EXPECT().
+		GetReleaseByID(gomock.Any(), uint64(404)).
+		Return(nil, nil)
+
+	result, err := exec.GetRelease(context.Background(), 404)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestGetToken_AppliesReleaseMembership(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	const tokenID = uint64(42)
+	const rawCID = "eip155:1:erc721:0xabc123:1" //nolint:gosec
+	normalizedCID := domain.TokenCID(rawCID).Normalized().String()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+	mockStore.EXPECT().
+		GetTokenByTokenCID(gomock.Any(), normalizedCID).
+		Return(&schema.Token{
+			ID:       tokenID,
+			TokenCID: normalizedCID,
+		}, nil)
+	mockStore.EXPECT().
+		GetReleaseMembersByTokenIDs(gomock.Any(), []uint64{tokenID}).
+		Return(map[uint64]*schema.ReleaseMember{
+			tokenID: {
+				ReleaseID:  99,
+				TokenID:    tokenID,
+				MintNumber: 3,
+			},
+		}, nil)
+
+	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.ReleaseID)
+	require.NotNil(t, result.MintNumber)
+	assert.Equal(t, uint64(99), *result.ReleaseID)
+	assert.Equal(t, int64(3), *result.MintNumber)
+}

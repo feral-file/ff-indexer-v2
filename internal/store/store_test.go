@@ -6622,6 +6622,72 @@ func testReleaseOperations(t *testing.T, store Store) {
 	assert.Equal(t, "0x0000000000000000000000000000000000009999-1", fetched.VendorReleaseID)
 }
 
+func testListEnrichmentSourcesByVendors(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	tokenInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000008888",
+		"1000001",
+		"0xlist888800000000000000000000000000000001",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput))
+	token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	require.NoError(t, store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
+		TokenID:    token.ID,
+		Vendor:     schema.VendorArtBlocks,
+		VendorJSON: []byte(`{"project":"1"}`),
+	}))
+
+	sources, err := store.ListEnrichmentSourcesByVendors(ctx, []schema.Vendor{schema.VendorArtBlocks}, 10, 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, sources)
+
+	found := false
+	for _, source := range sources {
+		if source.TokenID == token.ID && source.Vendor == schema.VendorArtBlocks {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected artblocks enrichment source for token")
+}
+
+func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	tokenInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000007777",
+		"1000001",
+		"0xconflict000000000000000000000000000001",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput))
+	token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	release1, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-1")
+	require.NoError(t, err)
+	release2, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-2")
+	require.NoError(t, err)
+
+	require.NoError(t, store.UpsertReleaseMember(ctx, release1.ID, token.ID, 1))
+	require.NoError(t, store.UpsertReleaseMember(ctx, release2.ID, token.ID, 2))
+
+	members, err := store.GetReleaseMembersByTokenIDs(ctx, []uint64{token.ID})
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	require.NotNil(t, members[token.ID])
+	assert.Equal(t, release2.ID, members[token.ID].ReleaseID)
+	assert.Equal(t, int64(2), members[token.ID].MintNumber)
+}
+
 // RunStoreTests runs all store contract subtests against initDB.
 func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func(t *testing.T)) {
 	tests := []struct {
@@ -6639,6 +6705,8 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
 		{"ReleaseOperations", testReleaseOperations},
+		{"ListEnrichmentSourcesByVendors", testListEnrichmentSourcesByVendors},
+		{"UpsertReleaseMemberConflictUpdate", testUpsertReleaseMemberConflictUpdate},
 		{"UpsertTokenMetadata", testUpsertTokenMetadata},
 		{"GetTokenMetadataByTokenID", testGetTokenMetadataByTokenID},
 		{"GetTokenMetadataByTokenIDs", testGetTokenMetadataByTokenIDs},

@@ -133,7 +133,8 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	assert.Equal(t, schema.VendorArtBlocks, result.Vendor)
 	assert.Equal(t, vendorJSON, result.VendorJSON)
 	assert.NotNil(t, result.Name)
-	assert.Equal(t, "Fidenza #5", *result.Name)
+	// tokenID 1000005 → raw AB index 5 → 1-based mint_number 6
+	assert.Equal(t, "Fidenza #6", *result.Name)
 	assert.NotNil(t, result.Description)
 	assert.Equal(t, "A generative art project", *result.Description)
 	assert.NotNil(t, result.ImageURL)
@@ -146,7 +147,7 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	assert.NotNil(t, result.MimeType)
 	assert.NotNil(t, result.Release)
 	assert.Equal(t, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1", result.Release.VendorReleaseID)
-	assert.Equal(t, int64(5), result.Release.MintNumber)
+	assert.Equal(t, int64(6), result.Release.MintNumber)
 }
 
 func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
@@ -208,7 +209,8 @@ func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Nil(t, result.Description) // Description should be nil when not provided
-	assert.Equal(t, "Fidenza #5", *result.Name)
+	// tokenID 1000005 → raw AB index 5 → 1-based mint_number 6
+	assert.Equal(t, "Fidenza #6", *result.Name)
 }
 
 func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {

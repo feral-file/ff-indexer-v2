@@ -144,11 +144,15 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 		return nil, fmt.Errorf("art blocks enhancement requires an eip155 chain, got %q", chain)
 	}
 
-	// Parse the token ID to get project ID and mint number
+	// Parse the token ID to get project ID and mint number.
+	// ParseArtBlocksTokenID returns a 0-based mint index (tokenID % 1_000_000).
+	// The schema and API contract use 1-based numbering (matching FF convention),
+	// so we add 1 here before storing or displaying the value.
 	projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse ArtBlocks token ID: %w", err)
 	}
+	mintNumber++ // convert to 1-based
 
 	// Build the project ID string in the format: contractAddress-projectID
 	projectIDStr := fmt.Sprintf("%s-%d", strings.ToLower(contractAddress), projectID)

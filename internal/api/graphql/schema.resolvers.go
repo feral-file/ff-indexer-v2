@@ -354,7 +354,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
@@ -403,12 +403,13 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", *sortOrder))
 	}
 
-	var releaseIDPtr *int64
+	var releaseIDPtr *uint64
 	if releaseID != nil {
-		if *releaseID <= 0 {
+		// Uint64 is unsigned; zero is the only invalid value.
+		if *releaseID == 0 {
 			return nil, apierrors.NewValidationError("Invalid release_id: must be a positive integer")
 		}
-		id := int64(*releaseID)
+		id := uint64(*releaseID)
 		releaseIDPtr = &id
 	}
 
@@ -420,12 +421,13 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 }
 
 // Release is the resolver for the release field.
-func (r *queryResolver) Release(ctx context.Context, id int) (*dto.ReleaseResponse, error) {
-	if id <= 0 {
+func (r *queryResolver) Release(ctx context.Context, id Uint64) (*dto.ReleaseResponse, error) {
+	// Uint64 is unsigned, so zero is the only invalid value.
+	if id == 0 {
 		return nil, apierrors.NewValidationError("Invalid release id")
 	}
 
-	release, err := r.executor.GetRelease(ctx, int64(id))
+	release, err := r.executor.GetRelease(ctx, uint64(id))
 	if err != nil {
 		return nil, err
 	}
@@ -542,6 +544,12 @@ func (r *queryResolver) SyncCollection(ctx context.Context, address string, chec
 	return response, nil
 }
 
+// ID is the resolver for the id field.
+// ID converts the uint64 DTO field to the GraphQL Uint64 scalar.
+func (r *releaseResolver) ID(ctx context.Context, obj *dto.ReleaseResponse) (Uint64, error) {
+	return Uint64(obj.ID), nil
+}
+
 // Members is the resolver for the members field.
 func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	if obj == nil {
@@ -586,6 +594,11 @@ func (r *tokenResolver) Chain(ctx context.Context, obj *dto.TokenResponse) (stri
 // Standard is the resolver for the standard field.
 func (r *tokenResolver) Standard(ctx context.Context, obj *dto.TokenResponse) (string, error) {
 	return string(obj.Standard), nil
+}
+
+// ReleaseID is the resolver for the release_id field.
+func (r *tokenResolver) ReleaseID(ctx context.Context, obj *dto.TokenResponse) (*Uint64, error) {
+	panic(fmt.Errorf("not implemented: ReleaseID - release_id"))
 }
 
 // ID is the resolver for the id field.

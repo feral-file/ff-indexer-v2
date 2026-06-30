@@ -5,7 +5,8 @@ import "time"
 // Release represents the releases table — a cross-vendor series/project abstraction.
 type Release struct {
 	// ID is the stable internal release identifier.
-	ID int64 `gorm:"column:id;primaryKey"`
+	// uint64 matches the Token.ID convention and the BIGSERIAL column (always positive).
+	ID uint64 `gorm:"column:id;primaryKey"`
 	// Vendor identifies the source platform (artblocks, feralfile).
 	Vendor Vendor `gorm:"column:vendor;not null;type:text"`
 	// VendorReleaseID is the external release key (FF seriesID UUID or AB {contract}-{projectID}).
@@ -24,9 +25,9 @@ func (Release) TableName() string {
 // ReleaseMember represents the release_members table — a token's membership in a release.
 type ReleaseMember struct {
 	// ID is the internal row identifier.
-	ID int64 `gorm:"column:id;primaryKey"`
-	// ReleaseID references the parent release.
-	ReleaseID int64 `gorm:"column:release_id;not null"`
+	ID uint64 `gorm:"column:id;primaryKey"`
+	// ReleaseID references the parent release (uint64, consistent with Release.ID).
+	ReleaseID uint64 `gorm:"column:release_id;not null"`
 	// TokenID references the member token.
 	TokenID uint64 `gorm:"column:token_id;not null"`
 	// MintNumber is the authoritative 1-based mint/edition order within the release.

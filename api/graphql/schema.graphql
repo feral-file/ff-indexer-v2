@@ -178,7 +178,7 @@ type Token {
   burned: Boolean!
   viewable: Boolean!
   last_provenance_timestamp: Time
-  release_id: Int
+  release_id: Uint64
   mint_number: Int
   created_at: Time!
   updated_at: Time!
@@ -200,7 +200,7 @@ type TokenList {
 
 # Cross-vendor release (FF series, AB project)
 type Release {
-  id: Int!
+  id: Uint64!
   vendor: String!
   vendor_release_id: String!
   members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc): TokenList!
@@ -263,7 +263,7 @@ type Query {
     token_numbers: [String!]
     token_ids: [Uint64!]
     token_cids: [String!]
-    release_id: Int
+    release_id: Uint64
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
@@ -273,7 +273,7 @@ type Query {
 
   # Get a release by internal id with mint-ordered members
   # Equivalent to: GET /api/v1/releases/:id
-  release(id: Int!): Release
+  release(id: Uint64!): Release
 
   # Get job status by job id
   # Equivalent to: GET /api/v1/jobs/:job_id

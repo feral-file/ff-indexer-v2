@@ -132,13 +132,18 @@ func (b *Backfiller) backfillSource(ctx context.Context, source schema.Enrichmen
 }
 
 // ReleaseInfoFromArtBlocks derives AB release membership from on-chain token id encoding.
+//
+// ParseArtBlocksTokenID returns a 0-based mint index (tokenID % 1_000_000).
+// This function converts to 1-based to match the schema contract and the FF
+// vendor convention (index + 1). The first token of a project (raw index 0)
+// is therefore returned as mint_number 1.
 func ReleaseInfoFromArtBlocks(contractAddress, tokenNumber string) (string, int64, error) {
 	projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
 	if err != nil {
 		return "", 0, err
 	}
 	vendorReleaseID := fmt.Sprintf("%s-%d", strings.ToLower(contractAddress), projectID)
-	return vendorReleaseID, mintNumber, nil
+	return vendorReleaseID, mintNumber + 1, nil
 }
 
 // ReleaseInfoFromFeralFile derives FF release membership from stored vendor JSON or the FF API.
