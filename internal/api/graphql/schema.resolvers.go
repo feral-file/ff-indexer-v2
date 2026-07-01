@@ -596,9 +596,10 @@ func (r *tokenResolver) Standard(ctx context.Context, obj *dto.TokenResponse) (s
 	return string(obj.Standard), nil
 }
 
-// ReleaseID is the resolver for the release_id field.
+// ReleaseID converts the optional uint64 DTO field to the GraphQL Uint64 scalar.
+// Returns nil when the token has no release membership.
 func (r *tokenResolver) ReleaseID(ctx context.Context, obj *dto.TokenResponse) (*Uint64, error) {
-	panic(fmt.Errorf("not implemented: ReleaseID - release_id"))
+	return FromNativeUint64(obj.ReleaseID), nil
 }
 
 // ID is the resolver for the id field.

@@ -16,6 +16,7 @@ func TestGetReleaseQueryParamsValidateInvalidExpansion(t *testing.T) {
 	t.Parallel()
 
 	params := GetReleaseQueryParams{
+		Limit:      1,
 		Expansions: []types.Expansion{"invalid"},
 		SortOrder:  types.OrderAsc,
 	}
@@ -31,6 +32,7 @@ func TestGetReleaseQueryParamsValidateInvalidSortOrder(t *testing.T) {
 	t.Parallel()
 
 	params := GetReleaseQueryParams{
+		Limit:     1,
 		SortOrder: types.Order("invalid"),
 	}
 
@@ -41,7 +43,9 @@ func TestGetReleaseQueryParamsValidateInvalidSortOrder(t *testing.T) {
 	assert.Contains(t, apiErr.Details, "Invalid sort_order")
 }
 
-func TestParseGetReleaseQueryDefaultsSortOrder(t *testing.T) {
+func TestParseGetReleaseQueryInvalidSortOrderPassesThroughToValidate(t *testing.T) {
+	// ParseGetReleaseQuery does not silently rewrite unknown sort_order values;
+	// Validate() is responsible for rejecting them with a clear error.
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
@@ -51,5 +55,29 @@ func TestParseGetReleaseQueryDefaultsSortOrder(t *testing.T) {
 	params, err := ParseGetReleaseQuery(c)
 	require.NoError(t, err)
 	require.NotNil(t, params)
-	assert.Equal(t, types.OrderAsc, params.SortOrder)
+
+	// The parse step must preserve the raw (invalid) value so Validate can reject it.
+	assert.Equal(t, types.Order("invalid"), params.SortOrder)
+
+	// Validate must reject the unrecognized value.
+	validateErr := params.Validate()
+	require.Error(t, validateErr)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, validateErr, &apiErr)
+	assert.Contains(t, apiErr.Details, "Invalid sort_order")
+}
+
+func TestGetReleaseQueryParamsValidateRejectsZeroLimit(t *testing.T) {
+	t.Parallel()
+
+	params := GetReleaseQueryParams{
+		Limit:     0,
+		SortOrder: types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "Invalid limit")
 }

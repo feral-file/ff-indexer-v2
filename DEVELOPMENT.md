@@ -225,7 +225,11 @@ Fresh installs from `init_pg_db.sql` can run `017.sql` directly if there are no 
 
 Migration `018.sql` adds the cross-vendor release abstraction (`releases`, `release_members`) used for mint-ordered series/project membership. Fresh installs pick this up from `db/init_pg_db.sql` automatically.
 
-After applying migration 018 on an existing database, backfill release rows from existing enrichment data:
+### Migration 019: mint_number positive constraint
+
+Migration `019.sql` adds `CHECK (mint_number > 0)` to `release_members`, enforcing the 1-based contract at the database level. Apply this after 018 on existing databases. Fresh installs include the constraint via `db/init_pg_db.sql`.
+
+After applying migrations 018 and 019 on an existing database, backfill release rows from existing enrichment data:
 
 ```bash
 go run ./cmd/backfill-releases --config config/config.yaml
@@ -233,35 +237,28 @@ go run ./cmd/backfill-releases --config config/config.yaml
 
 Optional flags: `--batch-size 500` (default). The command is safe to re-run; release and member rows are upserted idempotently.
 
-- **If migration has NOT run:** Application will fail at runtime with PostgreSQL error:
+- **If migration 018 has NOT run:** `UpsertRelease` fails at runtime with:
   ```
   ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)
   ```
-- **If app deploys before migration:** All ownership event inserts will fail, breaking token indexing
-- **If `017.sql` runs before dedup when duplicates exist:** `CREATE UNIQUE INDEX` fails; run `017_dedup.sql` then retry `017.sql`
-- **There is NO fallback:** The application will explicitly fail to prevent data corruption
+  Token enrichment that encounters a new release will fail until the tables exist.
+- **If app deploys before migration 018:** Release upserts fail; existing tokens without release rows are unaffected until they are re-enriched.
+- **There is NO silent fallback:** The application explicitly returns errors rather than silently skipping release membership.
 
 **Migration verification:**
 
 ```bash
-# Verify migration 017 index exists
-psql -h localhost -U postgres -d ff_indexer -c "\d token_events_ownership_unique"
+# Verify releases and release_members tables exist
+psql -h localhost -U postgres -d ff_indexer -c "\d releases"
+psql -h localhost -U postgres -d ff_indexer -c "\d release_members"
 
 # Or check in SQL
-SELECT indexname, indexdef 
-FROM pg_indexes 
-WHERE tablename = 'token_events' 
-  AND indexname = 'token_events_ownership_unique';
+SELECT tablename FROM pg_tables
+WHERE schemaname = 'public' AND tablename IN ('releases', 'release_members');
 
-# Optional: confirm no duplicate ownership keys remain
-SELECT token_id, owner_address, event_type, metadata->>'tx_hash' AS tx_hash, COUNT(*) AS n
-FROM token_events
-WHERE event_type IN ('acquired', 'released')
-  AND owner_address IS NOT NULL
-  AND metadata->>'tx_hash' IS NOT NULL
-GROUP BY 1, 2, 3, 4
-HAVING COUNT(*) > 1
-LIMIT 5;
+# Optional: confirm backfill ran and populated rows
+SELECT vendor, COUNT(*) FROM releases GROUP BY vendor;
+SELECT COUNT(*) FROM release_members;
 ```
 
 **For production deployments:**

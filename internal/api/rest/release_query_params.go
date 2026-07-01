@@ -20,6 +20,11 @@ type GetReleaseQueryParams struct {
 
 // Validate validates the query parameters for GET /releases/:id
 func (p *GetReleaseQueryParams) Validate() error {
+	// Limit must be at least 1; zero would stall cursor pagination.
+	if p.Limit == 0 {
+		return apierrors.NewValidationError("Invalid limit: must be at least 1")
+	}
+
 	for _, expansion := range p.Expansions {
 		if expansion != types.ExpansionOwners &&
 			expansion != types.ExpansionOwnerProvenances &&
@@ -32,8 +37,9 @@ func (p *GetReleaseQueryParams) Validate() error {
 		}
 	}
 
+	// Reject unrecognized sort_order values rather than silently rewriting them.
 	if !p.SortOrder.Valid() {
-		return apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", p.SortOrder))
+		return apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be 'asc' or 'desc'", p.SortOrder))
 	}
 
 	return nil
@@ -48,9 +54,6 @@ func ParseGetReleaseQuery(c *gin.Context) (*GetReleaseQueryParams, error) {
 
 	if params.Limit > constants.MAX_PAGE_SIZE {
 		params.Limit = constants.MAX_PAGE_SIZE
-	}
-	if !params.SortOrder.Asc() && !params.SortOrder.Desc() {
-		params.SortOrder = types.OrderAsc
 	}
 
 	return &params, nil

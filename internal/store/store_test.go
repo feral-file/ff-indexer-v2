@@ -6688,6 +6688,38 @@ func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
 	assert.Equal(t, int64(2), members[token.ID].MintNumber)
 }
 
+// testUpsertReleaseMemberRejectsZeroMintNumber verifies the store-level guard
+// that enforces the 1-based mint_number contract before the DB CHECK constraint fires.
+func testUpsertReleaseMemberRejectsZeroMintNumber(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000008888-0")
+	require.NoError(t, err)
+
+	// mint_number 0 is invalid (1-based contract).
+	err = store.UpsertReleaseMember(ctx, release.ID, 1, 0)
+	require.Error(t, err, "UpsertReleaseMember must reject mint_number=0")
+
+	// mint_number -1 is also invalid.
+	err = store.UpsertReleaseMember(ctx, release.ID, 1, -1)
+	require.Error(t, err, "UpsertReleaseMember must reject negative mint_number")
+
+	// mint_number 1 (first valid value) must succeed.
+	tokenInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000008888",
+		"1",
+		"0xmintnum000000000000000000000000000001",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput))
+	token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	require.NoError(t, store.UpsertReleaseMember(ctx, release.ID, token.ID, 1))
+}
+
 // RunStoreTests runs all store contract subtests against initDB.
 func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func(t *testing.T)) {
 	tests := []struct {
@@ -6707,6 +6739,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"ReleaseOperations", testReleaseOperations},
 		{"ListEnrichmentSourcesByVendors", testListEnrichmentSourcesByVendors},
 		{"UpsertReleaseMemberConflictUpdate", testUpsertReleaseMemberConflictUpdate},
+		{"UpsertReleaseMemberRejectsZeroMintNumber", testUpsertReleaseMemberRejectsZeroMintNumber},
 		{"UpsertTokenMetadata", testUpsertTokenMetadata},
 		{"GetTokenMetadataByTokenID", testGetTokenMetadataByTokenID},
 		{"GetTokenMetadataByTokenIDs", testGetTokenMetadataByTokenIDs},

@@ -101,7 +101,7 @@ CREATE TABLE release_members (
     id BIGSERIAL PRIMARY KEY,
     release_id BIGINT NOT NULL REFERENCES releases (id) ON DELETE CASCADE,
     token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    mint_number BIGINT NOT NULL,
+    mint_number BIGINT NOT NULL CHECK (mint_number > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (release_id, token_id),
     UNIQUE (release_id, mint_number),

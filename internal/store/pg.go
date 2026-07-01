@@ -1172,7 +1172,12 @@ func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendo
 
 // UpsertReleaseMember associates a token with a release at the given mint number.
 // Each token belongs to at most one release; conflicts on token_id update release_id and mint_number.
+// mintNumber must be > 0 (1-based, mirroring the DB CHECK constraint and API contract).
 func (s *pgStore) UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error {
+	if mintNumber <= 0 {
+		return fmt.Errorf("invalid mint_number %d: must be >= 1 (1-based)", mintNumber)
+	}
+
 	member := schema.ReleaseMember{
 		ReleaseID:  releaseID,
 		TokenID:    tokenID,
