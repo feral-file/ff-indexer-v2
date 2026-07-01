@@ -239,15 +239,15 @@ go run ./cmd/backfill-releases --config config/config.yaml
 
 Optional flags: `--batch-size 500` (default). The command is safe to re-run; release and member rows are upserted idempotently.
 
-- **If migration 018 has NOT run (tables missing):** The first call to `UpsertRelease` fails with:
+- **If migration 018 has NOT run (tables missing):** Every token read (`GET /tokens`, `GET /tokens/:cid`, GraphQL token queries) fails because the app unconditionally queries `release_members` to populate `release_id` and `mint_number`. The error you will see on each call is:
   ```
-  ERROR: relation "releases" does not exist (SQLSTATE 42P01)
+  ERROR: relation "release_members" does not exist (SQLSTATE 42P01)
   ```
+  Migration 018 must run **before** deploying this app version, not only before backfill or re-enrichment. This is not limited to release write paths.
 - **If migration 018 ran partially (tables exist but constraint missing):** `UpsertRelease` fails with:
   ```
   ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)
   ```
-- **If app deploys before migration 018:** Release upserts fail; existing tokens without release rows are unaffected until they are re-enriched.
 - **There is NO silent fallback:** The application explicitly returns errors rather than silently skipping release membership.
 
 **Migration verification:**
