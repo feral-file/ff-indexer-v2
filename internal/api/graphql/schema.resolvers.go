@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
+	"go.uber.org/zap"
+
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
@@ -21,7 +23,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
-	"go.uber.org/zap"
 )
 
 // TokenID is the resolver for the token_id field.
