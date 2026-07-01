@@ -39,9 +39,13 @@ func NewBackfiller(store store.Store, feralfileClient feralfile.Client, json ada
 	}
 }
 
+// ffVendorArtwork is the minimal shape needed to derive release identity and mint order
+// from stored Feral File enrichment JSON. Index is a pointer so that omitted JSON keys
+// can be distinguished from an explicit zero value — both seriesID and index must be
+// present to use stored JSON; otherwise the backfill falls through to GetArtwork.
 type ffVendorArtwork struct {
 	SeriesID string `json:"seriesID"`
-	Index    int64  `json:"index"`
+	Index    *int64 `json:"index"`
 	Series   struct {
 		ID string `json:"ID"`
 	} `json:"series"`
@@ -179,8 +183,13 @@ func (b *Backfiller) feralFileReleaseInfo(ctx context.Context, source schema.Enr
 			if seriesID == "" {
 				seriesID = artwork.Series.ID
 			}
-			if seriesID != "" {
-				return seriesID, artwork.Index + 1, MetadataFromFeralFileVendorJSON(source.VendorJSON, b.json), nil
+			// Require both seriesID and index to be present in stored JSON.
+			// When index is absent Go leaves the pointer nil, so artwork.Index == 0
+			// cannot be distinguished from a missing field; falling through to
+			// GetArtwork avoids writing mint_number=1 for a token that may be at
+			// a different position in the release.
+			if seriesID != "" && artwork.Index != nil {
+				return seriesID, *artwork.Index + 1, MetadataFromFeralFileVendorJSON(source.VendorJSON, b.json), nil
 			}
 		}
 	}

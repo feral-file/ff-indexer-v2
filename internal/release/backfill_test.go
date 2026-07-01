@@ -91,6 +91,39 @@ func TestBackfillerReleaseInfoFromFeralFileUsesVendorJSON(t *testing.T) {
 	assert.Equal(t, int64(5), mintNumber)
 }
 
+// TestBackfillerReleaseInfoFromFeralFileFallsBackWhenIndexMissing verifies that stored
+// FF vendor JSON containing a seriesID but no "index" key causes the backfiller to fall
+// through to GetArtwork rather than treating the absent value as index=0 and writing
+// mint_number=1, which would violate the UNIQUE (release_id, mint_number) constraint
+// for any later token in the same release that legitimately holds mint_number 1.
+func TestBackfillerReleaseInfoFromFeralFileFallsBackWhenIndexMissing(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	jsonAdapter := adapter.NewJSON()
+	ffClient := mocks.NewMockFeralFileClient(ctrl)
+
+	backfiller := release.NewBackfiller(nil, ffClient, jsonAdapter, 100)
+
+	// JSON has seriesID but no "index" field — must not use stored JSON for mint number.
+	source := schema.EnrichmentSource{
+		VendorJSON: []byte(`{"seriesID":"series-uuid"}`),
+	}
+
+	// GetArtwork must be called because stored JSON is incomplete.
+	ffClient.EXPECT().GetArtwork(gomock.Any(), "123").Return(&feralfile.Artwork{
+		SeriesID: "series-uuid",
+		Index:    7,
+	}, nil)
+
+	vendorReleaseID, mintNumber, err := backfiller.ReleaseInfoFromFeralFile(context.Background(), source, "123")
+	require.NoError(t, err)
+	assert.Equal(t, "series-uuid", vendorReleaseID)
+	assert.Equal(t, int64(8), mintNumber) // 7 + 1 = 1-based
+}
+
 func TestBackfillerReleaseInfoFromFeralFileFetchesAPIWhenMissingSeriesID(t *testing.T) {
 	t.Parallel()
 
