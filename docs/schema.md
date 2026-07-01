@@ -347,7 +347,7 @@ Ordered token membership within a release. Each token belongs to at most one rel
 | id | BIGSERIAL | Internal row identifier (primary key) |
 | release_id | BIGINT | Foreign key to `releases.id` (CASCADE delete) |
 | token_id | BIGINT | Foreign key to `tokens.id` (CASCADE delete) |
-| mint_number | BIGINT | Authoritative 1-based mint/edition order within the release |
+| mint_number | BIGINT | Authoritative 1-based mint/edition order within the release (`CHECK (mint_number > 0)`) |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 
 **Unique Constraints**:
@@ -685,7 +685,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 
 Migrations should be placed in `db/migrations/` directory with sequential numbering:
 - `001.sql` - Historical: introduced `token_ownership_periods` (removed in `015.sql`).
-- `018.sql` - Adds `releases` and `release_members` tables for cross-vendor release abstraction with mint-ordered members, plus the `update_releases_updated_at` trigger.
+- `018.sql` - Adds `releases` and `release_members` tables for cross-vendor release abstraction with mint-ordered members (including `CHECK (mint_number > 0)`), plus the `update_releases_updated_at` trigger.
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data

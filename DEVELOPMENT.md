@@ -223,13 +223,9 @@ Fresh installs from `init_pg_db.sql` can run `017.sql` directly if there are no 
 
 ### Migration 018: releases and release_members
 
-Migration `018.sql` adds the cross-vendor release abstraction (`releases`, `release_members`) used for mint-ordered series/project membership. Fresh installs pick this up from `db/init_pg_db.sql` automatically.
+Migration `018.sql` adds the cross-vendor release abstraction (`releases`, `release_members`) used for mint-ordered series/project membership. The `release_members.mint_number` column includes `CHECK (mint_number > 0)` to enforce the 1-based contract at the database level. Fresh installs pick this up from `db/init_pg_db.sql` automatically.
 
-### Migration 019: mint_number positive constraint
-
-Migration `019.sql` adds `CHECK (mint_number > 0)` to `release_members`, enforcing the 1-based contract at the database level. Apply this after 018 on existing databases. Fresh installs include the constraint via `db/init_pg_db.sql`.
-
-After applying migrations 018 and 019 on an existing database, backfill release rows from existing enrichment data:
+After applying migration 018 on an existing database, backfill release rows from existing enrichment data:
 
 ```bash
 go run ./cmd/backfill-releases --config config/config.yaml
