@@ -549,9 +549,11 @@ paths:
         - name: id
           in: path
           required: true
+          description: Internal release id (positive integer)
           schema:
             type: integer
             format: int64
+            minimum: 1
           example: 42
         - name: limit
           in: query
@@ -594,8 +596,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
-        '400':
-          description: Invalid request
+        '422':
+          description: Validation error - Invalid release id or query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
           content:
             application/json:
               schema:
