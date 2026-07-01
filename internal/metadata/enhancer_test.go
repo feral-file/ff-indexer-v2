@@ -133,8 +133,9 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	assert.Equal(t, schema.VendorArtBlocks, result.Vendor)
 	assert.Equal(t, vendorJSON, result.VendorJSON)
 	assert.NotNil(t, result.Name)
-	// tokenID 1000005 → raw AB index 5 → 1-based mint_number 6
-	assert.Equal(t, "Fidenza #6", *result.Name)
+	// tokenID 1000005 → raw AB index 5 → canonical display name uses 0-based index "Fidenza #5"
+	// release MintNumber is 1-based so it is stored as 6 (raw 5 + 1).
+	assert.Equal(t, "Fidenza #5", *result.Name)
 	assert.NotNil(t, result.Description)
 	assert.Equal(t, "A generative art project", *result.Description)
 	assert.NotNil(t, result.ImageURL)
@@ -146,7 +147,8 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	assert.NotEmpty(t, result.Artists[0].DID)
 	assert.NotNil(t, result.MimeType)
 	assert.NotNil(t, result.Release)
-	assert.Equal(t, "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1", result.Release.VendorReleaseID)
+	// vendor_release_id is chain-qualified: "{chainID}-{contract}-{projectID}"
+	assert.Equal(t, "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1", result.Release.VendorReleaseID)
 	assert.Equal(t, int64(6), result.Release.MintNumber)
 }
 
@@ -209,8 +211,8 @@ func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Nil(t, result.Description) // Description should be nil when not provided
-	// tokenID 1000005 → raw AB index 5 → 1-based mint_number 6
-	assert.Equal(t, "Fidenza #6", *result.Name)
+	// tokenID 1000005 → raw AB index 5 → canonical 0-based display name "Fidenza #5"
+	assert.Equal(t, "Fidenza #5", *result.Name)
 }
 
 func TestEnhancer_Enhance_ArtBlocks_NoArtistAddress(t *testing.T) {

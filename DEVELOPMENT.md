@@ -199,7 +199,13 @@ Unlike most migrations, **you MUST pause or stop write traffic** before running 
 1. **STOP write traffic** (pause indexer workers, drain queues, or use maintenance mode)
 2. Run `017_dedup.sql` if `token_events` is large or has known duplicates
 3. Run `017.sql` immediately after dedup completes
-4. Verify index exists (see verification commands below)
+4. Verify the index exists:
+   ```bash
+   psql -h localhost -U postgres -d ff_indexer -c "\d token_events_ownership_unique"
+   # Or in SQL:
+   SELECT indexname, indexdef FROM pg_indexes
+   WHERE tablename = 'token_events' AND indexname = 'token_events_ownership_unique';
+   ```
 5. Deploy new application version
 6. **RESUME write traffic**
 
@@ -233,11 +239,14 @@ go run ./cmd/backfill-releases --config config/config.yaml
 
 Optional flags: `--batch-size 500` (default). The command is safe to re-run; release and member rows are upserted idempotently.
 
-- **If migration 018 has NOT run:** `UpsertRelease` fails at runtime with:
+- **If migration 018 has NOT run (tables missing):** The first call to `UpsertRelease` fails with:
+  ```
+  ERROR: relation "releases" does not exist (SQLSTATE 42P01)
+  ```
+- **If migration 018 ran partially (tables exist but constraint missing):** `UpsertRelease` fails with:
   ```
   ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)
   ```
-  Token enrichment that encounters a new release will fail until the tables exist.
 - **If app deploys before migration 018:** Release upserts fail; existing tokens without release rows are unaffected until they are re-enriched.
 - **There is NO silent fallback:** The application explicitly returns errors rather than silently skipping release membership.
 

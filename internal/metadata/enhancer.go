@@ -146,19 +146,23 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 
 	// Parse the token ID to get project ID and mint number.
 	// ParseArtBlocksTokenID returns a 0-based mint index (tokenID % 1_000_000).
-	// The schema and API contract use 1-based numbering (matching FF convention),
-	// so we add 1 here before storing or displaying the value.
-	projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
+	// rawMintIndex is used for the canonical Art Blocks display name (0-based: "Fidenza #0" is
+	// the first minted piece). releaseMintNumber is the 1-based index stored in release_members
+	// to match the FF convention and the schema's mint_number > 0 constraint.
+	projectID, rawMintIndex, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse ArtBlocks token ID: %w", err)
 	}
-	mintNumber++ // convert to 1-based
+	releaseMintNumber := rawMintIndex + 1
 
-	// Build the project ID string in the format: contractAddress-projectID
-	projectIDStr := fmt.Sprintf("%s-%d", strings.ToLower(contractAddress), projectID)
+	// Build the vendor_release_id as "{chainID}-{contractAddress}-{projectID}" so that
+	// the same contract/project on different EVM chains (e.g. mainnet vs L2) maps to
+	// distinct release rows and does not collide on the UNIQUE (vendor, vendor_release_id)
+	// constraint.
+	projectIDStr := fmt.Sprintf("%d-%s-%d", evmChainID, strings.ToLower(contractAddress), projectID)
 
 	// Fetch project metadata from ArtBlocks API (composite key: chain_id + id)
-	project, err := e.artblocksClient.GetProjectMetadata(ctx, evmChainID, projectIDStr)
+	project, err := e.artblocksClient.GetProjectMetadata(ctx, evmChainID, fmt.Sprintf("%s-%d", strings.ToLower(contractAddress), projectID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch ArtBlocks project metadata: %w", err)
 	}
@@ -169,7 +173,8 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 		zap.Int("chainID", evmChainID),
 		zap.String("projectID", projectIDStr),
 		zap.String("projectName", project.Name),
-		zap.Int64("mintNumber", mintNumber))
+		zap.Int64("rawMintIndex", rawMintIndex),
+		zap.Int64("releaseMintNumber", releaseMintNumber))
 
 	vendorJSON, err := e.json.Marshal(project)
 	if err != nil {
@@ -182,8 +187,10 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 		VendorJSON: vendorJSON,
 	}
 
-	// Format the name as "{project.name} #{mintNumber}"
-	name := fmt.Sprintf("%s #%d", project.Name, mintNumber)
+	// Format the canonical Art Blocks display name as "{project.name} #{rawMintIndex}".
+	// AB uses 0-based display numbering: the first minted token is #0.
+	// releaseMintNumber (1-based) is only used for release_members ordering below.
+	name := fmt.Sprintf("%s #%d", project.Name, rawMintIndex)
 	enhanced.Name = &name
 
 	// Use project description if available
@@ -214,7 +221,7 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 
 	enhanced.Release = &ReleaseInfo{
 		VendorReleaseID: projectIDStr,
-		MintNumber:      mintNumber,
+		MintNumber:      releaseMintNumber,
 	}
 
 	return enhanced, nil

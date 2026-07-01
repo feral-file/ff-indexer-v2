@@ -556,6 +556,13 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 		return nil, apierrors.NewValidationError("Release is required")
 	}
 
+	// Reject an explicit limit of 0: the executor fetches limit+1, trims to 0 items,
+	// and sets next_offset = offset + 0, which traps offset-based clients in a loop.
+	// This mirrors the minimum: 1 contract enforced by the REST endpoint.
+	if limit != nil && *limit == 0 {
+		return nil, apierrors.NewValidationError("Invalid limit: must be at least 1")
+	}
+
 	if sortOrder != nil && !sortOrder.Valid() {
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", *sortOrder))
 	}

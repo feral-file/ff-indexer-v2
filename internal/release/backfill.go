@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
@@ -108,7 +109,7 @@ func (b *Backfiller) backfillSource(ctx context.Context, source schema.Enrichmen
 
 	switch source.Vendor {
 	case schema.VendorArtBlocks:
-		vendorReleaseID, mintNumber, err = ReleaseInfoFromArtBlocks(token.ContractAddress, token.TokenNumber)
+		vendorReleaseID, mintNumber, err = ReleaseInfoFromArtBlocks(token.Chain, token.ContractAddress, token.TokenNumber)
 	case schema.VendorFeralFile:
 		vendorReleaseID, mintNumber, err = b.ReleaseInfoFromFeralFile(ctx, source, token.TokenNumber)
 	default:
@@ -131,19 +132,26 @@ func (b *Backfiller) backfillSource(ctx context.Context, source schema.Enrichmen
 	return nil
 }
 
-// ReleaseInfoFromArtBlocks derives AB release membership from on-chain token id encoding.
+// ReleaseInfoFromArtBlocks derives AB release membership from the on-chain token ID encoding.
 //
 // ParseArtBlocksTokenID returns a 0-based mint index (tokenID % 1_000_000).
-// This function converts to 1-based to match the schema contract and the FF
-// vendor convention (index + 1). The first token of a project (raw index 0)
-// is therefore returned as mint_number 1.
-func ReleaseInfoFromArtBlocks(contractAddress, tokenNumber string) (string, int64, error) {
-	projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
+// The returned mintNumber is 1-based to match the schema contract and FF convention
+// (first token of a project is mint_number 1, not 0).
+//
+// The vendor_release_id includes the EIP-155 chain ID so that the same contract/project
+// on different EVM chains (e.g. mainnet vs L2) produces distinct release rows and does
+// not collide on the UNIQUE (vendor, vendor_release_id) constraint.
+func ReleaseInfoFromArtBlocks(chain domain.Chain, contractAddress, tokenNumber string) (string, int64, error) {
+	evmChainID, ok := chain.EIP155NumericID()
+	if !ok {
+		return "", 0, fmt.Errorf("art blocks release requires an eip155 chain, got %q", chain)
+	}
+	projectID, rawMintIndex, err := artblocks.ParseArtBlocksTokenID(tokenNumber)
 	if err != nil {
 		return "", 0, err
 	}
-	vendorReleaseID := fmt.Sprintf("%s-%d", strings.ToLower(contractAddress), projectID)
-	return vendorReleaseID, mintNumber + 1, nil
+	vendorReleaseID := fmt.Sprintf("%d-%s-%d", evmChainID, strings.ToLower(contractAddress), projectID)
+	return vendorReleaseID, rawMintIndex + 1, nil
 }
 
 // ReleaseInfoFromFeralFile derives FF release membership from stored vendor JSON or the FF API.

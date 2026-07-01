@@ -324,7 +324,7 @@ Cross-vendor release abstraction that gives Feral File series and Art Blocks pro
 |--------|------|-------------|
 | id | BIGSERIAL | Stable internal release identifier (primary key) |
 | vendor | vendor_type | Source platform (`artblocks`, `feralfile`) |
-| vendor_release_id | TEXT | External release key: FF seriesID UUID or AB `{contract}-{projectID}` |
+| vendor_release_id | TEXT | External release key: FF seriesID UUID or AB `{chainID}-{contract}-{projectID}` (chain-qualified to prevent cross-chain collisions) |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp (bumped on every upsert via trigger) |
 
