@@ -106,12 +106,16 @@ func (b *Backfiller) backfillSource(ctx context.Context, source schema.Enrichmen
 
 	var vendorReleaseID string
 	var mintNumber int64
+	var releaseMeta *Metadata
 
 	switch source.Vendor {
 	case schema.VendorArtBlocks:
 		vendorReleaseID, mintNumber, err = ReleaseInfoFromArtBlocks(token.Chain, token.ContractAddress, token.TokenNumber)
+		if err == nil {
+			releaseMeta = MetadataFromArtBlocksVendorJSON(source.VendorJSON, b.json)
+		}
 	case schema.VendorFeralFile:
-		vendorReleaseID, mintNumber, err = b.ReleaseInfoFromFeralFile(ctx, source, token.TokenNumber)
+		vendorReleaseID, mintNumber, releaseMeta, err = b.feralFileReleaseInfo(ctx, source, token.TokenNumber)
 	default:
 		return nil
 	}
@@ -122,7 +126,14 @@ func (b *Backfiller) backfillSource(ctx context.Context, source schema.Enrichmen
 		return fmt.Errorf("missing vendor release id")
 	}
 
-	release, err := b.store.UpsertRelease(ctx, source.Vendor, vendorReleaseID)
+	var name *string
+	var totalMints *int64
+	if releaseMeta != nil {
+		name = releaseMeta.Name
+		totalMints = releaseMeta.TotalMints
+	}
+
+	release, err := b.store.UpsertRelease(ctx, source.Vendor, vendorReleaseID, name, totalMints)
 	if err != nil {
 		return fmt.Errorf("upsert release: %w", err)
 	}
@@ -156,6 +167,11 @@ func ReleaseInfoFromArtBlocks(chain domain.Chain, contractAddress, tokenNumber s
 
 // ReleaseInfoFromFeralFile derives FF release membership from stored vendor JSON or the FF API.
 func (b *Backfiller) ReleaseInfoFromFeralFile(ctx context.Context, source schema.EnrichmentSource, tokenNumber string) (string, int64, error) {
+	vendorReleaseID, mintNumber, _, err := b.feralFileReleaseInfo(ctx, source, tokenNumber)
+	return vendorReleaseID, mintNumber, err
+}
+
+func (b *Backfiller) feralFileReleaseInfo(ctx context.Context, source schema.EnrichmentSource, tokenNumber string) (string, int64, *Metadata, error) {
 	if len(source.VendorJSON) > 0 {
 		var artwork ffVendorArtwork
 		if err := b.json.Unmarshal(source.VendorJSON, &artwork); err == nil {
@@ -164,18 +180,18 @@ func (b *Backfiller) ReleaseInfoFromFeralFile(ctx context.Context, source schema
 				seriesID = artwork.Series.ID
 			}
 			if seriesID != "" {
-				return seriesID, artwork.Index + 1, nil
+				return seriesID, artwork.Index + 1, MetadataFromFeralFileVendorJSON(source.VendorJSON, b.json), nil
 			}
 		}
 	}
 
 	artwork, err := b.feralfileClient.GetArtwork(ctx, tokenNumber)
 	if err != nil {
-		return "", 0, fmt.Errorf("fetch feral file artwork: %w", err)
+		return "", 0, nil, fmt.Errorf("fetch feral file artwork: %w", err)
 	}
 	seriesID := artwork.SeriesIDOrFallback()
 	if seriesID == "" {
-		return "", 0, fmt.Errorf("missing series id")
+		return "", 0, nil, fmt.Errorf("missing series id")
 	}
-	return seriesID, artwork.Index + 1, nil
+	return seriesID, artwork.Index + 1, MetadataFromFeralFileArtwork(artwork), nil
 }

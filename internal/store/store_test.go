@@ -6588,7 +6588,7 @@ func testReleaseOperations(t *testing.T, store Store) {
 	require.NoError(t, err)
 	require.NotNil(t, token2)
 
-	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000009999-1")
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000009999-1", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, release)
 	require.NotZero(t, release.ID)
@@ -6620,6 +6620,49 @@ func testReleaseOperations(t *testing.T, store Store) {
 	require.NotNil(t, fetched)
 	assert.Equal(t, schema.VendorArtBlocks, fetched.Vendor)
 	assert.Equal(t, "0x0000000000000000000000000000000000009999-1", fetched.VendorReleaseID)
+}
+
+func testUpsertReleaseMetadata(t *testing.T, store Store) {
+	ctx := context.Background()
+	vendorReleaseID := "0x000000000000000000000000000000000000aaaa-metadata"
+
+	name := "Fidenza by Tyler Hobbs"
+	totalMints := int64(999)
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &name, &totalMints)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.NotZero(t, release.ID)
+
+	fetched, err := store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	require.NotNil(t, fetched.Name)
+	assert.Equal(t, name, *fetched.Name)
+	require.NotNil(t, fetched.TotalMints)
+	assert.Equal(t, totalMints, *fetched.TotalMints)
+
+	updatedName := "Fidenza (updated)"
+	updatedTotal := int64(1000)
+	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &updatedName, &updatedTotal)
+	require.NoError(t, err)
+
+	fetched, err = store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched.Name)
+	assert.Equal(t, updatedName, *fetched.Name)
+	require.NotNil(t, fetched.TotalMints)
+	assert.Equal(t, updatedTotal, *fetched.TotalMints)
+
+	// Nil metadata on conflict must not clear existing name/total_mints.
+	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, nil, nil)
+	require.NoError(t, err)
+
+	fetched, err = store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched.Name)
+	assert.Equal(t, updatedName, *fetched.Name)
+	require.NotNil(t, fetched.TotalMints)
+	assert.Equal(t, updatedTotal, *fetched.TotalMints)
 }
 
 func testListEnrichmentSourcesByVendors(t *testing.T, store Store) {
@@ -6672,9 +6715,9 @@ func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
 	require.NoError(t, err)
 	require.NotNil(t, token)
 
-	release1, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-1")
+	release1, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-1", nil, nil)
 	require.NoError(t, err)
-	release2, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-2")
+	release2, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-2", nil, nil)
 	require.NoError(t, err)
 
 	require.NoError(t, store.UpsertReleaseMember(ctx, release1.ID, token.ID, 1))
@@ -6693,7 +6736,7 @@ func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
 func testUpsertReleaseMemberRejectsZeroMintNumber(t *testing.T, store Store) {
 	ctx := context.Background()
 
-	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000008888-0")
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000008888-0", nil, nil)
 	require.NoError(t, err)
 
 	// mint_number 0 is invalid (1-based contract).
@@ -6737,6 +6780,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
 		{"ReleaseOperations", testReleaseOperations},
+		{"UpsertReleaseMetadata", testUpsertReleaseMetadata},
 		{"ListEnrichmentSourcesByVendors", testListEnrichmentSourcesByVendors},
 		{"UpsertReleaseMemberConflictUpdate", testUpsertReleaseMemberConflictUpdate},
 		{"UpsertReleaseMemberRejectsZeroMintNumber", testUpsertReleaseMemberRejectsZeroMintNumber},

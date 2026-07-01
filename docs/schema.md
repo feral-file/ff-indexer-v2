@@ -325,6 +325,8 @@ Cross-vendor release abstraction that gives Feral File series and Art Blocks pro
 | id | BIGSERIAL | Stable internal release identifier (primary key) |
 | vendor | vendor_type | Source platform (`artblocks`, `feralfile`) |
 | vendor_release_id | TEXT | External release key: FF seriesID UUID or AB `{chainID}-{contract}-{projectID}` (chain-qualified to prevent cross-chain collisions) |
+| name | TEXT | Human-readable release title (e.g. "Fidenza by Tyler Hobbs"); populated from vendor enrichment |
+| total_mints | BIGINT | Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork); nullable when unknown |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp (bumped on every upsert via trigger) |
 
@@ -334,7 +336,7 @@ Cross-vendor release abstraction that gives Feral File series and Art Blocks pro
 **Triggers**:
 - `update_releases_updated_at` — automatically bumps `updated_at` on row update
 
-**Note**: `UpsertRelease` uses `INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now() RETURNING id` to be safe under concurrent token workers. `release_members` has no `updated_at`; membership rows are immutable once written (overwritten in full by the ON CONFLICT path on `token_id`).
+**Note**: `UpsertRelease` uses `INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()` (and `name`/`total_mints` when provided) RETURNING id to be safe under concurrent token workers. `release_members` has no `updated_at`; membership rows are immutable once written (overwritten in full by the ON CONFLICT path on `token_id`).
 
 ---
 

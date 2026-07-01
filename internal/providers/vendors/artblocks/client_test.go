@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -55,10 +56,11 @@ func TestClient_GetProjectMetadata_Success(t *testing.T) {
 			ProjectsMetadata *artblocks.ProjectMetadata `json:"projects_metadata_by_pk"`
 		}{
 			ProjectsMetadata: &artblocks.ProjectMetadata{
-				Name:          "Test Project",
-				ArtistName:    "Test Artist",
-				ArtistAddress: "0x1234567890123456789012345678901234567890",
-				Description:   &description,
+				Name:           "Test Project",
+				ArtistName:     "Test Artist",
+				ArtistAddress:  "0x1234567890123456789012345678901234567890",
+				Description:    &description,
+				MaxInvocations: 999,
 			},
 		},
 	}
@@ -80,6 +82,78 @@ func TestClient_GetProjectMetadata_Success(t *testing.T) {
 	assert.Equal(t, "0x1234567890123456789012345678901234567890", metadata.ArtistAddress)
 	assert.NotNil(t, metadata.Description)
 	assert.Equal(t, description, *metadata.Description)
+	assert.Equal(t, 999, metadata.MaxInvocations)
+}
+
+// TestClient_GetProjectMetadata_ParsesMaxInvocations verifies max_invocations is unmarshaled
+// from the GraphQL response (regression guard for release total_mints sourcing).
+func TestClient_GetProjectMetadata_ParsesMaxInvocations(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := artblocks.NewClient(mockHTTPClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
+
+	ctx := context.Background()
+	projectID := "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78"
+
+	mockHTTPClient.EXPECT().
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
+			return []byte(`{
+				"data": {
+					"projects_metadata_by_pk": {
+						"name": "Fidenza",
+						"artist_name": "Tyler Hobbs",
+						"artist_address": "0x1234567890123456789012345678901234567890",
+						"description": "Generative art",
+						"max_invocations": 999
+					}
+				}
+			}`), nil
+		}).
+		Times(1)
+
+	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
+
+	require.NoError(t, err)
+	require.NotNil(t, metadata)
+	assert.Equal(t, "Fidenza", metadata.Name)
+	assert.Equal(t, 999, metadata.MaxInvocations)
+}
+
+// TestClient_GetProjectMetadata_GraphQLQueryIncludesMaxInvocations verifies the outbound
+// GraphQL query requests max_invocations so the field is not dropped at request time.
+func TestClient_GetProjectMetadata_GraphQLQueryIncludesMaxInvocations(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := artblocks.NewClient(mockHTTPClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
+
+	ctx := context.Background()
+
+	mockHTTPClient.EXPECT().
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
+			reader, ok := body.(io.Reader)
+			require.True(t, ok, "PostBytes body must be an io.Reader")
+
+			payload, err := io.ReadAll(reader)
+			require.NoError(t, err)
+
+			var request artblocks.GraphQLRequest
+			require.NoError(t, json.Unmarshal(payload, &request))
+			assert.Contains(t, request.Query, "max_invocations")
+
+			return []byte(`{"data":{"projects_metadata_by_pk":{"name":"P","artist_name":"A","artist_address":"0x1","max_invocations":1}}}`), nil
+		}).
+		Times(1)
+
+	_, err := client.GetProjectMetadata(ctx, 1, "1")
+	require.NoError(t, err)
 }
 
 // TestClient_GetProjectMetadata_HTTPError tests error handling when HTTP client returns an error

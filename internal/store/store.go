@@ -323,7 +323,8 @@ type Store interface {
 	// =============================================================================
 
 	// UpsertRelease creates or returns an existing release for a vendor release id.
-	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string) (*schema.Release, error)
+	// When name or totalMints are provided, they are written on insert and updated on conflict.
+	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error)
 	// UpsertReleaseMember associates a token with a release at the given mint number.
 	UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error
 	// GetReleaseByID retrieves a release by internal id.

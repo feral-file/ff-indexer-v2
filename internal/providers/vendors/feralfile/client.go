@@ -59,11 +59,17 @@ func (a *Artwork) CanonicalName() string {
 
 // Series represents a series (collection) in Feral File
 type Series struct {
-	ID          string `json:"ID"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Medium      string `json:"medium"`
-	Artist      Artist `json:"artist"`
+	ID          string         `json:"ID"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	Medium      string         `json:"medium"`
+	Settings    SeriesSettings `json:"settings"`
+	Artist      Artist         `json:"artist"`
+}
+
+// SeriesSettings holds edition-size settings for a FF series.
+type SeriesSettings struct {
+	MaxArtwork int64 `json:"maxArtwork"`
 }
 
 // Artist represents an artist in Feral File

@@ -282,6 +282,10 @@ models:
         fieldName: Vendor
       vendor_release_id:
         fieldName: VendorReleaseID
+      name:
+        fieldName: Name
+      total_mints:
+        fieldName: TotalMints
       members:
         resolver: true
 

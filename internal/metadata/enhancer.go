@@ -17,6 +17,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
+	"github.com/feral-file/ff-indexer-v2/internal/release"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -26,6 +27,8 @@ import (
 type ReleaseInfo struct {
 	VendorReleaseID string
 	MintNumber      int64
+	Name            *string
+	TotalMints      *int64
 }
 
 // EnhancedMetadata represents metadata enhanced from vendor APIs
@@ -219,9 +222,14 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 		enhanced.ImageURL = &i
 	}
 
+	releaseMeta := release.MetadataFromArtBlocksProject(project.Name, project.ArtistName, project.MaxInvocations)
 	enhanced.Release = &ReleaseInfo{
 		VendorReleaseID: projectIDStr,
 		MintNumber:      releaseMintNumber,
+	}
+	if releaseMeta != nil {
+		enhanced.Release.Name = releaseMeta.Name
+		enhanced.Release.TotalMints = releaseMeta.TotalMints
 	}
 
 	return enhanced, nil
@@ -313,9 +321,14 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, chain domain.Chain, con
 	}
 
 	if seriesID := artwork.SeriesIDOrFallback(); seriesID != "" {
+		releaseMeta := release.MetadataFromFeralFileArtwork(artwork)
 		enhanced.Release = &ReleaseInfo{
 			VendorReleaseID: seriesID,
 			MintNumber:      artwork.Index + 1,
+		}
+		if releaseMeta != nil {
+			enhanced.Release.Name = releaseMeta.Name
+			enhanced.Release.TotalMints = releaseMeta.TotalMints
 		}
 	}
 

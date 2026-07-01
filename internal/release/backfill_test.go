@@ -147,7 +147,7 @@ func TestBackfillerRunSuccess(t *testing.T) {
 		}, nil)
 	// vendor_release_id is chain-qualified: "{chainID}-{contract}-{projectID}"
 	mockStore.EXPECT().
-		UpsertRelease(ctx, schema.VendorArtBlocks, "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
+		UpsertRelease(ctx, schema.VendorArtBlocks, "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1", gomock.Any(), gomock.Any()).
 		Return(&schema.Release{ID: 42}, nil)
 	// tokenID 1000005 → raw AB index 5 → 1-based mint_number 6
 	mockStore.EXPECT().
@@ -188,7 +188,7 @@ func TestBackfillerRunPartialFailure(t *testing.T) {
 		}, nil)
 	// vendor_release_id is chain-qualified: "{chainID}-{contract}-{projectID}"
 	mockStore.EXPECT().
-		UpsertRelease(ctx, schema.VendorArtBlocks, "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1").
+		UpsertRelease(ctx, schema.VendorArtBlocks, "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1", gomock.Any(), gomock.Any()).
 		Return(&schema.Release{ID: 42}, nil)
 	// tokenID 1000005 → raw AB index 5 → 1-based mint_number 6
 	mockStore.EXPECT().

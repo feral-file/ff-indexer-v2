@@ -1461,6 +1461,8 @@ func (e *executor) GetRelease(ctx context.Context, releaseID uint64) (*dto.Relea
 		ID:              release.ID,
 		Vendor:          string(release.Vendor),
 		VendorReleaseID: release.VendorReleaseID,
+		Name:            release.Name,
+		TotalMints:      release.TotalMints,
 	}, nil
 }
 

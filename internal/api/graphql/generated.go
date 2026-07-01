@@ -14,11 +14,10 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
-	gqlparser "github.com/vektah/gqlparser/v2"
-	"github.com/vektah/gqlparser/v2/ast"
-
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
+	gqlparser "github.com/vektah/gqlparser/v2"
+	"github.com/vektah/gqlparser/v2/ast"
 )
 
 // region    ************************** generated!.gotpl **************************
@@ -206,6 +205,8 @@ type ComplexityRoot struct {
 	Release struct {
 		ID              func(childComplexity int) int
 		Members         func(childComplexity int, limit *Uint8, offset *Uint64, sortOrder *types.Order) int
+		Name            func(childComplexity int) int
+		TotalMints      func(childComplexity int) int
 		Vendor          func(childComplexity int) int
 		VendorReleaseID func(childComplexity int) int
 	}
@@ -1073,6 +1074,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Release.Members(childComplexity, args["limit"].(*Uint8), args["offset"].(*Uint64), args["sort_order"].(*types.Order)), true
+	case "Release.name":
+		if e.complexity.Release.Name == nil {
+			break
+		}
+
+		return e.complexity.Release.Name(childComplexity), true
+	case "Release.total_mints":
+		if e.complexity.Release.TotalMints == nil {
+			break
+		}
+
+		return e.complexity.Release.TotalMints(childComplexity), true
 	case "Release.vendor":
 		if e.complexity.Release.Vendor == nil {
 			break
@@ -1819,6 +1832,10 @@ type Release {
   id: Uint64!
   vendor: String!
   vendor_release_id: String!
+  # Human-readable release title (e.g. "Fidenza by Tyler Hobbs"); REST GET /api/v1/releases/{id} ` + "`" + `name` + "`" + `.
+  name: String
+  # Declared max edition size from vendor; REST GET /api/v1/releases/{id} ` + "`" + `total_mints` + "`" + `.
+  total_mints: Int
   members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc): TokenList!
 }
 
@@ -5214,6 +5231,10 @@ func (ec *executionContext) fieldContext_Query_release(ctx context.Context, fiel
 				return ec.fieldContext_Release_vendor(ctx, field)
 			case "vendor_release_id":
 				return ec.fieldContext_Release_vendor_release_id(ctx, field)
+			case "name":
+				return ec.fieldContext_Release_name(ctx, field)
+			case "total_mints":
+				return ec.fieldContext_Release_total_mints(ctx, field)
 			case "members":
 				return ec.fieldContext_Release_members(ctx, field)
 			}
@@ -5656,6 +5677,64 @@ func (ec *executionContext) fieldContext_Release_vendor_release_id(_ context.Con
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Release_name(ctx context.Context, field graphql.CollectedField, obj *dto.ReleaseResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Release_name,
+		func(ctx context.Context) (any, error) {
+			return obj.Name, nil
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Release_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Release",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Release_total_mints(ctx context.Context, field graphql.CollectedField, obj *dto.ReleaseResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Release_total_mints,
+		func(ctx context.Context) (any, error) {
+			return obj.TotalMints, nil
+		},
+		nil,
+		ec.marshalOInt2ᚖint64,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Release_total_mints(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Release",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
 		},
 	}
 	return fc, nil
@@ -11048,6 +11127,10 @@ func (ec *executionContext) _Release(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "name":
+			out.Values[i] = ec._Release_name(ctx, field, obj)
+		case "total_mints":
+			out.Values[i] = ec._Release_total_mints(ctx, field, obj)
 		case "members":
 			field := field
 

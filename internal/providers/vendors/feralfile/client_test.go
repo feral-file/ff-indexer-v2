@@ -52,6 +52,9 @@ func TestClient_GetArtwork_Success(t *testing.T) {
 				Title:       "Test Series",
 				Description: "Test Description",
 				Medium:      "Digital",
+				Settings: feralfile.SeriesSettings{
+					MaxArtwork: 75,
+				},
 				Artist: feralfile.Artist{
 					ID: "artist-123",
 					AlumniAccount: feralfile.AlumniAccount{
@@ -90,6 +93,71 @@ func TestClient_GetArtwork_Success(t *testing.T) {
 	assert.Equal(t, "artist-123", artwork.Series.Artist.ID)
 	assert.Equal(t, "test-artist", artwork.Series.Artist.AlumniAccount.Alias)
 	assert.Len(t, artwork.Series.Artist.AlumniAccount.Addresses, 2)
+	assert.Equal(t, int64(75), artwork.Series.Settings.MaxArtwork)
+}
+
+// TestClient_GetArtwork_ParsesSeriesSettingsMaxArtwork verifies series.settings.maxArtwork
+// is unmarshaled from the API response (regression guard for release total_mints sourcing).
+func TestClient_GetArtwork_ParsesSeriesSettingsMaxArtwork(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	ctx := context.Background()
+	tokenID := "68133196527112232794835997367314869505960984666033462681082934679485439444096"
+	expectedURL := "https://feralfile.com/api/artworks/" + tokenID + "?includeArtist=true"
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(ctx, expectedURL, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
+			raw := []byte(`{
+				"result": {
+					"id": "` + tokenID + `",
+					"name": "#1",
+					"seriesID": "1f060e42-0000-0000-0000-000000000001",
+					"index": 0,
+					"series": {
+						"title": "1DE94",
+						"medium": "image",
+						"settings": { "maxArtwork": 75 },
+						"artist": {
+							"alumniAccount": {
+								"alias": "Raven Kwok",
+								"addresses": { "ethereum": "0xabc" }
+							}
+						}
+					}
+				}
+			}`)
+			return json.Unmarshal(raw, result)
+		}).
+		Times(1)
+
+	artwork, err := client.GetArtwork(ctx, tokenID)
+
+	require.NoError(t, err)
+	require.NotNil(t, artwork)
+	assert.Equal(t, "1DE94", artwork.Series.Title)
+	assert.Equal(t, int64(75), artwork.Series.Settings.MaxArtwork)
+	assert.Equal(t, "Raven Kwok", artwork.Series.Artist.AlumniAccount.Alias)
+}
+
+// TestSeriesSettings_UnmarshalMissingMaxArtwork verifies absent maxArtwork defaults to zero
+// without breaking artwork unmarshaling.
+func TestSeriesSettings_UnmarshalMissingMaxArtwork(t *testing.T) {
+	t.Parallel()
+
+	var artwork feralfile.Artwork
+	err := json.Unmarshal([]byte(`{
+		"series": {
+			"title": "Untitled Series",
+			"settings": {}
+		}
+	}`), &artwork)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), artwork.Series.Settings.MaxArtwork)
 }
 
 // TestClient_GetArtwork_HTTPError tests error handling when HTTP client returns an error

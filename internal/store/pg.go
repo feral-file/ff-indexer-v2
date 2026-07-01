@@ -1144,23 +1144,33 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 // UpsertRelease creates or returns an existing release for a vendor release id.
 //
 // Uses INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()
-// RETURNING id so the operation is atomic under concurrent callers. FirstOrCreate is
-// intentionally avoided here: it issues a SELECT then INSERT in two separate statements,
-// which causes a unique-constraint race when multiple workers index tokens from the same
-// new release simultaneously — one call would get a constraint violation instead of the
-// existing row. The ON CONFLICT path is idempotent and always returns the canonical row id.
-func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string) (*schema.Release, error) {
+// (and name/total_mints when provided) RETURNING id so the operation is atomic under concurrent
+// callers. FirstOrCreate is intentionally avoided here: it issues a SELECT then INSERT in two
+// separate statements, which causes a unique-constraint race when multiple workers index tokens
+// from the same new release simultaneously — one call would get a constraint violation instead of
+// the existing row. The ON CONFLICT path is idempotent and always returns the canonical row id.
+func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error) {
 	release := schema.Release{
 		Vendor:          vendor,
 		VendorReleaseID: vendorReleaseID,
+		Name:            name,
+		TotalMints:      totalMints,
+	}
+
+	assignments := map[string]interface{}{
+		"updated_at": gorm.Expr("now()"),
+	}
+	if name != nil && strings.TrimSpace(*name) != "" {
+		assignments["name"] = strings.TrimSpace(*name)
+	}
+	if totalMints != nil && *totalMints > 0 {
+		assignments["total_mints"] = *totalMints
 	}
 
 	err := s.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "vendor"}, {Name: "vendor_release_id"}},
-			DoUpdates: clause.Assignments(map[string]interface{}{
-				"updated_at": gorm.Expr("now()"),
-			}),
+			Columns:   []clause.Column{{Name: "vendor"}, {Name: "vendor_release_id"}},
+			DoUpdates: clause.Assignments(assignments),
 		}).
 		Create(&release).Error
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
@@ -94,10 +95,11 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	// Mock ArtBlocks client to return project metadata
 	// Token ID 1000005 = project 1, mint 5
 	projectMetadata := &artblocks.ProjectMetadata{
-		Name:          "Fidenza",
-		ArtistName:    "Tyler Hobbs",
-		ArtistAddress: "0x1234567890123456789012345678901234567890",
-		Description:   types.StringPtr("A generative art project"),
+		Name:           "Fidenza",
+		ArtistName:     "Tyler Hobbs",
+		ArtistAddress:  "0x1234567890123456789012345678901234567890",
+		Description:    types.StringPtr("A generative art project"),
+		MaxInvocations: 999,
 	}
 	mocks.artblocksClient.
 		EXPECT().
@@ -150,6 +152,10 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	// vendor_release_id is chain-qualified: "{chainID}-{contract}-{projectID}"
 	assert.Equal(t, "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1", result.Release.VendorReleaseID)
 	assert.Equal(t, int64(6), result.Release.MintNumber)
+	require.NotNil(t, result.Release.Name)
+	assert.Equal(t, "Fidenza by Tyler Hobbs", *result.Release.Name)
+	require.NotNil(t, result.Release.TotalMints)
+	assert.Equal(t, int64(999), *result.Release.TotalMints)
 }
 
 func TestEnhancer_Enhance_ArtBlocks_NoDescription(t *testing.T) {

@@ -541,6 +541,7 @@ paths:
       summary: Get release by internal id
       description: |
         Retrieves a cross-vendor release (Feral File series or Art Blocks project) and its member tokens sorted by mint number.
+        Response includes optional `name` (human-readable title) and `total_mints` (declared max edition size from vendor).
       operationId: getRelease
       tags:
         - releases
@@ -1943,6 +1944,15 @@ components:
           type: string
           description: External release key (FF series UUID or AB {chainID}-{contract}-{projectID}, chain-qualified)
           example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
+        name:
+          type: [string, "null"]
+          description: Human-readable release title (e.g. "Fidenza by Tyler Hobbs")
+          example: "Fidenza by Tyler Hobbs"
+        total_mints:
+          type: [integer, "null"]
+          format: int64
+          description: Declared max edition size from vendor (AB max_invocations, FF maxArtwork)
+          example: 999
         members:
           anyOf:
             - $ref: '#/components/schemas/TokenListResponse'

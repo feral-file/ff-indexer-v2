@@ -1156,18 +1156,18 @@ func (mr *MockStoreMockRecorder) UpsertEnrichmentSource(ctx, input any) *gomock.
 }
 
 // UpsertRelease mocks base method.
-func (m *MockStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string) (*schema.Release, error) {
+func (m *MockStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpsertRelease", ctx, vendor, vendorReleaseID)
+	ret := m.ctrl.Call(m, "UpsertRelease", ctx, vendor, vendorReleaseID, name, totalMints)
 	ret0, _ := ret[0].(*schema.Release)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // UpsertRelease indicates an expected call of UpsertRelease.
-func (mr *MockStoreMockRecorder) UpsertRelease(ctx, vendor, vendorReleaseID any) *gomock.Call {
+func (mr *MockStoreMockRecorder) UpsertRelease(ctx, vendor, vendorReleaseID, name, totalMints any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertRelease", reflect.TypeOf((*MockStore)(nil).UpsertRelease), ctx, vendor, vendorReleaseID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertRelease", reflect.TypeOf((*MockStore)(nil).UpsertRelease), ctx, vendor, vendorReleaseID, name, totalMints)
 }
 
 // UpsertReleaseMember mocks base method.

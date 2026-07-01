@@ -203,6 +203,10 @@ type Release {
   id: Uint64!
   vendor: String!
   vendor_release_id: String!
+  # Human-readable release title (e.g. "Fidenza by Tyler Hobbs"); REST GET /api/v1/releases/{id} `name`.
+  name: String
+  # Declared max edition size from vendor; REST GET /api/v1/releases/{id} `total_mints`.
+  total_mints: Int
   members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc): TokenList!
 }
 

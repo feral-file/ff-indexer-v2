@@ -12,6 +12,10 @@ type Release struct {
 	// VendorReleaseID is the external release key: FF seriesID UUID or AB {chainID}-{contract}-{projectID}
 	// (chain-qualified to prevent cross-chain collisions on the UNIQUE (vendor, vendor_release_id) constraint).
 	VendorReleaseID string `gorm:"column:vendor_release_id;not null;type:text"`
+	// Name is the human-readable release title (e.g. "Fidenza by Tyler Hobbs"), populated from vendor enrichment.
+	Name *string `gorm:"column:name;type:text"`
+	// TotalMints is the declared max edition size from the vendor (AB max_invocations, FF maxArtwork).
+	TotalMints *int64 `gorm:"column:total_mints"`
 	// CreatedAt is when this release row was first created.
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
 	// UpdatedAt is when this release row was last updated.
