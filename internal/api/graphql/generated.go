@@ -14,10 +14,11 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
-	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
-	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	gqlparser "github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
+
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 )
 
 // region    ************************** generated!.gotpl **************************
