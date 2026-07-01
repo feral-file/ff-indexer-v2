@@ -113,15 +113,48 @@ func TestBackfillerReleaseInfoFromFeralFileFallsBackWhenIndexMissing(t *testing.
 	}
 
 	// GetArtwork must be called because stored JSON is incomplete.
+	artworkIndex := int64(7)
 	ffClient.EXPECT().GetArtwork(gomock.Any(), "123").Return(&feralfile.Artwork{
 		SeriesID: "series-uuid",
-		Index:    7,
+		Index:    &artworkIndex,
 	}, nil)
 
 	vendorReleaseID, mintNumber, err := backfiller.ReleaseInfoFromFeralFile(context.Background(), source, "123")
 	require.NoError(t, err)
 	assert.Equal(t, "series-uuid", vendorReleaseID)
 	assert.Equal(t, int64(8), mintNumber) // 7 + 1 = 1-based
+}
+
+// TestBackfillerReleaseInfoFromFeralFileErrorsWhenAPIReturnsNilIndex verifies that when
+// the live FF API returns an artwork with a seriesID but no "index" field (nil pointer),
+// the backfiller returns an error rather than silently writing mint_number=1. A spurious
+// mint_number=1 would conflict with the legitimate first token in the release via the
+// UNIQUE (release_id, mint_number) constraint.
+func TestBackfillerReleaseInfoFromFeralFileErrorsWhenAPIReturnsNilIndex(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	jsonAdapter := adapter.NewJSON()
+	ffClient := mocks.NewMockFeralFileClient(ctrl)
+
+	backfiller := release.NewBackfiller(nil, ffClient, jsonAdapter, 100)
+
+	// Stored JSON has no seriesID, so the backfiller falls through to GetArtwork.
+	source := schema.EnrichmentSource{
+		VendorJSON: []byte(`{"name":"Test"}`),
+	}
+
+	// GetArtwork returns an artwork with a seriesID but Index is nil (absent from API response).
+	ffClient.EXPECT().GetArtwork(gomock.Any(), "123").Return(&feralfile.Artwork{
+		SeriesID: "series-uuid",
+		Index:    nil,
+	}, nil)
+
+	_, _, err := backfiller.ReleaseInfoFromFeralFile(context.Background(), source, "123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing index")
 }
 
 func TestBackfillerReleaseInfoFromFeralFileFetchesAPIWhenMissingSeriesID(t *testing.T) {
@@ -139,9 +172,10 @@ func TestBackfillerReleaseInfoFromFeralFileFetchesAPIWhenMissingSeriesID(t *test
 		VendorJSON: []byte(`{"name":"Test"}`),
 	}
 
+	zeroIndex := int64(0)
 	ffClient.EXPECT().GetArtwork(gomock.Any(), "123").Return(&feralfile.Artwork{
 		SeriesID: "series-uuid",
-		Index:    0,
+		Index:    &zeroIndex,
 	}, nil)
 
 	vendorReleaseID, mintNumber, err := backfiller.ReleaseInfoFromFeralFile(context.Background(), source, "123")

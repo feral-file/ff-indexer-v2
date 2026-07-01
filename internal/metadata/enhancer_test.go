@@ -565,13 +565,14 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 	}
 
 	// Mock Feral File client to return artwork data
+	artworkIndex := int64(4)
 	artwork := &feralfile.Artwork{
 		ID:           "68133196527112232794835997367314869505960984666033462681082934679485439444096",
 		Name:         "Money Vortex: Binaural Beats",
 		ThumbnailURI: "previews/test/thumbnail.jpg",
 		PreviewURI:   "previews/test/preview.html",
 		SeriesID:     "series-uuid",
-		Index:        4,
+		Index:        &artworkIndex,
 		Series: feralfile.Series{
 			ID:          "series-uuid",
 			Medium:      "software",
@@ -632,6 +633,56 @@ func TestEnhancer_Enhance_FeralFile(t *testing.T) {
 	assert.NotNil(t, result.Release)
 	assert.Equal(t, "series-uuid", result.Release.VendorReleaseID)
 	assert.Equal(t, int64(5), result.Release.MintNumber)
+}
+
+// TestEnhancer_Enhance_FeralFile_NilIndexSkipsRelease verifies that when the FF API
+// returns an artwork with a seriesID but no "index" field (Index == nil), the enhancer
+// does not record release membership. Writing mint_number=1 for an absent index would
+// silently mis-order the release and cause a UNIQUE (release_id, mint_number) conflict
+// for the legitimate first token in that release.
+func TestEnhancer_Enhance_FeralFile_NilIndexSkipsRelease(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890abcdef", "999")
+	publisherName := registry.PublisherNameFeralFile
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw: map[string]interface{}{"name": "No Index Artwork"},
+		Publisher: &metadata.Publisher{
+			Name: &publisherName,
+			URL:  types.StringPtr("https://feralfile.com"),
+		},
+	}
+
+	// Artwork has a seriesID but Index is nil (omitted by the API).
+	artwork := &feralfile.Artwork{
+		ID:       "999",
+		Name:     "No Index Artwork",
+		SeriesID: "series-uuid",
+		Index:    nil,
+		Series: feralfile.Series{
+			Medium: "software",
+		},
+	}
+
+	mocks.feralfileClient.
+		EXPECT().
+		GetArtwork(gomock.Any(), "999").
+		Return(artwork, nil)
+
+	vendorJSON := []byte(`{"id":"999","name":"No Index Artwork"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(artwork).
+		Return(vendorJSON, nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	// Release must be nil when index is absent; no mint_number can be derived.
+	assert.Nil(t, result.Release)
 }
 
 func TestEnhancer_Enhance_FeralFile_ImageMedium(t *testing.T) {

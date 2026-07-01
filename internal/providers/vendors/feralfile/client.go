@@ -26,7 +26,10 @@ type ArtworkResponse struct {
 	Result Artwork `json:"result"`
 }
 
-// Artwork represents an artwork from Feral File API
+// Artwork represents an artwork from Feral File API.
+// Index is a pointer so that a missing "index" key in JSON can be distinguished
+// from an explicit zero value. Callers must check for nil before using Index to
+// compute mint_number; an absent index means release membership cannot be determined.
 type Artwork struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -34,7 +37,7 @@ type Artwork struct {
 	PreviewURI   string `json:"previewURI"`
 	Series       Series `json:"series"`
 	SeriesID     string `json:"seriesID"`
-	Index        int64  `json:"index"`
+	Index        *int64 `json:"index"`
 }
 
 // SeriesIDOrFallback returns the stable FF series identifier.

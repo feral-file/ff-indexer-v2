@@ -202,5 +202,12 @@ func (b *Backfiller) feralFileReleaseInfo(ctx context.Context, source schema.Enr
 	if seriesID == "" {
 		return "", 0, nil, fmt.Errorf("missing series id")
 	}
-	return seriesID, artwork.Index + 1, MetadataFromFeralFileArtwork(artwork), nil
+	// Index is a pointer in the live API model for the same reason as stored JSON:
+	// a missing "index" key must be distinguishable from an explicit zero value.
+	// Return an error rather than silently writing mint_number=1, which would cause
+	// a false UNIQUE (release_id, mint_number) conflict for the legitimate first token.
+	if artwork.Index == nil {
+		return "", 0, nil, fmt.Errorf("missing index in FF artwork response for token %s", tokenNumber)
+	}
+	return seriesID, *artwork.Index + 1, MetadataFromFeralFileArtwork(artwork), nil
 }

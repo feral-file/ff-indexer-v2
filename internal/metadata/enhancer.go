@@ -320,11 +320,15 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, chain domain.Chain, con
 		}
 	}
 
-	if seriesID := artwork.SeriesIDOrFallback(); seriesID != "" {
+	// Require both seriesID and Index to be present before recording release membership.
+	// Index is a pointer; when the FF API omits "index", it is nil and mint_number cannot
+	// be determined. Skipping here rather than writing mint_number=1 prevents a false
+	// UNIQUE (release_id, mint_number) conflict for the legitimate first token of the release.
+	if seriesID := artwork.SeriesIDOrFallback(); seriesID != "" && artwork.Index != nil {
 		releaseMeta := release.MetadataFromFeralFileArtwork(artwork)
 		enhanced.Release = &ReleaseInfo{
 			VendorReleaseID: seriesID,
-			MintNumber:      artwork.Index + 1,
+			MintNumber:      *artwork.Index + 1,
 		}
 		if releaseMeta != nil {
 			enhanced.Release.Name = releaseMeta.Name
