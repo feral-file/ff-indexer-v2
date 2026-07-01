@@ -48,7 +48,7 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		return 1
 	}
-	defer logger.Flush(2)
+	defer logger.Flush(2 * time.Second)
 
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), &gorm.Config{})
 	if err != nil {

@@ -167,7 +167,13 @@ func ParseGetTokenQuery(c *gin.Context) (*GetTokenQueryParams, error) {
 	return &params, nil
 }
 
-// ParseListTokensQuery parses query parameters for GET /tokens
+// ParseListTokensQuery parses query parameters for GET /tokens.
+//
+// Invalid sort_by and sort_order values are preserved as-is so that the
+// subsequent Validate() call can return an actionable client error. Silently
+// rewriting invalid values to defaults (the previous behavior) masked typos
+// and was inconsistent with the release-member endpoint, which already lets
+// validation reject unrecognized sort_order values.
 func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	var params ListTokensQueryParams
 	if err := c.ShouldBindQuery(&params); err != nil {
@@ -177,16 +183,6 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	// Normalize addresses
 	params.Owners = domain.NormalizeAddresses(params.Owners)
 	params.ContractAddresses = domain.NormalizeAddresses(params.ContractAddresses)
-
-	// Validate sort order
-	if !params.SortOrder.Asc() && !params.SortOrder.Desc() {
-		params.SortOrder = types.OrderDesc
-	}
-
-	// Validate sort by
-	if !params.SortBy.Valid() {
-		params.SortBy = types.TokenLatestProvenance
-	}
 
 	return &params, nil
 }
