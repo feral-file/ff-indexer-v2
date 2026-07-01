@@ -2,6 +2,7 @@ package rest
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -9,6 +10,7 @@ import (
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
@@ -183,6 +185,115 @@ func ParseListTokensQuery(c *gin.Context) (*ListTokensQueryParams, error) {
 	// Normalize addresses
 	params.Owners = domain.NormalizeAddresses(params.Owners)
 	params.ContractAddresses = domain.NormalizeAddresses(params.ContractAddresses)
+
+	return &params, nil
+}
+
+// GetReleaseQueryParams holds query parameters for GET /releases/:id
+type GetReleaseQueryParams struct {
+	Limit      uint8             `form:"limit,default=20"`
+	Offset     uint64            `form:"offset,default=0"`
+	SortOrder  types.Order       `form:"sort_order,default=asc"`
+	Expansions []types.Expansion `form:"expand"`
+}
+
+// Validate validates the query parameters for GET /releases/:id
+func (p *GetReleaseQueryParams) Validate() error {
+	// Limit must be at least 1; zero would stall cursor pagination.
+	if p.Limit == 0 {
+		return apierrors.NewValidationError("Invalid limit: must be at least 1")
+	}
+
+	for _, expansion := range p.Expansions {
+		if expansion != types.ExpansionOwners &&
+			expansion != types.ExpansionOwnerProvenances &&
+			expansion != types.ExpansionProvenanceEvents &&
+			expansion != types.ExpansionMetadata &&
+			expansion != types.ExpansionEnrichmentSource &&
+			expansion != types.ExpansionMediaAsset &&
+			expansion != types.ExpansionDisplay {
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid expansion: %s. Must be a valid expansion", expansion))
+		}
+	}
+
+	// Reject unrecognized sort_order values rather than silently rewriting them.
+	if !p.SortOrder.Valid() {
+		return apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be 'asc' or 'desc'", p.SortOrder))
+	}
+
+	return nil
+}
+
+// ParseGetReleaseQuery parses query parameters for GET /releases/:id
+func ParseGetReleaseQuery(c *gin.Context) (*GetReleaseQueryParams, error) {
+	var params GetReleaseQueryParams
+	if err := c.ShouldBindQuery(&params); err != nil {
+		return nil, err
+	}
+
+	if params.Limit > constants.MAX_PAGE_SIZE {
+		params.Limit = constants.MAX_PAGE_SIZE
+	}
+
+	return &params, nil
+}
+
+// ListReleasesQueryParams holds query parameters for GET /releases.
+// Call Validate() before using ParsedVendor and ParsedVendorReleaseID.
+type ListReleasesQueryParams struct {
+	Vendor          string `form:"vendor"`
+	VendorReleaseID string `form:"vendor_release_id"`
+	Limit           uint8  `form:"limit,default=20"`
+	Offset          uint64 `form:"offset,default=0"`
+
+	// ParsedVendor and ParsedVendorReleaseID are populated by Validate().
+	ParsedVendor          *schema.Vendor
+	ParsedVendorReleaseID *string
+}
+
+// Validate validates the query parameters for GET /releases.
+// It populates ParsedVendor and ParsedVendorReleaseID on success.
+// At least one of vendor or vendor_release_id is required.
+// Only artblocks and feralfile are accepted as vendor values.
+func (p *ListReleasesQueryParams) Validate() error {
+	vendor := strings.TrimSpace(p.Vendor)
+	vendorReleaseID := strings.TrimSpace(p.VendorReleaseID)
+
+	if vendor == "" && vendorReleaseID == "" {
+		return apierrors.NewValidationError("at least one of vendor or vendor_release_id is required")
+	}
+
+	if p.Limit == 0 {
+		return apierrors.NewValidationError("Invalid limit: must be at least 1")
+	}
+
+	if vendor != "" {
+		v := schema.Vendor(strings.ToLower(vendor))
+		switch v {
+		case schema.VendorArtBlocks, schema.VendorFeralFile:
+			p.ParsedVendor = &v
+		default:
+			return apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be 'artblocks' or 'feralfile'", vendor))
+		}
+	}
+
+	if vendorReleaseID != "" {
+		p.ParsedVendorReleaseID = &vendorReleaseID
+	}
+
+	return nil
+}
+
+// ParseListReleasesQuery parses query parameters for GET /releases.
+func ParseListReleasesQuery(c *gin.Context) (*ListReleasesQueryParams, error) {
+	var params ListReleasesQueryParams
+	if err := c.ShouldBindQuery(&params); err != nil {
+		return nil, err
+	}
+
+	if params.Limit > constants.MAX_PAGE_SIZE {
+		params.Limit = constants.MAX_PAGE_SIZE
+	}
 
 	return &params, nil
 }

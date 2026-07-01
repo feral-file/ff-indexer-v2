@@ -165,6 +165,14 @@ type UpsertTokenBalanceForOwnerInput struct {
 	Events       []CreateProvenanceEventInput // Owner-related provenance events only
 }
 
+// ReleaseQueryFilter represents filters for release list queries.
+type ReleaseQueryFilter struct {
+	Vendor          *schema.Vendor
+	VendorReleaseID *string
+	Limit           int
+	Offset          uint64
+}
+
 // TokenQueryFilter represents filters for token queries
 type TokenQueryFilter struct {
 	Owners            []string
@@ -329,6 +337,9 @@ type Store interface {
 	UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error
 	// GetReleaseByID retrieves a release by internal id.
 	GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error)
+	// ListReleases returns releases matching optional vendor and vendor_release_id filters.
+	// At least one filter should be set by callers; results are ordered by id ascending.
+	ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error)
 	// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
 	GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error)
 	// ListEnrichmentSourcesByVendors returns enrichment sources for the given vendors in stable id order.

@@ -198,6 +198,22 @@ type TokenList {
   total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
 }
 
+# Paginated releases list (metadata only; use release(id) for members)
+type ReleaseList {
+  items: [ReleaseSummary!]!
+  offset: Uint64
+  total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
+}
+
+# Release metadata without members (list responses)
+type ReleaseSummary {
+  id: Uint64!
+  vendor: String!
+  vendor_release_id: String!
+  name: String
+  total_mints: Int
+}
+
 # Cross-vendor release (FF series, AB project)
 type Release {
   id: Uint64!
@@ -278,6 +294,15 @@ type Query {
   # Get a release by internal id with mint-ordered members
   # Equivalent to: GET /api/v1/releases/:id
   release(id: Uint64!): Release
+
+  # List releases filtered by vendor and/or vendor_release_id (metadata only)
+  # Equivalent to: GET /api/v1/releases?vendor=...&vendor_release_id=...
+  releases(
+    vendor: String
+    vendor_release_id: String
+    limit: Uint8 = 20
+    offset: Uint64 = 0
+  ): ReleaseList!
 
   # Get job status by job id
   # Equivalent to: GET /api/v1/jobs/:job_id

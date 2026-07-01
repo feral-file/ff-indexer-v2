@@ -39,6 +39,9 @@ type Executor interface {
 	// GetRelease retrieves a release by internal id without member tokens.
 	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
 
+	// ListReleases retrieves releases filtered by vendor and/or vendor_release_id without member tokens.
+	ListReleases(ctx context.Context, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error)
+
 	// TriggerTokenIndexing triggers indexing for one or more tokens by their CIDs.
 	// Returns a queue job id for tracking.
 	TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error)
@@ -1457,12 +1460,56 @@ func (e *executor) GetRelease(ctx context.Context, releaseID uint64) (*dto.Relea
 		return nil, nil
 	}
 
-	return &dto.ReleaseResponse{
-		ID:              release.ID,
-		Vendor:          string(release.Vendor),
-		VendorReleaseID: release.VendorReleaseID,
-		Name:            release.Name,
-		TotalMints:      release.TotalMints,
+	return dto.MapReleaseToDTO(release), nil
+}
+
+// ListReleases retrieves releases filtered by vendor and/or vendor_release_id without member tokens.
+func (e *executor) ListReleases(ctx context.Context, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
+	if limit == nil {
+		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
+		limit = &defaultLimit
+	}
+	if offset == nil {
+		defaultOffset := constants.DEFAULT_OFFSET
+		offset = &defaultOffset
+	}
+
+	filter := store.ReleaseQueryFilter{
+		Vendor:          vendor,
+		VendorReleaseID: vendorReleaseID,
+		Limit:           int(*limit) + 1,
+		Offset:          *offset,
+	}
+
+	releases, err := e.store.ListReleases(ctx, filter)
+	if err != nil {
+		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to list releases: %v", err))
+	}
+
+	limitInt := int(*limit)
+	hasMore := len(releases) > limitInt
+	if hasMore {
+		releases = releases[:limitInt]
+	}
+
+	items := make([]dto.ReleaseResponse, len(releases))
+	for i := range releases {
+		mapped := dto.MapReleaseToDTO(&releases[i])
+		if mapped != nil {
+			items[i] = *mapped
+		}
+	}
+
+	var nextOffset *uint64
+	if hasMore {
+		offsetVal := *offset + uint64(*limit)
+		nextOffset = &offsetVal
+	}
+
+	return &dto.ReleaseListResponse{
+		Items:  items,
+		Offset: nextOffset,
+		Total:  0,
 	}, nil
 }
 

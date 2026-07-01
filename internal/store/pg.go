@@ -1220,6 +1220,28 @@ func (s *pgStore) GetReleaseByID(ctx context.Context, id uint64) (*schema.Releas
 	return &release, nil
 }
 
+// ListReleases returns releases matching optional vendor and vendor_release_id filters.
+func (s *pgStore) ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error) {
+	query := s.db.WithContext(ctx).Model(&schema.Release{})
+	if filter.Vendor != nil {
+		query = query.Where("vendor = ?", *filter.Vendor)
+	}
+	if filter.VendorReleaseID != nil {
+		query = query.Where("vendor_release_id = ?", *filter.VendorReleaseID)
+	}
+
+	var releases []schema.Release
+	err := query.
+		Order("id ASC").
+		Limit(filter.Limit).
+		Offset(int(filter.Offset)). //nolint:gosec,G115
+		Find(&releases).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list releases: %w", err)
+	}
+	return releases, nil
+}
+
 // GetReleaseMembersByTokenIDs returns release membership keyed by token id.
 func (s *pgStore) GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error) {
 	if len(tokenIDs) == 0 {

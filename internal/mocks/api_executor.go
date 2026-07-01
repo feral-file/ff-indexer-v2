@@ -19,6 +19,7 @@ import (
 	executor "github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	types "github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
+	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 // MockAPIExecutor is a mock of Executor interface.
@@ -148,6 +149,21 @@ func (m *MockAPIExecutor) GetTokens(ctx context.Context, owners []string, chains
 func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, releaseID, limit, offset, includeUnviewable, sortBy, sortOrder, expansions any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokens", reflect.TypeOf((*MockAPIExecutor)(nil).GetTokens), ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, releaseID, limit, offset, includeUnviewable, sortBy, sortOrder, expansions)
+}
+
+// ListReleases mocks base method.
+func (m *MockAPIExecutor) ListReleases(ctx context.Context, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListReleases", ctx, vendor, vendorReleaseID, limit, offset)
+	ret0, _ := ret[0].(*dto.ReleaseListResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListReleases indicates an expected call of ListReleases.
+func (mr *MockAPIExecutorMockRecorder) ListReleases(ctx, vendor, vendorReleaseID, limit, offset any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockAPIExecutor)(nil).ListReleases), ctx, vendor, vendorReleaseID, limit, offset)
 }
 
 // SyncCollection mocks base method.

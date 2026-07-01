@@ -77,6 +77,15 @@ Design rules:
 - **Invalid sort parameters (behavior change, release abstraction / #93):** Unrecognized `sort_by` or `sort_order` values return **`422`** with a validation error. Previously the list endpoint silently rewrote invalid values to `latest_provenance` / `desc`; that masking was removed so validation matches the OpenAPI enum contract and the release member endpoint (which already rejected invalid `sort_order`). Clients that sent typos and depended on silent defaults must send valid enum values.
 - **`include_unviewable`:** Default **`false`**; changing defaults is a **compatibility** decision.
 
+### List releases (`GET /api/v1/releases`)
+
+- Returns a paginated list of release metadata rows filtered by **`vendor`** and/or **`vendor_release_id`**. At least one filter is required; when both are provided they are combined with AND semantics.
+- **`vendor`:** `artblocks` or `feralfile` only (the vendors that populate the `releases` table today).
+- **`vendor_release_id`:** External release key as stored during indexing (FF series UUID or AB `{chainID}-{contract}-{projectID}`). May be used without `vendor`; results can span vendors in theory but are typically 0–1 rows.
+- **Response:** `items` array of release metadata (`id`, `vendor`, `vendor_release_id`, optional `name`, optional `total_mints`). **No `members`** — use `GET /api/v1/releases/{id}` or `GET /api/v1/tokens?release_id=...` for member tokens.
+- **Pagination:** `limit` (default **20**, max **255**), `offset` (default **0**); empty match set returns **`200`** with `"items": []`.
+- **GraphQL:** `releases(vendor, vendor_release_id, limit, offset)` exposes the same contract via `ReleaseList`.
+
 ### Release endpoint (`GET /api/v1/releases/{id}`)
 
 - Returns a release by internal id (integer) with its complete, mint-ordered member token list.

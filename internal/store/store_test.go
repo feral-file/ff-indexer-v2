@@ -6665,6 +6665,84 @@ func testUpsertReleaseMetadata(t *testing.T, store Store) {
 	assert.Equal(t, updatedTotal, *fetched.TotalMints)
 }
 
+func testListReleases(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	abID := "0x000000000000000000000000000000000000bbbb-list-1"
+	ffID := "list-release-ff-series-uuid"
+	abName := "AB Release"
+	ffName := "FF Release"
+	abTotal := int64(100)
+	ffTotal := int64(50)
+
+	abRelease, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, abID, &abName, &abTotal)
+	require.NoError(t, err)
+	ffRelease, err := store.UpsertRelease(ctx, schema.VendorFeralFile, ffID, &ffName, &ffTotal)
+	require.NoError(t, err)
+
+	vendorAB := schema.VendorArtBlocks
+	vendorFF := schema.VendorFeralFile
+
+	byVendor, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		Vendor: &vendorAB,
+		Limit:  10,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, byVendor)
+	foundAB := false
+	for _, release := range byVendor {
+		if release.ID == abRelease.ID {
+			foundAB = true
+			assert.Equal(t, abID, release.VendorReleaseID)
+		}
+		assert.Equal(t, schema.VendorArtBlocks, release.Vendor)
+	}
+	assert.True(t, foundAB, "expected artblocks release in vendor-only filter results")
+
+	byVendorReleaseID, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		VendorReleaseID: &ffID,
+		Limit:           10,
+	})
+	require.NoError(t, err)
+	require.Len(t, byVendorReleaseID, 1)
+	assert.Equal(t, ffRelease.ID, byVendorReleaseID[0].ID)
+	assert.Equal(t, schema.VendorFeralFile, byVendorReleaseID[0].Vendor)
+
+	byBoth, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		Vendor:          &vendorAB,
+		VendorReleaseID: &abID,
+		Limit:           10,
+	})
+	require.NoError(t, err)
+	require.Len(t, byBoth, 1)
+	assert.Equal(t, abRelease.ID, byBoth[0].ID)
+
+	missingID := "nonexistent-release-id"
+	empty, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		VendorReleaseID: &missingID,
+		Limit:           10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+
+	page1, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		Vendor: &vendorFF,
+		Limit:  1,
+	})
+	require.NoError(t, err)
+	require.Len(t, page1, 1)
+
+	page2, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		Vendor: &vendorFF,
+		Limit:  1,
+		Offset: 1,
+	})
+	require.NoError(t, err)
+	if len(page2) > 0 {
+		assert.NotEqual(t, page1[0].ID, page2[0].ID)
+	}
+}
+
 func testListEnrichmentSourcesByVendors(t *testing.T, store Store) {
 	ctx := context.Background()
 
@@ -6780,6 +6858,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
 		{"ReleaseOperations", testReleaseOperations},
+		{"ListReleases", testListReleases},
 		{"UpsertReleaseMetadata", testUpsertReleaseMetadata},
 		{"ListEnrichmentSourcesByVendors", testListEnrichmentSourcesByVendors},
 		{"UpsertReleaseMemberConflictUpdate", testUpsertReleaseMemberConflictUpdate},

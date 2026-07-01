@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
@@ -491,6 +492,62 @@ func TestGetRelease_NotFound(t *testing.T) {
 	result, err := exec.GetRelease(context.Background(), 404)
 	require.NoError(t, err)
 	assert.Nil(t, result)
+}
+
+func TestListReleases_ByVendor(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	vendor := schema.VendorArtBlocks
+	limit := uint8(20)
+	offset := uint64(0)
+	mockStore.EXPECT().
+		ListReleases(gomock.Any(), store.ReleaseQueryFilter{
+			Vendor: &vendor,
+			Limit:  21,
+			Offset: 0,
+		}).
+		Return([]schema.Release{{
+			ID:              7,
+			Vendor:          schema.VendorArtBlocks,
+			VendorReleaseID: "0xabc-1",
+		}}, nil)
+
+	result, err := exec.ListReleases(context.Background(), &vendor, nil, &limit, &offset)
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, uint64(7), result.Items[0].ID)
+	assert.Nil(t, result.Offset)
+}
+
+func TestListReleases_Pagination(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	vendorReleaseID := "series-uuid"
+	limit := uint8(1)
+	offset := uint64(0)
+	mockStore.EXPECT().
+		ListReleases(gomock.Any(), store.ReleaseQueryFilter{
+			VendorReleaseID: &vendorReleaseID,
+			Limit:           2,
+			Offset:          0,
+		}).
+		Return([]schema.Release{
+			{ID: 1, Vendor: schema.VendorFeralFile, VendorReleaseID: vendorReleaseID},
+			{ID: 2, Vendor: schema.VendorFeralFile, VendorReleaseID: "other"},
+		}, nil)
+
+	result, err := exec.ListReleases(context.Background(), nil, &vendorReleaseID, &limit, &offset)
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, uint64(1), result.Items[0].ID)
+	require.NotNil(t, result.Offset)
+	assert.Equal(t, uint64(1), *result.Offset)
 }
 
 func TestGetToken_AppliesReleaseMembership(t *testing.T) {

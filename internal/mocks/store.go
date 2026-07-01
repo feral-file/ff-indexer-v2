@@ -901,6 +901,21 @@ func (mr *MockStoreMockRecorder) ListInFlightJobsWithCancelRequest(ctx, queue, i
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListInFlightJobsWithCancelRequest", reflect.TypeOf((*MockStore)(nil).ListInFlightJobsWithCancelRequest), ctx, queue, ids)
 }
 
+// ListReleases mocks base method.
+func (m *MockStore) ListReleases(ctx context.Context, filter store.ReleaseQueryFilter) ([]schema.Release, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListReleases", ctx, filter)
+	ret0, _ := ret[0].([]schema.Release)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListReleases indicates an expected call of ListReleases.
+func (mr *MockStoreMockRecorder) ListReleases(ctx, filter any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockStore)(nil).ListReleases), ctx, filter)
+}
+
 // MarkJobCanceled mocks base method.
 func (m *MockStore) MarkJobCanceled(ctx context.Context, id int64) error {
 	m.ctrl.T.Helper()

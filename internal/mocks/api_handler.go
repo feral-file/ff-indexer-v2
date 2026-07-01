@@ -124,6 +124,18 @@ func (mr *MockAPIHandlerMockRecorder) HealthCheck(c any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthCheck", reflect.TypeOf((*MockAPIHandler)(nil).HealthCheck), c)
 }
 
+// ListReleases mocks base method.
+func (m *MockAPIHandler) ListReleases(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "ListReleases", c)
+}
+
+// ListReleases indicates an expected call of ListReleases.
+func (mr *MockAPIHandlerMockRecorder) ListReleases(c any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockAPIHandler)(nil).ListReleases), c)
+}
+
 // ListTokens mocks base method.
 func (m *MockAPIHandler) ListTokens(c *gin.Context) {
 	m.ctrl.T.Helper()

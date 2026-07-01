@@ -21,6 +21,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
@@ -438,6 +439,45 @@ func (r *queryResolver) Release(ctx context.Context, id Uint64) (*dto.ReleaseRes
 	return release, nil
 }
 
+// Releases is the resolver for the releases field.
+func (r *queryResolver) Releases(ctx context.Context, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
+	vendorVal := strings.TrimSpace(stringOrEmpty(vendor))
+	vendorReleaseIDVal := strings.TrimSpace(stringOrEmpty(vendorReleaseID))
+	if vendorVal == "" && vendorReleaseIDVal == "" {
+		return nil, apierrors.NewValidationError("at least one of vendor or vendor_release_id is required")
+	}
+
+	if limit != nil && *limit == 0 {
+		return nil, apierrors.NewValidationError("Invalid limit: must be at least 1")
+	}
+
+	var parsedVendor *schema.Vendor
+	if vendorVal != "" {
+		v := schema.Vendor(strings.ToLower(vendorVal))
+		switch v {
+		case schema.VendorArtBlocks, schema.VendorFeralFile:
+			parsedVendor = &v
+		default:
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be 'artblocks' or 'feralfile'", vendorVal))
+		}
+	}
+
+	var parsedVendorReleaseID *string
+	if vendorReleaseIDVal != "" {
+		parsedVendorReleaseID = &vendorReleaseIDVal
+	}
+
+	return r.executor.ListReleases(ctx, parsedVendor, parsedVendorReleaseID, ToNativeUint8(limit), ToNativeUint64(offset))
+}
+
+// stringOrEmpty returns the dereferenced string or empty string if nil.
+func stringOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // JobStatus is the resolver for the jobStatus field.
 func (r *queryResolver) JobStatus(ctx context.Context, jobID int) (*dto.JobStatusResponse, error) {
 	if jobID < 1 {
@@ -583,6 +623,21 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
 }
 
+// Offset is the resolver for the offset field.
+func (r *releaseListResolver) Offset(ctx context.Context, obj *dto.ReleaseListResponse) (*Uint64, error) {
+	return FromNativeUint64(obj.Offset), nil
+}
+
+// Total is the resolver for the total field.
+func (r *releaseListResolver) Total(ctx context.Context, obj *dto.ReleaseListResponse) (Uint64, error) {
+	return Uint64(obj.Total), nil
+}
+
+// ID is the resolver for the id field.
+func (r *releaseSummaryResolver) ID(ctx context.Context, obj *dto.ReleaseResponse) (Uint64, error) {
+	return Uint64(obj.ID), nil
+}
+
 // EventID is the resolver for the event_id field.
 func (r *syncCheckpointResolver) EventID(ctx context.Context, obj *dto.SyncCheckpoint) (Uint64, error) {
 	return Uint64(obj.EventID), nil
@@ -698,6 +753,12 @@ func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 // Release returns ReleaseResolver implementation.
 func (r *Resolver) Release() ReleaseResolver { return &releaseResolver{r} }
 
+// ReleaseList returns ReleaseListResolver implementation.
+func (r *Resolver) ReleaseList() ReleaseListResolver { return &releaseListResolver{r} }
+
+// ReleaseSummary returns ReleaseSummaryResolver implementation.
+func (r *Resolver) ReleaseSummary() ReleaseSummaryResolver { return &releaseSummaryResolver{r} }
+
 // SyncCheckpoint returns SyncCheckpointResolver implementation.
 func (r *Resolver) SyncCheckpoint() SyncCheckpointResolver { return &syncCheckpointResolver{r} }
 
@@ -725,6 +786,8 @@ type paginatedProvenanceEventsResolver struct{ *Resolver }
 type provenanceEventResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
 type releaseResolver struct{ *Resolver }
+type releaseListResolver struct{ *Resolver }
+type releaseSummaryResolver struct{ *Resolver }
 type syncCheckpointResolver struct{ *Resolver }
 type tokenResolver struct{ *Resolver }
 type tokenEventResolver struct{ *Resolver }

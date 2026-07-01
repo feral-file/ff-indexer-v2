@@ -29,6 +29,10 @@ type Handler interface {
 	// GET /api/v1/tokens?owner=<address1>,<address2>&chain=<chain1>,<chain2>&contract_address=<contract_address1>,<contract_address2>&token_number=<number1>,<number2>&token_id=<id1>,<id2>&token_cid=<cid1>,<cid2>&release_id=<id>&limit=<limit>&offset=<offset>&expand=owners,provenance_events,enrichment_source&owners.limit=<limit>&owners.offset=<offset>&provenance_events.limit=<limit>&provenance_events.offset=<offset>&provenance_events.order=<order>
 	ListTokens(c *gin.Context)
 
+	// ListReleases retrieves releases filtered by vendor and/or vendor_release_id
+	// GET /api/v1/releases?vendor=<vendor>&vendor_release_id=<id>&limit=<limit>&offset=<offset>
+	ListReleases(c *gin.Context)
+
 	// GetRelease retrieves a release by internal id with mint-ordered member tokens
 	// GET /api/v1/releases/:id?limit=<limit>&offset=<offset>&sort_order=<order>&expand=...
 	GetRelease(c *gin.Context)
@@ -190,6 +194,37 @@ func (h *handler) ListTokens(c *gin.Context) {
 
 	if err != nil {
 		respondInternalError(c, err, "Failed to list tokens")
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// ListReleases retrieves releases filtered by vendor and/or vendor_release_id.
+func (h *handler) ListReleases(c *gin.Context) {
+	queryParams, err := ParseListReleasesQuery(c)
+	if err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	if err := queryParams.Validate(); err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	limit := &queryParams.Limit
+	offset := &queryParams.Offset
+
+	response, err := h.executor.ListReleases(
+		c.Request.Context(),
+		queryParams.ParsedVendor,
+		queryParams.ParsedVendorReleaseID,
+		limit,
+		offset,
+	)
+	if err != nil {
+		respondInternalError(c, err, "Failed to list releases")
 		return
 	}
 

@@ -536,6 +536,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
 
+  /api/v1/releases:
+    get:
+      summary: List releases
+      description: |
+        Retrieves a paginated list of releases filtered by vendor and/or vendor_release_id.
+        At least one filter is required. Results contain release metadata only; use
+        `GET /api/v1/releases/{id}` for mint-ordered member tokens.
+
+        Examples:
+        - Filter by vendor: `?vendor=artblocks`
+        - Filter by vendor release id: `?vendor_release_id=1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1`
+        - Combine filters: `?vendor=feralfile&vendor_release_id=<series-uuid>`
+      operationId: listReleases
+      tags:
+        - releases
+      parameters:
+        - name: vendor
+          in: query
+          description: Filter by source vendor (`artblocks` or `feralfile`)
+          schema:
+            type: string
+            enum: [artblocks, feralfile]
+          example: artblocks
+        - name: vendor_release_id
+          in: query
+          description: Filter by external release key (FF series UUID or AB {chainID}-{contract}-{projectID})
+          schema:
+            type: string
+          example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 255
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Releases retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseListResponse'
+        '422':
+          description: Validation error - missing filters or invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
   /api/v1/releases/{id}:
     get:
       summary: Get release by internal id
@@ -1966,6 +2028,28 @@ components:
             - $ref: '#/components/schemas/TokenListResponse'
             - type: "null"
           description: Mint-ordered member tokens when requested via REST GET /releases/{id}
+
+    ReleaseListResponse:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseResponse'
+          description: Matching releases (metadata only; no members)
+        offset:
+          type: [integer, "null"]
+          format: uint64
+          description: Next offset for pagination (null if there are no more results)
+          example: 20
+        total:
+          type: integer
+          format: uint64
+          description: Deprecated; use offset for pagination continuation
+          example: 0
 
     TriggerTokenIndexingRequest:
       type: object
