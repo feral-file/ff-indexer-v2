@@ -64,11 +64,12 @@ Primary entity for tracking tokens across all supported blockchains.
 - `(chain, contract_address, token_number)` (unique)
 
 **Query Sorting**:
-The tokens query supports two sort options:
+The tokens query supports three sort options:
 - `sort_by=created_at` - Sort by token creation timestamp
 - `sort_by=latest_provenance` (default) - Sort by latest provenance event:
   - When `owners` filter is provided: Sorts by latest provenance event for those specific owners (via join with `token_ownership_provenance`)
   - Without `owners` filter: Uses denormalized `last_provenance_timestamp` field for efficient sorting
+- `sort_by=mint_number` - Sort by authoritative 1-based mint order within a release (via join with `release_members`). **Requires** `release_id` filter; the API returns a validation error if `mint_number` is requested without `release_id`. Uses `release_members_release_id_mint_number_idx` on `(release_id, mint_number)` for ordered member listing.
 
 ### token_metadata
 
