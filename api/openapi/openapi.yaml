@@ -1941,8 +1941,8 @@ components:
           example: artblocks
         vendor_release_id:
           type: string
-          description: External release key (FF series UUID or AB {contract}-{projectID})
-          example: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
+          description: External release key (FF series UUID or AB {chainID}-{contract}-{projectID}, chain-qualified)
+          example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
         members:
           anyOf:
             - $ref: '#/components/schemas/TokenListResponse'

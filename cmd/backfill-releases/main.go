@@ -63,7 +63,10 @@ func run() int {
 	pgStore := store.NewPGStore(db)
 	httpClient := adapter.NewHTTPClient(30 * time.Second)
 	jsonAdapter := adapter.NewJSON()
-	ffClient := feralfile.NewClient(httpClient, feralfile.API_ENDPOINT)
+	// Use the configured FF API URL so backfill targets the same endpoint as normal
+	// enrichment (staging, proxy, or custom). The hardcoded feralfile.API_ENDPOINT
+	// constant is intentionally not used here to match worker_core.go behavior.
+	ffClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
 
 	backfiller := releasebackfill.NewBackfiller(pgStore, ffClient, jsonAdapter, *batchSize)
 	processed, err := backfiller.Run(ctx)
