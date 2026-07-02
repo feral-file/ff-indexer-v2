@@ -1,6 +1,8 @@
 package release
 
 import (
+	"strconv"
+
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 )
@@ -103,4 +105,90 @@ func MetadataFromFeralFileVendorJSON(vendorJSON []byte, json adapter.JSON) *Meta
 		meta.TotalMints = &maxArtwork
 	}
 	return meta
+}
+
+type fxVendorGentkMetadata struct {
+	GenerativeToken *struct {
+		ID             string  `json:"id"`
+		Name           string  `json:"name"`
+		Supply         string  `json:"supply"`
+		OriginalSupply *string `json:"original_supply"`
+	} `json:"generative_token"`
+}
+
+// MetadataFromFXHashVendorJSON parses stored fxhash vendor JSON for release metadata.
+func MetadataFromFXHashVendorJSON(vendorJSON []byte, json adapter.JSON) *Metadata {
+	if len(vendorJSON) == 0 {
+		return nil
+	}
+	var gentk fxVendorGentkMetadata
+	if err := json.Unmarshal(vendorJSON, &gentk); err != nil || gentk.GenerativeToken == nil {
+		return nil
+	}
+
+	gt := gentk.GenerativeToken
+	if gt.Name == "" {
+		return metadataFromFXHashSupply(gt.OriginalSupply, &gt.Supply)
+	}
+
+	meta := &Metadata{Name: &gt.Name}
+	if total := fxhashTotalMints(gt.OriginalSupply, &gt.Supply); total != nil {
+		meta.TotalMints = total
+	}
+	return meta
+}
+
+type objktVendorFAMetadata struct {
+	FA *struct {
+		Name     string `json:"name"`
+		Editions int64  `json:"editions"`
+	} `json:"fa"`
+}
+
+// MetadataFromObjktVendorJSON parses stored objkt vendor JSON for release metadata.
+func MetadataFromObjktVendorJSON(vendorJSON []byte, json adapter.JSON) *Metadata {
+	if len(vendorJSON) == 0 {
+		return nil
+	}
+	var token objktVendorFAMetadata
+	if err := json.Unmarshal(vendorJSON, &token); err != nil || token.FA == nil {
+		return nil
+	}
+
+	fa := token.FA
+	if fa.Name == "" && fa.Editions <= 0 {
+		return nil
+	}
+
+	meta := &Metadata{}
+	if fa.Name != "" {
+		meta.Name = &fa.Name
+	}
+	if fa.Editions > 0 {
+		total := fa.Editions
+		meta.TotalMints = &total
+	}
+	return meta
+}
+
+func metadataFromFXHashSupply(originalSupply, supply *string) *Metadata {
+	if total := fxhashTotalMints(originalSupply, supply); total != nil {
+		return &Metadata{TotalMints: total}
+	}
+	return nil
+}
+
+func fxhashTotalMints(originalSupply, supply *string) *int64 {
+	supplyStr := originalSupply
+	if supplyStr == nil {
+		supplyStr = supply
+	}
+	if supplyStr == nil {
+		return nil
+	}
+	parsed, err := strconv.ParseInt(*supplyStr, 10, 64)
+	if err != nil || parsed <= 0 {
+		return nil
+	}
+	return &parsed
 }

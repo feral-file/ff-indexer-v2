@@ -47,3 +47,46 @@ func TestMetadataFromFeralFileVendorJSON(t *testing.T) {
 		t.Errorf("total_mints = %d", *meta.TotalMints)
 	}
 }
+
+func TestMetadataFromFXHashVendorJSON(t *testing.T) {
+	t.Parallel()
+
+	json := adapter.NewJSON()
+	meta := MetadataFromFXHashVendorJSON([]byte(`{
+		"generative_token": {
+			"id": "9997",
+			"name": "Anticyclone",
+			"original_supply": "880"
+		}
+	}`), json)
+	if meta == nil || meta.Name == nil || meta.TotalMints == nil {
+		t.Fatalf("expected populated metadata, got %#v", meta)
+	}
+	if *meta.Name != "Anticyclone" {
+		t.Errorf("name = %q", *meta.Name)
+	}
+	if *meta.TotalMints != 880 {
+		t.Errorf("total_mints = %d", *meta.TotalMints)
+	}
+}
+
+func TestMetadataFromObjktVendorJSON(t *testing.T) {
+	t.Parallel()
+
+	json := adapter.NewJSON()
+	meta := MetadataFromObjktVendorJSON([]byte(`{
+		"fa": {
+			"name": "Festival",
+			"editions": 30
+		}
+	}`), json)
+	if meta == nil || meta.Name == nil || meta.TotalMints == nil {
+		t.Fatalf("expected populated metadata, got %#v", meta)
+	}
+	if *meta.Name != "Festival" {
+		t.Errorf("name = %q", *meta.Name)
+	}
+	if *meta.TotalMints != 30 {
+		t.Errorf("total_mints = %d", *meta.TotalMints)
+	}
+}

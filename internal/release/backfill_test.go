@@ -70,6 +70,78 @@ func TestReleaseInfoFromArtBlocks_NonEVMChain(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestReleaseInfoFromFXHash(t *testing.T) {
+	t.Parallel()
+
+	jsonAdapter := adapter.NewJSON()
+	vendorReleaseID, mintNumber, meta, err := release.ReleaseInfoFromFXHash([]byte(`{
+		"iteration": "224128",
+		"generative_token": {
+			"id": "9997",
+			"name": "Anticyclone",
+			"original_supply": "880"
+		}
+	}`), jsonAdapter)
+	require.NoError(t, err)
+	assert.Equal(t, "9997", vendorReleaseID)
+	assert.Equal(t, int64(224128), mintNumber)
+	require.NotNil(t, meta)
+	require.NotNil(t, meta.Name)
+	assert.Equal(t, "Anticyclone", *meta.Name)
+	require.NotNil(t, meta.TotalMints)
+	assert.Equal(t, int64(880), *meta.TotalMints)
+}
+
+func TestReleaseInfoFromFXHash_MissingIteration(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, err := release.ReleaseInfoFromFXHash([]byte(`{
+		"generative_token": {"id": "9997"}
+	}`), adapter.NewJSON())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "iteration")
+}
+
+func TestReleaseInfoFromObjktCustom(t *testing.T) {
+	t.Parallel()
+
+	jsonAdapter := adapter.NewJSON()
+	vendorReleaseID, mintNumber, meta, skip, err := release.ReleaseInfoFromObjkt(
+		"KT1EZaTsbB53pW7qTtHQ9cuPN3zPjvx72NmR",
+		"1",
+		[]byte(`{
+			"fa": {
+				"name": "Festival",
+				"editions": 30,
+				"collection_type": "custom"
+			}
+		}`),
+		jsonAdapter,
+	)
+	require.NoError(t, err)
+	assert.False(t, skip)
+	assert.Equal(t, "KT1EZaTsbB53pW7qTtHQ9cuPN3zPjvx72NmR", vendorReleaseID)
+	assert.Equal(t, int64(1), mintNumber)
+	require.NotNil(t, meta)
+	require.NotNil(t, meta.Name)
+	assert.Equal(t, "Festival", *meta.Name)
+	require.NotNil(t, meta.TotalMints)
+	assert.Equal(t, int64(30), *meta.TotalMints)
+}
+
+func TestReleaseInfoFromObjktOpenSkips(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, skip, err := release.ReleaseInfoFromObjkt(
+		"KT1BrPESh9X5F2HE2PJg4Ch9tmjeC9YsUumV",
+		"17",
+		[]byte(`{"fa": {"collection_type": "open"}}`),
+		adapter.NewJSON(),
+	)
+	require.NoError(t, err)
+	assert.True(t, skip)
+}
+
 func TestBackfillerReleaseInfoFromFeralFileUsesVendorJSON(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +254,101 @@ func TestBackfillerReleaseInfoFromFeralFileFetchesAPIWhenMissingSeriesID(t *test
 	require.NoError(t, err)
 	assert.Equal(t, "series-uuid", vendorReleaseID)
 	assert.Equal(t, int64(1), mintNumber)
+}
+
+func TestBackfillerRunFXHashSuccess(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStore := mocks.NewMockStore(ctrl)
+	ffClient := mocks.NewMockFeralFileClient(ctrl)
+	backfiller := release.NewBackfiller(mockStore, ffClient, adapter.NewJSON(), 100)
+
+	ctx := context.Background()
+	const tokenID = uint64(10)
+	sources := []schema.EnrichmentSource{{
+		TokenID: tokenID,
+		Vendor:  schema.VendorFXHash,
+		VendorJSON: []byte(`{
+			"iteration": "2",
+			"generative_token": {
+				"id": "0",
+				"name": "FXHASH Generative Logo",
+				"original_supply": "1000"
+			}
+		}`),
+	}}
+
+	mockStore.EXPECT().
+		ListEnrichmentSourcesByVendors(ctx, gomock.Any(), 100, uint64(0)).
+		Return(sources, nil)
+	mockStore.EXPECT().
+		GetTokenByID(ctx, tokenID).
+		Return(&schema.Token{
+			ID:              tokenID,
+			Chain:           domain.ChainTezosMainnet,
+			ContractAddress: "KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE",
+			TokenNumber:     "1",
+		}, nil)
+	mockStore.EXPECT().
+		UpsertRelease(ctx, schema.VendorFXHash, "0", gomock.Any(), gomock.Any()).
+		Return(&schema.Release{ID: 99}, nil)
+	mockStore.EXPECT().
+		UpsertReleaseMember(ctx, uint64(99), tokenID, int64(2)).
+		Return(nil)
+
+	processed, err := backfiller.Run(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, processed)
+}
+
+func TestBackfillerRunObjktCustomSuccess(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStore := mocks.NewMockStore(ctrl)
+	ffClient := mocks.NewMockFeralFileClient(ctrl)
+	backfiller := release.NewBackfiller(mockStore, ffClient, adapter.NewJSON(), 100)
+
+	ctx := context.Background()
+	const tokenID = uint64(11)
+	sources := []schema.EnrichmentSource{{
+		TokenID: tokenID,
+		Vendor:  schema.VendorObjkt,
+		VendorJSON: []byte(`{
+			"fa": {
+				"name": "Festival",
+				"editions": 30,
+				"collection_type": "custom"
+			}
+		}`),
+	}}
+
+	mockStore.EXPECT().
+		ListEnrichmentSourcesByVendors(ctx, gomock.Any(), 100, uint64(0)).
+		Return(sources, nil)
+	mockStore.EXPECT().
+		GetTokenByID(ctx, tokenID).
+		Return(&schema.Token{
+			ID:              tokenID,
+			Chain:           domain.ChainTezosMainnet,
+			ContractAddress: "KT1EZaTsbB53pW7qTtHQ9cuPN3zPjvx72NmR",
+			TokenNumber:     "1",
+		}, nil)
+	mockStore.EXPECT().
+		UpsertRelease(ctx, schema.VendorObjkt, "KT1EZaTsbB53pW7qTtHQ9cuPN3zPjvx72NmR", gomock.Any(), gomock.Any()).
+		Return(&schema.Release{ID: 100}, nil)
+	mockStore.EXPECT().
+		UpsertReleaseMember(ctx, uint64(100), tokenID, int64(1)).
+		Return(nil)
+
+	processed, err := backfiller.Run(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, processed)
 }
 
 func TestBackfillerRunSuccess(t *testing.T) {

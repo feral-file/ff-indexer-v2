@@ -3,6 +3,7 @@ package release
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"go.uber.org/zap"
@@ -51,7 +52,7 @@ type ffVendorArtwork struct {
 	} `json:"series"`
 }
 
-// Run backfills all artblocks and feralfile enrichment sources.
+// Run backfills artblocks, feralfile, fxhash, and objkt enrichment sources.
 //
 // Best-effort: per-row failures are logged and counted rather than aborting the run,
 // so a transient API error or malformed vendor JSON does not prevent other tokens from
@@ -60,7 +61,12 @@ type ffVendorArtwork struct {
 // backfills and re-run. The returned int is always the number of successfully processed
 // rows regardless of failures.
 func (b *Backfiller) Run(ctx context.Context) (int, error) {
-	vendors := []schema.Vendor{schema.VendorArtBlocks, schema.VendorFeralFile}
+	vendors := []schema.Vendor{
+		schema.VendorArtBlocks,
+		schema.VendorFeralFile,
+		schema.VendorFXHash,
+		schema.VendorObjkt,
+	}
 	var offset uint64
 	processed := 0
 	var failed int
@@ -120,6 +126,19 @@ func (b *Backfiller) backfillSource(ctx context.Context, source schema.Enrichmen
 		}
 	case schema.VendorFeralFile:
 		vendorReleaseID, mintNumber, releaseMeta, err = b.feralFileReleaseInfo(ctx, source, token.TokenNumber)
+	case schema.VendorFXHash:
+		vendorReleaseID, mintNumber, releaseMeta, err = ReleaseInfoFromFXHash(source.VendorJSON, b.json)
+	case schema.VendorObjkt:
+		var skip bool
+		vendorReleaseID, mintNumber, releaseMeta, skip, err = ReleaseInfoFromObjkt(
+			token.ContractAddress,
+			token.TokenNumber,
+			source.VendorJSON,
+			b.json,
+		)
+		if skip {
+			return nil
+		}
 	default:
 		return nil
 	}
@@ -210,4 +229,74 @@ func (b *Backfiller) feralFileReleaseInfo(ctx context.Context, source schema.Enr
 		return "", 0, nil, fmt.Errorf("missing index in FF artwork response for token %s", tokenNumber)
 	}
 	return seriesID, *artwork.Index + 1, MetadataFromFeralFileArtwork(artwork), nil
+}
+
+type fxVendorGentk struct {
+	Iteration       string `json:"iteration"`
+	GenerativeToken *struct {
+		ID string `json:"id"`
+	} `json:"generative_token"`
+}
+
+// ReleaseInfoFromFXHash derives fxhash release membership from stored vendor JSON.
+//
+// Mapping matches metadata enhancer behavior:
+//   - vendor_release_id = generative_token.id
+//   - mint_number       = gentk.iteration (already 1-based)
+func ReleaseInfoFromFXHash(vendorJSON []byte, json adapter.JSON) (string, int64, *Metadata, error) {
+	if len(vendorJSON) == 0 {
+		return "", 0, nil, fmt.Errorf("empty fxhash vendor json")
+	}
+
+	var gentk fxVendorGentk
+	if err := json.Unmarshal(vendorJSON, &gentk); err != nil {
+		return "", 0, nil, fmt.Errorf("parse fxhash vendor json: %w", err)
+	}
+	if gentk.GenerativeToken == nil || gentk.GenerativeToken.ID == "" {
+		return "", 0, nil, fmt.Errorf("missing generative token id")
+	}
+
+	iteration, err := strconv.ParseInt(gentk.Iteration, 10, 64)
+	if err != nil || iteration <= 0 {
+		return "", 0, nil, fmt.Errorf("missing or invalid iteration")
+	}
+
+	return gentk.GenerativeToken.ID, iteration, MetadataFromFXHashVendorJSON(vendorJSON, json), nil
+}
+
+type objktVendorToken struct {
+	FA *struct {
+		CollectionType string `json:"collection_type"`
+	} `json:"fa"`
+}
+
+// ReleaseInfoFromObjkt derives objkt release membership from stored vendor JSON.
+//
+// Only custom collections produce a release (open/curated collections return skip=true).
+// Mapping matches metadata enhancer behavior:
+//   - vendor_release_id = FA contract address (chain-unique KT1)
+//   - mint_number       = on-chain token_id (must be > 0)
+func ReleaseInfoFromObjkt(
+	contractAddress, tokenNumber string,
+	vendorJSON []byte,
+	json adapter.JSON,
+) (vendorReleaseID string, mintNumber int64, meta *Metadata, skip bool, err error) {
+	if len(vendorJSON) == 0 {
+		return "", 0, nil, false, fmt.Errorf("empty objkt vendor json")
+	}
+
+	var token objktVendorToken
+	if err := json.Unmarshal(vendorJSON, &token); err != nil {
+		return "", 0, nil, false, fmt.Errorf("parse objkt vendor json: %w", err)
+	}
+	if token.FA == nil || token.FA.CollectionType != "custom" {
+		return "", 0, nil, true, nil
+	}
+
+	mintNum, parseErr := strconv.ParseInt(tokenNumber, 10, 64)
+	if parseErr != nil || mintNum <= 0 {
+		return "", 0, nil, false, fmt.Errorf("invalid token number for objkt release: %q", tokenNumber)
+	}
+
+	return contractAddress, mintNum, MetadataFromObjktVendorJSON(vendorJSON, json), false, nil
 }
