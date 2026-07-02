@@ -507,21 +507,6 @@ func (mr *MockStoreMockRecorder) GetReleaseMembersByTokenIDs(ctx, tokenIDs any) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetReleaseMembersByTokenIDs", reflect.TypeOf((*MockStore)(nil).GetReleaseMembersByTokenIDs), ctx, tokenIDs)
 }
 
-// GetTokenByID mocks base method.
-func (m *MockStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokenByID", ctx, tokenID)
-	ret0, _ := ret[0].(*schema.Token)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetTokenByID indicates an expected call of GetTokenByID.
-func (mr *MockStoreMockRecorder) GetTokenByID(ctx, tokenID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenByID", reflect.TypeOf((*MockStore)(nil).GetTokenByID), ctx, tokenID)
-}
-
 // GetTokenByTokenCID mocks base method.
 func (m *MockStore) GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error) {
 	m.ctrl.T.Helper()
@@ -869,21 +854,6 @@ func (m *MockStore) IsAnyAddressWatched(ctx context.Context, chain domain.Chain,
 func (mr *MockStoreMockRecorder) IsAnyAddressWatched(ctx, chain, addresses any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsAnyAddressWatched", reflect.TypeOf((*MockStore)(nil).IsAnyAddressWatched), ctx, chain, addresses)
-}
-
-// ListEnrichmentSourcesByVendors mocks base method.
-func (m *MockStore) ListEnrichmentSourcesByVendors(ctx context.Context, vendors []schema.Vendor, limit int, offset uint64) ([]schema.EnrichmentSource, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListEnrichmentSourcesByVendors", ctx, vendors, limit, offset)
-	ret0, _ := ret[0].([]schema.EnrichmentSource)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListEnrichmentSourcesByVendors indicates an expected call of ListEnrichmentSourcesByVendors.
-func (mr *MockStoreMockRecorder) ListEnrichmentSourcesByVendors(ctx, vendors, limit, offset any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEnrichmentSourcesByVendors", reflect.TypeOf((*MockStore)(nil).ListEnrichmentSourcesByVendors), ctx, vendors, limit, offset)
 }
 
 // ListInFlightJobsWithCancelRequest mocks base method.

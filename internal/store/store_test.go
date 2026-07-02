@@ -6743,41 +6743,6 @@ func testListReleases(t *testing.T, store Store) {
 	}
 }
 
-func testListEnrichmentSourcesByVendors(t *testing.T, store Store) {
-	ctx := context.Background()
-
-	tokenInput := buildTestTokenMint(
-		domain.ChainEthereumMainnet,
-		domain.StandardERC721,
-		"0x0000000000000000000000000000000000008888",
-		"1000001",
-		"0xlist888800000000000000000000000000000001",
-	)
-	require.NoError(t, store.CreateTokenMint(ctx, tokenInput))
-	token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
-	require.NoError(t, err)
-	require.NotNil(t, token)
-
-	require.NoError(t, store.UpsertEnrichmentSource(ctx, CreateEnrichmentSourceInput{
-		TokenID:    token.ID,
-		Vendor:     schema.VendorArtBlocks,
-		VendorJSON: []byte(`{"project":"1"}`),
-	}))
-
-	sources, err := store.ListEnrichmentSourcesByVendors(ctx, []schema.Vendor{schema.VendorArtBlocks}, 10, 0)
-	require.NoError(t, err)
-	require.NotEmpty(t, sources)
-
-	found := false
-	for _, source := range sources {
-		if source.TokenID == token.ID && source.Vendor == schema.VendorArtBlocks {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "expected artblocks enrichment source for token")
-}
-
 func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
 	ctx := context.Background()
 
@@ -6860,7 +6825,6 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"ReleaseOperations", testReleaseOperations},
 		{"ListReleases", testListReleases},
 		{"UpsertReleaseMetadata", testUpsertReleaseMetadata},
-		{"ListEnrichmentSourcesByVendors", testListEnrichmentSourcesByVendors},
 		{"UpsertReleaseMemberConflictUpdate", testUpsertReleaseMemberConflictUpdate},
 		{"UpsertReleaseMemberRejectsZeroMintNumber", testUpsertReleaseMemberRejectsZeroMintNumber},
 		{"UpsertTokenMetadata", testUpsertTokenMetadata},

@@ -257,7 +257,7 @@ psql -h localhost -U postgres -d ff_indexer -c "\d release_members"
 
 ### Migration 019: re-enrich existing tokens to populate release membership
 
-Migration `019.sql` inserts `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt. The running worker processes these jobs to re-fetch vendor data and populate `releases` and `release_members`.
+Migration `019_reindex.sql` inserts `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt. The running worker processes these jobs to re-fetch vendor data and populate `releases` and `release_members`.
 
 **Why reindex rather than derive from stored vendor JSON:**
 
@@ -281,7 +281,7 @@ Reindexing runs the full enrichment pipeline — vendor API calls are governed b
 
 **Idempotency:** The migration uses `ON CONFLICT ... DO NOTHING` on the partial unique index `jobs_unique_key_active`. Re-running the migration skips tokens that already have a pending or running metadata job. Tokens whose jobs completed or failed can be re-triggered via `POST /api/v1/tokens/index`.
 
-**Fresh installs:** `019.sql` produces no rows on a fresh database (no `enrichment_sources` rows exist yet). `db/init_pg_db.sql` does not need updating.
+**Fresh installs:** `019_reindex.sql` produces no rows on a fresh database (no `enrichment_sources` rows exist yet). `db/init_pg_db.sql` does not need updating.
 
 **Verify progress after deployment:**
 

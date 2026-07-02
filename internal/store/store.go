@@ -267,8 +267,6 @@ type Store interface {
 	GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error)
 	// GetTokensByCIDs retrieves multiple tokens by their canonical IDs
 	GetTokensByCIDs(ctx context.Context, tokenCIDs []string) ([]*schema.Token, error)
-	// GetTokenByID retrieves a token by its internal ID
-	GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error)
 	// GetTokensByIDs retrieves multiple tokens by their internal IDs
 	GetTokensByIDs(ctx context.Context, tokenIDs []uint64) ([]*schema.Token, error)
 	// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID
@@ -342,9 +340,6 @@ type Store interface {
 	ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error)
 	// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
 	GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error)
-	// ListEnrichmentSourcesByVendors returns enrichment sources for the given vendors in stable id order.
-	ListEnrichmentSourcesByVendors(ctx context.Context, vendors []schema.Vendor, limit int, offset uint64) ([]schema.EnrichmentSource, error)
-
 	// =============================================================================
 	// Token Media Health Operations
 	// =============================================================================

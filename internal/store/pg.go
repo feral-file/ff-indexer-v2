@@ -136,19 +136,6 @@ func calculateSafeBatchSize(totalRecords int, fieldsPerRecord int) int {
 	return safeBatchSize
 }
 
-// GetTokenByID retrieves a token by its internal ID
-func (s *pgStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
-	var token schema.Token
-	err := s.db.WithContext(ctx).Where("id = ?", tokenID).First(&token).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get token: %w", err)
-	}
-	return &token, nil
-}
-
 // GetTokenByTokenCID retrieves a token by its canonical ID
 func (s *pgStore) GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error) {
 	var token schema.Token
@@ -1259,25 +1246,6 @@ func (s *pgStore) GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []ui
 		result[member.TokenID] = &member
 	}
 	return result, nil
-}
-
-// ListEnrichmentSourcesByVendors returns enrichment sources for the given vendors in stable id order.
-func (s *pgStore) ListEnrichmentSourcesByVendors(ctx context.Context, vendors []schema.Vendor, limit int, offset uint64) ([]schema.EnrichmentSource, error) {
-	if len(vendors) == 0 {
-		return []schema.EnrichmentSource{}, nil
-	}
-
-	var sources []schema.EnrichmentSource
-	query := s.db.WithContext(ctx).
-		Where("vendor IN ?", vendors).
-		Order("token_id ASC").
-		Limit(limit).
-		Offset(int(offset)) //nolint:gosec,G115
-
-	if err := query.Find(&sources).Error; err != nil {
-		return nil, fmt.Errorf("failed to list enrichment sources: %w", err)
-	}
-	return sources, nil
 }
 
 // UpdateTokenBurn updates a token as burned with associated balance update and provenance event in a single transaction
