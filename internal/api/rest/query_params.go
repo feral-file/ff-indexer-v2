@@ -254,7 +254,7 @@ type ListReleasesQueryParams struct {
 // Validate validates the query parameters for GET /releases.
 // It populates ParsedVendor and ParsedVendorReleaseID on success.
 // At least one of vendor or vendor_release_id is required.
-// Only artblocks and feralfile are accepted as vendor values.
+// Accepted vendor values: artblocks, feralfile, fxhash, objkt.
 func (p *ListReleasesQueryParams) Validate() error {
 	vendor := strings.TrimSpace(p.Vendor)
 	vendorReleaseID := strings.TrimSpace(p.VendorReleaseID)
@@ -270,10 +270,10 @@ func (p *ListReleasesQueryParams) Validate() error {
 	if vendor != "" {
 		v := schema.Vendor(strings.ToLower(vendor))
 		switch v {
-		case schema.VendorArtBlocks, schema.VendorFeralFile:
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt:
 			p.ParsedVendor = &v
 		default:
-			return apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be 'artblocks' or 'feralfile'", vendor))
+			return apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
 		}
 	}
 

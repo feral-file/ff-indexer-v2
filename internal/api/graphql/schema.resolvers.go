@@ -455,10 +455,10 @@ func (r *queryResolver) Releases(ctx context.Context, vendor *string, vendorRele
 	if vendorVal != "" {
 		v := schema.Vendor(strings.ToLower(vendorVal))
 		switch v {
-		case schema.VendorArtBlocks, schema.VendorFeralFile:
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt:
 			parsedVendor = &v
 		default:
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be 'artblocks' or 'feralfile'", vendorVal))
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendorVal))
 		}
 	}
 

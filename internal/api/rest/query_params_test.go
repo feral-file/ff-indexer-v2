@@ -126,7 +126,7 @@ func TestListReleasesQueryParamsValidateInvalidVendor(t *testing.T) {
 	t.Parallel()
 
 	params := ListReleasesQueryParams{
-		Vendor: "fxhash",
+		Vendor: "superrare",
 		Limit:  20,
 	}
 	err := params.Validate()
@@ -134,6 +134,32 @@ func TestListReleasesQueryParamsValidateInvalidVendor(t *testing.T) {
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, err, &apiErr)
 	assert.Contains(t, apiErr.Details, "invalid vendor")
+}
+
+func TestListReleasesQueryParamsValidateFxhashVendor(t *testing.T) {
+	t.Parallel()
+
+	params := ListReleasesQueryParams{
+		Vendor: "fxhash",
+		Limit:  20,
+	}
+	err := params.Validate()
+	require.NoError(t, err)
+	require.NotNil(t, params.ParsedVendor)
+	assert.Equal(t, schema.VendorFXHash, *params.ParsedVendor)
+}
+
+func TestListReleasesQueryParamsValidateObjktVendor(t *testing.T) {
+	t.Parallel()
+
+	params := ListReleasesQueryParams{
+		Vendor: "objkt",
+		Limit:  20,
+	}
+	err := params.Validate()
+	require.NoError(t, err)
+	require.NotNil(t, params.ParsedVendor)
+	assert.Equal(t, schema.VendorObjkt, *params.ParsedVendor)
 }
 
 func TestListReleasesQueryParamsValidateRejectsZeroLimit(t *testing.T) {

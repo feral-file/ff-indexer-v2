@@ -48,7 +48,7 @@ tags:
   - name: tokens
     description: Token data and metadata operations
   - name: releases
-    description: Cross-vendor release (FF series, AB project) lookup with mint-ordered member tokens
+    description: Cross-vendor release (FF series, AB project, fxhash generative token, objkt custom collection) lookup with mint-ordered member tokens
   - name: collections
     description: Collection sync and state management operations
   - name: workflows
@@ -554,14 +554,14 @@ paths:
       parameters:
         - name: vendor
           in: query
-          description: Filter by source vendor (`artblocks` or `feralfile`)
+          description: Filter by source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
           schema:
             type: string
-            enum: [artblocks, feralfile]
+            enum: [artblocks, feralfile, fxhash, objkt]
           example: artblocks
         - name: vendor_release_id
           in: query
-          description: Filter by external release key (FF series UUID or AB {chainID}-{contract}-{projectID})
+          description: Filter by external release key (FF series UUID, AB {chainID}-{contract}-{projectID}, fxhash generative token id, or objkt KT1 contract)
           schema:
             type: string
           example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
@@ -602,7 +602,7 @@ paths:
     get:
       summary: Get release by internal id
       description: |
-        Retrieves a cross-vendor release (Feral File series or Art Blocks project) and its member tokens sorted by mint number.
+        Retrieves a cross-vendor release (Feral File series, Art Blocks project, fxhash generative token, or objkt custom collection) and its member tokens sorted by mint number.
         Response includes optional `name` (human-readable title) and `total_mints` (declared max edition size from vendor).
       operationId: getRelease
       tags:
@@ -2008,11 +2008,11 @@ components:
           example: 42
         vendor:
           type: string
-          description: Source vendor (artblocks or feralfile)
+          description: Source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
           example: artblocks
         vendor_release_id:
           type: string
-          description: External release key (FF series UUID or AB {chainID}-{contract}-{projectID}, chain-qualified)
+          description: External release key — AB `{chainID}-{contract}-{projectID}` (chain-qualified), FF series UUID, fxhash generative token id, or objkt KT1 contract address
           example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
         name:
           type: [string, "null"]
