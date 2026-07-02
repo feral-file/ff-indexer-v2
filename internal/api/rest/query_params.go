@@ -270,6 +270,11 @@ func (p *ListReleasesQueryParams) Validate() error {
 		return apierrors.NewValidationError("Invalid limit: must be at least 1")
 	}
 
+	for _, id := range p.IDs {
+		if id == 0 {
+			return apierrors.NewValidationError("invalid id in ids: must be a positive integer")
+		}
+	}
 	if len(p.IDs) > 0 {
 		p.ParsedIDs = p.IDs
 	}

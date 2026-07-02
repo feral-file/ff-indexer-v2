@@ -96,6 +96,20 @@ func TestListReleasesQueryParamsValidateRequiresFilter(t *testing.T) {
 	assert.Contains(t, apiErr.Details, "at least one of ids, vendor, or vendor_release_id is required")
 }
 
+func TestListReleasesQueryParamsValidateIDsRejectsZero(t *testing.T) {
+	t.Parallel()
+
+	params := ListReleasesQueryParams{
+		IDs:   []uint64{1, 0, 3},
+		Limit: 20,
+	}
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "must be a positive integer")
+}
+
 func TestListReleasesQueryParamsValidateIDsOnly(t *testing.T) {
 	t.Parallel()
 

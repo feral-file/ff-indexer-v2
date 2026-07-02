@@ -446,6 +446,11 @@ func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *stri
 	if len(ids) == 0 && vendorVal == "" && vendorReleaseIDVal == "" {
 		return nil, apierrors.NewValidationError("at least one of ids, vendor, or vendor_release_id is required")
 	}
+	for _, id := range ids {
+		if id == 0 {
+			return nil, apierrors.NewValidationError("invalid id in ids: must be a positive integer")
+		}
+	}
 
 	if limit != nil && *limit == 0 {
 		return nil, apierrors.NewValidationError("Invalid limit: must be at least 1")

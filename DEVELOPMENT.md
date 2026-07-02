@@ -505,6 +505,21 @@ make clean-images
 
 ## Testing
 
+### Test categories
+
+Tests are split by the `integration` build tag:
+
+**Unit tests** (default, no build tag):
+- All `*_test.go` files without `//go:build integration`
+- Run with `make test` or `CGO_ENABLED=1 go test ./...`
+- Excludes `internal/store` tests and vendor `*_integration_test.go` files
+
+**Integration tests** (`//go:build integration`):
+- `internal/store` — requires PostgreSQL (testcontainers when Docker is available and `TEST_DB_HOST` is unset, or `TEST_DB_*` for an external DB)
+- `internal/providers/vendors/*/client_integration_test.go` — call live vendor APIs (network required)
+
+**Important:** `go test -tags=integration ./...` is **additive** — it runs unit tests **and** integration-tagged tests. It is not integration-only.
+
 ### Canonical Verification
 
 Use this command before handing off a substantive change:
@@ -513,7 +528,15 @@ Use this command before handing off a substantive change:
 make check
 ```
 
-It runs the `check` target in the `Makefile`: format imports (`goimports`), verify `gofmt -s` formatting (same as CI’s go fmt check), full-repo local lint (`golangci-lint` with CGO enabled), then `CGO_ENABLED=1` `go test -cover ./...` (same package set CI exercises, including `cmd/ff-indexer`).
+It runs: format imports (`goimports`), verify `gofmt -s` formatting, full-repo local lint (`golangci-lint` with CGO enabled), unit tests (`make test`), then the full suite with integration tests (`make test-integration`).
+
+**Store integration tests require Docker or `TEST_DB_*`** — the store harness spins up a PostgreSQL testcontainer when `TEST_DB_HOST` is unset. Ensure Docker is running before invoking `make check`, or point at an external database:
+
+```bash
+export TEST_DB_HOST=localhost TEST_DB_PORT=5432
+export TEST_DB_USER=postgres TEST_DB_PASSWORD=postgres TEST_DB_NAME=test_db
+make test-integration
+```
 
 To fix formatting issues before running checks:
 
@@ -522,27 +545,38 @@ make imports   # goimports (import order and grouping)
 make fmt       # gofmt -s -w (simplifications enforced in CI)
 ```
 
-The lint profile is opinionated (complexity, length, doc expectations). For CI’s exact commands and package filters, see `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`.
+### Running tests
+
+```bash
+# Unit tests only (fast, no external dependencies)
+make test
+
+# Full suite: unit + integration (matches CI; needs Docker or TEST_DB_* for store tests)
+make test-integration
+
+# Same command CI uses (with PostgreSQL service and TEST_DB_* set)
+CGO_ENABLED=1 go test -tags=integration -cover ./...
+
+# Store integration tests only
+CGO_ENABLED=1 go test -tags=integration -v ./internal/store/...
+
+# Vendor API integration tests only (live external APIs)
+go test -tags=integration ./internal/providers/vendors/fxhash/...
+go test -tags=integration ./internal/providers/vendors/objkt/...
+go test -tags=integration ./internal/providers/vendors/artblocks/...
+go test -tags=integration ./internal/providers/vendors/feralfile/...
+
+# All media-related tests (requires CGO)
+CGO_ENABLED=1 go test ./internal/media/... -v
+```
+
+The lint profile is opinionated (complexity, length, doc expectations). For CI's exact commands and package filters, see `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`. CI runs the full test suite with `-tags=integration` against a PostgreSQL service (see `TEST_DB_*` env vars in that workflow).
 
 Optional lightweight verification (CGO-disabled binary and stub media path) is **not** part of `make check` or CI. Run `make test-lightweight-build` when you change code that must remain compatible with the default lightweight Docker deployment.
-
-Some packages need PostgreSQL or Docker (for example `internal/store` may use `TEST_DB_*` against a local DB or testcontainers when `TEST_DB_HOST` is unset). Start infrastructure with `make up-infra` when tests require Postgres, and set `TEST_DB_*` if you use an external database instead of the default container path.
 
 For non-trivial changed functions, use the doc comment to capture the reason, trade-offs, and constraints behind the implementation so later contributors do not reopen already-rejected paths by accident.
 
 Coverage policy is non-regression versus the base branch. If a change must lower coverage, document the reason in the PR description and call out the gap for reviewers.
-
-```bash
-# Run all media-related tests (requires CGO)
-CGO_ENABLED=1 go test ./internal/media/... -v
-
-# Narrow to specific packages
-CGO_ENABLED=1 go test ./internal/media/processor -v
-CGO_ENABLED=1 go test ./internal/media/transformer -v
-CGO_ENABLED=1 go test ./internal/media/rasterizer -v
-```
-
-Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environment.
 
 ## Tips
 

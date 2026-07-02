@@ -2,7 +2,8 @@
 	up down start stop restart logs logs-component \
 	logs-api logs-ethereum-ingestion logs-tezos-ingestion logs-worker-core logs-worker-media logs-sweeper \
 	ps clean config \
-	up-infra up-app dev
+	up-infra up-app dev \
+	test test-integration test-lightweight-build check
 
 # Docker Compose settings
 # Use clean environment to ensure .env files take precedence over host shell variables
@@ -270,10 +271,15 @@ fmt-check: ## Verify gofmt -s formatting (matches CI go fmt check)
 	fi
 	@echo "$(COLOR_GREEN)✓ gofmt check passed$(COLOR_RESET)"
 
-test: ## Run tests
-	@echo "$(COLOR_BLUE)Running tests...$(COLOR_RESET)"
+test: ## Run unit tests (no external dependencies required)
+	@echo "$(COLOR_BLUE)Running unit tests...$(COLOR_RESET)"
 	@CGO_ENABLED=1 go test -cover ./...
-	@echo "$(COLOR_GREEN)✓ Tests passed$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)✓ Unit tests passed$(COLOR_RESET)"
+
+test-integration: ## Run integration tests (store tests require Docker or TEST_DB_* env vars; vendor tests require external APIs)
+	@echo "$(COLOR_BLUE)Running integration tests...$(COLOR_RESET)"
+	@CGO_ENABLED=1 go test -tags=integration -cover ./...
+	@echo "$(COLOR_GREEN)✓ Integration tests passed$(COLOR_RESET)"
 
 test-lightweight-build: ## Verify the default CGO_ENABLED=0 app build and stub tests used by lightweight Docker mode
 	@echo "$(COLOR_BLUE)Verifying lightweight app build and stub tests (CGO_ENABLED=0)...$(COLOR_RESET)"
@@ -281,7 +287,7 @@ test-lightweight-build: ## Verify the default CGO_ENABLED=0 app build and stub t
 	@CGO_ENABLED=0 go test ./cmd/ff-indexer/...
 	@echo "$(COLOR_GREEN)✓ Lightweight build passed$(COLOR_RESET)"
 
-check: imports fmt-check lint-local test ## Format imports, verify gofmt -s, local golangci-lint, full (CGO=1) tests
+check: imports fmt-check lint-local test test-integration ## Format imports, verify gofmt -s, lint, unit tests, and integration tests (store requires Docker or TEST_DB_*)
 	@echo "$(COLOR_GREEN)✓ All checks passed$(COLOR_RESET)"
 
 ##@ Quick Start

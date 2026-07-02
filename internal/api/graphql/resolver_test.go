@@ -95,6 +95,21 @@ func TestQueryResolverReleasesRequiresFilter(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least one of ids, vendor, or vendor_release_id is required")
 }
 
+func TestQueryResolverReleasesRejectsZeroID(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	ids := []Uint64{1, 0, 3}
+	_, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be a positive integer")
+}
+
 func TestQueryResolverReleasesReturnsByIDs(t *testing.T) {
 	t.Parallel()
 
