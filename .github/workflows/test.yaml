@@ -46,8 +46,8 @@ jobs:
     concurrency:
       group: test-${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
-    
-    # PostgreSQL service for integration tests
+
+    # PostgreSQL service for store integration tests (//go:build integration).
     services:
       postgres:
         image: postgres:18-alpine
@@ -62,7 +62,7 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-    
+
     defaults:
       run:
         working-directory: ./
@@ -99,7 +99,9 @@ jobs:
           PGPASSWORD: postgres
 
       - name: Run tests with coverage
-        run: CGO_ENABLED=1 go test -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|internal/store/schema|tools")
+        # -tags=integration includes unit tests plus integration-tagged tests
+        # (internal/store and vendor client_integration_test.go files).
+        run: CGO_ENABLED=1 go test -tags=integration -v -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -vE "/internal/mocks|/internal/adapter|internal/store/schema|tools")
         env:
           TEST_DB_HOST: localhost
           TEST_DB_PORT: 5432

@@ -26,13 +26,27 @@ type ArtworkResponse struct {
 	Result Artwork `json:"result"`
 }
 
-// Artwork represents an artwork from Feral File API
+// Artwork represents an artwork from Feral File API.
+// Index is a pointer so that a missing "index" key in JSON can be distinguished
+// from an explicit zero value. Callers must check for nil before using Index to
+// compute mint_number; an absent index means release membership cannot be determined.
 type Artwork struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	ThumbnailURI string `json:"thumbnailURI"`
 	PreviewURI   string `json:"previewURI"`
 	Series       Series `json:"series"`
+	SeriesID     string `json:"seriesID"`
+	Index        *int64 `json:"index"`
+}
+
+// SeriesIDOrFallback returns the stable FF series identifier.
+// Prefer the artwork-level seriesID; fall back to the nested series ID when present.
+func (a *Artwork) SeriesIDOrFallback() string {
+	if a.SeriesID != "" {
+		return a.SeriesID
+	}
+	return a.Series.ID
 }
 
 // CanonicalName returns the canonical name for an artwork
@@ -48,10 +62,17 @@ func (a *Artwork) CanonicalName() string {
 
 // Series represents a series (collection) in Feral File
 type Series struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Medium      string `json:"medium"`
-	Artist      Artist `json:"artist"`
+	ID          string         `json:"ID"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	Medium      string         `json:"medium"`
+	Settings    SeriesSettings `json:"settings"`
+	Artist      Artist         `json:"artist"`
+}
+
+// SeriesSettings holds edition-size settings for a FF series.
+type SeriesSettings struct {
+	MaxArtwork int64 `json:"maxArtwork"`
 }
 
 // Artist represents an artist in Feral File

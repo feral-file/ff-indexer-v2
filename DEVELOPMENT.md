@@ -199,7 +199,13 @@ Unlike most migrations, **you MUST pause or stop write traffic** before running 
 1. **STOP write traffic** (pause indexer workers, drain queues, or use maintenance mode)
 2. Run `017_dedup.sql` if `token_events` is large or has known duplicates
 3. Run `017.sql` immediately after dedup completes
-4. Verify index exists (see verification commands below)
+4. Verify the index exists:
+   ```bash
+   psql -h localhost -U postgres -d ff_indexer -c "\d token_events_ownership_unique"
+   # Or in SQL:
+   SELECT indexname, indexdef FROM pg_indexes
+   WHERE tablename = 'token_events' AND indexname = 'token_events_ownership_unique';
+   ```
 5. Deploy new application version
 6. **RESUME write traffic**
 
@@ -221,41 +227,83 @@ psql -h localhost -U postgres -d ff_indexer -f db/migrations/017.sql
 
 Fresh installs from `init_pg_db.sql` can run `017.sql` directly if there are no duplicate ownership rows. Traffic pause is still required due to write blocking during index build.
 
-- **If migration has NOT run:** Application will fail at runtime with PostgreSQL error:
+### Migration 018: releases and release_members
+
+Migration `018.sql` adds the cross-vendor release abstraction (`releases`, `release_members`) used for mint-ordered series/project membership. The `release_members.mint_number` column includes `CHECK (mint_number > 0)` to enforce the 1-based contract at the database level. Fresh installs pick this up from `db/init_pg_db.sql` automatically.
+
+- **If migration 018 has NOT run (tables missing):** Every token read (`GET /tokens`, `GET /tokens/:cid`, GraphQL token queries) fails because the app unconditionally queries `release_members` to populate `release_id` and `mint_number`. The error you will see on each call is:
+  ```
+  ERROR: relation "release_members" does not exist (SQLSTATE 42P01)
+  ```
+  Migration 018 must run **before** deploying this app version, not only before backfill or re-enrichment. This is not limited to release write paths.
+- **If migration 018 ran partially (tables exist but constraint missing):** `UpsertRelease` fails with:
   ```
   ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)
   ```
-- **If app deploys before migration:** All ownership event inserts will fail, breaking token indexing
-- **If `017.sql` runs before dedup when duplicates exist:** `CREATE UNIQUE INDEX` fails; run `017_dedup.sql` then retry `017.sql`
-- **There is NO fallback:** The application will explicitly fail to prevent data corruption
+- **There is NO silent fallback:** The application explicitly returns errors rather than silently skipping release membership.
 
 **Migration verification:**
 
 ```bash
-# Verify migration 017 index exists
-psql -h localhost -U postgres -d ff_indexer -c "\d token_events_ownership_unique"
-
-# Or check in SQL
-SELECT indexname, indexdef 
-FROM pg_indexes 
-WHERE tablename = 'token_events' 
-  AND indexname = 'token_events_ownership_unique';
-
-# Optional: confirm no duplicate ownership keys remain
-SELECT token_id, owner_address, event_type, metadata->>'tx_hash' AS tx_hash, COUNT(*) AS n
-FROM token_events
-WHERE event_type IN ('acquired', 'released')
-  AND owner_address IS NOT NULL
-  AND metadata->>'tx_hash' IS NOT NULL
-GROUP BY 1, 2, 3, 4
-HAVING COUNT(*) > 1
-LIMIT 5;
+# Verify releases and release_members tables exist
+psql -h localhost -U postgres -d ff_indexer -c "\d releases"
+psql -h localhost -U postgres -d ff_indexer -c "\d release_members"
 ```
 
 **For production deployments:**
 - Use blue-green deployment strategy to avoid downtime
 - Run migrations on blue environment, verify, then switch traffic
 - Or schedule maintenance window for migration + deployment
+
+### Migration 018_reindex: re-enrich existing tokens to populate release membership
+
+Migration `018_reindex.sql` inserts `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt. The running worker processes these jobs to re-fetch vendor data and populate `releases` and `release_members`.
+
+**Why reindex rather than derive from stored vendor JSON:**
+
+Stored `vendor_json` from before this release is incomplete for every vendor and cannot produce correct release rows without hitting vendor APIs:
+
+| Vendor | Gap in pre-existing stored JSON |
+|--------|--------------------------------|
+| Art Blocks | `max_invocations` was not fetched; `total_mints` would be absent |
+| Feral File | `index` and `seriesID` were not stored; `mint_number` cannot be derived |
+| fxhash | Tokens were stored as `vendor=objkt` with no `generative_token`/`iteration`; `vendor_release_id` cannot be derived |
+| objkt | `fa.collection_type` was not fetched; custom collections cannot be identified |
+
+Reindexing runs the full enrichment pipeline — vendor API calls are governed by the configured rate limiters (2 RPS for fxhash/objkt, no separate limit for Feral File/Art Blocks) and the existing token worker concurrency.
+
+**What happens after migration 018_reindex runs:**
+
+1. Jobs are inserted into the `token_index` queue with `status=pending`.
+2. The token worker picks them up and calls `EnhanceTokenMetadata` for each token.
+3. The enhancer re-fetches data from the vendor API, stores a complete `vendor_json`, and upserts `releases` + `release_members` directly.
+4. New tokens indexed after this release get releases written automatically at enrichment time — no additional action needed.
+
+**Idempotency:** The migration uses `ON CONFLICT ... DO NOTHING` on the partial unique index `jobs_unique_key_active`. Re-running the migration skips tokens that already have a pending or running metadata job. Tokens whose jobs completed or failed can be re-triggered via `POST /api/v1/tokens/index`.
+
+**Fresh installs:** `018_reindex.sql` produces no rows on a fresh database (no `enrichment_sources` rows exist yet). `db/init_pg_db.sql` does not need updating.
+
+**Verify progress after deployment:**
+
+```sql
+-- Jobs inserted by migration 018_reindex (all statuses)
+SELECT status, COUNT(*)
+FROM jobs
+WHERE kind = 'IndexTokenMetadata'
+GROUP BY status;
+
+-- Tokens still without release membership (expected to shrink as worker runs)
+SELECT es.vendor, COUNT(*)
+FROM enrichment_sources es
+LEFT JOIN release_members rm ON rm.token_id = es.token_id
+WHERE es.vendor IN ('artblocks', 'feralfile', 'fxhash', 'objkt')
+  AND rm.id IS NULL
+GROUP BY es.vendor;
+
+-- Release membership after enrichment completes
+SELECT vendor, COUNT(*) FROM releases GROUP BY vendor;
+SELECT COUNT(*) FROM release_members;
+```
 
 ### Reset Database
 
@@ -457,6 +505,21 @@ make clean-images
 
 ## Testing
 
+### Test categories
+
+Tests are split by the `integration` build tag:
+
+**Unit tests** (default, no build tag):
+- All `*_test.go` files without `//go:build integration`
+- Run with `make test` or `CGO_ENABLED=1 go test ./...`
+- Excludes `internal/store` tests and vendor `*_integration_test.go` files
+
+**Integration tests** (`//go:build integration`):
+- `internal/store` — requires PostgreSQL (testcontainers when Docker is available and `TEST_DB_HOST` is unset, or `TEST_DB_*` for an external DB)
+- `internal/providers/vendors/*/client_integration_test.go` — call live vendor APIs (network required)
+
+**Important:** `go test -tags=integration ./...` is **additive** — it runs unit tests **and** integration-tagged tests. It is not integration-only.
+
 ### Canonical Verification
 
 Use this command before handing off a substantive change:
@@ -465,7 +528,15 @@ Use this command before handing off a substantive change:
 make check
 ```
 
-It runs the `check` target in the `Makefile`: format imports (`goimports`), verify `gofmt -s` formatting (same as CI’s go fmt check), full-repo local lint (`golangci-lint` with CGO enabled), then `CGO_ENABLED=1` `go test -cover ./...` (same package set CI exercises, including `cmd/ff-indexer`).
+It runs: format imports (`goimports`), verify `gofmt -s` formatting, full-repo local lint (`golangci-lint` with CGO enabled), unit tests (`make test`), then the full suite with integration tests (`make test-integration`).
+
+**Store integration tests require Docker or `TEST_DB_*`** — the store harness spins up a PostgreSQL testcontainer when `TEST_DB_HOST` is unset. Ensure Docker is running before invoking `make check`, or point at an external database:
+
+```bash
+export TEST_DB_HOST=localhost TEST_DB_PORT=5432
+export TEST_DB_USER=postgres TEST_DB_PASSWORD=postgres TEST_DB_NAME=test_db
+make test-integration
+```
 
 To fix formatting issues before running checks:
 
@@ -474,27 +545,38 @@ make imports   # goimports (import order and grouping)
 make fmt       # gofmt -s -w (simplifications enforced in CI)
 ```
 
-The lint profile is opinionated (complexity, length, doc expectations). For CI’s exact commands and package filters, see `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`.
+### Running tests
+
+```bash
+# Unit tests only (fast, no external dependencies)
+make test
+
+# Full suite: unit + integration (matches CI; needs Docker or TEST_DB_* for store tests)
+make test-integration
+
+# Same command CI uses (with PostgreSQL service and TEST_DB_* set)
+CGO_ENABLED=1 go test -tags=integration -cover ./...
+
+# Store integration tests only
+CGO_ENABLED=1 go test -tags=integration -v ./internal/store/...
+
+# Vendor API integration tests only (live external APIs)
+go test -tags=integration ./internal/providers/vendors/fxhash/...
+go test -tags=integration ./internal/providers/vendors/objkt/...
+go test -tags=integration ./internal/providers/vendors/artblocks/...
+go test -tags=integration ./internal/providers/vendors/feralfile/...
+
+# All media-related tests (requires CGO)
+CGO_ENABLED=1 go test ./internal/media/... -v
+```
+
+The lint profile is opinionated (complexity, length, doc expectations). For CI's exact commands and package filters, see `.github/workflows/test.yaml` and `.github/workflows/lint.yaml`. CI runs the full test suite with `-tags=integration` against a PostgreSQL service (see `TEST_DB_*` env vars in that workflow).
 
 Optional lightweight verification (CGO-disabled binary and stub media path) is **not** part of `make check` or CI. Run `make test-lightweight-build` when you change code that must remain compatible with the default lightweight Docker deployment.
-
-Some packages need PostgreSQL or Docker (for example `internal/store` may use `TEST_DB_*` against a local DB or testcontainers when `TEST_DB_HOST` is unset). Start infrastructure with `make up-infra` when tests require Postgres, and set `TEST_DB_*` if you use an external database instead of the default container path.
 
 For non-trivial changed functions, use the doc comment to capture the reason, trade-offs, and constraints behind the implementation so later contributors do not reopen already-rejected paths by accident.
 
 Coverage policy is non-regression versus the base branch. If a change must lower coverage, document the reason in the PR description and call out the gap for reviewers.
-
-```bash
-# Run all media-related tests (requires CGO)
-CGO_ENABLED=1 go test ./internal/media/... -v
-
-# Narrow to specific packages
-CGO_ENABLED=1 go test ./internal/media/processor -v
-CGO_ENABLED=1 go test ./internal/media/transformer -v
-CGO_ENABLED=1 go test ./internal/media/rasterizer -v
-```
-
-Note: media tests require CGO; make sure `CGO_ENABLED=1` is set in your environment.
 
 ## Tips
 

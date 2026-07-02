@@ -17,6 +17,7 @@ enum Order {
 enum TokenSortBy {
   created_at
   latest_provenance
+  mint_number
 }
 
 # MediaAssetVariantKey enumeration for variant URL keys
@@ -177,6 +178,8 @@ type Token {
   burned: Boolean!
   viewable: Boolean!
   last_provenance_timestamp: Time
+  release_id: Uint64
+  mint_number: Int
   created_at: Time!
   updated_at: Time!
   display: TokenDisplay
@@ -193,6 +196,33 @@ type TokenList {
   items: [Token!]!
   offset: Uint64
   total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
+}
+
+# Paginated releases list (metadata only; use release(id) for members)
+type ReleaseList {
+  items: [ReleaseSummary!]!
+  offset: Uint64
+}
+
+# Release metadata without members (list responses)
+type ReleaseSummary {
+  id: Uint64!
+  vendor: String!
+  vendor_release_id: String!
+  name: String
+  total_mints: Int
+}
+
+# Cross-vendor release (FF series, AB project)
+type Release {
+  id: Uint64!
+  vendor: String!
+  vendor_release_id: String!
+  # Human-readable release title (e.g. "Fidenza"); REST GET /api/v1/releases/{id} `name`.
+  name: String
+  # Declared max edition size from vendor; REST GET /api/v1/releases/{id} `total_mints`.
+  total_mints: Int
+  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc): TokenList!
 }
 
 # Result of triggering indexing
@@ -252,12 +282,28 @@ type Query {
     token_numbers: [String!]
     token_ids: [Uint64!]
     token_cids: [String!]
+    release_id: Uint64
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
   ): TokenList
+
+  # Get a release by internal id with mint-ordered members
+  # Equivalent to: GET /api/v1/releases/:id
+  release(id: Uint64!): Release
+
+  # List releases filtered by ids, vendor, and/or vendor_release_id (metadata only)
+  # Equivalent to: GET /api/v1/releases?ids=1&ids=2&vendor=...&vendor_release_id=...
+  # At least one of ids, vendor, or vendor_release_id is required.
+  releases(
+    ids: [Uint64!]
+    vendor: String
+    vendor_release_id: String
+    limit: Uint8 = 20
+    offset: Uint64 = 0
+  ): ReleaseList!
 
   # Get job status by job id
   # Equivalent to: GET /api/v1/jobs/:job_id

@@ -22,6 +22,8 @@ The database includes the following main tables:
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
+- `releases` - Cross-vendor release abstraction (Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections) with stable internal id (migration 018)
+- `release_members` - Ordered token membership within a release; `mint_number` is authoritative and 1-based (migration 018)
 - `watched_addresses` - Addresses being monitored for indexing
 - `jobs` - Postgres-backed durable job queue (token and media work units)
 - `address_indexing_jobs` - Address-level indexing job status tracking
@@ -62,11 +64,12 @@ Primary entity for tracking tokens across all supported blockchains.
 - `(chain, contract_address, token_number)` (unique)
 
 **Query Sorting**:
-The tokens query supports two sort options:
+The tokens query supports three sort options:
 - `sort_by=created_at` - Sort by token creation timestamp
 - `sort_by=latest_provenance` (default) - Sort by latest provenance event:
   - When `owners` filter is provided: Sorts by latest provenance event for those specific owners (via join with `token_ownership_provenance`)
   - Without `owners` filter: Uses denormalized `last_provenance_timestamp` field for efficient sorting
+- `sort_by=mint_number` - Sort by authoritative 1-based mint order within a release (via join with `release_members`). **Requires** `release_id` filter; the API returns a validation error if `mint_number` is requested without `release_id`. Uses `release_members_release_id_mint_number_idx` on `(release_id, mint_number)` for ordered member listing.
 
 ### token_metadata
 
@@ -311,6 +314,58 @@ Materialized view tracking the most recent provenance event per token-owner pair
 **Maintenance**:
 - Maintained by application code via UPSERT operations
 - Monotonic timestamp enforcement in UPSERT WHERE clause prevents out-of-order updates
+
+---
+
+### releases
+
+Cross-vendor release abstraction that gives Feral File series, Art Blocks projects, fxhash generative tokens, and objkt custom collections a stable internal id with mint-ordered members. Added in migration 018.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Stable internal release identifier (primary key) |
+| vendor | vendor_type | Source platform (`artblocks`, `feralfile`, `fxhash`, `objkt`) |
+| vendor_release_id | TEXT | External release key: FF seriesID UUID, AB `{chainID}-{contract}-{projectID}` (chain-qualified), fxhash generative token numeric id (e.g. `"9997"`), objkt custom-collection KT1 contract address |
+| name | TEXT | Human-readable release title (e.g. "Fidenza"); populated from vendor enrichment |
+| total_mints | BIGINT | Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork, fxhash original_supply, objkt FA editions); nullable when unknown |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp (bumped on every upsert via trigger) |
+
+**Unique Constraints**:
+- `(vendor, vendor_release_id)` (unique) — the upsert conflict target
+
+**Triggers**:
+- `update_releases_updated_at` — automatically bumps `updated_at` on row update
+
+**Note**: `UpsertRelease` uses `INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()` (and `name`/`total_mints` when provided) RETURNING id to be safe under concurrent token workers. `release_members` has no `updated_at`; membership rows are immutable once written (overwritten in full by the ON CONFLICT path on `token_id`).
+
+---
+
+### release_members
+
+Ordered token membership within a release. Each token belongs to at most one release; `mint_number` is the authoritative 1-based edition order within the release. Added in migration 018.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL | Internal row identifier (primary key) |
+| release_id | BIGINT | Foreign key to `releases.id` (CASCADE delete) |
+| token_id | BIGINT | Foreign key to `tokens.id` (CASCADE delete) |
+| mint_number | BIGINT | Authoritative 1-based mint/edition order within the release (`CHECK (mint_number > 0)`) |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+
+**Unique Constraints**:
+- `(token_id)` (unique) — a token belongs to at most one release; conflict target for `UpsertReleaseMember`
+- `(release_id, token_id)` (unique)
+- `(release_id, mint_number)` (unique)
+
+**Indexes**:
+- `release_members_release_id_mint_number_idx` on `(release_id, mint_number)` — supports ordered member listing
+
+**Relationships**:
+- Many-to-one with `releases` (FK `release_id`)
+- Many-to-one with `tokens` (FK `token_id`)
+
+**Note**: `release_members` is intentionally `created_at`-only (no `updated_at`, no trigger). When a token's membership changes, the existing row is replaced via `ON CONFLICT (token_id) DO UPDATE`.
 
 ---
 
@@ -579,7 +634,11 @@ tokens (1)
   ├── (N) provenance_events
   ├── (N) token_events
   ├── (N) enrichment_sources
-  └── (N) token_media_health
+  ├── (N) token_media_health
+  └── (0..1) release_members → releases
+
+releases (1)
+  └── (N) release_members
 
 webhook_clients (1)
   └── (N) webhook_deliveries
@@ -612,6 +671,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_address_indexing_jobs_updated_at`
 - `update_token_media_health_updated_at`
 - `update_jobs_updated_at`
+- `update_releases_updated_at` — added in migration 018 (`releases` table only; `release_members` has no `updated_at` by design)
 
 ## Migrations
 
@@ -628,8 +688,8 @@ All tables with `updated_at` columns have triggers that automatically update the
 
 Migrations should be placed in `db/migrations/` directory with sequential numbering:
 - `001.sql` - Historical: introduced `token_ownership_periods` (removed in `015.sql`).
-- `002.sql` - Future changes
-- etc.
+- `018.sql` - Adds `releases` and `release_members` tables for cross-vendor release abstraction with mint-ordered members (including `CHECK (mint_number > 0)`), plus the `update_releases_updated_at` trigger.
+- `018_reindex.sql` - Enqueues `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt so the updated enhancer re-fetches vendor data and populates `releases` + `release_members`. Pre-existing stored `vendor_json` is incomplete for release derivation across all vendors; reindexing is the correct single path. Safe to run on a fresh database (produces no rows).
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data

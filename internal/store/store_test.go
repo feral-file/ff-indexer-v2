@@ -1,3 +1,5 @@
+//go:build integration
+
 package store
 
 import (
@@ -6561,6 +6563,251 @@ func testJobQueue(t *testing.T, store Store) {
 // Test Runner - runs all tests against a given store implementation
 // =============================================================================
 
+func testReleaseOperations(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	tokenInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000009999",
+		"1000001",
+		"0xrelease100000000000000000000000000000000001",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput))
+	token1, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token1)
+
+	tokenInput2 := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000009999",
+		"1000003",
+		"0xrelease200000000000000000000000000000000002",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput2))
+	token2, err := store.GetTokenByTokenCID(ctx, tokenInput2.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token2)
+
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000009999-1", nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.NotZero(t, release.ID)
+
+	require.NoError(t, store.UpsertReleaseMember(ctx, release.ID, token1.ID, 1))
+	require.NoError(t, store.UpsertReleaseMember(ctx, release.ID, token2.ID, 3))
+
+	releaseID := release.ID
+	tokens, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+		ReleaseID:         &releaseID,
+		SortBy:            TokenSortByMintNumber,
+		SortOrder:         SortOrderAsc,
+		Limit:             10,
+		IncludeUnviewable: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, tokens, 2)
+	assert.Equal(t, token1.ID, tokens[0].ID)
+	assert.Equal(t, token2.ID, tokens[1].ID)
+
+	members, err := store.GetReleaseMembersByTokenIDs(ctx, []uint64{token1.ID, token2.ID})
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+	assert.Equal(t, int64(1), members[token1.ID].MintNumber)
+	assert.Equal(t, int64(3), members[token2.ID].MintNumber)
+
+	fetched, err := store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.Equal(t, schema.VendorArtBlocks, fetched.Vendor)
+	assert.Equal(t, "0x0000000000000000000000000000000000009999-1", fetched.VendorReleaseID)
+}
+
+func testUpsertReleaseMetadata(t *testing.T, store Store) {
+	ctx := context.Background()
+	vendorReleaseID := "0x000000000000000000000000000000000000aaaa-metadata"
+
+	name := "Fidenza"
+	totalMints := int64(999)
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &name, &totalMints)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.NotZero(t, release.ID)
+
+	fetched, err := store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	require.NotNil(t, fetched.Name)
+	assert.Equal(t, name, *fetched.Name)
+	require.NotNil(t, fetched.TotalMints)
+	assert.Equal(t, totalMints, *fetched.TotalMints)
+
+	updatedName := "Fidenza (updated)"
+	updatedTotal := int64(1000)
+	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &updatedName, &updatedTotal)
+	require.NoError(t, err)
+
+	fetched, err = store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched.Name)
+	assert.Equal(t, updatedName, *fetched.Name)
+	require.NotNil(t, fetched.TotalMints)
+	assert.Equal(t, updatedTotal, *fetched.TotalMints)
+
+	// Nil metadata on conflict must not clear existing name/total_mints.
+	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, nil, nil)
+	require.NoError(t, err)
+
+	fetched, err = store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched.Name)
+	assert.Equal(t, updatedName, *fetched.Name)
+	require.NotNil(t, fetched.TotalMints)
+	assert.Equal(t, updatedTotal, *fetched.TotalMints)
+}
+
+func testListReleases(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	abID := "0x000000000000000000000000000000000000bbbb-list-1"
+	ffID := "list-release-ff-series-uuid"
+	abName := "AB Release"
+	ffName := "FF Release"
+	abTotal := int64(100)
+	ffTotal := int64(50)
+
+	abRelease, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, abID, &abName, &abTotal)
+	require.NoError(t, err)
+	ffRelease, err := store.UpsertRelease(ctx, schema.VendorFeralFile, ffID, &ffName, &ffTotal)
+	require.NoError(t, err)
+
+	vendorAB := schema.VendorArtBlocks
+	vendorFF := schema.VendorFeralFile
+
+	byVendor, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		Vendor: &vendorAB,
+		Limit:  10,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, byVendor)
+	foundAB := false
+	for _, release := range byVendor {
+		if release.ID == abRelease.ID {
+			foundAB = true
+			assert.Equal(t, abID, release.VendorReleaseID)
+		}
+		assert.Equal(t, schema.VendorArtBlocks, release.Vendor)
+	}
+	assert.True(t, foundAB, "expected artblocks release in vendor-only filter results")
+
+	byVendorReleaseID, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		VendorReleaseID: &ffID,
+		Limit:           10,
+	})
+	require.NoError(t, err)
+	require.Len(t, byVendorReleaseID, 1)
+	assert.Equal(t, ffRelease.ID, byVendorReleaseID[0].ID)
+	assert.Equal(t, schema.VendorFeralFile, byVendorReleaseID[0].Vendor)
+
+	byBoth, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		Vendor:          &vendorAB,
+		VendorReleaseID: &abID,
+		Limit:           10,
+	})
+	require.NoError(t, err)
+	require.Len(t, byBoth, 1)
+	assert.Equal(t, abRelease.ID, byBoth[0].ID)
+
+	missingID := "nonexistent-release-id"
+	empty, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		VendorReleaseID: &missingID,
+		Limit:           10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+
+	page1, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		Vendor: &vendorFF,
+		Limit:  1,
+	})
+	require.NoError(t, err)
+	require.Len(t, page1, 1)
+
+	page2, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		Vendor: &vendorFF,
+		Limit:  1,
+		Offset: 1,
+	})
+	require.NoError(t, err)
+	if len(page2) > 0 {
+		assert.NotEqual(t, page1[0].ID, page2[0].ID)
+	}
+}
+
+func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	tokenInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000007777",
+		"1000001",
+		"0xconflict000000000000000000000000000001",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput))
+	token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	release1, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-1", nil, nil)
+	require.NoError(t, err)
+	release2, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-2", nil, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, store.UpsertReleaseMember(ctx, release1.ID, token.ID, 1))
+	require.NoError(t, store.UpsertReleaseMember(ctx, release2.ID, token.ID, 2))
+
+	members, err := store.GetReleaseMembersByTokenIDs(ctx, []uint64{token.ID})
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	require.NotNil(t, members[token.ID])
+	assert.Equal(t, release2.ID, members[token.ID].ReleaseID)
+	assert.Equal(t, int64(2), members[token.ID].MintNumber)
+}
+
+// testUpsertReleaseMemberRejectsZeroMintNumber verifies the store-level guard
+// that enforces the 1-based mint_number contract before the DB CHECK constraint fires.
+func testUpsertReleaseMemberRejectsZeroMintNumber(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000008888-0", nil, nil)
+	require.NoError(t, err)
+
+	// mint_number 0 is invalid (1-based contract).
+	err = store.UpsertReleaseMember(ctx, release.ID, 1, 0)
+	require.Error(t, err, "UpsertReleaseMember must reject mint_number=0")
+
+	// mint_number -1 is also invalid.
+	err = store.UpsertReleaseMember(ctx, release.ID, 1, -1)
+	require.Error(t, err, "UpsertReleaseMember must reject negative mint_number")
+
+	// mint_number 1 (first valid value) must succeed.
+	tokenInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		"0x0000000000000000000000000000000000008888",
+		"1",
+		"0xmintnum000000000000000000000000000001",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, tokenInput))
+	token, err := store.GetTokenByTokenCID(ctx, tokenInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	require.NoError(t, store.UpsertReleaseMember(ctx, release.ID, token.ID, 1))
+}
+
 // RunStoreTests runs all store contract subtests against initDB.
 func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func(t *testing.T)) {
 	tests := []struct {
@@ -6577,6 +6824,11 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByCIDs", testGetTokensByCIDs},
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
+		{"ReleaseOperations", testReleaseOperations},
+		{"ListReleases", testListReleases},
+		{"UpsertReleaseMetadata", testUpsertReleaseMetadata},
+		{"UpsertReleaseMemberConflictUpdate", testUpsertReleaseMemberConflictUpdate},
+		{"UpsertReleaseMemberRejectsZeroMintNumber", testUpsertReleaseMemberRejectsZeroMintNumber},
 		{"UpsertTokenMetadata", testUpsertTokenMetadata},
 		{"GetTokenMetadataByTokenID", testGetTokenMetadataByTokenID},
 		{"GetTokenMetadataByTokenIDs", testGetTokenMetadataByTokenIDs},

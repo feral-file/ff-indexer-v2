@@ -72,8 +72,28 @@ Design rules:
 
 - **Pagination:** `limit` (default **20**, max **255**), `offset` (default **0**).
 - **Filters:** Repeatable query parameters; **AND** across different filter types, **OR** within the same parameter. Document new filters with the same semantics.
-- **Sorting:** `sort_by` (`created_at` | `latest_provenance`), `sort_order` (`asc` | `desc`). When `owner` is present, `latest_provenance` follows documented owner-scoped behavior (see OpenAPI).
+  - **`release_id`:** Filter tokens to members of a specific release (internal integer id). When combined with `sort_by=mint_number`, results are ordered by their authoritative mint position within the release.
+- **Sorting:** `sort_by` (`created_at` | `latest_provenance` | `mint_number`), `sort_order` (`asc` | `desc`). When `owner` is present, `latest_provenance` follows documented owner-scoped behavior (see OpenAPI). `mint_number` **requires** `release_id` to be set; the API returns a validation error if `mint_number` is requested without a `release_id` filter.
+- **Invalid sort parameters (behavior change, release abstraction / #93):** Unrecognized `sort_by` or `sort_order` values return **`422`** with a validation error. Previously the list endpoint silently rewrote invalid values to `latest_provenance` / `desc`; that masking was removed so validation matches the OpenAPI enum contract and the release member endpoint (which already rejected invalid `sort_order`). Clients that sent typos and depended on silent defaults must send valid enum values.
 - **`include_unviewable`:** Default **`false`**; changing defaults is a **compatibility** decision.
+
+### List releases (`GET /api/v1/releases`)
+
+- Returns a paginated list of release metadata rows filtered by **`ids`**, **`vendor`**, and/or **`vendor_release_id`**. At least one filter is required; when multiple are provided they are combined with AND semantics.
+- **`ids`:** One or more internal release IDs (positive integers). Repeat the parameter for multiple values: `?ids=1&ids=2`. All IDs must be positive; zero is rejected.
+- **`vendor`:** `artblocks`, `feralfile`, `fxhash`, or `objkt` (all vendors that populate the `releases` table).
+- **`vendor_release_id`:** External release key as stored during indexing (FF series UUID, AB `{chainID}-{contract}-{projectID}`, fxhash generative token numeric id, or objkt custom-collection KT1 contract address). May be used without `vendor`; results can span vendors in theory but are typically 0–1 rows.
+- **Response:** `items` array of release metadata (`id`, `vendor`, `vendor_release_id`, optional `name`, optional `total_mints`). **No `members`** — use `GET /api/v1/releases/{id}` or `GET /api/v1/tokens?release_id=...` for member tokens.
+- **Pagination:** `limit` (default **20**, max **255**), `offset` (default **0**); empty match set returns **`200`** with `"items": []`.
+- **GraphQL:** `releases(ids, vendor, vendor_release_id, limit, offset)` exposes the same contract via `ReleaseList`.
+
+### Release endpoint (`GET /api/v1/releases/{id}`)
+
+- Returns a release by internal id (integer) with its complete, mint-ordered member token list.
+- **Release metadata:** Optional read-only `name` (human-readable title, e.g. `"Fidenza"`) and `total_mints` (declared max edition size from vendor: AB `max_invocations`, FF `series.settings.maxArtwork`). Both are nullable when vendor data is unavailable.
+- **Membership completeness:** All members are returned regardless of `is_viewable` state so the list is stable across viewability changes (tokens may be temporarily unviewable during media processing). Callers needing only publicly visible members should use `GET /api/v1/tokens?release_id=...` with the default `include_unviewable=false`.
+- **Pagination:** `limit` / `offset` on member list; `sort_order` (`asc` | `desc`). Sort is always by `mint_number` (not configurable here).
+- **GraphQL:** `release(id)` query exposes the same release with a `members` field that follows the same membership-completeness contract.
 
 ### Single token (`GET /api/v1/tokens/{cid}`)
 

@@ -17,6 +17,8 @@ func SetupRoutes(router *gin.Engine, handler Handler, authCfg middleware.AuthCon
 		// Token endpoints (public read access)
 		v1.GET("/tokens/:cid", handler.GetToken)
 		v1.GET("/tokens", handler.ListTokens)
+		v1.GET("/releases", handler.ListReleases)
+		v1.GET("/releases/:id", handler.GetRelease)
 
 		// Token indexing by CIDs (open, no authentication required)
 		v1.POST("/tokens/index", handler.TriggerTokenIndexing)

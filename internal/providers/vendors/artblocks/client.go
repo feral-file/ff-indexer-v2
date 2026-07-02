@@ -16,10 +16,11 @@ const (
 
 // ProjectMetadata represents the project metadata from ArtBlocks API
 type ProjectMetadata struct {
-	Name          string  `json:"name"`
-	ArtistName    string  `json:"artist_name"`
-	ArtistAddress string  `json:"artist_address"`
-	Description   *string `json:"description"`
+	Name           string  `json:"name"`
+	ArtistName     string  `json:"artist_name"`
+	ArtistAddress  string  `json:"artist_address"`
+	Description    *string `json:"description"`
+	MaxInvocations int     `json:"max_invocations"`
 }
 
 // GraphQLRequest represents a GraphQL request
@@ -71,6 +72,7 @@ func (c *ArtBlocksClient) GetProjectMetadata(ctx context.Context, chainID int, p
 			artist_name
 			artist_address
 			description
+			max_invocations
 		}
 	}`
 

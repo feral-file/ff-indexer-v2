@@ -21,6 +21,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
@@ -354,7 +355,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
@@ -403,7 +404,75 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", *sortOrder))
 	}
 
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+	var releaseIDPtr *uint64
+	if releaseID != nil {
+		// Uint64 is unsigned; zero is the only invalid value.
+		if *releaseID == 0 {
+			return nil, apierrors.NewValidationError("Invalid release_id: must be a positive integer")
+		}
+		id := uint64(*releaseID)
+		releaseIDPtr = &id
+	}
+
+	if sortBy != nil && *sortBy == types.TokenSortByMintNumber && releaseIDPtr == nil {
+		return nil, apierrors.NewValidationError("sort_by=mint_number requires release_id")
+	}
+
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+}
+
+// Release is the resolver for the release field.
+func (r *queryResolver) Release(ctx context.Context, id Uint64) (*dto.ReleaseResponse, error) {
+	// Uint64 is unsigned, so zero is the only invalid value.
+	if id == 0 {
+		return nil, apierrors.NewValidationError("Invalid release id")
+	}
+
+	release, err := r.executor.GetRelease(ctx, uint64(id))
+	if err != nil {
+		return nil, err
+	}
+	if release == nil {
+		return nil, apierrors.NewNotFoundError("Release not found")
+	}
+
+	return release, nil
+}
+
+// Releases is the resolver for the releases field.
+func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
+	vendorVal := strings.TrimSpace(internalTypes.SafeString(vendor))
+	vendorReleaseIDVal := strings.TrimSpace(internalTypes.SafeString(vendorReleaseID))
+	if len(ids) == 0 && vendorVal == "" && vendorReleaseIDVal == "" {
+		return nil, apierrors.NewValidationError("at least one of ids, vendor, or vendor_release_id is required")
+	}
+	for _, id := range ids {
+		if id == 0 {
+			return nil, apierrors.NewValidationError("invalid id in ids: must be a positive integer")
+		}
+	}
+
+	if limit != nil && *limit == 0 {
+		return nil, apierrors.NewValidationError("Invalid limit: must be at least 1")
+	}
+
+	var parsedVendor *schema.Vendor
+	if vendorVal != "" {
+		v := schema.Vendor(strings.ToLower(vendorVal))
+		switch v {
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt:
+			parsedVendor = &v
+		default:
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendorVal))
+		}
+	}
+
+	var parsedVendorReleaseID *string
+	if vendorReleaseIDVal != "" {
+		parsedVendorReleaseID = &vendorReleaseIDVal
+	}
+
+	return r.executor.ListReleases(ctx, convertToUint64(ids), parsedVendor, parsedVendorReleaseID, ToNativeUint8(limit), ToNativeUint64(offset))
 }
 
 // JobStatus is the resolver for the jobStatus field.
@@ -512,6 +581,55 @@ func (r *queryResolver) SyncCollection(ctx context.Context, address string, chec
 	return response, nil
 }
 
+// ID is the resolver for the id field.
+// ID converts the uint64 DTO field to the GraphQL Uint64 scalar.
+func (r *releaseResolver) ID(ctx context.Context, obj *dto.ReleaseResponse) (Uint64, error) {
+	return Uint64(obj.ID), nil
+}
+
+// Members is the resolver for the members field.
+func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+	if obj == nil {
+		return nil, apierrors.NewValidationError("Release is required")
+	}
+
+	// Reject an explicit limit of 0: the executor fetches limit+1, trims to 0 items,
+	// and sets next_offset = offset + 0, which traps offset-based clients in a loop.
+	// This mirrors the minimum: 1 contract enforced by the REST endpoint.
+	if limit != nil && *limit == 0 {
+		return nil, apierrors.NewValidationError("Invalid limit: must be at least 1")
+	}
+
+	if sortOrder != nil && !sortOrder.Valid() {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid sort_order: %s. Must be a valid order", *sortOrder))
+	}
+
+	expansions := autoDetectTokenExpansions(ctx)
+	releaseID := obj.ID
+	sortBy := types.TokenSortByMintNumber
+	// Release membership is a data relationship, not a viewability gate — all members
+	// are returned so the list is stable across viewability state changes. This mirrors
+	// the REST GET /api/v1/releases/{id} contract.
+	includeUnviewable := true
+
+	if sortOrder == nil {
+		defaultOrder := types.OrderAsc
+		sortOrder = &defaultOrder
+	}
+
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
+}
+
+// Offset is the resolver for the offset field.
+func (r *releaseListResolver) Offset(ctx context.Context, obj *dto.ReleaseListResponse) (*Uint64, error) {
+	return FromNativeUint64(obj.Offset), nil
+}
+
+// ID is the resolver for the id field.
+func (r *releaseSummaryResolver) ID(ctx context.Context, obj *dto.ReleaseResponse) (Uint64, error) {
+	return Uint64(obj.ID), nil
+}
+
 // EventID is the resolver for the event_id field.
 func (r *syncCheckpointResolver) EventID(ctx context.Context, obj *dto.SyncCheckpoint) (Uint64, error) {
 	return Uint64(obj.EventID), nil
@@ -530,6 +648,12 @@ func (r *tokenResolver) Chain(ctx context.Context, obj *dto.TokenResponse) (stri
 // Standard is the resolver for the standard field.
 func (r *tokenResolver) Standard(ctx context.Context, obj *dto.TokenResponse) (string, error) {
 	return string(obj.Standard), nil
+}
+
+// ReleaseID converts the optional uint64 DTO field to the GraphQL Uint64 scalar.
+// Returns nil when the token has no release membership.
+func (r *tokenResolver) ReleaseID(ctx context.Context, obj *dto.TokenResponse) (*Uint64, error) {
+	return FromNativeUint64(obj.ReleaseID), nil
 }
 
 // ID is the resolver for the id field.
@@ -618,6 +742,15 @@ func (r *Resolver) ProvenanceEvent() ProvenanceEventResolver { return &provenanc
 // Query returns QueryResolver implementation.
 func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 
+// Release returns ReleaseResolver implementation.
+func (r *Resolver) Release() ReleaseResolver { return &releaseResolver{r} }
+
+// ReleaseList returns ReleaseListResolver implementation.
+func (r *Resolver) ReleaseList() ReleaseListResolver { return &releaseListResolver{r} }
+
+// ReleaseSummary returns ReleaseSummaryResolver implementation.
+func (r *Resolver) ReleaseSummary() ReleaseSummaryResolver { return &releaseSummaryResolver{r} }
+
 // SyncCheckpoint returns SyncCheckpointResolver implementation.
 func (r *Resolver) SyncCheckpoint() SyncCheckpointResolver { return &syncCheckpointResolver{r} }
 
@@ -644,6 +777,9 @@ type paginatedOwnersResolver struct{ *Resolver }
 type paginatedProvenanceEventsResolver struct{ *Resolver }
 type provenanceEventResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
+type releaseResolver struct{ *Resolver }
+type releaseListResolver struct{ *Resolver }
+type releaseSummaryResolver struct{ *Resolver }
 type syncCheckpointResolver struct{ *Resolver }
 type tokenResolver struct{ *Resolver }
 type tokenEventResolver struct{ *Resolver }

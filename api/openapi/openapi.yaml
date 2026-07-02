@@ -47,6 +47,8 @@ servers:
 tags:
   - name: tokens
     description: Token data and metadata operations
+  - name: releases
+    description: Cross-vendor release (FF series, AB project, fxhash generative token, objkt custom collection) lookup with mint-ordered member tokens
   - name: collections
     description: Collection sync and state management operations
   - name: workflows
@@ -236,6 +238,7 @@ paths:
         - Filter by token number: `?token_number=1234&token_number=5678`
         - Filter by token ID: `?token_id=12345&token_id=67890`
         - Filter by token CID: `?token_cid=eip155:1:erc721:0xabc123:1234`
+        - Filter by release: `?release_id=42`
         - Combine filters: `?owner=0xabc123&chain=eip155:1`
         
         ## Sorting
@@ -243,6 +246,7 @@ paths:
         - `sort_by` - Field to sort by (default: `latest_provenance`)
           - `created_at` - Sort by token creation timestamp
           - `latest_provenance` - Sort by latest provenance event timestamp (respects owner filter when provided) (default)
+          - `mint_number` - Sort by authoritative mint order within a release (requires `release_id`)
         - `sort_order` - Sort direction (default: `desc`)
           - `asc` - Ascending order (oldest first)
           - `desc` - Descending order (newest first)
@@ -349,6 +353,13 @@ paths:
           style: form
           explode: true
           example: ["eip155:1:erc721:0xabc123:1234"]
+        - name: release_id
+          in: query
+          description: Filter by internal release ID
+          schema:
+            type: integer
+            format: int64
+          example: 42
         - name: include_unviewable
           in: query
           description: Include tokens with unviewable media (no accessible media URLs). Default is false - only tokens with accessible media are returned.
@@ -364,9 +375,10 @@ paths:
             Sort options:
             - `created_at` - Sort by token creation timestamp
             - `latest_provenance` - Sort by latest provenance event timestamp. When owner filter is provided, sorts by the latest provenance event for those specific owners. Without owner filter, uses the token's last provenance timestamp. (default)
+            - `mint_number` - Sort by mint order within a release (requires `release_id`)
           schema:
             type: string
-            enum: [created_at, latest_provenance]
+            enum: [created_at, latest_provenance, mint_number]
             default: latest_provenance
           example: latest_provenance
         - name: sort_order
@@ -513,6 +525,154 @@ paths:
                 $ref: '#/components/schemas/SyncCollectionResponse'
         '400':
           description: Invalid request (bad address format, invalid checkpoint, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/releases:
+    get:
+      summary: List releases
+      description: |
+        Retrieves a paginated list of releases filtered by ids, vendor, and/or vendor_release_id.
+        At least one filter is required. Multiple filters are ANDed. Results contain release metadata only; use
+        `GET /api/v1/releases/{id}` for mint-ordered member tokens.
+
+        Examples:
+        - Filter by internal IDs: `?ids=1&ids=2`
+        - Filter by vendor: `?vendor=artblocks`
+        - Filter by vendor release id: `?vendor_release_id=1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1`
+        - Combine filters: `?vendor=feralfile&vendor_release_id=<series-uuid>`
+      operationId: listReleases
+      tags:
+        - releases
+      parameters:
+        - name: ids
+          in: query
+          description: Filter by one or more internal release IDs (repeat parameter for multiple values)
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int64
+              minimum: 1
+          style: form
+          explode: true
+          example: [1, 2]
+        - name: vendor
+          in: query
+          description: Filter by source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
+          schema:
+            type: string
+            enum: [artblocks, feralfile, fxhash, objkt]
+          example: artblocks
+        - name: vendor_release_id
+          in: query
+          description: Filter by external release key (FF series UUID, AB {chainID}-{contract}-{projectID}, fxhash generative token id, or objkt KT1 contract)
+          schema:
+            type: string
+          example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 255
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Releases retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseListResponse'
+        '422':
+          description: Validation error - missing filters or invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/releases/{id}:
+    get:
+      summary: Get release by internal id
+      description: |
+        Retrieves a cross-vendor release (Feral File series, Art Blocks project, fxhash generative token, or objkt custom collection) and its member tokens sorted by mint number.
+        Response includes optional `name` (human-readable title) and `total_mints` (declared max edition size from vendor).
+      operationId: getRelease
+      tags:
+        - releases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Internal release id (positive integer)
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          example: 42
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 255
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - name: expand
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [metadata, owners, owner_provenances, provenance_events, enrichment_source, display, media_asset]
+          style: form
+          explode: false
+      responses:
+        '200':
+          description: Release with mint-ordered member tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseResponse'
+        '404':
+          description: Release not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '422':
+          description: Validation error - Invalid release id or query parameters
           content:
             application/json:
               schema:
@@ -1356,6 +1516,16 @@ components:
           format: date-time
           description: Timestamp of the most recent provenance event (cached for query performance)
           example: "2024-01-15T10:30:00Z"
+        release_id:
+          type: [integer, "null"]
+          format: int64
+          description: Internal release ID when this token is a release member
+          example: 42
+        mint_number:
+          type: [integer, "null"]
+          format: int64
+          description: Authoritative 1-based mint/edition number within the release
+          example: 5
         version:
           type: integer
           format: uint64
@@ -1836,6 +2006,57 @@ components:
           format: uint64
           description: Next offset for pagination (null if there are no more results)
           example: 0
+
+    ReleaseResponse:
+      type: object
+      required:
+        - id
+        - vendor
+        - vendor_release_id
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Internal release ID
+          example: 42
+        vendor:
+          type: string
+          description: Source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
+          example: artblocks
+        vendor_release_id:
+          type: string
+          description: External release key — AB `{chainID}-{contract}-{projectID}` (chain-qualified), FF series UUID, fxhash generative token id, or objkt KT1 contract address
+          example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
+        name:
+          type: [string, "null"]
+          description: Human-readable release title (e.g. "Fidenza")
+          example: "Fidenza"
+        total_mints:
+          type: [integer, "null"]
+          format: int64
+          description: Declared max edition size from vendor (AB max_invocations, FF maxArtwork)
+          example: 999
+        members:
+          anyOf:
+            - $ref: '#/components/schemas/TokenListResponse'
+            - type: "null"
+          description: Mint-ordered member tokens when requested via REST GET /releases/{id}
+
+    ReleaseListResponse:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseResponse'
+          description: Matching releases (metadata only; no members)
+        offset:
+          type: [integer, "null"]
+          format: uint64
+          description: Next offset for pagination (null if there are no more results)
+          example: 20
 
     TriggerTokenIndexingRequest:
       type: object

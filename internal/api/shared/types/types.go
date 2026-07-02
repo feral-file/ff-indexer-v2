@@ -27,11 +27,12 @@ type TokenSortBy string
 const (
 	TokenSortByCreatedAt  TokenSortBy = "created_at"
 	TokenLatestProvenance TokenSortBy = "latest_provenance"
+	TokenSortByMintNumber TokenSortBy = "mint_number"
 )
 
 // Valid checks if a token sort by is valid
 func (t TokenSortBy) Valid() bool {
-	return t == TokenSortByCreatedAt || t == TokenLatestProvenance
+	return t == TokenSortByCreatedAt || t == TokenLatestProvenance || t == TokenSortByMintNumber
 }
 
 // Expansion enumeration for expansions

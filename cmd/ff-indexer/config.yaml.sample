@@ -98,6 +98,7 @@ tezos:
 vendors:
   artblocks_url: https://artblocks-mainnet.hasura.app/v1/graphql
   feralfile_url: https://feralfile.com/api
+  fxhash_url: https://api.v2.fxhash.xyz/v1/graphql
   objkt_url: https://data.objkt.com/v3/graphql
   objkt_api_key: ""
   opensea_url: https://api.opensea.io/api/v2
@@ -139,6 +140,10 @@ rate_limiter:
       burst: 4
       max_queue_time: 5m
     objkt:
+      requests_per_second: 2
+      burst: 2
+      max_queue_time: 5m
+    fxhash:
       requests_per_second: 2
       burst: 2
       max_queue_time: 5m

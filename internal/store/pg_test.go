@@ -1,3 +1,5 @@
+//go:build integration
+
 package store
 
 import (
@@ -5,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -15,6 +19,8 @@ import (
 	pgdriver "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
 var (
@@ -188,4 +194,61 @@ func TestPostgreSQLStore(t *testing.T) {
 	}
 
 	RunStoreTests(t, initPGTestDB, cleanupPGTestDB)
+}
+
+// TestConcurrentUpsertRelease verifies that UpsertRelease is safe under concurrent callers
+// racing to create the same (vendor, vendor_release_id) row.
+//
+// This test intentionally uses the raw connection pool (testDB), not the transaction-wrapped
+// store returned by initPGTestDB. Transaction-backed stores share a single connection and are
+// not safe for concurrent goroutine use; the pool-backed store exercises the real concurrent
+// access pattern seen in production where multiple token workers race to upsert the same new
+// release. Cleanup is handled via a manual DELETE after the test.
+//
+// The previous FirstOrCreate implementation issued SELECT then INSERT in two separate
+// statements, causing a unique-constraint race. The current ON CONFLICT path is atomic:
+// all goroutines must receive the same release id with no error.
+func TestConcurrentUpsertRelease(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
+	}
+
+	const concurrency = 10
+	vendor := schema.VendorArtBlocks
+	vendorReleaseID := "0x000000000000000000000000000000000000eeee-concurrent-test"
+
+	// Clean up after test regardless of outcome.
+	t.Cleanup(func() {
+		testDB.Exec("DELETE FROM releases WHERE vendor_release_id = ?", vendorReleaseID)
+	})
+
+	store := NewPGStore(testDB)
+
+	var wg sync.WaitGroup
+	ids := make([]uint64, concurrency)
+	errs := make([]error, concurrency)
+
+	for i := range concurrency {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			r, err := store.UpsertRelease(context.Background(), vendor, vendorReleaseID, nil, nil)
+			if err == nil {
+				ids[idx] = r.ID
+			}
+			errs[idx] = err
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		require.NoError(t, err, "goroutine %d got error", i)
+	}
+
+	// All goroutines must have resolved the same release row.
+	first := ids[0]
+	require.NotZero(t, first)
+	for i, id := range ids {
+		assert.Equal(t, first, id, "goroutine %d returned a different release id", i)
+	}
 }

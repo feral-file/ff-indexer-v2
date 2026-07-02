@@ -19,6 +19,8 @@ type TokenResponse struct {
 	Burned                  bool                 `json:"burned"`
 	Viewable                bool                 `json:"viewable"`
 	LastProvenanceTimestamp *time.Time           `json:"last_provenance_timestamp"`
+	ReleaseID               *uint64              `json:"release_id,omitempty"`
+	MintNumber              *int64               `json:"mint_number,omitempty"`
 	CreatedAt               time.Time            `json:"created_at"`
 	UpdatedAt               time.Time            `json:"updated_at"`
 

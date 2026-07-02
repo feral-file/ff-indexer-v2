@@ -87,6 +87,7 @@ type JobsConfig struct {
 type VendorsConfig struct {
 	ArtBlocksURL  string `mapstructure:"artblocks_url"`
 	FeralFileURL  string `mapstructure:"feralfile_url"`
+	FxhashURL     string `mapstructure:"fxhash_url"`
 	ObjktURL      string `mapstructure:"objkt_url"`
 	ObjktAPIKey   string `mapstructure:"objkt_api_key"`
 	OpenSeaURL    string `mapstructure:"opensea_url"`
@@ -537,6 +538,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// Vendors
 	v.SetDefault("vendors.artblocks_url", "https://artblocks-mainnet.hasura.app/v1/graphql")
 	v.SetDefault("vendors.feralfile_url", "https://feralfile.com/api")
+	v.SetDefault("vendors.fxhash_url", "https://api.v2.fxhash.xyz/v1/graphql")
 	v.SetDefault("vendors.objkt_url", "https://data.objkt.com/v3/graphql")
 	v.SetDefault("vendors.opensea_url", "https://api.opensea.io/api/v2")
 
@@ -582,6 +584,9 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("rate_limiter.providers.opensea.requests_per_second", 4)
 	v.SetDefault("rate_limiter.providers.opensea.burst", 4)
 	v.SetDefault("rate_limiter.providers.opensea.max_queue_time", "15m")
+	v.SetDefault("rate_limiter.providers.fxhash.requests_per_second", 2)
+	v.SetDefault("rate_limiter.providers.fxhash.burst", 2)
+	v.SetDefault("rate_limiter.providers.fxhash.max_queue_time", "15m")
 	v.SetDefault("rate_limiter.providers.objkt.requests_per_second", 2)
 	v.SetDefault("rate_limiter.providers.objkt.burst", 2)
 	v.SetDefault("rate_limiter.providers.objkt.max_queue_time", "15m")
@@ -683,6 +688,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		// Vendors
 		"vendors.artblocks_url",
 		"vendors.feralfile_url",
+		"vendors.fxhash_url",
 		"vendors.objkt_url",
 		"vendors.objkt_api_key",
 		"vendors.opensea_url",
@@ -740,6 +746,9 @@ func bindAllEnvVars(v *viper.Viper) {
 		"rate_limiter.providers.tzkt.requests_per_second",
 		"rate_limiter.providers.tzkt.burst",
 		"rate_limiter.providers.tzkt.max_queue_time",
+		"rate_limiter.providers.fxhash.requests_per_second",
+		"rate_limiter.providers.fxhash.burst",
+		"rate_limiter.providers.fxhash.max_queue_time",
 		"rate_limiter.providers.objkt.requests_per_second",
 		"rate_limiter.providers.objkt.burst",
 		"rate_limiter.providers.objkt.max_queue_time",

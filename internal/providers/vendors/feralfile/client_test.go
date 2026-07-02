@@ -6,13 +6,11 @@ import (
 	"errors"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
@@ -52,6 +50,9 @@ func TestClient_GetArtwork_Success(t *testing.T) {
 				Title:       "Test Series",
 				Description: "Test Description",
 				Medium:      "Digital",
+				Settings: feralfile.SeriesSettings{
+					MaxArtwork: 75,
+				},
 				Artist: feralfile.Artist{
 					ID: "artist-123",
 					AlumniAccount: feralfile.AlumniAccount{
@@ -90,6 +91,71 @@ func TestClient_GetArtwork_Success(t *testing.T) {
 	assert.Equal(t, "artist-123", artwork.Series.Artist.ID)
 	assert.Equal(t, "test-artist", artwork.Series.Artist.AlumniAccount.Alias)
 	assert.Len(t, artwork.Series.Artist.AlumniAccount.Addresses, 2)
+	assert.Equal(t, int64(75), artwork.Series.Settings.MaxArtwork)
+}
+
+// TestClient_GetArtwork_ParsesSeriesSettingsMaxArtwork verifies series.settings.maxArtwork
+// is unmarshaled from the API response (regression guard for release total_mints sourcing).
+func TestClient_GetArtwork_ParsesSeriesSettingsMaxArtwork(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	ctx := context.Background()
+	tokenID := "68133196527112232794835997367314869505960984666033462681082934679485439444096"
+	expectedURL := "https://feralfile.com/api/artworks/" + tokenID + "?includeArtist=true"
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(ctx, expectedURL, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, result interface{}) error {
+			raw := []byte(`{
+				"result": {
+					"id": "` + tokenID + `",
+					"name": "#1",
+					"seriesID": "1f060e42-0000-0000-0000-000000000001",
+					"index": 0,
+					"series": {
+						"title": "1DE94",
+						"medium": "image",
+						"settings": { "maxArtwork": 75 },
+						"artist": {
+							"alumniAccount": {
+								"alias": "Raven Kwok",
+								"addresses": { "ethereum": "0xabc" }
+							}
+						}
+					}
+				}
+			}`)
+			return json.Unmarshal(raw, result)
+		}).
+		Times(1)
+
+	artwork, err := client.GetArtwork(ctx, tokenID)
+
+	require.NoError(t, err)
+	require.NotNil(t, artwork)
+	assert.Equal(t, "1DE94", artwork.Series.Title)
+	assert.Equal(t, int64(75), artwork.Series.Settings.MaxArtwork)
+	assert.Equal(t, "Raven Kwok", artwork.Series.Artist.AlumniAccount.Alias)
+}
+
+// TestSeriesSettings_UnmarshalMissingMaxArtwork verifies absent maxArtwork defaults to zero
+// without breaking artwork unmarshaling.
+func TestSeriesSettings_UnmarshalMissingMaxArtwork(t *testing.T) {
+	t.Parallel()
+
+	var artwork feralfile.Artwork
+	err := json.Unmarshal([]byte(`{
+		"series": {
+			"title": "Untitled Series",
+			"settings": {}
+		}
+	}`), &artwork)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), artwork.Series.Settings.MaxArtwork)
 }
 
 // TestClient_GetArtwork_HTTPError tests error handling when HTTP client returns an error
@@ -243,6 +309,30 @@ func TestClient_GetArtwork_URLFormat(t *testing.T) {
 
 	_, err := client.GetArtwork(ctx, tokenID)
 	assert.NoError(t, err)
+}
+
+// TestArtwork_CanonicalName tests the CanonicalName method
+func TestArtwork_SeriesIDOrFallback(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prefers top-level seriesID", func(t *testing.T) {
+		artwork := feralfile.Artwork{
+			SeriesID: "series-top",
+			Series: feralfile.Series{
+				ID: "series-nested",
+			},
+		}
+		assert.Equal(t, "series-top", artwork.SeriesIDOrFallback())
+	})
+
+	t.Run("falls back to nested series ID", func(t *testing.T) {
+		artwork := feralfile.Artwork{
+			Series: feralfile.Series{
+				ID: "series-nested",
+			},
+		}
+		assert.Equal(t, "series-nested", artwork.SeriesIDOrFallback())
+	})
 }
 
 // TestArtwork_CanonicalName tests the CanonicalName method
@@ -412,102 +502,4 @@ func TestURL(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
-}
-
-// Integration tests - these test against the real Feral File API
-
-func TestClient_GetArtwork_Integration(t *testing.T) {
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	client := feralfile.NewClient(httpClient, feralfile.API_ENDPOINT)
-
-	ctx := context.Background()
-
-	// Test artwork IDs provided by the user
-	artworkIDs := []string{
-		"68133196527112232794835997367314869505960984666033462681082934679485439444096",
-		"54927077953071573898060197382410853987230099039252111790486496240282061669504",
-		"2d9351003e8f279b4c553ad60b4f3340dd295cf81206959f16c0efd231ec1811",
-		"49496415076657029545097811331011115026006736793184670775359718991147383068624",
-	}
-
-	for _, tokenID := range artworkIDs {
-		t.Run("tokenID_"+tokenID, func(t *testing.T) {
-			artwork, err := client.GetArtwork(ctx, tokenID)
-
-			require.NoError(t, err, "Failed to fetch artwork for tokenID: %s", tokenID)
-			require.NotNil(t, artwork, "Artwork should not be nil for tokenID: %s", tokenID)
-
-			// Validate response structure
-			assert.NotEmpty(t, artwork.ID, "Artwork ID should not be empty")
-			assert.NotEmpty(t, artwork.Name, "Artwork name should not be empty")
-			assert.NotEmpty(t, artwork.Series.Title, "Series title should not be empty")
-			assert.NotEmpty(t, artwork.Series.Medium, "Series medium should not be empty")
-			assert.NotEmpty(t, artwork.Series.Description, "Series description should not be empty")
-			assert.NotEmpty(t, artwork.Series.Artist.ID, "Artist ID should not be empty")
-			assert.NotNil(t, artwork.Series.Artist.AlumniAccount, "AlumniAccount should not be nil")
-			assert.NotEmpty(t, artwork.Series.Artist.AlumniAccount.ID, "AlumniAccount ID should not be empty")
-			assert.NotEmpty(t, artwork.Series.Artist.AlumniAccount.Alias, "AlumniAccount alias should not be empty")
-			assert.NotEmpty(t, artwork.Series.Artist.AlumniAccount.Addresses, "AlumniAccount addresses should not be empty")
-			for chain, address := range artwork.Series.Artist.AlumniAccount.Addresses {
-				if chain != "tezos" && chain != "ethereum" {
-					t.Logf("Unsupported chain: %s", chain)
-					t.FailNow()
-				}
-				assert.NotEmpty(t, address, "Address should not be empty")
-			}
-
-			// Test CanonicalName method with real data
-			canonicalName := artwork.CanonicalName()
-			assert.NotEmpty(t, canonicalName, "CanonicalName should not be empty")
-
-			// Test URL helper with real URIs
-			if artwork.ThumbnailURI != "" {
-				thumbnailURL := feralfile.URL(artwork.ThumbnailURI)
-				assert.NotEmpty(t, thumbnailURL, "Thumbnail URL should not be empty")
-			}
-
-			if artwork.PreviewURI != "" {
-				previewURL := feralfile.URL(artwork.PreviewURI)
-				assert.NotEmpty(t, previewURL, "Preview URL should not be empty")
-			}
-
-			// Log some details for debugging
-			t.Logf("Artwork ID: %s", artwork.ID)
-			t.Logf("Artwork Name: %s", artwork.Name)
-			t.Logf("Canonical Name: %s", canonicalName)
-			t.Logf("Series: %s", artwork.Series.Title)
-			t.Logf("Artist ID: %s", artwork.Series.Artist.ID)
-		})
-	}
-}
-
-// TestClient_GetArtwork_Integration_InvalidID tests error handling with invalid artwork ID
-func TestClient_GetArtwork_Integration_InvalidID(t *testing.T) {
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	client := feralfile.NewClient(httpClient, feralfile.API_ENDPOINT)
-
-	ctx := context.Background()
-	invalidTokenID := "99999999999999999999999999999999999999999999999999999999999999999999999999999"
-
-	_, err := client.GetArtwork(ctx, invalidTokenID)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to call Feral File API")
-	assert.Contains(t, err.Error(), "artwork not found")
-}
-
-// TestClient_GetArtwork_Integration_ContextCancellation tests context cancellation
-func TestClient_GetArtwork_Integration_ContextCancellation(t *testing.T) {
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	client := feralfile.NewClient(httpClient, feralfile.API_ENDPOINT)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	tokenID := "68133196527112232794835997367314869505960984666033462681082934679485439444096"
-
-	artwork, err := client.GetArtwork(ctx, tokenID)
-
-	// Should return an error due to context cancellation
-	assert.Error(t, err)
-	assert.Nil(t, artwork)
 }

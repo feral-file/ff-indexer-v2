@@ -4,10 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,10 +54,11 @@ func TestClient_GetProjectMetadata_Success(t *testing.T) {
 			ProjectsMetadata *artblocks.ProjectMetadata `json:"projects_metadata_by_pk"`
 		}{
 			ProjectsMetadata: &artblocks.ProjectMetadata{
-				Name:          "Test Project",
-				ArtistName:    "Test Artist",
-				ArtistAddress: "0x1234567890123456789012345678901234567890",
-				Description:   &description,
+				Name:           "Test Project",
+				ArtistName:     "Test Artist",
+				ArtistAddress:  "0x1234567890123456789012345678901234567890",
+				Description:    &description,
+				MaxInvocations: 999,
 			},
 		},
 	}
@@ -80,6 +80,78 @@ func TestClient_GetProjectMetadata_Success(t *testing.T) {
 	assert.Equal(t, "0x1234567890123456789012345678901234567890", metadata.ArtistAddress)
 	assert.NotNil(t, metadata.Description)
 	assert.Equal(t, description, *metadata.Description)
+	assert.Equal(t, 999, metadata.MaxInvocations)
+}
+
+// TestClient_GetProjectMetadata_ParsesMaxInvocations verifies max_invocations is unmarshaled
+// from the GraphQL response (regression guard for release total_mints sourcing).
+func TestClient_GetProjectMetadata_ParsesMaxInvocations(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := artblocks.NewClient(mockHTTPClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
+
+	ctx := context.Background()
+	projectID := "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78"
+
+	mockHTTPClient.EXPECT().
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
+			return []byte(`{
+				"data": {
+					"projects_metadata_by_pk": {
+						"name": "Fidenza",
+						"artist_name": "Tyler Hobbs",
+						"artist_address": "0x1234567890123456789012345678901234567890",
+						"description": "Generative art",
+						"max_invocations": 999
+					}
+				}
+			}`), nil
+		}).
+		Times(1)
+
+	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
+
+	require.NoError(t, err)
+	require.NotNil(t, metadata)
+	assert.Equal(t, "Fidenza", metadata.Name)
+	assert.Equal(t, 999, metadata.MaxInvocations)
+}
+
+// TestClient_GetProjectMetadata_GraphQLQueryIncludesMaxInvocations verifies the outbound
+// GraphQL query requests max_invocations so the field is not dropped at request time.
+func TestClient_GetProjectMetadata_GraphQLQueryIncludesMaxInvocations(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := artblocks.NewClient(mockHTTPClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
+
+	ctx := context.Background()
+
+	mockHTTPClient.EXPECT().
+		PostBytes(ctx, ARTBLOCKS_GRAPHQL_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
+			reader, ok := body.(io.Reader)
+			require.True(t, ok, "PostBytes body must be an io.Reader")
+
+			payload, err := io.ReadAll(reader)
+			require.NoError(t, err)
+
+			var request artblocks.GraphQLRequest
+			require.NoError(t, json.Unmarshal(payload, &request))
+			assert.Contains(t, request.Query, "max_invocations")
+
+			return []byte(`{"data":{"projects_metadata_by_pk":{"name":"P","artist_name":"A","artist_address":"0x1","max_invocations":1}}}`), nil
+		}).
+		Times(1)
+
+	_, err := client.GetProjectMetadata(ctx, 1, "1")
+	require.NoError(t, err)
 }
 
 // TestClient_GetProjectMetadata_HTTPError tests error handling when HTTP client returns an error
@@ -280,252 +352,4 @@ func TestParseArtBlocksTokenID(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Integration tests - these test against the real ArtBlocks API
-
-func TestClient_GetProjectMetadata_Integration(t *testing.T) {
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	mockJSON := adapter.NewJSON()
-	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
-
-	ctx := context.Background()
-	testCases := []struct {
-		name      string
-		projectID string
-		expectOk  bool
-	}{
-		{
-			name:      "Chromie_Squiggle",
-			projectID: "0x059edd72cd353df5106d2b9cc5ab83a52287ac3a-0",
-			expectOk:  true,
-		},
-		{
-			name:      "Fidenza",
-			projectID: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78",
-			expectOk:  true,
-		},
-		{
-			name:      "Archetype",
-			projectID: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-23",
-			expectOk:  true,
-		},
-		{
-			name:      "Ringers",
-			projectID: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-13",
-			expectOk:  true,
-		},
-		{
-			name:      "Invalid_Project",
-			projectID: "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-999999",
-			expectOk:  false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			metadata, err := client.GetProjectMetadata(ctx, 1, tc.projectID)
-
-			if !tc.expectOk {
-				// We expect this to fail
-				assert.Error(t, err)
-				assert.Nil(t, metadata)
-				//assert.Contains(t, err.Error(), "project not found") // TODO: Uncomment this when we have a valid error message
-				t.Logf("Expected error for %s: %v", tc.projectID, err)
-				return
-			}
-
-			// For valid projects, check if we can fetch data
-			if err != nil {
-				// Some projects may not be accessible, log and continue
-				t.Logf("Project %s: Error - %v (may not be accessible)", tc.projectID, err)
-				return
-			}
-
-			require.NotNil(t, metadata, "Metadata should not be nil for project: %s", tc.projectID)
-
-			// Validate response structure
-			assert.NotEmpty(t, metadata.Name, "Project name should not be empty")
-			assert.NotEmpty(t, metadata.ArtistName, "Artist name should not be empty")
-			assert.NotEmpty(t, metadata.ArtistAddress, "Artist address should not be empty")
-
-			// Optional fields - may or may not be present
-			if metadata.Description != nil {
-				t.Logf("Description length: %d chars", len(*metadata.Description))
-			}
-
-			// Log project details
-			t.Logf("Project Name: %s", metadata.Name)
-			t.Logf("Artist Name: %s", metadata.ArtistName)
-			t.Logf("Artist Address: %s", metadata.ArtistAddress)
-		})
-	}
-}
-
-// TestClient_GetProjectMetadata_Integration_TokenIDParsing tests with actual token IDs
-func TestClient_GetProjectMetadata_Integration_TokenIDParsing(t *testing.T) {
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	mockJSON := adapter.NewJSON()
-	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
-
-	ctx := context.Background()
-
-	// Test with actual token IDs and parse them to get project metadata
-	testCases := []struct {
-		name                 string
-		tokenID              string
-		expectedProjectID    int64
-		expectedMintNumber   int64
-		artblocksContract    string
-		expectedProjectFound bool
-	}{
-		{
-			name:                 "Chromie_Squiggle_Token",
-			tokenID:              "5",
-			expectedProjectID:    0,
-			expectedMintNumber:   5,
-			artblocksContract:    "0x059edd72cd353df5106d2b9cc5ab83a52287ac3a",
-			expectedProjectFound: true,
-		},
-		{
-			name:                 "Fidenza_Token",
-			tokenID:              "78000100",
-			expectedProjectID:    78,
-			expectedMintNumber:   100,
-			artblocksContract:    "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
-			expectedProjectFound: true,
-		},
-		{
-			name:                 "Archetype_Token",
-			tokenID:              "23000050",
-			expectedProjectID:    23,
-			expectedMintNumber:   50,
-			artblocksContract:    "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270",
-			expectedProjectFound: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Parse the token ID
-			projectID, mintNumber, err := artblocks.ParseArtBlocksTokenID(tc.tokenID)
-			require.NoError(t, err)
-			assert.Equal(t, tc.expectedProjectID, projectID)
-			assert.Equal(t, tc.expectedMintNumber, mintNumber)
-
-			// Build the full project ID
-			fullProjectID := fmt.Sprintf("%s-%d", tc.artblocksContract, projectID)
-			t.Logf("Token ID %s -> Project ID: %s, Mint: %d", tc.tokenID, fullProjectID, mintNumber)
-
-			// Fetch project metadata
-			metadata, err := client.GetProjectMetadata(ctx, 1, fullProjectID)
-
-			if !tc.expectedProjectFound {
-				assert.Error(t, err)
-				assert.Nil(t, metadata)
-				return
-			}
-
-			if err != nil {
-				t.Logf("Could not fetch project %s: %v (may not be accessible)", fullProjectID, err)
-				return
-			}
-
-			require.NotNil(t, metadata)
-			assert.NotEmpty(t, metadata.Name)
-			assert.NotEmpty(t, metadata.ArtistName)
-
-			t.Logf("Successfully fetched: %s by %s (mint #%d)", metadata.Name, metadata.ArtistName, mintNumber)
-		})
-	}
-}
-
-// TestClient_GetProjectMetadata_Integration_InvalidID tests error handling with invalid project ID
-func TestClient_GetProjectMetadata_Integration_InvalidID(t *testing.T) {
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	mockJSON := adapter.NewJSON()
-	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
-
-	ctx := context.Background()
-
-	// Test with various invalid project IDs
-	invalidIDs := []string{
-		"0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-999999",  // Very large project ID that likely doesn't exist
-		"0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-9999999", // Even larger
-		"invalid-contract-address-123",                       // Invalid format
-	}
-
-	for _, projectID := range invalidIDs {
-		t.Run("invalid_id_"+projectID, func(t *testing.T) {
-			metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
-
-			// Should return an error (project not found)
-			assert.Error(t, err)
-			assert.Nil(t, metadata)
-			//assert.Contains(t, err.Error(), "project not found") // TODO: Uncomment this when we have a valid error message
-			t.Logf("Expected error for invalid ID %s: %v", projectID, err)
-		})
-	}
-}
-
-// TestClient_GetProjectMetadata_Integration_ContextCancellation tests context cancellation
-func TestClient_GetProjectMetadata_Integration_ContextCancellation(t *testing.T) {
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	mockJSON := adapter.NewJSON()
-	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	projectID := "1"
-
-	metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
-
-	// Should return an error due to context cancellation
-	assert.Error(t, err)
-	assert.Nil(t, metadata)
-	t.Logf("Context cancellation error: %v", err)
-}
-
-// TestClient_GetProjectMetadata_Integration_EdgeCases tests various edge cases
-func TestClient_GetProjectMetadata_Integration_EdgeCases(t *testing.T) {
-	httpClient := adapter.NewHTTPClient(30 * time.Second)
-	mockJSON := adapter.NewJSON()
-	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, mockJSON)
-
-	ctx := context.Background()
-
-	t.Run("EmptyProjectID", func(t *testing.T) {
-		projectID := ""
-
-		metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
-
-		// Should return an error
-		assert.Error(t, err)
-		assert.Nil(t, metadata)
-		t.Logf("Empty project ID error: %v", err)
-	})
-
-	t.Run("NegativeProjectID", func(t *testing.T) {
-		projectID := "-1"
-
-		metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
-
-		// Should return an error
-		assert.Error(t, err)
-		assert.Nil(t, metadata)
-		t.Logf("Negative project ID error: %v", err)
-	})
-
-	t.Run("NonNumericProjectID", func(t *testing.T) {
-		// GraphQL accepts string IDs, so this might work depending on API implementation
-		projectID := "abc"
-
-		metadata, err := client.GetProjectMetadata(ctx, 1, projectID)
-
-		// Should return an error
-		assert.Error(t, err)
-		assert.Nil(t, metadata)
-		t.Logf("Non-numeric project ID error: %v", err)
-	})
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 )
@@ -116,6 +117,13 @@ func newDisplayMediaAssetFixture() *displayMediaAssetFixture {
 	}
 }
 
+func expectNoReleaseMembership(mockStore *mocks.MockStore, tokenIDs []uint64) {
+	mockStore.EXPECT().
+		GetReleaseMembersByTokenIDs(gomock.Any(), tokenIDs).
+		Return(map[uint64]*schema.ReleaseMember{}, nil).
+		AnyTimes()
+}
+
 func (f *displayMediaAssetFixture) setupMocks(mockStore *mocks.MockStore) {
 	mockStore.EXPECT().
 		GetTokenByTokenCID(gomock.Any(), f.normalizedCID).
@@ -136,6 +144,7 @@ func (f *displayMediaAssetFixture) setupMocks(mockStore *mocks.MockStore) {
 	mockStore.EXPECT().
 		GetMediaAssetsBySourceURLs(gomock.Any(), gomock.Any()).
 		Return([]schema.MediaAsset{f.mediaAsset}, nil)
+	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 }
 
 // containsURL returns a Matcher that verifies a []string argument contains target.
@@ -251,6 +260,7 @@ func TestGetToken_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
 	mockStore.EXPECT().
 		GetMediaAssetsBySourceURLs(gomock.Any(), containsURL(f.workingURL)).
 		Return([]schema.MediaAsset{f.mediaAsset}, nil)
+	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 
 	const rawCID = "eip155:1:erc721:0xdef456:2" //nolint:gosec
 	result, err := exec.GetToken(context.Background(), rawCID,
@@ -294,9 +304,10 @@ func TestGetTokens_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
 	mockStore.EXPECT().
 		GetMediaAssetsBySourceURLs(gomock.Any(), containsURL(f.workingURL)).
 		Return([]schema.MediaAsset{f.mediaAsset}, nil)
+	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 
 	result, err := exec.GetTokens(context.Background(),
-		nil, nil, nil, nil, []uint64{f.tokenID}, nil,
+		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
 		nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset})
 
@@ -397,6 +408,7 @@ func TestGetToken_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 	mockStore.EXPECT().
 		GetTokenMediaHealthByTokenIDs(gomock.Any(), []uint64{f.tokenID}).
 		Return(nil, errors.New("connection timeout"))
+	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 
 	result, err := exec.GetToken(context.Background(), f.rawCID,
 		[]types.Expansion{types.ExpansionDisplay}, nil, nil, nil, nil, nil)
@@ -429,10 +441,173 @@ func TestGetTokens_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 		Return(nil, errors.New("connection timeout"))
 
 	result, err := exec.GetTokens(context.Background(),
-		nil, nil, nil, nil, []uint64{f.tokenID}, nil,
+		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
 		nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay})
 
 	require.Error(t, err, "GetTokens must propagate health query failure as an error")
 	assert.Nil(t, result, "result must be nil on health query failure")
+}
+
+func TestGetRelease_Found(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	name := "Fidenza"
+	totalMints := int64(999)
+	mockStore.EXPECT().
+		GetReleaseByID(gomock.Any(), uint64(7)).
+		Return(&schema.Release{
+			ID:              7,
+			Vendor:          schema.VendorArtBlocks,
+			VendorReleaseID: "0xabc-1",
+			Name:            &name,
+			TotalMints:      &totalMints,
+		}, nil)
+
+	result, err := exec.GetRelease(context.Background(), 7)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, uint64(7), result.ID)
+	assert.Equal(t, string(schema.VendorArtBlocks), result.Vendor)
+	assert.Equal(t, "0xabc-1", result.VendorReleaseID)
+	require.NotNil(t, result.Name)
+	assert.Equal(t, "Fidenza", *result.Name)
+	require.NotNil(t, result.TotalMints)
+	assert.Equal(t, int64(999), *result.TotalMints)
+}
+
+func TestGetRelease_NotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	mockStore.EXPECT().
+		GetReleaseByID(gomock.Any(), uint64(404)).
+		Return(nil, nil)
+
+	result, err := exec.GetRelease(context.Background(), 404)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestListReleases_ByVendor(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	vendor := schema.VendorArtBlocks
+	limit := uint8(20)
+	offset := uint64(0)
+	mockStore.EXPECT().
+		ListReleases(gomock.Any(), store.ReleaseQueryFilter{
+			Vendor: &vendor,
+			Limit:  21,
+			Offset: 0,
+		}).
+		Return([]schema.Release{{
+			ID:              7,
+			Vendor:          schema.VendorArtBlocks,
+			VendorReleaseID: "0xabc-1",
+		}}, nil)
+
+	result, err := exec.ListReleases(context.Background(), nil, &vendor, nil, &limit, &offset)
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, uint64(7), result.Items[0].ID)
+	assert.Nil(t, result.Offset)
+}
+
+func TestListReleases_Pagination(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	vendorReleaseID := "series-uuid"
+	limit := uint8(1)
+	offset := uint64(0)
+	mockStore.EXPECT().
+		ListReleases(gomock.Any(), store.ReleaseQueryFilter{
+			VendorReleaseID: &vendorReleaseID,
+			Limit:           2,
+			Offset:          0,
+		}).
+		Return([]schema.Release{
+			{ID: 1, Vendor: schema.VendorFeralFile, VendorReleaseID: vendorReleaseID},
+			{ID: 2, Vendor: schema.VendorFeralFile, VendorReleaseID: "other"},
+		}, nil)
+
+	result, err := exec.ListReleases(context.Background(), nil, nil, &vendorReleaseID, &limit, &offset)
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, uint64(1), result.Items[0].ID)
+	require.NotNil(t, result.Offset)
+	assert.Equal(t, uint64(1), *result.Offset)
+}
+
+func TestListReleases_ByIDs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	ids := []uint64{3, 7}
+	limit := uint8(20)
+	offset := uint64(0)
+	mockStore.EXPECT().
+		ListReleases(gomock.Any(), store.ReleaseQueryFilter{
+			IDs:    ids,
+			Limit:  21,
+			Offset: 0,
+		}).
+		Return([]schema.Release{
+			{ID: 3, Vendor: schema.VendorFeralFile, VendorReleaseID: "uuid-3"},
+			{ID: 7, Vendor: schema.VendorArtBlocks, VendorReleaseID: "0xabc-1"},
+		}, nil)
+
+	result, err := exec.ListReleases(context.Background(), ids, nil, nil, &limit, &offset)
+	require.NoError(t, err)
+	require.Len(t, result.Items, 2)
+	assert.Equal(t, uint64(3), result.Items[0].ID)
+	assert.Equal(t, uint64(7), result.Items[1].ID)
+	assert.Nil(t, result.Offset)
+}
+
+func TestGetToken_AppliesReleaseMembership(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	const tokenID = uint64(42)
+	const rawCID = "eip155:1:erc721:0xabc123:1" //nolint:gosec
+	normalizedCID := domain.TokenCID(rawCID).Normalized().String()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+	mockStore.EXPECT().
+		GetTokenByTokenCID(gomock.Any(), normalizedCID).
+		Return(&schema.Token{
+			ID:       tokenID,
+			TokenCID: normalizedCID,
+		}, nil)
+	mockStore.EXPECT().
+		GetReleaseMembersByTokenIDs(gomock.Any(), []uint64{tokenID}).
+		Return(map[uint64]*schema.ReleaseMember{
+			tokenID: {
+				ReleaseID:  99,
+				TokenID:    tokenID,
+				MintNumber: 3,
+			},
+		}, nil)
+
+	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.ReleaseID)
+	require.NotNil(t, result.MintNumber)
+	assert.Equal(t, uint64(99), *result.ReleaseID)
+	assert.Equal(t, int64(3), *result.MintNumber)
 }

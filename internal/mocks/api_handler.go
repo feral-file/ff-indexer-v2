@@ -76,6 +76,18 @@ func (mr *MockAPIHandlerMockRecorder) GetJobStatus(c any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobStatus", reflect.TypeOf((*MockAPIHandler)(nil).GetJobStatus), c)
 }
 
+// GetRelease mocks base method.
+func (m *MockAPIHandler) GetRelease(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "GetRelease", c)
+}
+
+// GetRelease indicates an expected call of GetRelease.
+func (mr *MockAPIHandlerMockRecorder) GetRelease(c any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRelease", reflect.TypeOf((*MockAPIHandler)(nil).GetRelease), c)
+}
+
 // GetToken mocks base method.
 func (m *MockAPIHandler) GetToken(c *gin.Context) {
 	m.ctrl.T.Helper()
@@ -110,6 +122,18 @@ func (m *MockAPIHandler) HealthCheck(c *gin.Context) {
 func (mr *MockAPIHandlerMockRecorder) HealthCheck(c any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthCheck", reflect.TypeOf((*MockAPIHandler)(nil).HealthCheck), c)
+}
+
+// ListReleases mocks base method.
+func (m *MockAPIHandler) ListReleases(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "ListReleases", c)
+}
+
+// ListReleases indicates an expected call of ListReleases.
+func (mr *MockAPIHandlerMockRecorder) ListReleases(c any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockAPIHandler)(nil).ListReleases), c)
 }
 
 // ListTokens mocks base method.

@@ -208,3 +208,123 @@ func TestClient_GetToken_EmptyResponse(t *testing.T) {
 	assert.Nil(t, token)
 	assert.Contains(t, err.Error(), "token not found")
 }
+
+// TestClient_GetToken_FAFieldInResponse verifies that the FA sub-struct (collection type
+// and editions) is correctly unmarshalled from a mock response.
+func TestClient_GetToken_FAFieldInResponse(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := objkt.NewClient(mockHTTPClient, nil, OBJKT_API_URL, "", mockJSON)
+
+	ctx := context.Background()
+
+	mockHTTPClient.EXPECT().
+		PostBytes(ctx, OBJKT_API_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
+			return []byte(`{
+				"data": {
+					"token": [{
+						"name": "Custom Work #1",
+						"description": "A custom collection piece",
+						"display_uri": "ipfs://QmDisplay",
+						"artifact_uri": null,
+						"thumbnail_uri": null,
+						"mime": "image/jpeg",
+						"metadata": null,
+						"creators": [],
+						"fa": {
+							"name": "My Custom Collection",
+							"editions": 100,
+							"collection_type": "custom"
+						}
+					}]
+				}
+			}`), nil
+		}).
+		Times(1)
+
+	token, err := client.GetToken(ctx, "KT1CustomArtist111111111111111111111", "1")
+
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	require.NotNil(t, token.FA, "FA field must be populated for custom collection tokens")
+	assert.Equal(t, "My Custom Collection", token.FA.Name)
+	assert.Equal(t, int64(100), token.FA.Editions)
+	assert.Equal(t, "custom", token.FA.CollectionType)
+}
+
+// TestClient_GetToken_FAFieldOpenCollection verifies that FA with collection_type "open"
+// is correctly parsed (open/curated collections are multi-artist; no release is derived).
+func TestClient_GetToken_FAFieldOpenCollection(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := objkt.NewClient(mockHTTPClient, nil, OBJKT_API_URL, "", mockJSON)
+
+	ctx := context.Background()
+
+	mockHTTPClient.EXPECT().
+		PostBytes(ctx, OBJKT_API_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
+			return []byte(`{
+				"data": {
+					"token": [{
+						"name": "Open Platform Token",
+						"creators": [],
+						"fa": {
+							"name": "hic et nunc",
+							"editions": 10,
+							"collection_type": "open"
+						}
+					}]
+				}
+			}`), nil
+		}).
+		Times(1)
+
+	token, err := client.GetToken(ctx, "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton", "42")
+
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	require.NotNil(t, token.FA)
+	assert.Equal(t, "open", token.FA.CollectionType)
+}
+
+// TestClient_GetToken_FAFieldNullFA verifies that tokens with no FA entry parse cleanly
+// (FA pointer is nil; the enhancer skips release population in this case).
+func TestClient_GetToken_FAFieldNullFA(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := objkt.NewClient(mockHTTPClient, nil, OBJKT_API_URL, "", mockJSON)
+
+	ctx := context.Background()
+
+	mockHTTPClient.EXPECT().
+		PostBytes(ctx, OBJKT_API_URL, map[string]string{"Content-Type": "application/json"}, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, url string, headers map[string]string, body interface{}) ([]byte, error) {
+			return []byte(`{
+				"data": {
+					"token": [{
+						"name": "Token Without FA",
+						"creators": [],
+						"fa": null
+					}]
+				}
+			}`), nil
+		}).
+		Times(1)
+
+	token, err := client.GetToken(ctx, "KT1SomeContract11111111111111111111", "7")
+
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	assert.Nil(t, token.FA, "nil FA in response should yield nil FA pointer")
+}

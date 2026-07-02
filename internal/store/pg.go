@@ -136,19 +136,6 @@ func calculateSafeBatchSize(totalRecords int, fieldsPerRecord int) int {
 	return safeBatchSize
 }
 
-// GetTokenByID retrieves a token by its internal ID
-func (s *pgStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
-	var token schema.Token
-	err := s.db.WithContext(ctx).Where("id = ?", tokenID).First(&token).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get token: %w", err)
-	}
-	return &token, nil
-}
-
 // GetTokenByTokenCID retrieves a token by its canonical ID
 func (s *pgStore) GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error) {
 	var token schema.Token
@@ -541,6 +528,15 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		sortOrder = SortOrderDesc // Default
 	}
 
+	needsReleaseJoin := filter.ReleaseID != nil || sortBy == TokenSortByMintNumber
+	if needsReleaseJoin {
+		if filter.ReleaseID != nil {
+			query = query.Joins("JOIN release_members ON release_members.token_id = tokens.id AND release_members.release_id = ?", *filter.ReleaseID)
+		} else {
+			query = query.Joins("LEFT JOIN release_members ON release_members.token_id = tokens.id")
+		}
+	}
+
 	// If filtering by owners and sorting by last_owner_provenance_timestamp,
 	// join with token_ownership_provenance for owner-specific sorting
 	if len(filter.Owners) > 0 && sortBy == TokenSortByLatestProvenance {
@@ -612,6 +608,13 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 			query = query.Order("tokens.created_at ASC").Order("tokens.id ASC")
 		} else {
 			query = query.Order("tokens.created_at DESC").Order("tokens.id DESC")
+		}
+	case TokenSortByMintNumber:
+		// Sort by authoritative mint number from release_members. NULLs sort last.
+		if sortOrder == SortOrderAsc {
+			query = query.Order("release_members.mint_number ASC NULLS LAST").Order("tokens.id ASC")
+		} else {
+			query = query.Order("release_members.mint_number DESC NULLS LAST").Order("tokens.id DESC")
 		}
 	default:
 		// Default to created_at desc
@@ -1123,6 +1126,137 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 
 		return nil
 	})
+}
+
+// UpsertRelease creates or returns an existing release for a vendor release id.
+//
+// Uses INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()
+// (and name/total_mints when provided) RETURNING id so the operation is atomic under concurrent
+// callers. FirstOrCreate is intentionally avoided here: it issues a SELECT then INSERT in two
+// separate statements, which causes a unique-constraint race when multiple workers index tokens
+// from the same new release simultaneously — one call would get a constraint violation instead of
+// the existing row. The ON CONFLICT path is idempotent and always returns the canonical row id.
+func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error) {
+	release := schema.Release{
+		Vendor:          vendor,
+		VendorReleaseID: vendorReleaseID,
+		Name:            name,
+		TotalMints:      totalMints,
+	}
+
+	assignments := map[string]interface{}{
+		"updated_at": gorm.Expr("now()"),
+	}
+	if name != nil && strings.TrimSpace(*name) != "" {
+		assignments["name"] = strings.TrimSpace(*name)
+	}
+	if totalMints != nil && *totalMints > 0 {
+		assignments["total_mints"] = *totalMints
+	}
+
+	err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "vendor"}, {Name: "vendor_release_id"}},
+			DoUpdates: clause.Assignments(assignments),
+		}).
+		Create(&release).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to upsert release: %w", err)
+	}
+
+	return &release, nil
+}
+
+// UpsertReleaseMember associates a token with a release at the given mint number.
+// Each token belongs to at most one release; conflicts on token_id update release_id and mint_number.
+// mintNumber must be > 0 (1-based, mirroring the DB CHECK constraint and API contract).
+//
+// Collision policy: the UNIQUE (release_id, mint_number) constraint is intentionally left as a
+// hard-fail. If re-enrichment or a vendor correction tries to assign a mint slot already occupied
+// by a different token, the write is rejected with a DB constraint error and the caller (the
+// core executor) logs and skips that token's release assignment. This is the correct integrity
+// behavior: two tokens cannot occupy the same position in a release. A raw DB error here
+// surfaces a real vendor data inconsistency rather than silently overwriting existing membership.
+func (s *pgStore) UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error {
+	if mintNumber <= 0 {
+		return fmt.Errorf("invalid mint_number %d: must be >= 1 (1-based)", mintNumber)
+	}
+
+	member := schema.ReleaseMember{
+		ReleaseID:  releaseID,
+		TokenID:    tokenID,
+		MintNumber: mintNumber,
+	}
+
+	err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "token_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"release_id", "mint_number"}),
+		}).
+		Create(&member).Error
+	if err != nil {
+		return fmt.Errorf("failed to upsert release member: %w", err)
+	}
+
+	return nil
+}
+
+// GetReleaseByID retrieves a release by internal id.
+func (s *pgStore) GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error) {
+	var release schema.Release
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&release).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get release: %w", err)
+	}
+	return &release, nil
+}
+
+// ListReleases returns releases matching the provided filter fields (ANDed).
+// At least one of IDs, Vendor, or VendorReleaseID must be set in the filter.
+func (s *pgStore) ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error) {
+	query := s.db.WithContext(ctx).Model(&schema.Release{})
+	if len(filter.IDs) > 0 {
+		query = query.Where("id IN ?", filter.IDs)
+	}
+	if filter.Vendor != nil {
+		query = query.Where("vendor = ?", *filter.Vendor)
+	}
+	if filter.VendorReleaseID != nil {
+		query = query.Where("vendor_release_id = ?", *filter.VendorReleaseID)
+	}
+
+	var releases []schema.Release
+	err := query.
+		Order("id ASC").
+		Limit(filter.Limit).
+		Offset(int(filter.Offset)). //nolint:gosec,G115
+		Find(&releases).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list releases: %w", err)
+	}
+	return releases, nil
+}
+
+// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
+func (s *pgStore) GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error) {
+	if len(tokenIDs) == 0 {
+		return map[uint64]*schema.ReleaseMember{}, nil
+	}
+
+	var members []schema.ReleaseMember
+	if err := s.db.WithContext(ctx).Where("token_id IN ?", tokenIDs).Find(&members).Error; err != nil {
+		return nil, fmt.Errorf("failed to get release members: %w", err)
+	}
+
+	result := make(map[uint64]*schema.ReleaseMember, len(members))
+	for i := range members {
+		member := members[i]
+		result[member.TokenID] = &member
+	}
+	return result, nil
 }
 
 // UpdateTokenBurn updates a token as burned with associated balance update and provenance event in a single transaction

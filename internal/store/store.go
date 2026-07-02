@@ -16,11 +16,12 @@ type TokenSortBy string
 const (
 	TokenSortByCreatedAt        TokenSortBy = "created_at"
 	TokenSortByLatestProvenance TokenSortBy = "latest_provenance"
+	TokenSortByMintNumber       TokenSortBy = "mint_number"
 )
 
 // Valid checks if a token sort by is valid
 func (t TokenSortBy) Valid() bool {
-	return t == TokenSortByCreatedAt || t == TokenSortByLatestProvenance
+	return t == TokenSortByCreatedAt || t == TokenSortByLatestProvenance || t == TokenSortByMintNumber
 }
 
 // SortOrder enumeration for sorting
@@ -164,6 +165,17 @@ type UpsertTokenBalanceForOwnerInput struct {
 	Events       []CreateProvenanceEventInput // Owner-related provenance events only
 }
 
+// ReleaseQueryFilter represents filters for release list queries.
+// IDs, Vendor, and VendorReleaseID are ANDed when multiple are provided.
+// At least one of IDs, Vendor, or VendorReleaseID must be set.
+type ReleaseQueryFilter struct {
+	IDs             []uint64
+	Vendor          *schema.Vendor
+	VendorReleaseID *string
+	Limit           int
+	Offset          uint64
+}
+
 // TokenQueryFilter represents filters for token queries
 type TokenQueryFilter struct {
 	Owners            []string
@@ -172,6 +184,7 @@ type TokenQueryFilter struct {
 	TokenNumbers      []string
 	TokenIDs          []uint64
 	TokenCIDs         []string
+	ReleaseID         *uint64
 	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
 	SortBy            TokenSortBy // Sort field: created_at or last_owner_provenance_timestamp
 	SortOrder         SortOrder   // Sort order: asc or desc
@@ -257,8 +270,6 @@ type Store interface {
 	GetTokenByTokenCID(ctx context.Context, tokenCID string) (*schema.Token, error)
 	// GetTokensByCIDs retrieves multiple tokens by their canonical IDs
 	GetTokensByCIDs(ctx context.Context, tokenCIDs []string) ([]*schema.Token, error)
-	// GetTokenByID retrieves a token by its internal ID
-	GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error)
 	// GetTokensByIDs retrieves multiple tokens by their internal IDs
 	GetTokensByIDs(ctx context.Context, tokenIDs []uint64) ([]*schema.Token, error)
 	// GetTokenWithMetadataByTokenCID retrieves a token with its metadata by canonical ID
@@ -316,6 +327,22 @@ type Store interface {
 	// UpsertEnrichmentSource creates or updates an enrichment source
 	UpsertEnrichmentSource(ctx context.Context, input CreateEnrichmentSourceInput) error
 
+	// =============================================================================
+	// Release Operations
+	// =============================================================================
+
+	// UpsertRelease creates or returns an existing release for a vendor release id.
+	// When name or totalMints are provided, they are written on insert and updated on conflict.
+	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error)
+	// UpsertReleaseMember associates a token with a release at the given mint number.
+	UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error
+	// GetReleaseByID retrieves a release by internal id.
+	GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error)
+	// ListReleases returns releases matching optional vendor and vendor_release_id filters.
+	// At least one filter should be set by callers; results are ordered by id ascending.
+	ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error)
+	// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
+	GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error)
 	// =============================================================================
 	// Token Media Health Operations
 	// =============================================================================

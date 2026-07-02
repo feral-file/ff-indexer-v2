@@ -477,19 +477,34 @@ func (mr *MockStoreMockRecorder) GetQuotaInfo(ctx, address, chain any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQuotaInfo", reflect.TypeOf((*MockStore)(nil).GetQuotaInfo), ctx, address, chain)
 }
 
-// GetTokenByID mocks base method.
-func (m *MockStore) GetTokenByID(ctx context.Context, tokenID uint64) (*schema.Token, error) {
+// GetReleaseByID mocks base method.
+func (m *MockStore) GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokenByID", ctx, tokenID)
-	ret0, _ := ret[0].(*schema.Token)
+	ret := m.ctrl.Call(m, "GetReleaseByID", ctx, id)
+	ret0, _ := ret[0].(*schema.Release)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetTokenByID indicates an expected call of GetTokenByID.
-func (mr *MockStoreMockRecorder) GetTokenByID(ctx, tokenID any) *gomock.Call {
+// GetReleaseByID indicates an expected call of GetReleaseByID.
+func (mr *MockStoreMockRecorder) GetReleaseByID(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenByID", reflect.TypeOf((*MockStore)(nil).GetTokenByID), ctx, tokenID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetReleaseByID", reflect.TypeOf((*MockStore)(nil).GetReleaseByID), ctx, id)
+}
+
+// GetReleaseMembersByTokenIDs mocks base method.
+func (m *MockStore) GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetReleaseMembersByTokenIDs", ctx, tokenIDs)
+	ret0, _ := ret[0].(map[uint64]*schema.ReleaseMember)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetReleaseMembersByTokenIDs indicates an expected call of GetReleaseMembersByTokenIDs.
+func (mr *MockStoreMockRecorder) GetReleaseMembersByTokenIDs(ctx, tokenIDs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetReleaseMembersByTokenIDs", reflect.TypeOf((*MockStore)(nil).GetReleaseMembersByTokenIDs), ctx, tokenIDs)
 }
 
 // GetTokenByTokenCID mocks base method.
@@ -856,6 +871,21 @@ func (mr *MockStoreMockRecorder) ListInFlightJobsWithCancelRequest(ctx, queue, i
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListInFlightJobsWithCancelRequest", reflect.TypeOf((*MockStore)(nil).ListInFlightJobsWithCancelRequest), ctx, queue, ids)
 }
 
+// ListReleases mocks base method.
+func (m *MockStore) ListReleases(ctx context.Context, filter store.ReleaseQueryFilter) ([]schema.Release, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListReleases", ctx, filter)
+	ret0, _ := ret[0].([]schema.Release)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListReleases indicates an expected call of ListReleases.
+func (mr *MockStoreMockRecorder) ListReleases(ctx, filter any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockStore)(nil).ListReleases), ctx, filter)
+}
+
 // MarkJobCanceled mocks base method.
 func (m *MockStore) MarkJobCanceled(ctx context.Context, id int64) error {
 	m.ctrl.T.Helper()
@@ -1108,6 +1138,35 @@ func (m *MockStore) UpsertEnrichmentSource(ctx context.Context, input store.Crea
 func (mr *MockStoreMockRecorder) UpsertEnrichmentSource(ctx, input any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertEnrichmentSource", reflect.TypeOf((*MockStore)(nil).UpsertEnrichmentSource), ctx, input)
+}
+
+// UpsertRelease mocks base method.
+func (m *MockStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertRelease", ctx, vendor, vendorReleaseID, name, totalMints)
+	ret0, _ := ret[0].(*schema.Release)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpsertRelease indicates an expected call of UpsertRelease.
+func (mr *MockStoreMockRecorder) UpsertRelease(ctx, vendor, vendorReleaseID, name, totalMints any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertRelease", reflect.TypeOf((*MockStore)(nil).UpsertRelease), ctx, vendor, vendorReleaseID, name, totalMints)
+}
+
+// UpsertReleaseMember mocks base method.
+func (m *MockStore) UpsertReleaseMember(ctx context.Context, releaseID, tokenID uint64, mintNumber int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertReleaseMember", ctx, releaseID, tokenID, mintNumber)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertReleaseMember indicates an expected call of UpsertReleaseMember.
+func (mr *MockStoreMockRecorder) UpsertReleaseMember(ctx, releaseID, tokenID, mintNumber any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertReleaseMember", reflect.TypeOf((*MockStore)(nil).UpsertReleaseMember), ctx, releaseID, tokenID, mintNumber)
 }
 
 // UpsertTokenBalanceForOwner mocks base method.

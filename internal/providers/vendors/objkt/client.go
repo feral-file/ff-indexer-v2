@@ -18,6 +18,16 @@ type TokenResponse struct {
 	} `json:"data"`
 }
 
+// FA represents a Tezos FA2 collection (contract-level) from objkt v3 API.
+// CollectionType distinguishes dedicated single-artist contracts ("custom") from
+// open curated marketplaces ("open", "open_generative"). Only "custom" collections
+// map cleanly to a single release; the KT1 address serves as the vendor_release_id.
+type FA struct {
+	Name           string `json:"name"`
+	Editions       int64  `json:"editions"`
+	CollectionType string `json:"collection_type"`
+}
+
 // Token represents a token from objkt v3 API
 type Token struct {
 	Name         *string   `json:"name"`
@@ -28,6 +38,7 @@ type Token struct {
 	Mime         *string   `json:"mime"`
 	Metadata     any       `json:"metadata"`
 	Creators     []Creator `json:"creators"`
+	FA           *FA       `json:"fa"`
 }
 
 // Creator represents a creator/artist in objkt API
@@ -95,6 +106,11 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
         address
         alias
       }
+    }
+    fa {
+      name
+      editions
+      collection_type
     }
   }
 }`, contractAddress, tokenID)

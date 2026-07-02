@@ -34,7 +34,14 @@ type Executor interface {
 	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions (bulk: fixed sub-page sizes for owners/provenance per token).
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+
+	// GetRelease retrieves a release by internal id without member tokens.
+	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
+
+	// ListReleases retrieves releases matching optional ids, vendor, and/or vendor_release_id filters without member tokens.
+	// At least one of ids, vendor, or vendorReleaseID must be non-empty.
+	ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens by their CIDs.
 	// Returns a queue job id for tracking.
@@ -116,6 +123,9 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 
 	// Map to DTO
 	tokenDTO := dto.MapTokenToDTO(token)
+	if err := e.applyReleaseMembership(ctx, []*dto.TokenResponse{tokenDTO}); err != nil {
+		return nil, err
+	}
 
 	// Handle expansions
 	for _, exp := range expansions {
@@ -203,7 +213,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -259,6 +269,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		TokenIDs:          tokenIDs,
 		Chains:            chains,
 		TokenCIDs:         tokenCIDs,
+		ReleaseID:         releaseID,
 		IncludeUnviewable: *includeUnviewable,
 		SortBy:            storeSortBy,
 		SortOrder:         storeSortOrder,
@@ -542,6 +553,14 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		if err := e.resolveDisplayDataURIs(ctx, tokenDTOs); err != nil {
 			return nil, err
 		}
+	}
+
+	tokenPtrs := make([]*dto.TokenResponse, len(tokenDTOs))
+	for i := range tokenDTOs {
+		tokenPtrs[i] = &tokenDTOs[i]
+	}
+	if err := e.applyReleaseMembership(ctx, tokenPtrs); err != nil {
+		return nil, err
 	}
 
 	// Build response with pagination
@@ -1431,4 +1450,102 @@ func (e *executor) SyncCollection(ctx context.Context, address string, checkpoin
 		NextCheckpoint: nextCheckpoint,
 		ServerTime:     serverTime,
 	}, nil
+}
+
+func (e *executor) GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error) {
+	release, err := e.store.GetReleaseByID(ctx, releaseID)
+	if err != nil {
+		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to get release: %v", err))
+	}
+	if release == nil {
+		return nil, nil
+	}
+
+	return dto.MapReleaseToDTO(release), nil
+}
+
+// ListReleases retrieves releases matching optional ids, vendor, and/or vendor_release_id filters without member tokens.
+// At least one of ids, vendor, or vendorReleaseID must be non-empty; callers are responsible for enforcing this.
+// Multiple filters are ANDed.
+func (e *executor) ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
+	if limit == nil {
+		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
+		limit = &defaultLimit
+	}
+	if offset == nil {
+		defaultOffset := constants.DEFAULT_OFFSET
+		offset = &defaultOffset
+	}
+
+	filter := store.ReleaseQueryFilter{
+		IDs:             ids,
+		Vendor:          vendor,
+		VendorReleaseID: vendorReleaseID,
+		Limit:           int(*limit) + 1,
+		Offset:          *offset,
+	}
+
+	releases, err := e.store.ListReleases(ctx, filter)
+	if err != nil {
+		return nil, apierrors.NewDatabaseError(fmt.Sprintf("Failed to list releases: %v", err))
+	}
+
+	limitInt := int(*limit)
+	hasMore := len(releases) > limitInt
+	if hasMore {
+		releases = releases[:limitInt]
+	}
+
+	items := make([]dto.ReleaseResponse, len(releases))
+	for i := range releases {
+		mapped := dto.MapReleaseToDTO(&releases[i])
+		if mapped != nil {
+			items[i] = *mapped
+		}
+	}
+
+	var nextOffset *uint64
+	if hasMore {
+		offsetVal := *offset + uint64(*limit)
+		nextOffset = &offsetVal
+	}
+
+	return &dto.ReleaseListResponse{
+		Items:  items,
+		Offset: nextOffset,
+	}, nil
+}
+
+func (e *executor) applyReleaseMembership(ctx context.Context, tokens []*dto.TokenResponse) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	tokenIDs := make([]uint64, 0, len(tokens))
+	for _, token := range tokens {
+		if token != nil {
+			tokenIDs = append(tokenIDs, token.ID)
+		}
+	}
+
+	members, err := e.store.GetReleaseMembersByTokenIDs(ctx, tokenIDs)
+	if err != nil {
+		return apierrors.NewDatabaseError(fmt.Sprintf("Failed to get release members: %v", err))
+	}
+
+	for _, token := range tokens {
+		if token == nil {
+			continue
+		}
+		member, ok := members[token.ID]
+		if !ok || member == nil {
+			continue
+		}
+		releaseID := member.ReleaseID
+		mintNumber := member.MintNumber
+		token.ReleaseID = &releaseID
+		token.MintNumber = &mintNumber
+	}
+
+	return nil
 }
