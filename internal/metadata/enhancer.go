@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"go.uber.org/zap"
@@ -14,6 +15,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -60,14 +62,28 @@ type enhancer struct {
 	uriResolver     uri.Resolver
 	artblocksClient artblocks.Client
 	feralfileClient feralfile.Client
+	fxhashClient    fxhash.Client
 	objktClient     objkt.Client
 	openseaClient   opensea.Client
 	json            adapter.JSON
 	jcs             adapter.JCS
 }
 
-func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, feralfileClient feralfile.Client, objktClient objkt.Client, openseaClient opensea.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
-	return &enhancer{httpClient: httpClient, uriResolver: uriResolver, artblocksClient: artblocksClient, feralfileClient: feralfileClient, objktClient: objktClient, openseaClient: openseaClient, json: json, jcs: jcs}
+// NewEnhancer creates a new metadata enhancer that routes vendor-specific enrichment
+// to ArtBlocks, Feral File, fxhash, objkt, or OpenSea depending on the publisher registry
+// entry for the token's contract.
+func NewEnhancer(httpClient adapter.HTTPClient, uriResolver uri.Resolver, artblocksClient artblocks.Client, feralfileClient feralfile.Client, fxhashClient fxhash.Client, objktClient objkt.Client, openseaClient opensea.Client, json adapter.JSON, jcs adapter.JCS) Enhancer {
+	return &enhancer{
+		httpClient:      httpClient,
+		uriResolver:     uriResolver,
+		artblocksClient: artblocksClient,
+		feralfileClient: feralfileClient,
+		fxhashClient:    fxhashClient,
+		objktClient:     objktClient,
+		openseaClient:   openseaClient,
+		json:            json,
+		jcs:             jcs,
+	}
 }
 
 // VendorJsonHash returns the hash of the canonicalized vendor JSON and the vendor JSON itself
@@ -108,6 +124,17 @@ func (e *enhancer) Enhance(ctx context.Context, tokenCID domain.TokenCID, meta *
 			enhancedMetadata, err = e.enhanceFeralFile(ctx, chain, contractAddress, tokenNumber)
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance Feral File metadata: %w", err)
+			}
+		}
+
+	case registry.PublisherNameFXHash:
+		// fxhash generative tokens live on Tezos mainnet only.
+		// If the fxhash API does not recognize the gentk (returns nil), we fall through
+		// to objkt so basic metadata is still fetched rather than leaving the record empty.
+		if chain == domain.ChainTezosMainnet {
+			enhancedMetadata, err = e.enhanceFxhash(ctx, contractAddress, tokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("failed to enhance fxhash metadata: %w", err)
 			}
 		}
 
@@ -339,6 +366,99 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, chain domain.Chain, con
 	return enhanced, nil
 }
 
+// enhanceFxhash enhances metadata for a fxhash generative token (gentk) using the
+// fxhash v2 GraphQL API. It returns (nil, nil) when the fxhash API does not index
+// the gentk, allowing the caller to fall through to enhanceObjkt for basic metadata.
+//
+// Release mapping:
+//   - VendorReleaseID = generative_token.id (stable numeric project id, e.g. "9997")
+//   - MintNumber      = gentk.Iteration (1-based within the project)
+//   - TotalMints      = generative_token.original_supply if set, else supply
+func (e *enhancer) enhanceFxhash(ctx context.Context, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
+	logger.InfoCtx(ctx, "Enhancing fxhash metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
+
+	gentk, err := e.fxhashClient.GetGentk(ctx, contractAddress, tokenNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch fxhash gentk: %w", err)
+	}
+
+	// fxhash does not index this token (e.g. legacy h=n contract, or not yet synced).
+	// Fall through to objkt so at least basic metadata is available.
+	if gentk == nil {
+		logger.InfoCtx(ctx, "fxhash gentk not found, falling back to objkt",
+			zap.String("contractAddress", contractAddress),
+			zap.String("tokenNumber", tokenNumber))
+		return e.enhanceObjkt(ctx, contractAddress, tokenNumber)
+	}
+
+	vendorJSON, err := e.json.Marshal(gentk)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal fxhash gentk: %w", err)
+	}
+
+	enhanced := &EnhancedMetadata{
+		Vendor:     schema.VendorFXHash,
+		VendorJSON: vendorJSON,
+	}
+
+	if gentk.Name != nil {
+		enhanced.Name = gentk.Name
+	}
+
+	// fxhash generative tokens do not produce a static artifact URI; display_uri
+	// is the preview image generated at mint time.
+	if !types.StringNilOrEmpty(gentk.DisplayURI) {
+		resolved, err := e.uriResolver.Resolve(ctx, *gentk.DisplayURI)
+		if err != nil {
+			logger.WarnCtx(ctx, "failed to resolve fxhash display URI, fallback to default gateway", zap.Error(err), zap.String("displayURI", *gentk.DisplayURI))
+			url := domain.UriToGateway(*gentk.DisplayURI)
+			enhanced.ImageURL = &url
+		} else {
+			enhanced.ImageURL = &resolved
+		}
+	}
+
+	// Build artist DID from the generative token author's wallet address.
+	if gentk.GenerativeToken != nil && gentk.GenerativeToken.Author != nil {
+		gt := gentk.GenerativeToken
+		author := gt.Author
+		if author.WalletAccount != nil && author.WalletAccount.Address != "" {
+			artistDID := domain.NewDID(author.WalletAccount.Address, domain.ChainTezosMainnet)
+			enhanced.Artists = []Artist{
+				{
+					DID:  artistDID,
+					Name: author.Name,
+				},
+			}
+		}
+
+		// Populate release membership.
+		iteration, parseErr := strconv.ParseInt(gentk.Iteration, 10, 64)
+		if parseErr == nil && iteration > 0 {
+			var totalMints *int64
+			supplyStr := gt.OriginalSupply
+			if supplyStr == nil {
+				supplyStr = &gt.Supply
+			}
+			if supplyStr != nil {
+				if parsed, err := strconv.ParseInt(*supplyStr, 10, 64); err == nil {
+					totalMints = &parsed
+				}
+			}
+
+			releaseName := gt.Name
+			enhanced.Release = &ReleaseInfo{
+				VendorReleaseID: gt.ID,
+				MintNumber:      iteration,
+				Name:            &releaseName,
+				TotalMints:      totalMints,
+			}
+		}
+	}
+
+	return enhanced, nil
+}
+
 // enhanceObjkt enhances metadata from objkt v3 API for Tezos tokens
 func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
 	logger.InfoCtx(ctx, "Enhancing objkt metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
@@ -417,6 +537,25 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 		}
 		if len(artists) > 0 {
 			enhanced.Artists = artists
+		}
+	}
+
+	// Populate release for objkt custom collections.
+	// collection_type "custom" means a dedicated per-artist contract where the KT1
+	// address is the stable release id and token_id is the 1-based mint number.
+	// Open/curated collections are multi-artist and have no meaningful single-release
+	// semantics, so we skip them here.
+	if token.FA != nil && token.FA.CollectionType == "custom" {
+		mintNum, parseErr := strconv.ParseInt(tokenNumber, 10, 64)
+		if parseErr == nil && mintNum > 0 {
+			totalMints := token.FA.Editions
+			faName := token.FA.Name
+			enhanced.Release = &ReleaseInfo{
+				VendorReleaseID: contractAddress, // KT1 address is chain-unique; no chain prefix needed
+				MintNumber:      mintNum,
+				Name:            &faName,
+				TotalMints:      &totalMints,
+			}
 		}
 	}
 

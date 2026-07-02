@@ -18,6 +18,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
@@ -85,6 +86,7 @@ func registerWorkerCore(
 
 	artblocksClient := artblocks.NewClient(httpClient, cfg.Vendors.ArtBlocksURL, jsonAdapter)
 	feralfileClient := feralfile.NewClient(httpClient, cfg.Vendors.FeralFileURL)
+	fxhashClient := fxhash.NewClient(httpClient, rateLimiter, cfg.Vendors.FxhashURL, jsonAdapter)
 	objktClient := objkt.NewClient(httpClient, rateLimiter, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
 	openseaClient := opensea.NewClient(httpClient, rateLimiter, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
 
@@ -129,7 +131,7 @@ func registerWorkerCore(
 	urlChecker := uri.NewURLChecker(httpClient, ioAdapter, uriConfig)
 	dataURIChecker := uri.NewDataURIChecker()
 
-	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, objktClient, openseaClient, jsonAdapter, jcsAdapter)
+	metadataEnhancer := metadata.NewEnhancer(httpClient, uriResolver, artblocksClient, feralfileClient, fxhashClient, objktClient, openseaClient, jsonAdapter, jcsAdapter)
 	metadataResolver := metadata.NewResolver(ethereumClient, tzktClient, httpClient, uriResolver, jsonAdapter, clockAdapter, jcsAdapter, base64Adapter, dataStore, publisherRegistry)
 
 	if publisherRegistry != nil {

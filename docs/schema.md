@@ -22,7 +22,7 @@ The database includes the following main tables:
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
-- `releases` - Cross-vendor release abstraction (Feral File series, Art Blocks projects) with stable internal id (migration 018)
+- `releases` - Cross-vendor release abstraction (Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections) with stable internal id (migration 018)
 - `release_members` - Ordered token membership within a release; `mint_number` is authoritative and 1-based (migration 018)
 - `watched_addresses` - Addresses being monitored for indexing
 - `jobs` - Postgres-backed durable job queue (token and media work units)
@@ -319,15 +319,15 @@ Materialized view tracking the most recent provenance event per token-owner pair
 
 ### releases
 
-Cross-vendor release abstraction that gives Feral File series and Art Blocks projects a stable internal id with mint-ordered members. Added in migration 018.
+Cross-vendor release abstraction that gives Feral File series, Art Blocks projects, fxhash generative tokens, and objkt custom collections a stable internal id with mint-ordered members. Added in migration 018.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | id | BIGSERIAL | Stable internal release identifier (primary key) |
-| vendor | vendor_type | Source platform (`artblocks`, `feralfile`) |
-| vendor_release_id | TEXT | External release key: FF seriesID UUID or AB `{chainID}-{contract}-{projectID}` (chain-qualified to prevent cross-chain collisions) |
+| vendor | vendor_type | Source platform (`artblocks`, `feralfile`, `fxhash`, `objkt`) |
+| vendor_release_id | TEXT | External release key: FF seriesID UUID, AB `{chainID}-{contract}-{projectID}` (chain-qualified), fxhash generative token numeric id (e.g. `"9997"`), objkt custom-collection KT1 contract address |
 | name | TEXT | Human-readable release title (e.g. "Fidenza by Tyler Hobbs"); populated from vendor enrichment |
-| total_mints | BIGINT | Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork); nullable when unknown |
+| total_mints | BIGINT | Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork, fxhash original_supply, objkt FA editions); nullable when unknown |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp (bumped on every upsert via trigger) |
 
