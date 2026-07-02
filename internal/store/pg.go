@@ -1170,6 +1170,13 @@ func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendo
 // UpsertReleaseMember associates a token with a release at the given mint number.
 // Each token belongs to at most one release; conflicts on token_id update release_id and mint_number.
 // mintNumber must be > 0 (1-based, mirroring the DB CHECK constraint and API contract).
+//
+// Collision policy: the UNIQUE (release_id, mint_number) constraint is intentionally left as a
+// hard-fail. If re-enrichment or a vendor correction tries to assign a mint slot already occupied
+// by a different token, the write is rejected with a DB constraint error and the caller (the
+// core executor) logs and skips that token's release assignment. This is the correct integrity
+// behavior: two tokens cannot occupy the same position in a release. A raw DB error here
+// surfaces a real vendor data inconsistency rather than silently overwriting existing membership.
 func (s *pgStore) UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error {
 	if mintNumber <= 0 {
 		return fmt.Errorf("invalid mint_number %d: must be >= 1 (1-based)", mintNumber)

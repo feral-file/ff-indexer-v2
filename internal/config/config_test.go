@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -256,6 +257,42 @@ database:
 	assert.Equal(t, "require", cfg.Database.SSLMode)
 	assert.Equal(t, "https://api.tzkt.io", cfg.Tezos.APIURL)
 	assert.Equal(t, "wss://ws.tzkt.io", cfg.Tezos.WebSocketURL)
+}
+
+func TestLoadAppConfig_FxhashRateLimiterFromEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	envDir := filepath.Join(tmpDir, "env")
+	require.NoError(t, os.MkdirAll(envDir, 0750))
+
+	// Override all three fxhash rate-limiter keys via environment variables.
+	// These keys were missing from bindAllEnvVars; this test ensures env overrides work.
+	envContent := "FF_INDEXER_RATE_LIMITER_PROVIDERS_FXHASH_REQUESTS_PER_SECOND=5\n" +
+		"FF_INDEXER_RATE_LIMITER_PROVIDERS_FXHASH_BURST=10\n" +
+		"FF_INDEXER_RATE_LIMITER_PROVIDERS_FXHASH_MAX_QUEUE_TIME=5m\n"
+	require.NoError(t, os.WriteFile(filepath.Join(envDir, ".env"), []byte(envContent), 0600))
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := `
+database:
+  host: localhost
+  dbname: ff_indexer
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  websocket_url: wss://ws.tzkt.io
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0600))
+
+	cfg, err := LoadAppConfig(configPath, envDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	fxhash := cfg.RateLimiter.Providers["fxhash"]
+	assert.Equal(t, 5, fxhash.RequestsPerSecond, "fxhash RPS must be overridable via env")
+	assert.Equal(t, 10, fxhash.Burst, "fxhash burst must be overridable via env")
+	assert.Equal(t, 5*time.Minute, fxhash.MaxQueueTime, "fxhash max_queue_time must be overridable via env")
 }
 
 func TestLoadAppConfig_MediaEnabledFromEnv(t *testing.T) {
