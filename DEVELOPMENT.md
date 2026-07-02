@@ -231,14 +231,6 @@ Fresh installs from `init_pg_db.sql` can run `017.sql` directly if there are no 
 
 Migration `018.sql` adds the cross-vendor release abstraction (`releases`, `release_members`) used for mint-ordered series/project membership. The `release_members.mint_number` column includes `CHECK (mint_number > 0)` to enforce the 1-based contract at the database level. Fresh installs pick this up from `db/init_pg_db.sql` automatically.
 
-After applying migration 018 on an existing database, backfill release rows from existing enrichment data:
-
-```bash
-go run ./cmd/backfill-releases --config config/config.yaml
-```
-
-Optional flags: `--batch-size 500` (default). The command is safe to re-run; release and member rows are upserted idempotently.
-
 - **If migration 018 has NOT run (tables missing):** Every token read (`GET /tokens`, `GET /tokens/:cid`, GraphQL token queries) fails because the app unconditionally queries `release_members` to populate `release_id` and `mint_number`. The error you will see on each call is:
   ```
   ERROR: relation "release_members" does not exist (SQLSTATE 42P01)
@@ -256,20 +248,62 @@ Optional flags: `--batch-size 500` (default). The command is safe to re-run; rel
 # Verify releases and release_members tables exist
 psql -h localhost -U postgres -d ff_indexer -c "\d releases"
 psql -h localhost -U postgres -d ff_indexer -c "\d release_members"
-
-# Or check in SQL
-SELECT tablename FROM pg_tables
-WHERE schemaname = 'public' AND tablename IN ('releases', 'release_members');
-
-# Optional: confirm backfill ran and populated rows
-SELECT vendor, COUNT(*) FROM releases GROUP BY vendor;
-SELECT COUNT(*) FROM release_members;
 ```
 
 **For production deployments:**
 - Use blue-green deployment strategy to avoid downtime
 - Run migrations on blue environment, verify, then switch traffic
 - Or schedule maintenance window for migration + deployment
+
+### Migration 019: re-enrich existing tokens to populate release membership
+
+Migration `019.sql` inserts `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt. The running worker processes these jobs to re-fetch vendor data and populate `releases` and `release_members`.
+
+**Why reindex rather than derive from stored vendor JSON:**
+
+Stored `vendor_json` from before this release is incomplete for every vendor and cannot produce correct release rows without hitting vendor APIs:
+
+| Vendor | Gap in pre-existing stored JSON |
+|--------|--------------------------------|
+| Art Blocks | `max_invocations` was not fetched; `total_mints` would be absent |
+| Feral File | `index` and `seriesID` were not stored; `mint_number` cannot be derived |
+| fxhash | Tokens were stored as `vendor=objkt` with no `generative_token`/`iteration`; `vendor_release_id` cannot be derived |
+| objkt | `fa.collection_type` was not fetched; custom collections cannot be identified |
+
+Reindexing runs the full enrichment pipeline — vendor API calls are governed by the configured rate limiters (2 RPS for fxhash/objkt, no separate limit for Feral File/Art Blocks) and the existing token worker concurrency.
+
+**What happens after migration 019 runs:**
+
+1. Jobs are inserted into the `token_index` queue with `status=pending`.
+2. The token worker picks them up and calls `EnhanceTokenMetadata` for each token.
+3. The enhancer re-fetches data from the vendor API, stores a complete `vendor_json`, and upserts `releases` + `release_members` directly.
+4. New tokens indexed after this release get releases written automatically at enrichment time — no additional action needed.
+
+**Idempotency:** The migration uses `ON CONFLICT ... DO NOTHING` on the partial unique index `jobs_unique_key_active`. Re-running the migration skips tokens that already have a pending or running metadata job. Tokens whose jobs completed or failed can be re-triggered via `POST /api/v1/tokens/index`.
+
+**Fresh installs:** `019.sql` produces no rows on a fresh database (no `enrichment_sources` rows exist yet). `db/init_pg_db.sql` does not need updating.
+
+**Verify progress after deployment:**
+
+```sql
+-- Jobs inserted by migration 019 (all statuses)
+SELECT status, COUNT(*)
+FROM jobs
+WHERE kind = 'IndexTokenMetadata'
+GROUP BY status;
+
+-- Tokens still without release membership (expected to shrink as worker runs)
+SELECT es.vendor, COUNT(*)
+FROM enrichment_sources es
+LEFT JOIN release_members rm ON rm.token_id = es.token_id
+WHERE es.vendor IN ('artblocks', 'feralfile', 'fxhash', 'objkt')
+  AND rm.id IS NULL
+GROUP BY es.vendor;
+
+-- Release membership after enrichment completes
+SELECT vendor, COUNT(*) FROM releases GROUP BY vendor;
+SELECT COUNT(*) FROM release_members;
+```
 
 ### Reset Database
 
