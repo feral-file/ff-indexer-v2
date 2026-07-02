@@ -955,6 +955,67 @@ func TestEnhancer_Enhance_FXHash(t *testing.T) {
 	assert.Equal(t, int64(512), *result.Release.TotalMints)
 }
 
+// TestEnhancer_Enhance_FXHash_ZeroSupply verifies that a fxhash gentk with supply "0" does not
+// set TotalMints on the release. A zero supply would violate the DB CHECK (total_mints > 0) and
+// abort enrichment, so non-positive supply values must be treated as unknown (nil).
+func TestEnhancer_Enhance_FXHash_ZeroSupply(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", "1")
+	publisherName := registry.PublisherNameFXHash
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Zero supply token"},
+		Publisher: &metadata.Publisher{Name: &publisherName, URL: types.StringPtr("https://fxhash.xyz")},
+	}
+
+	iteration := "1"
+	displayURI := "ipfs://QmDisplay"
+	tokenName := "Token #1"
+	zeroSupply := "0"
+	walletAddr := "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"
+
+	gentk := &fxhash.Gentk{
+		Iteration:  iteration,
+		DisplayURI: &displayURI,
+		Name:       &tokenName,
+		GenerativeToken: &fxhash.GenerativeToken{
+			ID:             "1234",
+			Name:           "Zero Supply Project",
+			Supply:         zeroSupply,
+			OriginalSupply: nil,
+			Author: &fxhash.Author{
+				Name:          "Artist",
+				WalletAccount: &fxhash.WalletAccount{Address: walletAddr},
+			},
+		},
+	}
+
+	mocks.fxhashClient.EXPECT().
+		GetGentk(gomock.Any(), "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", "1").
+		Return(gentk, nil)
+
+	vendorJSON := []byte(`{"iteration":"1"}`)
+	mocks.json.EXPECT().Marshal(gentk).Return(vendorJSON, nil)
+
+	resolvedURL := "https://ipfs.io/ipfs/QmDisplay"
+	mocks.uriResolver.EXPECT().Resolve(gomock.Any(), displayURI).Return(resolvedURL, nil)
+	// MIME type detection re-resolves and probes the image URL.
+	mocks.uriResolver.EXPECT().Resolve(gomock.Any(), resolvedURL).Return(resolvedURL, nil)
+	mocks.httpClient.EXPECT().Head(gomock.Any(), resolvedURL).Return(nil, assert.AnError)
+	mocks.httpClient.EXPECT().GetPartialBytes(gomock.Any(), resolvedURL, gomock.Any()).Return([]byte("fake image data"), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Release)
+	assert.Equal(t, "1234", result.Release.VendorReleaseID)
+	// TotalMints must be nil: supply "0" must not be propagated to the DB
+	assert.Nil(t, result.Release.TotalMints, "zero vendor supply should not set TotalMints")
+}
+
 // TestEnhancer_Enhance_FXHash_NullFallback verifies that when the fxhash API returns nil
 // (gentk not indexed), the enhancer falls through to objkt enrichment.
 func TestEnhancer_Enhance_FXHash_NullFallback(t *testing.T) {
@@ -1098,6 +1159,51 @@ func TestEnhancer_Enhance_ObjktCustom(t *testing.T) {
 	assert.Equal(t, "My Custom Collection", *result.Release.Name)
 	require.NotNil(t, result.Release.TotalMints)
 	assert.Equal(t, int64(100), *result.Release.TotalMints)
+}
+
+// TestEnhancer_Enhance_ObjktCustom_ZeroEditions verifies that a custom-collection objkt token
+// with FA.Editions == 0 does not set TotalMints on the release. Zero editions would violate the
+// DB CHECK (total_mints IS NULL OR total_mints > 0) and abort enrichment.
+func TestEnhancer_Enhance_ObjktCustom_ZeroEditions(t *testing.T) {
+	m := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(m)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1ZeroEditionsContract111111111", "3")
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Zero editions token"},
+		Publisher: nil,
+	}
+
+	name := "Token #3"
+	mime := "image/png"
+	faName := "Zero Editions Collection"
+
+	objktToken := &objkt.Token{
+		Name: &name,
+		Mime: &mime,
+		FA: &objkt.FA{
+			Name:           faName,
+			Editions:       0, // vendor reports zero — must not reach DB
+			CollectionType: "custom",
+		},
+	}
+
+	m.objktClient.EXPECT().
+		GetToken(gomock.Any(), "KT1ZeroEditionsContract111111111", "3").
+		Return(objktToken, nil)
+
+	vendorJSON := []byte(`{"name":"Token #3","fa":{"collection_type":"custom","editions":0}}`)
+	m.json.EXPECT().Marshal(objktToken).Return(vendorJSON, nil)
+
+	result, err := m.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Release)
+	assert.Equal(t, "KT1ZeroEditionsContract111111111", result.Release.VendorReleaseID)
+	assert.Equal(t, int64(3), result.Release.MintNumber)
+	// TotalMints must be nil: editions == 0 must not be propagated to the DB
+	assert.Nil(t, result.Release.TotalMints, "zero vendor editions should not set TotalMints")
 }
 
 // TestEnhancer_Enhance_ObjktOpen verifies that an objkt token with collection_type "open"

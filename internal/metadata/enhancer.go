@@ -441,7 +441,11 @@ func (e *enhancer) enhanceFxhash(ctx context.Context, contractAddress, tokenNumb
 				supplyStr = &gt.Supply
 			}
 			if supplyStr != nil {
-				if parsed, err := strconv.ParseInt(*supplyStr, 10, 64); err == nil {
+				// Only set TotalMints when the vendor-reported supply is positive.
+				// A supply of "0" (or any non-positive value) would violate the
+				// CHECK (total_mints IS NULL OR total_mints > 0) DB constraint and
+				// abort enrichment. Treat non-positive as unknown (nil).
+				if parsed, err := strconv.ParseInt(*supplyStr, 10, 64); err == nil && parsed > 0 {
 					totalMints = &parsed
 				}
 			}
@@ -548,14 +552,20 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 	if token.FA != nil && token.FA.CollectionType == "custom" {
 		mintNum, parseErr := strconv.ParseInt(tokenNumber, 10, 64)
 		if parseErr == nil && mintNum > 0 {
-			totalMints := token.FA.Editions
 			faName := token.FA.Name
-			enhanced.Release = &ReleaseInfo{
+			release := &ReleaseInfo{
 				VendorReleaseID: contractAddress, // KT1 address is chain-unique; no chain prefix needed
 				MintNumber:      mintNum,
 				Name:            &faName,
-				TotalMints:      &totalMints,
 			}
+			// Only set TotalMints when the vendor-reported edition count is positive.
+			// Editions == 0 violates CHECK (total_mints IS NULL OR total_mints > 0) and
+			// would abort enrichment. Treat non-positive as unknown (nil).
+			if token.FA.Editions > 0 {
+				totalMints := token.FA.Editions
+				release.TotalMints = &totalMints
+			}
+			enhanced.Release = release
 		}
 	}
 
