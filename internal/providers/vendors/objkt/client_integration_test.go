@@ -3,7 +3,8 @@
 package objkt_test
 
 // Integration tests for the objkt client against the real objkt v3 GraphQL API.
-// They are excluded from the default test run and CI.
+// Gated behind //go:build integration; excluded from plain go test ./... but
+// included in CI and make test-integration via -tags=integration.
 //
 // Run with:
 //

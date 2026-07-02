@@ -3,7 +3,8 @@
 package artblocks_test
 
 // Integration tests for the artblocks client against the real ArtBlocks GraphQL API.
-// They are excluded from the default test run and CI.
+// Gated behind //go:build integration; excluded from plain go test ./... but
+// included in CI and make test-integration via -tags=integration.
 //
 // Run with:
 //

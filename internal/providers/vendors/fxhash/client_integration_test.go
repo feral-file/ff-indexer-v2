@@ -3,7 +3,8 @@
 package fxhash_test
 
 // Integration tests for the fxhash client against the real fxhash v2 GraphQL API.
-// They are excluded from the default test run and CI.
+// Gated behind //go:build integration; excluded from plain go test ./... but
+// included in CI and make test-integration via -tags=integration.
 //
 // Run with:
 //
