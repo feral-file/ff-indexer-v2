@@ -441,8 +441,8 @@ func (r *queryResolver) Release(ctx context.Context, id Uint64) (*dto.ReleaseRes
 
 // Releases is the resolver for the releases field.
 func (r *queryResolver) Releases(ctx context.Context, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
-	vendorVal := strings.TrimSpace(stringOrEmpty(vendor))
-	vendorReleaseIDVal := strings.TrimSpace(stringOrEmpty(vendorReleaseID))
+	vendorVal := strings.TrimSpace(internalTypes.SafeString(vendor))
+	vendorReleaseIDVal := strings.TrimSpace(internalTypes.SafeString(vendorReleaseID))
 	if vendorVal == "" && vendorReleaseIDVal == "" {
 		return nil, apierrors.NewValidationError("at least one of vendor or vendor_release_id is required")
 	}
@@ -468,14 +468,6 @@ func (r *queryResolver) Releases(ctx context.Context, vendor *string, vendorRele
 	}
 
 	return r.executor.ListReleases(ctx, parsedVendor, parsedVendorReleaseID, ToNativeUint8(limit), ToNativeUint64(offset))
-}
-
-// stringOrEmpty returns the dereferenced string or empty string if nil.
-func stringOrEmpty(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }
 
 // JobStatus is the resolver for the jobStatus field.

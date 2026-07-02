@@ -28,7 +28,7 @@ func TestQueryResolverReleaseReturnsNameAndTotalMints(t *testing.T) {
 	mockExec := mocks.NewMockAPIExecutor(ctrl)
 	resolver := NewResolver(false, mockExec)
 
-	name := "1DE94 by Raven Kwok"
+	name := "1DE94"
 	totalMints := int64(75)
 	mockExec.EXPECT().
 		GetRelease(gomock.Any(), uint64(7)).

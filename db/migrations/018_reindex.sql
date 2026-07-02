@@ -1,6 +1,6 @@
 BEGIN;
 
--- Migration 019: Enqueue IndexTokenMetadata jobs for tokens that need release membership.
+-- Migration 018_reindex: Enqueue IndexTokenMetadata jobs for tokens that need release membership.
 --
 -- Context
 -- -------

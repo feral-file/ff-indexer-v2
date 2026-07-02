@@ -11,7 +11,7 @@ import (
 func TestReleaseResponseJSONIncludesNameAndTotalMints(t *testing.T) {
 	t.Parallel()
 
-	name := "Fidenza by Tyler Hobbs"
+	name := "Fidenza"
 	totalMints := int64(999)
 	response := ReleaseResponse{
 		ID:              42,
@@ -27,6 +27,6 @@ func TestReleaseResponseJSONIncludesNameAndTotalMints(t *testing.T) {
 	var decoded map[string]interface{}
 	require.NoError(t, json.Unmarshal(data, &decoded))
 
-	assert.Equal(t, "Fidenza by Tyler Hobbs", decoded["name"])
+	assert.Equal(t, "Fidenza", decoded["name"])
 	assert.Equal(t, float64(999), decoded["total_mints"])
 }

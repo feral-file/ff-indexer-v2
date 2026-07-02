@@ -157,7 +157,7 @@ func TestEnhancer_Enhance_ArtBlocks(t *testing.T) {
 	assert.Equal(t, "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1", result.Release.VendorReleaseID)
 	assert.Equal(t, int64(6), result.Release.MintNumber)
 	require.NotNil(t, result.Release.Name)
-	assert.Equal(t, "Fidenza by Tyler Hobbs", *result.Release.Name)
+	assert.Equal(t, "Fidenza", *result.Release.Name)
 	require.NotNil(t, result.Release.TotalMints)
 	assert.Equal(t, int64(999), *result.Release.TotalMints)
 }

@@ -326,7 +326,7 @@ Cross-vendor release abstraction that gives Feral File series, Art Blocks projec
 | id | BIGSERIAL | Stable internal release identifier (primary key) |
 | vendor | vendor_type | Source platform (`artblocks`, `feralfile`, `fxhash`, `objkt`) |
 | vendor_release_id | TEXT | External release key: FF seriesID UUID, AB `{chainID}-{contract}-{projectID}` (chain-qualified), fxhash generative token numeric id (e.g. `"9997"`), objkt custom-collection KT1 contract address |
-| name | TEXT | Human-readable release title (e.g. "Fidenza by Tyler Hobbs"); populated from vendor enrichment |
+| name | TEXT | Human-readable release title (e.g. "Fidenza"); populated from vendor enrichment |
 | total_mints | BIGINT | Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork, fxhash original_supply, objkt FA editions); nullable when unknown |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp (bumped on every upsert via trigger) |
@@ -689,7 +689,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 Migrations should be placed in `db/migrations/` directory with sequential numbering:
 - `001.sql` - Historical: introduced `token_ownership_periods` (removed in `015.sql`).
 - `018.sql` - Adds `releases` and `release_members` tables for cross-vendor release abstraction with mint-ordered members (including `CHECK (mint_number > 0)`), plus the `update_releases_updated_at` trigger.
-- `019_reindex.sql` - Enqueues `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt so the updated enhancer re-fetches vendor data and populates `releases` + `release_members`. Pre-existing stored `vendor_json` is incomplete for release derivation across all vendors; reindexing is the correct single path. Safe to run on a fresh database (produces no rows).
+- `018_reindex.sql` - Enqueues `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt so the updated enhancer re-fetches vendor data and populates `releases` + `release_members`. Pre-existing stored `vendor_json` is incomplete for release derivation across all vendors; reindexing is the correct single path. Safe to run on a fresh database (produces no rows).
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data

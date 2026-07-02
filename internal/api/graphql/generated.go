@@ -1935,7 +1935,7 @@ type Release {
   id: Uint64!
   vendor: String!
   vendor_release_id: String!
-  # Human-readable release title (e.g. "Fidenza by Tyler Hobbs"); REST GET /api/v1/releases/{id} ` + "`" + `name` + "`" + `.
+  # Human-readable release title (e.g. "Fidenza"); REST GET /api/v1/releases/{id} ` + "`" + `name` + "`" + `.
   name: String
   # Declared max edition size from vendor; REST GET /api/v1/releases/{id} ` + "`" + `total_mints` + "`" + `.
   total_mints: Int

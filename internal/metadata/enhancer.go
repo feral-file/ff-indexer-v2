@@ -19,7 +19,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
-	"github.com/feral-file/ff-indexer-v2/internal/release"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
@@ -249,14 +248,16 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 		enhanced.ImageURL = &i
 	}
 
-	releaseMeta := release.MetadataFromArtBlocksProject(project.Name, project.ArtistName, project.MaxInvocations)
 	enhanced.Release = &ReleaseInfo{
 		VendorReleaseID: projectIDStr,
 		MintNumber:      releaseMintNumber,
 	}
-	if releaseMeta != nil {
-		enhanced.Release.Name = releaseMeta.Name
-		enhanced.Release.TotalMints = releaseMeta.TotalMints
+	if title := strings.TrimSpace(project.Name); title != "" {
+		enhanced.Release.Name = &title
+	}
+	if project.MaxInvocations > 0 {
+		total := int64(project.MaxInvocations)
+		enhanced.Release.TotalMints = &total
 	}
 
 	return enhanced, nil
@@ -352,14 +353,15 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, chain domain.Chain, con
 	// be determined. Skipping here rather than writing mint_number=1 prevents a false
 	// UNIQUE (release_id, mint_number) conflict for the legitimate first token of the release.
 	if seriesID := artwork.SeriesIDOrFallback(); seriesID != "" && artwork.Index != nil {
-		releaseMeta := release.MetadataFromFeralFileArtwork(artwork)
 		enhanced.Release = &ReleaseInfo{
 			VendorReleaseID: seriesID,
 			MintNumber:      *artwork.Index + 1,
 		}
-		if releaseMeta != nil {
-			enhanced.Release.Name = releaseMeta.Name
-			enhanced.Release.TotalMints = releaseMeta.TotalMints
+		if title := strings.TrimSpace(artwork.Series.Title); title != "" {
+			enhanced.Release.Name = &title
+		}
+		if artwork.Series.Settings.MaxArtwork > 0 {
+			enhanced.Release.TotalMints = &artwork.Series.Settings.MaxArtwork
 		}
 	}
 

@@ -89,7 +89,7 @@ Design rules:
 ### Release endpoint (`GET /api/v1/releases/{id}`)
 
 - Returns a release by internal id (integer) with its complete, mint-ordered member token list.
-- **Release metadata:** Optional read-only `name` (human-readable title, e.g. `"Fidenza by Tyler Hobbs"`) and `total_mints` (declared max edition size from vendor: AB `max_invocations`, FF `series.settings.maxArtwork`). Both are nullable when vendor data is unavailable.
+- **Release metadata:** Optional read-only `name` (human-readable title, e.g. `"Fidenza"`) and `total_mints` (declared max edition size from vendor: AB `max_invocations`, FF `series.settings.maxArtwork`). Both are nullable when vendor data is unavailable.
 - **Membership completeness:** All members are returned regardless of `is_viewable` state so the list is stable across viewability changes (tokens may be temporarily unviewable during media processing). Callers needing only publicly visible members should use `GET /api/v1/tokens?release_id=...` with the default `include_unviewable=false`.
 - **Pagination:** `limit` / `offset` on member list; `sort_order` (`asc` | `desc`). Sort is always by `mint_number` (not configurable here).
 - **GraphQL:** `release(id)` query exposes the same release with a `members` field that follows the same membership-completeness contract.

@@ -455,7 +455,7 @@ func TestGetRelease_Found(t *testing.T) {
 
 	exec, mockStore := newTestExecutor(t, ctrl)
 
-	name := "Fidenza by Tyler Hobbs"
+	name := "Fidenza"
 	totalMints := int64(999)
 	mockStore.EXPECT().
 		GetReleaseByID(gomock.Any(), uint64(7)).
@@ -474,7 +474,7 @@ func TestGetRelease_Found(t *testing.T) {
 	assert.Equal(t, string(schema.VendorArtBlocks), result.Vendor)
 	assert.Equal(t, "0xabc-1", result.VendorReleaseID)
 	require.NotNil(t, result.Name)
-	assert.Equal(t, "Fidenza by Tyler Hobbs", *result.Name)
+	assert.Equal(t, "Fidenza", *result.Name)
 	require.NotNil(t, result.TotalMints)
 	assert.Equal(t, int64(999), *result.TotalMints)
 }

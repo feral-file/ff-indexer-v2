@@ -2016,8 +2016,8 @@ components:
           example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
         name:
           type: [string, "null"]
-          description: Human-readable release title (e.g. "Fidenza by Tyler Hobbs")
-          example: "Fidenza by Tyler Hobbs"
+          description: Human-readable release title (e.g. "Fidenza")
+          example: "Fidenza"
         total_mints:
           type: [integer, "null"]
           format: int64

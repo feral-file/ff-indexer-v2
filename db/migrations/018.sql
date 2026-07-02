@@ -30,7 +30,7 @@ CREATE INDEX release_members_release_id_mint_number_idx ON release_members (rele
 COMMENT ON TABLE releases IS 'Cross-vendor release (FF series, AB project) with stable internal id and external vendor_release_id';
 COMMENT ON TABLE release_members IS 'Ordered member tokens for a release; mint_number is authoritative and 1-based';
 COMMENT ON COLUMN releases.vendor_release_id IS 'External release key: FF seriesID UUID or AB {chainID}-{contract}-{projectID} (chain-qualified to prevent cross-chain collisions)';
-COMMENT ON COLUMN releases.name IS 'Human-readable release title (e.g. "Fidenza by Tyler Hobbs"); populated from vendor enrichment';
+COMMENT ON COLUMN releases.name IS 'Human-readable release title (e.g. "Fidenza"); populated from vendor enrichment';
 COMMENT ON COLUMN releases.total_mints IS 'Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork); nullable when unknown';
 
 CREATE TRIGGER update_releases_updated_at

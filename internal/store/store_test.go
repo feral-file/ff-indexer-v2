@@ -6626,7 +6626,7 @@ func testUpsertReleaseMetadata(t *testing.T, store Store) {
 	ctx := context.Background()
 	vendorReleaseID := "0x000000000000000000000000000000000000aaaa-metadata"
 
-	name := "Fidenza by Tyler Hobbs"
+	name := "Fidenza"
 	totalMints := int64(999)
 	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &name, &totalMints)
 	require.NoError(t, err)

@@ -255,9 +255,9 @@ psql -h localhost -U postgres -d ff_indexer -c "\d release_members"
 - Run migrations on blue environment, verify, then switch traffic
 - Or schedule maintenance window for migration + deployment
 
-### Migration 019: re-enrich existing tokens to populate release membership
+### Migration 018_reindex: re-enrich existing tokens to populate release membership
 
-Migration `019_reindex.sql` inserts `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt. The running worker processes these jobs to re-fetch vendor data and populate `releases` and `release_members`.
+Migration `018_reindex.sql` inserts `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt. The running worker processes these jobs to re-fetch vendor data and populate `releases` and `release_members`.
 
 **Why reindex rather than derive from stored vendor JSON:**
 
@@ -272,7 +272,7 @@ Stored `vendor_json` from before this release is incomplete for every vendor and
 
 Reindexing runs the full enrichment pipeline — vendor API calls are governed by the configured rate limiters (2 RPS for fxhash/objkt, no separate limit for Feral File/Art Blocks) and the existing token worker concurrency.
 
-**What happens after migration 019 runs:**
+**What happens after migration 018_reindex runs:**
 
 1. Jobs are inserted into the `token_index` queue with `status=pending`.
 2. The token worker picks them up and calls `EnhanceTokenMetadata` for each token.
@@ -281,12 +281,12 @@ Reindexing runs the full enrichment pipeline — vendor API calls are governed b
 
 **Idempotency:** The migration uses `ON CONFLICT ... DO NOTHING` on the partial unique index `jobs_unique_key_active`. Re-running the migration skips tokens that already have a pending or running metadata job. Tokens whose jobs completed or failed can be re-triggered via `POST /api/v1/tokens/index`.
 
-**Fresh installs:** `019_reindex.sql` produces no rows on a fresh database (no `enrichment_sources` rows exist yet). `db/init_pg_db.sql` does not need updating.
+**Fresh installs:** `018_reindex.sql` produces no rows on a fresh database (no `enrichment_sources` rows exist yet). `db/init_pg_db.sql` does not need updating.
 
 **Verify progress after deployment:**
 
 ```sql
--- Jobs inserted by migration 019 (all statuses)
+-- Jobs inserted by migration 018_reindex (all statuses)
 SELECT status, COUNT(*)
 FROM jobs
 WHERE kind = 'IndexTokenMetadata'
