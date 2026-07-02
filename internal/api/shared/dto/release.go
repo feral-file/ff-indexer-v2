@@ -16,7 +16,6 @@ type ReleaseResponse struct {
 type ReleaseListResponse struct {
 	Items  []ReleaseResponse `json:"items"`
 	Offset *uint64           `json:"offset,omitempty"`
-	Total  uint64            `json:"total"`
 }
 
 // MapReleaseToDTO maps a schema.Release to ReleaseResponse without members.

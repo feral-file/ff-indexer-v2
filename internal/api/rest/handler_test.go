@@ -27,7 +27,7 @@ func TestHandlerListReleasesSuccess(t *testing.T) {
 
 	vendor := schema.VendorArtBlocks
 	mockExec.EXPECT().
-		ListReleases(gomock.Any(), &vendor, gomock.Nil(), gomock.Any(), gomock.Any()).
+		ListReleases(gomock.Any(), gomock.Nil(), &vendor, gomock.Nil(), gomock.Any(), gomock.Any()).
 		Return(&dto.ReleaseListResponse{
 			Items: []dto.ReleaseResponse{{
 				ID:              9,

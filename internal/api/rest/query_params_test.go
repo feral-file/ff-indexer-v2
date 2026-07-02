@@ -93,7 +93,34 @@ func TestListReleasesQueryParamsValidateRequiresFilter(t *testing.T) {
 	require.Error(t, err)
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, err, &apiErr)
-	assert.Contains(t, apiErr.Details, "at least one of vendor or vendor_release_id is required")
+	assert.Contains(t, apiErr.Details, "at least one of ids, vendor, or vendor_release_id is required")
+}
+
+func TestListReleasesQueryParamsValidateIDsOnly(t *testing.T) {
+	t.Parallel()
+
+	params := ListReleasesQueryParams{
+		IDs:   []uint64{1, 2, 3},
+		Limit: 20,
+	}
+	require.NoError(t, params.Validate())
+	assert.Equal(t, []uint64{1, 2, 3}, params.ParsedIDs)
+	assert.Nil(t, params.ParsedVendor)
+	assert.Nil(t, params.ParsedVendorReleaseID)
+}
+
+func TestListReleasesQueryParamsValidateIDsWithVendor(t *testing.T) {
+	t.Parallel()
+
+	params := ListReleasesQueryParams{
+		IDs:    []uint64{5},
+		Vendor: "feralfile",
+		Limit:  20,
+	}
+	require.NoError(t, params.Validate())
+	assert.Equal(t, []uint64{5}, params.ParsedIDs)
+	require.NotNil(t, params.ParsedVendor)
+	assert.Equal(t, schema.VendorFeralFile, *params.ParsedVendor)
 }
 
 func TestListReleasesQueryParamsValidateVendorOnly(t *testing.T) {

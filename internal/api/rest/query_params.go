@@ -239,32 +239,39 @@ func ParseGetReleaseQuery(c *gin.Context) (*GetReleaseQueryParams, error) {
 }
 
 // ListReleasesQueryParams holds query parameters for GET /releases.
-// Call Validate() before using ParsedVendor and ParsedVendorReleaseID.
+// Call Validate() before using ParsedVendor, ParsedVendorReleaseID, and ParsedIDs.
 type ListReleasesQueryParams struct {
-	Vendor          string `form:"vendor"`
-	VendorReleaseID string `form:"vendor_release_id"`
-	Limit           uint8  `form:"limit,default=20"`
-	Offset          uint64 `form:"offset,default=0"`
+	// IDs is a repeated query parameter: ?ids=1&ids=2
+	IDs             []uint64 `form:"ids"`
+	Vendor          string   `form:"vendor"`
+	VendorReleaseID string   `form:"vendor_release_id"`
+	Limit           uint8    `form:"limit,default=20"`
+	Offset          uint64   `form:"offset,default=0"`
 
-	// ParsedVendor and ParsedVendorReleaseID are populated by Validate().
+	// ParsedVendor, ParsedVendorReleaseID, and ParsedIDs are populated by Validate().
+	ParsedIDs             []uint64
 	ParsedVendor          *schema.Vendor
 	ParsedVendorReleaseID *string
 }
 
 // Validate validates the query parameters for GET /releases.
-// It populates ParsedVendor and ParsedVendorReleaseID on success.
-// At least one of vendor or vendor_release_id is required.
+// It populates ParsedVendor, ParsedVendorReleaseID, and ParsedIDs on success.
+// At least one of ids, vendor, or vendor_release_id is required.
 // Accepted vendor values: artblocks, feralfile, fxhash, objkt.
 func (p *ListReleasesQueryParams) Validate() error {
 	vendor := strings.TrimSpace(p.Vendor)
 	vendorReleaseID := strings.TrimSpace(p.VendorReleaseID)
 
-	if vendor == "" && vendorReleaseID == "" {
-		return apierrors.NewValidationError("at least one of vendor or vendor_release_id is required")
+	if len(p.IDs) == 0 && vendor == "" && vendorReleaseID == "" {
+		return apierrors.NewValidationError("at least one of ids, vendor, or vendor_release_id is required")
 	}
 
 	if p.Limit == 0 {
 		return apierrors.NewValidationError("Invalid limit: must be at least 1")
+	}
+
+	if len(p.IDs) > 0 {
+		p.ParsedIDs = p.IDs
 	}
 
 	if vendor != "" {

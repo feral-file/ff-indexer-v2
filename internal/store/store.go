@@ -166,7 +166,10 @@ type UpsertTokenBalanceForOwnerInput struct {
 }
 
 // ReleaseQueryFilter represents filters for release list queries.
+// IDs, Vendor, and VendorReleaseID are ANDed when multiple are provided.
+// At least one of IDs, Vendor, or VendorReleaseID must be set.
 type ReleaseQueryFilter struct {
+	IDs             []uint64
 	Vendor          *schema.Vendor
 	VendorReleaseID *string
 	Limit           int

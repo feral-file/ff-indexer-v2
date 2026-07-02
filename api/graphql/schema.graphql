@@ -202,7 +202,6 @@ type TokenList {
 type ReleaseList {
   items: [ReleaseSummary!]!
   offset: Uint64
-  total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
 }
 
 # Release metadata without members (list responses)
@@ -295,9 +294,11 @@ type Query {
   # Equivalent to: GET /api/v1/releases/:id
   release(id: Uint64!): Release
 
-  # List releases filtered by vendor and/or vendor_release_id (metadata only)
-  # Equivalent to: GET /api/v1/releases?vendor=...&vendor_release_id=...
+  # List releases filtered by ids, vendor, and/or vendor_release_id (metadata only)
+  # Equivalent to: GET /api/v1/releases?ids=1&ids=2&vendor=...&vendor_release_id=...
+  # At least one of ids, vendor, or vendor_release_id is required.
   releases(
+    ids: [Uint64!]
     vendor: String
     vendor_release_id: String
     limit: Uint8 = 20

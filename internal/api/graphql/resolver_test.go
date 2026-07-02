@@ -63,7 +63,7 @@ func TestQueryResolverReleasesReturnsList(t *testing.T) {
 	vendor := "artblocks"
 	nextOffset := uint64(20)
 	mockExec.EXPECT().
-		ListReleases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ListReleases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.ReleaseListResponse{
 			Items: []dto.ReleaseResponse{{
 				ID:              3,
@@ -73,7 +73,7 @@ func TestQueryResolverReleasesReturnsList(t *testing.T) {
 			Offset: &nextOffset,
 		}, nil)
 
-	result, err := resolver.Query().Releases(context.Background(), &vendor, nil, nil, nil)
+	result, err := resolver.Query().Releases(context.Background(), nil, &vendor, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(3), result.Items[0].ID)
@@ -90,9 +90,35 @@ func TestQueryResolverReleasesRequiresFilter(t *testing.T) {
 	mockExec := mocks.NewMockAPIExecutor(ctrl)
 	resolver := NewResolver(false, mockExec)
 
-	_, err := resolver.Query().Releases(context.Background(), nil, nil, nil, nil)
+	_, err := resolver.Query().Releases(context.Background(), nil, nil, nil, nil, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one of vendor or vendor_release_id is required")
+	assert.Contains(t, err.Error(), "at least one of ids, vendor, or vendor_release_id is required")
+}
+
+func TestQueryResolverReleasesReturnsByIDs(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	ids := []Uint64{3, 7}
+	mockExec.EXPECT().
+		ListReleases(gomock.Any(), []uint64{3, 7}, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&dto.ReleaseListResponse{
+			Items: []dto.ReleaseResponse{
+				{ID: 3, Vendor: "feralfile", VendorReleaseID: "uuid-3"},
+				{ID: 7, Vendor: "artblocks", VendorReleaseID: "0xabc-1"},
+			},
+		}, nil)
+
+	result, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Items, 2)
+	assert.Equal(t, uint64(3), result.Items[0].ID)
+	assert.Equal(t, uint64(7), result.Items[1].ID)
 }
 
 // --- token.release_id field resolver ---

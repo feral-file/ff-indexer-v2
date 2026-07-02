@@ -440,11 +440,11 @@ func (r *queryResolver) Release(ctx context.Context, id Uint64) (*dto.ReleaseRes
 }
 
 // Releases is the resolver for the releases field.
-func (r *queryResolver) Releases(ctx context.Context, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
+func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
 	vendorVal := strings.TrimSpace(internalTypes.SafeString(vendor))
 	vendorReleaseIDVal := strings.TrimSpace(internalTypes.SafeString(vendorReleaseID))
-	if vendorVal == "" && vendorReleaseIDVal == "" {
-		return nil, apierrors.NewValidationError("at least one of vendor or vendor_release_id is required")
+	if len(ids) == 0 && vendorVal == "" && vendorReleaseIDVal == "" {
+		return nil, apierrors.NewValidationError("at least one of ids, vendor, or vendor_release_id is required")
 	}
 
 	if limit != nil && *limit == 0 {
@@ -467,7 +467,7 @@ func (r *queryResolver) Releases(ctx context.Context, vendor *string, vendorRele
 		parsedVendorReleaseID = &vendorReleaseIDVal
 	}
 
-	return r.executor.ListReleases(ctx, parsedVendor, parsedVendorReleaseID, ToNativeUint8(limit), ToNativeUint64(offset))
+	return r.executor.ListReleases(ctx, convertToUint64(ids), parsedVendor, parsedVendorReleaseID, ToNativeUint8(limit), ToNativeUint64(offset))
 }
 
 // JobStatus is the resolver for the jobStatus field.
@@ -618,11 +618,6 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 // Offset is the resolver for the offset field.
 func (r *releaseListResolver) Offset(ctx context.Context, obj *dto.ReleaseListResponse) (*Uint64, error) {
 	return FromNativeUint64(obj.Offset), nil
-}
-
-// Total is the resolver for the total field.
-func (r *releaseListResolver) Total(ctx context.Context, obj *dto.ReleaseListResponse) (Uint64, error) {
-	return Uint64(obj.Total), nil
 }
 
 // ID is the resolver for the id field.

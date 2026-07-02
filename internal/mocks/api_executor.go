@@ -152,18 +152,18 @@ func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAd
 }
 
 // ListReleases mocks base method.
-func (m *MockAPIExecutor) ListReleases(ctx context.Context, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
+func (m *MockAPIExecutor) ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListReleases", ctx, vendor, vendorReleaseID, limit, offset)
+	ret := m.ctrl.Call(m, "ListReleases", ctx, ids, vendor, vendorReleaseID, limit, offset)
 	ret0, _ := ret[0].(*dto.ReleaseListResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListReleases indicates an expected call of ListReleases.
-func (mr *MockAPIExecutorMockRecorder) ListReleases(ctx, vendor, vendorReleaseID, limit, offset any) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) ListReleases(ctx, ids, vendor, vendorReleaseID, limit, offset any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockAPIExecutor)(nil).ListReleases), ctx, vendor, vendorReleaseID, limit, offset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockAPIExecutor)(nil).ListReleases), ctx, ids, vendor, vendorReleaseID, limit, offset)
 }
 
 // SyncCollection mocks base method.

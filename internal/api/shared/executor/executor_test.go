@@ -515,7 +515,7 @@ func TestListReleases_ByVendor(t *testing.T) {
 			VendorReleaseID: "0xabc-1",
 		}}, nil)
 
-	result, err := exec.ListReleases(context.Background(), &vendor, nil, &limit, &offset)
+	result, err := exec.ListReleases(context.Background(), nil, &vendor, nil, &limit, &offset)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(7), result.Items[0].ID)
@@ -542,12 +542,40 @@ func TestListReleases_Pagination(t *testing.T) {
 			{ID: 2, Vendor: schema.VendorFeralFile, VendorReleaseID: "other"},
 		}, nil)
 
-	result, err := exec.ListReleases(context.Background(), nil, &vendorReleaseID, &limit, &offset)
+	result, err := exec.ListReleases(context.Background(), nil, nil, &vendorReleaseID, &limit, &offset)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(1), result.Items[0].ID)
 	require.NotNil(t, result.Offset)
 	assert.Equal(t, uint64(1), *result.Offset)
+}
+
+func TestListReleases_ByIDs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+
+	ids := []uint64{3, 7}
+	limit := uint8(20)
+	offset := uint64(0)
+	mockStore.EXPECT().
+		ListReleases(gomock.Any(), store.ReleaseQueryFilter{
+			IDs:    ids,
+			Limit:  21,
+			Offset: 0,
+		}).
+		Return([]schema.Release{
+			{ID: 3, Vendor: schema.VendorFeralFile, VendorReleaseID: "uuid-3"},
+			{ID: 7, Vendor: schema.VendorArtBlocks, VendorReleaseID: "0xabc-1"},
+		}, nil)
+
+	result, err := exec.ListReleases(context.Background(), ids, nil, nil, &limit, &offset)
+	require.NoError(t, err)
+	require.Len(t, result.Items, 2)
+	assert.Equal(t, uint64(3), result.Items[0].ID)
+	assert.Equal(t, uint64(7), result.Items[1].ID)
+	assert.Nil(t, result.Offset)
 }
 
 func TestGetToken_AppliesReleaseMembership(t *testing.T) {

@@ -39,8 +39,9 @@ type Executor interface {
 	// GetRelease retrieves a release by internal id without member tokens.
 	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
 
-	// ListReleases retrieves releases filtered by vendor and/or vendor_release_id without member tokens.
-	ListReleases(ctx context.Context, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error)
+	// ListReleases retrieves releases matching optional ids, vendor, and/or vendor_release_id filters without member tokens.
+	// At least one of ids, vendor, or vendorReleaseID must be non-empty.
+	ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens by their CIDs.
 	// Returns a queue job id for tracking.
@@ -1463,8 +1464,10 @@ func (e *executor) GetRelease(ctx context.Context, releaseID uint64) (*dto.Relea
 	return dto.MapReleaseToDTO(release), nil
 }
 
-// ListReleases retrieves releases filtered by vendor and/or vendor_release_id without member tokens.
-func (e *executor) ListReleases(ctx context.Context, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
+// ListReleases retrieves releases matching optional ids, vendor, and/or vendor_release_id filters without member tokens.
+// At least one of ids, vendor, or vendorReleaseID must be non-empty; callers are responsible for enforcing this.
+// Multiple filters are ANDed.
+func (e *executor) ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
 		limit = &defaultLimit
@@ -1475,6 +1478,7 @@ func (e *executor) ListReleases(ctx context.Context, vendor *schema.Vendor, vend
 	}
 
 	filter := store.ReleaseQueryFilter{
+		IDs:             ids,
 		Vendor:          vendor,
 		VendorReleaseID: vendorReleaseID,
 		Limit:           int(*limit) + 1,
@@ -1509,7 +1513,6 @@ func (e *executor) ListReleases(ctx context.Context, vendor *schema.Vendor, vend
 	return &dto.ReleaseListResponse{
 		Items:  items,
 		Offset: nextOffset,
-		Total:  0,
 	}, nil
 }
 

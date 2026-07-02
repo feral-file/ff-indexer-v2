@@ -540,11 +540,12 @@ paths:
     get:
       summary: List releases
       description: |
-        Retrieves a paginated list of releases filtered by vendor and/or vendor_release_id.
-        At least one filter is required. Results contain release metadata only; use
+        Retrieves a paginated list of releases filtered by ids, vendor, and/or vendor_release_id.
+        At least one filter is required. Multiple filters are ANDed. Results contain release metadata only; use
         `GET /api/v1/releases/{id}` for mint-ordered member tokens.
 
         Examples:
+        - Filter by internal IDs: `?ids=1&ids=2`
         - Filter by vendor: `?vendor=artblocks`
         - Filter by vendor release id: `?vendor_release_id=1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1`
         - Combine filters: `?vendor=feralfile&vendor_release_id=<series-uuid>`
@@ -552,6 +553,18 @@ paths:
       tags:
         - releases
       parameters:
+        - name: ids
+          in: query
+          description: Filter by one or more internal release IDs (repeat parameter for multiple values)
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int64
+              minimum: 1
+          style: form
+          explode: true
+          example: [1, 2]
         - name: vendor
           in: query
           description: Filter by source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
@@ -2033,7 +2046,6 @@ components:
       type: object
       required:
         - items
-        - total
       properties:
         items:
           type: array
@@ -2045,11 +2057,6 @@ components:
           format: uint64
           description: Next offset for pagination (null if there are no more results)
           example: 20
-        total:
-          type: integer
-          format: uint64
-          description: Deprecated; use offset for pagination continuation
-          example: 0
 
     TriggerTokenIndexingRequest:
       type: object

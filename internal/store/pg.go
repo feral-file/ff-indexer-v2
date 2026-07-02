@@ -1214,9 +1214,13 @@ func (s *pgStore) GetReleaseByID(ctx context.Context, id uint64) (*schema.Releas
 	return &release, nil
 }
 
-// ListReleases returns releases matching optional vendor and vendor_release_id filters.
+// ListReleases returns releases matching the provided filter fields (ANDed).
+// At least one of IDs, Vendor, or VendorReleaseID must be set in the filter.
 func (s *pgStore) ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error) {
 	query := s.db.WithContext(ctx).Model(&schema.Release{})
+	if len(filter.IDs) > 0 {
+		query = query.Where("id IN ?", filter.IDs)
+	}
 	if filter.Vendor != nil {
 		query = query.Where("vendor = ?", *filter.Vendor)
 	}

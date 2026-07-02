@@ -199,7 +199,7 @@ type ComplexityRoot struct {
 		IndexingJob    func(childComplexity int, jobID *int, workflowID *string) int
 		JobStatus      func(childComplexity int, jobID int) int
 		Release        func(childComplexity int, id Uint64) int
-		Releases       func(childComplexity int, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) int
+		Releases       func(childComplexity int, ids []Uint64, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) int
 		SyncCollection func(childComplexity int, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) int
 		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
 		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
@@ -218,7 +218,6 @@ type ComplexityRoot struct {
 	ReleaseList struct {
 		Items  func(childComplexity int) int
 		Offset func(childComplexity int) int
-		Total  func(childComplexity int) int
 	}
 
 	ReleaseSummary struct {
@@ -380,7 +379,7 @@ type QueryResolver interface {
 	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
 	Release(ctx context.Context, id Uint64) (*dto.ReleaseResponse, error)
-	Releases(ctx context.Context, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error)
+	Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error)
 	JobStatus(ctx context.Context, jobID int) (*dto.JobStatusResponse, error)
 	WorkflowStatus(ctx context.Context, workflowID string, runID *string) (*dto.JobStatusResponse, error)
 	IndexingJob(ctx context.Context, jobID *int, workflowID *string) (*dto.AddressIndexingJobResponse, error)
@@ -393,7 +392,6 @@ type ReleaseResolver interface {
 }
 type ReleaseListResolver interface {
 	Offset(ctx context.Context, obj *dto.ReleaseListResponse) (*Uint64, error)
-	Total(ctx context.Context, obj *dto.ReleaseListResponse) (Uint64, error)
 }
 type ReleaseSummaryResolver interface {
 	ID(ctx context.Context, obj *dto.ReleaseResponse) (Uint64, error)
@@ -1048,7 +1046,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Releases(childComplexity, args["vendor"].(*string), args["vendor_release_id"].(*string), args["limit"].(*Uint8), args["offset"].(*Uint64)), true
+		return e.complexity.Query.Releases(childComplexity, args["ids"].([]Uint64), args["vendor"].(*string), args["vendor_release_id"].(*string), args["limit"].(*Uint8), args["offset"].(*Uint64)), true
 	case "Query.syncCollection":
 		if e.complexity.Query.SyncCollection == nil {
 			break
@@ -1148,12 +1146,6 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.ReleaseList.Offset(childComplexity), true
-	case "ReleaseList.total":
-		if e.complexity.ReleaseList.Total == nil {
-			break
-		}
-
-		return e.complexity.ReleaseList.Total(childComplexity), true
 
 	case "ReleaseSummary.id":
 		if e.complexity.ReleaseSummary.ID == nil {
@@ -1918,7 +1910,6 @@ type TokenList {
 type ReleaseList {
   items: [ReleaseSummary!]!
   offset: Uint64
-  total: Uint64! @deprecated(reason: "reason: Use the offset as the indicator for next page")
 }
 
 # Release metadata without members (list responses)
@@ -2011,9 +2002,11 @@ type Query {
   # Equivalent to: GET /api/v1/releases/:id
   release(id: Uint64!): Release
 
-  # List releases filtered by vendor and/or vendor_release_id (metadata only)
-  # Equivalent to: GET /api/v1/releases?vendor=...&vendor_release_id=...
+  # List releases filtered by ids, vendor, and/or vendor_release_id (metadata only)
+  # Equivalent to: GET /api/v1/releases?ids=1&ids=2&vendor=...&vendor_release_id=...
+  # At least one of ids, vendor, or vendor_release_id is required.
   releases(
+    ids: [Uint64!]
     vendor: String
     vendor_release_id: String
     limit: Uint8 = 20
@@ -2283,26 +2276,31 @@ func (ec *executionContext) field_Query_release_args(ctx context.Context, rawArg
 func (ec *executionContext) field_Query_releases_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
-	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "vendor", ec.unmarshalOString2ᚖstring)
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "ids", ec.unmarshalOUint642ᚕgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64ᚄ)
 	if err != nil {
 		return nil, err
 	}
-	args["vendor"] = arg0
-	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "vendor_release_id", ec.unmarshalOString2ᚖstring)
+	args["ids"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "vendor", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["vendor_release_id"] = arg1
-	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["vendor"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "vendor_release_id", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["limit"] = arg2
-	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["vendor_release_id"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["offset"] = arg3
+	args["limit"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg4
 	return args, nil
 }
 
@@ -5401,7 +5399,7 @@ func (ec *executionContext) _Query_releases(ctx context.Context, field graphql.C
 		ec.fieldContext_Query_releases,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Releases(ctx, fc.Args["vendor"].(*string), fc.Args["vendor_release_id"].(*string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64))
+			return ec.resolvers.Query().Releases(ctx, fc.Args["ids"].([]Uint64), fc.Args["vendor"].(*string), fc.Args["vendor_release_id"].(*string), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64))
 		},
 		nil,
 		ec.marshalNReleaseList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐReleaseListResponse,
@@ -5422,8 +5420,6 @@ func (ec *executionContext) fieldContext_Query_releases(ctx context.Context, fie
 				return ec.fieldContext_ReleaseList_items(ctx, field)
 			case "offset":
 				return ec.fieldContext_ReleaseList_offset(ctx, field)
-			case "total":
-				return ec.fieldContext_ReleaseList_total(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type ReleaseList", field.Name)
 		},
@@ -6034,35 +6030,6 @@ func (ec *executionContext) _ReleaseList_offset(ctx context.Context, field graph
 }
 
 func (ec *executionContext) fieldContext_ReleaseList_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	fc = &graphql.FieldContext{
-		Object:     "ReleaseList",
-		Field:      field,
-		IsMethod:   true,
-		IsResolver: true,
-		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
-			return nil, errors.New("field of type Uint64 does not have child fields")
-		},
-	}
-	return fc, nil
-}
-
-func (ec *executionContext) _ReleaseList_total(ctx context.Context, field graphql.CollectedField, obj *dto.ReleaseListResponse) (ret graphql.Marshaler) {
-	return graphql.ResolveField(
-		ctx,
-		ec.OperationContext,
-		field,
-		ec.fieldContext_ReleaseList_total,
-		func(ctx context.Context) (any, error) {
-			return ec.resolvers.ReleaseList().Total(ctx, obj)
-		},
-		nil,
-		ec.marshalNUint642githubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64,
-		true,
-		true,
-	)
-}
-
-func (ec *executionContext) fieldContext_ReleaseList_total(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "ReleaseList",
 		Field:      field,
@@ -11669,42 +11636,6 @@ func (ec *executionContext) _ReleaseList(ctx context.Context, sel ast.SelectionS
 					}
 				}()
 				res = ec._ReleaseList_offset(ctx, field, obj)
-				return res
-			}
-
-			if field.Deferrable != nil {
-				dfs, ok := deferred[field.Deferrable.Label]
-				di := 0
-				if ok {
-					dfs.AddField(field)
-					di = len(dfs.Values) - 1
-				} else {
-					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
-					deferred[field.Deferrable.Label] = dfs
-				}
-				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
-					return innerFunc(ctx, dfs)
-				})
-
-				// don't run the out.Concurrently() call below
-				out.Values[i] = graphql.Null
-				continue
-			}
-
-			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
-		case "total":
-			field := field
-
-			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
-				defer func() {
-					if r := recover(); r != nil {
-						ec.Error(ctx, ec.Recover(ctx, r))
-					}
-				}()
-				res = ec._ReleaseList_total(ctx, field, obj)
-				if res == graphql.Null {
-					atomic.AddUint32(&fs.Invalids, 1)
-				}
 				return res
 			}
 

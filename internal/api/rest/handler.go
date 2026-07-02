@@ -218,6 +218,7 @@ func (h *handler) ListReleases(c *gin.Context) {
 
 	response, err := h.executor.ListReleases(
 		c.Request.Context(),
+		queryParams.ParsedIDs,
 		queryParams.ParsedVendor,
 		queryParams.ParsedVendorReleaseID,
 		limit,
