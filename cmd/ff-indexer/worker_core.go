@@ -174,9 +174,11 @@ func registerWorkerCore(
 			// Vendor clients for IndexRelease CID derivation and slug resolution.
 			// fxhash and Feral File require API calls for CID derivation.
 			// AB and objkt are deterministic for CID derivation; AB requires a client only for slug resolution.
+			// OpenSea requires a GetCollection call to resolve contract address and chain.
 			FxhashClient:    fxhashClient,
 			FeralFileClient: feralfileClient,
 			ArtBlocksClient: artblocksClient,
+			OpenSeaClient:   openseaClient,
 		}, blacklistRegistry, jobQueue)
 
 	reg := jobs.NewRegistry(jsonAdapter)

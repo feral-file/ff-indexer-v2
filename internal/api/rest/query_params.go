@@ -301,10 +301,10 @@ func (p *ListReleasesQueryParams) Validate() error {
 	if vendor != "" {
 		v := schema.Vendor(strings.ToLower(vendor))
 		switch v {
-		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt:
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt, schema.VendorOpenSea:
 			p.ParsedVendor = &v
 		default:
-			return apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
+			return apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", vendor))
 		}
 	}
 

@@ -638,10 +638,10 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 // triggers for the same release and range.
 func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error) {
 	switch vendor {
-	case "artblocks", "feralfile", "fxhash", "objkt":
+	case "artblocks", "feralfile", "fxhash", "objkt", "opensea":
 		// valid
 	default:
-		return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
+		return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", vendor))
 	}
 	if mintFrom < 1 {
 		return nil, apierrors.NewValidationError("mint_from must be >= 1")

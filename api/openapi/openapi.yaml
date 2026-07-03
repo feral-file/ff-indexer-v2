@@ -567,10 +567,10 @@ paths:
           example: [1, 2]
         - name: vendor
           in: query
-          description: Filter by source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
+          description: Filter by source vendor (`artblocks`, `feralfile`, `fxhash`, `objkt`, or `opensea`)
           schema:
             type: string
-            enum: [artblocks, feralfile, fxhash, objkt]
+            enum: [artblocks, feralfile, fxhash, objkt, opensea]
           example: artblocks
         - name: vendor_release_id
           in: query
@@ -673,6 +673,60 @@ paths:
                 $ref: '#/components/schemas/APIError'
         '422':
           description: Validation error - Invalid release id or query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/releases/index:
+    post:
+      summary: Trigger release indexing by vendor and release identifier
+      description: |
+        Enqueues an IndexRelease job for a vendor release within a 1-based mint range [mint_from, mint_to].
+
+        **Phase 1** (CID derivation + IndexTokens fan-out) runs as a background job. Phase 1 is fast
+        for deterministic vendors (artblocks, objkt) and may take seconds-to-minutes for API-based
+        vendors (fxhash, feralfile, opensea) depending on range size.
+
+        **Phase 2** (per-token indexing) runs independently as IndexTokens child jobs on the same queue.
+
+        Poll `GET /api/v1/jobs/{job_id}` for Phase 1 status, then
+        `GET /api/v1/tokens?release_id=...` to track completion of indexed tokens.
+
+        **Vendor strategies:**
+        - `artblocks` — deterministic CID math; vendor_release_id format: `{chainID}-{contract}-{projectID}`
+        - `objkt` — deterministic; vendor_release_id is the KT1 contract address
+        - `fxhash` — API-based; vendor_release_id is the generative token ID
+        - `feralfile` — API-based; vendor_release_id is the series UUID
+        - `opensea` — API-based; vendor_release_id (or vendor_release_slug) is the collection slug
+
+        **Authentication:** API key required (`X-API-KEY` header).
+      operationId: triggerReleaseIndexing
+      tags:
+        - releases
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerReleaseIndexingRequest'
+      responses:
+        '202':
+          description: Release indexing triggered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerIndexingResponse'
+        '422':
+          description: Validation error — invalid vendor, mint range, or missing identifier
           content:
             application/json:
               schema:
@@ -2021,11 +2075,11 @@ components:
           example: 42
         vendor:
           type: string
-          description: Source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
+          description: Source vendor (`artblocks`, `feralfile`, `fxhash`, `objkt`, or `opensea`)
           example: artblocks
         vendor_release_id:
           type: string
-          description: External release key — AB `{chainID}-{contract}-{projectID}` (chain-qualified), FF series UUID, fxhash generative token id, or objkt KT1 contract address
+          description: External release key — AB `{chainID}-{contract}-{projectID}` (chain-qualified), FF series UUID, fxhash generative token id, objkt KT1 contract address, or opensea collection slug
           example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
         name:
           type: [string, "null"]
@@ -2057,6 +2111,48 @@ components:
           format: uint64
           description: Next offset for pagination (null if there are no more results)
           example: 20
+
+    TriggerReleaseIndexingRequest:
+      type: object
+      required:
+        - vendor
+        - mint_to
+      properties:
+        vendor:
+          type: string
+          description: Source vendor
+          enum: [artblocks, feralfile, fxhash, objkt, opensea]
+          example: opensea
+        vendor_release_id:
+          type: string
+          description: |
+            Vendor-specific release identifier. Provide exactly one of vendor_release_id or vendor_release_slug.
+            - artblocks: `{chainID}-{contract}-{projectID}` (e.g. `1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78`)
+            - objkt: KT1 contract address (e.g. `KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton`)
+            - fxhash: generative token ID (e.g. `9997`)
+            - feralfile: series UUID
+            - opensea: collection slug (e.g. `boredapeyachtclub`)
+          example: boredapeyachtclub
+        vendor_release_slug:
+          type: string
+          description: |
+            URL slug from the vendor's website. The indexer resolves the slug to a vendor_release_id.
+            For opensea, the slug IS the vendor_release_id (both values are the collection slug).
+            For objkt, use the KT1 contract address.
+          example: boredapeyachtclub
+        mint_from:
+          type: integer
+          format: int64
+          minimum: 1
+          default: 1
+          description: First mint number (1-based, inclusive)
+          example: 1
+        mint_to:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Last mint number (1-based, inclusive)
+          example: 100
 
     TriggerTokenIndexingRequest:
       type: object

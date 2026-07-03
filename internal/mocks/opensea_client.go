@@ -42,6 +42,21 @@ func (m *MockOpenSeaClient) EXPECT() *MockOpenSeaClientMockRecorder {
 	return m.recorder
 }
 
+// GetCollection mocks base method.
+func (m *MockOpenSeaClient) GetCollection(ctx context.Context, slug string) (*opensea.CollectionMetadata, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCollection", ctx, slug)
+	ret0, _ := ret[0].(*opensea.CollectionMetadata)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCollection indicates an expected call of GetCollection.
+func (mr *MockOpenSeaClientMockRecorder) GetCollection(ctx, slug any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCollection", reflect.TypeOf((*MockOpenSeaClient)(nil).GetCollection), ctx, slug)
+}
+
 // GetNFT mocks base method.
 func (m *MockOpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID string) (*opensea.NFTMetadata, error) {
 	m.ctrl.T.Helper()
@@ -55,4 +70,19 @@ func (m *MockOpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID
 func (mr *MockOpenSeaClientMockRecorder) GetNFT(ctx, contractAddress, tokenID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNFT", reflect.TypeOf((*MockOpenSeaClient)(nil).GetNFT), ctx, contractAddress, tokenID)
+}
+
+// ResolveSlug mocks base method.
+func (m *MockOpenSeaClient) ResolveSlug(ctx context.Context, slug string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveSlug", ctx, slug)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveSlug indicates an expected call of ResolveSlug.
+func (mr *MockOpenSeaClientMockRecorder) ResolveSlug(ctx, slug any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveSlug", reflect.TypeOf((*MockOpenSeaClient)(nil).ResolveSlug), ctx, slug)
 }

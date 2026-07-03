@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -69,6 +70,9 @@ type enhancer struct {
 	openseaClient   opensea.Client
 	json            adapter.JSON
 	jcs             adapter.JCS
+	// openSeaCollectionCache avoids repeated GetCollection calls when indexing many
+	// tokens from the same OpenSea release in one worker process.
+	openSeaCollectionCache sync.Map
 }
 
 // NewEnhancer creates a new metadata enhancer that routes vendor-specific enrichment
@@ -618,6 +622,27 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 		VendorJSON: vendorJSON,
 	}
 
+	// Populate release info from the single-NFT response.
+	// nft.Collection is the collection slug — for OpenSea this IS the vendor_release_id.
+	if nft.Collection != "" {
+		slug := nft.Collection
+		var nftName string
+		if nft.Name != nil {
+			nftName = *nft.Name
+		}
+		mintNum, _ := opensea.ExtractMintNumber(nftName, nft.Identifier)
+		release := &ReleaseInfo{
+			VendorReleaseID: slug,
+			Slug:            &slug,
+			MintNumber:      mintNum,
+		}
+		if name, totalMints := e.openSeaCollectionReleaseMetadata(ctx, slug); name != nil || totalMints != nil {
+			release.Name = name
+			release.TotalMints = totalMints
+		}
+		enhanced.Release = release
+	}
+
 	// Set name
 	if nft.Name != nil && *nft.Name != "" {
 		enhanced.Name = nft.Name
@@ -660,4 +685,29 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 	}
 
 	return enhanced, nil
+}
+
+// openSeaCollectionReleaseMetadata fetches collection-level name and total_mints for a slug,
+// using an in-process cache to avoid N+1 GetCollection calls during release indexing.
+func (e *enhancer) openSeaCollectionReleaseMetadata(ctx context.Context, slug string) (name *string, totalMints *int64) {
+	if slug == "" {
+		return nil, nil
+	}
+	if cached, ok := e.openSeaCollectionCache.Load(slug); ok {
+		return opensea.ReleaseMetadataFromCollection(cached.(*opensea.CollectionMetadata))
+	}
+
+	collection, err := e.openseaClient.GetCollection(ctx, slug)
+	if err != nil {
+		if !errors.Is(err, opensea.ErrNoAPIKey) {
+			logger.WarnCtx(ctx, "Failed to fetch OpenSea collection for release metadata",
+				zap.String("slug", slug),
+				zap.Error(err),
+			)
+		}
+		return nil, nil
+	}
+
+	e.openSeaCollectionCache.Store(slug, collection)
+	return opensea.ReleaseMetadataFromCollection(collection)
 }

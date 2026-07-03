@@ -1779,6 +1779,15 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
 		Return(nftMetadata, nil)
 
+	mocks.openseaClient.
+		EXPECT().
+		GetCollection(gomock.Any(), "bored-ape-yacht-club").
+		Return(&opensea.CollectionMetadata{
+			Collection:  "bored-ape-yacht-club",
+			Name:        "Bored Ape Yacht Club",
+			TotalSupply: 10000,
+		}, nil)
+
 	// Mock JSON marshal for NFT metadata
 	vendorJSON := []byte(`{"identifier":"1","collection":"bored-ape-yacht-club","name":"Bored Ape #1","description":"A Bored Ape from OpenSea"}`)
 	mocks.json.
@@ -1817,6 +1826,12 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	assert.Len(t, result.Artists, 1)
 	assert.Equal(t, "Yuga Labs", result.Artists[0].Name)
 	assert.NotNil(t, result.MimeType)
+	require.NotNil(t, result.Release)
+	assert.Equal(t, "bored-ape-yacht-club", result.Release.VendorReleaseID)
+	require.NotNil(t, result.Release.Name)
+	assert.Equal(t, "Bored Ape Yacht Club", *result.Release.Name)
+	require.NotNil(t, result.Release.TotalMints)
+	assert.Equal(t, int64(10000), *result.Release.TotalMints)
 }
 
 func TestEnhancer_Enhance_OpenSea_MinimalFields(t *testing.T) {
@@ -1847,6 +1862,15 @@ func TestEnhancer_Enhance_OpenSea_MinimalFields(t *testing.T) {
 		EXPECT().
 		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nftMetadata, nil)
+
+	mocks.openseaClient.
+		EXPECT().
+		GetCollection(gomock.Any(), "test-collection").
+		Return(&opensea.CollectionMetadata{
+			Collection:  "test-collection",
+			Name:        "Test Collection",
+			TotalSupply: 500,
+		}, nil)
 
 	// Mock JSON marshal
 	vendorJSON := []byte(`{"identifier":"1","collection":"test-collection","name":"Minimal NFT"}`)

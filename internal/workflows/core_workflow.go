@@ -8,6 +8,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
@@ -59,7 +60,7 @@ type CoreWorkflows interface {
 
 	// IndexRelease derives token CIDs for a vendor release within a 1-based mint range
 	// [mintFrom, mintTo] and enqueues chunked IndexTokens jobs for the full set.
-	// vendor must be one of: artblocks, feralfile, fxhash, objkt.
+	// vendor must be one of: artblocks, feralfile, fxhash, objkt, opensea.
 	//
 	// Exactly one of vendorReleaseID or vendorReleaseSlug must be non-empty.
 	// When vendorReleaseSlug is provided, the workflow resolves it to a vendor_release_id
@@ -70,6 +71,7 @@ type CoreWorkflows interface {
 	//   objkt     — pure math (token_number == mint_number), zero API calls
 	//   fxhash    — calls GetGentksByIteration (requires FxhashClient in config)
 	//   feralfile — calls GetSeriesArtworks (requires FeralFileClient in config)
+	//   opensea   — calls GetCollection to resolve contract + chain, then deterministic CID math
 	//
 	// Returns an error if CID derivation or enqueueing fails; a partial enqueue
 	// (some chunks succeed, then a failure) will leave already-queued jobs running.
@@ -120,6 +122,9 @@ type CoreWorkflowsConfig struct {
 	// ArtBlocksClient is required for IndexRelease slug resolution with vendor=artblocks.
 	// Nil disables artblocks slug-based triggering (numeric vendor_release_id still works).
 	ArtBlocksClient artblocks.Client
+	// OpenSeaClient is required for IndexRelease with vendor=opensea.
+	// Nil disables opensea release indexing (the job will return an error).
+	OpenSeaClient opensea.Client
 }
 
 // coreWorkflows is the concrete implementation of CoreWorkflows.
@@ -131,6 +136,7 @@ type coreWorkflows struct {
 	fxhashClient    fxhash.Client    // may be nil if fxhash release indexing is not configured
 	feralfileClient feralfile.Client // may be nil if Feral File release indexing is not configured
 	artblocksClient artblocks.Client // may be nil; required only for artblocks slug resolution
+	openseaClient   opensea.Client   // may be nil if opensea release indexing is not configured
 }
 
 // NewCoreWorkflows creates a new core workflows instance.
@@ -148,5 +154,6 @@ func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blackli
 		fxhashClient:    config.FxhashClient,
 		feralfileClient: config.FeralFileClient,
 		artblocksClient: config.ArtBlocksClient,
+		openseaClient:   config.OpenSeaClient,
 	}
 }

@@ -102,13 +102,14 @@ func (r *TriggerMetadataIndexingRequest) Validate() error {
 // It triggers asynchronous indexing of tokens within a mint range for a given vendor release.
 // Exactly one of VendorReleaseID or VendorReleaseSlug must be provided.
 type TriggerReleaseIndexingRequest struct {
-	// Vendor identifies the source platform. Must be one of: artblocks, feralfile, fxhash, objkt.
+	// Vendor identifies the source platform. Must be one of: artblocks, feralfile, fxhash, objkt, opensea.
 	Vendor string `json:"vendor"`
 	// VendorReleaseID is the platform-specific release key:
 	//   artblocks: "{chainID}-{contract}-{projectID}" (e.g. "1-0xa7d...-78")
 	//   feralfile: series UUID (e.g. "abc-123-...")
 	//   fxhash:    generative token ID (e.g. "9997")
 	//   objkt:     KT1 contract address (e.g. "KT1abc...")
+	//   opensea:   collection slug (e.g. "boredapeyachtclub")
 	// Mutually exclusive with VendorReleaseSlug.
 	VendorReleaseID string `json:"vendor_release_id"`
 	// VendorReleaseSlug is the human-readable URL slug from the vendor's website.
@@ -116,6 +117,7 @@ type TriggerReleaseIndexingRequest struct {
 	//   feralfile: "data-pilgrims-01-769"
 	//   fxhash:    "industrial-park"
 	//   objkt:     KT1 contract address (same as vendor_release_id)
+	//   opensea:   collection slug (same as vendor_release_id)
 	// Mutually exclusive with VendorReleaseID. The indexer resolves the slug to a
 	// vendor_release_id before enqueuing the job.
 	VendorReleaseSlug string `json:"vendor_release_slug"`
@@ -138,10 +140,10 @@ func (r *TriggerReleaseIndexingRequest) Validate() error {
 		return apierrors.NewValidationError("vendor is required")
 	}
 	switch r.Vendor {
-	case "artblocks", "feralfile", "fxhash", "objkt":
+	case "artblocks", "feralfile", "fxhash", "objkt", "opensea":
 		// valid
 	default:
-		return apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", r.Vendor))
+		return apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", r.Vendor))
 	}
 
 	hasID := strings.TrimSpace(r.VendorReleaseID) != ""

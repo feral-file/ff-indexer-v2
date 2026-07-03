@@ -14,14 +14,13 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "go.uber.org/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
 	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
 	workflows "github.com/feral-file/ff-indexer-v2/internal/workflows"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockCoreExecutor is a mock of CoreExecutor interface.
@@ -452,4 +451,18 @@ func (m *MockCoreExecutor) UpdateTokenTransfer(ctx context.Context, event *domai
 func (mr *MockCoreExecutorMockRecorder) UpdateTokenTransfer(ctx, event any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenTransfer", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateTokenTransfer), ctx, event)
+}
+
+// UpsertReleaseMetadata mocks base method.
+func (m *MockCoreExecutor) UpsertReleaseMetadata(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertReleaseMetadata", ctx, vendor, vendorReleaseID, name, totalMints, slug)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertReleaseMetadata indicates an expected call of UpsertReleaseMetadata.
+func (mr *MockCoreExecutorMockRecorder) UpsertReleaseMetadata(ctx, vendor, vendorReleaseID, name, totalMints, slug any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertReleaseMetadata", reflect.TypeOf((*MockCoreExecutor)(nil).UpsertReleaseMetadata), ctx, vendor, vendorReleaseID, name, totalMints, slug)
 }

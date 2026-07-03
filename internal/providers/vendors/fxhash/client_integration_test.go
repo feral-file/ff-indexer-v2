@@ -188,9 +188,9 @@ func TestResolveSlug_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	cases := []struct {
-		name              string
-		slug              string
-		wantGenerativeID  string
+		name             string
+		slug             string
+		wantGenerativeID string
 	}{
 		{
 			name:             "Industrial_Park",

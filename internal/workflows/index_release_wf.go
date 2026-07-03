@@ -23,6 +23,11 @@ package workflows
 //   feralfile: requires GetSeriesArtworks API call (artworks sorted by index);
 //              CID format depends on resolved chain: eip155:1:erc721 or tezos:mainnet:fa2;
 //              artworks still on Bitmark (chain=="bitmark") are skipped.
+//
+//   opensea:   requires GetCollection API call to resolve contract address and chain;
+//              vendor_release_id = collection slug (e.g. "boredapeyachtclub");
+//              token_id = mintNumber (direct mapping);
+//              CID format: eip155:{chainID}:erc721:{contract}:{mintNumber}
 
 import (
 	"context"
@@ -36,6 +41,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
@@ -165,6 +171,13 @@ func (w *coreWorkflows) resolveVendorSlug(ctx context.Context, vendor schema.Ven
 		const artBlocksMainnetChainID = 1
 		return w.artblocksClient.ResolveSlug(ctx, artBlocksMainnetChainID, slug)
 
+	case schema.VendorOpenSea:
+		if w.openseaClient == nil {
+			return "", fmt.Errorf("opensea client not configured: cannot resolve slug %q", slug)
+		}
+		// For OpenSea, the slug IS the vendor_release_id; ResolveSlug validates and returns it unchanged.
+		return w.openseaClient.ResolveSlug(ctx, slug)
+
 	default:
 		return "", fmt.Errorf("slug resolution not supported for vendor %q", vendor)
 	}
@@ -175,16 +188,40 @@ func (w *coreWorkflows) resolveVendorSlug(ctx context.Context, vendor schema.Ven
 //
 // skippedCount counts mint positions for which a CID could not be derived:
 // Bitmark-origin FF artworks not yet swapped, or vendor API gaps.
+//
+// Chain validation: every derive call checks that the release's resolved chain matches
+// the indexer's configured chain (EthereumChainID or TezosChainID). A mismatch returns
+// an error immediately rather than silently indexing tokens on the wrong network.
 func (w *coreWorkflows) deriveReleaseCIDs(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, mintFrom, mintTo int64) ([]domain.TokenCID, int, error) {
 	switch vendor {
 	case schema.VendorArtBlocks:
+		// Parse the chain from vendor_release_id before building CIDs so we can
+		// validate against the configured Ethereum chain before any work is done.
+		abChain, err := parseArtBlocksChainFromID(vendorReleaseID)
+		if err != nil {
+			return nil, 0, fmt.Errorf("invalid artblocks vendor_release_id: %w", err)
+		}
+		if err := w.validateChain(vendor, abChain); err != nil {
+			return nil, 0, err
+		}
 		return deriveArtBlocksCIDs(vendorReleaseID, mintFrom, mintTo)
+
 	case schema.VendorObjkt:
+		// objkt always lives on Tezos mainnet; validate once before building CIDs.
+		if err := w.validateChain(vendor, domain.ChainTezosMainnet); err != nil {
+			return nil, 0, err
+		}
 		return deriveObjktCIDs(vendorReleaseID, mintFrom, mintTo)
+
 	case schema.VendorFXHash:
 		return w.deriveFxhashCIDs(ctx, vendorReleaseID, mintFrom, mintTo)
+
 	case schema.VendorFeralFile:
 		return w.deriveFeralFileCIDs(ctx, vendorReleaseID, mintFrom, mintTo)
+
+	case schema.VendorOpenSea:
+		return w.deriveOpenSeaCIDs(ctx, vendorReleaseID, mintFrom, mintTo)
+
 	default:
 		return nil, 0, fmt.Errorf("unsupported vendor for release indexing: %s", vendor)
 	}
@@ -263,6 +300,11 @@ func (w *coreWorkflows) deriveFxhashCIDs(ctx context.Context, vendorReleaseID st
 		return nil, 0, fmt.Errorf("fxhash client not configured: cannot index fxhash release %q", vendorReleaseID)
 	}
 
+	// fxhash always lives on Tezos mainnet; reject if the indexer is configured for another chain.
+	if err := w.validateChain(schema.VendorFXHash, domain.ChainTezosMainnet); err != nil {
+		return nil, 0, err
+	}
+
 	refs, err := w.fxhashClient.GetGentksByIteration(ctx, vendorReleaseID, mintFrom, mintTo)
 	if err != nil {
 		return nil, 0, fmt.Errorf("fxhash GetGentksByIteration failed for %q [%d..%d]: %w", vendorReleaseID, mintFrom, mintTo, err)
@@ -314,6 +356,11 @@ func (w *coreWorkflows) deriveFeralFileCIDs(ctx context.Context, vendorReleaseID
 			skipped++
 			continue
 		}
+		// Validate that the artwork's chain matches the indexer's configured chain for
+		// that blockchain family. A mismatch means the release targets a different network.
+		if err := w.validateChain(schema.VendorFeralFile, chain); err != nil {
+			return nil, 0, fmt.Errorf("artwork index=%d chain=%q: %w", artwork.Index, artwork.Chain, err)
+		}
 		if artwork.ContractAddress == "" || artwork.TokenID == "" {
 			logger.WarnCtx(ctx, "IndexRelease: skipping artwork with missing contract or token ID",
 				zap.String("seriesID", vendorReleaseID),
@@ -355,5 +402,153 @@ func mapFeralFileChain(chain string) (domain.Chain, domain.ChainStandard, bool) 
 	default:
 		// Includes "bitmark" and any unrecognized chain string.
 		return "", "", true
+	}
+}
+
+// parseArtBlocksChainFromID extracts the domain.Chain from an ArtBlocks vendor_release_id.
+//
+// Format: "{chainID}-{contract}-{projectID}" where chainID is a numeric EIP-155 chain ID.
+// This is a fast helper called before CID derivation to enable chain validation before
+// any significant work is done.
+func parseArtBlocksChainFromID(vendorReleaseID string) (domain.Chain, error) {
+	sep := strings.Index(vendorReleaseID, "-")
+	if sep < 0 {
+		return "", fmt.Errorf("invalid artblocks vendor_release_id (no separator): %q", vendorReleaseID)
+	}
+	chainIDStr := vendorReleaseID[:sep]
+	chainID, err := strconv.ParseInt(chainIDStr, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid artblocks vendor_release_id chain ID %q: %w", chainIDStr, err)
+	}
+	return domain.Chain(fmt.Sprintf("eip155:%d", chainID)), nil
+}
+
+// validateChain returns an error if derivedChain does not match the indexer's configured
+// chain for that blockchain family.
+//
+// EVM chains (eip155:*) are checked against config.EthereumChainID.
+// Tezos chains (tezos:*) are checked against config.TezosChainID.
+//
+// Reason: release indexing uses vendor APIs or vendor_release_id fields to derive
+// on-chain CIDs. If the derived chain does not match the indexer's configured chain,
+// the tokens will not be reachable during metadata or provenance indexing, and the
+// mismatch almost certainly reflects a caller error (e.g. triggering a mainnet release
+// on a testnet-configured indexer or vice versa). Failing explicitly here is safer than
+// silently creating unreachable CIDs.
+func (w *coreWorkflows) validateChain(vendor schema.Vendor, derivedChain domain.Chain) error {
+	s := string(derivedChain)
+	switch {
+	case strings.HasPrefix(s, "eip155:"):
+		if derivedChain != w.config.EthereumChainID {
+			return fmt.Errorf(
+				"release indexing chain mismatch for vendor %s: release resolves to %s but indexer is configured for %s",
+				vendor, derivedChain, w.config.EthereumChainID,
+			)
+		}
+	case strings.HasPrefix(s, "tezos:"):
+		if derivedChain != w.config.TezosChainID {
+			return fmt.Errorf(
+				"release indexing chain mismatch for vendor %s: release resolves to %s but indexer is configured for %s",
+				vendor, derivedChain, w.config.TezosChainID,
+			)
+		}
+	default:
+		return fmt.Errorf("release indexing: unrecognized chain family %q for vendor %s", derivedChain, vendor)
+	}
+	return nil
+}
+
+// deriveOpenSeaCIDs resolves OpenSea token CIDs by fetching collection metadata.
+//
+// OpenSea vendor_release_id is the collection slug (e.g. "boredapeyachtclub").
+// There is no deterministic math to derive the contract address and chain from
+// the slug alone, so GetCollection is called once per IndexRelease job.
+// After resolving the contract address and chain, CIDs are built deterministically
+// using token_id = mintNumber (1-based direct mapping).
+//
+// Multi-contract collections: if a collection is deployed on multiple chains,
+// contracts[0] is used. Callers can avoid ambiguity by ensuring the indexer is
+// configured for the target chain — validateChain will reject mismatches.
+func (w *coreWorkflows) deriveOpenSeaCIDs(ctx context.Context, vendorReleaseID string, mintFrom, mintTo int64) ([]domain.TokenCID, int, error) {
+	if w.openseaClient == nil {
+		return nil, 0, fmt.Errorf("opensea client not configured: cannot index opensea release %q", vendorReleaseID)
+	}
+
+	// vendorReleaseID is the collection slug; one API call resolves contract + chain.
+	collection, err := w.openseaClient.GetCollection(ctx, vendorReleaseID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("opensea GetCollection failed for %q: %w", vendorReleaseID, err)
+	}
+
+	if len(collection.Contracts) == 0 {
+		return nil, 0, fmt.Errorf("opensea collection %q has no associated contracts", vendorReleaseID)
+	}
+
+	// Use the primary contract (first in list) to derive CIDs.
+	contract := collection.Contracts[0]
+
+	chain, standard, ok := mapOpenSeaChain(contract.Chain)
+	if !ok {
+		return nil, 0, fmt.Errorf("opensea collection %q: unsupported chain %q", vendorReleaseID, contract.Chain)
+	}
+
+	// Reject if the resolved chain does not match the indexer's configured chain.
+	if err := w.validateChain(schema.VendorOpenSea, chain); err != nil {
+		return nil, 0, err
+	}
+
+	if w.executor != nil {
+		if err := upsertOpenSeaReleaseFromCollection(ctx, w.executor, vendorReleaseID, collection); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	contractAddress := contract.Address
+	cids := make([]domain.TokenCID, 0, mintTo-mintFrom+1)
+	for mintNum := mintFrom; mintNum <= mintTo; mintNum++ {
+		cid := domain.NewTokenCID(chain, standard, contractAddress, strconv.FormatInt(mintNum, 10))
+		cids = append(cids, cid)
+	}
+	return cids, 0, nil
+}
+
+// releaseMetadataUpserter upserts release-level metadata during IndexRelease.
+type releaseMetadataUpserter interface {
+	UpsertReleaseMetadata(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) error
+}
+
+// upsertOpenSeaReleaseFromCollection persists OpenSea collection name, total_supply, and slug
+// on the release row using data already fetched by GetCollection.
+func upsertOpenSeaReleaseFromCollection(ctx context.Context, upserter releaseMetadataUpserter, vendorReleaseID string, collection *opensea.CollectionMetadata) error {
+	slug := vendorReleaseID
+	if collection.Collection != "" {
+		slug = collection.Collection
+	}
+	name, totalMints := opensea.ReleaseMetadataFromCollection(collection)
+	if err := upserter.UpsertReleaseMetadata(ctx, schema.VendorOpenSea, vendorReleaseID, name, totalMints, &slug); err != nil {
+		return fmt.Errorf("opensea upsert release metadata for %q: %w", vendorReleaseID, err)
+	}
+	return nil
+}
+
+// mapOpenSeaChain maps an OpenSea chain name to the indexer's domain.Chain and domain.ChainStandard.
+//
+// OpenSea chain names are lowercase strings (e.g. "ethereum", "base", "polygon").
+// Only ERC-721 EVM chains are mapped; unsupported chains return (_, _, false).
+// The list covers chains where OpenSea hosts primary NFT markets (as of 2024).
+func mapOpenSeaChain(chainName string) (domain.Chain, domain.ChainStandard, bool) {
+	switch strings.ToLower(chainName) {
+	case "ethereum":
+		return domain.ChainEthereumMainnet, domain.StandardERC721, true
+	case "base":
+		return domain.Chain("eip155:8453"), domain.StandardERC721, true
+	case "polygon":
+		return domain.Chain("eip155:137"), domain.StandardERC721, true
+	case "optimism":
+		return domain.Chain("eip155:10"), domain.StandardERC721, true
+	case "arbitrum":
+		return domain.Chain("eip155:42161"), domain.StandardERC721, true
+	default:
+		return "", "", false
 	}
 }
