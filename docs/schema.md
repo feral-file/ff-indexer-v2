@@ -22,7 +22,7 @@ The database includes the following main tables:
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
-- `releases` - Cross-vendor release abstraction (Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections) with stable internal id (migration 018)
+- `releases` - Cross-vendor release abstraction (Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections, OpenSea collections) with stable internal id and optional human-readable slug (migration 018; `vendor_release_slug` added in 019)
 - `release_members` - Ordered token membership within a release; `mint_number` is authoritative and 1-based (migration 018)
 - `watched_addresses` - Addresses being monitored for indexing
 - `jobs` - Postgres-backed durable job queue (token and media work units)
@@ -69,7 +69,7 @@ The tokens query supports three sort options:
 - `sort_by=latest_provenance` (default) - Sort by latest provenance event:
   - When `owners` filter is provided: Sorts by latest provenance event for those specific owners (via join with `token_ownership_provenance`)
   - Without `owners` filter: Uses denormalized `last_provenance_timestamp` field for efficient sorting
-- `sort_by=mint_number` - Sort by authoritative 1-based mint order within a release (via join with `release_members`). **Requires** `release_id` filter; the API returns a validation error if `mint_number` is requested without `release_id`. Uses `release_members_release_id_mint_number_idx` on `(release_id, mint_number)` for ordered member listing.
+- `sort_by=mint_number` - Sort by authoritative 1-based mint order within a release (via join with `release_members`). Requires at least one of `release_id`, `release_vendor`, or `release_vendor_slug`; the API returns a validation error when none are present. Uses `release_members_release_id_mint_number_idx` on `(release_id, mint_number)` for ordered member listing.
 
 ### token_metadata
 
@@ -319,25 +319,29 @@ Materialized view tracking the most recent provenance event per token-owner pair
 
 ### releases
 
-Cross-vendor release abstraction that gives Feral File series, Art Blocks projects, fxhash generative tokens, and objkt custom collections a stable internal id with mint-ordered members. Added in migration 018.
+Cross-vendor release abstraction that gives Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections, and OpenSea token collections a stable internal id with mint-ordered members. Added in migration 018; `vendor_release_slug` column added in migration 019.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | id | BIGSERIAL | Stable internal release identifier (primary key) |
-| vendor | vendor_type | Source platform (`artblocks`, `feralfile`, `fxhash`, `objkt`) |
-| vendor_release_id | TEXT | External release key: FF seriesID UUID, AB `{chainID}-{contract}-{projectID}` (chain-qualified), fxhash generative token numeric id (e.g. `"9997"`), objkt custom-collection KT1 contract address |
+| vendor | vendor_type | Source platform (`artblocks`, `feralfile`, `fxhash`, `objkt`, `opensea`) |
+| vendor_release_id | TEXT | External release key: FF seriesID UUID, AB `{chainID}-{contract}-{projectID}` (chain-qualified), fxhash generative token numeric id (e.g. `"9997"`), objkt custom-collection KT1 contract address, OpenSea collection slug |
+| vendor_release_slug | TEXT | Human-readable URL slug from the vendor's website (e.g. `fidenza-by-tyler-hobbs`). Nullable; populated during enrichment. For OpenSea, equals `vendor_release_id` (the collection slug). For objkt, equals the KT1 address. Added in migration 019. |
 | name | TEXT | Human-readable release title (e.g. "Fidenza"); populated from vendor enrichment |
-| total_mints | BIGINT | Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork, fxhash original_supply, objkt FA editions); nullable when unknown |
+| total_mints | BIGINT | Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork, fxhash original_supply, objkt FA editions, OpenSea total_supply); nullable when unknown |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp (bumped on every upsert via trigger) |
 
 **Unique Constraints**:
 - `(vendor, vendor_release_id)` (unique) — the upsert conflict target
 
+**Indexes**:
+- `releases_vendor_slug_idx` on `(vendor_release_slug)` WHERE `vendor_release_slug IS NOT NULL` — supports `GET /api/v1/releases?vendor_release_slug=...` and `GET /api/v1/tokens?release_vendor_slug=...` (added in migration 019)
+
 **Triggers**:
 - `update_releases_updated_at` — automatically bumps `updated_at` on row update
 
-**Note**: `UpsertRelease` uses `INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()` (and `name`/`total_mints` when provided) RETURNING id to be safe under concurrent token workers. `release_members` has no `updated_at`; membership rows are immutable once written (overwritten in full by the ON CONFLICT path on `token_id`).
+**Note**: `UpsertRelease` uses `INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()` (and `name`/`total_mints`/`vendor_release_slug` when provided) RETURNING id to be safe under concurrent token workers. A nil slug never overwrites an existing non-null value. `release_members` has no `updated_at`; membership rows are immutable once written (overwritten in full by the ON CONFLICT path on `token_id`).
 
 ---
 
@@ -690,6 +694,8 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `001.sql` - Historical: introduced `token_ownership_periods` (removed in `015.sql`).
 - `018.sql` - Adds `releases` and `release_members` tables for cross-vendor release abstraction with mint-ordered members (including `CHECK (mint_number > 0)`), plus the `update_releases_updated_at` trigger.
 - `018_reindex.sql` - Enqueues `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt so the updated enhancer re-fetches vendor data and populates `releases` + `release_members`. Pre-existing stored `vendor_json` is incomplete for release derivation across all vendors; reindexing is the correct single path. Safe to run on a fresh database (produces no rows).
+- `019.sql` - Adds `vendor_release_slug TEXT` column to `releases` and the partial unique index `releases_vendor_slug_idx` on `(vendor_release_slug)` WHERE NOT NULL. The column is nullable; existing rows retain `vendor_release_slug = NULL` until re-enriched.
+- `019_reindex.sql` - Two-part backfill: (1) Re-enqueues all OpenSea-enriched tokens so the updated enhancer fetches `GetCollection` data and populates `name`, `total_mints`, and `vendor_release_slug` on their release rows. (2) For every non-OpenSea release still missing a slug, enqueues the first member token for re-enrichment; a single enrichment is sufficient to upsert the slug on the release row. Run `019_reindex.sql` after deploying the application (worker must be running to process the enqueued jobs).
 
 **Migration Guidelines**:
 1. Always test migrations on a copy of production data

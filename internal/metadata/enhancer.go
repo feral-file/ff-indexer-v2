@@ -601,10 +601,10 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 //
 // Returns (nil, nil) — skip, no error — for two expected non-failure cases:
 //  1. No API key configured (ErrNoAPIKey): degraded mode, token created without enrichment.
-//  2. Token not found on OpenSea (ErrNFTNotFound): happens when a derived token ID does not
-//     correspond to a real on-chain token, e.g. tokenID=0 for a 1-indexed ERC-721 contract.
-//     This is an expected outcome of the mintNum-1 token-ID mapping used by IndexRelease for
-//     OpenSea; treating it as a skip prevents infinite retries for phantom token IDs.
+//  2. Token not found on OpenSea (ErrNFTNotFound): the on-chain token ID does not exist in
+//     OpenSea's index. This can happen for token ID 0 on 1-based ERC-721 collections or for
+//     IDs that were minted but not yet indexed by OpenSea. Treating it as a skip prevents
+//     infinite retries for tokens that OpenSea cannot return.
 func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
 	logger.InfoCtx(ctx, "Enhancing OpenSea metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
 
@@ -617,10 +617,8 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 			return nil, nil
 		}
 		if errors.Is(err, opensea.ErrNFTNotFound) {
-			// Token ID does not exist on OpenSea. This is an expected skip when the
-			// collection uses 1-based token IDs and the derived CID landed on token 0
-			// via the mintNum-1 mapping. Log at info (not warn) because it is not a
-			// transient failure and retrying would not help.
+			// Token ID does not exist in OpenSea's index. Log at info (not warn) because
+			// it is not a transient failure and retrying would not help.
 			logger.InfoCtx(ctx, "OpenSea enrichment skipped: token not found (may be outside collection token ID range)",
 				zap.String("contractAddress", contractAddress),
 				zap.String("tokenNumber", tokenNumber))
