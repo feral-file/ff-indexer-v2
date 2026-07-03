@@ -3,10 +3,10 @@ package constants
 import "github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 
 const (
-	MAX_TOKEN_CIDS_PER_REQUEST           = 50
-	MAX_ADDRESSES_PER_REQUEST            = 5
-	MAX_PAGE_SIZE                        = uint8(255)
-	MAX_RETRY_MAX_ATTEMPTS               = 10
+	MAX_TOKEN_CIDS_PER_REQUEST = 50
+	MAX_ADDRESSES_PER_REQUEST  = 5
+	MAX_PAGE_SIZE              = uint8(255)
+	MAX_RETRY_MAX_ATTEMPTS     = 10
 	// MAX_RELEASE_MINT_RANGE is the maximum number of tokens that can be indexed in a single
 	// IndexRelease request. Clients must batch larger collections themselves by making multiple
 	// calls with non-overlapping mint ranges. Kept intentionally small (100) so that the Phase 1

@@ -101,8 +101,12 @@ func (a *Artwork) CanonicalName() string {
 
 // Series represents a series (collection) in Feral File
 type Series struct {
-	ID          string         `json:"ID"`
-	Title       string         `json:"title"`
+	ID    string `json:"ID"`
+	Title string `json:"title"`
+	// Slug is the URL slug for this series on the Feral File website
+	// (e.g. "data-pilgrims-01-769"). Populated when the artwork response
+	// includes the nested series object.
+	Slug        string         `json:"slug"`
 	Description string         `json:"description"`
 	Medium      string         `json:"medium"`
 	Settings    SeriesSettings `json:"settings"`
@@ -148,6 +152,14 @@ func URL(uri string) string {
 	return uri
 }
 
+// seriesListResponse is the paginated series list response from the FF API.
+type seriesListResponse struct {
+	Result []struct {
+		ID   string `json:"id"`
+		Slug string `json:"slug"`
+	} `json:"result"`
+}
+
 // Client defines the interface for Feral File client operations to enable mocking
 //
 //go:generate mockgen -source=client.go -destination=../../../mocks/feralfile_client.go -package=mocks -mock_names=Client=MockFeralFileClient
@@ -167,6 +179,11 @@ type Client interface {
 	// EVM/Tezos are included in the result with Chain=="bitmark". Callers must
 	// check Chain before building a CID and skip Bitmark-origin artworks.
 	GetSeriesArtworks(ctx context.Context, seriesID string, mintFrom, mintTo int64) ([]ArtworkRef, error)
+
+	// ResolveSlug resolves a Feral File series URL slug (e.g. "data-pilgrims-01-769")
+	// to the series UUID used as vendor_release_id.
+	// Returns an error when no matching series is found.
+	ResolveSlug(ctx context.Context, slug string) (string, error)
 }
 
 // FeralFileClient implements Feral File client
@@ -254,4 +271,24 @@ func (c *FeralFileClient) GetSeriesArtworks(ctx context.Context, seriesID string
 	}
 
 	return all, nil
+}
+
+// ResolveSlug resolves a Feral File series URL slug to the series UUID used as vendor_release_id.
+//
+// Queries GET /api/series?slug={slug}&limit=1 to map the human-readable URL slug to the
+// stable series UUID. The UUID is used internally as vendor_release_id because it is stable
+// across slug renames.
+func (c *FeralFileClient) ResolveSlug(ctx context.Context, slug string) (string, error) {
+	apiURL := fmt.Sprintf("%s/series?slug=%s&limit=1", c.apiBaseURL, slug)
+
+	var resp seriesListResponse
+	if err := c.httpClient.GetAndUnmarshal(ctx, apiURL, &resp); err != nil {
+		return "", fmt.Errorf("failed to call Feral File series API: %w", err)
+	}
+
+	if len(resp.Result) == 0 {
+		return "", fmt.Errorf("feral file series slug not found: %q", slug)
+	}
+
+	return resp.Result[0].ID, nil
 }

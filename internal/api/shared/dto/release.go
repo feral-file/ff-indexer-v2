@@ -4,12 +4,13 @@ import "github.com/feral-file/ff-indexer-v2/internal/store/schema"
 
 // ReleaseResponse represents a cross-vendor release with optional member tokens.
 type ReleaseResponse struct {
-	ID              uint64             `json:"id"`
-	Vendor          string             `json:"vendor"`
-	VendorReleaseID string             `json:"vendor_release_id"`
-	Name            *string            `json:"name,omitempty"`
-	TotalMints      *int64             `json:"total_mints,omitempty"`
-	Members         *TokenListResponse `json:"members,omitempty"`
+	ID                uint64             `json:"id"`
+	Vendor            string             `json:"vendor"`
+	VendorReleaseID   string             `json:"vendor_release_id"`
+	VendorReleaseSlug *string            `json:"vendor_release_slug,omitempty"`
+	Name              *string            `json:"name,omitempty"`
+	TotalMints        *int64             `json:"total_mints,omitempty"`
+	Members           *TokenListResponse `json:"members,omitempty"`
 }
 
 // ReleaseListResponse represents a paginated list of releases without member tokens.
@@ -25,10 +26,11 @@ func MapReleaseToDTO(release *schema.Release) *ReleaseResponse {
 	}
 
 	return &ReleaseResponse{
-		ID:              release.ID,
-		Vendor:          string(release.Vendor),
-		VendorReleaseID: release.VendorReleaseID,
-		Name:            release.Name,
-		TotalMints:      release.TotalMints,
+		ID:                release.ID,
+		Vendor:            string(release.Vendor),
+		VendorReleaseID:   release.VendorReleaseID,
+		VendorReleaseSlug: release.VendorReleaseSlug,
+		Name:              release.Name,
+		TotalMints:        release.TotalMints,
 	}
 }

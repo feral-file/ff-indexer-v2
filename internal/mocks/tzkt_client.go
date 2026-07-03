@@ -13,9 +13,10 @@ import (
 	context "context"
 	reflect "reflect"
 
+	gomock "go.uber.org/mock/gomock"
+
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	tezos "github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
-	gomock "go.uber.org/mock/gomock"
 )
 
 // MockTzKTClient is a mock of TzKTClient interface.

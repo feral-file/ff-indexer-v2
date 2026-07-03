@@ -109,6 +109,20 @@ type gqlListResponse struct {
 	} `json:"errors"`
 }
 
+// gqlResolveSlugResponse wraps the fxhash v2 API response for slug → token ID lookup.
+type gqlResolveSlugResponse struct {
+	Data struct {
+		Onchain struct {
+			GenerativeToken []struct {
+				ID string `json:"id"`
+			} `json:"generative_token"`
+		} `json:"onchain"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
 // Client defines the interface for fxhash client operations.
 //
 //go:generate mockgen -source=client.go -destination=../../../mocks/fxhash_client.go -package=mocks -mock_names=Client=MockFxhashClient
@@ -133,6 +147,11 @@ type Client interface {
 	// (e.g. a range beyond the current supply). Never returns a partial result on
 	// error; any HTTP or GraphQL error causes the method to return an error.
 	GetGentksByIteration(ctx context.Context, generativeTokenID string, iterationFrom, iterationTo int64) ([]GentkRef, error)
+
+	// ResolveSlug resolves a fxhash URL slug (e.g. "industrial-park") to the numeric
+	// generative token ID (e.g. "9997") used as vendor_release_id.
+	// Returns an error when the slug does not match any known generative token.
+	ResolveSlug(ctx context.Context, slug string) (string, error)
 }
 
 // fxhashClient implements the Client interface.
@@ -293,6 +312,58 @@ func (c *fxhashClient) GetGentksByIteration(ctx context.Context, generativeToken
 	}
 
 	return all, nil
+}
+
+// ResolveSlug resolves a fxhash URL slug to the generative token ID used as vendor_release_id.
+//
+// Queries onchain.generative_token(where:{slug:{_eq:$slug}}) to map the human-readable slug
+// from fxhash.xyz URLs to the stable numeric token ID. The numeric ID is used internally
+// because it is stable; slugs can be renamed by artists.
+func (c *fxhashClient) ResolveSlug(ctx context.Context, slug string) (string, error) {
+	query := fmt.Sprintf(`query ResolveSlug {
+  onchain {
+    generative_token(where: {slug: {_eq: "%s"}}, limit: 1) {
+      id
+    }
+  }
+}`, slug)
+
+	reqBody := GQLRequest{
+		Query:         query,
+		Variables:     nil,
+		OperationName: "ResolveSlug",
+	}
+
+	bodyBytes, err := c.json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal fxhash request: %w", err)
+	}
+
+	responseBody, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
+		headers := map[string]string{
+			"Content-Type": "application/json",
+		}
+		return c.httpClient.PostBytes(ctx, c.apiURL, headers, bytes.NewReader(bodyBytes))
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to call fxhash v2 API: %w", err)
+	}
+
+	var resp gqlResolveSlugResponse
+	if err := c.json.Unmarshal(responseBody, &resp); err != nil {
+		return "", fmt.Errorf("failed to unmarshal fxhash response: %w", err)
+	}
+
+	if len(resp.Errors) > 0 {
+		return "", fmt.Errorf("fxhash API error: %s", resp.Errors[0].Message)
+	}
+
+	tokens := resp.Data.Onchain.GenerativeToken
+	if len(tokens) == 0 {
+		return "", fmt.Errorf("fxhash slug not found: %q", slug)
+	}
+
+	return tokens[0].ID, nil
 }
 
 // parseGentkRef parses a fxhash composite id "{contract}-{tokenID}" and iteration

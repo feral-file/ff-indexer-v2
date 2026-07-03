@@ -603,7 +603,7 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 	}
 
 	if enhanced.Release != nil {
-		release, err := e.store.UpsertRelease(ctx, enhanced.Vendor, enhanced.Release.VendorReleaseID, enhanced.Release.Name, enhanced.Release.TotalMints)
+		release, err := e.store.UpsertRelease(ctx, enhanced.Vendor, enhanced.Release.VendorReleaseID, enhanced.Release.Name, enhanced.Release.TotalMints, enhanced.Release.Slug)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upsert release: %w", err)
 		}

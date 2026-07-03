@@ -38,6 +38,10 @@ func (f *fakeFxhashClient) GetGentksByIteration(_ context.Context, _ string, _, 
 	return f.gentks, f.err
 }
 
+func (f *fakeFxhashClient) ResolveSlug(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
 // fakeFFClient implements feralfile.Client for tests.
 type fakeFFClient struct {
 	artworks []feralfile.ArtworkRef
@@ -50,6 +54,10 @@ func (f *fakeFFClient) GetArtwork(_ context.Context, _ string) (*feralfile.Artwo
 
 func (f *fakeFFClient) GetSeriesArtworks(_ context.Context, _ string, _, _ int64) ([]feralfile.ArtworkRef, error) {
 	return f.artworks, f.err
+}
+
+func (f *fakeFFClient) ResolveSlug(_ context.Context, _ string) (string, error) {
+	return "", nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -357,7 +365,7 @@ func TestDeriveFeralFileCIDs_NilClient(t *testing.T) {
 	_, _, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", 1, 10)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Feral File client not configured")
+	assert.Contains(t, err.Error(), "feral file client not configured")
 }
 
 func TestDeriveFeralFileCIDs_APIError(t *testing.T) {

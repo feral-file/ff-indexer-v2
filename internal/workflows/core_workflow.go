@@ -5,6 +5,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -60,15 +61,19 @@ type CoreWorkflows interface {
 	// [mintFrom, mintTo] and enqueues chunked IndexTokens jobs for the full set.
 	// vendor must be one of: artblocks, feralfile, fxhash, objkt.
 	//
+	// Exactly one of vendorReleaseID or vendorReleaseSlug must be non-empty.
+	// When vendorReleaseSlug is provided, the workflow resolves it to a vendor_release_id
+	// via the vendor API before CID derivation.
+	//
 	// CID derivation strategy per vendor:
-	//   artblocks — pure math, zero API calls
+	//   artblocks — pure math, zero API calls (requires ArtBlocksClient only for slug resolution)
 	//   objkt     — pure math (token_number == mint_number), zero API calls
 	//   fxhash    — calls GetGentksByIteration (requires FxhashClient in config)
 	//   feralfile — calls GetSeriesArtworks (requires FeralFileClient in config)
 	//
 	// Returns an error if CID derivation or enqueueing fails; a partial enqueue
 	// (some chunks succeed, then a failure) will leave already-queued jobs running.
-	IndexRelease(ctx context.Context, vendor string, vendorReleaseID string, mintFrom int64, mintTo int64) error
+	IndexRelease(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) error
 
 	// NotifyWebhookClients orchestrates webhook notifications to all matching clients
 	NotifyWebhookClients(ctx context.Context, event webhook.WebhookEvent) error
@@ -112,6 +117,9 @@ type CoreWorkflowsConfig struct {
 	// FeralFileClient is required for IndexRelease with vendor=feralfile.
 	// Nil disables Feral File release indexing (the job will return an error).
 	FeralFileClient feralfile.Client
+	// ArtBlocksClient is required for IndexRelease slug resolution with vendor=artblocks.
+	// Nil disables artblocks slug-based triggering (numeric vendor_release_id still works).
+	ArtBlocksClient artblocks.Client
 }
 
 // coreWorkflows is the concrete implementation of CoreWorkflows.
@@ -122,6 +130,7 @@ type coreWorkflows struct {
 	jobQueue        jobs.JobQueue
 	fxhashClient    fxhash.Client    // may be nil if fxhash release indexing is not configured
 	feralfileClient feralfile.Client // may be nil if Feral File release indexing is not configured
+	artblocksClient artblocks.Client // may be nil; required only for artblocks slug resolution
 }
 
 // NewCoreWorkflows creates a new core workflows instance.
@@ -138,5 +147,6 @@ func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blackli
 		jobQueue:        jobQueue,
 		fxhashClient:    config.FxhashClient,
 		feralfileClient: config.FeralFileClient,
+		artblocksClient: config.ArtBlocksClient,
 	}
 }

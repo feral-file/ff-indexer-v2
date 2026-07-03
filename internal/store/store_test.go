@@ -2644,7 +2644,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			mintTokens[i] = tok
 		}
 
-		rel, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, mintRangeContract+"-mintrangetest", nil, nil)
+		rel, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, mintRangeContract+"-mintrangetest", nil, nil, nil)
 		require.NoError(t, err)
 
 		for i, tok := range mintTokens {
@@ -6658,7 +6658,7 @@ func testReleaseOperations(t *testing.T, store Store) {
 	require.NoError(t, err)
 	require.NotNil(t, token2)
 
-	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000009999-1", nil, nil)
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000009999-1", nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, release)
 	require.NotZero(t, release.ID)
@@ -6698,7 +6698,7 @@ func testUpsertReleaseMetadata(t *testing.T, store Store) {
 
 	name := "Fidenza"
 	totalMints := int64(999)
-	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &name, &totalMints)
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &name, &totalMints, nil)
 	require.NoError(t, err)
 	require.NotNil(t, release)
 	require.NotZero(t, release.ID)
@@ -6713,7 +6713,7 @@ func testUpsertReleaseMetadata(t *testing.T, store Store) {
 
 	updatedName := "Fidenza (updated)"
 	updatedTotal := int64(1000)
-	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &updatedName, &updatedTotal)
+	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, &updatedName, &updatedTotal, nil)
 	require.NoError(t, err)
 
 	fetched, err = store.GetReleaseByID(ctx, release.ID)
@@ -6724,7 +6724,7 @@ func testUpsertReleaseMetadata(t *testing.T, store Store) {
 	assert.Equal(t, updatedTotal, *fetched.TotalMints)
 
 	// Nil metadata on conflict must not clear existing name/total_mints.
-	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, nil, nil)
+	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, nil, nil, nil)
 	require.NoError(t, err)
 
 	fetched, err = store.GetReleaseByID(ctx, release.ID)
@@ -6745,9 +6745,9 @@ func testListReleases(t *testing.T, store Store) {
 	abTotal := int64(100)
 	ffTotal := int64(50)
 
-	abRelease, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, abID, &abName, &abTotal)
+	abRelease, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, abID, &abName, &abTotal, nil)
 	require.NoError(t, err)
-	ffRelease, err := store.UpsertRelease(ctx, schema.VendorFeralFile, ffID, &ffName, &ffTotal)
+	ffRelease, err := store.UpsertRelease(ctx, schema.VendorFeralFile, ffID, &ffName, &ffTotal, nil)
 	require.NoError(t, err)
 
 	vendorAB := schema.VendorArtBlocks
@@ -6813,6 +6813,65 @@ func testListReleases(t *testing.T, store Store) {
 	}
 }
 
+// testUpsertReleaseSlug verifies that UpsertRelease stores and updates the
+// vendor_release_slug field and that a nil slug does not overwrite an existing one.
+func testUpsertReleaseSlug(t *testing.T, store Store) {
+	ctx := context.Background()
+	vendorReleaseID := "0x000000000000000000000000000000000000cccc-slug"
+	slug := "fidenza-by-tyler-hobbs"
+
+	// Insert with slug.
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, nil, nil, &slug)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+
+	fetched, err := store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched.VendorReleaseSlug)
+	assert.Equal(t, slug, *fetched.VendorReleaseSlug)
+
+	// Update slug to a new value.
+	newSlug := "fidenza-updated"
+	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, nil, nil, &newSlug)
+	require.NoError(t, err)
+
+	fetched, err = store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched.VendorReleaseSlug)
+	assert.Equal(t, newSlug, *fetched.VendorReleaseSlug)
+
+	// Nil slug on conflict must not clear the existing slug.
+	_, err = store.UpsertRelease(ctx, schema.VendorArtBlocks, vendorReleaseID, nil, nil, nil)
+	require.NoError(t, err)
+
+	fetched, err = store.GetReleaseByID(ctx, release.ID)
+	require.NoError(t, err)
+	require.NotNil(t, fetched.VendorReleaseSlug)
+	assert.Equal(t, newSlug, *fetched.VendorReleaseSlug)
+}
+
+// testListReleasesBySlug verifies that ListReleases filters by vendor_release_slug.
+func testListReleasesBySlug(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	slugA := "industrial-park"
+	slugB := "other-slug"
+	releaseA, err := store.UpsertRelease(ctx, schema.VendorFXHash, "fxhash-slug-filter-1", nil, nil, &slugA)
+	require.NoError(t, err)
+	_, err = store.UpsertRelease(ctx, schema.VendorFXHash, "fxhash-slug-filter-2", nil, nil, &slugB)
+	require.NoError(t, err)
+
+	results, err := store.ListReleases(ctx, ReleaseQueryFilter{
+		VendorReleaseSlug: &slugA,
+		Limit:             10,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, releaseA.ID, results[0].ID)
+	require.NotNil(t, results[0].VendorReleaseSlug)
+	assert.Equal(t, slugA, *results[0].VendorReleaseSlug)
+}
+
 func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
 	ctx := context.Background()
 
@@ -6828,9 +6887,9 @@ func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
 	require.NoError(t, err)
 	require.NotNil(t, token)
 
-	release1, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-1", nil, nil)
+	release1, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-1", nil, nil, nil)
 	require.NoError(t, err)
-	release2, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-2", nil, nil)
+	release2, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000007777-2", nil, nil, nil)
 	require.NoError(t, err)
 
 	require.NoError(t, store.UpsertReleaseMember(ctx, release1.ID, token.ID, 1))
@@ -6849,7 +6908,7 @@ func testUpsertReleaseMemberConflictUpdate(t *testing.T, store Store) {
 func testUpsertReleaseMemberRejectsZeroMintNumber(t *testing.T, store Store) {
 	ctx := context.Background()
 
-	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000008888-0", nil, nil)
+	release, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, "0x0000000000000000000000000000000000008888-0", nil, nil, nil)
 	require.NoError(t, err)
 
 	// mint_number 0 is invalid (1-based contract).
@@ -6895,6 +6954,8 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"ReleaseOperations", testReleaseOperations},
 		{"ListReleases", testListReleases},
 		{"UpsertReleaseMetadata", testUpsertReleaseMetadata},
+		{"UpsertReleaseSlug", testUpsertReleaseSlug},
+		{"ListReleasesBySlug", testListReleasesBySlug},
 		{"UpsertReleaseMemberConflictUpdate", testUpsertReleaseMemberConflictUpdate},
 		{"UpsertReleaseMemberRejectsZeroMintNumber", testUpsertReleaseMemberRejectsZeroMintNumber},
 		{"UpsertTokenMetadata", testUpsertTokenMetadata},

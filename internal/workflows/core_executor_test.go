@@ -1705,7 +1705,7 @@ func TestEnhanceTokenMetadata_PersistsReleaseMembership(t *testing.T) {
 		UpsertEnrichmentSource(ctx, gomock.Any()).
 		Return(nil)
 	mocks.store.EXPECT().
-		UpsertRelease(ctx, schema.VendorArtBlocks, "0x1234567890123456789012345678901234567890-1", nil, nil).
+		UpsertRelease(ctx, schema.VendorArtBlocks, "0x1234567890123456789012345678901234567890-1", nil, nil, nil).
 		Return(&schema.Release{ID: 99}, nil)
 	mocks.store.EXPECT().
 		UpsertReleaseMember(ctx, uint64(99), token.ID, int64(5)).

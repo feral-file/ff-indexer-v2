@@ -166,14 +166,15 @@ type UpsertTokenBalanceForOwnerInput struct {
 }
 
 // ReleaseQueryFilter represents filters for release list queries.
-// IDs, Vendor, and VendorReleaseID are ANDed when multiple are provided.
-// At least one of IDs, Vendor, or VendorReleaseID must be set.
+// IDs, Vendor, VendorReleaseID, and VendorReleaseSlug are ANDed when multiple are provided.
+// At least one of IDs, Vendor, VendorReleaseID, or VendorReleaseSlug must be set.
 type ReleaseQueryFilter struct {
-	IDs             []uint64
-	Vendor          *schema.Vendor
-	VendorReleaseID *string
-	Limit           int
-	Offset          uint64
+	IDs               []uint64
+	Vendor            *schema.Vendor
+	VendorReleaseID   *string
+	VendorReleaseSlug *string
+	Limit             int
+	Offset            uint64
 }
 
 // TokenQueryFilter represents filters for token queries
@@ -338,14 +339,17 @@ type Store interface {
 	// =============================================================================
 
 	// UpsertRelease creates or returns an existing release for a vendor release id.
-	// When name or totalMints are provided, they are written on insert and updated on conflict.
-	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error)
+	// When name, totalMints, or slug are provided, they are written on insert and updated on conflict.
+	// slug is the URL slug from the vendor's website (e.g. "fidenza-by-tyler-hobbs"); nil leaves
+	// any existing slug unchanged.
+	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) (*schema.Release, error)
 	// UpsertReleaseMember associates a token with a release at the given mint number.
 	UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error
 	// GetReleaseByID retrieves a release by internal id.
 	GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error)
-	// ListReleases returns releases matching optional vendor and vendor_release_id filters.
-	// At least one filter should be set by callers; results are ordered by id ascending.
+	// ListReleases returns releases matching the provided filter fields (ANDed).
+	// At least one of IDs, Vendor, VendorReleaseID, or VendorReleaseSlug must be set.
+	// Results are ordered by id ascending.
 	ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error)
 	// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
 	GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error)

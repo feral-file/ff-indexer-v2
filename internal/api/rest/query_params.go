@@ -63,9 +63,9 @@ type ListTokensQueryParams struct {
 	// MintFrom and MintTo are 1-based mint number range filters.
 	// Only meaningful (and validated) when release_id is also set.
 	// Clients use these to poll for indexed tokens after triggering IndexRelease.
-	MintFrom          *int64         `form:"mint_from"`
-	MintTo            *int64         `form:"mint_to"`
-	IncludeUnviewable bool           `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
+	MintFrom          *int64 `form:"mint_from"`
+	MintTo            *int64 `form:"mint_to"`
+	IncludeUnviewable bool   `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`
@@ -255,31 +255,34 @@ func ParseGetReleaseQuery(c *gin.Context) (*GetReleaseQueryParams, error) {
 }
 
 // ListReleasesQueryParams holds query parameters for GET /releases.
-// Call Validate() before using ParsedVendor, ParsedVendorReleaseID, and ParsedIDs.
+// Call Validate() before using ParsedVendor, ParsedVendorReleaseID, ParsedVendorReleaseSlug, and ParsedIDs.
 type ListReleasesQueryParams struct {
 	// IDs is a repeated query parameter: ?ids=1&ids=2
-	IDs             []uint64 `form:"ids"`
-	Vendor          string   `form:"vendor"`
-	VendorReleaseID string   `form:"vendor_release_id"`
-	Limit           uint8    `form:"limit,default=20"`
-	Offset          uint64   `form:"offset,default=0"`
+	IDs               []uint64 `form:"ids"`
+	Vendor            string   `form:"vendor"`
+	VendorReleaseID   string   `form:"vendor_release_id"`
+	VendorReleaseSlug string   `form:"vendor_release_slug"`
+	Limit             uint8    `form:"limit,default=20"`
+	Offset            uint64   `form:"offset,default=0"`
 
-	// ParsedVendor, ParsedVendorReleaseID, and ParsedIDs are populated by Validate().
-	ParsedIDs             []uint64
-	ParsedVendor          *schema.Vendor
-	ParsedVendorReleaseID *string
+	// Parsed fields are populated by Validate().
+	ParsedIDs               []uint64
+	ParsedVendor            *schema.Vendor
+	ParsedVendorReleaseID   *string
+	ParsedVendorReleaseSlug *string
 }
 
 // Validate validates the query parameters for GET /releases.
-// It populates ParsedVendor, ParsedVendorReleaseID, and ParsedIDs on success.
-// At least one of ids, vendor, or vendor_release_id is required.
+// It populates ParsedVendor, ParsedVendorReleaseID, ParsedVendorReleaseSlug, and ParsedIDs on success.
+// At least one of ids, vendor, vendor_release_id, or vendor_release_slug is required.
 // Accepted vendor values: artblocks, feralfile, fxhash, objkt.
 func (p *ListReleasesQueryParams) Validate() error {
 	vendor := strings.TrimSpace(p.Vendor)
 	vendorReleaseID := strings.TrimSpace(p.VendorReleaseID)
+	vendorReleaseSlug := strings.TrimSpace(p.VendorReleaseSlug)
 
-	if len(p.IDs) == 0 && vendor == "" && vendorReleaseID == "" {
-		return apierrors.NewValidationError("at least one of ids, vendor, or vendor_release_id is required")
+	if len(p.IDs) == 0 && vendor == "" && vendorReleaseID == "" && vendorReleaseSlug == "" {
+		return apierrors.NewValidationError("at least one of ids, vendor, vendor_release_id, or vendor_release_slug is required")
 	}
 
 	if p.Limit == 0 {
@@ -307,6 +310,10 @@ func (p *ListReleasesQueryParams) Validate() error {
 
 	if vendorReleaseID != "" {
 		p.ParsedVendorReleaseID = &vendorReleaseID
+	}
+
+	if vendorReleaseSlug != "" {
+		p.ParsedVendorReleaseSlug = &vendorReleaseSlug
 	}
 
 	return nil

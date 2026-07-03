@@ -13,8 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	opensea "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	gomock "go.uber.org/mock/gomock"
+
+	opensea "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 )
 
 // MockOpenSeaClient is a mock of Client interface.

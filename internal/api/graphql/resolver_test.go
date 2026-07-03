@@ -63,7 +63,7 @@ func TestQueryResolverReleasesReturnsList(t *testing.T) {
 	vendor := "artblocks"
 	nextOffset := uint64(20)
 	mockExec.EXPECT().
-		ListReleases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ListReleases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.ReleaseListResponse{
 			Items: []dto.ReleaseResponse{{
 				ID:              3,
@@ -73,7 +73,7 @@ func TestQueryResolverReleasesReturnsList(t *testing.T) {
 			Offset: &nextOffset,
 		}, nil)
 
-	result, err := resolver.Query().Releases(context.Background(), nil, &vendor, nil, nil, nil)
+	result, err := resolver.Query().Releases(context.Background(), nil, &vendor, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(3), result.Items[0].ID)
@@ -90,9 +90,9 @@ func TestQueryResolverReleasesRequiresFilter(t *testing.T) {
 	mockExec := mocks.NewMockAPIExecutor(ctrl)
 	resolver := NewResolver(false, mockExec)
 
-	_, err := resolver.Query().Releases(context.Background(), nil, nil, nil, nil, nil)
+	_, err := resolver.Query().Releases(context.Background(), nil, nil, nil, nil, nil, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one of ids, vendor, or vendor_release_id is required")
+	assert.Contains(t, err.Error(), "at least one of ids, vendor, vendor_release_id, or vendor_release_slug is required")
 }
 
 func TestQueryResolverReleasesRejectsZeroID(t *testing.T) {
@@ -105,7 +105,7 @@ func TestQueryResolverReleasesRejectsZeroID(t *testing.T) {
 	resolver := NewResolver(false, mockExec)
 
 	ids := []Uint64{1, 0, 3}
-	_, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil)
+	_, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be a positive integer")
 }
@@ -121,7 +121,7 @@ func TestQueryResolverReleasesReturnsByIDs(t *testing.T) {
 
 	ids := []Uint64{3, 7}
 	mockExec.EXPECT().
-		ListReleases(gomock.Any(), []uint64{3, 7}, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ListReleases(gomock.Any(), []uint64{3, 7}, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.ReleaseListResponse{
 			Items: []dto.ReleaseResponse{
 				{ID: 3, Vendor: "feralfile", VendorReleaseID: "uuid-3"},
@@ -129,7 +129,7 @@ func TestQueryResolverReleasesReturnsByIDs(t *testing.T) {
 			},
 		}, nil)
 
-	result, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil)
+	result, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 2)
 	assert.Equal(t, uint64(3), result.Items[0].ID)

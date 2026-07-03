@@ -54,7 +54,26 @@ const indexReleaseChunkSize = 50
 // Feral File require external API calls to resolve mint numbers to on-chain IDs.
 // Doing that synchronously in an HTTP request risks timeouts for large ranges.
 // The job model also provides retry semantics for transient API failures.
-func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorReleaseID string, mintFrom int64, mintTo int64) error {
+//
+// vendorReleaseSlug is the URL slug from the vendor's website (e.g. "industrial-park").
+// When it is non-empty and vendorReleaseID is empty, the workflow resolves the slug to
+// the canonical vendor_release_id before CID derivation. Both parameters arrive from the
+// job payload; the executor supplies whichever identifier the client provided.
+func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) error {
+	// Resolve slug → vendor_release_id when only a slug was provided.
+	if vendorReleaseID == "" && vendorReleaseSlug != "" {
+		resolved, err := w.resolveVendorSlug(ctx, schema.Vendor(vendor), vendorReleaseSlug)
+		if err != nil {
+			return fmt.Errorf("IndexRelease: slug resolution failed for %s/%q: %w", vendor, vendorReleaseSlug, err)
+		}
+		vendorReleaseID = resolved
+		logger.InfoCtx(ctx, "IndexRelease: resolved slug to vendor_release_id",
+			zap.String("vendor", vendor),
+			zap.String("slug", vendorReleaseSlug),
+			zap.String("vendorReleaseID", vendorReleaseID),
+		)
+	}
+
 	logger.InfoCtx(ctx, "IndexRelease started",
 		zap.String("vendor", vendor),
 		zap.String("vendorReleaseID", vendorReleaseID),
@@ -111,6 +130,44 @@ func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorR
 	)
 
 	return nil
+}
+
+// resolveVendorSlug maps a URL slug to the canonical vendor_release_id using the
+// vendor's API. Called when IndexRelease receives a slug-only trigger (no vendor_release_id).
+//
+// For objkt, the slug IS the contract address, so it is returned unchanged.
+// For artblocks (Ethereum mainnet, chainID=1), the ArtBlocksClient must be configured.
+// For fxhash and feralfile, the respective clients must be configured.
+func (w *coreWorkflows) resolveVendorSlug(ctx context.Context, vendor schema.Vendor, slug string) (string, error) {
+	switch vendor {
+	case schema.VendorObjkt:
+		// For objkt, the URL identifier is the KT1 contract address, same as vendor_release_id.
+		return slug, nil
+
+	case schema.VendorFXHash:
+		if w.fxhashClient == nil {
+			return "", fmt.Errorf("fxhash client not configured: cannot resolve slug %q", slug)
+		}
+		return w.fxhashClient.ResolveSlug(ctx, slug)
+
+	case schema.VendorFeralFile:
+		if w.feralfileClient == nil {
+			return "", fmt.Errorf("feral file client not configured: cannot resolve slug %q", slug)
+		}
+		return w.feralfileClient.ResolveSlug(ctx, slug)
+
+	case schema.VendorArtBlocks:
+		if w.artblocksClient == nil {
+			return "", fmt.Errorf("ArtBlocks client not configured: cannot resolve slug %q", slug)
+		}
+		// Art Blocks Ethereum mainnet = chainID 1. Slug resolution is restricted to mainnet
+		// because that is the canonical deployment; other chains are rare and use numeric IDs.
+		const artBlocksMainnetChainID = 1
+		return w.artblocksClient.ResolveSlug(ctx, artBlocksMainnetChainID, slug)
+
+	default:
+		return "", fmt.Errorf("slug resolution not supported for vendor %q", vendor)
+	}
 }
 
 // deriveReleaseCIDs resolves the full set of token CIDs for [mintFrom, mintTo] using
@@ -235,12 +292,12 @@ func (w *coreWorkflows) deriveFxhashCIDs(ctx context.Context, vendorReleaseID st
 // Chain mapping: "ethereum" → eip155:1:erc721; "tezos" → tezos:mainnet:fa2
 func (w *coreWorkflows) deriveFeralFileCIDs(ctx context.Context, vendorReleaseID string, mintFrom, mintTo int64) ([]domain.TokenCID, int, error) {
 	if w.feralfileClient == nil {
-		return nil, 0, fmt.Errorf("Feral File client not configured: cannot index Feral File release %q", vendorReleaseID)
+		return nil, 0, fmt.Errorf("feral file client not configured: cannot index feral file release %q", vendorReleaseID)
 	}
 
 	artworks, err := w.feralfileClient.GetSeriesArtworks(ctx, vendorReleaseID, mintFrom, mintTo)
 	if err != nil {
-		return nil, 0, fmt.Errorf("Feral File GetSeriesArtworks failed for series %q [%d..%d]: %w", vendorReleaseID, mintFrom, mintTo, err)
+		return nil, 0, fmt.Errorf("feral file GetSeriesArtworks failed for series %q [%d..%d]: %w", vendorReleaseID, mintFrom, mintTo, err)
 	}
 
 	cids := make([]domain.TokenCID, 0, len(artworks))
@@ -296,8 +353,7 @@ func mapFeralFileChain(chain string) (domain.Chain, domain.ChainStandard, bool) 
 	case "tezos":
 		return domain.ChainTezosMainnet, domain.StandardFA2, false
 	default:
-		// Includes "bitmark" and any unrecognised chain string.
+		// Includes "bitmark" and any unrecognized chain string.
 		return "", "", true
 	}
 }
-

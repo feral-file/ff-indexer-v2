@@ -171,10 +171,12 @@ func registerWorkerCore(
 			MediaTaskQueue:                     cfg.Jobs.MediaQueue,
 			BudgetedIndexingModeEnabled:        cfg.BudgetedIndexingEnabled,
 			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
-			// Vendor clients for IndexRelease CID derivation.
-			// fxhash and Feral File require API calls; AB and objkt are deterministic (no client needed).
+			// Vendor clients for IndexRelease CID derivation and slug resolution.
+			// fxhash and Feral File require API calls for CID derivation.
+			// AB and objkt are deterministic for CID derivation; AB requires a client only for slug resolution.
 			FxhashClient:    fxhashClient,
 			FeralFileClient: feralfileClient,
+			ArtBlocksClient: artblocksClient,
 		}, blacklistRegistry, jobQueue)
 
 	reg := jobs.NewRegistry(jsonAdapter)

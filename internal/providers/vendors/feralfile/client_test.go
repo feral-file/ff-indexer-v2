@@ -604,3 +604,46 @@ func TestURL(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveSlug_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	ctx := context.Background()
+	expectedUUID := "series-uuid-123"
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(ctx, "https://feralfile.com/api/series?slug=data-pilgrims-01-769&limit=1", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, out interface{}) error {
+			data := []byte(`{"result":[{"id":"series-uuid-123","slug":"data-pilgrims-01-769"}]}`)
+			return json.Unmarshal(data, out)
+		})
+
+	id, err := client.ResolveSlug(ctx, "data-pilgrims-01-769")
+	require.NoError(t, err)
+	assert.Equal(t, expectedUUID, id)
+}
+
+func TestResolveSlug_NotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	ctx := context.Background()
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(ctx, "https://feralfile.com/api/series?slug=no-such-series&limit=1", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, out interface{}) error {
+			data := []byte(`{"result":[]}`)
+			return json.Unmarshal(data, out)
+		})
+
+	_, err := client.ResolveSlug(ctx, "no-such-series")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "slug not found")
+}

@@ -41,9 +41,10 @@ type Executor interface {
 	// GetRelease retrieves a release by internal id without member tokens.
 	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
 
-	// ListReleases retrieves releases matching optional ids, vendor, and/or vendor_release_id filters without member tokens.
-	// At least one of ids, vendor, or vendorReleaseID must be non-empty.
-	ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error)
+	// ListReleases retrieves releases matching optional ids, vendor, vendor_release_id, and/or
+	// vendor_release_slug filters without member tokens.
+	// At least one of ids, vendor, vendorReleaseID, or vendorReleaseSlug must be non-empty.
+	ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, vendorReleaseSlug *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error)
 
 	// TriggerTokenIndexing triggers indexing for one or more tokens by their CIDs.
 	// Returns a queue job id for tracking.
@@ -61,7 +62,9 @@ type Executor interface {
 	// Returns a job id for tracking Phase 1 (CID derivation + fan-out) completion.
 	// After Phase 1 succeeds, clients poll GET /api/v1/tokens?release_id=X&mint_from=...&mint_to=...
 	// with offset-based pagination to track how many tokens have been indexed.
-	TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error)
+	// vendorReleaseSlug is the URL slug from the vendor's website; when provided without
+	// vendorReleaseID, the executor resolves it to a vendor_release_id before enqueuing.
+	TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error)
 
 	// GetJobStatus returns status for a postgres job row
 	GetJobStatus(ctx context.Context, jobID int64) (*dto.JobStatusResponse, error)
@@ -627,7 +630,13 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 //
 // Validation: vendor must be one of artblocks|feralfile|fxhash|objkt; mint_from >= 1;
 // mint_to >= mint_from; range <= MAX_RELEASE_MINT_RANGE.
-func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error) {
+//
+// vendorReleaseSlug is the URL slug from the vendor's website. When non-empty, it is passed
+// to the IndexRelease job, which resolves it to a vendor_release_id using the vendor API.
+// This keeps vendor clients out of the executor and in the workflow layer where they belong.
+// The uniqueKey uses whichever identifier is provided (id or slug) to deduplicate concurrent
+// triggers for the same release and range.
+func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error) {
 	switch vendor {
 	case "artblocks", "feralfile", "fxhash", "objkt":
 		// valid
@@ -644,11 +653,16 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 		return nil, apierrors.NewValidationError(fmt.Sprintf("mint range too large: max %d tokens per request", constants.MAX_RELEASE_MINT_RANGE))
 	}
 
-	uniqueKey := fmt.Sprintf("index-release-%s-%s-%d-%d", vendor, vendorReleaseID, mintFrom, mintTo)
+	// Use whichever identifier is provided for deduplication and job args.
+	releaseIdentifier := vendorReleaseID
+	if releaseIdentifier == "" {
+		releaseIdentifier = vendorReleaseSlug
+	}
+	uniqueKey := fmt.Sprintf("index-release-%s-%s-%d-%d", vendor, releaseIdentifier, mintFrom, mintTo)
 	j, _, err := e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
 		Queue:     e.tokenQueue,
 		Kind:      "IndexRelease",
-		Args:      []any{vendor, vendorReleaseID, mintFrom, mintTo},
+		Args:      []any{vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo},
 		UniqueKey: &uniqueKey,
 	})
 	if err != nil {
@@ -1517,10 +1531,11 @@ func (e *executor) GetRelease(ctx context.Context, releaseID uint64) (*dto.Relea
 	return dto.MapReleaseToDTO(release), nil
 }
 
-// ListReleases retrieves releases matching optional ids, vendor, and/or vendor_release_id filters without member tokens.
-// At least one of ids, vendor, or vendorReleaseID must be non-empty; callers are responsible for enforcing this.
+// ListReleases retrieves releases matching optional ids, vendor, vendor_release_id, and/or
+// vendor_release_slug filters without member tokens.
+// At least one filter must be non-empty; callers are responsible for enforcing this.
 // Multiple filters are ANDed.
-func (e *executor) ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
+func (e *executor) ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, vendorReleaseSlug *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
 		limit = &defaultLimit
@@ -1531,11 +1546,12 @@ func (e *executor) ListReleases(ctx context.Context, ids []uint64, vendor *schem
 	}
 
 	filter := store.ReleaseQueryFilter{
-		IDs:             ids,
-		Vendor:          vendor,
-		VendorReleaseID: vendorReleaseID,
-		Limit:           int(*limit) + 1,
-		Offset:          *offset,
+		IDs:               ids,
+		Vendor:            vendor,
+		VendorReleaseID:   vendorReleaseID,
+		VendorReleaseSlug: vendorReleaseSlug,
+		Limit:             int(*limit) + 1,
+		Offset:            *offset,
 	}
 
 	releases, err := e.store.ListReleases(ctx, filter)

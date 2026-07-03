@@ -13,9 +13,10 @@ import (
 	context "context"
 	reflect "reflect"
 
+	gomock "go.uber.org/mock/gomock"
+
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
-	gomock "go.uber.org/mock/gomock"
 )
 
 // MockCoreWorkflows is a mock of CoreWorkflows interface.
@@ -99,17 +100,17 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexMultipleTokensMetadata(ctx, tokenC
 }
 
 // IndexRelease mocks base method.
-func (m *MockCoreWorkflows) IndexRelease(ctx context.Context, vendor, vendorReleaseID string, mintFrom, mintTo int64) error {
+func (m *MockCoreWorkflows) IndexRelease(ctx context.Context, vendor, vendorReleaseID, vendorReleaseSlug string, mintFrom, mintTo int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexRelease", ctx, vendor, vendorReleaseID, mintFrom, mintTo)
+	ret := m.ctrl.Call(m, "IndexRelease", ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexRelease indicates an expected call of IndexRelease.
-func (mr *MockCoreWorkflowsMockRecorder) IndexRelease(ctx, vendor, vendorReleaseID, mintFrom, mintTo any) *gomock.Call {
+func (mr *MockCoreWorkflowsMockRecorder) IndexRelease(ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexRelease", reflect.TypeOf((*MockCoreWorkflows)(nil).IndexRelease), ctx, vendor, vendorReleaseID, mintFrom, mintTo)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexRelease", reflect.TypeOf((*MockCoreWorkflows)(nil).IndexRelease), ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo)
 }
 
 // IndexTezosTokenOwner mocks base method.

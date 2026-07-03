@@ -13,8 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	downloader "github.com/feral-file/ff-indexer-v2/internal/downloader"
 	gomock "go.uber.org/mock/gomock"
+
+	downloader "github.com/feral-file/ff-indexer-v2/internal/downloader"
 )
 
 // MockDownloader is a mock of Downloader interface.

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
+	"go.uber.org/zap"
+
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
@@ -22,7 +24,6 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
-	"go.uber.org/zap"
 )
 
 // TokenID is the resolver for the token_id field.
@@ -208,12 +209,20 @@ func (r *mutationResolver) TriggerMetadataIndexing(ctx context.Context, tokenIds
 }
 
 // TriggerReleaseIndexing is the resolver for the triggerReleaseIndexing field.
-func (r *mutationResolver) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, mintFrom *int, mintTo int) (*dto.TriggerIndexingResponse, error) {
+func (r *mutationResolver) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID *string, vendorReleaseSlug *string, mintFrom *int, mintTo int) (*dto.TriggerIndexingResponse, error) {
 	mintFromInt64 := int64(1)
 	if mintFrom != nil {
 		mintFromInt64 = int64(*mintFrom)
 	}
-	return r.executor.TriggerReleaseIndexing(ctx, vendor, vendorReleaseID, mintFromInt64, int64(mintTo))
+	id := ""
+	if vendorReleaseID != nil {
+		id = *vendorReleaseID
+	}
+	slug := ""
+	if vendorReleaseSlug != nil {
+		slug = *vendorReleaseSlug
+	}
+	return r.executor.TriggerReleaseIndexing(ctx, vendor, id, slug, mintFromInt64, int64(mintTo))
 }
 
 // CreateWebhookClient is the resolver for the createWebhookClient field.
@@ -471,11 +480,12 @@ func (r *queryResolver) Release(ctx context.Context, id Uint64) (*dto.ReleaseRes
 }
 
 // Releases is the resolver for the releases field.
-func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
+func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
 	vendorVal := strings.TrimSpace(internalTypes.SafeString(vendor))
 	vendorReleaseIDVal := strings.TrimSpace(internalTypes.SafeString(vendorReleaseID))
-	if len(ids) == 0 && vendorVal == "" && vendorReleaseIDVal == "" {
-		return nil, apierrors.NewValidationError("at least one of ids, vendor, or vendor_release_id is required")
+	vendorReleaseSlugVal := strings.TrimSpace(internalTypes.SafeString(vendorReleaseSlug))
+	if len(ids) == 0 && vendorVal == "" && vendorReleaseIDVal == "" && vendorReleaseSlugVal == "" {
+		return nil, apierrors.NewValidationError("at least one of ids, vendor, vendor_release_id, or vendor_release_slug is required")
 	}
 	for _, id := range ids {
 		if id == 0 {
@@ -503,7 +513,12 @@ func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *stri
 		parsedVendorReleaseID = &vendorReleaseIDVal
 	}
 
-	return r.executor.ListReleases(ctx, convertToUint64(ids), parsedVendor, parsedVendorReleaseID, ToNativeUint8(limit), ToNativeUint64(offset))
+	var parsedVendorReleaseSlug *string
+	if vendorReleaseSlugVal != "" {
+		parsedVendorReleaseSlug = &vendorReleaseSlugVal
+	}
+
+	return r.executor.ListReleases(ctx, convertToUint64(ids), parsedVendor, parsedVendorReleaseID, parsedVendorReleaseSlug, ToNativeUint8(limit), ToNativeUint64(offset))
 }
 
 // JobStatus is the resolver for the jobStatus field.

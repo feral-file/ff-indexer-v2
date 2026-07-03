@@ -313,3 +313,35 @@ func TestGetGentksByIteration_Pagination(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, refs, pageSize+1)
 }
+
+func TestResolveSlug_Success(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{"data":{"onchain":{"generative_token":[{"id":"9997"}]}}}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	id, err := client.ResolveSlug(context.Background(), "anticyclone")
+	require.NoError(t, err)
+	assert.Equal(t, "9997", id)
+}
+
+func TestResolveSlug_NotFound(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{"data":{"onchain":{"generative_token":[]}}}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	_, err := client.ResolveSlug(context.Background(), "nonexistent-slug")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "slug not found")
+}

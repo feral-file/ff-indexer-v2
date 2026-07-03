@@ -13,8 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	fxhash "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	gomock "go.uber.org/mock/gomock"
+
+	fxhash "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 )
 
 // MockFxhashClient is a mock of Client interface.
@@ -69,4 +70,19 @@ func (m *MockFxhashClient) GetGentksByIteration(ctx context.Context, generativeT
 func (mr *MockFxhashClientMockRecorder) GetGentksByIteration(ctx, generativeTokenID, iterationFrom, iterationTo any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGentksByIteration", reflect.TypeOf((*MockFxhashClient)(nil).GetGentksByIteration), ctx, generativeTokenID, iterationFrom, iterationTo)
+}
+
+// ResolveSlug mocks base method.
+func (m *MockFxhashClient) ResolveSlug(ctx context.Context, slug string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveSlug", ctx, slug)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveSlug indicates an expected call of ResolveSlug.
+func (mr *MockFxhashClientMockRecorder) ResolveSlug(ctx, slug any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveSlug", reflect.TypeOf((*MockFxhashClient)(nil).ResolveSlug), ctx, slug)
 }

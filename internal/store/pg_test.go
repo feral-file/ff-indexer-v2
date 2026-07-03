@@ -232,7 +232,7 @@ func TestConcurrentUpsertRelease(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			r, err := store.UpsertRelease(context.Background(), vendor, vendorReleaseID, nil, nil)
+			r, err := store.UpsertRelease(context.Background(), vendor, vendorReleaseID, nil, nil, nil)
 			if err == nil {
 				ids[idx] = r.ID
 			}

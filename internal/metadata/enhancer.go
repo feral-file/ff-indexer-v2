@@ -27,9 +27,12 @@ import (
 // ReleaseInfo carries release membership data extracted during vendor enrichment.
 type ReleaseInfo struct {
 	VendorReleaseID string
-	MintNumber      int64
-	Name            *string
-	TotalMints      *int64
+	// Slug is the URL slug for this release on the vendor's website.
+	// For objkt, this equals VendorReleaseID (KT1 address). Nil when not available.
+	Slug       *string
+	MintNumber int64
+	Name       *string
+	TotalMints *int64
 }
 
 // EnhancedMetadata represents metadata enhanced from vendor APIs
@@ -259,6 +262,9 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 		total := int64(project.MaxInvocations)
 		enhanced.Release.TotalMints = &total
 	}
+	if slug := strings.TrimSpace(project.Slug); slug != "" {
+		enhanced.Release.Slug = &slug
+	}
 
 	return enhanced, nil
 }
@@ -363,6 +369,9 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, chain domain.Chain, con
 		if artwork.Series.Settings.MaxArtwork > 0 {
 			enhanced.Release.TotalMints = &artwork.Series.Settings.MaxArtwork
 		}
+		if slug := strings.TrimSpace(artwork.Series.Slug); slug != "" {
+			enhanced.Release.Slug = &slug
+		}
 	}
 
 	return enhanced, nil
@@ -453,12 +462,16 @@ func (e *enhancer) enhanceFxhash(ctx context.Context, contractAddress, tokenNumb
 			}
 
 			releaseName := gt.Name
-			enhanced.Release = &ReleaseInfo{
+			release := &ReleaseInfo{
 				VendorReleaseID: gt.ID,
 				MintNumber:      iteration,
 				Name:            &releaseName,
 				TotalMints:      totalMints,
 			}
+			if slug := strings.TrimSpace(gt.Slug); slug != "" {
+				release.Slug = &slug
+			}
+			enhanced.Release = release
 		}
 	}
 
@@ -555,8 +568,14 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 		mintNum, parseErr := strconv.ParseInt(tokenNumber, 10, 64)
 		if parseErr == nil && mintNum > 0 {
 			faName := token.FA.Name
+			// For objkt, the KT1 contract address is also the URL identifier
+			// (objkt.com/collections/KT1...) — there is no separate human slug.
+			// We set Slug = VendorReleaseID so clients can use vendor_release_slug
+			// with the same value they see in the URL.
+			contractAddressCopy := contractAddress
 			release := &ReleaseInfo{
 				VendorReleaseID: contractAddress, // KT1 address is chain-unique; no chain prefix needed
+				Slug:            &contractAddressCopy,
 				MintNumber:      mintNum,
 				Name:            &faName,
 			}

@@ -81,18 +81,19 @@ Design rules:
 
 ### List releases (`GET /api/v1/releases`)
 
-- Returns a paginated list of release metadata rows filtered by **`ids`**, **`vendor`**, and/or **`vendor_release_id`**. At least one filter is required; when multiple are provided they are combined with AND semantics.
+- Returns a paginated list of release metadata rows filtered by **`ids`**, **`vendor`**, **`vendor_release_id`**, and/or **`vendor_release_slug`**. At least one filter is required; when multiple are provided they are combined with AND semantics.
 - **`ids`:** One or more internal release IDs (positive integers). Repeat the parameter for multiple values: `?ids=1&ids=2`. All IDs must be positive; zero is rejected.
 - **`vendor`:** `artblocks`, `feralfile`, `fxhash`, or `objkt` (all vendors that populate the `releases` table).
 - **`vendor_release_id`:** External release key as stored during indexing (FF series UUID, AB `{chainID}-{contract}-{projectID}`, fxhash generative token numeric id, or objkt custom-collection KT1 contract address). May be used without `vendor`; results can span vendors in theory but are typically 0–1 rows.
-- **Response:** `items` array of release metadata (`id`, `vendor`, `vendor_release_id`, optional `name`, optional `total_mints`). **No `members`** — use `GET /api/v1/releases/{id}` or `GET /api/v1/tokens?release_id=...` for member tokens.
+- **`vendor_release_slug`:** Human-readable URL slug from the vendor's website (e.g. `industrial-park` for fxhash, `fidenza-by-tyler-hobbs` for Art Blocks, `data-pilgrims-01-769` for Feral File; for objkt this equals the KT1 contract address). Nullable; only rows where `vendor_release_slug` is non-null and matches are returned.
+- **Response:** `items` array of release metadata (`id`, `vendor`, `vendor_release_id`, optional `vendor_release_slug`, optional `name`, optional `total_mints`). **No `members`** — use `GET /api/v1/releases/{id}` or `GET /api/v1/tokens?release_id=...` for member tokens.
 - **Pagination:** `limit` (default **20**, max **255**), `offset` (default **0**); empty match set returns **`200`** with `"items": []`.
-- **GraphQL:** `releases(ids, vendor, vendor_release_id, limit, offset)` exposes the same contract via `ReleaseList`.
+- **GraphQL:** `releases(ids, vendor, vendor_release_id, vendor_release_slug, limit, offset)` exposes the same contract via `ReleaseList`.
 
 ### Release endpoint (`GET /api/v1/releases/{id}`)
 
 - Returns a release by internal id (integer) with its complete, mint-ordered member token list.
-- **Release metadata:** Optional read-only `name` (human-readable title, e.g. `"Fidenza"`) and `total_mints` (declared max edition size from vendor: AB `max_invocations`, FF `series.settings.maxArtwork`). Both are nullable when vendor data is unavailable.
+- **Release metadata:** Optional read-only `name` (human-readable title, e.g. `"Fidenza"`), `total_mints` (declared max edition size from vendor: AB `max_invocations`, FF `series.settings.maxArtwork`), and `vendor_release_slug` (URL slug from the vendor's website, populated during enrichment). All are nullable when vendor data is unavailable; `vendor_release_slug` is also null for older rows not yet re-enriched.
 - **Membership completeness:** All members are returned regardless of `is_viewable` state so the list is stable across viewability changes (tokens may be temporarily unviewable during media processing). Callers needing only publicly visible members should use `GET /api/v1/tokens?release_id=...` with the default `include_unviewable=false`.
 - **Pagination:** `limit` / `offset` on member list; `sort_order` (`asc` | `desc`). Sort is always by `mint_number` (not configurable here).
 - **GraphQL:** `release(id)` query exposes the same release with a `members` field that follows the same membership-completeness contract.
@@ -133,11 +134,13 @@ Triggers asynchronous, full-collection indexing for a vendor release within a 1-
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `vendor` | string | yes | `artblocks`, `feralfile`, `fxhash`, or `objkt` |
-| `vendor_release_id` | string | yes | Vendor-specific release key (see list releases docs for format per vendor) |
+| `vendor_release_id` | string | one of | Vendor-specific release key (see list releases docs for format per vendor). Mutually exclusive with `vendor_release_slug`. |
+| `vendor_release_slug` | string | one of | Human-readable URL slug from the vendor's website (e.g. `industrial-park`). The workflow resolves the slug to a canonical `vendor_release_id` via the vendor's API before CID derivation. Mutually exclusive with `vendor_release_id`. For `objkt`, slug equals the KT1 contract address (no resolution API call needed). |
 | `mint_from` | int64 | no | First mint number to index (1-based, inclusive). Defaults to **1**. |
 | `mint_to` | int64 | yes | Last mint number to index (1-based, inclusive). |
 
 **Validation:**
+- Exactly one of `vendor_release_id` or `vendor_release_slug` must be supplied.
 - `mint_from ≥ 1` (when supplied)
 - `mint_to ≥ mint_from`
 - `mint_to − mint_from + 1 ≤ 100` (max range per request; see `MAX_RELEASE_MINT_RANGE`). Clients must batch larger collections themselves by issuing multiple non-overlapping requests.
@@ -145,14 +148,14 @@ Triggers asynchronous, full-collection indexing for a vendor release within a 1-
 **Response (`202`):** `TriggerIndexingResponse` with `job_id`. Use `GET /api/v1/jobs/{job_id}` to check whether Phase 1 (CID derivation + child-job enqueueing) succeeded. After the `job_id` reaches a terminal state, track per-token completion via `GET /api/v1/tokens?release_id=X&mint_from=1&mint_to=N&include_unviewable=true` with offset-based pagination (see List tokens documentation above).
 
 **Per-vendor CID derivation strategy:**
-- `artblocks` — fully deterministic; zero API calls; `vendor_release_id` is `"{chainID}-{contract}-{projectID}"`
-- `objkt` — fully deterministic; zero API calls; `vendor_release_id` is the KT1 FA2 contract address
-- `fxhash` — requires an internal API call to map iteration numbers to on-chain token IDs
-- `feralfile` — requires an internal API call; artworks still on the Bitmark chain (not yet swapped to EVM/Tezos) are skipped and counted as `tokens_skipped`
+- `artblocks` — fully deterministic; zero API calls; `vendor_release_id` is `"{chainID}-{contract}-{projectID}"`; slug resolution calls the AB GraphQL API once.
+- `objkt` — fully deterministic; zero API calls; `vendor_release_id` is the KT1 FA2 contract address; slug equals the KT1 address (no extra call).
+- `fxhash` — requires an internal API call to map iteration numbers to on-chain token IDs; slug resolution calls the fxhash GraphQL API once.
+- `feralfile` — requires an internal API call; artworks still on the Bitmark chain (not yet swapped to EVM/Tezos) are skipped and counted as `tokens_skipped`; slug resolution calls the FF series list API once.
 
 **Auth:** Open (no API key required), same as `POST /api/v1/tokens/index`. Max range cap of 100 tokens per call prevents large queue floods; clients batch larger collections themselves.
 
-**GraphQL:** `triggerReleaseIndexing(vendor, vendorReleaseId, mintFrom, mintTo)` — same behavior; returns the `job_id` via `Boolean` placeholder pending schema refinement.
+**GraphQL:** `triggerReleaseIndexing(vendor, vendorReleaseId, vendorReleaseSlug, mintFrom, mintTo)` — same behavior; exactly one of `vendorReleaseId` / `vendorReleaseSlug` must be supplied.
 
 ## Async operations and job tracking
 

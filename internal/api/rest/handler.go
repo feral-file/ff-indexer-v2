@@ -227,6 +227,7 @@ func (h *handler) ListReleases(c *gin.Context) {
 		queryParams.ParsedIDs,
 		queryParams.ParsedVendor,
 		queryParams.ParsedVendorReleaseID,
+		queryParams.ParsedVendorReleaseSlug,
 		limit,
 		offset,
 	)
@@ -352,6 +353,7 @@ func (h *handler) TriggerReleaseIndexing(c *gin.Context) {
 		c.Request.Context(),
 		req.Vendor,
 		req.VendorReleaseID,
+		req.VendorReleaseSlug,
 		req.ResolvedMintFrom(),
 		req.MintTo,
 	)

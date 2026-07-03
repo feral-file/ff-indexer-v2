@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
+	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
@@ -94,7 +94,7 @@ func TestListReleasesQueryParamsValidateRequiresFilter(t *testing.T) {
 	require.Error(t, err)
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, err, &apiErr)
-	assert.Contains(t, apiErr.Details, "at least one of ids, vendor, or vendor_release_id is required")
+	assert.Contains(t, apiErr.Details, "at least one of ids, vendor, vendor_release_id, or vendor_release_slug is required")
 }
 
 func TestListReleasesQueryParamsValidateIDsRejectsZero(t *testing.T) {
@@ -162,6 +162,20 @@ func TestListReleasesQueryParamsValidateVendorReleaseIDOnly(t *testing.T) {
 	assert.Nil(t, params.ParsedVendor)
 	require.NotNil(t, params.ParsedVendorReleaseID)
 	assert.Equal(t, "series-uuid", *params.ParsedVendorReleaseID)
+}
+
+func TestListReleasesQueryParamsValidateVendorReleaseSlugOnly(t *testing.T) {
+	t.Parallel()
+
+	params := ListReleasesQueryParams{
+		VendorReleaseSlug: "industrial-park",
+		Limit:             20,
+	}
+	require.NoError(t, params.Validate())
+	assert.Nil(t, params.ParsedVendor)
+	assert.Nil(t, params.ParsedVendorReleaseID)
+	require.NotNil(t, params.ParsedVendorReleaseSlug)
+	assert.Equal(t, "industrial-park", *params.ParsedVendorReleaseSlug)
 }
 
 func TestListReleasesQueryParamsValidateInvalidVendor(t *testing.T) {
@@ -435,29 +449,34 @@ func TestTriggerReleaseIndexingRequestValidate(t *testing.T) {
 		name    string
 		vendor  string
 		id      string
+		slug    string
 		from    *int64
 		to      int64
 		wantErr string // matched against APIError.Details (empty = expect no error)
 	}{
-		{"valid artblocks", "artblocks", "1-0xabc-78", nil, 100, ""},
-		{"valid feralfile", "feralfile", "series-uuid", nil, 50, ""},
-		{"valid fxhash", "fxhash", "9997", nil, 50, ""},
-		{"valid objkt", "objkt", "KT1abc", nil, 100, ""},
-		{"missing vendor", "", "abc", nil, 10, "vendor is required"},
-		{"invalid vendor", "superrare", "abc", nil, 10, "unsupported vendor"},
-		{"missing release id", "artblocks", "", nil, 10, "vendor_release_id is required"},
-		{"mint_to < mint_from", "artblocks", "abc", int64Ptr(5), 3, "mint_to must be"},
-		{"mint_from < 1", "artblocks", "abc", int64Ptr(0), 10, "mint_from must be"},
+		{"valid artblocks with id", "artblocks", "1-0xabc-78", "", nil, 100, ""},
+		{"valid feralfile with id", "feralfile", "series-uuid", "", nil, 50, ""},
+		{"valid fxhash with id", "fxhash", "9997", "", nil, 50, ""},
+		{"valid objkt with id", "objkt", "KT1abc", "", nil, 100, ""},
+		{"valid fxhash with slug", "fxhash", "", "industrial-park", nil, 50, ""},
+		{"valid feralfile with slug", "feralfile", "", "data-pilgrims-01-769", nil, 50, ""},
+		{"missing vendor", "", "abc", "", nil, 10, "vendor is required"},
+		{"invalid vendor", "superrare", "abc", "", nil, 10, "unsupported vendor"},
+		{"missing release id", "artblocks", "", "", nil, 10, "exactly one of vendor_release_id or vendor_release_slug is required"},
+		{"both id and slug", "artblocks", "1-0xabc-78", "fidenza-by-tyler-hobbs", nil, 10, "mutually exclusive"},
+		{"mint_to < mint_from", "artblocks", "abc", "", int64Ptr(5), 3, "mint_to must be"},
+		{"mint_from < 1", "artblocks", "abc", "", int64Ptr(0), 10, "mint_from must be"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			req := dto.TriggerReleaseIndexingRequest{
-				Vendor:          tt.vendor,
-				VendorReleaseID: tt.id,
-				MintFrom:        tt.from,
-				MintTo:          tt.to,
+				Vendor:            tt.vendor,
+				VendorReleaseID:   tt.id,
+				VendorReleaseSlug: tt.slug,
+				MintFrom:          tt.from,
+				MintTo:            tt.to,
 			}
 			err := req.Validate()
 			if tt.wantErr == "" {

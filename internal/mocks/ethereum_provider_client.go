@@ -15,11 +15,12 @@ import (
 
 	ethereum "github.com/ethereum/go-ethereum"
 	types "github.com/ethereum/go-ethereum/core/types"
+	gomock "go.uber.org/mock/gomock"
+
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	adapters "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	registry "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/registry"
 	registry0 "github.com/feral-file/ff-indexer-v2/internal/registry"
-	gomock "go.uber.org/mock/gomock"
 )
 
 // MockEthereumProviderClient is a mock of EthereumClient interface.

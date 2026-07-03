@@ -515,7 +515,7 @@ func TestListReleases_ByVendor(t *testing.T) {
 			VendorReleaseID: "0xabc-1",
 		}}, nil)
 
-	result, err := exec.ListReleases(context.Background(), nil, &vendor, nil, &limit, &offset)
+	result, err := exec.ListReleases(context.Background(), nil, &vendor, nil, nil, &limit, &offset)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(7), result.Items[0].ID)
@@ -542,7 +542,7 @@ func TestListReleases_Pagination(t *testing.T) {
 			{ID: 2, Vendor: schema.VendorFeralFile, VendorReleaseID: "other"},
 		}, nil)
 
-	result, err := exec.ListReleases(context.Background(), nil, nil, &vendorReleaseID, &limit, &offset)
+	result, err := exec.ListReleases(context.Background(), nil, nil, &vendorReleaseID, nil, &limit, &offset)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(1), result.Items[0].ID)
@@ -570,7 +570,7 @@ func TestListReleases_ByIDs(t *testing.T) {
 			{ID: 7, Vendor: schema.VendorArtBlocks, VendorReleaseID: "0xabc-1"},
 		}, nil)
 
-	result, err := exec.ListReleases(context.Background(), ids, nil, nil, &limit, &offset)
+	result, err := exec.ListReleases(context.Background(), ids, nil, nil, nil, &limit, &offset)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 2)
 	assert.Equal(t, uint64(3), result.Items[0].ID)

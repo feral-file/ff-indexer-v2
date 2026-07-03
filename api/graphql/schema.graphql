@@ -209,6 +209,9 @@ type ReleaseSummary {
   id: Uint64!
   vendor: String!
   vendor_release_id: String!
+  # URL slug from the vendor's website (e.g. "fidenza-by-tyler-hobbs"). Null when not yet enriched.
+  # For objkt, equals vendor_release_id (KT1 address).
+  vendor_release_slug: String
   name: String
   total_mints: Int
 }
@@ -218,6 +221,9 @@ type Release {
   id: Uint64!
   vendor: String!
   vendor_release_id: String!
+  # URL slug from the vendor's website (e.g. "fidenza-by-tyler-hobbs"). Null when not yet enriched.
+  # For objkt, equals vendor_release_id (KT1 address).
+  vendor_release_slug: String
   # Human-readable release title (e.g. "Fidenza"); REST GET /api/v1/releases/{id} `name`.
   name: String
   # Declared max edition size from vendor; REST GET /api/v1/releases/{id} `total_mints`.
@@ -299,13 +305,15 @@ type Query {
   # Equivalent to: GET /api/v1/releases/:id
   release(id: Uint64!): Release
 
-  # List releases filtered by ids, vendor, and/or vendor_release_id (metadata only)
-  # Equivalent to: GET /api/v1/releases?ids=1&ids=2&vendor=...&vendor_release_id=...
-  # At least one of ids, vendor, or vendor_release_id is required.
+  # List releases filtered by ids, vendor, vendor_release_id, and/or vendor_release_slug (metadata only)
+  # Equivalent to: GET /api/v1/releases?ids=1&ids=2&vendor=...&vendor_release_id=...&vendor_release_slug=...
+  # At least one of ids, vendor, vendor_release_id, or vendor_release_slug is required.
   releases(
     ids: [Uint64!]
     vendor: String
     vendor_release_id: String
+    # URL slug from the vendor's website. Can be used instead of vendor_release_id.
+    vendor_release_slug: String
     limit: Uint8 = 20
     offset: Uint64 = 0
   ): ReleaseList!
@@ -373,11 +381,15 @@ type Mutation {
   # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
   # After Phase 1 succeeds, poll tokens(release_id, mint_from, mint_to, include_unviewable: true) to track completion.
   # vendor: one of artblocks | feralfile | fxhash | objkt
+  # Provide exactly one of vendor_release_id or vendor_release_slug.
   # mint_from: 1-based first mint number (default 1)
   # mint_to: 1-based last mint number (required)
   triggerReleaseIndexing(
     vendor: String!
-    vendor_release_id: String!
+    vendor_release_id: String
+    # URL slug from the vendor's website. The indexer resolves the slug to a vendor_release_id.
+    # For objkt, use the KT1 contract address (same as vendor_release_id).
+    vendor_release_slug: String
     mint_from: Int
     mint_to: Int!
   ): TriggerIndexingResult

@@ -13,8 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 	gomock "go.uber.org/mock/gomock"
+
+	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
 )
 
 // MockSignalRClient is a mock of SignalRClient interface.

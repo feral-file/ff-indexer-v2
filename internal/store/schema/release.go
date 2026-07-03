@@ -12,6 +12,11 @@ type Release struct {
 	// VendorReleaseID is the external release key: FF seriesID UUID or AB {chainID}-{contract}-{projectID}
 	// (chain-qualified to prevent cross-chain collisions on the UNIQUE (vendor, vendor_release_id) constraint).
 	VendorReleaseID string `gorm:"column:vendor_release_id;not null;type:text"`
+	// VendorReleaseSlug is the URL slug used on the vendor's website (e.g. "fidenza-by-tyler-hobbs").
+	// Nullable: populated from enrichment and may be absent for older rows.
+	// For objkt, equals VendorReleaseID (KT1 address) since objkt has no human slug.
+	// Unique per vendor when not null (partial index).
+	VendorReleaseSlug *string `gorm:"column:vendor_release_slug;type:text"`
 	// Name is the human-readable release title (e.g. "Fidenza"), populated from vendor enrichment.
 	Name *string `gorm:"column:name;type:text"`
 	// TotalMints is the declared max edition size from the vendor (AB max_invocations, FF maxArtwork).

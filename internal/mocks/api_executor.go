@@ -13,12 +13,13 @@ import (
 	context "context"
 	reflect "reflect"
 
+	gomock "go.uber.org/mock/gomock"
+
 	dto "github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	executor "github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	types "github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
-	gomock "go.uber.org/mock/gomock"
 )
 
 // MockAPIExecutor is a mock of Executor interface.
@@ -151,18 +152,18 @@ func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAd
 }
 
 // ListReleases mocks base method.
-func (m *MockAPIExecutor) ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
+func (m *MockAPIExecutor) ListReleases(ctx context.Context, ids []uint64, vendor *schema.Vendor, vendorReleaseID, vendorReleaseSlug *string, limit *uint8, offset *uint64) (*dto.ReleaseListResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListReleases", ctx, ids, vendor, vendorReleaseID, limit, offset)
+	ret := m.ctrl.Call(m, "ListReleases", ctx, ids, vendor, vendorReleaseID, vendorReleaseSlug, limit, offset)
 	ret0, _ := ret[0].(*dto.ReleaseListResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListReleases indicates an expected call of ListReleases.
-func (mr *MockAPIExecutorMockRecorder) ListReleases(ctx, ids, vendor, vendorReleaseID, limit, offset any) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) ListReleases(ctx, ids, vendor, vendorReleaseID, vendorReleaseSlug, limit, offset any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockAPIExecutor)(nil).ListReleases), ctx, ids, vendor, vendorReleaseID, limit, offset)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListReleases", reflect.TypeOf((*MockAPIExecutor)(nil).ListReleases), ctx, ids, vendor, vendorReleaseID, vendorReleaseSlug, limit, offset)
 }
 
 // SyncCollection mocks base method.
@@ -211,18 +212,18 @@ func (mr *MockAPIExecutorMockRecorder) TriggerMetadataIndexing(ctx, tokenIDs, to
 }
 
 // TriggerReleaseIndexing mocks base method.
-func (m *MockAPIExecutor) TriggerReleaseIndexing(ctx context.Context, vendor, vendorReleaseID string, mintFrom, mintTo int64) (*dto.TriggerIndexingResponse, error) {
+func (m *MockAPIExecutor) TriggerReleaseIndexing(ctx context.Context, vendor, vendorReleaseID, vendorReleaseSlug string, mintFrom, mintTo int64) (*dto.TriggerIndexingResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TriggerReleaseIndexing", ctx, vendor, vendorReleaseID, mintFrom, mintTo)
+	ret := m.ctrl.Call(m, "TriggerReleaseIndexing", ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo)
 	ret0, _ := ret[0].(*dto.TriggerIndexingResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // TriggerReleaseIndexing indicates an expected call of TriggerReleaseIndexing.
-func (mr *MockAPIExecutorMockRecorder) TriggerReleaseIndexing(ctx, vendor, vendorReleaseID, mintFrom, mintTo any) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) TriggerReleaseIndexing(ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerReleaseIndexing", reflect.TypeOf((*MockAPIExecutor)(nil).TriggerReleaseIndexing), ctx, vendor, vendorReleaseID, mintFrom, mintTo)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerReleaseIndexing", reflect.TypeOf((*MockAPIExecutor)(nil).TriggerReleaseIndexing), ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo)
 }
 
 // TriggerTokenIndexing mocks base method.

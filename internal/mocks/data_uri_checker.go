@@ -12,8 +12,9 @@ package mocks
 import (
 	reflect "reflect"
 
-	uri "github.com/feral-file/ff-indexer-v2/internal/uri"
 	gomock "go.uber.org/mock/gomock"
+
+	uri "github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
 // MockDataURIChecker is a mock of DataURIChecker interface.

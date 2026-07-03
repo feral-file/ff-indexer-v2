@@ -28,7 +28,7 @@ func TestHandlerListReleasesSuccess(t *testing.T) {
 
 	vendor := schema.VendorArtBlocks
 	mockExec.EXPECT().
-		ListReleases(gomock.Any(), gomock.Nil(), &vendor, gomock.Nil(), gomock.Any(), gomock.Any()).
+		ListReleases(gomock.Any(), gomock.Nil(), &vendor, gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any()).
 		Return(&dto.ReleaseListResponse{
 			Items: []dto.ReleaseResponse{{
 				ID:              9,
@@ -82,7 +82,7 @@ func TestHandlerTriggerReleaseIndexingSuccess(t *testing.T) {
 	h := NewHandler(false, mockExec)
 
 	mockExec.EXPECT().
-		TriggerReleaseIndexing(gomock.Any(), "artblocks", "1-0xabc-78", int64(1), int64(100)).
+		TriggerReleaseIndexing(gomock.Any(), "artblocks", "1-0xabc-78", "", int64(1), int64(100)).
 		Return(&dto.TriggerIndexingResponse{JobID: 42}, nil)
 
 	body := `{"vendor":"artblocks","vendor_release_id":"1-0xabc-78","mint_to":100}`
@@ -106,7 +106,7 @@ func TestHandlerTriggerReleaseIndexingWithMintFrom(t *testing.T) {
 	h := NewHandler(false, mockExec)
 
 	mockExec.EXPECT().
-		TriggerReleaseIndexing(gomock.Any(), "feralfile", "series-abc", int64(5), int64(50)).
+		TriggerReleaseIndexing(gomock.Any(), "feralfile", "series-abc", "", int64(5), int64(50)).
 		Return(&dto.TriggerIndexingResponse{JobID: 99}, nil)
 
 	body := `{"vendor":"feralfile","vendor_release_id":"series-abc","mint_from":5,"mint_to":50}`

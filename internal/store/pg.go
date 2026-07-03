@@ -1143,17 +1143,21 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 // UpsertRelease creates or returns an existing release for a vendor release id.
 //
 // Uses INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()
-// (and name/total_mints when provided) RETURNING id so the operation is atomic under concurrent
+// (and name/total_mints/slug when provided) RETURNING id so the operation is atomic under concurrent
 // callers. FirstOrCreate is intentionally avoided here: it issues a SELECT then INSERT in two
 // separate statements, which causes a unique-constraint race when multiple workers index tokens
 // from the same new release simultaneously — one call would get a constraint violation instead of
 // the existing row. The ON CONFLICT path is idempotent and always returns the canonical row id.
-func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error) {
+//
+// slug is the URL slug from the vendor website (e.g. "fidenza-by-tyler-hobbs"). A nil slug is
+// treated as "no update" — the existing value is preserved. A non-nil slug overwrites on conflict.
+func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) (*schema.Release, error) {
 	release := schema.Release{
-		Vendor:          vendor,
-		VendorReleaseID: vendorReleaseID,
-		Name:            name,
-		TotalMints:      totalMints,
+		Vendor:            vendor,
+		VendorReleaseID:   vendorReleaseID,
+		Name:              name,
+		TotalMints:        totalMints,
+		VendorReleaseSlug: slug,
 	}
 
 	assignments := map[string]interface{}{
@@ -1164,6 +1168,9 @@ func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendo
 	}
 	if totalMints != nil && *totalMints > 0 {
 		assignments["total_mints"] = *totalMints
+	}
+	if slug != nil && strings.TrimSpace(*slug) != "" {
+		assignments["vendor_release_slug"] = strings.TrimSpace(*slug)
 	}
 
 	err := s.db.WithContext(ctx).
@@ -1227,7 +1234,7 @@ func (s *pgStore) GetReleaseByID(ctx context.Context, id uint64) (*schema.Releas
 }
 
 // ListReleases returns releases matching the provided filter fields (ANDed).
-// At least one of IDs, Vendor, or VendorReleaseID must be set in the filter.
+// At least one of IDs, Vendor, VendorReleaseID, or VendorReleaseSlug must be set in the filter.
 func (s *pgStore) ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error) {
 	query := s.db.WithContext(ctx).Model(&schema.Release{})
 	if len(filter.IDs) > 0 {
@@ -1238,6 +1245,9 @@ func (s *pgStore) ListReleases(ctx context.Context, filter ReleaseQueryFilter) (
 	}
 	if filter.VendorReleaseID != nil {
 		query = query.Where("vendor_release_id = ?", *filter.VendorReleaseID)
+	}
+	if filter.VendorReleaseSlug != nil {
+		query = query.Where("vendor_release_slug = ?", *filter.VendorReleaseSlug)
 	}
 
 	var releases []schema.Release

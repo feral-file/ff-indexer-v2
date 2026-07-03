@@ -13,8 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	feralfile "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	gomock "go.uber.org/mock/gomock"
+
+	feralfile "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 )
 
 // MockFeralFileClient is a mock of Client interface.
@@ -69,4 +70,19 @@ func (m *MockFeralFileClient) GetSeriesArtworks(ctx context.Context, seriesID st
 func (mr *MockFeralFileClientMockRecorder) GetSeriesArtworks(ctx, seriesID, mintFrom, mintTo any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSeriesArtworks", reflect.TypeOf((*MockFeralFileClient)(nil).GetSeriesArtworks), ctx, seriesID, mintFrom, mintTo)
+}
+
+// ResolveSlug mocks base method.
+func (m *MockFeralFileClient) ResolveSlug(ctx context.Context, slug string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveSlug", ctx, slug)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveSlug indicates an expected call of ResolveSlug.
+func (mr *MockFeralFileClientMockRecorder) ResolveSlug(ctx, slug any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveSlug", reflect.TypeOf((*MockFeralFileClient)(nil).ResolveSlug), ctx, slug)
 }

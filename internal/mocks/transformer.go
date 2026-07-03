@@ -15,8 +15,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	transformer "github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	gomock "go.uber.org/mock/gomock"
+
+	transformer "github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 )
 
 // MockTransformer is a mock of Transformer interface.
