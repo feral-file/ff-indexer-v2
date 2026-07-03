@@ -13,9 +13,10 @@ import (
 	context "context"
 	reflect "reflect"
 
+	gomock "go.uber.org/mock/gomock"
+
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	webhook "github.com/feral-file/ff-indexer-v2/internal/webhook"
-	gomock "go.uber.org/mock/gomock"
 )
 
 // MockCoreWorkflows is a mock of CoreWorkflows interface.

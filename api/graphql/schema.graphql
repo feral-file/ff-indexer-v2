@@ -380,7 +380,7 @@ type Mutation {
   # Equivalent to: POST /api/v1/releases/index
   # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
   # After Phase 1 succeeds, poll tokens(release_id, mint_from, mint_to, include_unviewable: true) to track completion.
-  # vendor: one of artblocks | feralfile | fxhash | objkt | opensea
+  # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
   # Provide exactly one of vendor_release_id or vendor_release_slug.
   # mint_from: 1-based first mint number (default 1)
   # mint_to: 1-based last mint number (required)

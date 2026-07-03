@@ -2,9 +2,11 @@ package opensea_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
@@ -207,7 +209,9 @@ func TestOpenSeaClient_GetNFT_UnmarshalError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to unmarshal OpenSea response")
 }
 
-func TestOpenSeaClient_GetNFT_ResponseErrors(t *testing.T) {
+// TestOpenSeaClient_GetNFT_ResponseErrors_NotFound verifies that a "not found" error
+// in the JSON errors array is mapped to ErrNFTNotFound (not a generic API error).
+func TestOpenSeaClient_GetNFT_ResponseErrors_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -219,7 +223,7 @@ func TestOpenSeaClient_GetNFT_ResponseErrors(t *testing.T) {
 
 	ctx := context.Background()
 	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
-	tokenID := "1"
+	tokenID := "0"
 
 	responseJSON := []byte(`{"errors": ["NFT not found"]}`)
 
@@ -243,9 +247,86 @@ func TestOpenSeaClient_GetNFT_ResponseErrors(t *testing.T) {
 
 	result, err := client.GetNFT(ctx, contractAddress, tokenID)
 
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, opensea.ErrNFTNotFound)
+}
+
+// TestOpenSeaClient_GetNFT_ResponseErrors_Other verifies that non-"not found" error
+// strings in the JSON errors array are returned as generic API errors.
+func TestOpenSeaClient_GetNFT_ResponseErrors_Other(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := mocks.NewMockJSON(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
+
+	client := opensea.NewClient(mockHTTPClient, mockLimiter, testAPIURL, "test-api-key", mockJSON)
+
+	ctx := context.Background()
+	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
+	tokenID := "1"
+
+	responseJSON := []byte(`{"errors": ["Internal server error"]}`)
+
+	mockLimiter.EXPECT().
+		Do(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
+
+	mockHTTPClient.EXPECT().
+		GetBytes(ctx, gomock.Any(), gomock.Any()).
+		Return(responseJSON, nil)
+
+	mockJSON.EXPECT().
+		Unmarshal(responseJSON, gomock.Any()).
+		DoAndReturn(func(data []byte, v interface{}) error {
+			resp := v.(*opensea.NFTResponse)
+			resp.Errors = []string{"Internal server error"}
+			return nil
+		})
+
+	result, err := client.GetNFT(ctx, contractAddress, tokenID)
+
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "OpenSea API errors")
+}
+
+// TestOpenSeaClient_GetNFT_HTTP404_ReturnsErrNFTNotFound verifies that an HTTP 404
+// response from the NFT endpoint is mapped to ErrNFTNotFound.
+func TestOpenSeaClient_GetNFT_HTTP404_ReturnsErrNFTNotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := mocks.NewMockJSON(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
+
+	client := opensea.NewClient(mockHTTPClient, mockLimiter, testAPIURL, "test-api-key", mockJSON)
+
+	ctx := context.Background()
+	contractAddress := "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"
+	tokenID := "0"
+
+	mockLimiter.EXPECT().
+		Do(gomock.Any(), opensea.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
+
+	// Simulate the HTTP client returning "unexpected status code 404" (how GetBytes surfaces 404s).
+	mockHTTPClient.EXPECT().
+		GetBytes(ctx, gomock.Any(), gomock.Any()).
+		Return(nil, fmt.Errorf("unexpected status code 404"))
+
+	result, err := client.GetNFT(ctx, contractAddress, tokenID)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, opensea.ErrNFTNotFound)
 }
 
 func TestExtractArtistFromTraits(t *testing.T) {

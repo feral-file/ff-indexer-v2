@@ -692,7 +692,7 @@ paths:
 
         **Phase 1** (CID derivation + IndexTokens fan-out) runs as a background job. Phase 1 is fast
         for deterministic vendors (artblocks, objkt) and may take seconds-to-minutes for API-based
-        vendors (fxhash, feralfile, opensea) depending on range size.
+        vendors (fxhash, feralfile) depending on range size.
 
         **Phase 2** (per-token indexing) runs independently as IndexTokens child jobs on the same queue.
 
@@ -701,17 +701,17 @@ paths:
 
         **Vendor strategies:**
         - `artblocks` — deterministic CID math; vendor_release_id format: `{chainID}-{contract}-{projectID}`
-        - `objkt` — deterministic; vendor_release_id is the KT1 contract address
+        - `objkt` — requires a "custom" collection contract (pre-checked via objkt API); vendor_release_id is the KT1 contract address
         - `fxhash` — API-based; vendor_release_id is the generative token ID
         - `feralfile` — API-based; vendor_release_id is the series UUID
-        - `opensea` — API-based; vendor_release_id (or vendor_release_slug) is the collection slug
 
-        **Authentication:** API key required (`X-API-KEY` header).
+        **Note:** `opensea` is not supported for release indexing. OpenSea tokens are indexed
+        via on-chain events where mint_number is derived from the actual token identifier during enrichment.
+
+        **Authentication:** None required (open endpoint, same as `POST /api/v1/tokens/index`).
       operationId: triggerReleaseIndexing
       tags:
         - releases
-      security:
-        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -2075,11 +2075,11 @@ components:
           example: 42
         vendor:
           type: string
-          description: Source vendor (`artblocks`, `feralfile`, `fxhash`, `objkt`, or `opensea`)
+          description: Source vendor (`artblocks`, `feralfile`, `fxhash`, `objkt`, or `opensea`). opensea tokens are indexed via on-chain events, not via release indexing.
           example: artblocks
         vendor_release_id:
           type: string
-          description: External release key — AB `{chainID}-{contract}-{projectID}` (chain-qualified), FF series UUID, fxhash generative token id, objkt KT1 contract address, or opensea collection slug
+          description: External release key — AB `{chainID}-{contract}-{projectID}` (chain-qualified), FF series UUID, fxhash generative token id, or objkt KT1 contract address
           example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
         name:
           type: [string, "null"]
@@ -2120,26 +2120,24 @@ components:
       properties:
         vendor:
           type: string
-          description: Source vendor
-          enum: [artblocks, feralfile, fxhash, objkt, opensea]
-          example: opensea
+          description: Source vendor. opensea is not accepted for release indexing.
+          enum: [artblocks, feralfile, fxhash, objkt]
+          example: objkt
         vendor_release_id:
           type: string
           description: |
             Vendor-specific release identifier. Provide exactly one of vendor_release_id or vendor_release_slug.
             - artblocks: `{chainID}-{contract}-{projectID}` (e.g. `1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78`)
-            - objkt: KT1 contract address (e.g. `KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton`)
+            - objkt: KT1 contract address for a "custom" collection (e.g. `KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton`)
             - fxhash: generative token ID (e.g. `9997`)
             - feralfile: series UUID
-            - opensea: collection slug (e.g. `boredapeyachtclub`)
-          example: boredapeyachtclub
+          example: KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton
         vendor_release_slug:
           type: string
           description: |
             URL slug from the vendor's website. The indexer resolves the slug to a vendor_release_id.
-            For opensea, the slug IS the vendor_release_id (both values are the collection slug).
-            For objkt, use the KT1 contract address.
-          example: boredapeyachtclub
+            For objkt, use the KT1 contract address (same as vendor_release_id).
+          example: industrial-park
         mint_from:
           type: integer
           format: int64

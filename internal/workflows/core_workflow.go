@@ -8,7 +8,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
@@ -122,9 +122,10 @@ type CoreWorkflowsConfig struct {
 	// ArtBlocksClient is required for IndexRelease slug resolution with vendor=artblocks.
 	// Nil disables artblocks slug-based triggering (numeric vendor_release_id still works).
 	ArtBlocksClient artblocks.Client
-	// OpenSeaClient is required for IndexRelease with vendor=opensea.
-	// Nil disables opensea release indexing (the job will return an error).
-	OpenSeaClient opensea.Client
+	// ObjktClient is required for IndexRelease with vendor=objkt.
+	// Before enqueuing CIDs, IndexRelease calls GetFA to verify the contract is a
+	// "custom" collection. Nil disables objkt release indexing (the job returns an error).
+	ObjktClient objkt.Client
 }
 
 // coreWorkflows is the concrete implementation of CoreWorkflows.
@@ -136,12 +137,12 @@ type coreWorkflows struct {
 	fxhashClient    fxhash.Client    // may be nil if fxhash release indexing is not configured
 	feralfileClient feralfile.Client // may be nil if Feral File release indexing is not configured
 	artblocksClient artblocks.Client // may be nil; required only for artblocks slug resolution
-	openseaClient   opensea.Client   // may be nil if opensea release indexing is not configured
+	objktClient     objkt.Client     // required for objkt release indexing (custom-contract pre-check)
 }
 
 // NewCoreWorkflows creates a new core workflows instance.
-// jobQueue is required. FxhashClient and FeralFileClient in config are optional but
-// must be set for IndexRelease to work with those vendors.
+// jobQueue is required. FxhashClient, FeralFileClient, and ObjktClient in config are
+// optional but must be set for IndexRelease to work with those vendors.
 func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blacklist registry.BlacklistRegistry, jobQueue jobs.JobQueue) CoreWorkflows {
 	if jobQueue == nil {
 		panic("workflows: NewCoreWorkflows requires a non-nil jobQueue (see NewCoreWorkflows doc for NopQueue vs mocks)")
@@ -154,6 +155,6 @@ func NewCoreWorkflows(executor CoreExecutor, config CoreWorkflowsConfig, blackli
 		fxhashClient:    config.FxhashClient,
 		feralfileClient: config.FeralFileClient,
 		artblocksClient: config.ArtBlocksClient,
-		openseaClient:   config.OpenSeaClient,
+		objktClient:     config.ObjktClient,
 	}
 }

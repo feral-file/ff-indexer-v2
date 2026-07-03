@@ -628,8 +628,11 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 // chunked IndexTokens jobs (Phase 2). Phase 1 is typically fast (seconds for AB/objkt,
 // seconds-to-minutes for fxhash/FF depending on range size and API latency).
 //
-// Validation: vendor must be one of artblocks|feralfile|fxhash|objkt; mint_from >= 1;
-// mint_to >= mint_from; range <= MAX_RELEASE_MINT_RANGE.
+// Validation: vendor must be one of artblocks|feralfile|fxhash|objkt (opensea is not
+// supported for release indexing — see IndexRelease file-level doc for rationale);
+// exactly one of vendorReleaseID or vendorReleaseSlug must be non-empty;
+// mint_from >= 1 (all vendors use 1-based mint numbering); mint_to >= mint_from;
+// range <= MAX_RELEASE_MINT_RANGE.
 //
 // vendorReleaseSlug is the URL slug from the vendor's website. When non-empty, it is passed
 // to the IndexRelease job, which resolves it to a vendor_release_id using the vendor API.
@@ -638,11 +641,26 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 // triggers for the same release and range.
 func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error) {
 	switch vendor {
-	case "artblocks", "feralfile", "fxhash", "objkt", "opensea":
+	case "artblocks", "feralfile", "fxhash", "objkt":
 		// valid
 	default:
-		return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", vendor))
+		return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
 	}
+
+	// Validate that exactly one of vendor_release_id or vendor_release_slug is provided.
+	// This mirrors the REST DTO check but must also live here because the GraphQL resolver
+	// calls the executor directly without going through the DTO's Validate method.
+	// Whitespace-only values are treated as absent to catch accidental empty strings.
+	hasID := strings.TrimSpace(vendorReleaseID) != ""
+	hasSlug := strings.TrimSpace(vendorReleaseSlug) != ""
+	if !hasID && !hasSlug {
+		return nil, apierrors.NewValidationError("exactly one of vendor_release_id or vendor_release_slug is required")
+	}
+	if hasID && hasSlug {
+		return nil, apierrors.NewValidationError("vendor_release_id and vendor_release_slug are mutually exclusive; provide exactly one")
+	}
+
+	// All vendors use 1-based mint numbering.
 	if mintFrom < 1 {
 		return nil, apierrors.NewValidationError("mint_from must be >= 1")
 	}

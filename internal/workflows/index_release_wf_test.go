@@ -10,6 +10,7 @@ package workflows
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
-	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
@@ -62,29 +63,18 @@ func (f *fakeFFClient) ResolveSlug(_ context.Context, _ string) (string, error) 
 	return "", nil
 }
 
-// fakeOpenSeaClient implements opensea.Client for tests.
-type fakeOpenSeaClient struct {
-	collection *opensea.CollectionMetadata
-	slug       string
-	err        error
+// fakeObjktClient implements objkt.Client for tests.
+type fakeObjktClient struct {
+	fa  *objkt.FA
+	err error
 }
 
-func (f *fakeOpenSeaClient) GetNFT(_ context.Context, _, _ string) (*opensea.NFTMetadata, error) {
+func (f *fakeObjktClient) GetToken(_ context.Context, _, _ string) (*objkt.Token, error) {
 	return nil, nil
 }
 
-func (f *fakeOpenSeaClient) GetCollection(_ context.Context, _ string) (*opensea.CollectionMetadata, error) {
-	return f.collection, f.err
-}
-
-func (f *fakeOpenSeaClient) ResolveSlug(_ context.Context, slug string) (string, error) {
-	if f.err != nil {
-		return "", f.err
-	}
-	if f.slug != "" {
-		return f.slug, nil
-	}
-	return slug, nil
+func (f *fakeObjktClient) GetFA(_ context.Context, _ string) (*objkt.FA, error) {
+	return f.fa, f.err
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -436,181 +426,81 @@ func TestDeriveFeralFileCIDs_MissingContractSkipped(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// OpenSea CID derivation
+// objkt CID derivation with custom-contract pre-check
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestDeriveOpenSeaCIDs_Success(t *testing.T) {
+func TestDeriveObjktCIDs_CustomContractPasses(t *testing.T) {
 	t.Parallel()
 
 	w := &coreWorkflows{
-		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
-		openseaClient: &fakeOpenSeaClient{
-			collection: &opensea.CollectionMetadata{
-				Collection:  "boredapeyachtclub",
-				Name:        "Bored Ape Yacht Club",
-				TotalSupply: 10000,
-				Contracts: []opensea.CollectionContract{
-					{Address: "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", Chain: "ethereum"},
-				},
-			},
-		},
+		config:      CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
+		objktClient: &fakeObjktClient{fa: &objkt.FA{Name: "Test Collection", CollectionType: "custom"}},
 	}
 
-	cids, skipped, err := w.deriveOpenSeaCIDs(context.Background(), "boredapeyachtclub", 1, 3)
+	cids, skipped, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", 1, 3)
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
 	require.Len(t, cids, 3)
-
-	// Contract address should be EIP-55 checksummed in CID (NormalizeAddress uses checksum, not lowercase).
-	for _, cid := range cids {
-		chain, standard, contract, _ := cid.Parse()
-		assert.Equal(t, domain.ChainEthereumMainnet, chain)
-		assert.Equal(t, domain.StandardERC721, standard)
-		// EIP-55 checksum of the input address
-		assert.Equal(t, "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", contract)
+	for i, cid := range cids {
+		chain, standard, contract, tokenID := cid.Parse()
+		assert.Equal(t, domain.ChainTezosMainnet, chain)
+		assert.Equal(t, domain.StandardFA2, standard)
+		assert.Equal(t, "KT1abc", contract)
+		assert.Equal(t, fmt.Sprintf("%d", i+1), tokenID, "mintNum must equal tokenID for objkt")
 	}
-	// Verify token IDs are mint numbers.
-	_, _, _, tokenID0 := cids[0].Parse()
-	_, _, _, tokenID1 := cids[1].Parse()
-	_, _, _, tokenID2 := cids[2].Parse()
-	assert.Equal(t, "1", tokenID0)
-	assert.Equal(t, "2", tokenID1)
-	assert.Equal(t, "3", tokenID2)
 }
 
-func TestDeriveOpenSeaCIDs_NilClient(t *testing.T) {
+func TestDeriveObjktCIDs_NonCustomContractRejected(t *testing.T) {
 	t.Parallel()
 
-	w := &coreWorkflows{
-		config:        CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
-		openseaClient: nil,
-	}
-	_, _, err := w.deriveOpenSeaCIDs(context.Background(), "boredapeyachtclub", 1, 10)
+	nonCustomTypes := []string{"open", "open_generative", "curated"}
+	for _, collType := range nonCustomTypes {
+		collType := collType
+		t.Run(collType, func(t *testing.T) {
+			t.Parallel()
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "opensea client not configured")
-}
-
-func TestDeriveOpenSeaCIDs_APIError(t *testing.T) {
-	t.Parallel()
-
-	w := &coreWorkflows{
-		config:        CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
-		openseaClient: &fakeOpenSeaClient{err: errors.New("API down")},
-	}
-	_, _, err := w.deriveOpenSeaCIDs(context.Background(), "boredapeyachtclub", 1, 5)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "GetCollection failed")
-}
-
-func TestDeriveOpenSeaCIDs_NoContracts(t *testing.T) {
-	t.Parallel()
-
-	w := &coreWorkflows{
-		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
-		openseaClient: &fakeOpenSeaClient{
-			collection: &opensea.CollectionMetadata{
-				Collection: "empty-collection",
-				Contracts:  []opensea.CollectionContract{},
-			},
-		},
-	}
-	_, _, err := w.deriveOpenSeaCIDs(context.Background(), "empty-collection", 1, 5)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no associated contracts")
-}
-
-func TestDeriveOpenSeaCIDs_UnsupportedChain(t *testing.T) {
-	t.Parallel()
-
-	w := &coreWorkflows{
-		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
-		openseaClient: &fakeOpenSeaClient{
-			collection: &opensea.CollectionMetadata{
-				Collection: "solana-collection",
-				Contracts: []opensea.CollectionContract{
-					{Address: "SomeAddress", Chain: "solana"},
+			w := &coreWorkflows{
+				config: CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
+				objktClient: &fakeObjktClient{
+					err: fmt.Errorf("objkt contract KT1abc is a %q collection, not \"custom\": %w", collType, objkt.ErrCollectionNotCustom),
 				},
-			},
-		},
-	}
-	_, _, err := w.deriveOpenSeaCIDs(context.Background(), "solana-collection", 1, 5)
+			}
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported chain")
+			_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", 1, 5)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "objkt pre-check failed")
+		})
+	}
 }
 
-func TestDeriveOpenSeaCIDs_ChainMismatch(t *testing.T) {
+func TestDeriveObjktCIDs_NilClientRejected(t *testing.T) {
 	t.Parallel()
 
-	// Indexer configured for Ethereum mainnet (eip155:1), collection is on Polygon (eip155:137).
 	w := &coreWorkflows{
-		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
-		openseaClient: &fakeOpenSeaClient{
-			collection: &opensea.CollectionMetadata{
-				Collection: "polygon-collection",
-				Contracts: []opensea.CollectionContract{
-					{Address: "0xabc", Chain: "polygon"},
-				},
-			},
-		},
+		config:      CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
+		objktClient: nil,
 	}
-	_, _, err := w.deriveOpenSeaCIDs(context.Background(), "polygon-collection", 1, 5)
+
+	_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", 1, 5)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "chain mismatch")
+	assert.Contains(t, err.Error(), "objkt client not configured")
 }
 
-type recordingReleaseUpserter struct {
-	calls []recordingReleaseUpsertCall
-	err   error
-}
-
-type recordingReleaseUpsertCall struct {
-	vendor          schema.Vendor
-	vendorReleaseID string
-	name            *string
-	totalMints      *int64
-	slug            *string
-}
-
-func (r *recordingReleaseUpserter) UpsertReleaseMetadata(_ context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) error {
-	r.calls = append(r.calls, recordingReleaseUpsertCall{
-		vendor:          vendor,
-		vendorReleaseID: vendorReleaseID,
-		name:            name,
-		totalMints:      totalMints,
-		slug:            slug,
-	})
-	return r.err
-}
-
-func TestUpsertOpenSeaReleaseFromCollection(t *testing.T) {
+func TestDeriveObjktCIDs_GetFAAPIError(t *testing.T) {
 	t.Parallel()
 
-	upserter := &recordingReleaseUpserter{}
-	collection := &opensea.CollectionMetadata{
-		Collection:  "boredapeyachtclub",
-		Name:        "Bored Ape Yacht Club",
-		TotalSupply: 10000,
+	w := &coreWorkflows{
+		config:      CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
+		objktClient: &fakeObjktClient{err: errors.New("API timeout")},
 	}
 
-	err := upsertOpenSeaReleaseFromCollection(context.Background(), upserter, "boredapeyachtclub", collection)
-	require.NoError(t, err)
-	require.Len(t, upserter.calls, 1)
+	_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", 1, 5)
 
-	call := upserter.calls[0]
-	assert.Equal(t, schema.VendorOpenSea, call.vendor)
-	assert.Equal(t, "boredapeyachtclub", call.vendorReleaseID)
-	require.NotNil(t, call.name)
-	assert.Equal(t, "Bored Ape Yacht Club", *call.name)
-	require.NotNil(t, call.totalMints)
-	assert.Equal(t, int64(10000), *call.totalMints)
-	require.NotNil(t, call.slug)
-	assert.Equal(t, "boredapeyachtclub", *call.slug)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "objkt pre-check failed")
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

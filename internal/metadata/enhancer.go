@@ -597,15 +597,33 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 	return enhanced, nil
 }
 
-// enhanceOpenSea enhances metadata from OpenSea API for Ethereum tokens
+// enhanceOpenSea enhances metadata from OpenSea API for Ethereum tokens.
+//
+// Returns (nil, nil) — skip, no error — for two expected non-failure cases:
+//  1. No API key configured (ErrNoAPIKey): degraded mode, token created without enrichment.
+//  2. Token not found on OpenSea (ErrNFTNotFound): happens when a derived token ID does not
+//     correspond to a real on-chain token, e.g. tokenID=0 for a 1-indexed ERC-721 contract.
+//     This is an expected outcome of the mintNum-1 token-ID mapping used by IndexRelease for
+//     OpenSea; treating it as a skip prevents infinite retries for phantom token IDs.
 func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
 	logger.InfoCtx(ctx, "Enhancing OpenSea metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
 
-	// Fetch NFT data from OpenSea API
 	nft, err := e.openseaClient.GetNFT(ctx, contractAddress, tokenNumber)
 	if err != nil {
 		if errors.Is(err, opensea.ErrNoAPIKey) {
-			logger.WarnCtx(ctx, "No API key provided for OpenSea", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
+			logger.WarnCtx(ctx, "OpenSea enrichment skipped: no API key configured",
+				zap.String("contractAddress", contractAddress),
+				zap.String("tokenNumber", tokenNumber))
+			return nil, nil
+		}
+		if errors.Is(err, opensea.ErrNFTNotFound) {
+			// Token ID does not exist on OpenSea. This is an expected skip when the
+			// collection uses 1-based token IDs and the derived CID landed on token 0
+			// via the mintNum-1 mapping. Log at info (not warn) because it is not a
+			// transient failure and retrying would not help.
+			logger.InfoCtx(ctx, "OpenSea enrichment skipped: token not found (may be outside collection token ID range)",
+				zap.String("contractAddress", contractAddress),
+				zap.String("tokenNumber", tokenNumber))
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to fetch OpenSea NFT: %w", err)

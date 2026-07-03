@@ -19,6 +19,11 @@ var (
 	ErrNoAPIKey = errors.New("no API key provided")
 	// ErrCollectionNotFound is returned when a collection slug does not resolve to a known collection.
 	ErrCollectionNotFound = errors.New("opensea collection not found")
+	// ErrNFTNotFound is returned when an individual NFT (contract+tokenID) does not exist on OpenSea.
+	// This happens for token IDs that are outside the collection's actual minted range — e.g. when
+	// a caller indexes an OpenSea collection whose contracts start at token ID 1, not 0, and derives
+	// tokenID=0 via the mintNum-1 mapping. Callers should treat this as a skip, not a hard failure.
+	ErrNFTNotFound = errors.New("opensea NFT not found")
 )
 
 // editionNumberRe matches the "#<digits>" pattern commonly used in generative art NFT names
@@ -122,13 +127,17 @@ func NewClient(httpClient adapter.HTTPClient, rateLimiter ratelimit.Limiter, api
 	}
 }
 
-// GetNFT fetches NFT metadata from OpenSea API v2
+// GetNFT fetches NFT metadata from OpenSea API v2.
+//
+// Returns ErrNFTNotFound when the token does not exist on OpenSea (HTTP 404 or
+// a JSON errors payload mentioning "not found"). Callers should treat ErrNFTNotFound
+// as a skip rather than a retryable failure — it commonly occurs when indexing a
+// collection whose token IDs start at 1 (not 0) and the derived CID uses tokenID=0.
 func (c *OpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID string) (*NFTMetadata, error) {
 	if c.apiKey == "" {
 		return nil, ErrNoAPIKey
 	}
 
-	// Build the API URL
 	url := fmt.Sprintf("%s/chain/%s/contract/%s/nfts/%s",
 		c.apiURL,
 		"ethereum",
@@ -136,7 +145,6 @@ func (c *OpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID str
 		tokenID,
 	)
 
-	// Make the request with API key header
 	headers := map[string]string{
 		"X-API-KEY": c.apiKey,
 	}
@@ -145,6 +153,9 @@ func (c *OpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID str
 		return c.httpClient.GetBytes(ctx, url, headers)
 	})
 	if err != nil {
+		if isOpenSeaNotFoundError(err) {
+			return nil, fmt.Errorf("opensea NFT not found: contract=%s tokenID=%s: %w", contractAddress, tokenID, ErrNFTNotFound)
+		}
 		return nil, fmt.Errorf("failed to call OpenSea API: %w", err)
 	}
 
@@ -154,6 +165,12 @@ func (c *OpenSeaClient) GetNFT(ctx context.Context, contractAddress, tokenID str
 	}
 
 	if len(response.Errors) > 0 {
+		// OpenSea may return HTTP 200 with a JSON errors array for missing tokens.
+		for _, e := range response.Errors {
+			if strings.Contains(strings.ToLower(e), "not found") {
+				return nil, fmt.Errorf("opensea NFT not found: contract=%s tokenID=%s: %w", contractAddress, tokenID, ErrNFTNotFound)
+			}
+		}
 		return nil, fmt.Errorf("OpenSea API errors: %v", response.Errors)
 	}
 

@@ -611,3 +611,100 @@ func TestGetToken_AppliesReleaseMembership(t *testing.T) {
 	assert.Equal(t, uint64(99), *result.ReleaseID)
 	assert.Equal(t, int64(3), *result.MintNumber)
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TriggerReleaseIndexing validation
+//
+// The executor is the shared validation layer for both REST and GraphQL. REST goes
+// through dto.TriggerReleaseIndexingRequest.Validate first, but GraphQL calls the
+// executor directly. These tests cover the executor-level guards.
+// ──────────────────────────────────────────────────────────────────────────────
+
+// newReleaseIndexingExecutor builds an executor whose job-queue mock never expects
+// a call. Validation errors must be returned before any enqueue attempt.
+func newReleaseIndexingExecutor(t *testing.T) executor.Executor {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJobQueue := mocks.NewMockJobQueue(ctrl)
+	mockBlacklist := mocks.NewMockBlacklistRegistry(ctrl)
+	// No EXPECT calls — any enqueue call would fail the test.
+	return executor.NewExecutor(
+		mockStore,
+		mockJobQueue,
+		"token_index",
+		mockBlacklist,
+		adapter.NewJSON(),
+		adapter.NewClock(),
+		domain.Chain("tezos:mainnet"),
+		domain.Chain("eip155:1"),
+	)
+}
+
+func TestTriggerReleaseIndexing_BothIdentifiersEmpty(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "", "", 1, 10)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
+}
+
+func TestTriggerReleaseIndexing_BothIdentifiersProvided(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "some-id", "some-slug", 1, 10)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
+func TestTriggerReleaseIndexing_WhitespaceOnlyIDTreatedAsAbsent(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	// Whitespace-only vendor_release_id should be treated the same as empty.
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "   ", "", 1, 10)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
+}
+
+func TestTriggerReleaseIndexing_WhitespaceOnlySlugTreatedAsAbsent(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "", "\t \n", 1, 10)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
+}
+
+func TestTriggerReleaseIndexing_MintFromZeroRejected(t *testing.T) {
+	t.Parallel()
+
+	for _, vendor := range []string{"artblocks", "feralfile", "fxhash", "objkt"} {
+		vendor := vendor
+		t.Run(vendor, func(t *testing.T) {
+			t.Parallel()
+
+			exec := newReleaseIndexingExecutor(t)
+			_, err := exec.TriggerReleaseIndexing(context.Background(), vendor, "some-id", "", 0, 10)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "mint_from must be")
+		})
+	}
+}
+
+func TestTriggerReleaseIndexing_OpenSeaVendorRejected(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "opensea", "boredapeyachtclub", "", 1, 100)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported vendor")
+}

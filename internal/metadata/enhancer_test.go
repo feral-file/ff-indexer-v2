@@ -339,6 +339,32 @@ func TestEnhancer_Enhance_NoPublisher(t *testing.T) {
 	assert.Nil(t, result) // Should return nil when OpenSea has no API key
 }
 
+// TestEnhancer_Enhance_OpenSeaNFTNotFound verifies that ErrNFTNotFound from GetNFT is
+// treated as a skip (nil result, no error) rather than a hard failure. This prevents
+// infinite retries for phantom token IDs produced by the mintNum-1 mapping when a
+// collection uses 1-based token IDs and mintFrom=1 derives tokenID=0.
+func TestEnhancer_Enhance_OpenSeaNFTNotFound(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "0")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Token #0"},
+		Publisher: nil,
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "0").
+		Return(nil, opensea.ErrNFTNotFound)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result, "ErrNFTNotFound must be treated as a skip, not a hard error")
+}
+
 func TestEnhancer_Enhance_NoPublisherName(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)

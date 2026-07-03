@@ -42,6 +42,21 @@ func (m *MockObjktClient) EXPECT() *MockObjktClientMockRecorder {
 	return m.recorder
 }
 
+// GetFA mocks base method.
+func (m *MockObjktClient) GetFA(ctx context.Context, contractAddress string) (*objkt.FA, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetFA", ctx, contractAddress)
+	ret0, _ := ret[0].(*objkt.FA)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetFA indicates an expected call of GetFA.
+func (mr *MockObjktClientMockRecorder) GetFA(ctx, contractAddress any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFA", reflect.TypeOf((*MockObjktClient)(nil).GetFA), ctx, contractAddress)
+}
+
 // GetToken mocks base method.
 func (m *MockObjktClient) GetToken(ctx context.Context, contractAddress, tokenID string) (*objkt.Token, error) {
 	m.ctrl.T.Helper()
