@@ -642,23 +642,31 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 
 	// Populate release info from the single-NFT response.
 	// nft.Collection is the collection slug — for OpenSea this IS the vendor_release_id.
+	//
+	// Release membership is only recorded when a positive (1-based) mint number can be
+	// derived. ExtractMintNumber returns ok=false for tokens with non-numeric identifiers
+	// and no "#N" pattern in their name; mintNum==0 would violate the release_members
+	// DB constraint (mint_number > 0). Skipping here avoids a repeated persistence
+	// failure for CryptoPunks V1 / tokens without parseable edition numbers.
 	if nft.Collection != "" {
 		slug := nft.Collection
 		var nftName string
 		if nft.Name != nil {
 			nftName = *nft.Name
 		}
-		mintNum, _ := opensea.ExtractMintNumber(nftName, nft.Identifier)
-		release := &ReleaseInfo{
-			VendorReleaseID: slug,
-			Slug:            &slug,
-			MintNumber:      mintNum,
+		mintNum, ok := opensea.ExtractMintNumber(nftName, nft.Identifier)
+		if ok && mintNum > 0 {
+			release := &ReleaseInfo{
+				VendorReleaseID: slug,
+				Slug:            &slug,
+				MintNumber:      mintNum,
+			}
+			if name, totalMints := e.openSeaCollectionReleaseMetadata(ctx, slug); name != nil || totalMints != nil {
+				release.Name = name
+				release.TotalMints = totalMints
+			}
+			enhanced.Release = release
 		}
-		if name, totalMints := e.openSeaCollectionReleaseMetadata(ctx, slug); name != nil || totalMints != nil {
-			release.Name = name
-			release.TotalMints = totalMints
-		}
-		enhanced.Release = release
 	}
 
 	// Set name

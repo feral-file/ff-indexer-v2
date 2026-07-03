@@ -2077,6 +2077,97 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 	assert.Empty(t, result.Artists[0].DID)
 }
 
+// TestEnhancer_Enhance_OpenSea_NoMintNumber_NonNumericIdentifier verifies that
+// Release is nil when ExtractMintNumber returns ok=false (non-numeric identifier,
+// no "#N" pattern in name). Persisting mintNum=0 would violate the DB constraint
+// release_members.mint_number > 0.
+func TestEnhancer_Enhance_OpenSea_NoMintNumber_NonNumericIdentifier(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	// Identifier is a hex hash — not parseable as int64 and name has no "#N" pattern.
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "abc123def456")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Test NFT"},
+		Publisher: nil,
+	}
+
+	name := "No Edition Token"
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "abc123def456",
+		Collection: "test-collection",
+		Contract:   "0x0000000000000000000000000000000000000123",
+		Name:       &name,
+		Traits:     []opensea.Trait{},
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "abc123def456").
+		Return(nftMetadata, nil)
+
+	vendorJSON := []byte(`{"identifier":"abc123def456","collection":"test-collection"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return(vendorJSON, nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, schema.VendorOpenSea, result.Vendor)
+	// Release must not be populated: ExtractMintNumber returned ok=false.
+	assert.Nil(t, result.Release)
+}
+
+// TestEnhancer_Enhance_OpenSea_NoMintNumber_ZeroTokenID verifies that Release is nil
+// when ExtractMintNumber returns mintNum=0 (identifier=="0"). The DB constraint
+// release_members.mint_number > 0 forbids inserting mint_number=0.
+func TestEnhancer_Enhance_OpenSea_NoMintNumber_ZeroTokenID(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	// Token ID "0" parses to mintNum=0, ok=true — this must not populate Release.
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "0")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Test NFT"},
+		Publisher: nil,
+	}
+
+	name := "CryptoPunk #0"
+	nftMetadata := &opensea.NFTMetadata{
+		// Name contains "#0" — ExtractMintNumber parses it as 0, which is still
+		// blocked by the mintNum > 0 guard added to enhanceOpenSea.
+		Identifier: "0",
+		Collection: "cryptopunks",
+		Contract:   "0x0000000000000000000000000000000000000123",
+		Name:       &name,
+		Traits:     []opensea.Trait{},
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "0").
+		Return(nftMetadata, nil)
+
+	vendorJSON := []byte(`{"identifier":"0","collection":"cryptopunks"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return(vendorJSON, nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, schema.VendorOpenSea, result.Vendor)
+	// Release must not be populated: mintNum == 0 violates the DB constraint.
+	assert.Nil(t, result.Release)
+}
+
 func TestEnhancer_Enhance_Objkt_URIResolverSuccess(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)

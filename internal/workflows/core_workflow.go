@@ -60,7 +60,10 @@ type CoreWorkflows interface {
 
 	// IndexRelease derives token CIDs for a vendor release within a 1-based mint range
 	// [mintFrom, mintTo] and enqueues chunked IndexTokens jobs for the full set.
-	// vendor must be one of: artblocks, feralfile, fxhash, objkt, opensea.
+	// vendor must be one of: artblocks, feralfile, fxhash, objkt.
+	// opensea is not supported for release indexing — OpenSea tokens are indexed via
+	// on-chain events where mint_number is derived from the actual token identifier
+	// during enrichment.
 	//
 	// Exactly one of vendorReleaseID or vendorReleaseSlug must be non-empty.
 	// When vendorReleaseSlug is provided, the workflow resolves it to a vendor_release_id
@@ -68,10 +71,10 @@ type CoreWorkflows interface {
 	//
 	// CID derivation strategy per vendor:
 	//   artblocks — pure math, zero API calls (requires ArtBlocksClient only for slug resolution)
-	//   objkt     — pure math (token_number == mint_number), zero API calls
+	//   objkt     — pure math (token_number == mint_number); requires ObjktClient for
+	//               custom-contract pre-check before CIDs are built
 	//   fxhash    — calls GetGentksByIteration (requires FxhashClient in config)
 	//   feralfile — calls GetSeriesArtworks (requires FeralFileClient in config)
-	//   opensea   — calls GetCollection to resolve contract + chain, then deterministic CID math
 	//
 	// Returns an error if CID derivation or enqueueing fails; a partial enqueue
 	// (some chunks succeed, then a failure) will leave already-queued jobs running.

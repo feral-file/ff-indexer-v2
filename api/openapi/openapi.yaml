@@ -2081,6 +2081,13 @@ components:
           type: string
           description: External release key — AB `{chainID}-{contract}-{projectID}` (chain-qualified), FF series UUID, fxhash generative token id, or objkt KT1 contract address
           example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
+        vendor_release_slug:
+          type: [string, "null"]
+          description: |
+            Human-readable URL slug from the vendor's website (e.g. "fidenza-by-tyler-hobbs").
+            For OpenSea, equals vendor_release_id (the collection slug). Null when not yet
+            resolved or not available for the vendor.
+          example: "fidenza-by-tyler-hobbs"
         name:
           type: [string, "null"]
           description: Human-readable release title (e.g. "Fidenza")

@@ -5,8 +5,8 @@ BEGIN;
 --
 -- Context
 -- -------
--- OpenSea was not included in 018_reindex because full OpenSea release support
--- (IndexRelease + release metadata) was added after that migration. Two new
+-- OpenSea was not included in 018_reindex because OpenSea release enrichment
+-- (release metadata via GetCollection) was added after that migration. Two new
 -- capabilities require re-enrichment of all previously-enriched OpenSea tokens:
 --
 --   1. Release name and total_mints: enhanceOpenSea now calls GetCollection and
@@ -17,6 +17,11 @@ BEGIN;
 --      so UpsertRelease populates vendor_release_slug. For OpenSea, the slug is
 --      always equal to vendor_release_id (the collection slug), but the column was
 --      not written by older code paths.
+--
+-- Note: IndexRelease does NOT support opensea as a vendor. OpenSea tokens enter the
+-- system exclusively via on-chain event indexing; release rows are created during
+-- OpenSea enrichment when a positive mint_number is successfully derived from the
+-- token identifier.
 --
 -- Part 1: Re-enrich all enriched OpenSea tokens
 -- -----------------------------------------------
@@ -30,13 +35,11 @@ BEGIN;
 -- the first member token (lowest mint_number) for re-enrichment. Enriching even a
 -- single token is sufficient to upsert vendor_release_slug on the release row.
 --
--- OpenSea is excluded: Part 1 already handles all OpenSea enriched tokens, and
--- IndexRelease now upserts the slug on the release row at CID derivation time.
---
--- The first member is queued unconditionally (regardless of whether it already has
--- an enrichment_sources entry). Filtering to un-enriched tokens only would miss
--- releases whose members were enriched before the slug column existed, leaving the
--- slug column still null despite enrichment_sources rows being present.
+-- OpenSea is excluded from Part 2: Part 1 already handles all OpenSea enriched
+-- tokens. The first member is queued unconditionally (regardless of whether it
+-- already has an enrichment_sources entry). Filtering to un-enriched tokens only
+-- would miss releases whose members were enriched before the slug column existed,
+-- leaving the slug column still null despite enrichment_sources rows being present.
 --
 -- Idempotency
 -- -----------
