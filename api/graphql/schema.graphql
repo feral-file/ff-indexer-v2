@@ -288,9 +288,16 @@ type Query {
     token_numbers: [String!]
     token_ids: [Uint64!]
     token_cids: [String!]
+    # release_id, release_vendor, and release_vendor_slug are all optional and ANDed.
+    # Any one of them is sufficient to enable sort_by=mint_number and mint_from/mint_to.
     release_id: Uint64
+    # release_vendor filters tokens to releases from a given vendor (e.g. "artblocks").
+    release_vendor: String
+    # release_vendor_slug filters tokens to the release whose vendor_release_slug matches
+    # (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
+    release_vendor_slug: String
     # mint_from and mint_to are 1-based mint range filters (inclusive).
-    # Only meaningful when release_id is also provided.
+    # Require at least one of release_id, release_vendor, or release_vendor_slug.
     # Clients use these to poll for indexed tokens after triggerReleaseIndexing.
     mint_from: Int
     mint_to: Int
@@ -380,6 +387,7 @@ type Mutation {
   # Equivalent to: POST /api/v1/releases/index
   # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
   # After Phase 1 succeeds, poll tokens(release_id, mint_from, mint_to, include_unviewable: true) to track completion.
+  # Alternatively use tokens(release_vendor_slug: "...", mint_from, mint_to, include_unviewable: true) without needing release_id.
   # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
   # Provide exactly one of vendor_release_id or vendor_release_slug.
   # mint_from: 1-based first mint number (default 1)

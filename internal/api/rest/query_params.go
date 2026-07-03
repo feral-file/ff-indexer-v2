@@ -59,9 +59,16 @@ type ListTokensQueryParams struct {
 	TokenNumbers      []string       `form:"token_number"`
 	TokenIDs          []uint64       `form:"token_id"`
 	TokenCIDs         []string       `form:"token_cid"`
-	ReleaseID         *uint64        `form:"release_id"`
-	// MintFrom and MintTo are 1-based mint number range filters.
-	// Only meaningful (and validated) when release_id is also set.
+	// ReleaseID narrows results to a specific release by internal integer id.
+	// Any of ReleaseID, ReleaseVendor, and ReleaseVendorSlug may be combined (ANDed).
+	ReleaseID *uint64 `form:"release_id"`
+	// ReleaseVendor filters tokens to releases from a given vendor (e.g. "artblocks").
+	ReleaseVendor string `form:"release_vendor"`
+	// ReleaseVendorSlug filters tokens to the release whose vendor_release_slug matches
+	// (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
+	ReleaseVendorSlug string `form:"release_vendor_slug"`
+	// MintFrom and MintTo are 1-based mint number range filters (inclusive).
+	// Require at least one release context (release_id, release_vendor, or release_vendor_slug).
 	// Clients use these to poll for indexed tokens after triggering IndexRelease.
 	MintFrom          *int64 `form:"mint_from"`
 	MintTo            *int64 `form:"mint_to"`
@@ -77,6 +84,9 @@ type ListTokensQueryParams struct {
 
 	// Expansion
 	Expansions []types.Expansion `form:"expand"`
+
+	// ParsedReleaseVendor is populated by Validate().
+	ParsedReleaseVendor *schema.Vendor
 }
 
 // Validate validates the query parameters for GET /tokens
@@ -139,13 +149,30 @@ func (p *ListTokensQueryParams) Validate() error {
 		return apierrors.NewValidationError("Invalid release_id: must be a positive integer")
 	}
 
-	if p.SortBy == types.TokenSortByMintNumber && p.ReleaseID == nil {
-		return apierrors.NewValidationError("sort_by=mint_number requires release_id")
+	// Validate and parse release_vendor when present.
+	releaseVendor := strings.TrimSpace(p.ReleaseVendor)
+	if releaseVendor != "" {
+		v := schema.Vendor(strings.ToLower(releaseVendor))
+		switch v {
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt, schema.VendorOpenSea:
+			p.ParsedReleaseVendor = &v
+		default:
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid release_vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", releaseVendor))
+		}
 	}
 
-	// Validate mint range filters — only valid when release_id is also provided.
-	if (p.MintFrom != nil || p.MintTo != nil) && p.ReleaseID == nil {
-		return apierrors.NewValidationError("mint_from and mint_to require release_id")
+	// hasReleaseContext is true when at least one release filter is present.
+	// sort_by=mint_number and mint_from/mint_to require this context so that
+	// mint_number ordering is meaningful.
+	hasReleaseContext := p.ReleaseID != nil || p.ParsedReleaseVendor != nil || strings.TrimSpace(p.ReleaseVendorSlug) != ""
+
+	if p.SortBy == types.TokenSortByMintNumber && !hasReleaseContext {
+		return apierrors.NewValidationError("sort_by=mint_number requires at least one of: release_id, release_vendor, release_vendor_slug")
+	}
+
+	// Validate mint range filters — require at least one release context.
+	if (p.MintFrom != nil || p.MintTo != nil) && !hasReleaseContext {
+		return apierrors.NewValidationError("mint_from and mint_to require at least one of: release_id, release_vendor, release_vendor_slug")
 	}
 	if p.MintFrom != nil && *p.MintFrom < 1 {
 		return apierrors.NewValidationError("mint_from must be >= 1")

@@ -355,11 +355,49 @@ paths:
           example: ["eip155:1:erc721:0xabc123:1234"]
         - name: release_id
           in: query
-          description: Filter by internal release ID
+          description: Filter by internal release ID. May be combined with release_vendor and/or release_vendor_slug (ANDed).
           schema:
             type: integer
             format: int64
           example: 42
+        - name: release_vendor
+          in: query
+          description: |
+            Filter tokens to releases from a given vendor. Any of release_id, release_vendor, or
+            release_vendor_slug may be supplied (all ANDed). Providing at least one release context
+            enables sort_by=mint_number and mint_from/mint_to.
+          schema:
+            type: string
+            enum: [artblocks, feralfile, fxhash, objkt, opensea]
+          example: artblocks
+        - name: release_vendor_slug
+          in: query
+          description: |
+            Filter tokens to the release whose vendor_release_slug matches (e.g. "fidenza-by-tyler-hobbs").
+            Case-sensitive. May be combined with release_id and/or release_vendor.
+          schema:
+            type: string
+          example: "fidenza-by-tyler-hobbs"
+        - name: mint_from
+          in: query
+          description: |
+            1-based mint number lower bound (inclusive). Requires at least one of:
+            release_id, release_vendor, or release_vendor_slug. mint_from must be >= 1.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          example: 1
+        - name: mint_to
+          in: query
+          description: |
+            1-based mint number upper bound (inclusive). Requires at least one of:
+            release_id, release_vendor, or release_vendor_slug. mint_to must be >= mint_from.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          example: 100
         - name: include_unviewable
           in: query
           description: Include tokens with unviewable media (no accessible media URLs). Default is false - only tokens with accessible media are returned.

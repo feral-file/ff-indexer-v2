@@ -185,15 +185,23 @@ type TokenQueryFilter struct {
 	TokenNumbers      []string
 	TokenIDs          []uint64
 	TokenCIDs         []string
-	ReleaseID         *uint64
-	// MintNumberFrom and MintNumberTo are 1-based mint range filters that apply only
-	// when ReleaseID is set. They constrain which release_members rows are returned,
-	// allowing clients to poll for indexed tokens within a specific mint range after
-	// triggering IndexRelease. Both must be set together (they are ANDed).
+	// ReleaseID filters tokens to a specific release by internal id.
+	// Any of ReleaseID, ReleaseVendor, or ReleaseVendorSlug may be set; they are ANDed.
+	ReleaseID *uint64
+	// ReleaseVendor filters tokens to releases from the given vendor (e.g. "artblocks").
+	// May be combined with ReleaseVendorSlug or ReleaseID.
+	ReleaseVendor *schema.Vendor
+	// ReleaseVendorSlug filters tokens to the release whose vendor_release_slug matches.
+	// Together with ReleaseVendor this typically identifies a single release.
+	ReleaseVendorSlug *string
+	// MintNumberFrom and MintNumberTo are 1-based mint range filters.
+	// Require at least one release context (ReleaseID, ReleaseVendor, or ReleaseVendorSlug).
+	// They constrain release_members.mint_number, allowing clients to poll for indexed
+	// tokens within a specific mint window after triggering IndexRelease.
 	MintNumberFrom    *int64
 	MintNumberTo      *int64
 	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
-	SortBy            TokenSortBy // Sort field: created_at or last_owner_provenance_timestamp
+	SortBy            TokenSortBy // Sort field: created_at, latest_provenance, or mint_number
 	SortOrder         SortOrder   // Sort order: asc or desc
 	Limit             int
 	Offset            uint64 // Offset for pagination

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -179,6 +180,12 @@ func (h *handler) ListTokens(c *gin.Context) {
 	sortBy := &queryParams.SortBy
 	sortOrder := &queryParams.SortOrder
 
+	// Build optional release_vendor_slug pointer (empty string means not provided).
+	var releaseVendorSlug *string
+	if slug := strings.TrimSpace(queryParams.ReleaseVendorSlug); slug != "" {
+		releaseVendorSlug = &slug
+	}
+
 	response, err := h.executor.GetTokens(
 		c.Request.Context(),
 		queryParams.Owners,
@@ -188,6 +195,8 @@ func (h *handler) ListTokens(c *gin.Context) {
 		queryParams.TokenIDs,
 		queryParams.TokenCIDs,
 		queryParams.ReleaseID,
+		queryParams.ParsedReleaseVendor,
+		releaseVendorSlug,
 		queryParams.MintFrom,
 		queryParams.MintTo,
 		limit,
@@ -288,6 +297,8 @@ func (h *handler) GetRelease(c *gin.Context) {
 		nil,
 		nil,
 		&releaseID,
+		nil, // no release vendor filter for member listing
+		nil, // no release vendor slug filter for member listing
 		nil, // no mint range filter for member listing
 		nil,
 		limit,

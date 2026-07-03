@@ -203,7 +203,7 @@ type ComplexityRoot struct {
 		Releases       func(childComplexity int, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) int
 		SyncCollection func(childComplexity int, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) int
 		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
-		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, mintFrom *int, mintTo *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
+		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintFrom *int, mintTo *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID *string) int
 	}
 
@@ -381,7 +381,7 @@ type ProvenanceEventResolver interface {
 }
 type QueryResolver interface {
 	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
-	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, mintFrom *int, mintTo *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
+	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintFrom *int, mintTo *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
 	Release(ctx context.Context, id Uint64) (*dto.ReleaseResponse, error)
 	Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error)
 	JobStatus(ctx context.Context, jobID int) (*dto.JobStatusResponse, error)
@@ -1094,7 +1094,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["release_id"].(*Uint64), args["mint_from"].(*int), args["mint_to"].(*int), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
+		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["release_id"].(*Uint64), args["release_vendor"].(*string), args["release_vendor_slug"].(*string), args["mint_from"].(*int), args["mint_to"].(*int), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
 	case "Query.workflowStatus":
 		if e.complexity.Query.WorkflowStatus == nil {
 			break
@@ -2023,9 +2023,16 @@ type Query {
     token_numbers: [String!]
     token_ids: [Uint64!]
     token_cids: [String!]
+    # release_id, release_vendor, and release_vendor_slug are all optional and ANDed.
+    # Any one of them is sufficient to enable sort_by=mint_number and mint_from/mint_to.
     release_id: Uint64
+    # release_vendor filters tokens to releases from a given vendor (e.g. "artblocks").
+    release_vendor: String
+    # release_vendor_slug filters tokens to the release whose vendor_release_slug matches
+    # (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
+    release_vendor_slug: String
     # mint_from and mint_to are 1-based mint range filters (inclusive).
-    # Only meaningful when release_id is also provided.
+    # Require at least one of release_id, release_vendor, or release_vendor_slug.
     # Clients use these to poll for indexed tokens after triggerReleaseIndexing.
     mint_from: Int
     mint_to: Int
@@ -2115,7 +2122,8 @@ type Mutation {
   # Equivalent to: POST /api/v1/releases/index
   # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
   # After Phase 1 succeeds, poll tokens(release_id, mint_from, mint_to, include_unviewable: true) to track completion.
-  # vendor: one of artblocks | feralfile | fxhash | objkt
+  # Alternatively use tokens(release_vendor_slug: "...", mint_from, mint_to, include_unviewable: true) without needing release_id.
+  # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
   # Provide exactly one of vendor_release_id or vendor_release_slug.
   # mint_from: 1-based first mint number (default 1)
   # mint_to: 1-based last mint number (required)
@@ -2498,41 +2506,51 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["release_id"] = arg6
-	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "mint_from", ec.unmarshalOInt2ᚖint)
+	arg7, err := graphql.ProcessArgField(ctx, rawArgs, "release_vendor", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["mint_from"] = arg7
-	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "mint_to", ec.unmarshalOInt2ᚖint)
+	args["release_vendor"] = arg7
+	arg8, err := graphql.ProcessArgField(ctx, rawArgs, "release_vendor_slug", ec.unmarshalOString2ᚖstring)
 	if err != nil {
 		return nil, err
 	}
-	args["mint_to"] = arg8
-	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
+	args["release_vendor_slug"] = arg8
+	arg9, err := graphql.ProcessArgField(ctx, rawArgs, "mint_from", ec.unmarshalOInt2ᚖint)
 	if err != nil {
 		return nil, err
 	}
-	args["limit"] = arg9
-	arg10, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
+	args["mint_from"] = arg9
+	arg10, err := graphql.ProcessArgField(ctx, rawArgs, "mint_to", ec.unmarshalOInt2ᚖint)
 	if err != nil {
 		return nil, err
 	}
-	args["offset"] = arg10
-	arg11, err := graphql.ProcessArgField(ctx, rawArgs, "include_unviewable", ec.unmarshalOBoolean2ᚖbool)
+	args["mint_to"] = arg10
+	arg11, err := graphql.ProcessArgField(ctx, rawArgs, "limit", ec.unmarshalOUint82ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint8)
 	if err != nil {
 		return nil, err
 	}
-	args["include_unviewable"] = arg11
-	arg12, err := graphql.ProcessArgField(ctx, rawArgs, "sort_by", ec.unmarshalOTokenSortBy2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐTokenSortBy)
+	args["limit"] = arg11
+	arg12, err := graphql.ProcessArgField(ctx, rawArgs, "offset", ec.unmarshalOUint642ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋgraphqlᚐUint64)
 	if err != nil {
 		return nil, err
 	}
-	args["sort_by"] = arg12
-	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "sort_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
+	args["offset"] = arg12
+	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "include_unviewable", ec.unmarshalOBoolean2ᚖbool)
 	if err != nil {
 		return nil, err
 	}
-	args["sort_order"] = arg13
+	args["include_unviewable"] = arg13
+	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "sort_by", ec.unmarshalOTokenSortBy2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐTokenSortBy)
+	if err != nil {
+		return nil, err
+	}
+	args["sort_by"] = arg14
+	arg15, err := graphql.ProcessArgField(ctx, rawArgs, "sort_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
+	if err != nil {
+		return nil, err
+	}
+	args["sort_order"] = arg15
 	return args, nil
 }
 
@@ -5448,7 +5466,7 @@ func (ec *executionContext) _Query_tokens(ctx context.Context, field graphql.Col
 		ec.fieldContext_Query_tokens,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["release_id"].(*Uint64), fc.Args["mint_from"].(*int), fc.Args["mint_to"].(*int), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order))
+			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["release_id"].(*Uint64), fc.Args["release_vendor"].(*string), fc.Args["release_vendor_slug"].(*string), fc.Args["mint_from"].(*int), fc.Args["mint_to"].(*int), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,

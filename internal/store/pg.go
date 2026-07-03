@@ -528,19 +528,51 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		sortOrder = SortOrderDesc // Default
 	}
 
-	needsReleaseJoin := filter.ReleaseID != nil || sortBy == TokenSortByMintNumber
-	if needsReleaseJoin {
+	// Determine whether we need a release_members join and what kind.
+	//
+	// Three cases drive the release join:
+	//   1. ReleaseID — INNER JOIN with the release_id baked into the ON clause (cheapest path).
+	//   2. ReleaseVendor / ReleaseVendorSlug — INNER JOIN without a specific release_id; a
+	//      second JOIN to the releases table adds the vendor/slug WHERE filters.
+	//   3. sort_by=mint_number only (no release filter) — LEFT JOIN so tokens without a
+	//      release membership are still included but sort last (NULLS LAST).
+	//
+	// Cases 1 and 2 can be combined: if ReleaseID is set together with vendor/slug, we
+	// keep the efficient ON-clause condition and additionally join releases for the
+	// vendor/slug filters.
+	hasVendorFilter := filter.ReleaseVendor != nil || filter.ReleaseVendorSlug != nil
+	needsReleaseMembersJoin := filter.ReleaseID != nil || hasVendorFilter || sortBy == TokenSortByMintNumber
+
+	if needsReleaseMembersJoin {
 		if filter.ReleaseID != nil {
+			// Specific release: push the equality into the ON clause for the planner.
 			query = query.Joins("JOIN release_members ON release_members.token_id = tokens.id AND release_members.release_id = ?", *filter.ReleaseID)
+		} else if hasVendorFilter {
+			// Vendor/slug filter: plain INNER JOIN; the releases table join below provides filtering.
+			query = query.Joins("JOIN release_members ON release_members.token_id = tokens.id")
 		} else {
+			// sort_by=mint_number only: LEFT JOIN preserves tokens outside any release.
 			query = query.Joins("LEFT JOIN release_members ON release_members.token_id = tokens.id")
 		}
 	}
 
-	// Mint number range filter — only meaningful (and only applied) when a release join is present.
-	// MintNumberFrom/To narrow the release_members.mint_number range so callers can poll for
+	// When filtering by vendor or slug, join releases and apply WHERE clauses.
+	// This also handles the combined case where ReleaseID + vendor/slug are both set.
+	if hasVendorFilter {
+		query = query.Joins("JOIN releases ON releases.id = release_members.release_id")
+		if filter.ReleaseVendor != nil {
+			query = query.Where("releases.vendor = ?", *filter.ReleaseVendor)
+		}
+		if filter.ReleaseVendorSlug != nil {
+			query = query.Where("releases.vendor_release_slug = ?", *filter.ReleaseVendorSlug)
+		}
+	}
+
+	// Mint number range filter — applied whenever a release context is present.
+	// MintNumberFrom/To narrow release_members.mint_number so callers can poll for
 	// indexed tokens within a specific window after triggering IndexRelease.
-	if filter.ReleaseID != nil {
+	hasReleaseContext := filter.ReleaseID != nil || hasVendorFilter
+	if hasReleaseContext {
 		if filter.MintNumberFrom != nil {
 			query = query.Where("release_members.mint_number >= ?", *filter.MintNumberFrom)
 		}

@@ -14,6 +14,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 )
 
@@ -179,4 +180,81 @@ func TestTokenResolverReleaseID_LargeID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, Uint64(9_999_999_999), *result)
+}
+
+// --- tokens(release_vendor, release_vendor_slug) ---
+
+// TestQueryResolverTokensRejectsInvalidReleaseVendor ensures an unrecognized
+// release_vendor value returns a validation error.
+func TestQueryResolverTokensRejectsInvalidReleaseVendor(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	vendor := "superrare"
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		&vendor, nil,
+		nil, nil, nil, nil, nil, nil, nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Invalid release_vendor")
+}
+
+// TestQueryResolverTokensMintNumberRequiresReleaseContext verifies that
+// sort_by=mint_number without any release context is rejected.
+func TestQueryResolverTokensMintNumberRequiresReleaseContext(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	sortBy := types.TokenSortByMintNumber
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		nil, nil,
+		nil, nil, nil, nil, nil, &sortBy, nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sort_by=mint_number requires at least one of")
+}
+
+// TestQueryResolverTokensMintRangeWithVendorSlug verifies that release_vendor_slug
+// alone is sufficient context to accept mint_from / mint_to.
+func TestQueryResolverTokensMintRangeWithVendorSlug(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	slug := "fidenza-by-tyler-hobbs"
+	from := 1
+	to := 50
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), // release vendor + slug
+			gomock.Any(), gomock.Any(), // mint range
+			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&dto.TokenListResponse{}, nil)
+
+	resolver := NewResolver(false, mockExec)
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		nil, &slug,
+		&from, &to, nil, nil, nil, nil, nil,
+	)
+	require.NoError(t, err)
 }

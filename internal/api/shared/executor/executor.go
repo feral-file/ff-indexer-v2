@@ -36,7 +36,12 @@ type Executor interface {
 	// GetTokens retrieves tokens with optional filters and expansions (bulk: fixed sub-page sizes for owners/provenance per token).
 	// mintNumberFrom and mintNumberTo are 1-based range filters that apply only when releaseID is also set;
 	// they allow clients to poll for indexed tokens within a specific mint window after triggering IndexRelease.
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, mintNumberFrom *int64, mintNumberTo *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+	// GetTokens retrieves tokens matching the given filters with optional expansions.
+	// releaseVendor and releaseVendorSlug filter tokens by their associated release's vendor
+	// and slug respectively; they may be combined with releaseID (all ANDed).
+	// mintNumberFrom/To and sort_by=mint_number require at least one of releaseID,
+	// releaseVendor, or releaseVendorSlug.
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumberFrom *int64, mintNumberTo *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
 
 	// GetRelease retrieves a release by internal id without member tokens.
 	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
@@ -225,7 +230,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, mintNumberFrom *int64, mintNumberTo *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumberFrom *int64, mintNumberTo *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -282,6 +287,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		Chains:            chains,
 		TokenCIDs:         tokenCIDs,
 		ReleaseID:         releaseID,
+		ReleaseVendor:     releaseVendor,
+		ReleaseVendorSlug: releaseVendorSlug,
 		MintNumberFrom:    mintNumberFrom,
 		MintNumberTo:      mintNumberTo,
 		IncludeUnviewable: *includeUnviewable,

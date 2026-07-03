@@ -372,7 +372,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, mintFrom *int, mintTo *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintFrom *int, mintTo *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
@@ -431,13 +431,36 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		releaseIDPtr = &id
 	}
 
-	if sortBy != nil && *sortBy == types.TokenSortByMintNumber && releaseIDPtr == nil {
-		return nil, apierrors.NewValidationError("sort_by=mint_number requires release_id")
+	// Validate and parse release_vendor.
+	var parsedReleaseVendor *schema.Vendor
+	releaseVendorVal := strings.TrimSpace(internalTypes.SafeString(releaseVendor))
+	if releaseVendorVal != "" {
+		v := schema.Vendor(strings.ToLower(releaseVendorVal))
+		switch v {
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt, schema.VendorOpenSea:
+			parsedReleaseVendor = &v
+		default:
+			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid release_vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", releaseVendorVal))
+		}
 	}
 
-	// Validate mint range filters — only meaningful when release_id is set.
-	if (mintFrom != nil || mintTo != nil) && releaseIDPtr == nil {
-		return nil, apierrors.NewValidationError("mint_from and mint_to require release_id")
+	// Normalize release_vendor_slug.
+	var parsedReleaseVendorSlug *string
+	releaseVendorSlugVal := strings.TrimSpace(internalTypes.SafeString(releaseVendorSlug))
+	if releaseVendorSlugVal != "" {
+		parsedReleaseVendorSlug = &releaseVendorSlugVal
+	}
+
+	// hasReleaseContext — at least one release filter enables sort_by=mint_number and mint range.
+	hasReleaseContext := releaseIDPtr != nil || parsedReleaseVendor != nil || parsedReleaseVendorSlug != nil
+
+	if sortBy != nil && *sortBy == types.TokenSortByMintNumber && !hasReleaseContext {
+		return nil, apierrors.NewValidationError("sort_by=mint_number requires at least one of: release_id, release_vendor, release_vendor_slug")
+	}
+
+	// Validate mint range filters — require at least one release context.
+	if (mintFrom != nil || mintTo != nil) && !hasReleaseContext {
+		return nil, apierrors.NewValidationError("mint_from and mint_to require at least one of: release_id, release_vendor, release_vendor_slug")
 	}
 	if mintFrom != nil && *mintFrom < 1 {
 		return nil, apierrors.NewValidationError("mint_from must be >= 1")
@@ -458,7 +481,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		mintToInt64 = &v
 	}
 
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, mintFromInt64, mintToInt64, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, parsedReleaseVendor, parsedReleaseVendorSlug, mintFromInt64, mintToInt64, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
 }
 
 // Release is the resolver for the release field.
@@ -663,7 +686,7 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 		sortOrder = &defaultOrder
 	}
 
-	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
 }
 
 // Offset is the resolver for the offset field.
