@@ -212,3 +212,94 @@ func TestClient_GetProjectMetadata_Integration_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// TestClient_ResolveSlug_Integration verifies slug → vendor_release_id resolution against
+// the live Art Blocks GraphQL API. These slugs are stable public URLs on artblocks.io.
+func TestClient_ResolveSlug_Integration(t *testing.T) {
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, adapter.NewJSON())
+	ctx := context.Background()
+
+	cases := []struct {
+		name                string
+		slug                string
+		wantVendorReleaseID string
+	}{
+		{
+			name:                "Fidenza",
+			slug:                "fidenza-by-tyler-hobbs",
+			wantVendorReleaseID: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78",
+		},
+		{
+			name:                "Ringers",
+			slug:                "ringers-by-dmitri-cherniak",
+			wantVendorReleaseID: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-13",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vendorReleaseID, err := client.ResolveSlug(ctx, 1, tc.slug)
+			if err != nil {
+				t.Fatalf("ResolveSlug failed (API may be unreachable): %v", err)
+			}
+			assert.Equal(t, tc.wantVendorReleaseID, vendorReleaseID)
+			t.Logf("slug %q → vendor_release_id %q", tc.slug, vendorReleaseID)
+		})
+	}
+}
+
+// TestClient_ResolveSlug_Integration_NotFound verifies unknown slugs return an error.
+func TestClient_ResolveSlug_Integration_NotFound(t *testing.T) {
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, adapter.NewJSON())
+
+	_, err := client.ResolveSlug(context.Background(), 1, "no-such-artblocks-slug-xyz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "slug not found")
+}
+
+// TestClient_GetProjectMetadata_Integration_SlugField verifies the slug field is returned
+// by the live API and matches the public artblocks.io URL slug for a known project.
+func TestClient_GetProjectMetadata_Integration_SlugField(t *testing.T) {
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, adapter.NewJSON())
+	ctx := context.Background()
+
+	const fidenzaProjectID = "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78"
+	metadata, err := client.GetProjectMetadata(ctx, 1, fidenzaProjectID)
+	if err != nil {
+		t.Fatalf("GetProjectMetadata failed (API may be unreachable): %v", err)
+	}
+
+	require.NotNil(t, metadata)
+	assert.Equal(t, "fidenza-by-tyler-hobbs", metadata.Slug)
+	assert.NotEmpty(t, metadata.Name)
+	t.Logf("Fidenza slug=%q name=%q", metadata.Slug, metadata.Name)
+}
+
+// TestClient_ResolveSlug_Integration_RoundTrip resolves a slug then fetches project metadata
+// by the derived project ID to confirm slug and ID refer to the same release.
+func TestClient_ResolveSlug_Integration_RoundTrip(t *testing.T) {
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	client := artblocks.NewClient(httpClient, ARTBLOCKS_GRAPHQL_URL, adapter.NewJSON())
+	ctx := context.Background()
+
+	const slug = "fidenza-by-tyler-hobbs"
+	vendorReleaseID, err := client.ResolveSlug(ctx, 1, slug)
+	if err != nil {
+		t.Fatalf("ResolveSlug failed: %v", err)
+	}
+
+	// vendorReleaseID is "{chainID}-{contract}-{projectID}"; strip chain prefix for GetProjectMetadata.
+	const wantProjectID = "0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78"
+	assert.Equal(t, "1-"+wantProjectID, vendorReleaseID)
+
+	metadata, err := client.GetProjectMetadata(ctx, 1, wantProjectID)
+	if err != nil {
+		t.Fatalf("GetProjectMetadata failed: %v", err)
+	}
+	require.NotNil(t, metadata)
+	assert.Equal(t, slug, metadata.Slug)
+	assert.Equal(t, "Fidenza", metadata.Name)
+}

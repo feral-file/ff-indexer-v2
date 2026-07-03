@@ -179,3 +179,107 @@ func TestGetGentk_Integration_MultipleTokens(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveSlug_Integration verifies slug → generative token ID resolution against the
+// live fxhash v2 GraphQL API. Note: project display names (e.g. "Anticyclone") are not
+// always equal to the URL slug; industrial-park is the canonical slug for GT 9997.
+func TestResolveSlug_Integration(t *testing.T) {
+	client := newIntegrationClient()
+	ctx := context.Background()
+
+	cases := []struct {
+		name              string
+		slug              string
+		wantGenerativeID  string
+	}{
+		{
+			name:             "Industrial_Park",
+			slug:             "industrial-park",
+			wantGenerativeID: "9997",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := client.ResolveSlug(ctx, tc.slug)
+			if err != nil {
+				t.Fatalf("ResolveSlug failed (API may be unreachable): %v", err)
+			}
+			assert.Equal(t, tc.wantGenerativeID, id)
+			t.Logf("slug %q → generative token id %q", tc.slug, id)
+		})
+	}
+}
+
+// TestResolveSlug_Integration_NotFound verifies unknown slugs return an error.
+func TestResolveSlug_Integration_NotFound(t *testing.T) {
+	client := newIntegrationClient()
+
+	_, err := client.ResolveSlug(context.Background(), "no-such-fxhash-slug-xyz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "slug not found")
+}
+
+// TestGetGentksByIteration_Integration fetches iteration→token mappings for a known GT.
+// Required by IndexRelease to derive on-chain CIDs for fxhash releases.
+func TestGetGentksByIteration_Integration(t *testing.T) {
+	client := newIntegrationClient()
+	ctx := context.Background()
+
+	// Resolve slug the same way IndexRelease does when triggered by vendor_release_slug.
+	const slug = "industrial-park"
+	gtID, err := client.ResolveSlug(ctx, slug)
+	if err != nil {
+		t.Fatalf("ResolveSlug failed: %v", err)
+	}
+	assert.Equal(t, "9997", gtID)
+
+	refs, err := client.GetGentksByIteration(ctx, gtID, 1, 3)
+	if err != nil {
+		t.Fatalf("GetGentksByIteration failed: %v", err)
+	}
+
+	require.NotEmpty(t, refs, "expected gentk refs for iterations 1..3")
+	for i, ref := range refs {
+		t.Logf("ref[%d]: contract=%q tokenID=%q iteration=%d",
+			i, ref.ContractAddress, ref.TokenID, ref.Iteration)
+		assert.NotEmpty(t, ref.ContractAddress)
+		assert.NotEmpty(t, ref.TokenID)
+		assert.GreaterOrEqual(t, ref.Iteration, int64(1))
+		assert.LessOrEqual(t, ref.Iteration, int64(3))
+	}
+}
+
+// TestGetGentk_Integration_SlugField verifies generative_token.slug is returned by the
+// live API (used during enrichment to populate vendor_release_slug).
+func TestGetGentk_Integration_SlugField(t *testing.T) {
+	client := newIntegrationClient()
+	ctx := context.Background()
+
+	// Resolve a known GT, then fetch a gentk from the iteration range (token IDs are not
+	// predictable from mint numbers alone on fxhash).
+	gtID, err := client.ResolveSlug(ctx, "industrial-park")
+	if err != nil {
+		t.Fatalf("ResolveSlug failed: %v", err)
+	}
+
+	refs, err := client.GetGentksByIteration(ctx, gtID, 1, 1)
+	if err != nil {
+		t.Fatalf("GetGentksByIteration failed: %v", err)
+	}
+	require.NotEmpty(t, refs, "need at least one gentk ref for iteration 1")
+
+	ref := refs[0]
+	gentk, err := client.GetGentk(ctx, ref.ContractAddress, ref.TokenID)
+	if err != nil {
+		t.Fatalf("GetGentk failed: %v", err)
+	}
+	if gentk == nil {
+		t.Fatalf("expected gentk %s/%s to be indexed", ref.ContractAddress, ref.TokenID)
+	}
+
+	require.NotNil(t, gentk.GenerativeToken)
+	assert.Equal(t, "9997", gentk.GenerativeToken.ID)
+	assert.Equal(t, "industrial-park", gentk.GenerativeToken.Slug)
+	t.Logf("GenerativeToken slug=%q name=%q", gentk.GenerativeToken.Slug, gentk.GenerativeToken.Name)
+}
