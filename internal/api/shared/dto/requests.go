@@ -2,6 +2,7 @@ package dto
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
@@ -95,6 +96,64 @@ func (r *TriggerMetadataIndexingRequest) Validate() error {
 	}
 
 	return nil
+}
+
+// TriggerReleaseIndexingRequest represents the request body for POST /api/v1/releases/index.
+// It triggers asynchronous indexing of tokens within a mint range for a given vendor release.
+type TriggerReleaseIndexingRequest struct {
+	// Vendor identifies the source platform. Must be one of: artblocks, feralfile, fxhash, objkt.
+	Vendor string `json:"vendor"`
+	// VendorReleaseID is the platform-specific release key:
+	//   artblocks: "{chainID}-{contract}-{projectID}" (e.g. "1-0xa7d...-78")
+	//   feralfile: series UUID (e.g. "abc-123-...")
+	//   fxhash:    generative token ID (e.g. "9997")
+	//   objkt:     KT1 contract address (e.g. "KT1abc...")
+	VendorReleaseID string `json:"vendor_release_id"`
+	// MintFrom is the first mint number to index (1-based, inclusive). Defaults to 1 when omitted.
+	MintFrom *int64 `json:"mint_from,omitempty"`
+	// MintTo is the last mint number to index (1-based, inclusive, required).
+	MintTo int64 `json:"mint_to"`
+}
+
+// Validate validates the TriggerReleaseIndexingRequest.
+func (r *TriggerReleaseIndexingRequest) Validate() error {
+	// Resolve mint_from default.
+	mintFrom := int64(1)
+	if r.MintFrom != nil {
+		mintFrom = *r.MintFrom
+	}
+
+	if strings.TrimSpace(r.Vendor) == "" {
+		return apierrors.NewValidationError("vendor is required")
+	}
+	switch r.Vendor {
+	case "artblocks", "feralfile", "fxhash", "objkt":
+		// valid
+	default:
+		return apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", r.Vendor))
+	}
+
+	if strings.TrimSpace(r.VendorReleaseID) == "" {
+		return apierrors.NewValidationError("vendor_release_id is required")
+	}
+	if mintFrom < 1 {
+		return apierrors.NewValidationError("mint_from must be >= 1")
+	}
+	if r.MintTo < mintFrom {
+		return apierrors.NewValidationError("mint_to must be >= mint_from")
+	}
+	if r.MintTo-mintFrom+1 > constants.MAX_RELEASE_MINT_RANGE {
+		return apierrors.NewValidationError(fmt.Sprintf("mint range too large: max %d tokens per request", constants.MAX_RELEASE_MINT_RANGE))
+	}
+	return nil
+}
+
+// ResolvedMintFrom returns the effective mint_from value (defaults to 1).
+func (r *TriggerReleaseIndexingRequest) ResolvedMintFrom() int64 {
+	if r.MintFrom != nil {
+		return *r.MintFrom
+	}
+	return 1
 }
 
 // CreateWebhookClientRequest represents the request body for creating a webhook client

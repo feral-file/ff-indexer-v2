@@ -14,9 +14,8 @@ import (
 	io "io"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockMediaProvider is a mock of Provider interface.

@@ -3,6 +3,8 @@ package fxhash_test
 import (
 	"context"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,4 +186,130 @@ func TestGetGentk_CompositeID(t *testing.T) {
 	gentk, err := client.GetGentk(context.Background(), "KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE", "777")
 	require.NoError(t, err)
 	assert.Nil(t, gentk)
+}
+
+// TestGetGentksByIteration_Success verifies that a single-page result is returned correctly.
+func TestGetGentksByIteration_Success(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{
+		"data": {
+			"onchain": {
+				"objkt": [
+					{"id": "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi-1", "iteration": "1"},
+					{"id": "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi-2", "iteration": "2"},
+					{"id": "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi-3", "iteration": "3"}
+				]
+			}
+		}
+	}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 3)
+
+	require.NoError(t, err)
+	require.Len(t, refs, 3)
+	assert.Equal(t, "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", refs[0].ContractAddress)
+	assert.Equal(t, "1", refs[0].TokenID)
+	assert.Equal(t, int64(1), refs[0].Iteration)
+	assert.Equal(t, "2", refs[1].TokenID)
+	assert.Equal(t, int64(2), refs[1].Iteration)
+	assert.Equal(t, "3", refs[2].TokenID)
+}
+
+// TestGetGentksByIteration_EmptyResult verifies that an empty API response returns an empty slice.
+func TestGetGentksByIteration_EmptyResult(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{"data":{"onchain":{"objkt":[]}}}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 10)
+
+	require.NoError(t, err)
+	assert.Empty(t, refs)
+}
+
+// TestGetGentksByIteration_HTTPError verifies that HTTP errors are propagated.
+func TestGetGentksByIteration_HTTPError(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(nil, assert.AnError)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 10)
+
+	assert.Error(t, err)
+	assert.Nil(t, refs)
+	assert.Contains(t, err.Error(), "failed to call fxhash v2 API")
+}
+
+// TestGetGentksByIteration_GraphQLError verifies that GraphQL-level errors are returned as errors.
+func TestGetGentksByIteration_GraphQLError(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{"errors": [{"message": "query timeout"}]}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 10)
+
+	assert.Error(t, err)
+	assert.Nil(t, refs)
+	assert.Contains(t, err.Error(), "fxhash API error")
+}
+
+// TestGetGentksByIteration_Pagination verifies that results spanning more than one page
+// trigger a second HTTP request and that both pages are combined into the result.
+func TestGetGentksByIteration_Pagination(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	// Build a JSON page of `count` gentk objects.
+	buildPage := func(startIdx, count int) []byte {
+		items := make([]string, count)
+		for i := 0; i < count; i++ {
+			n := startIdx + i
+			items[i] = `{"id":"KT1abc-` + strconv.Itoa(n) + `","iteration":"` + strconv.Itoa(n) + `"}`
+		}
+		return []byte(`{"data":{"onchain":{"objkt":[` + strings.Join(items, ",") + `]}}}`)
+	}
+
+	const pageSize = 100 // matches fxhashIterationPageSize in client.go
+
+	// First call returns a full page (triggers pagination).
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(buildPage(1, pageSize), nil).
+		Times(1)
+
+	// Second call returns a partial page (signals last page).
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(buildPage(pageSize+1, 1), nil).
+		Times(1)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, pageSize+1)
+
+	require.NoError(t, err)
+	assert.Len(t, refs, pageSize+1)
 }

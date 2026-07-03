@@ -13,9 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	fxhash "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockFxhashClient is a mock of Client interface.
@@ -55,4 +54,19 @@ func (m *MockFxhashClient) GetGentk(ctx context.Context, contractAddress, tokenI
 func (mr *MockFxhashClientMockRecorder) GetGentk(ctx, contractAddress, tokenID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGentk", reflect.TypeOf((*MockFxhashClient)(nil).GetGentk), ctx, contractAddress, tokenID)
+}
+
+// GetGentksByIteration mocks base method.
+func (m *MockFxhashClient) GetGentksByIteration(ctx context.Context, generativeTokenID string, iterationFrom, iterationTo int64) ([]fxhash.GentkRef, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetGentksByIteration", ctx, generativeTokenID, iterationFrom, iterationTo)
+	ret0, _ := ret[0].([]fxhash.GentkRef)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetGentksByIteration indicates an expected call of GetGentksByIteration.
+func (mr *MockFxhashClientMockRecorder) GetGentksByIteration(ctx, generativeTokenID, iterationFrom, iterationTo any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGentksByIteration", reflect.TypeOf((*MockFxhashClient)(nil).GetGentksByIteration), ctx, generativeTokenID, iterationFrom, iterationTo)
 }

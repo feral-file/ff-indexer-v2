@@ -13,9 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	objkt "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockObjktClient is a mock of Client interface.

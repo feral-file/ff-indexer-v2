@@ -60,6 +60,11 @@ type ListTokensQueryParams struct {
 	TokenIDs          []uint64       `form:"token_id"`
 	TokenCIDs         []string       `form:"token_cid"`
 	ReleaseID         *uint64        `form:"release_id"`
+	// MintFrom and MintTo are 1-based mint number range filters.
+	// Only meaningful (and validated) when release_id is also set.
+	// Clients use these to poll for indexed tokens after triggering IndexRelease.
+	MintFrom          *int64         `form:"mint_from"`
+	MintTo            *int64         `form:"mint_to"`
 	IncludeUnviewable bool           `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
 
 	// Pagination
@@ -136,6 +141,17 @@ func (p *ListTokensQueryParams) Validate() error {
 
 	if p.SortBy == types.TokenSortByMintNumber && p.ReleaseID == nil {
 		return apierrors.NewValidationError("sort_by=mint_number requires release_id")
+	}
+
+	// Validate mint range filters — only valid when release_id is also provided.
+	if (p.MintFrom != nil || p.MintTo != nil) && p.ReleaseID == nil {
+		return apierrors.NewValidationError("mint_from and mint_to require release_id")
+	}
+	if p.MintFrom != nil && *p.MintFrom < 1 {
+		return apierrors.NewValidationError("mint_from must be >= 1")
+	}
+	if p.MintFrom != nil && p.MintTo != nil && *p.MintTo < *p.MintFrom {
+		return apierrors.NewValidationError("mint_to must be >= mint_from")
 	}
 
 	// Validate sort_order

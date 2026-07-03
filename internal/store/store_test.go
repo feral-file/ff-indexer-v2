@@ -2630,6 +2630,74 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.Len(t, resultsMixedInclude, 1)
 	})
+
+	t.Run("filter by release mint range", func(t *testing.T) {
+		// Create 5 tokens and assign them mint numbers 1–5 in a release.
+		const mintRangeContract = "0x000000000000000000000000000000000000ff01"
+		var mintTokens [5]*schema.Token
+		for i := range 5 {
+			inp := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, mintRangeContract, strconv.Itoa(i+1), "0xmintrange")
+			require.NoError(t, store.CreateTokenMint(ctx, inp))
+			tok, err := store.GetTokenByTokenCID(ctx, inp.Token.TokenCID)
+			require.NoError(t, err)
+			require.NotNil(t, tok)
+			mintTokens[i] = tok
+		}
+
+		rel, err := store.UpsertRelease(ctx, schema.VendorArtBlocks, mintRangeContract+"-mintrangetest", nil, nil)
+		require.NoError(t, err)
+
+		for i, tok := range mintTokens {
+			require.NoError(t, store.UpsertReleaseMember(ctx, rel.ID, tok.ID, int64(i+1)))
+		}
+
+		releaseID := rel.ID
+		from := int64(2)
+		to := int64(4)
+
+		// Query mint numbers 2–4: should return tokens at index 1,2,3 (mint numbers 2,3,4).
+		results, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ReleaseID:         &releaseID,
+			MintNumberFrom:    &from,
+			MintNumberTo:      &to,
+			SortBy:            TokenSortByMintNumber,
+			SortOrder:         SortOrderAsc,
+			Limit:             10,
+			IncludeUnviewable: true,
+		})
+		require.NoError(t, err)
+		require.Len(t, results, 3, "should return exactly 3 tokens for mint range 2–4")
+		assert.Equal(t, mintTokens[1].ID, results[0].ID, "first result should be mint #2")
+		assert.Equal(t, mintTokens[2].ID, results[1].ID, "second result should be mint #3")
+		assert.Equal(t, mintTokens[3].ID, results[2].ID, "third result should be mint #4")
+
+		// Query mint number 1 only.
+		fromOne := int64(1)
+		toOne := int64(1)
+		single, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ReleaseID:         &releaseID,
+			MintNumberFrom:    &fromOne,
+			MintNumberTo:      &toOne,
+			SortBy:            TokenSortByMintNumber,
+			SortOrder:         SortOrderAsc,
+			Limit:             10,
+			IncludeUnviewable: true,
+		})
+		require.NoError(t, err)
+		require.Len(t, single, 1)
+		assert.Equal(t, mintTokens[0].ID, single[0].ID, "should return only mint #1")
+
+		// Without MintNumberFrom/To but with ReleaseID: should return all 5 tokens.
+		all, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			ReleaseID:         &releaseID,
+			SortBy:            TokenSortByMintNumber,
+			SortOrder:         SortOrderAsc,
+			Limit:             10,
+			IncludeUnviewable: true,
+		})
+		require.NoError(t, err)
+		assert.Len(t, all, 5, "without mint range filter all 5 tokens should appear")
+	})
 }
 
 // =============================================================================

@@ -185,6 +185,12 @@ type TokenQueryFilter struct {
 	TokenIDs          []uint64
 	TokenCIDs         []string
 	ReleaseID         *uint64
+	// MintNumberFrom and MintNumberTo are 1-based mint range filters that apply only
+	// when ReleaseID is set. They constrain which release_members rows are returned,
+	// allowing clients to poll for indexed tokens within a specific mint range after
+	// triggering IndexRelease. Both must be set together (they are ANDed).
+	MintNumberFrom    *int64
+	MintNumberTo      *int64
 	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
 	SortBy            TokenSortBy // Sort field: created_at or last_owner_provenance_timestamp
 	SortOrder         SortOrder   // Sort order: asc or desc

@@ -442,6 +442,107 @@ func TestArtwork_CanonicalName(t *testing.T) {
 	}
 }
 
+// TestGetSeriesArtworks_Success verifies that artworks are parsed and returned correctly.
+func TestGetSeriesArtworks_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, result interface{}) error {
+			return json.Unmarshal([]byte(`{
+				"result": [
+					{"index":0,"chain":"ethereum","contractAddress":"0xabc","tokenID":"1"},
+					{"index":1,"chain":"tezos","contractAddress":"KT1xyz","tokenID":"2"}
+				]
+			}`), result)
+		}).
+		Times(1)
+
+	refs, err := client.GetSeriesArtworks(context.Background(), "series-uuid", 1, 2)
+
+	require.NoError(t, err)
+	require.Len(t, refs, 2)
+	assert.Equal(t, int64(0), refs[0].Index)
+	assert.Equal(t, "ethereum", refs[0].Chain)
+	assert.Equal(t, "0xabc", refs[0].ContractAddress)
+	assert.Equal(t, "1", refs[0].TokenID)
+	assert.Equal(t, int64(1), refs[1].Index)
+	assert.Equal(t, "tezos", refs[1].Chain)
+}
+
+// TestGetSeriesArtworks_EmptyResult verifies that an empty API result returns an empty slice.
+func TestGetSeriesArtworks_EmptyResult(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, result interface{}) error {
+			return json.Unmarshal([]byte(`{"result":[]}`), result)
+		}).
+		Times(1)
+
+	refs, err := client.GetSeriesArtworks(context.Background(), "series-uuid", 1, 10)
+
+	require.NoError(t, err)
+	assert.Empty(t, refs)
+}
+
+// TestGetSeriesArtworks_HTTPError verifies that HTTP errors are propagated.
+func TestGetSeriesArtworks_HTTPError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("connection refused")).
+		Times(1)
+
+	refs, err := client.GetSeriesArtworks(context.Background(), "series-uuid", 1, 10)
+
+	assert.Error(t, err)
+	assert.Nil(t, refs)
+	assert.Contains(t, err.Error(), "failed to call Feral File artworks API")
+}
+
+// TestGetSeriesArtworks_URLContainsSeriesAndOffset verifies that the correct API URL is
+// constructed with the seriesID, sortBy, sortOrder, offset, and limit parameters.
+func TestGetSeriesArtworks_URLContainsSeriesAndOffset(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	var capturedURL string
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, url string, result interface{}) error {
+			capturedURL = url
+			return json.Unmarshal([]byte(`{"result":[]}`), result)
+		}).
+		Times(1)
+
+	_, _ = client.GetSeriesArtworks(context.Background(), "abc-123", 3, 5)
+
+	// mintFrom=3 → offset=(3-1)=2; range=3 → limit=3
+	assert.Contains(t, capturedURL, "seriesID=abc-123")
+	assert.Contains(t, capturedURL, "sortBy=index")
+	assert.Contains(t, capturedURL, "sortOrder=ASC")
+	assert.Contains(t, capturedURL, "offset=2")
+	assert.Contains(t, capturedURL, "limit=3")
+}
+
 // TestURL tests the URL helper function
 func TestURL(t *testing.T) {
 	tests := []struct {

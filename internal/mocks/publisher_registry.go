@@ -12,10 +12,9 @@ package mocks
 import (
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	registry "github.com/feral-file/ff-indexer-v2/internal/registry"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockPublisherRegistry is a mock of PublisherRegistry interface.

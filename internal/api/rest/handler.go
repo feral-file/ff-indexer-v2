@@ -41,6 +41,10 @@ type Handler interface {
 	// POST /api/v1/tokens/index
 	TriggerTokenIndexing(c *gin.Context)
 
+	// TriggerReleaseIndexing triggers asynchronous indexing for all tokens in a vendor release within a mint range (open, no auth required)
+	// POST /api/v1/releases/index
+	TriggerReleaseIndexing(c *gin.Context)
+
 	// TriggerAddressIndexing triggers indexing for tokens by owner addresses with job tracking (requires authentication)
 	// POST /api/v1/tokens/addresses/index
 	TriggerAddressIndexing(c *gin.Context)
@@ -184,6 +188,8 @@ func (h *handler) ListTokens(c *gin.Context) {
 		queryParams.TokenIDs,
 		queryParams.TokenCIDs,
 		queryParams.ReleaseID,
+		queryParams.MintFrom,
+		queryParams.MintTo,
 		limit,
 		offset,
 		includeUnviewable,
@@ -281,6 +287,8 @@ func (h *handler) GetRelease(c *gin.Context) {
 		nil,
 		nil,
 		&releaseID,
+		nil, // no mint range filter for member listing
+		nil,
 		limit,
 		offset,
 		&includeUnviewable,
@@ -320,6 +328,35 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 
 	if err != nil {
 		respondInternalError(c, err, "Failed to trigger indexing")
+		return
+	}
+
+	c.JSON(http.StatusAccepted, response)
+}
+
+// TriggerReleaseIndexing triggers asynchronous indexing for all tokens in a vendor release within a mint range.
+// POST /api/v1/releases/index
+func (h *handler) TriggerReleaseIndexing(c *gin.Context) {
+	var req dto.TriggerReleaseIndexingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	if err := req.Validate(); err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	response, err := h.executor.TriggerReleaseIndexing(
+		c.Request.Context(),
+		req.Vendor,
+		req.VendorReleaseID,
+		req.ResolvedMintFrom(),
+		req.MintTo,
+	)
+	if err != nil {
+		respondInternalError(c, err, "Failed to trigger release indexing")
 		return
 	}
 

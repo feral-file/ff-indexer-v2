@@ -16,9 +16,8 @@ import (
 	reflect "reflect"
 
 	vips "github.com/cshum/vipsgen/vips"
-	gomock "go.uber.org/mock/gomock"
-
 	adapter "github.com/feral-file/ff-indexer-v2/internal/adapter"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockVipsImage is a mock of VipsImage interface.

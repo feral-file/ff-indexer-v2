@@ -13,9 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	ratelimit "github.com/feral-file/ff-indexer-v2/internal/ratelimit"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockLimiter is a mock of Limiter interface.

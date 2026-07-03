@@ -537,6 +537,18 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		}
 	}
 
+	// Mint number range filter — only meaningful (and only applied) when a release join is present.
+	// MintNumberFrom/To narrow the release_members.mint_number range so callers can poll for
+	// indexed tokens within a specific window after triggering IndexRelease.
+	if filter.ReleaseID != nil {
+		if filter.MintNumberFrom != nil {
+			query = query.Where("release_members.mint_number >= ?", *filter.MintNumberFrom)
+		}
+		if filter.MintNumberTo != nil {
+			query = query.Where("release_members.mint_number <= ?", *filter.MintNumberTo)
+		}
+	}
+
 	// If filtering by owners and sorting by last_owner_provenance_timestamp,
 	// join with token_ownership_provenance for owner-specific sorting
 	if len(filter.Owners) > 0 && sortBy == TokenSortByLatestProvenance {

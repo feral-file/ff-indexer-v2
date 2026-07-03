@@ -13,9 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	artblocks "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/artblocks"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockArtBlocksClient is a mock of Client interface.

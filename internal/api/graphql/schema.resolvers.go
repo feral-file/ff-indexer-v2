@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
-	"go.uber.org/zap"
-
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
@@ -24,6 +22,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
+	"go.uber.org/zap"
 )
 
 // TokenID is the resolver for the token_id field.
@@ -208,6 +207,15 @@ func (r *mutationResolver) TriggerMetadataIndexing(ctx context.Context, tokenIds
 	return wr, nil
 }
 
+// TriggerReleaseIndexing is the resolver for the triggerReleaseIndexing field.
+func (r *mutationResolver) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, mintFrom *int, mintTo int) (*dto.TriggerIndexingResponse, error) {
+	mintFromInt64 := int64(1)
+	if mintFrom != nil {
+		mintFromInt64 = int64(*mintFrom)
+	}
+	return r.executor.TriggerReleaseIndexing(ctx, vendor, vendorReleaseID, mintFromInt64, int64(mintTo))
+}
+
 // CreateWebhookClient is the resolver for the createWebhookClient field.
 func (r *mutationResolver) CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts *int) (*dto.CreateWebhookClientResponse, error) {
 	// Validate: webhook URL must be provided
@@ -355,7 +363,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, mintFrom *int, mintTo *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
@@ -418,7 +426,30 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		return nil, apierrors.NewValidationError("sort_by=mint_number requires release_id")
 	}
 
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+	// Validate mint range filters — only meaningful when release_id is set.
+	if (mintFrom != nil || mintTo != nil) && releaseIDPtr == nil {
+		return nil, apierrors.NewValidationError("mint_from and mint_to require release_id")
+	}
+	if mintFrom != nil && *mintFrom < 1 {
+		return nil, apierrors.NewValidationError("mint_from must be >= 1")
+	}
+	if mintFrom != nil && mintTo != nil && *mintTo < *mintFrom {
+		return nil, apierrors.NewValidationError("mint_to must be >= mint_from")
+	}
+
+	// Convert *int to *int64 for the executor layer.
+	var mintFromInt64 *int64
+	if mintFrom != nil {
+		v := int64(*mintFrom)
+		mintFromInt64 = &v
+	}
+	var mintToInt64 *int64
+	if mintTo != nil {
+		v := int64(*mintTo)
+		mintToInt64 = &v
+	}
+
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, mintFromInt64, mintToInt64, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
 }
 
 // Release is the resolver for the release field.
@@ -617,7 +648,7 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 		sortOrder = &defaultOrder
 	}
 
-	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
 }
 
 // Offset is the resolver for the offset field.

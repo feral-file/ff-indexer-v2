@@ -283,6 +283,11 @@ type Query {
     token_ids: [Uint64!]
     token_cids: [String!]
     release_id: Uint64
+    # mint_from and mint_to are 1-based mint range filters (inclusive).
+    # Only meaningful when release_id is also provided.
+    # Clients use these to poll for indexed tokens after triggerReleaseIndexing.
+    mint_from: Int
+    mint_to: Int
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
@@ -361,6 +366,20 @@ type Mutation {
   triggerMetadataIndexing(
     token_ids: [Uint64!]
     token_cids: [String!]
+  ): TriggerIndexingResult
+
+  # Trigger asynchronous indexing for all tokens in a vendor release within a mint range.
+  # Equivalent to: POST /api/v1/releases/index
+  # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
+  # After Phase 1 succeeds, poll tokens(release_id, mint_from, mint_to, include_unviewable: true) to track completion.
+  # vendor: one of artblocks | feralfile | fxhash | objkt
+  # mint_from: 1-based first mint number (default 1)
+  # mint_to: 1-based last mint number (required)
+  triggerReleaseIndexing(
+    vendor: String!
+    vendor_release_id: String!
+    mint_from: Int
+    mint_to: Int!
   ): TriggerIndexingResult
 
   # Create a new webhook client (requires API key authentication only, JWT not accepted)

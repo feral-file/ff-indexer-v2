@@ -34,7 +34,9 @@ type Executor interface {
 	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions (bulk: fixed sub-page sizes for owners/provenance per token).
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+	// mintNumberFrom and mintNumberTo are 1-based range filters that apply only when releaseID is also set;
+	// they allow clients to poll for indexed tokens within a specific mint window after triggering IndexRelease.
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, mintNumberFrom *int64, mintNumberTo *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
 
 	// GetRelease retrieves a release by internal id without member tokens.
 	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
@@ -53,6 +55,13 @@ type Executor interface {
 
 	// TriggerMetadataIndexing triggers metadata refresh for one or more tokens by IDs or CIDs
 	TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint64, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error)
+
+	// TriggerReleaseIndexing enqueues an IndexRelease job that derives token CIDs for the
+	// given vendor + release + mint range and fans them into IndexTokens child jobs.
+	// Returns a job id for tracking Phase 1 (CID derivation + fan-out) completion.
+	// After Phase 1 succeeds, clients poll GET /api/v1/tokens?release_id=X&mint_from=...&mint_to=...
+	// with offset-based pagination to track how many tokens have been indexed.
+	TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error)
 
 	// GetJobStatus returns status for a postgres job row
 	GetJobStatus(ctx context.Context, jobID int64) (*dto.JobStatusResponse, error)
@@ -213,7 +222,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, mintNumberFrom *int64, mintNumberTo *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -270,6 +279,8 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		Chains:            chains,
 		TokenCIDs:         tokenCIDs,
 		ReleaseID:         releaseID,
+		MintNumberFrom:    mintNumberFrom,
+		MintNumberTo:      mintNumberTo,
 		IncludeUnviewable: *includeUnviewable,
 		SortBy:            storeSortBy,
 		SortOrder:         storeSortOrder,
@@ -603,6 +614,48 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 	}
 	if j == nil {
 		return nil, apierrors.NewServiceError("Failed to trigger indexing: empty job")
+	}
+
+	return newTriggerIndexingResponse(j.ID), nil
+}
+
+// TriggerReleaseIndexing enqueues an IndexRelease job for the given vendor + release + mint range.
+//
+// The job (Phase 1) derives token CIDs using the per-vendor strategy and fans them into
+// chunked IndexTokens jobs (Phase 2). Phase 1 is typically fast (seconds for AB/objkt,
+// seconds-to-minutes for fxhash/FF depending on range size and API latency).
+//
+// Validation: vendor must be one of artblocks|feralfile|fxhash|objkt; mint_from >= 1;
+// mint_to >= mint_from; range <= MAX_RELEASE_MINT_RANGE.
+func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error) {
+	switch vendor {
+	case "artblocks", "feralfile", "fxhash", "objkt":
+		// valid
+	default:
+		return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
+	}
+	if mintFrom < 1 {
+		return nil, apierrors.NewValidationError("mint_from must be >= 1")
+	}
+	if mintTo < mintFrom {
+		return nil, apierrors.NewValidationError("mint_to must be >= mint_from")
+	}
+	if mintTo-mintFrom+1 > constants.MAX_RELEASE_MINT_RANGE {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("mint range too large: max %d tokens per request", constants.MAX_RELEASE_MINT_RANGE))
+	}
+
+	uniqueKey := fmt.Sprintf("index-release-%s-%s-%d-%d", vendor, vendorReleaseID, mintFrom, mintTo)
+	j, _, err := e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+		Queue:     e.tokenQueue,
+		Kind:      "IndexRelease",
+		Args:      []any{vendor, vendorReleaseID, mintFrom, mintTo},
+		UniqueKey: &uniqueKey,
+	})
+	if err != nil {
+		return nil, apierrors.NewServiceError(fmt.Sprintf("Failed to trigger release indexing: %v", err))
+	}
+	if j == nil {
+		return nil, apierrors.NewServiceError("Failed to trigger release indexing: empty job")
 	}
 
 	return newTriggerIndexingResponse(j.ID), nil

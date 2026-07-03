@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
@@ -325,3 +326,150 @@ func TestParseListTokensQueryInvalidSortOrderPassesThroughToValidate(t *testing.
 	require.ErrorAs(t, validateErr, &apiErr)
 	assert.Contains(t, apiErr.Details, "Invalid sort_order")
 }
+
+// ─── Mint range filter on ListTokensQueryParams ───────────────────────────────
+
+func TestListTokensQueryParamsMintRangeRequiresReleaseID(t *testing.T) {
+	t.Parallel()
+
+	from := int64(1)
+	to := int64(10)
+	params := ListTokensQueryParams{
+		MintFrom:  &from,
+		MintTo:    &to,
+		SortOrder: types.OrderAsc,
+		SortBy:    types.TokenLatestProvenance,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "release_id")
+}
+
+func TestListTokensQueryParamsMintRangeValidWithReleaseID(t *testing.T) {
+	t.Parallel()
+
+	releaseID := uint64(5)
+	from := int64(1)
+	to := int64(100)
+	params := ListTokensQueryParams{
+		ReleaseID: &releaseID,
+		MintFrom:  &from,
+		MintTo:    &to,
+		SortBy:    types.TokenSortByMintNumber,
+		SortOrder: types.OrderAsc,
+	}
+
+	assert.NoError(t, params.Validate())
+}
+
+func TestListTokensQueryParamsMintFromMustBePositive(t *testing.T) {
+	t.Parallel()
+
+	releaseID := uint64(5)
+	zero := int64(0)
+	to := int64(10)
+	params := ListTokensQueryParams{
+		ReleaseID: &releaseID,
+		MintFrom:  &zero,
+		MintTo:    &to,
+		SortBy:    types.TokenSortByMintNumber,
+		SortOrder: types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "mint_from must be >= 1")
+}
+
+func TestListTokensQueryParamsMintToMustBeGEMintFrom(t *testing.T) {
+	t.Parallel()
+
+	releaseID := uint64(5)
+	from := int64(10)
+	to := int64(5)
+	params := ListTokensQueryParams{
+		ReleaseID: &releaseID,
+		MintFrom:  &from,
+		MintTo:    &to,
+		SortBy:    types.TokenSortByMintNumber,
+		SortOrder: types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "mint_to must be >= mint_from")
+}
+
+func TestParseListTokensQueryMintRange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/tokens?release_id=7&mint_from=3&mint_to=25&sort_by=mint_number&sort_order=asc", nil)
+
+	params, err := ParseListTokensQuery(c)
+	require.NoError(t, err)
+	require.NotNil(t, params)
+
+	require.NotNil(t, params.MintFrom)
+	require.NotNil(t, params.MintTo)
+	assert.Equal(t, int64(3), *params.MintFrom)
+	assert.Equal(t, int64(25), *params.MintTo)
+
+	assert.NoError(t, params.Validate())
+}
+
+// ─── TriggerReleaseIndexingRequest DTO ───────────────────────────────────────
+
+func TestTriggerReleaseIndexingRequestValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		vendor  string
+		id      string
+		from    *int64
+		to      int64
+		wantErr string // matched against APIError.Details (empty = expect no error)
+	}{
+		{"valid artblocks", "artblocks", "1-0xabc-78", nil, 100, ""},
+		{"valid feralfile", "feralfile", "series-uuid", nil, 50, ""},
+		{"valid fxhash", "fxhash", "9997", nil, 50, ""},
+		{"valid objkt", "objkt", "KT1abc", nil, 100, ""},
+		{"missing vendor", "", "abc", nil, 10, "vendor is required"},
+		{"invalid vendor", "superrare", "abc", nil, 10, "unsupported vendor"},
+		{"missing release id", "artblocks", "", nil, 10, "vendor_release_id is required"},
+		{"mint_to < mint_from", "artblocks", "abc", int64Ptr(5), 3, "mint_to must be"},
+		{"mint_from < 1", "artblocks", "abc", int64Ptr(0), 10, "mint_from must be"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := dto.TriggerReleaseIndexingRequest{
+				Vendor:          tt.vendor,
+				VendorReleaseID: tt.id,
+				MintFrom:        tt.from,
+				MintTo:          tt.to,
+			}
+			err := req.Validate()
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				var apiErr *apierrors.APIError
+				require.ErrorAs(t, err, &apiErr)
+				assert.Contains(t, apiErr.Details, tt.wantErr)
+			}
+		})
+	}
+}
+
+func int64Ptr(v int64) *int64 { return &v }

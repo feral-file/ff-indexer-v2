@@ -3,16 +3,25 @@
 // belongs to a generative token (the project/release). This client fetches gentk data
 // including its release membership and artist using the fxhash v2 API's onchain.objkt_by_pk
 // query, keyed by "{contract}-{tokenID}".
+//
+// GetGentksByIteration uses the bulk objkt list query to resolve on-chain token identities
+// for a range of mint iterations, which is required for release-level CID derivation.
 package fxhash
 
 import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 )
+
+// fxhashIterationPageSize is the number of gentks fetched per request in GetGentksByIteration.
+// Chosen conservatively to stay within Hasura's default row limit.
+const fxhashIterationPageSize = 100
 
 const PROVIDER_NAME = "fxhash"
 
@@ -70,6 +79,36 @@ type GQLResponse struct {
 	} `json:"errors"`
 }
 
+// GentkRef holds the minimal on-chain identity of a fxhash gentk, resolved from
+// a bulk iteration-range query. Used for release-level CID derivation without
+// full metadata enrichment.
+type GentkRef struct {
+	// ContractAddress is the Tezos KT1 contract address of the FA2 token.
+	ContractAddress string
+	// TokenID is the on-chain FA2 token ID (numeric string).
+	TokenID string
+	// Iteration is the 1-based mint number within the generative token.
+	Iteration int64
+}
+
+// gqlListResponse wraps the fxhash v2 API response for bulk gentk list queries
+// (onchain.objkt with where/limit/offset). Only the fields needed for CID
+// derivation are decoded.
+type gqlListResponse struct {
+	Data struct {
+		Onchain struct {
+			Objkt []struct {
+				// ID is the composite "{contract}-{tokenID}" key used by the fxhash API.
+				ID        string `json:"id"`
+				Iteration string `json:"iteration"` // numeric string, 1-based
+			} `json:"objkt"`
+		} `json:"onchain"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
 // Client defines the interface for fxhash client operations.
 //
 //go:generate mockgen -source=client.go -destination=../../../mocks/fxhash_client.go -package=mocks -mock_names=Client=MockFxhashClient
@@ -80,6 +119,20 @@ type Client interface {
 	// fxhash v2 API does not yet index it). The caller should treat nil as "not found"
 	// and fall through to objkt enrichment.
 	GetGentk(ctx context.Context, contractAddress, tokenID string) (*Gentk, error)
+
+	// GetGentksByIteration fetches fxhash gentks for a generative token within a 1-based
+	// iteration range [iterationFrom, iterationTo] (inclusive). Results are paginated
+	// internally so the caller always receives the full requested range.
+	//
+	// Gentk token IDs are global integers that cannot be derived from mint numbers
+	// by math alone — this API call is required for release-level CID derivation.
+	// The returned GentkRefs include the on-chain (ContractAddress, TokenID) pair
+	// needed to build a tezos:mainnet:fa2:{contract}:{tokenID} CID.
+	//
+	// Returns an empty slice when no gentks exist for the given iteration range
+	// (e.g. a range beyond the current supply). Never returns a partial result on
+	// error; any HTTP or GraphQL error causes the method to return an error.
+	GetGentksByIteration(ctx context.Context, generativeTokenID string, iterationFrom, iterationTo int64) ([]GentkRef, error)
 }
 
 // fxhashClient implements the Client interface.
@@ -164,4 +217,106 @@ func (c *fxhashClient) GetGentk(ctx context.Context, contractAddress, tokenID st
 
 	// nil means not found in fxhash index — not an error, caller falls back to objkt.
 	return resp.Data.Onchain.ObjktByPK, nil
+}
+
+// GetGentksByIteration fetches all fxhash gentks for a generative token within the
+// given 1-based iteration range, paginating internally with fxhashIterationPageSize.
+//
+// Reason: fxhash gentk token IDs are global integers assigned at mint time and cannot
+// be derived from iteration numbers by math. This query resolves the mapping from
+// iteration (mint number) → on-chain (contract, tokenID) so that CIDs can be built
+// for release-level indexing.
+func (c *fxhashClient) GetGentksByIteration(ctx context.Context, generativeTokenID string, iterationFrom, iterationTo int64) ([]GentkRef, error) {
+	var all []GentkRef
+	offset := int64(0)
+
+	for {
+		query := fmt.Sprintf(`query GetGentksByIteration {
+  onchain {
+    objkt(
+      where: {generative_token: {id: {_eq: "%s"}}, iteration: {_gte: %d, _lte: %d}}
+      limit: %d
+      offset: %d
+    ) {
+      id
+      iteration
+    }
+  }
+}`, generativeTokenID, iterationFrom, iterationTo, fxhashIterationPageSize, offset)
+
+		reqBody := GQLRequest{
+			Query:         query,
+			Variables:     nil,
+			OperationName: "GetGentksByIteration",
+		}
+
+		bodyBytes, err := c.json.Marshal(reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal fxhash request: %w", err)
+		}
+
+		responseBody, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]byte, error) {
+			headers := map[string]string{
+				"Content-Type": "application/json",
+			}
+			return c.httpClient.PostBytes(ctx, c.apiURL, headers, bytes.NewReader(bodyBytes))
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to call fxhash v2 API: %w", err)
+		}
+
+		var resp gqlListResponse
+		if err := c.json.Unmarshal(responseBody, &resp); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal fxhash response: %w", err)
+		}
+
+		if len(resp.Errors) > 0 {
+			return nil, fmt.Errorf("fxhash API error: %s", resp.Errors[0].Message)
+		}
+
+		page := resp.Data.Onchain.Objkt
+		for _, item := range page {
+			ref, err := parseGentkRef(item.ID, item.Iteration)
+			if err != nil {
+				// Skip malformed entries rather than failing the entire batch;
+				// a parse error here indicates an unexpected API schema change.
+				continue
+			}
+			all = append(all, ref)
+		}
+
+		if len(page) < fxhashIterationPageSize {
+			// Last page: no more results to fetch.
+			break
+		}
+		offset += int64(fxhashIterationPageSize)
+	}
+
+	return all, nil
+}
+
+// parseGentkRef parses a fxhash composite id "{contract}-{tokenID}" and iteration
+// string into a GentkRef. The separator is the last hyphen in the id because Tezos
+// KT1 contract addresses use only Base58 characters (no hyphens).
+func parseGentkRef(compositeID, iterationStr string) (GentkRef, error) {
+	sep := strings.LastIndex(compositeID, "-")
+	if sep < 0 {
+		return GentkRef{}, fmt.Errorf("invalid fxhash composite id (no separator): %q", compositeID)
+	}
+	contract := compositeID[:sep]
+	tokenID := compositeID[sep+1:]
+	if contract == "" || tokenID == "" {
+		return GentkRef{}, fmt.Errorf("invalid fxhash composite id (empty part): %q", compositeID)
+	}
+
+	iteration, err := strconv.ParseInt(iterationStr, 10, 64)
+	if err != nil {
+		return GentkRef{}, fmt.Errorf("invalid iteration %q: %w", iterationStr, err)
+	}
+
+	return GentkRef{
+		ContractAddress: contract,
+		TokenID:         tokenID,
+		Iteration:       iteration,
+	}, nil
 }

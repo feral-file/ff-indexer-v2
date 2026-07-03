@@ -13,10 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	metadata "github.com/feral-file/ff-indexer-v2/internal/metadata"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockMetadataEnhancer is a mock of Enhancer interface.

@@ -13,9 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	feralfile "github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockFeralFileClient is a mock of Client interface.
@@ -55,4 +54,19 @@ func (m *MockFeralFileClient) GetArtwork(ctx context.Context, tokenID string) (*
 func (mr *MockFeralFileClientMockRecorder) GetArtwork(ctx, tokenID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetArtwork", reflect.TypeOf((*MockFeralFileClient)(nil).GetArtwork), ctx, tokenID)
+}
+
+// GetSeriesArtworks mocks base method.
+func (m *MockFeralFileClient) GetSeriesArtworks(ctx context.Context, seriesID string, mintFrom, mintTo int64) ([]feralfile.ArtworkRef, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSeriesArtworks", ctx, seriesID, mintFrom, mintTo)
+	ret0, _ := ret[0].([]feralfile.ArtworkRef)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSeriesArtworks indicates an expected call of GetSeriesArtworks.
+func (mr *MockFeralFileClientMockRecorder) GetSeriesArtworks(ctx, seriesID, mintFrom, mintTo any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSeriesArtworks", reflect.TypeOf((*MockFeralFileClient)(nil).GetSeriesArtworks), ctx, seriesID, mintFrom, mintTo)
 }

@@ -13,9 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	blockchain "github.com/feral-file/ff-indexer-v2/internal/blockchain"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockBlockchainEventSource is a mock of EventSource interface.

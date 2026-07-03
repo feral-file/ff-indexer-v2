@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -65,6 +66,135 @@ func TestHandlerListReleasesValidationError(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases", nil)
 
 	h.ListReleases(c)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+// ─── TriggerReleaseIndexing handler ──────────────────────────────────────────
+
+func TestHandlerTriggerReleaseIndexingSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	mockExec.EXPECT().
+		TriggerReleaseIndexing(gomock.Any(), "artblocks", "1-0xabc-78", int64(1), int64(100)).
+		Return(&dto.TriggerIndexingResponse{JobID: 42}, nil)
+
+	body := `{"vendor":"artblocks","vendor_release_id":"1-0xabc-78","mint_to":100}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TriggerReleaseIndexing(c)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+}
+
+func TestHandlerTriggerReleaseIndexingWithMintFrom(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	mockExec.EXPECT().
+		TriggerReleaseIndexing(gomock.Any(), "feralfile", "series-abc", int64(5), int64(50)).
+		Return(&dto.TriggerIndexingResponse{JobID: 99}, nil)
+
+	body := `{"vendor":"feralfile","vendor_release_id":"series-abc","mint_from":5,"mint_to":50}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TriggerReleaseIndexing(c)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+}
+
+func TestHandlerTriggerReleaseIndexingValidationError_MissingVendor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	body := `{"vendor_release_id":"1-0xabc-78","mint_to":100}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TriggerReleaseIndexing(c)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+func TestHandlerTriggerReleaseIndexingValidationError_InvalidVendor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	body := `{"vendor":"superrare","vendor_release_id":"abc","mint_to":10}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TriggerReleaseIndexing(c)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+func TestHandlerTriggerReleaseIndexingValidationError_MintToZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	body := `{"vendor":"artblocks","vendor_release_id":"1-0xabc-78","mint_to":0}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TriggerReleaseIndexing(c)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+func TestHandlerTriggerReleaseIndexingValidationError_InvalidJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString("not-json"))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.TriggerReleaseIndexing(c)
 
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }

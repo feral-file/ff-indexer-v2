@@ -73,9 +73,11 @@ Design rules:
 - **Pagination:** `limit` (default **20**, max **255**), `offset` (default **0**).
 - **Filters:** Repeatable query parameters; **AND** across different filter types, **OR** within the same parameter. Document new filters with the same semantics.
   - **`release_id`:** Filter tokens to members of a specific release (internal integer id). When combined with `sort_by=mint_number`, results are ordered by their authoritative mint position within the release.
+  - **`mint_from` / `mint_to`:** 1-based mint number range filter (inclusive). Both parameters require `release_id` to be set; supplying either without `release_id` returns a **`422`** validation error. `mint_from` must be `≥ 1`; `mint_to` must be `≥ mint_from`. Omitting both returns all members. The primary use case is polling `IndexRelease` job progress: page through `GET /api/v1/tokens?release_id=X&mint_from=1&mint_to=N&include_unviewable=true` with offset-based pagination and accumulate the count until a partial page is returned — when the count equals `tokens_queued` from the indexing response, all child jobs have completed. (`paging.total` is deprecated and always returns 0; do not rely on it for termination.)
 - **Sorting:** `sort_by` (`created_at` | `latest_provenance` | `mint_number`), `sort_order` (`asc` | `desc`). When `owner` is present, `latest_provenance` follows documented owner-scoped behavior (see OpenAPI). `mint_number` **requires** `release_id` to be set; the API returns a validation error if `mint_number` is requested without a `release_id` filter.
 - **Invalid sort parameters (behavior change, release abstraction / #93):** Unrecognized `sort_by` or `sort_order` values return **`422`** with a validation error. Previously the list endpoint silently rewrote invalid values to `latest_provenance` / `desc`; that masking was removed so validation matches the OpenAPI enum contract and the release member endpoint (which already rejected invalid `sort_order`). Clients that sent typos and depended on silent defaults must send valid enum values.
 - **`include_unviewable`:** Default **`false`**; changing defaults is a **compatibility** decision.
+- **GraphQL:** `tokens(release_id, mint_from, mint_to, limit, offset, ...)` exposes the same mint range filter; the same validation rules apply.
 
 ### List releases (`GET /api/v1/releases`)
 
@@ -121,6 +123,36 @@ Design rules:
 ### GraphQL
 
 - Expansions are **inferred from the selection set**; keep parity with REST expansions and document any intentional differences in schema comments.
+
+### Release indexing (`POST /api/v1/releases/index`)
+
+Triggers asynchronous, full-collection indexing for a vendor release within a 1-based mint number range. The response arrives immediately (HTTP **202**) with a `job_id`; the actual token indexing runs in the background via the jobs queue.
+
+**Request body:**
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `vendor` | string | yes | `artblocks`, `feralfile`, `fxhash`, or `objkt` |
+| `vendor_release_id` | string | yes | Vendor-specific release key (see list releases docs for format per vendor) |
+| `mint_from` | int64 | no | First mint number to index (1-based, inclusive). Defaults to **1**. |
+| `mint_to` | int64 | yes | Last mint number to index (1-based, inclusive). |
+
+**Validation:**
+- `mint_from ≥ 1` (when supplied)
+- `mint_to ≥ mint_from`
+- `mint_to − mint_from + 1 ≤ 100` (max range per request; see `MAX_RELEASE_MINT_RANGE`). Clients must batch larger collections themselves by issuing multiple non-overlapping requests.
+
+**Response (`202`):** `TriggerIndexingResponse` with `job_id`. Use `GET /api/v1/jobs/{job_id}` to check whether Phase 1 (CID derivation + child-job enqueueing) succeeded. After the `job_id` reaches a terminal state, track per-token completion via `GET /api/v1/tokens?release_id=X&mint_from=1&mint_to=N&include_unviewable=true` with offset-based pagination (see List tokens documentation above).
+
+**Per-vendor CID derivation strategy:**
+- `artblocks` — fully deterministic; zero API calls; `vendor_release_id` is `"{chainID}-{contract}-{projectID}"`
+- `objkt` — fully deterministic; zero API calls; `vendor_release_id` is the KT1 FA2 contract address
+- `fxhash` — requires an internal API call to map iteration numbers to on-chain token IDs
+- `feralfile` — requires an internal API call; artworks still on the Bitmark chain (not yet swapped to EVM/Tezos) are skipped and counted as `tokens_skipped`
+
+**Auth:** Open (no API key required), same as `POST /api/v1/tokens/index`. Max range cap of 100 tokens per call prevents large queue floods; clients batch larger collections themselves.
+
+**GraphQL:** `triggerReleaseIndexing(vendor, vendorReleaseId, mintFrom, mintTo)` — same behavior; returns the `job_id` via `Boolean` placeholder pending schema refinement.
 
 ## Async operations and job tracking
 

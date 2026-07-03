@@ -13,9 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	uri "github.com/feral-file/ff-indexer-v2/internal/uri"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockURLChecker is a mock of URLChecker interface.
