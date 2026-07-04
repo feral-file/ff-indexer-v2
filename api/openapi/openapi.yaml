@@ -365,7 +365,7 @@ paths:
           description: |
             Filter tokens to releases from a given vendor. Any of release_id, release_vendor, or
             release_vendor_slug may be supplied (all ANDed). Providing at least one release context
-            enables sort_by=mint_number and mint_from/mint_to.
+            enables sort_by=mint_number and mint_number filters.
           schema:
             type: string
             enum: [artblocks, feralfile, fxhash, objkt, opensea]
@@ -378,26 +378,23 @@ paths:
           schema:
             type: string
           example: "fidenza-by-tyler-hobbs"
-        - name: mint_from
+        - name: mint_number
           in: query
           description: |
-            1-based mint number lower bound (inclusive). Requires at least one of:
-            release_id, release_vendor, or release_vendor_slug. mint_from must be >= 1.
+            Explicit 1-based mint positions to include (repeatable; max 50 values, no duplicates).
+            Requires at least one of: release_id, release_vendor, or release_vendor_slug.
+            Use this to poll for exactly the mints you triggered via POST /api/v1/releases/index.
+            Each value must be >= 1.
           schema:
-            type: integer
-            format: int64
-            minimum: 1
-          example: 1
-        - name: mint_to
-          in: query
-          description: |
-            1-based mint number upper bound (inclusive). Requires at least one of:
-            release_id, release_vendor, or release_vendor_slug. mint_to must be >= mint_from.
-          schema:
-            type: integer
-            format: int64
-            minimum: 1
-          example: 100
+            type: array
+            items:
+              type: integer
+              format: int64
+              minimum: 1
+            maxItems: 50
+          style: form
+          explode: true
+          example: [1, 2, 3]
         - name: include_unviewable
           in: query
           description: Include tokens with unviewable media (no accessible media URLs). Default is false - only tokens with accessible media are returned.
@@ -726,16 +723,17 @@ paths:
     post:
       summary: Trigger release indexing by vendor and release identifier
       description: |
-        Enqueues an IndexRelease job for a vendor release within a 1-based mint range [mint_from, mint_to].
+        Enqueues an IndexRelease job for an explicit list of mint numbers within a vendor release.
 
         **Phase 1** (CID derivation + IndexTokens fan-out) runs as a background job. Phase 1 is fast
         for deterministic vendors (artblocks, objkt) and may take seconds-to-minutes for API-based
-        vendors (fxhash, feralfile) depending on range size.
+        vendors (fxhash, feralfile) depending on list size and API latency.
 
         **Phase 2** (per-token indexing) runs independently as IndexTokens child jobs on the same queue.
 
         Poll `GET /api/v1/jobs/{job_id}` for Phase 1 status, then
-        `GET /api/v1/tokens?release_id=...` to track completion of indexed tokens.
+        `GET /api/v1/tokens?release_vendor_slug=...&mint_number=N&mint_number=M` with the same
+        `mint_numbers` to track exactly which mints have been indexed.
 
         **Vendor strategies:**
         - `artblocks` — deterministic CID math; vendor_release_id format: `{chainID}-{contract}-{projectID}`
@@ -764,7 +762,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/TriggerIndexingResponse'
         '422':
-          description: Validation error — invalid vendor, mint range, or missing identifier
+          description: Validation error — invalid vendor, mint_numbers, or missing identifier
           content:
             application/json:
               schema:
@@ -2161,7 +2159,7 @@ components:
       type: object
       required:
         - vendor
-        - mint_to
+        - mint_numbers
       properties:
         vendor:
           type: string
@@ -2183,19 +2181,19 @@ components:
             URL slug from the vendor's website. The indexer resolves the slug to a vendor_release_id.
             For objkt, use the KT1 contract address (same as vendor_release_id).
           example: industrial-park
-        mint_from:
-          type: integer
-          format: int64
-          minimum: 1
-          default: 1
-          description: First mint number (1-based, inclusive)
-          example: 1
-        mint_to:
-          type: integer
-          format: int64
-          minimum: 1
-          description: Last mint number (1-based, inclusive)
-          example: 100
+        mint_numbers:
+          type: array
+          items:
+            type: integer
+            format: int64
+            minimum: 1
+          description: |
+            Explicit 1-based list of mint positions to index (required, non-empty, max 50, no duplicates).
+            Using an explicit list lets callers target only the mints that are still missing without
+            re-indexing already-completed positions.
+          minItems: 1
+          maxItems: 50
+          example: [1, 2, 3]
 
     TriggerTokenIndexingRequest:
       type: object

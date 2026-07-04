@@ -197,8 +197,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 		queryParams.ReleaseID,
 		queryParams.ParsedReleaseVendor,
 		releaseVendorSlug,
-		queryParams.MintFrom,
-		queryParams.MintTo,
+		queryParams.MintNumbers,
 		limit,
 		offset,
 		includeUnviewable,
@@ -299,8 +298,7 @@ func (h *handler) GetRelease(c *gin.Context) {
 		&releaseID,
 		nil, // no release vendor filter for member listing
 		nil, // no release vendor slug filter for member listing
-		nil, // no mint range filter for member listing
-		nil,
+		nil, // no mint_numbers filter for member listing
 		limit,
 		offset,
 		&includeUnviewable,
@@ -365,8 +363,7 @@ func (h *handler) TriggerReleaseIndexing(c *gin.Context) {
 		req.Vendor,
 		req.VendorReleaseID,
 		req.VendorReleaseSlug,
-		req.ResolvedMintFrom(),
-		req.MintTo,
+		req.MintNumbers,
 	)
 	if err != nil {
 		respondInternalError(c, err, "Failed to trigger release indexing")

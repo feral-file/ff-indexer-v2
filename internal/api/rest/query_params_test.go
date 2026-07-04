@@ -341,18 +341,15 @@ func TestParseListTokensQueryInvalidSortOrderPassesThroughToValidate(t *testing.
 	assert.Contains(t, apiErr.Details, "Invalid sort_order")
 }
 
-// ─── Mint range filter on ListTokensQueryParams ───────────────────────────────
+// ─── MintNumbers filter on ListTokensQueryParams ─────────────────────────────
 
-func TestListTokensQueryParamsMintRangeRequiresReleaseID(t *testing.T) {
+func TestListTokensQueryParamsMintNumbersRequiresReleaseContext(t *testing.T) {
 	t.Parallel()
 
-	from := int64(1)
-	to := int64(10)
 	params := ListTokensQueryParams{
-		MintFrom:  &from,
-		MintTo:    &to,
-		SortOrder: types.OrderAsc,
-		SortBy:    types.TokenLatestProvenance,
+		MintNumbers: []int64{1, 2, 3},
+		SortOrder:   types.OrderAsc,
+		SortBy:      types.TokenLatestProvenance,
 	}
 
 	err := params.Validate()
@@ -362,80 +359,91 @@ func TestListTokensQueryParamsMintRangeRequiresReleaseID(t *testing.T) {
 	assert.Contains(t, apiErr.Details, "release_id")
 }
 
-func TestListTokensQueryParamsMintRangeValidWithReleaseID(t *testing.T) {
+func TestListTokensQueryParamsMintNumbersValidWithReleaseID(t *testing.T) {
 	t.Parallel()
 
 	releaseID := uint64(5)
-	from := int64(1)
-	to := int64(100)
 	params := ListTokensQueryParams{
-		ReleaseID: &releaseID,
-		MintFrom:  &from,
-		MintTo:    &to,
-		SortBy:    types.TokenSortByMintNumber,
-		SortOrder: types.OrderAsc,
+		ReleaseID:   &releaseID,
+		MintNumbers: []int64{1, 5, 50},
+		SortBy:      types.TokenSortByMintNumber,
+		SortOrder:   types.OrderAsc,
 	}
 
 	assert.NoError(t, params.Validate())
 }
 
-func TestListTokensQueryParamsMintFromMustBePositive(t *testing.T) {
+func TestListTokensQueryParamsMintNumberZeroInvalid(t *testing.T) {
 	t.Parallel()
 
 	releaseID := uint64(5)
-	zero := int64(0)
-	to := int64(10)
 	params := ListTokensQueryParams{
-		ReleaseID: &releaseID,
-		MintFrom:  &zero,
-		MintTo:    &to,
-		SortBy:    types.TokenSortByMintNumber,
-		SortOrder: types.OrderAsc,
+		ReleaseID:   &releaseID,
+		MintNumbers: []int64{0},
+		SortBy:      types.TokenSortByMintNumber,
+		SortOrder:   types.OrderAsc,
 	}
 
 	err := params.Validate()
 	require.Error(t, err)
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, err, &apiErr)
-	assert.Contains(t, apiErr.Details, "mint_from must be >= 1")
+	assert.Contains(t, apiErr.Details, "mint_number must be >= 1")
 }
 
-func TestListTokensQueryParamsMintToMustBeGEMintFrom(t *testing.T) {
+func TestListTokensQueryParamsMintNumbersDuplicate(t *testing.T) {
 	t.Parallel()
 
 	releaseID := uint64(5)
-	from := int64(10)
-	to := int64(5)
 	params := ListTokensQueryParams{
-		ReleaseID: &releaseID,
-		MintFrom:  &from,
-		MintTo:    &to,
-		SortBy:    types.TokenSortByMintNumber,
-		SortOrder: types.OrderAsc,
+		ReleaseID:   &releaseID,
+		MintNumbers: []int64{1, 3, 1},
+		SortBy:      types.TokenSortByMintNumber,
+		SortOrder:   types.OrderAsc,
 	}
 
 	err := params.Validate()
 	require.Error(t, err)
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, err, &apiErr)
-	assert.Contains(t, apiErr.Details, "mint_to must be >= mint_from")
+	assert.Contains(t, apiErr.Details, "duplicate mint_number")
 }
 
-func TestParseListTokensQueryMintRange(t *testing.T) {
+func TestListTokensQueryParamsMintNumbersTooMany(t *testing.T) {
+	t.Parallel()
+
+	releaseID := uint64(5)
+	nums := make([]int64, 51)
+	for i := range nums {
+		nums[i] = int64(i + 1)
+	}
+	params := ListTokensQueryParams{
+		ReleaseID:   &releaseID,
+		MintNumbers: nums,
+		SortBy:      types.TokenSortByMintNumber,
+		SortOrder:   types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "too many mint_number")
+}
+
+func TestParseListTokensQueryMintNumbers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/tokens?release_id=7&mint_from=3&mint_to=25&sort_by=mint_number&sort_order=asc", nil)
+	c.Request = httptest.NewRequest("GET", "/tokens?release_id=7&mint_number=3&mint_number=10&mint_number=25&sort_by=mint_number&sort_order=asc", nil)
 
 	params, err := ParseListTokensQuery(c)
 	require.NoError(t, err)
 	require.NotNil(t, params)
 
-	require.NotNil(t, params.MintFrom)
-	require.NotNil(t, params.MintTo)
-	assert.Equal(t, int64(3), *params.MintFrom)
-	assert.Equal(t, int64(25), *params.MintTo)
+	require.Len(t, params.MintNumbers, 3)
+	assert.Equal(t, []int64{3, 10, 25}, params.MintNumbers)
 
 	assert.NoError(t, params.Validate())
 }
@@ -446,26 +454,26 @@ func TestTriggerReleaseIndexingRequestValidate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		vendor  string
-		id      string
-		slug    string
-		from    *int64
-		to      int64
-		wantErr string // matched against APIError.Details (empty = expect no error)
+		name        string
+		vendor      string
+		id          string
+		slug        string
+		mintNumbers []int64
+		wantErr     string // matched against APIError.Details (empty = expect no error)
 	}{
-		{"valid artblocks with id", "artblocks", "1-0xabc-78", "", nil, 100, ""},
-		{"valid feralfile with id", "feralfile", "series-uuid", "", nil, 50, ""},
-		{"valid fxhash with id", "fxhash", "9997", "", nil, 50, ""},
-		{"valid objkt with id", "objkt", "KT1abc", "", nil, 100, ""},
-		{"valid fxhash with slug", "fxhash", "", "industrial-park", nil, 50, ""},
-		{"valid feralfile with slug", "feralfile", "", "data-pilgrims-01-769", nil, 50, ""},
-		{"missing vendor", "", "abc", "", nil, 10, "vendor is required"},
-		{"invalid vendor", "superrare", "abc", "", nil, 10, "unsupported vendor"},
-		{"missing release id", "artblocks", "", "", nil, 10, "exactly one of vendor_release_id or vendor_release_slug is required"},
-		{"both id and slug", "artblocks", "1-0xabc-78", "fidenza-by-tyler-hobbs", nil, 10, "mutually exclusive"},
-		{"mint_to < mint_from", "artblocks", "abc", "", int64Ptr(5), 3, "mint_to must be"},
-		{"mint_from < 1", "artblocks", "abc", "", int64Ptr(0), 10, "mint_from must be"},
+		{"valid artblocks with id", "artblocks", "1-0xabc-78", "", []int64{1, 50, 100}, ""},
+		{"valid feralfile with id", "feralfile", "series-uuid", "", []int64{1, 2, 3}, ""},
+		{"valid fxhash with id", "fxhash", "9997", "", []int64{5, 10}, ""},
+		{"valid objkt with id", "objkt", "KT1abc", "", []int64{1}, ""},
+		{"valid fxhash with slug", "fxhash", "", "industrial-park", []int64{1, 2}, ""},
+		{"valid feralfile with slug", "feralfile", "", "data-pilgrims-01-769", []int64{3}, ""},
+		{"missing vendor", "", "abc", "", []int64{1}, "vendor is required"},
+		{"invalid vendor", "superrare", "abc", "", []int64{1}, "unsupported vendor"},
+		{"missing release id", "artblocks", "", "", []int64{1}, "exactly one of vendor_release_id or vendor_release_slug is required"},
+		{"both id and slug", "artblocks", "1-0xabc-78", "fidenza-by-tyler-hobbs", []int64{1}, "mutually exclusive"},
+		{"empty mint_numbers", "artblocks", "abc", "", []int64{}, "mint_numbers is required"},
+		{"zero mint_number", "artblocks", "abc", "", []int64{0}, "mint_number must be"},
+		{"duplicate mint_number", "artblocks", "abc", "", []int64{1, 2, 1}, "duplicate mint_number"},
 	}
 
 	for _, tt := range tests {
@@ -475,8 +483,7 @@ func TestTriggerReleaseIndexingRequestValidate(t *testing.T) {
 				Vendor:            tt.vendor,
 				VendorReleaseID:   tt.id,
 				VendorReleaseSlug: tt.slug,
-				MintFrom:          tt.from,
-				MintTo:            tt.to,
+				MintNumbers:       tt.mintNumbers,
 			}
 			err := req.Validate()
 			if tt.wantErr == "" {
@@ -490,8 +497,6 @@ func TestTriggerReleaseIndexingRequestValidate(t *testing.T) {
 		})
 	}
 }
-
-func int64Ptr(v int64) *int64 { return &v }
 
 // ─── release_vendor and release_vendor_slug on ListTokensQueryParams ──────────
 
@@ -541,17 +546,14 @@ func TestListTokensQueryParamsMintNumberWithReleaseVendor(t *testing.T) {
 	assert.NoError(t, params.Validate())
 }
 
-// TestListTokensQueryParamsMintRangeWithVendorSlug verifies that release_vendor_slug alone
-// is sufficient context to enable mint_from / mint_to.
-func TestListTokensQueryParamsMintRangeWithVendorSlug(t *testing.T) {
+// TestListTokensQueryParamsMintNumbersWithVendorSlug verifies that release_vendor_slug alone
+// is sufficient context to enable mint_numbers.
+func TestListTokensQueryParamsMintNumbersWithVendorSlug(t *testing.T) {
 	t.Parallel()
 
-	from := int64(1)
-	to := int64(50)
 	params := ListTokensQueryParams{
 		ReleaseVendorSlug: "fidenza-by-tyler-hobbs",
-		MintFrom:          &from,
-		MintTo:            &to,
+		MintNumbers:       []int64{1, 25, 50},
 		SortBy:            types.TokenSortByMintNumber,
 		SortOrder:         types.OrderAsc,
 	}

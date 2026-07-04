@@ -122,22 +122,16 @@ type TriggerReleaseIndexingRequest struct {
 	// Mutually exclusive with VendorReleaseID. The indexer resolves the slug to a
 	// vendor_release_id before enqueuing the job.
 	VendorReleaseSlug string `json:"vendor_release_slug"`
-	// MintFrom is the first mint number to index (1-based, inclusive). Defaults to 1 when omitted.
-	MintFrom *int64 `json:"mint_from,omitempty"`
-	// MintTo is the last mint number to index (1-based, inclusive, required).
-	MintTo int64 `json:"mint_to"`
+	// MintNumbers is the explicit list of 1-based mint positions to index (required, non-empty,
+	// max 50, no duplicates). Using an explicit list instead of a range lets callers target only
+	// the mints that are still missing without re-indexing already-completed positions.
+	MintNumbers []int64 `json:"mint_numbers"`
 }
 
 // Validate validates the TriggerReleaseIndexingRequest.
 // Exactly one of vendor_release_id or vendor_release_slug must be provided.
-// All vendors use 1-based mint numbering.
+// mint_numbers must be non-empty, each >= 1, no duplicates, and at most MAX_RELEASE_MINT_NUMBERS entries.
 func (r *TriggerReleaseIndexingRequest) Validate() error {
-	// Resolve mint_from default.
-	mintFrom := int64(1)
-	if r.MintFrom != nil {
-		mintFrom = *r.MintFrom
-	}
-
 	if strings.TrimSpace(r.Vendor) == "" {
 		return apierrors.NewValidationError("vendor is required")
 	}
@@ -157,24 +151,23 @@ func (r *TriggerReleaseIndexingRequest) Validate() error {
 		return apierrors.NewValidationError("vendor_release_id and vendor_release_slug are mutually exclusive; provide exactly one")
 	}
 
-	if mintFrom < 1 {
-		return apierrors.NewValidationError("mint_from must be >= 1")
+	if len(r.MintNumbers) == 0 {
+		return apierrors.NewValidationError("mint_numbers is required and must not be empty")
 	}
-	if r.MintTo < mintFrom {
-		return apierrors.NewValidationError("mint_to must be >= mint_from")
+	if int64(len(r.MintNumbers)) > constants.MAX_RELEASE_MINT_NUMBERS {
+		return apierrors.NewValidationError(fmt.Sprintf("too many mint_numbers: max %d per request", constants.MAX_RELEASE_MINT_NUMBERS))
 	}
-	if r.MintTo-mintFrom+1 > constants.MAX_RELEASE_MINT_RANGE {
-		return apierrors.NewValidationError(fmt.Sprintf("mint range too large: max %d tokens per request", constants.MAX_RELEASE_MINT_RANGE))
+	seen := make(map[int64]struct{}, len(r.MintNumbers))
+	for _, n := range r.MintNumbers {
+		if n < 1 {
+			return apierrors.NewValidationError("each mint_number must be >= 1")
+		}
+		if _, dup := seen[n]; dup {
+			return apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", n))
+		}
+		seen[n] = struct{}{}
 	}
 	return nil
-}
-
-// ResolvedMintFrom returns the effective mint_from value (defaults to 1).
-func (r *TriggerReleaseIndexingRequest) ResolvedMintFrom() int64 {
-	if r.MintFrom != nil {
-		return *r.MintFrom
-	}
-	return 1
 }
 
 // CreateWebhookClientRequest represents the request body for creating a webhook client

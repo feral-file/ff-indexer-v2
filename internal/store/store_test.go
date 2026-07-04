@@ -2655,29 +2655,25 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		from := int64(2)
 		to := int64(4)
 
-		// Query mint numbers 2–4: should return tokens at index 1,2,3 (mint numbers 2,3,4).
+		// Query mint numbers 2, 3, 4: should return tokens at index 1,2,3 (mint numbers 2,3,4).
 		results, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ReleaseID:         &releaseID,
-			MintNumberFrom:    &from,
-			MintNumberTo:      &to,
+			MintNumbers:       []int64{from, from + 1, to},
 			SortBy:            TokenSortByMintNumber,
 			SortOrder:         SortOrderAsc,
 			Limit:             10,
 			IncludeUnviewable: true,
 		})
 		require.NoError(t, err)
-		require.Len(t, results, 3, "should return exactly 3 tokens for mint range 2–4")
+		require.Len(t, results, 3, "should return exactly 3 tokens for mint numbers [2,3,4]")
 		assert.Equal(t, mintTokens[1].ID, results[0].ID, "first result should be mint #2")
 		assert.Equal(t, mintTokens[2].ID, results[1].ID, "second result should be mint #3")
 		assert.Equal(t, mintTokens[3].ID, results[2].ID, "third result should be mint #4")
 
 		// Query mint number 1 only.
-		fromOne := int64(1)
-		toOne := int64(1)
 		single, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ReleaseID:         &releaseID,
-			MintNumberFrom:    &fromOne,
-			MintNumberTo:      &toOne,
+			MintNumbers:       []int64{1},
 			SortBy:            TokenSortByMintNumber,
 			SortOrder:         SortOrderAsc,
 			Limit:             10,
@@ -2687,7 +2683,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		require.Len(t, single, 1)
 		assert.Equal(t, mintTokens[0].ID, single[0].ID, "should return only mint #1")
 
-		// Without MintNumberFrom/To but with ReleaseID: should return all 5 tokens.
+		// Without MintNumbers but with ReleaseID: should return all 5 tokens.
 		all, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			ReleaseID:         &releaseID,
 			SortBy:            TokenSortByMintNumber,

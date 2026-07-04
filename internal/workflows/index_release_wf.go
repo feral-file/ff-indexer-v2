@@ -1,11 +1,14 @@
 package workflows
 
-// IndexRelease workflow: derives token CIDs for a vendor release within a mint range and
-// fans them into chunked IndexTokens jobs.
+// IndexRelease workflow: derives token CIDs for an explicit list of mint numbers within a
+// vendor release and fans them into chunked IndexTokens jobs.
 //
 // This file implements the IndexRelease job handler registered in worker_core.go.
 // Phase 1 (this handler) is fast: it derives CIDs and enqueues child jobs, then exits.
 // Phase 2 (IndexTokens children) runs independently on the same queue.
+//
+// Using an explicit mint number list (rather than a contiguous range) lets callers target
+// only the positions that are still missing, without re-indexing already-completed mints.
 //
 // Vendor CID derivation strategies:
 //
@@ -20,9 +23,13 @@ package workflows
 //              CID format: tezos:mainnet:fa2:{contract}:{mint_number}
 //
 //   fxhash:    requires GetGentksByIteration API call (gentk IDs are global, not derived by math);
+//              calls the API with [min(mintNumbers), max(mintNumbers)] then filters returned
+//              gentks to only those whose iteration is in the requested mintNumbers set;
 //              CID format: tezos:mainnet:fa2:{contract}:{tokenID}
 //
 //   feralfile: requires GetSeriesArtworks API call (artworks sorted by index);
+//              calls the API with [min(mintNumbers), max(mintNumbers)] then filters returned
+//              artworks to only those whose index (1-based) is in the requested mintNumbers set;
 //              CID format depends on resolved chain: eip155:1:erc721 or tezos:mainnet:fa2;
 //              artworks still on Bitmark (chain=="bitmark") are skipped.
 //
@@ -36,6 +43,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -54,20 +62,20 @@ const indexReleaseChunkSize = 50
 
 // IndexRelease is the job handler for the "IndexRelease" job kind.
 //
-// It derives token CIDs for [mintFrom, mintTo] using per-vendor strategies,
+// It derives token CIDs for the explicit mintNumbers list using per-vendor strategies,
 // skips any CIDs that cannot be derived (logging the count), then chunks the
 // valid CIDs into IndexTokens child jobs of indexReleaseChunkSize each.
 //
 // Reason this is a separate job (not inline in the HTTP handler): fxhash and
 // Feral File require external API calls to resolve mint numbers to on-chain IDs.
-// Doing that synchronously in an HTTP request risks timeouts for large ranges.
+// Doing that synchronously in an HTTP request risks timeouts for large lists.
 // The job model also provides retry semantics for transient API failures.
 //
 // vendorReleaseSlug is the URL slug from the vendor's website (e.g. "industrial-park").
 // When it is non-empty and vendorReleaseID is empty, the workflow resolves the slug to
 // the canonical vendor_release_id before CID derivation. Both parameters arrive from the
 // job payload; the executor supplies whichever identifier the client provided.
-func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) error {
+func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintNumbers []int64) error {
 	// Resolve slug → vendor_release_id when only a slug was provided.
 	if vendorReleaseID == "" && vendorReleaseSlug != "" {
 		resolved, err := w.resolveVendorSlug(ctx, schema.Vendor(vendor), vendorReleaseSlug)
@@ -85,13 +93,12 @@ func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorR
 	logger.InfoCtx(ctx, "IndexRelease started",
 		zap.String("vendor", vendor),
 		zap.String("vendorReleaseID", vendorReleaseID),
-		zap.Int64("mintFrom", mintFrom),
-		zap.Int64("mintTo", mintTo),
+		zap.Int("mintCount", len(mintNumbers)),
 	)
 
-	cids, skipped, err := w.deriveReleaseCIDs(ctx, schema.Vendor(vendor), vendorReleaseID, mintFrom, mintTo)
+	cids, skipped, err := w.deriveReleaseCIDs(ctx, schema.Vendor(vendor), vendorReleaseID, mintNumbers)
 	if err != nil {
-		return fmt.Errorf("IndexRelease: CID derivation failed for %s/%s [%d..%d]: %w", vendor, vendorReleaseID, mintFrom, mintTo, err)
+		return fmt.Errorf("IndexRelease: CID derivation failed for %s/%s: %w", vendor, vendorReleaseID, err)
 	}
 
 	logger.InfoCtx(ctx, "IndexRelease: CIDs derived",
@@ -109,13 +116,18 @@ func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorR
 		return nil
 	}
 
-	// Enqueue IndexTokens child jobs in chunks.
-	// The unique key includes the parent mint range (mintFrom, mintTo) so that two
-	// IndexRelease calls for the same release but different windows cannot collide on
-	// the same chunk-offset key. Without mintFrom/mintTo, call A for mints [1..50]
-	// and call B for mints [1..100] both produce a first-chunk key ending in "-0-50",
-	// causing the queue to reuse call A's child job and silently skip call B's first
-	// 50 tokens.
+	// Build a sorted, comma-joined representation of the mint list for use in child job
+	// unique keys. Sorting ensures that two IndexRelease calls with the same mint numbers
+	// in different orders produce identical keys and do not collide on chunk offsets.
+	sorted := make([]int64, len(mintNumbers))
+	copy(sorted, mintNumbers)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	mintKeyParts := make([]string, len(sorted))
+	for i, n := range sorted {
+		mintKeyParts[i] = strconv.FormatInt(n, 10)
+	}
+	mintKey := strings.Join(mintKeyParts, ",")
+
 	for i := 0; i < len(cids); i += indexReleaseChunkSize {
 		end := i + indexReleaseChunkSize
 		if end > len(cids) {
@@ -123,7 +135,7 @@ func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorR
 		}
 		chunk := cids[i:end]
 
-		uk := fmt.Sprintf("index-release-%s-%s-%d-%d-%d-%d", vendor, vendorReleaseID, mintFrom, mintTo, i, end)
+		uk := fmt.Sprintf("index-release-%s-%s-%s-%d-%d", vendor, vendorReleaseID, mintKey, i, end)
 		_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
 			Queue:     w.config.TokenTaskQueue,
 			Kind:      "IndexTokens",
@@ -184,16 +196,17 @@ func (w *coreWorkflows) resolveVendorSlug(ctx context.Context, vendor schema.Ven
 	}
 }
 
-// deriveReleaseCIDs resolves the full set of token CIDs for [mintFrom, mintTo] using
-// the per-vendor strategy. Returns (cids, skippedCount, error).
+// deriveReleaseCIDs resolves token CIDs for the given mint number list using the
+// per-vendor strategy. Returns (cids, skippedCount, error).
 //
 // skippedCount counts mint positions for which a CID could not be derived:
-// Bitmark-origin FF artworks not yet swapped, or vendor API gaps.
+// Bitmark-origin FF artworks not yet swapped, vendor API gaps, or mints not in the
+// API response window.
 //
 // Chain validation: every derive call checks that the release's resolved chain matches
 // the indexer's configured chain (EthereumChainID or TezosChainID). A mismatch returns
 // an error immediately rather than silently indexing tokens on the wrong network.
-func (w *coreWorkflows) deriveReleaseCIDs(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, mintFrom, mintTo int64) ([]domain.TokenCID, int, error) {
+func (w *coreWorkflows) deriveReleaseCIDs(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, mintNumbers []int64) ([]domain.TokenCID, int, error) {
 	switch vendor {
 	case schema.VendorArtBlocks:
 		// Parse the chain from vendor_release_id before building CIDs so we can
@@ -205,7 +218,7 @@ func (w *coreWorkflows) deriveReleaseCIDs(ctx context.Context, vendor schema.Ven
 		if err := w.validateChain(vendor, abChain); err != nil {
 			return nil, 0, err
 		}
-		return deriveArtBlocksCIDs(vendorReleaseID, mintFrom, mintTo)
+		return deriveArtBlocksCIDs(vendorReleaseID, mintNumbers)
 
 	case schema.VendorObjkt:
 		// objkt always lives on Tezos mainnet; validate once before building CIDs.
@@ -221,13 +234,13 @@ func (w *coreWorkflows) deriveReleaseCIDs(ctx context.Context, vendor schema.Ven
 		if _, err := w.objktClient.GetFA(ctx, vendorReleaseID); err != nil {
 			return nil, 0, fmt.Errorf("objkt pre-check failed for %q: %w", vendorReleaseID, err)
 		}
-		return deriveObjktCIDs(vendorReleaseID, mintFrom, mintTo)
+		return deriveObjktCIDs(vendorReleaseID, mintNumbers)
 
 	case schema.VendorFXHash:
-		return w.deriveFxhashCIDs(ctx, vendorReleaseID, mintFrom, mintTo)
+		return w.deriveFxhashCIDs(ctx, vendorReleaseID, mintNumbers)
 
 	case schema.VendorFeralFile:
-		return w.deriveFeralFileCIDs(ctx, vendorReleaseID, mintFrom, mintTo)
+		return w.deriveFeralFileCIDs(ctx, vendorReleaseID, mintNumbers)
 
 	default:
 		// opensea is intentionally excluded — see file-level doc comment for rationale.
@@ -235,7 +248,8 @@ func (w *coreWorkflows) deriveReleaseCIDs(ctx context.Context, vendor schema.Ven
 	}
 }
 
-// deriveArtBlocksCIDs computes Art Blocks token CIDs from vendor_release_id and mint range.
+// deriveArtBlocksCIDs computes Art Blocks token CIDs from vendor_release_id and an explicit
+// mint number list.
 //
 // Art Blocks vendor_release_id format: "{chainID}-{contract}-{projectID}"
 // Token number formula: projectID * 1_000_000 + (mintNumber - 1)
@@ -243,7 +257,7 @@ func (w *coreWorkflows) deriveReleaseCIDs(ctx context.Context, vendor schema.Ven
 //
 // This is fully deterministic — zero API calls required. The formula is the inverse
 // of ParseArtBlocksTokenID used in the metadata enhancer.
-func deriveArtBlocksCIDs(vendorReleaseID string, mintFrom, mintTo int64) ([]domain.TokenCID, int, error) {
+func deriveArtBlocksCIDs(vendorReleaseID string, mintNumbers []int64) ([]domain.TokenCID, int, error) {
 	// Parse: first "-" separates chainID from the rest; last "-" separates contract from projectID.
 	firstSep := strings.Index(vendorReleaseID, "-")
 	if firstSep < 0 {
@@ -270,8 +284,8 @@ func deriveArtBlocksCIDs(vendorReleaseID string, mintFrom, mintTo int64) ([]doma
 
 	chain := domain.Chain(fmt.Sprintf("eip155:%d", chainID))
 
-	cids := make([]domain.TokenCID, 0, mintTo-mintFrom+1)
-	for mintNum := mintFrom; mintNum <= mintTo; mintNum++ {
+	cids := make([]domain.TokenCID, 0, len(mintNumbers))
+	for _, mintNum := range mintNumbers {
 		tokenNumber := projectID*artblocksTokenIDMultiplier + (mintNum - 1)
 		cid := domain.NewTokenCID(chain, domain.StandardERC721, contract, strconv.FormatInt(tokenNumber, 10))
 		cids = append(cids, cid)
@@ -284,7 +298,8 @@ func deriveArtBlocksCIDs(vendorReleaseID string, mintFrom, mintTo int64) ([]doma
 // Defined here to avoid importing the artblocks vendor package (which would create a circular dep).
 const artblocksTokenIDMultiplier = int64(1_000_000)
 
-// deriveObjktCIDs computes objkt token CIDs from vendor_release_id (KT1 address) and mint range.
+// deriveObjktCIDs computes objkt token CIDs from vendor_release_id (KT1 address) and
+// an explicit mint number list.
 //
 // objkt vendor_release_id is the FA2 contract address (KT1...).
 //
@@ -294,21 +309,27 @@ const artblocksTokenIDMultiplier = int64(1_000_000)
 // mintNum > 0 guard (enhancer.go) and objkt's own deployment convention. There is no
 // known objkt custom collection with a valid token ID 0.
 // CID format: tezos:mainnet:fa2:{contract}:{mint_number}
-func deriveObjktCIDs(vendorReleaseID string, mintFrom, mintTo int64) ([]domain.TokenCID, int, error) {
-	cids := make([]domain.TokenCID, 0, mintTo-mintFrom+1)
-	for mintNum := mintFrom; mintNum <= mintTo; mintNum++ {
+func deriveObjktCIDs(vendorReleaseID string, mintNumbers []int64) ([]domain.TokenCID, int, error) {
+	cids := make([]domain.TokenCID, 0, len(mintNumbers))
+	for _, mintNum := range mintNumbers {
 		cid := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, vendorReleaseID, strconv.FormatInt(mintNum, 10))
 		cids = append(cids, cid)
 	}
 	return cids, 0, nil
 }
 
-// deriveFxhashCIDs resolves fxhash token CIDs via GetGentksByIteration.
+// deriveFxhashCIDs resolves fxhash token CIDs for an explicit mint number list via
+// GetGentksByIteration.
 //
 // fxhash gentk token IDs are global integers assigned at mint time and cannot be
 // derived from iteration numbers by math. The API call is required.
+//
+// Strategy: call GetGentksByIteration with [min(mintNumbers), max(mintNumbers)] to fetch
+// the bounding window in a single (possibly multi-page) request, then filter returned
+// gentks to only those whose iteration number is in the requested mintNumbers set.
+// This avoids N round trips for sparse lists while keeping the API surface unchanged.
 // CID format: tezos:mainnet:fa2:{contract}:{tokenID}
-func (w *coreWorkflows) deriveFxhashCIDs(ctx context.Context, vendorReleaseID string, mintFrom, mintTo int64) ([]domain.TokenCID, int, error) {
+func (w *coreWorkflows) deriveFxhashCIDs(ctx context.Context, vendorReleaseID string, mintNumbers []int64) ([]domain.TokenCID, int, error) {
 	if w.fxhashClient == nil {
 		return nil, 0, fmt.Errorf("fxhash client not configured: cannot index fxhash release %q", vendorReleaseID)
 	}
@@ -318,19 +339,35 @@ func (w *coreWorkflows) deriveFxhashCIDs(ctx context.Context, vendorReleaseID st
 		return nil, 0, err
 	}
 
-	refs, err := w.fxhashClient.GetGentksByIteration(ctx, vendorReleaseID, mintFrom, mintTo)
+	// Build a lookup set and compute the bounding range for a single API call.
+	wanted := make(map[int64]struct{}, len(mintNumbers))
+	mintMin, mintMax := mintNumbers[0], mintNumbers[0]
+	for _, n := range mintNumbers {
+		wanted[n] = struct{}{}
+		if n < mintMin {
+			mintMin = n
+		}
+		if n > mintMax {
+			mintMax = n
+		}
+	}
+
+	refs, err := w.fxhashClient.GetGentksByIteration(ctx, vendorReleaseID, mintMin, mintMax)
 	if err != nil {
-		return nil, 0, fmt.Errorf("fxhash GetGentksByIteration failed for %q [%d..%d]: %w", vendorReleaseID, mintFrom, mintTo, err)
+		return nil, 0, fmt.Errorf("fxhash GetGentksByIteration failed for %q [%d..%d]: %w", vendorReleaseID, mintMin, mintMax, err)
 	}
 
-	cids := make([]domain.TokenCID, 0, len(refs))
+	// Filter to only the requested iterations.
+	cids := make([]domain.TokenCID, 0, len(mintNumbers))
 	for _, ref := range refs {
-		cid := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, ref.ContractAddress, ref.TokenID)
-		cids = append(cids, cid)
+		if _, ok := wanted[ref.Iteration]; ok {
+			cid := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, ref.ContractAddress, ref.TokenID)
+			cids = append(cids, cid)
+		}
 	}
 
-	// skipped = range size minus resolved count (gaps or API returns fewer than requested).
-	skipped := int(mintTo-mintFrom+1) - len(refs)
+	// skipped = requested count minus resolved count.
+	skipped := len(mintNumbers) - len(cids)
 	if skipped < 0 {
 		skipped = 0
 	}
@@ -338,27 +375,52 @@ func (w *coreWorkflows) deriveFxhashCIDs(ctx context.Context, vendorReleaseID st
 	return cids, skipped, nil
 }
 
-// deriveFeralFileCIDs resolves Feral File token CIDs via GetSeriesArtworks.
+// deriveFeralFileCIDs resolves Feral File token CIDs for an explicit mint number list
+// via GetSeriesArtworks.
 //
 // Feral File artworks carry a resolved chain/contractAddress/tokenID from the API.
 // Artworks still on Bitmark (chain=="bitmark") have no EVM/Tezos identity and are
 // skipped; the caller is informed via tokensSkipped.
 //
+// Strategy: call GetSeriesArtworks with [min(mintNumbers), max(mintNumbers)] to fetch
+// the bounding window in a single (possibly multi-page) request, then filter returned
+// artworks to only those whose 1-based Index is in the requested mintNumbers set.
 // Chain mapping: "ethereum" → eip155:1:erc721; "tezos" → tezos:mainnet:fa2
-func (w *coreWorkflows) deriveFeralFileCIDs(ctx context.Context, vendorReleaseID string, mintFrom, mintTo int64) ([]domain.TokenCID, int, error) {
+func (w *coreWorkflows) deriveFeralFileCIDs(ctx context.Context, vendorReleaseID string, mintNumbers []int64) ([]domain.TokenCID, int, error) {
 	if w.feralfileClient == nil {
 		return nil, 0, fmt.Errorf("feral file client not configured: cannot index feral file release %q", vendorReleaseID)
 	}
 
-	artworks, err := w.feralfileClient.GetSeriesArtworks(ctx, vendorReleaseID, mintFrom, mintTo)
-	if err != nil {
-		return nil, 0, fmt.Errorf("feral file GetSeriesArtworks failed for series %q [%d..%d]: %w", vendorReleaseID, mintFrom, mintTo, err)
+	// Build a lookup set and compute the bounding range for a single API call.
+	// FF artwork Index is 0-based in the API, but our mint numbers are 1-based, so
+	// we convert: mintNumber = artwork.Index + 1.
+	wanted := make(map[int64]struct{}, len(mintNumbers))
+	mintMin, mintMax := mintNumbers[0], mintNumbers[0]
+	for _, n := range mintNumbers {
+		wanted[n] = struct{}{}
+		if n < mintMin {
+			mintMin = n
+		}
+		if n > mintMax {
+			mintMax = n
+		}
 	}
 
-	cids := make([]domain.TokenCID, 0, len(artworks))
+	artworks, err := w.feralfileClient.GetSeriesArtworks(ctx, vendorReleaseID, mintMin, mintMax)
+	if err != nil {
+		return nil, 0, fmt.Errorf("feral file GetSeriesArtworks failed for series %q [%d..%d]: %w", vendorReleaseID, mintMin, mintMax, err)
+	}
+
+	cids := make([]domain.TokenCID, 0, len(mintNumbers))
 	skipped := 0
 
 	for _, artwork := range artworks {
+		// artwork.Index is 0-based; mintNumber is 1-based.
+		mintNumber := artwork.Index + 1
+		if _, ok := wanted[mintNumber]; !ok {
+			continue // not in requested set
+		}
+
 		chain, standard, skip := mapFeralFileChain(artwork.Chain)
 		if skip {
 			// Artwork is still on Bitmark — no EVM/Tezos identity yet.
@@ -388,10 +450,10 @@ func (w *coreWorkflows) deriveFeralFileCIDs(ctx context.Context, vendorReleaseID
 		cids = append(cids, cid)
 	}
 
-	// Account for artworks not returned by the API (range beyond current supply).
-	apiSkipped := int(mintTo-mintFrom+1) - len(artworks)
-	if apiSkipped > 0 {
-		skipped += apiSkipped
+	// Any requested mint not matched by an API artwork counts as skipped.
+	skipped += len(mintNumbers) - (len(cids) + skipped)
+	if skipped < 0 {
+		skipped = 0
 	}
 
 	return cids, skipped, nil

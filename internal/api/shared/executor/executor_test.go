@@ -308,7 +308,7 @@ func TestGetTokens_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
 
 	result, err := exec.GetTokens(context.Background(),
 		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset})
 
 	require.NoError(t, err)
@@ -442,7 +442,7 @@ func TestGetTokens_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 
 	result, err := exec.GetTokens(context.Background(),
 		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay})
 
 	require.Error(t, err, "GetTokens must propagate health query failure as an error")
@@ -645,7 +645,7 @@ func TestTriggerReleaseIndexing_BothIdentifiersEmpty(t *testing.T) {
 	t.Parallel()
 
 	exec := newReleaseIndexingExecutor(t)
-	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "", "", 1, 10)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "", "", []int64{1, 2})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
@@ -655,7 +655,7 @@ func TestTriggerReleaseIndexing_BothIdentifiersProvided(t *testing.T) {
 	t.Parallel()
 
 	exec := newReleaseIndexingExecutor(t)
-	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "some-id", "some-slug", 1, 10)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "some-id", "some-slug", []int64{1, 2})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mutually exclusive")
@@ -666,7 +666,7 @@ func TestTriggerReleaseIndexing_WhitespaceOnlyIDTreatedAsAbsent(t *testing.T) {
 
 	exec := newReleaseIndexingExecutor(t)
 	// Whitespace-only vendor_release_id should be treated the same as empty.
-	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "   ", "", 1, 10)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "   ", "", []int64{1})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
@@ -676,13 +676,13 @@ func TestTriggerReleaseIndexing_WhitespaceOnlySlugTreatedAsAbsent(t *testing.T) 
 	t.Parallel()
 
 	exec := newReleaseIndexingExecutor(t)
-	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "", "\t \n", 1, 10)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "", "\t \n", []int64{1})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
 }
 
-func TestTriggerReleaseIndexing_MintFromZeroRejected(t *testing.T) {
+func TestTriggerReleaseIndexing_ZeroMintNumberRejected(t *testing.T) {
 	t.Parallel()
 
 	for _, vendor := range []string{"artblocks", "feralfile", "fxhash", "objkt"} {
@@ -691,19 +691,39 @@ func TestTriggerReleaseIndexing_MintFromZeroRejected(t *testing.T) {
 			t.Parallel()
 
 			exec := newReleaseIndexingExecutor(t)
-			_, err := exec.TriggerReleaseIndexing(context.Background(), vendor, "some-id", "", 0, 10)
+			_, err := exec.TriggerReleaseIndexing(context.Background(), vendor, "some-id", "", []int64{0})
 
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "mint_from must be")
+			assert.Contains(t, err.Error(), "mint_number must be")
 		})
 	}
+}
+
+func TestTriggerReleaseIndexing_EmptyMintNumbersRejected(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "some-id", "", []int64{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mint_numbers is required")
+}
+
+func TestTriggerReleaseIndexing_DuplicateMintNumberRejected(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "some-id", "", []int64{1, 2, 1})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate mint_number")
 }
 
 func TestTriggerReleaseIndexing_OpenSeaVendorRejected(t *testing.T) {
 	t.Parallel()
 
 	exec := newReleaseIndexingExecutor(t)
-	_, err := exec.TriggerReleaseIndexing(context.Background(), "opensea", "boredapeyachtclub", "", 1, 100)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "opensea", "boredapeyachtclub", "", []int64{1, 2, 3})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported vendor")

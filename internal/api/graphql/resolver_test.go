@@ -200,7 +200,7 @@ func TestQueryResolverTokensRejectsInvalidReleaseVendor(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		&vendor, nil,
-		nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Invalid release_vendor")
@@ -222,30 +222,29 @@ func TestQueryResolverTokensMintNumberRequiresReleaseContext(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		nil, nil,
-		nil, nil, nil, nil, nil, &sortBy, nil,
+		nil, nil, nil, nil, &sortBy, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sort_by=mint_number requires at least one of")
 }
 
-// TestQueryResolverTokensMintRangeWithVendorSlug verifies that release_vendor_slug
-// alone is sufficient context to accept mint_from / mint_to.
-func TestQueryResolverTokensMintRangeWithVendorSlug(t *testing.T) {
+// TestQueryResolverTokensMintNumbersWithVendorSlug verifies that release_vendor_slug
+// alone is sufficient context to accept mint_numbers.
+func TestQueryResolverTokensMintNumbersWithVendorSlug(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	slug := "fidenza-by-tyler-hobbs"
-	from := 1
-	to := 50
+	mintNums := []int{1, 25, 50}
 
 	mockExec := mocks.NewMockAPIExecutor(ctrl)
 	mockExec.EXPECT().
 		GetTokens(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), // release vendor + slug
-			gomock.Any(), gomock.Any(), // mint range
+			gomock.Any(), // mint_numbers
 			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.TokenListResponse{}, nil)
 
@@ -254,7 +253,7 @@ func TestQueryResolverTokensMintRangeWithVendorSlug(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		nil, &slug,
-		&from, &to, nil, nil, nil, nil, nil,
+		mintNums, nil, nil, nil, nil, nil,
 	)
 	require.NoError(t, err)
 }

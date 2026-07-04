@@ -82,10 +82,10 @@ func TestHandlerTriggerReleaseIndexingSuccess(t *testing.T) {
 	h := NewHandler(false, mockExec)
 
 	mockExec.EXPECT().
-		TriggerReleaseIndexing(gomock.Any(), "artblocks", "1-0xabc-78", "", int64(1), int64(100)).
+		TriggerReleaseIndexing(gomock.Any(), "artblocks", "1-0xabc-78", "", []int64{1, 50, 100}).
 		Return(&dto.TriggerIndexingResponse{JobID: 42}, nil)
 
-	body := `{"vendor":"artblocks","vendor_release_id":"1-0xabc-78","mint_to":100}`
+	body := `{"vendor":"artblocks","vendor_release_id":"1-0xabc-78","mint_numbers":[1,50,100]}`
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
@@ -96,7 +96,7 @@ func TestHandlerTriggerReleaseIndexingSuccess(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, w.Code)
 }
 
-func TestHandlerTriggerReleaseIndexingWithMintFrom(t *testing.T) {
+func TestHandlerTriggerReleaseIndexingWithSlug(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctrl := gomock.NewController(t)
@@ -106,10 +106,10 @@ func TestHandlerTriggerReleaseIndexingWithMintFrom(t *testing.T) {
 	h := NewHandler(false, mockExec)
 
 	mockExec.EXPECT().
-		TriggerReleaseIndexing(gomock.Any(), "feralfile", "series-abc", "", int64(5), int64(50)).
+		TriggerReleaseIndexing(gomock.Any(), "feralfile", "", "data-pilgrims-01-769", []int64{5, 10, 50}).
 		Return(&dto.TriggerIndexingResponse{JobID: 99}, nil)
 
-	body := `{"vendor":"feralfile","vendor_release_id":"series-abc","mint_from":5,"mint_to":50}`
+	body := `{"vendor":"feralfile","vendor_release_slug":"data-pilgrims-01-769","mint_numbers":[5,10,50]}`
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
@@ -129,7 +129,7 @@ func TestHandlerTriggerReleaseIndexingValidationError_MissingVendor(t *testing.T
 	mockExec := mocks.NewMockAPIExecutor(ctrl)
 	h := NewHandler(false, mockExec)
 
-	body := `{"vendor_release_id":"1-0xabc-78","mint_to":100}`
+	body := `{"vendor_release_id":"1-0xabc-78","mint_numbers":[1,2,3]}`
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
@@ -149,7 +149,7 @@ func TestHandlerTriggerReleaseIndexingValidationError_InvalidVendor(t *testing.T
 	mockExec := mocks.NewMockAPIExecutor(ctrl)
 	h := NewHandler(false, mockExec)
 
-	body := `{"vendor":"superrare","vendor_release_id":"abc","mint_to":10}`
+	body := `{"vendor":"superrare","vendor_release_id":"abc","mint_numbers":[1,2]}`
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))
@@ -160,7 +160,7 @@ func TestHandlerTriggerReleaseIndexingValidationError_InvalidVendor(t *testing.T
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }
 
-func TestHandlerTriggerReleaseIndexingValidationError_MintToZero(t *testing.T) {
+func TestHandlerTriggerReleaseIndexingValidationError_EmptyMintNumbers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctrl := gomock.NewController(t)
@@ -169,7 +169,7 @@ func TestHandlerTriggerReleaseIndexingValidationError_MintToZero(t *testing.T) {
 	mockExec := mocks.NewMockAPIExecutor(ctrl)
 	h := NewHandler(false, mockExec)
 
-	body := `{"vendor":"artblocks","vendor_release_id":"1-0xabc-78","mint_to":0}`
+	body := `{"vendor":"artblocks","vendor_release_id":"1-0xabc-78","mint_numbers":[]}`
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/releases/index", bytes.NewBufferString(body))

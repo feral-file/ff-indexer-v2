@@ -41,7 +41,7 @@ type Executor interface {
 	// and slug respectively; they may be combined with releaseID (all ANDed).
 	// mintNumberFrom/To and sort_by=mint_number require at least one of releaseID,
 	// releaseVendor, or releaseVendorSlug.
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumberFrom *int64, mintNumberTo *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
 
 	// GetRelease retrieves a release by internal id without member tokens.
 	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
@@ -63,13 +63,13 @@ type Executor interface {
 	TriggerMetadataIndexing(ctx context.Context, tokenIDs []uint64, tokenCIDs []domain.TokenCID) (*dto.TriggerIndexingResponse, error)
 
 	// TriggerReleaseIndexing enqueues an IndexRelease job that derives token CIDs for the
-	// given vendor + release + mint range and fans them into IndexTokens child jobs.
+	// given vendor + release + explicit mint number list and fans them into IndexTokens child jobs.
 	// Returns a job id for tracking Phase 1 (CID derivation + fan-out) completion.
-	// After Phase 1 succeeds, clients poll GET /api/v1/tokens?release_id=X&mint_from=...&mint_to=...
-	// with offset-based pagination to track how many tokens have been indexed.
+	// After Phase 1 succeeds, clients poll GET /api/v1/tokens?release_vendor_slug=X&mint_number=N...
+	// with the same mint_numbers to track exactly which mints have been indexed.
 	// vendorReleaseSlug is the URL slug from the vendor's website; when provided without
 	// vendorReleaseID, the executor resolves it to a vendor_release_id before enqueuing.
-	TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error)
+	TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintNumbers []int64) (*dto.TriggerIndexingResponse, error)
 
 	// GetJobStatus returns status for a postgres job row
 	GetJobStatus(ctx context.Context, jobID int64) (*dto.JobStatusResponse, error)
@@ -230,7 +230,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumberFrom *int64, mintNumberTo *int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -289,8 +289,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		ReleaseID:         releaseID,
 		ReleaseVendor:     releaseVendor,
 		ReleaseVendorSlug: releaseVendorSlug,
-		MintNumberFrom:    mintNumberFrom,
-		MintNumberTo:      mintNumberTo,
+		MintNumbers:       mintNumbers,
 		IncludeUnviewable: *includeUnviewable,
 		SortBy:            storeSortBy,
 		SortOrder:         storeSortOrder,
@@ -629,24 +628,21 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 	return newTriggerIndexingResponse(j.ID), nil
 }
 
-// TriggerReleaseIndexing enqueues an IndexRelease job for the given vendor + release + mint range.
+// TriggerReleaseIndexing enqueues an IndexRelease job for the given vendor + release +
+// explicit mint number list.
 //
 // The job (Phase 1) derives token CIDs using the per-vendor strategy and fans them into
 // chunked IndexTokens jobs (Phase 2). Phase 1 is typically fast (seconds for AB/objkt,
-// seconds-to-minutes for fxhash/FF depending on range size and API latency).
+// seconds-to-minutes for fxhash/FF depending on list size and API latency).
 //
-// Validation: vendor must be one of artblocks|feralfile|fxhash|objkt (opensea is not
-// supported for release indexing — see IndexRelease file-level doc for rationale);
-// exactly one of vendorReleaseID or vendorReleaseSlug must be non-empty;
-// mint_from >= 1 (all vendors use 1-based mint numbering); mint_to >= mint_from;
-// range <= MAX_RELEASE_MINT_RANGE.
+// Validation: vendor must be one of artblocks|feralfile|fxhash|objkt (opensea not
+// supported — see IndexRelease file-level doc for rationale); exactly one of
+// vendorReleaseID or vendorReleaseSlug must be non-empty; mintNumbers must be non-empty,
+// each >= 1, no duplicates, and at most MAX_RELEASE_MINT_NUMBERS entries.
 //
-// vendorReleaseSlug is the URL slug from the vendor's website. When non-empty, it is passed
-// to the IndexRelease job, which resolves it to a vendor_release_id using the vendor API.
-// This keeps vendor clients out of the executor and in the workflow layer where they belong.
-// The uniqueKey uses whichever identifier is provided (id or slug) to deduplicate concurrent
-// triggers for the same release and range.
-func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) (*dto.TriggerIndexingResponse, error) {
+// The unique key is built from the sorted mint list so that [1,3,2] and [2,1,3] resolve
+// to the same active job and do not enqueue duplicate Phase 1 work.
+func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintNumbers []int64) (*dto.TriggerIndexingResponse, error) {
 	switch vendor {
 	case "artblocks", "feralfile", "fxhash", "objkt":
 		// valid
@@ -654,10 +650,8 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 		return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
 	}
 
-	// Validate that exactly one of vendor_release_id or vendor_release_slug is provided.
-	// This mirrors the REST DTO check but must also live here because the GraphQL resolver
-	// calls the executor directly without going through the DTO's Validate method.
-	// Whitespace-only values are treated as absent to catch accidental empty strings.
+	// Validate identifier — mirrors the REST DTO check but must also live here because the
+	// GraphQL resolver calls the executor directly, bypassing DTO.Validate.
 	hasID := strings.TrimSpace(vendorReleaseID) != ""
 	hasSlug := strings.TrimSpace(vendorReleaseSlug) != ""
 	if !hasID && !hasSlug {
@@ -667,27 +661,42 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 		return nil, apierrors.NewValidationError("vendor_release_id and vendor_release_slug are mutually exclusive; provide exactly one")
 	}
 
-	// All vendors use 1-based mint numbering.
-	if mintFrom < 1 {
-		return nil, apierrors.NewValidationError("mint_from must be >= 1")
+	// Validate mint numbers — mirrors DTO.Validate for the GraphQL path.
+	if len(mintNumbers) == 0 {
+		return nil, apierrors.NewValidationError("mint_numbers is required and must not be empty")
 	}
-	if mintTo < mintFrom {
-		return nil, apierrors.NewValidationError("mint_to must be >= mint_from")
+	if int64(len(mintNumbers)) > constants.MAX_RELEASE_MINT_NUMBERS {
+		return nil, apierrors.NewValidationError(fmt.Sprintf("too many mint_numbers: max %d per request", constants.MAX_RELEASE_MINT_NUMBERS))
 	}
-	if mintTo-mintFrom+1 > constants.MAX_RELEASE_MINT_RANGE {
-		return nil, apierrors.NewValidationError(fmt.Sprintf("mint range too large: max %d tokens per request", constants.MAX_RELEASE_MINT_RANGE))
+	seen := make(map[int64]struct{}, len(mintNumbers))
+	for _, n := range mintNumbers {
+		if n < 1 {
+			return nil, apierrors.NewValidationError("each mint_number must be >= 1")
+		}
+		if _, dup := seen[n]; dup {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", n))
+		}
+		seen[n] = struct{}{}
 	}
 
-	// Use whichever identifier is provided for deduplication and job args.
+	// Sort a copy for a stable unique key — [1,3,2] and [2,1,3] must share the same key.
+	sorted := make([]int64, len(mintNumbers))
+	copy(sorted, mintNumbers)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	parts := make([]string, len(sorted))
+	for i, n := range sorted {
+		parts[i] = strconv.FormatInt(n, 10)
+	}
+
 	releaseIdentifier := vendorReleaseID
 	if releaseIdentifier == "" {
 		releaseIdentifier = vendorReleaseSlug
 	}
-	uniqueKey := fmt.Sprintf("index-release-%s-%s-%d-%d", vendor, releaseIdentifier, mintFrom, mintTo)
+	uniqueKey := fmt.Sprintf("index-release-%s-%s-%s", vendor, releaseIdentifier, strings.Join(parts, ","))
 	j, _, err := e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
 		Queue:     e.tokenQueue,
 		Kind:      "IndexRelease",
-		Args:      []any{vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo},
+		Args:      []any{vendor, vendorReleaseID, vendorReleaseSlug, mintNumbers},
 		UniqueKey: &uniqueKey,
 	})
 	if err != nil {

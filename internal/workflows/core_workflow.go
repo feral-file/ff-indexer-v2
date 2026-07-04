@@ -58,8 +58,8 @@ type CoreWorkflows interface {
 	// IndexTokenProvenances indexes all provenances (balances and events) for a token
 	IndexTokenProvenances(ctx context.Context, tokenCID domain.TokenCID, address *string) error
 
-	// IndexRelease derives token CIDs for a vendor release within a 1-based mint range
-	// [mintFrom, mintTo] and enqueues chunked IndexTokens jobs for the full set.
+	// IndexRelease derives token CIDs for a vendor release for an explicit list of 1-based
+	// mint numbers and enqueues chunked IndexTokens jobs for the derived set.
 	// vendor must be one of: artblocks, feralfile, fxhash, objkt.
 	// opensea is not supported for release indexing — OpenSea tokens are indexed via
 	// on-chain events where mint_number is derived from the actual token identifier
@@ -73,12 +73,12 @@ type CoreWorkflows interface {
 	//   artblocks — pure math, zero API calls (requires ArtBlocksClient only for slug resolution)
 	//   objkt     — pure math (token_number == mint_number); requires ObjktClient for
 	//               custom-contract pre-check before CIDs are built
-	//   fxhash    — calls GetGentksByIteration (requires FxhashClient in config)
-	//   feralfile — calls GetSeriesArtworks (requires FeralFileClient in config)
+	//   fxhash    — calls GetGentksByIteration(min, max) then filters to mintNumbers set
+	//   feralfile — calls GetSeriesArtworks(min, max) then filters to mintNumbers set
 	//
 	// Returns an error if CID derivation or enqueueing fails; a partial enqueue
 	// (some chunks succeed, then a failure) will leave already-queued jobs running.
-	IndexRelease(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintFrom int64, mintTo int64) error
+	IndexRelease(ctx context.Context, vendor string, vendorReleaseID string, vendorReleaseSlug string, mintNumbers []int64) error
 
 	// NotifyWebhookClients orchestrates webhook notifications to all matching clients
 	NotifyWebhookClients(ctx context.Context, event webhook.WebhookEvent) error

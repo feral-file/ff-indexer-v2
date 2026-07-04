@@ -67,12 +67,11 @@ type ListTokensQueryParams struct {
 	// ReleaseVendorSlug filters tokens to the release whose vendor_release_slug matches
 	// (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
 	ReleaseVendorSlug string `form:"release_vendor_slug"`
-	// MintFrom and MintTo are 1-based mint number range filters (inclusive).
-	// Require at least one release context (release_id, release_vendor, or release_vendor_slug).
-	// Clients use these to poll for indexed tokens after triggering IndexRelease.
-	MintFrom          *int64 `form:"mint_from"`
-	MintTo            *int64 `form:"mint_to"`
-	IncludeUnviewable bool   `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
+	// MintNumbers is an explicit 1-based list of mint positions to include (max 50).
+	// Requires at least one release context (release_id, release_vendor, or release_vendor_slug).
+	// Clients use this to poll for exactly the mints they triggered via IndexRelease.
+	MintNumbers       []int64 `form:"mint_number"`
+	IncludeUnviewable bool    `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`
@@ -170,15 +169,24 @@ func (p *ListTokensQueryParams) Validate() error {
 		return apierrors.NewValidationError("sort_by=mint_number requires at least one of: release_id, release_vendor, release_vendor_slug")
 	}
 
-	// Validate mint range filters — require at least one release context.
-	if (p.MintFrom != nil || p.MintTo != nil) && !hasReleaseContext {
-		return apierrors.NewValidationError("mint_from and mint_to require at least one of: release_id, release_vendor, release_vendor_slug")
-	}
-	if p.MintFrom != nil && *p.MintFrom < 1 {
-		return apierrors.NewValidationError("mint_from must be >= 1")
-	}
-	if p.MintFrom != nil && p.MintTo != nil && *p.MintTo < *p.MintFrom {
-		return apierrors.NewValidationError("mint_to must be >= mint_from")
+	// Validate mint_number list — requires at least one release context.
+	if len(p.MintNumbers) > 0 {
+		if !hasReleaseContext {
+			return apierrors.NewValidationError("mint_number requires at least one of: release_id, release_vendor, release_vendor_slug")
+		}
+		if int64(len(p.MintNumbers)) > constants.MAX_TOKEN_MINT_NUMBERS_FILTER {
+			return apierrors.NewValidationError(fmt.Sprintf("too many mint_number values: max %d", constants.MAX_TOKEN_MINT_NUMBERS_FILTER))
+		}
+		seen := make(map[int64]struct{}, len(p.MintNumbers))
+		for _, n := range p.MintNumbers {
+			if n < 1 {
+				return apierrors.NewValidationError("each mint_number must be >= 1")
+			}
+			if _, dup := seen[n]; dup {
+				return apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", n))
+			}
+			seen[n] = struct{}{}
+		}
 	}
 
 	// Validate sort_order

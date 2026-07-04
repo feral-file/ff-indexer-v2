@@ -7,12 +7,17 @@ const (
 	MAX_ADDRESSES_PER_REQUEST  = 5
 	MAX_PAGE_SIZE              = uint8(255)
 	MAX_RETRY_MAX_ATTEMPTS     = 10
-	// MAX_RELEASE_MINT_RANGE is the maximum number of tokens that can be indexed in a single
-	// IndexRelease request. Clients must batch larger collections themselves by making multiple
-	// calls with non-overlapping mint ranges. Kept intentionally small (100) so that the Phase 1
-	// job (CID derivation + child-job enqueueing) completes quickly and fxhash/FF API calls stay
-	// within a single paginated batch.
-	MAX_RELEASE_MINT_RANGE               = int64(100)
+	// MAX_RELEASE_MINT_NUMBERS is the maximum number of mint numbers that can be indexed in a
+	// single IndexRelease request. Clients must batch larger collections themselves by making
+	// multiple calls with non-overlapping mint number lists. Kept intentionally small (50) so
+	// that Phase 1 (CID derivation + child-job enqueueing) completes quickly and fxhash/FF API
+	// calls stay within a single paginated batch. Matches MAX_TOKEN_CIDS_PER_REQUEST and
+	// MAX_TOKEN_MINT_NUMBERS_FILTER for consistency.
+	MAX_RELEASE_MINT_NUMBERS = int64(50)
+	// MAX_TOKEN_MINT_NUMBERS_FILTER is the maximum number of mint numbers allowed in the
+	// mint_numbers filter on GET /api/v1/tokens and the equivalent GraphQL field. Matches
+	// MAX_RELEASE_MINT_NUMBERS so a single IndexRelease batch maps 1:1 to a polling query.
+	MAX_TOKEN_MINT_NUMBERS_FILTER        = int64(50)
 	DEFAULT_OFFSET                       = uint64(0)
 	DEFAULT_TOKENS_LIMIT                 = uint8(20)
 	DEFAULT_OWNERS_LIMIT                 = uint8(20)

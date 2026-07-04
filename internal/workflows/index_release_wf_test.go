@@ -85,7 +85,7 @@ func TestDeriveArtBlocksCIDs_Basic(t *testing.T) {
 	t.Parallel()
 
 	// vendor_release_id for AB project 78 on chain 1
-	cids, skipped, err := deriveArtBlocksCIDs("1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78", 1, 3)
+	cids, skipped, err := deriveArtBlocksCIDs("1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78", []int64{1, 2, 3})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
@@ -106,7 +106,7 @@ func TestDeriveArtBlocksCIDs_Basic(t *testing.T) {
 func TestDeriveArtBlocksCIDs_SingleMint(t *testing.T) {
 	t.Parallel()
 
-	cids, skipped, err := deriveArtBlocksCIDs("1-0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-5", 10, 10)
+	cids, skipped, err := deriveArtBlocksCIDs("1-0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-5", []int64{10})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
@@ -115,10 +115,23 @@ func TestDeriveArtBlocksCIDs_SingleMint(t *testing.T) {
 	assert.Contains(t, string(cids[0]), "5000009")
 }
 
+func TestDeriveArtBlocksCIDs_SparseList(t *testing.T) {
+	t.Parallel()
+
+	cids, skipped, err := deriveArtBlocksCIDs("1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78", []int64{1, 5, 10})
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, skipped)
+	require.Len(t, cids, 3)
+	assert.Contains(t, string(cids[0]), "78000000")
+	assert.Contains(t, string(cids[1]), "78000004")
+	assert.Contains(t, string(cids[2]), "78000009")
+}
+
 func TestDeriveArtBlocksCIDs_InvalidVendorReleaseID_NoSeparator(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := deriveArtBlocksCIDs("noseparator", 1, 3)
+	_, _, err := deriveArtBlocksCIDs("noseparator", []int64{1, 2, 3})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no separator")
 }
@@ -126,7 +139,7 @@ func TestDeriveArtBlocksCIDs_InvalidVendorReleaseID_NoSeparator(t *testing.T) {
 func TestDeriveArtBlocksCIDs_InvalidVendorReleaseID_MissingProject(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := deriveArtBlocksCIDs("1-0xabc", 1, 3)
+	_, _, err := deriveArtBlocksCIDs("1-0xabc", []int64{1, 2, 3})
 	assert.Error(t, err)
 }
 
@@ -137,7 +150,7 @@ func TestDeriveArtBlocksCIDs_InvalidVendorReleaseID_MissingProject(t *testing.T)
 func TestDeriveObjktCIDs_Basic(t *testing.T) {
 	t.Parallel()
 
-	cids, skipped, err := deriveObjktCIDs("KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", 1, 3)
+	cids, skipped, err := deriveObjktCIDs("KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", []int64{1, 2, 3})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
@@ -153,17 +166,16 @@ func TestDeriveObjktCIDs_Basic(t *testing.T) {
 	}
 }
 
-func TestDeriveObjktCIDs_Range(t *testing.T) {
+func TestDeriveObjktCIDs_SparseList(t *testing.T) {
 	t.Parallel()
 
-	cids, skipped, err := deriveObjktCIDs("KT1abc", 5, 7)
+	cids, skipped, err := deriveObjktCIDs("KT1abc", []int64{5, 7})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
-	require.Len(t, cids, 3)
+	require.Len(t, cids, 2)
 	assert.Contains(t, string(cids[0]), ":5")
-	assert.Contains(t, string(cids[1]), ":6")
-	assert.Contains(t, string(cids[2]), ":7")
+	assert.Contains(t, string(cids[1]), ":7")
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -219,7 +231,7 @@ func TestDeriveFxhashCIDs_Success(t *testing.T) {
 		},
 	}
 
-	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", 1, 2)
+	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
@@ -235,11 +247,38 @@ func TestDeriveFxhashCIDs_Success(t *testing.T) {
 	}
 }
 
+// TestDeriveFxhashCIDs_FiltersByIteration verifies that gentks whose iteration is
+// not in the requested mintNumbers set are excluded.
+func TestDeriveFxhashCIDs_FiltersByIteration(t *testing.T) {
+	t.Parallel()
+
+	// API returns iterations 1, 2, 3 (bounding window 1..3).
+	// We only requested mintNumbers=[1, 3], so iteration 2 should be filtered out.
+	w := &coreWorkflows{
+		config: CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
+		fxhashClient: &fakeFxhashClient{
+			gentks: []fxhash.GentkRef{
+				{ContractAddress: "KT1abc", TokenID: "10", Iteration: 1},
+				{ContractAddress: "KT1abc", TokenID: "11", Iteration: 2}, // not requested
+				{ContractAddress: "KT1abc", TokenID: "12", Iteration: 3},
+			},
+		},
+	}
+
+	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 3})
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, skipped) // both requested iterations were found
+	require.Len(t, cids, 2)
+	assert.Contains(t, string(cids[0]), ":10")
+	assert.Contains(t, string(cids[1]), ":12")
+}
+
 func TestDeriveFxhashCIDs_NilClient(t *testing.T) {
 	t.Parallel()
 
 	w := &coreWorkflows{fxhashClient: nil}
-	_, _, err := w.deriveFxhashCIDs(context.Background(), "9997", 1, 10)
+	_, _, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2, 3})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fxhash client not configured")
@@ -252,7 +291,7 @@ func TestDeriveFxhashCIDs_APIError(t *testing.T) {
 		config:       CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
 		fxhashClient: &fakeFxhashClient{err: errors.New("network error")},
 	}
-	_, _, err := w.deriveFxhashCIDs(context.Background(), "9997", 1, 5)
+	_, _, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2, 3, 4, 5})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GetGentksByIteration failed")
@@ -261,7 +300,7 @@ func TestDeriveFxhashCIDs_APIError(t *testing.T) {
 func TestDeriveFxhashCIDs_PartialResult(t *testing.T) {
 	t.Parallel()
 
-	// API returns fewer results than requested range (gap in supply).
+	// API returns only iteration 1 even though we requested [1,2,3,4,5].
 	w := &coreWorkflows{
 		config: CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
 		fxhashClient: &fakeFxhashClient{
@@ -270,10 +309,10 @@ func TestDeriveFxhashCIDs_PartialResult(t *testing.T) {
 			},
 		},
 	}
-	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", 1, 5)
+	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2, 3, 4, 5})
 
 	require.NoError(t, err)
-	assert.Equal(t, 4, skipped) // 5 requested, 1 returned
+	assert.Equal(t, 4, skipped) // 5 requested, 1 matched
 	assert.Len(t, cids, 1)
 }
 
@@ -284,7 +323,7 @@ func TestDeriveFxhashCIDs_EmptyResult(t *testing.T) {
 		config:       CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
 		fxhashClient: &fakeFxhashClient{gentks: []fxhash.GentkRef{}},
 	}
-	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", 1, 3)
+	cids, skipped, err := w.deriveFxhashCIDs(context.Background(), "9997", []int64{1, 2, 3})
 
 	require.NoError(t, err)
 	assert.Len(t, cids, 0)
@@ -307,7 +346,7 @@ func TestDeriveFeralFileCIDs_EthereumArtworks(t *testing.T) {
 			},
 		},
 	}
-	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", 1, 2)
+	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1, 2})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
@@ -328,7 +367,7 @@ func TestDeriveFeralFileCIDs_TezosArtworks(t *testing.T) {
 			},
 		},
 	}
-	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", 1, 1)
+	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
@@ -338,6 +377,32 @@ func TestDeriveFeralFileCIDs_TezosArtworks(t *testing.T) {
 	assert.Equal(t, domain.StandardFA2, standard)
 	assert.Equal(t, "KT1def", contract)
 	assert.Equal(t, "5", tokenNum)
+}
+
+// TestDeriveFeralFileCIDs_FiltersByIndex verifies that artworks whose Index+1 is not
+// in the requested mintNumbers set are excluded.
+func TestDeriveFeralFileCIDs_FiltersByIndex(t *testing.T) {
+	t.Parallel()
+
+	// API returns artworks at Index 0,1,2 (bounding window 1..3).
+	// We only requested mintNumbers=[1,3] (Index 0 and 2). Index 1 should be filtered.
+	w := &coreWorkflows{
+		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
+		feralfileClient: &fakeFFClient{
+			artworks: []feralfile.ArtworkRef{
+				{Index: 0, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "10"},
+				{Index: 1, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "11"}, // not requested
+				{Index: 2, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "12"},
+			},
+		},
+	}
+	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1, 3})
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, skipped) // both requested indices were found
+	require.Len(t, cids, 2)
+	assert.Contains(t, string(cids[0]), ":10")
+	assert.Contains(t, string(cids[1]), ":12")
 }
 
 func TestDeriveFeralFileCIDs_SkipsBitmarkArtworks(t *testing.T) {
@@ -356,7 +421,7 @@ func TestDeriveFeralFileCIDs_SkipsBitmarkArtworks(t *testing.T) {
 			},
 		},
 	}
-	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", 1, 3)
+	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1, 2, 3})
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, skipped) // 1 Bitmark artwork skipped
@@ -378,7 +443,7 @@ func TestDeriveFeralFileCIDs_AllBitmarkSkipped(t *testing.T) {
 			},
 		},
 	}
-	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", 1, 2)
+	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1, 2})
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, skipped)
@@ -389,7 +454,7 @@ func TestDeriveFeralFileCIDs_NilClient(t *testing.T) {
 	t.Parallel()
 
 	w := &coreWorkflows{feralfileClient: nil}
-	_, _, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", 1, 10)
+	_, _, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1, 2, 3})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "feral file client not configured")
@@ -401,7 +466,7 @@ func TestDeriveFeralFileCIDs_APIError(t *testing.T) {
 	w := &coreWorkflows{
 		feralfileClient: &fakeFFClient{err: errors.New("ff api error")},
 	}
-	_, _, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", 1, 5)
+	_, _, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1, 2, 3, 4, 5})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GetSeriesArtworks failed")
@@ -418,7 +483,7 @@ func TestDeriveFeralFileCIDs_MissingContractSkipped(t *testing.T) {
 			},
 		},
 	}
-	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", 1, 1)
+	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1})
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, skipped)
@@ -437,7 +502,7 @@ func TestDeriveObjktCIDs_CustomContractPasses(t *testing.T) {
 		objktClient: &fakeObjktClient{fa: &objkt.FA{Name: "Test Collection", CollectionType: "custom"}},
 	}
 
-	cids, skipped, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", 1, 3)
+	cids, skipped, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", []int64{1, 2, 3})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, skipped)
@@ -467,7 +532,7 @@ func TestDeriveObjktCIDs_NonCustomContractRejected(t *testing.T) {
 				},
 			}
 
-			_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", 1, 5)
+			_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", []int64{1, 2, 3, 4, 5})
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "objkt pre-check failed")
@@ -483,7 +548,7 @@ func TestDeriveObjktCIDs_NilClientRejected(t *testing.T) {
 		objktClient: nil,
 	}
 
-	_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", 1, 5)
+	_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", []int64{1})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "objkt client not configured")
@@ -497,7 +562,7 @@ func TestDeriveObjktCIDs_GetFAAPIError(t *testing.T) {
 		objktClient: &fakeObjktClient{err: errors.New("API timeout")},
 	}
 
-	_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", 1, 5)
+	_, _, err := w.deriveReleaseCIDs(context.Background(), schema.VendorObjkt, "KT1abc", []int64{1})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "objkt pre-check failed")

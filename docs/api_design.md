@@ -75,11 +75,11 @@ Design rules:
   - **`release_id`:** Filter tokens to members of a specific release (internal integer id). May be combined with `release_vendor` and/or `release_vendor_slug` (all ANDed).
   - **`release_vendor`:** Filter tokens to releases from a specific vendor (e.g. `artblocks`, `feralfile`, `fxhash`, `objkt`, `opensea`). May be used alone or combined with `release_id` / `release_vendor_slug`.
   - **`release_vendor_slug`:** Filter tokens to the release whose `vendor_release_slug` matches (e.g. `fidenza-by-tyler-hobbs`). Case-sensitive. May be used alone or combined with `release_id` / `release_vendor`.
-  - **`mint_from` / `mint_to`:** 1-based mint number range filter (inclusive). At least one of `release_id`, `release_vendor`, or `release_vendor_slug` must be set; supplying either without any release context returns a **`422`** validation error. `mint_from` must be `≥ 1`; `mint_to` must be `≥ mint_from`. Omitting both returns all members in the release context. The primary use case is polling `IndexRelease` job progress: page through `GET /api/v1/tokens?release_vendor_slug=X&mint_from=1&mint_to=N&include_unviewable=true` with offset-based pagination and accumulate the count until a partial page is returned — when the accumulated count equals `mint_to - mint_from + 1` (minus any known-skipped tokens), all child jobs have completed. `TriggerIndexingResponse` returns only a `job_id`; the expected count must be computed by the caller from the requested mint range. (`paging.total` is deprecated and always returns 0; do not rely on it for termination.)
+  - **`mint_number` (repeatable):** Explicit 1-based list of mint positions to include (max **50** per request, no duplicates). At least one of `release_id`, `release_vendor`, or `release_vendor_slug` must be set; providing any `mint_number` values without a release context returns a **`422`** validation error. Each value must be `≥ 1`. Omitting all `mint_number` values returns all members in the release context. The primary use case is polling `IndexRelease` job progress: query `GET /api/v1/tokens?release_vendor_slug=X&mint_number=N1&mint_number=N2&include_unviewable=true` with the same `mint_numbers` you passed to `POST /api/v1/releases/index` and accumulate returned tokens until all requested mints appear. (`paging.total` is deprecated and always returns 0; do not rely on it for termination.)
 - **Sorting:** `sort_by` (`created_at` | `latest_provenance` | `mint_number`), `sort_order` (`asc` | `desc`). When `owner` is present, `latest_provenance` follows documented owner-scoped behavior (see OpenAPI). `mint_number` requires at least one of `release_id`, `release_vendor`, or `release_vendor_slug`; the API returns a validation error if none are present.
 - **Invalid sort parameters (behavior change, release abstraction / #93):** Unrecognized `sort_by` or `sort_order` values return **`422`** with a validation error. Previously the list endpoint silently rewrote invalid values to `latest_provenance` / `desc`; that masking was removed so validation matches the OpenAPI enum contract and the release member endpoint (which already rejected invalid `sort_order`). Clients that sent typos and depended on silent defaults must send valid enum values.
 - **`include_unviewable`:** Default **`false`**; changing defaults is a **compatibility** decision.
-- **GraphQL:** `tokens(release_id, release_vendor, release_vendor_slug, mint_from, mint_to, limit, offset, ...)` exposes the same filters; the same validation rules apply.
+- **GraphQL:** `tokens(release_id, release_vendor, release_vendor_slug, mint_numbers, limit, offset, ...)` exposes the same filters; the same validation rules apply.
 
 ### List releases (`GET /api/v1/releases`)
 
@@ -130,7 +130,9 @@ Design rules:
 
 ### Release indexing (`POST /api/v1/releases/index`)
 
-Triggers asynchronous, full-collection indexing for a vendor release within a 1-based mint number range. The response arrives immediately (HTTP **202**) with a `job_id`; the actual token indexing runs in the background via the jobs queue.
+Triggers asynchronous indexing for an explicit list of mint numbers within a vendor release. The response arrives immediately (HTTP **202**) with a `job_id`; the actual token indexing runs in the background via the jobs queue.
+
+Using an explicit list (instead of a contiguous range) lets callers target only the mints that are still missing without re-indexing already-completed positions.
 
 **Request body:**
 
@@ -139,26 +141,23 @@ Triggers asynchronous, full-collection indexing for a vendor release within a 1-
 | `vendor` | string | yes | `artblocks`, `feralfile`, `fxhash`, or `objkt` |
 | `vendor_release_id` | string | one of | Vendor-specific release key (see list releases docs for format per vendor). Mutually exclusive with `vendor_release_slug`. |
 | `vendor_release_slug` | string | one of | Human-readable URL slug from the vendor's website (e.g. `industrial-park`). The workflow resolves the slug to a canonical `vendor_release_id` via the vendor's API before CID derivation. Mutually exclusive with `vendor_release_id`. For `objkt`, slug equals the KT1 contract address (no resolution API call needed). |
-| `mint_from` | int64 | no | First mint number to index (1-based, inclusive). Defaults to **1**. |
-| `mint_to` | int64 | yes | Last mint number to index (1-based, inclusive). |
+| `mint_numbers` | int64[] | yes | Explicit 1-based list of mint positions to index (required, non-empty, max **50**, no duplicates). |
 
 **Validation:**
 - Exactly one of `vendor_release_id` or `vendor_release_slug` must be supplied.
-- `mint_from ≥ 1` (when supplied)
-- `mint_to ≥ mint_from`
-- `mint_to − mint_from + 1 ≤ 100` (max range per request; see `MAX_RELEASE_MINT_RANGE`). Clients must batch larger collections themselves by issuing multiple non-overlapping requests.
+- `mint_numbers` must be non-empty; each value must be `≥ 1`; no duplicates; at most **50** entries per request (see `MAX_RELEASE_MINT_NUMBERS`). Clients must batch larger collections themselves by issuing multiple non-overlapping requests.
 
-**Response (`202`):** `TriggerIndexingResponse` with `job_id`. Use `GET /api/v1/jobs/{job_id}` to check whether Phase 1 (CID derivation + child-job enqueueing) succeeded. After the `job_id` reaches a terminal state, track per-token completion via `GET /api/v1/tokens?release_id=X&mint_from=1&mint_to=N&include_unviewable=true` with offset-based pagination (see List tokens documentation above).
+**Response (`202`):** `TriggerIndexingResponse` with `job_id`. Use `GET /api/v1/jobs/{job_id}` to check whether Phase 1 (CID derivation + child-job enqueueing) succeeded. After the `job_id` reaches a terminal state, track per-token completion via `GET /api/v1/tokens?release_vendor_slug=X&mint_number=N1&mint_number=N2&include_unviewable=true` with the same `mint_numbers` you submitted (see List tokens documentation above).
 
 **Per-vendor CID derivation strategy:**
 - `artblocks` — fully deterministic; zero API calls; `vendor_release_id` is `"{chainID}-{contract}-{projectID}"`; slug resolution calls the AB GraphQL API once.
 - `objkt` — fully deterministic; zero API calls; `vendor_release_id` is the KT1 FA2 contract address; slug equals the KT1 address (no extra call).
-- `fxhash` — requires an internal API call to map iteration numbers to on-chain token IDs; slug resolution calls the fxhash GraphQL API once.
-- `feralfile` — requires an internal API call; artworks still on the Bitmark chain (not yet swapped to EVM/Tezos) are skipped and counted as `tokens_skipped`; slug resolution calls the FF series list API once.
+- `fxhash` — calls `GetGentksByIteration([min, max])` once and filters returned gentks to only those whose iteration is in the requested `mint_numbers` set; slug resolution calls the fxhash GraphQL API once.
+- `feralfile` — calls `GetSeriesArtworks([min, max])` once and filters returned artworks to only those whose index (1-based) is in the requested `mint_numbers` set; artworks still on the Bitmark chain (not yet swapped to EVM/Tezos) are skipped and counted as `tokens_skipped`; slug resolution calls the FF series list API once.
 
-**Auth:** Open (no API key required), same as `POST /api/v1/tokens/index`. Max range cap of 100 tokens per call prevents large queue floods; clients batch larger collections themselves.
+**Auth:** Open (no API key required), same as `POST /api/v1/tokens/index`. Max list cap of **50** mints per call prevents large queue floods; clients batch larger collections themselves.
 
-**GraphQL:** `triggerReleaseIndexing(vendor, vendorReleaseId, vendorReleaseSlug, mintFrom, mintTo)` — same behavior; exactly one of `vendorReleaseId` / `vendorReleaseSlug` must be supplied.
+**GraphQL:** `triggerReleaseIndexing(vendor, vendorReleaseId, vendorReleaseSlug, mintNumbers)` — same behavior; exactly one of `vendorReleaseId` / `vendorReleaseSlug` must be supplied; `mintNumbers` is required and non-empty.
 
 ## Async operations and job tracking
 

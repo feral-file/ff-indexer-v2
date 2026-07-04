@@ -194,12 +194,12 @@ type TokenQueryFilter struct {
 	// ReleaseVendorSlug filters tokens to the release whose vendor_release_slug matches.
 	// Together with ReleaseVendor this typically identifies a single release.
 	ReleaseVendorSlug *string
-	// MintNumberFrom and MintNumberTo are 1-based mint range filters.
-	// Require at least one release context (ReleaseID, ReleaseVendor, or ReleaseVendorSlug).
-	// They constrain release_members.mint_number, allowing clients to poll for indexed
-	// tokens within a specific mint window after triggering IndexRelease.
-	MintNumberFrom    *int64
-	MintNumberTo      *int64
+	// MintNumbers is an explicit 1-based list of mint positions to include.
+	// Requires at least one release context (ReleaseID, ReleaseVendor, or ReleaseVendorSlug).
+	// Constrains release_members.mint_number via IN (?), allowing clients to poll for exactly
+	// the mints they triggered via IndexRelease without re-fetching already-indexed positions.
+	// Max 50 entries (MAX_TOKEN_MINT_NUMBERS_FILTER); each entry must be >= 1.
+	MintNumbers       []int64
 	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
 	SortBy            TokenSortBy // Sort field: created_at, latest_provenance, or mint_number
 	SortOrder         SortOrder   // Sort order: asc or desc

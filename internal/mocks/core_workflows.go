@@ -100,17 +100,17 @@ func (mr *MockCoreWorkflowsMockRecorder) IndexMultipleTokensMetadata(ctx, tokenC
 }
 
 // IndexRelease mocks base method.
-func (m *MockCoreWorkflows) IndexRelease(ctx context.Context, vendor, vendorReleaseID, vendorReleaseSlug string, mintFrom, mintTo int64) error {
+func (m *MockCoreWorkflows) IndexRelease(ctx context.Context, vendor, vendorReleaseID, vendorReleaseSlug string, mintNumbers []int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IndexRelease", ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo)
+	ret := m.ctrl.Call(m, "IndexRelease", ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintNumbers)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // IndexRelease indicates an expected call of IndexRelease.
-func (mr *MockCoreWorkflowsMockRecorder) IndexRelease(ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo any) *gomock.Call {
+func (mr *MockCoreWorkflowsMockRecorder) IndexRelease(ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintNumbers any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexRelease", reflect.TypeOf((*MockCoreWorkflows)(nil).IndexRelease), ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintFrom, mintTo)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IndexRelease", reflect.TypeOf((*MockCoreWorkflows)(nil).IndexRelease), ctx, vendor, vendorReleaseID, vendorReleaseSlug, mintNumbers)
 }
 
 // IndexTezosTokenOwner mocks base method.

@@ -209,11 +209,7 @@ func (r *mutationResolver) TriggerMetadataIndexing(ctx context.Context, tokenIds
 }
 
 // TriggerReleaseIndexing is the resolver for the triggerReleaseIndexing field.
-func (r *mutationResolver) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID *string, vendorReleaseSlug *string, mintFrom *int, mintTo int) (*dto.TriggerIndexingResponse, error) {
-	mintFromInt64 := int64(1)
-	if mintFrom != nil {
-		mintFromInt64 = int64(*mintFrom)
-	}
+func (r *mutationResolver) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID *string, vendorReleaseSlug *string, mintNumbers []int) (*dto.TriggerIndexingResponse, error) {
 	id := ""
 	if vendorReleaseID != nil {
 		id = *vendorReleaseID
@@ -222,7 +218,12 @@ func (r *mutationResolver) TriggerReleaseIndexing(ctx context.Context, vendor st
 	if vendorReleaseSlug != nil {
 		slug = *vendorReleaseSlug
 	}
-	return r.executor.TriggerReleaseIndexing(ctx, vendor, id, slug, mintFromInt64, int64(mintTo))
+	// Convert []int (GraphQL Int scalar) to []int64 for the executor.
+	mintNums := make([]int64, len(mintNumbers))
+	for i, n := range mintNumbers {
+		mintNums[i] = int64(n)
+	}
+	return r.executor.TriggerReleaseIndexing(ctx, vendor, id, slug, mintNums)
 }
 
 // CreateWebhookClient is the resolver for the createWebhookClient field.
@@ -372,7 +373,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintFrom *int, mintTo *int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
@@ -451,37 +452,38 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		parsedReleaseVendorSlug = &releaseVendorSlugVal
 	}
 
-	// hasReleaseContext — at least one release filter enables sort_by=mint_number and mint range.
+	// hasReleaseContext — at least one release filter enables sort_by=mint_number and mint_numbers.
 	hasReleaseContext := releaseIDPtr != nil || parsedReleaseVendor != nil || parsedReleaseVendorSlug != nil
 
 	if sortBy != nil && *sortBy == types.TokenSortByMintNumber && !hasReleaseContext {
 		return nil, apierrors.NewValidationError("sort_by=mint_number requires at least one of: release_id, release_vendor, release_vendor_slug")
 	}
 
-	// Validate mint range filters — require at least one release context.
-	if (mintFrom != nil || mintTo != nil) && !hasReleaseContext {
-		return nil, apierrors.NewValidationError("mint_from and mint_to require at least one of: release_id, release_vendor, release_vendor_slug")
-	}
-	if mintFrom != nil && *mintFrom < 1 {
-		return nil, apierrors.NewValidationError("mint_from must be >= 1")
-	}
-	if mintFrom != nil && mintTo != nil && *mintTo < *mintFrom {
-		return nil, apierrors.NewValidationError("mint_to must be >= mint_from")
+	// Validate mint_numbers list — requires at least one release context.
+	var mintNums []int64
+	if len(mintNumbers) > 0 {
+		if !hasReleaseContext {
+			return nil, apierrors.NewValidationError("mint_numbers requires at least one of: release_id, release_vendor, release_vendor_slug")
+		}
+		if int64(len(mintNumbers)) > constants.MAX_TOKEN_MINT_NUMBERS_FILTER {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("too many mint_numbers: max %d", constants.MAX_TOKEN_MINT_NUMBERS_FILTER))
+		}
+		seen := make(map[int64]struct{}, len(mintNumbers))
+		mintNums = make([]int64, len(mintNumbers))
+		for i, n := range mintNumbers {
+			v := int64(n)
+			if v < 1 {
+				return nil, apierrors.NewValidationError("each mint_number must be >= 1")
+			}
+			if _, dup := seen[v]; dup {
+				return nil, apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", v))
+			}
+			seen[v] = struct{}{}
+			mintNums[i] = v
+		}
 	}
 
-	// Convert *int to *int64 for the executor layer.
-	var mintFromInt64 *int64
-	if mintFrom != nil {
-		v := int64(*mintFrom)
-		mintFromInt64 = &v
-	}
-	var mintToInt64 *int64
-	if mintTo != nil {
-		v := int64(*mintTo)
-		mintToInt64 = &v
-	}
-
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, parsedReleaseVendor, parsedReleaseVendorSlug, mintFromInt64, mintToInt64, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, parsedReleaseVendor, parsedReleaseVendorSlug, mintNums, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
 }
 
 // Release is the resolver for the release field.
@@ -686,7 +688,7 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 		sortOrder = &defaultOrder
 	}
 
-	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
 }
 
 // Offset is the resolver for the offset field.

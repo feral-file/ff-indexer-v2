@@ -568,17 +568,12 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		}
 	}
 
-	// Mint number range filter — applied whenever a release context is present.
-	// MintNumberFrom/To narrow release_members.mint_number so callers can poll for
-	// indexed tokens within a specific window after triggering IndexRelease.
+	// MintNumbers filter — applied whenever a release context is present.
+	// Constrains release_members.mint_number to the exact set requested so callers
+	// can poll for precisely the mints they triggered via IndexRelease.
 	hasReleaseContext := filter.ReleaseID != nil || hasVendorFilter
-	if hasReleaseContext {
-		if filter.MintNumberFrom != nil {
-			query = query.Where("release_members.mint_number >= ?", *filter.MintNumberFrom)
-		}
-		if filter.MintNumberTo != nil {
-			query = query.Where("release_members.mint_number <= ?", *filter.MintNumberTo)
-		}
+	if hasReleaseContext && len(filter.MintNumbers) > 0 {
+		query = query.Where("release_members.mint_number IN ?", filter.MintNumbers)
 	}
 
 	// If filtering by owners and sorting by last_owner_provenance_timestamp,
