@@ -23,7 +23,7 @@ const (
 	// vendor API, paginated at 100 items per page. A span of 1000 limits worst-case paging to
 	// 10 vendor API calls per IndexRelease job regardless of how many mint numbers are requested.
 	// artblocks and objkt are deterministic and are not subject to this cap.
-	MAX_API_VENDOR_MINT_SPAN = int64(1000)
+	MAX_API_VENDOR_MINT_SPAN             = int64(1000)
 	DEFAULT_OFFSET                       = uint64(0)
 	DEFAULT_TOKENS_LIMIT                 = uint8(20)
 	DEFAULT_OWNERS_LIMIT                 = uint8(20)
