@@ -250,10 +250,14 @@ func (c *fxhashClient) GetGentksByIteration(ctx context.Context, generativeToken
 	offset := int64(0)
 
 	for {
+		// order_by iteration asc is required for deterministic multi-page pagination.
+		// Without a stable sort, Hasura can return different row orderings across pages,
+		// causing iterations to be duplicated or skipped when the span exceeds one page.
 		query := fmt.Sprintf(`query GetGentksByIteration {
   onchain {
     objkt(
       where: {generative_token: {id: {_eq: "%s"}}, iteration: {_gte: %d, _lte: %d}}
+      order_by: [{iteration: asc}]
       limit: %d
       offset: %d
     ) {
