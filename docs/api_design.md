@@ -146,6 +146,7 @@ Using an explicit list (instead of a contiguous range) lets callers target only 
 **Validation:**
 - Exactly one of `vendor_release_id` or `vendor_release_slug` must be supplied.
 - `mint_numbers` must be non-empty; each value must be `≥ 1`; no duplicates; at most **50** entries per request (see `MAX_RELEASE_MINT_NUMBERS`). Clients must batch larger collections themselves by issuing multiple non-overlapping requests.
+- **Span cap for `fxhash` and `feralfile`:** `max(mint_numbers) - min(mint_numbers)` must be `≤ 1000` (see `MAX_API_VENDOR_MINT_SPAN`). These vendors fetch the full `[min, max]` interval from their vendor APIs and paginate at 100 items/page; a large sparse span (e.g. `[1, 50000]`) would force ~500 vendor API calls to index 2 mints. Split wide sparse lists into batches with span `≤ 1000`. `artblocks` and `objkt` are deterministic and not subject to this cap.
 
 **Response (`202`):** `TriggerIndexingResponse` with `job_id`. Use `GET /api/v1/jobs/{job_id}` to check whether Phase 1 (CID derivation + child-job enqueueing) succeeded. After the `job_id` reaches a terminal state, track per-token completion via `GET /api/v1/tokens?release_vendor_slug=X&mint_number=N1&mint_number=N2&include_unviewable=true` with the same `mint_numbers` you submitted (see List tokens documentation above).
 

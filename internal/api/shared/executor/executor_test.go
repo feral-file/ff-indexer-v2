@@ -728,3 +728,79 @@ func TestTriggerReleaseIndexing_OpenSeaVendorRejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported vendor")
 }
+
+// ── API-vendor span cap (executor layer, covers the GraphQL path) ─────────────
+
+func TestTriggerReleaseIndexing_SpanTooWideForFxhash(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	// span = 50000 - 1 = 49999, exceeds MAX_API_VENDOR_MINT_SPAN = 1000
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "some-id", "", []int64{1, 50000})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mint_numbers span")
+	assert.Contains(t, err.Error(), "fxhash")
+}
+
+func TestTriggerReleaseIndexing_SpanTooWideForFeralFile(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "feralfile", "some-uuid", "", []int64{1, 50000})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mint_numbers span")
+	assert.Contains(t, err.Error(), "feralfile")
+}
+
+// newReleaseIndexingExecutorWithEnqueue creates an executor whose job queue accepts one
+// Enqueue call. Used by exemption tests that verify validation passes and the request
+// reaches the enqueue stage.
+func newReleaseIndexingExecutorWithEnqueue(t *testing.T) executor.Executor {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJobQueue := mocks.NewMockJobQueue(ctrl)
+	mockBlacklist := mocks.NewMockBlacklistRegistry(ctrl)
+	mockJobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(&schema.Job{ID: 1}, false, nil).AnyTimes()
+	return executor.NewExecutor(
+		mockStore,
+		mockJobQueue,
+		"token_index",
+		mockBlacklist,
+		adapter.NewJSON(),
+		adapter.NewClock(),
+		domain.Chain("tezos:mainnet"),
+		domain.Chain("eip155:1"),
+	)
+}
+
+func TestTriggerReleaseIndexing_SpanAtLimitForFxhash(t *testing.T) {
+	t.Parallel()
+
+	// span = 1001 - 1 = 1000 = MAX_API_VENDOR_MINT_SPAN — must pass span validation.
+	exec := newReleaseIndexingExecutorWithEnqueue(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "some-id", "", []int64{1, 1001})
+
+	require.NoError(t, err)
+}
+
+func TestTriggerReleaseIndexing_SpanNotAppliedToArtBlocks(t *testing.T) {
+	t.Parallel()
+
+	// artblocks is deterministic — a wide sparse span must pass span validation entirely.
+	exec := newReleaseIndexingExecutorWithEnqueue(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "1-0xabc-78", "", []int64{1, 999000})
+
+	require.NoError(t, err)
+}
+
+func TestTriggerReleaseIndexing_SpanNotAppliedToObjkt(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutorWithEnqueue(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "objkt", "KT1SomeContract", "", []int64{1, 999000})
+
+	require.NoError(t, err)
+}

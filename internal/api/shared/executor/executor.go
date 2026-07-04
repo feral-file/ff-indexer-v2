@@ -635,10 +635,13 @@ func (e *executor) TriggerTokenIndexing(ctx context.Context, tokenCIDs []domain.
 // chunked IndexTokens jobs (Phase 2). Phase 1 is typically fast (seconds for AB/objkt,
 // seconds-to-minutes for fxhash/FF depending on list size and API latency).
 //
-// Validation: vendor must be one of artblocks|feralfile|fxhash|objkt (opensea not
-// supported — see IndexRelease file-level doc for rationale); exactly one of
-// vendorReleaseID or vendorReleaseSlug must be non-empty; mintNumbers must be non-empty,
-// each >= 1, no duplicates, and at most MAX_RELEASE_MINT_NUMBERS entries.
+// Validation mirrors TriggerReleaseIndexingRequest.Validate and must be kept in sync
+// because GraphQL resolvers call this method directly, bypassing the DTO. Checks:
+//   - vendor must be one of artblocks|feralfile|fxhash|objkt
+//   - exactly one of vendorReleaseID or vendorReleaseSlug must be non-empty
+//   - mintNumbers: non-empty, each >= 1, no duplicates, at most MAX_RELEASE_MINT_NUMBERS
+//   - for fxhash and feralfile: max(mintNumbers)-min(mintNumbers) <= MAX_API_VENDOR_MINT_SPAN
+//     (those vendors page the entire [min,max] interval from their API)
 //
 // The unique key is built from the sorted mint list so that [1,3,2] and [2,1,3] resolve
 // to the same active job and do not enqueue duplicate Phase 1 work.
@@ -668,6 +671,7 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 	if int64(len(mintNumbers)) > constants.MAX_RELEASE_MINT_NUMBERS {
 		return nil, apierrors.NewValidationError(fmt.Sprintf("too many mint_numbers: max %d per request", constants.MAX_RELEASE_MINT_NUMBERS))
 	}
+	mintMin, mintMax := mintNumbers[0], mintNumbers[0]
 	seen := make(map[int64]struct{}, len(mintNumbers))
 	for _, n := range mintNumbers {
 		if n < 1 {
@@ -677,6 +681,22 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 			return nil, apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", n))
 		}
 		seen[n] = struct{}{}
+		if n < mintMin {
+			mintMin = n
+		}
+		if n > mintMax {
+			mintMax = n
+		}
+	}
+	// Span cap for API-based vendors: fxhash and feralfile fetch the full [min,max] interval
+	// from their vendor APIs and paginate at 100 items/page. A wide sparse span like [1,50000]
+	// would force ~500 vendor API calls to index 2 mints. artblocks and objkt are deterministic
+	// and not subject to this cap. This mirrors the identical check in DTO.Validate.
+	if (vendor == "fxhash" || vendor == "feralfile") && mintMax-mintMin > constants.MAX_API_VENDOR_MINT_SPAN {
+		return nil, apierrors.NewValidationError(fmt.Sprintf(
+			"mint_numbers span (%d) exceeds maximum allowed for %s (%d); split into smaller non-overlapping batches",
+			mintMax-mintMin, vendor, constants.MAX_API_VENDOR_MINT_SPAN,
+		))
 	}
 
 	// Sort a copy for a stable unique key — [1,3,2] and [2,1,3] must share the same key.

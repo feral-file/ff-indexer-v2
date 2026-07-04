@@ -389,7 +389,10 @@ type Mutation {
   # with the same mint_numbers to track exactly which mints have been indexed.
   # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
   # Provide exactly one of vendor_release_id or vendor_release_slug.
-  # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates)
+  # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates).
+  #   For fxhash and feralfile: max(mint_numbers)-min(mint_numbers) must be <= 1000 (MAX_API_VENDOR_MINT_SPAN).
+  #   Those vendors fetch the full [min,max] interval from their APIs; a wide sparse span forces many
+  #   API calls. artblocks and objkt are deterministic and not subject to this span cap.
   triggerReleaseIndexing(
     vendor: String!
     vendor_release_id: String
