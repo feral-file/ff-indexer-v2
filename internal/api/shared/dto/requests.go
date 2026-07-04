@@ -131,6 +131,9 @@ type TriggerReleaseIndexingRequest struct {
 // Validate validates the TriggerReleaseIndexingRequest.
 // Exactly one of vendor_release_id or vendor_release_slug must be provided.
 // mint_numbers must be non-empty, each >= 1, no duplicates, and at most MAX_RELEASE_MINT_NUMBERS entries.
+// For API-based vendors (fxhash, feralfile) the span max(mint_numbers)-min(mint_numbers) is additionally
+// capped at MAX_API_VENDOR_MINT_SPAN because those vendors fetch the full [min,max] interval from their
+// API and paginate it; a large sparse span would cause an avoidable number of vendor API calls.
 func (r *TriggerReleaseIndexingRequest) Validate() error {
 	if strings.TrimSpace(r.Vendor) == "" {
 		return apierrors.NewValidationError("vendor is required")
@@ -157,6 +160,7 @@ func (r *TriggerReleaseIndexingRequest) Validate() error {
 	if int64(len(r.MintNumbers)) > constants.MAX_RELEASE_MINT_NUMBERS {
 		return apierrors.NewValidationError(fmt.Sprintf("too many mint_numbers: max %d per request", constants.MAX_RELEASE_MINT_NUMBERS))
 	}
+	mintMin, mintMax := r.MintNumbers[0], r.MintNumbers[0]
 	seen := make(map[int64]struct{}, len(r.MintNumbers))
 	for _, n := range r.MintNumbers {
 		if n < 1 {
@@ -166,6 +170,21 @@ func (r *TriggerReleaseIndexingRequest) Validate() error {
 			return apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", n))
 		}
 		seen[n] = struct{}{}
+		if n < mintMin {
+			mintMin = n
+		}
+		if n > mintMax {
+			mintMax = n
+		}
+	}
+	// Span cap for API-based vendors: derivation fetches the full [min,max] interval and
+	// paginates at 100 items/page. Cap prevents a sparse list like [1, 50000] from forcing
+	// 500 vendor API pages to resolve 2 mints. artblocks and objkt are deterministic and exempt.
+	if (r.Vendor == "fxhash" || r.Vendor == "feralfile") && mintMax-mintMin > constants.MAX_API_VENDOR_MINT_SPAN {
+		return apierrors.NewValidationError(fmt.Sprintf(
+			"mint_numbers span (%d) exceeds maximum allowed for %s (%d); split into smaller non-overlapping batches",
+			mintMax-mintMin, r.Vendor, constants.MAX_API_VENDOR_MINT_SPAN,
+		))
 	}
 	return nil
 }

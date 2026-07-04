@@ -17,7 +17,13 @@ const (
 	// MAX_TOKEN_MINT_NUMBERS_FILTER is the maximum number of mint numbers allowed in the
 	// mint_numbers filter on GET /api/v1/tokens and the equivalent GraphQL field. Matches
 	// MAX_RELEASE_MINT_NUMBERS so a single IndexRelease batch maps 1:1 to a polling query.
-	MAX_TOKEN_MINT_NUMBERS_FILTER        = int64(50)
+	MAX_TOKEN_MINT_NUMBERS_FILTER = int64(50)
+	// MAX_API_VENDOR_MINT_SPAN caps max(mint_numbers)-min(mint_numbers) for API-based vendors
+	// (fxhash, feralfile) whose CID derivation fetches the entire [min,max] interval from the
+	// vendor API, paginated at 100 items per page. A span of 1000 limits worst-case paging to
+	// 10 vendor API calls per IndexRelease job regardless of how many mint numbers are requested.
+	// artblocks and objkt are deterministic and are not subject to this cap.
+	MAX_API_VENDOR_MINT_SPAN = int64(1000)
 	DEFAULT_OFFSET                       = uint64(0)
 	DEFAULT_TOKENS_LIMIT                 = uint8(20)
 	DEFAULT_OWNERS_LIMIT                 = uint8(20)

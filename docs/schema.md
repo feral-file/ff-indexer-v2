@@ -336,7 +336,7 @@ Cross-vendor release abstraction that gives Feral File series, Art Blocks projec
 - `(vendor, vendor_release_id)` (unique) — the upsert conflict target
 
 **Indexes**:
-- `releases_vendor_slug_idx` on `(vendor_release_slug)` WHERE `vendor_release_slug IS NOT NULL` — supports `GET /api/v1/releases?vendor_release_slug=...` and `GET /api/v1/tokens?release_vendor_slug=...` (added in migration 019)
+- `releases_vendor_slug_idx` on `(vendor, vendor_release_slug)` WHERE `vendor_release_slug IS NOT NULL` (unique) — supports `GET /api/v1/releases?vendor_release_slug=...` and `GET /api/v1/tokens?release_vendor_slug=...`; composite key ensures slug uniqueness is scoped per vendor (added in migration 019)
 
 **Triggers**:
 - `update_releases_updated_at` — automatically bumps `updated_at` on row update
@@ -694,7 +694,7 @@ Migrations should be placed in `db/migrations/` directory with sequential number
 - `001.sql` - Historical: introduced `token_ownership_periods` (removed in `015.sql`).
 - `018.sql` - Adds `releases` and `release_members` tables for cross-vendor release abstraction with mint-ordered members (including `CHECK (mint_number > 0)`), plus the `update_releases_updated_at` trigger.
 - `018_reindex.sql` - Enqueues `IndexTokenMetadata` jobs for all tokens previously enriched by Art Blocks, Feral File, fxhash, and objkt so the updated enhancer re-fetches vendor data and populates `releases` + `release_members`. Pre-existing stored `vendor_json` is incomplete for release derivation across all vendors; reindexing is the correct single path. Safe to run on a fresh database (produces no rows).
-- `019.sql` - Adds `vendor_release_slug TEXT` column to `releases` and the partial unique index `releases_vendor_slug_idx` on `(vendor_release_slug)` WHERE NOT NULL. The column is nullable; existing rows retain `vendor_release_slug = NULL` until re-enriched.
+- `019.sql` - Adds `vendor_release_slug TEXT` column to `releases` and the partial unique index `releases_vendor_slug_idx` on `(vendor, vendor_release_slug)` WHERE NOT NULL (composite key so slug uniqueness is scoped per vendor). The column is nullable; existing rows retain `vendor_release_slug = NULL` until re-enriched.
 - `019_reindex.sql` - Two-part backfill: (1) Re-enqueues all OpenSea-enriched tokens so the updated enhancer fetches `GetCollection` data and populates `name`, `total_mints`, and `vendor_release_slug` on their release rows. (2) For every non-OpenSea release still missing a slug, enqueues the first member token for re-enrichment; a single enrichment is sufficient to upsert the slug on the release row. Run `019_reindex.sql` after deploying the application (worker must be running to process the enqueued jobs).
 
 **Migration Guidelines**:

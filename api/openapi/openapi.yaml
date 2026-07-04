@@ -246,7 +246,7 @@ paths:
         - `sort_by` - Field to sort by (default: `latest_provenance`)
           - `created_at` - Sort by token creation timestamp
           - `latest_provenance` - Sort by latest provenance event timestamp (respects owner filter when provided) (default)
-          - `mint_number` - Sort by authoritative mint order within a release (requires `release_id`)
+          - `mint_number` - Sort by authoritative mint order within a release (requires at least one of `release_id`, `release_vendor`, or `release_vendor_slug`)
         - `sort_order` - Sort direction (default: `desc`)
           - `asc` - Ascending order (oldest first)
           - `desc` - Descending order (newest first)
@@ -410,7 +410,7 @@ paths:
             Sort options:
             - `created_at` - Sort by token creation timestamp
             - `latest_provenance` - Sort by latest provenance event timestamp. When owner filter is provided, sorts by the latest provenance event for those specific owners. Without owner filter, uses the token's last provenance timestamp. (default)
-            - `mint_number` - Sort by mint order within a release (requires `release_id`)
+            - `mint_number` - Sort by mint order within a release (requires at least one of `release_id`, `release_vendor`, or `release_vendor_slug`)
           schema:
             type: string
             enum: [created_at, latest_provenance, mint_number]
@@ -2191,6 +2191,12 @@ components:
             Explicit 1-based list of mint positions to index (required, non-empty, max 50, no duplicates).
             Using an explicit list lets callers target only the mints that are still missing without
             re-indexing already-completed positions.
+
+            **Span cap for API-based vendors (fxhash, feralfile):** `max(mint_numbers) - min(mint_numbers)`
+            must be ≤ 1000. These vendors fetch the full `[min, max]` interval from their API and paginate
+            at 100 items per page; a large sparse span would force many vendor API calls to index a few
+            mints. Split wide sparse lists into batches of span ≤ 1000. artblocks and objkt are
+            deterministic and are not subject to this span cap.
           minItems: 1
           maxItems: 50
           example: [1, 2, 3]
