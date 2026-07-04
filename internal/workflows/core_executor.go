@@ -1770,9 +1770,11 @@ func (e *coreExecutor) UpdateIndexingJobProgress(ctx context.Context, jobID int6
 
 // UpsertReleaseMetadata upserts vendor release row metadata without linking tokens.
 //
-// Reason: IndexRelease for OpenSea calls GetCollection once to resolve contract/chain and
-// should persist collection name and total_supply on the release row before token jobs run.
+// Reason: API-based vendors (feralfile, fxhash) resolve release metadata (name, total_mints,
+// slug) during IndexRelease Phase 1 and persist it here before child IndexTokens jobs run.
 // Token enhancement may upsert the same fields again when release members are indexed.
+// OpenSea does not use IndexRelease; its release metadata is persisted during per-token
+// enrichment via on-chain events.
 func (e *coreExecutor) UpsertReleaseMetadata(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) error {
 	if _, err := e.store.UpsertRelease(ctx, vendor, vendorReleaseID, name, totalMints, slug); err != nil {
 		return fmt.Errorf("failed to upsert release metadata: %w", err)
