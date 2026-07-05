@@ -659,10 +659,14 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 				Slug:            &slug,
 				MintNumber:      mintNum,
 			}
-			if name, totalMints := e.openSeaCollectionReleaseMetadata(ctx, slug); name != nil || totalMints != nil {
-				release.Name = name
-				release.TotalMints = totalMints
+			name, totalMints, collErr := e.openSeaCollectionReleaseMetadata(ctx, slug)
+			if collErr != nil {
+				// Propagate so the IndexTokens job retries and picks up release metadata
+				// on the next attempt rather than persisting a row without name/total_mints.
+				return nil, collErr
 			}
+			release.Name = name
+			release.TotalMints = totalMints
 			enhanced.Release = release
 		}
 	}
@@ -713,25 +717,34 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 
 // openSeaCollectionReleaseMetadata fetches collection-level name and total_mints for a slug,
 // using an in-process cache to avoid N+1 GetCollection calls during release indexing.
-func (e *enhancer) openSeaCollectionReleaseMetadata(ctx context.Context, slug string) (name *string, totalMints *int64) {
+//
+// Returns a non-nil error when GetCollection fails for a transient reason (i.e. any error
+// other than ErrNoAPIKey). The caller (enhanceOpenSea) propagates this as a job-level error
+// so the IndexTokens job retries and picks up the collection metadata on the next attempt.
+// ErrNoAPIKey is a permanent configuration issue and is treated as "no data available"
+// rather than a retryable failure.
+func (e *enhancer) openSeaCollectionReleaseMetadata(ctx context.Context, slug string) (name *string, totalMints *int64, err error) {
 	if slug == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if cached, ok := e.openSeaCollectionCache.Load(slug); ok {
-		return opensea.ReleaseMetadataFromCollection(cached.(*opensea.CollectionMetadata))
+		n, t := opensea.ReleaseMetadataFromCollection(cached.(*opensea.CollectionMetadata))
+		return n, t, nil
 	}
 
 	collection, err := e.openseaClient.GetCollection(ctx, slug)
 	if err != nil {
-		if !errors.Is(err, opensea.ErrNoAPIKey) {
-			logger.WarnCtx(ctx, "Failed to fetch OpenSea collection for release metadata",
-				zap.String("slug", slug),
-				zap.Error(err),
-			)
+		if errors.Is(err, opensea.ErrNoAPIKey) {
+			// No API key configured — permanent; treat as no data, don't retry.
+			return nil, nil, nil
 		}
-		return nil, nil
+		// Transient failure (rate limit, network, API downtime). Return the error so
+		// the IndexTokens job retries rather than persisting a release row with no
+		// name or total_mints.
+		return nil, nil, fmt.Errorf("OpenSea GetCollection failed for slug %q: %w", slug, err)
 	}
 
 	e.openSeaCollectionCache.Store(slug, collection)
-	return opensea.ReleaseMetadataFromCollection(collection)
+	n, t := opensea.ReleaseMetadataFromCollection(collection)
+	return n, t, nil
 }

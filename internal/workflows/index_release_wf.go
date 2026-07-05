@@ -41,6 +41,8 @@ package workflows
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sort"
@@ -109,11 +111,14 @@ func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorR
 	)
 
 	if len(cids) == 0 {
-		logger.InfoCtx(ctx, "IndexRelease: no CIDs to index, exiting",
-			zap.String("vendor", vendor),
-			zap.String("vendorReleaseID", vendorReleaseID),
-		)
-		return nil
+		// Return a terminal error rather than nil: a silent success would mark the job
+		// complete while no child IndexTokens jobs are enqueued, leaving callers to poll
+		// forever without realizing no work was done. skipped > 0 typically means the
+		// vendor API omitted edition numbers (nil FF index or missing fxhash gentks) for
+		// all requested mints, which indicates a release/API state the operator should see.
+		return fmt.Errorf("IndexRelease: no CIDs derived for %s/%s (skipped=%d); "+
+			"release may not be indexed or mint numbers may be out of range",
+			vendor, vendorReleaseID, skipped)
 	}
 
 	// Build a sorted, comma-joined representation of the mint list for use in child job
@@ -128,6 +133,14 @@ func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorR
 	}
 	mintKey := strings.Join(mintKeyParts, ",")
 
+	// Hash the release identifier for child job unique keys, matching the same strategy
+	// used by TriggerReleaseIndexing for the parent key. Without hashing, a long
+	// vendorReleaseID accepted by the parent (whose key uses a bounded digest) would be
+	// embedded raw in every child key and cause Enqueue to fail with a PostgreSQL btree
+	// index-row-size error at Phase 1.
+	idDigest := sha256.Sum256([]byte(vendorReleaseID))
+	idHash := "sha256:" + hex.EncodeToString(idDigest[:])
+
 	for i := 0; i < len(cids); i += indexReleaseChunkSize {
 		end := i + indexReleaseChunkSize
 		if end > len(cids) {
@@ -135,7 +148,7 @@ func (w *coreWorkflows) IndexRelease(ctx context.Context, vendor string, vendorR
 		}
 		chunk := cids[i:end]
 
-		uk := fmt.Sprintf("index-release-%s-%s-%s-%d-%d", vendor, vendorReleaseID, mintKey, i, end)
+		uk := fmt.Sprintf("index-release-%s-%s-%s-%d-%d", vendor, idHash, mintKey, i, end)
 		_, _, err := w.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
 			Queue:     w.config.TokenTaskQueue,
 			Kind:      "IndexTokens",

@@ -678,3 +678,36 @@ func TestResolveSlug_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "slug not found")
 }
+
+// TestGetSeriesArtworks_ReservedCharsInSeriesIDEncoded verifies that reserved URL characters
+// in seriesID (e.g. &, =, %) are percent-encoded in the outbound request. Without encoding,
+// a seriesID like "abc&foo=bar" would append extra query parameters to the Feral File URL.
+func TestGetSeriesArtworks_ReservedCharsInSeriesIDEncoded(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+	ctx := context.Background()
+
+	// seriesID with reserved characters that must not alter the query string.
+	seriesID := "abc&foo=bar"
+
+	var capturedURL string
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, u string, out interface{}) error {
+			capturedURL = u
+			// Return an empty result to stop pagination.
+			return json.Unmarshal([]byte(`{"result":[]}`), out)
+		})
+
+	_, err := client.GetSeriesArtworks(ctx, seriesID, 1, 1)
+	require.NoError(t, err)
+
+	// The raw seriesID must not appear in the URL; the encoded form must.
+	assert.NotContains(t, capturedURL, "abc&foo=bar",
+		"raw seriesID must not appear in URL; reserved chars must be encoded")
+	assert.Contains(t, capturedURL, "abc%26foo%3Dbar",
+		"seriesID must be percent-encoded in the URL")
+}

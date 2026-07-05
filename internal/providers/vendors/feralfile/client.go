@@ -240,8 +240,10 @@ func (c *FeralFileClient) GetSeriesArtworks(ctx context.Context, seriesID string
 			pageLimit = remaining
 		}
 
+		// url.QueryEscape ensures reserved characters in the caller-supplied seriesID
+		// (e.g. &, =, %) are percent-encoded and cannot alter the outbound query string.
 		apiURL := fmt.Sprintf("%s/artworks?seriesID=%s&sortBy=index&sortOrder=ASC&offset=%d&limit=%d",
-			c.apiBaseURL, seriesID, apiOffset+int64(len(all)), pageLimit)
+			c.apiBaseURL, url.QueryEscape(seriesID), apiOffset+int64(len(all)), pageLimit)
 
 		var resp artworkListResponse
 		if err := c.httpClient.GetAndUnmarshal(ctx, apiURL, &resp); err != nil {

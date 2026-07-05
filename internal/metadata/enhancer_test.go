@@ -2313,3 +2313,100 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 	assert.Equal(t, "https://ipfs.io/ipfs/QmTest123", *result.ImageURL)
 	assert.Equal(t, "https://ipfs.io/ipfs/QmTest456", *result.AnimationURL)
 }
+
+// TestEnhancer_Enhance_OpenSea_GetCollectionErrorIsRetryable verifies that when GetNFT
+// succeeds but GetCollection returns a transient (non-ErrNoAPIKey) error, Enhance returns
+// an error rather than succeeding with incomplete release metadata.
+//
+// This gives the IndexTokens job a retry path: the job fails and will be retried, at which
+// point GetCollection may succeed and fill in the name/total_mints on the release row.
+// Without this, the token is persisted with a release row that has no name or total_mints,
+// and there is no signal or retry path to recover the missing collection data.
+func TestEnhancer_Enhance_OpenSea_GetCollectionErrorIsRetryable(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1")
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Test NFT"},
+		Publisher: nil,
+	}
+
+	name := "Bored Ape #1"
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "1",
+		Collection: "bored-ape-yacht-club",
+		Contract:   "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+		Name:       &name,
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
+		Return(nftMetadata, nil)
+
+	// GetCollection returns a transient error (e.g. rate limit or network failure).
+	transientErr := fmt.Errorf("opensea: 429 too many requests")
+	mocks.openseaClient.
+		EXPECT().
+		GetCollection(gomock.Any(), "bored-ape-yacht-club").
+		Return(nil, transientErr)
+
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return([]byte(`{"identifier":"1"}`), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	require.Error(t, err, "a transient GetCollection error must cause Enhance to return an error")
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "GetCollection failed")
+}
+
+// TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyIsNotRetryable verifies that when
+// GetCollection returns ErrNoAPIKey (a permanent configuration issue), Enhance still
+// succeeds and the release is populated without name/total_mints rather than retrying forever.
+func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyIsNotRetryable(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1")
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Test NFT"},
+		Publisher: nil,
+	}
+
+	name := "Bored Ape #1"
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "1",
+		Collection: "bored-ape-yacht-club",
+		Contract:   "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+		Name:       &name,
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
+		Return(nftMetadata, nil)
+
+	// ErrNoAPIKey is a permanent issue — must be treated as "no data", not a retry trigger.
+	mocks.openseaClient.
+		EXPECT().
+		GetCollection(gomock.Any(), "bored-ape-yacht-club").
+		Return(nil, opensea.ErrNoAPIKey)
+
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return([]byte(`{"identifier":"1"}`), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	require.NoError(t, err, "ErrNoAPIKey must not cause a retryable error")
+	require.NotNil(t, result)
+	require.NotNil(t, result.Release)
+	assert.Equal(t, "bored-ape-yacht-club", result.Release.VendorReleaseID)
+	assert.Nil(t, result.Release.Name, "name must be nil when API key is absent")
+	assert.Nil(t, result.Release.TotalMints, "total_mints must be nil when API key is absent")
+}

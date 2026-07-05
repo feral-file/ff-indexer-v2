@@ -9,14 +9,18 @@ package workflows
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/feralfile"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/fxhash"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
@@ -695,4 +699,91 @@ func TestValidateChain_UnknownFamily(t *testing.T) {
 	err := w.validateChain(schema.VendorArtBlocks, domain.Chain("solana:mainnet"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unrecognized chain family")
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// IndexRelease integration-level unit tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+// captureQueue records Enqueue calls so tests can inspect unique keys and args.
+type captureQueue struct {
+	calls []jobs.EnqueueOptions
+}
+
+func (q *captureQueue) Enqueue(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+	q.calls = append(q.calls, opts)
+	return &schema.Job{ID: int64(len(q.calls))}, true, nil
+}
+
+func (q *captureQueue) GetStatus(_ context.Context, _ int64) (*schema.Job, error) {
+	return nil, fmt.Errorf("captureQueue: not implemented")
+}
+
+func (q *captureQueue) Cancel(_ context.Context, _ int64) error { return nil }
+
+// artblocksWorkflow builds a minimal coreWorkflows that can run IndexRelease for artblocks.
+func artblocksWorkflow(q jobs.JobQueue) *coreWorkflows {
+	return &coreWorkflows{
+		config: CoreWorkflowsConfig{
+			EthereumChainID: domain.ChainEthereumMainnet,
+			TezosChainID:    domain.ChainTezosMainnet,
+			TokenTaskQueue:  "token_index",
+		},
+		jobQueue: q,
+	}
+}
+
+// TestIndexRelease_ZeroCIDsReturnsError verifies that IndexRelease returns a visible
+// error when CID derivation produces zero results, rather than returning nil (phantom success).
+// Without this check, the job would complete successfully while no child IndexTokens jobs
+// are enqueued, leaving polling clients to wait forever.
+func TestIndexRelease_ZeroCIDsReturnsError(t *testing.T) {
+	t.Parallel()
+
+	q := &captureQueue{}
+	w := &coreWorkflows{
+		config: CoreWorkflowsConfig{
+			EthereumChainID: domain.ChainEthereumMainnet,
+			TezosChainID:    domain.ChainTezosMainnet,
+			TokenTaskQueue:  "token_index",
+		},
+		jobQueue:        q,
+		feralfileClient: &fakeFFClient{artworks: []feralfile.ArtworkRef{}},
+	}
+
+	// feralfile returns no artworks for the requested mint range → zero CIDs derived.
+	err := w.IndexRelease(context.Background(), "feralfile", "some-series-uuid", "", []int64{1, 2})
+
+	require.Error(t, err, "IndexRelease must return an error when no CIDs are derived")
+	assert.Contains(t, err.Error(), "no CIDs derived")
+	assert.Empty(t, q.calls, "no child jobs should have been enqueued")
+}
+
+// TestIndexRelease_ChildKeyUsesHashedIdentifier verifies that child IndexTokens unique
+// keys contain the SHA-256 digest of the vendorReleaseID, not the raw value. This
+// mirrors the parent IndexRelease key strategy and prevents PostgreSQL btree index-row-size
+// failures when an accepted long identifier is later embedded in child job keys.
+func TestIndexRelease_ChildKeyUsesHashedIdentifier(t *testing.T) {
+	t.Parallel()
+
+	q := &captureQueue{}
+	w := artblocksWorkflow(q)
+
+	// Use a valid Art Blocks vendor_release_id so CID derivation succeeds without API calls.
+	vendorReleaseID := "1-0x059EDD72Cd353dF5106D2B9cC5ab83a52287aC3a-0"
+	err := w.IndexRelease(context.Background(), "artblocks", vendorReleaseID, "", []int64{1})
+	require.NoError(t, err)
+	require.Len(t, q.calls, 1)
+
+	uk := *q.calls[0].UniqueKey
+
+	// The raw vendorReleaseID must not appear in the key.
+	assert.NotContains(t, uk, vendorReleaseID,
+		"child unique key must not embed the raw vendorReleaseID")
+
+	// The SHA-256 digest of the identifier must appear in the key.
+	digest := sha256.Sum256([]byte(vendorReleaseID))
+	expectedHash := "sha256:" + hex.EncodeToString(digest[:])
+	assert.True(t, strings.Contains(uk, expectedHash),
+		"child unique key must contain the SHA-256 digest of vendorReleaseID; got: %s", uk)
 }
