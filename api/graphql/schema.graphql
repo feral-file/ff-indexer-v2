@@ -289,15 +289,19 @@ type Query {
     token_ids: [Uint64!]
     token_cids: [String!]
     # release_id, release_vendor, and release_vendor_slug are all optional and ANDed.
-    # Any one of them is sufficient to enable sort_by=mint_number and mint_numbers.
+    # release_vendor alone is a broad vendor filter; it does NOT enable sort_by=mint_number
+    # or mint_numbers by itself because a vendor covers many releases and mint numbers repeat
+    # across them. To use mint semantics, supply release_id, or both release_vendor and
+    # release_vendor_slug together.
     release_id: Uint64
     # release_vendor filters tokens to releases from a given vendor (e.g. "artblocks").
     release_vendor: String
     # release_vendor_slug filters tokens to the release whose vendor_release_slug matches
     # (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
+    # Must be combined with release_vendor (slug uniqueness is scoped per vendor).
     release_vendor_slug: String
     # mint_numbers is an explicit 1-based list of mint positions to include (max 50, no duplicates).
-    # Requires at least one of release_id, release_vendor, or release_vendor_slug.
+    # Requires release_id, or both release_vendor and release_vendor_slug.
     # Use this to poll for exactly the mints triggered via triggerReleaseIndexing.
     mint_numbers: [Int!]
     limit: Uint8 = 20

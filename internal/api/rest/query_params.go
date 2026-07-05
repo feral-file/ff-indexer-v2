@@ -167,19 +167,25 @@ func (p *ListTokensQueryParams) Validate() error {
 		return apierrors.NewValidationError("release_vendor_slug requires release_vendor or release_id (slug uniqueness is scoped per vendor)")
 	}
 
-	// hasReleaseContext is true when at least one release filter is present.
+	// hasReleaseContext is true when the query is scoped to a specific release.
 	// sort_by=mint_number and mint_numbers require this context so that
-	// mint_number ordering is meaningful.
-	hasReleaseContext := p.ReleaseID != nil || p.ParsedReleaseVendor != nil || strings.TrimSpace(p.ReleaseVendorSlug) != ""
+	// mint_number ordering is unambiguous.
+	//
+	// release_vendor alone is not sufficient: a vendor covers many releases, so
+	// mint_number=1 with release_vendor=artblocks would return #1 from every
+	// Art Blocks release. A specific release must be identified by release_id,
+	// or by release_vendor+release_vendor_slug together.
+	vendorSlugPresent := strings.TrimSpace(p.ReleaseVendorSlug) != ""
+	hasReleaseContext := p.ReleaseID != nil || (p.ParsedReleaseVendor != nil && vendorSlugPresent)
 
 	if p.SortBy == types.TokenSortByMintNumber && !hasReleaseContext {
-		return apierrors.NewValidationError("sort_by=mint_number requires at least one of: release_id, release_vendor, release_vendor_slug")
+		return apierrors.NewValidationError("sort_by=mint_number requires release_id, or both release_vendor and release_vendor_slug")
 	}
 
-	// Validate mint_number list — requires at least one release context.
+	// Validate mint_number list — requires specific release context.
 	if len(p.MintNumbers) > 0 {
 		if !hasReleaseContext {
-			return apierrors.NewValidationError("mint_number requires at least one of: release_id, release_vendor, release_vendor_slug")
+			return apierrors.NewValidationError("mint_number requires release_id, or both release_vendor and release_vendor_slug")
 		}
 		if int64(len(p.MintNumbers)) > constants.MAX_TOKEN_MINT_NUMBERS_FILTER {
 			return apierrors.NewValidationError(fmt.Sprintf("too many mint_number values: max %d", constants.MAX_TOKEN_MINT_NUMBERS_FILTER))

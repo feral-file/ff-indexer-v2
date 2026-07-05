@@ -225,7 +225,32 @@ func TestQueryResolverTokensMintNumberRequiresReleaseContext(t *testing.T) {
 		nil, nil, nil, nil, &sortBy, nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "sort_by=mint_number requires at least one of")
+	assert.Contains(t, err.Error(), "sort_by=mint_number requires release_id")
+}
+
+// TestQueryResolverTokensVendorAloneRejectsForMintNumber verifies that release_vendor alone
+// (without release_vendor_slug) is rejected for sort_by=mint_number. A vendor covers many
+// releases, so mint-number ordering is ambiguous without a specific release identifier.
+func TestQueryResolverTokensVendorAloneRejectsForMintNumber(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	vendor := "artblocks"
+	sortBy := types.TokenSortByMintNumber
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		&vendor, nil,
+		nil, nil, nil, nil, &sortBy, nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sort_by=mint_number requires release_id")
 }
 
 // TestQueryResolverTokensMintNumbersWithVendorSlug verifies that release_vendor_slug

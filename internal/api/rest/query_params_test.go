@@ -275,7 +275,7 @@ func TestListTokensQueryParamsValidateMintNumberRequiresReleaseID(t *testing.T) 
 	require.Error(t, err)
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, err, &apiErr)
-	assert.Contains(t, apiErr.Details, "sort_by=mint_number requires at least one of")
+	assert.Contains(t, apiErr.Details, "sort_by=mint_number requires release_id")
 }
 
 func TestListTokensQueryParamsValidateMintNumberWithReleaseID(t *testing.T) {
@@ -532,15 +532,17 @@ func TestListTokensQueryParamsReleaseVendorInvalid(t *testing.T) {
 	assert.Contains(t, apiErr.Details, "Invalid release_vendor")
 }
 
-// TestListTokensQueryParamsMintNumberWithReleaseVendor verifies that release_vendor alone
-// is sufficient context to enable sort_by=mint_number.
-func TestListTokensQueryParamsMintNumberWithReleaseVendor(t *testing.T) {
+// TestListTokensQueryParamsMintNumberWithReleaseVendorAndSlug verifies that release_vendor
+// combined with release_vendor_slug is sufficient context to enable sort_by=mint_number.
+// release_vendor alone is no longer sufficient because a vendor covers many releases.
+func TestListTokensQueryParamsMintNumberWithReleaseVendorAndSlug(t *testing.T) {
 	t.Parallel()
 
 	params := ListTokensQueryParams{
-		ReleaseVendor: "feralfile",
-		SortBy:        types.TokenSortByMintNumber,
-		SortOrder:     types.OrderAsc,
+		ReleaseVendor:     "feralfile",
+		ReleaseVendorSlug: "data-pilgrims-01-769",
+		SortBy:            types.TokenSortByMintNumber,
+		SortOrder:         types.OrderAsc,
 	}
 
 	assert.NoError(t, params.Validate())
@@ -597,6 +599,46 @@ func TestListTokensQueryParamsSlugWithReleaseIDAccepted(t *testing.T) {
 	}
 
 	assert.NoError(t, params.Validate())
+}
+
+// TestListTokensQueryParamsVendorAloneRejectsForMintNumber verifies that release_vendor
+// alone (without release_vendor_slug) is rejected when mint_number is requested. A vendor
+// covers many releases; mint numbers repeat across them, making ordering ambiguous.
+func TestListTokensQueryParamsVendorAloneRejectsForMintNumber(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor: "artblocks",
+		MintNumbers:   []int64{1, 2},
+		SortBy:        types.TokenSortByMintNumber,
+		SortOrder:     types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, apierrors.ErrCodeValidationFailed, apiErr.Code)
+	assert.Contains(t, apiErr.Details, "mint_number requires release_id")
+}
+
+// TestListTokensQueryParamsVendorAloneRejectsForSortByMintNumber verifies that
+// sort_by=mint_number with only release_vendor (no slug) is also rejected.
+func TestListTokensQueryParamsVendorAloneRejectsForSortByMintNumber(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor: "artblocks",
+		SortBy:        types.TokenSortByMintNumber,
+		SortOrder:     types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, apierrors.ErrCodeValidationFailed, apiErr.Code)
+	assert.Contains(t, apiErr.Details, "sort_by=mint_number requires release_id")
 }
 
 // TestParseListTokensQueryReleaseVendorSlug verifies that release_vendor_slug and

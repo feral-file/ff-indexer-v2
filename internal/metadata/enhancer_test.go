@@ -2314,15 +2314,16 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 	assert.Equal(t, "https://ipfs.io/ipfs/QmTest456", *result.AnimationURL)
 }
 
-// TestEnhancer_Enhance_OpenSea_GetCollectionErrorIsRetryable verifies that when GetNFT
-// succeeds but GetCollection returns a transient (non-ErrNoAPIKey) error, Enhance returns
-// an error rather than succeeding with incomplete release metadata.
+// TestEnhancer_Enhance_OpenSea_GetCollectionTransientErrorDoesNotBlockNFTEnrichment verifies
+// that when GetNFT succeeds but GetCollection returns a transient error (rate limit, network),
+// token-level enrichment (name, image, release membership) is still persisted and Enhance
+// returns success. Collection metadata (name/total_mints) is best-effort.
 //
-// This gives the IndexTokens job a retry path: the job fails and will be retried, at which
-// point GetCollection may succeed and fill in the name/total_mints on the release row.
-// Without this, the token is persisted with a release row that has no name or total_mints,
-// and there is no signal or retry path to recover the missing collection data.
-func TestEnhancer_Enhance_OpenSea_GetCollectionErrorIsRetryable(t *testing.T) {
+// The token metadata workflow (index_metadata_wf.go) treats EnhanceTokenMetadata errors as
+// non-fatal and continues, so returning an error from here would simply discard the already-
+// fetched NFT data without providing a retry path. A future re-enrichment run can backfill
+// collection name/total_mints once GetCollection succeeds.
+func TestEnhancer_Enhance_OpenSea_GetCollectionTransientErrorDoesNotBlockNFTEnrichment(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
@@ -2345,12 +2346,12 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionErrorIsRetryable(t *testing.T) {
 		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
 		Return(nftMetadata, nil)
 
-	// GetCollection returns a transient error (e.g. rate limit or network failure).
-	transientErr := fmt.Errorf("opensea: 429 too many requests")
+	// Transient error (rate limit, network). Collection metadata is best-effort; token
+	// enrichment must still succeed.
 	mocks.openseaClient.
 		EXPECT().
 		GetCollection(gomock.Any(), "bored-ape-yacht-club").
-		Return(nil, transientErr)
+		Return(nil, fmt.Errorf("opensea: 429 too many requests"))
 
 	mocks.json.
 		EXPECT().
@@ -2359,15 +2360,24 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionErrorIsRetryable(t *testing.T) {
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
-	require.Error(t, err, "a transient GetCollection error must cause Enhance to return an error")
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "GetCollection failed")
+	require.NoError(t, err, "transient GetCollection failure must not block token enrichment")
+	require.NotNil(t, result)
+	// NFT-level name must still be set from GetNFT.
+	require.NotNil(t, result.Name)
+	assert.Equal(t, "Bored Ape #1", *result.Name)
+	// Release membership is still created with VendorReleaseID and mint number.
+	require.NotNil(t, result.Release)
+	assert.Equal(t, "bored-ape-yacht-club", result.Release.VendorReleaseID)
+	// Collection-level fields are nil because GetCollection failed.
+	assert.Nil(t, result.Release.Name, "name must be nil when GetCollection fails")
+	assert.Nil(t, result.Release.TotalMints, "total_mints must be nil when GetCollection fails")
 }
 
-// TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyIsNotRetryable verifies that when
-// GetCollection returns ErrNoAPIKey (a permanent configuration issue), Enhance still
-// succeeds and the release is populated without name/total_mints rather than retrying forever.
-func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyIsNotRetryable(t *testing.T) {
+// TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyBestEffort verifies that when
+// GetCollection returns ErrNoAPIKey (permanent configuration issue), Enhance succeeds and
+// the release is populated without collection-level name/total_mints — same best-effort
+// behavior as transient failures.
+func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyBestEffort(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
 
@@ -2390,7 +2400,6 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyIsNotRetryable(t *test
 		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
 		Return(nftMetadata, nil)
 
-	// ErrNoAPIKey is a permanent issue — must be treated as "no data", not a retry trigger.
 	mocks.openseaClient.
 		EXPECT().
 		GetCollection(gomock.Any(), "bored-ape-yacht-club").
@@ -2403,7 +2412,7 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyIsNotRetryable(t *test
 
 	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
 
-	require.NoError(t, err, "ErrNoAPIKey must not cause a retryable error")
+	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.Release)
 	assert.Equal(t, "bored-ape-yacht-club", result.Release.VendorReleaseID)

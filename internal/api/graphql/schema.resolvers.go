@@ -458,18 +458,22 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		return nil, apierrors.NewValidationError("release_vendor_slug requires release_vendor or release_id (slug uniqueness is scoped per vendor)")
 	}
 
-	// hasReleaseContext — at least one release filter enables sort_by=mint_number and mint_numbers.
-	hasReleaseContext := releaseIDPtr != nil || parsedReleaseVendor != nil || parsedReleaseVendorSlug != nil
+	// hasReleaseContext is true when the query is scoped to a specific release.
+	// release_vendor alone is not sufficient because a vendor covers many releases;
+	// mint_number=1 with release_vendor=artblocks would return #1 from every
+	// Art Blocks release. A specific release must be identified by release_id, or
+	// by release_vendor+release_vendor_slug together.
+	hasReleaseContext := releaseIDPtr != nil || (parsedReleaseVendor != nil && parsedReleaseVendorSlug != nil)
 
 	if sortBy != nil && *sortBy == types.TokenSortByMintNumber && !hasReleaseContext {
-		return nil, apierrors.NewValidationError("sort_by=mint_number requires at least one of: release_id, release_vendor, release_vendor_slug")
+		return nil, apierrors.NewValidationError("sort_by=mint_number requires release_id, or both release_vendor and release_vendor_slug")
 	}
 
-	// Validate mint_numbers list — requires at least one release context.
+	// Validate mint_numbers list — requires specific release context.
 	var mintNums []int64
 	if len(mintNumbers) > 0 {
 		if !hasReleaseContext {
-			return nil, apierrors.NewValidationError("mint_numbers requires at least one of: release_id, release_vendor, release_vendor_slug")
+			return nil, apierrors.NewValidationError("mint_numbers requires release_id, or both release_vendor and release_vendor_slug")
 		}
 		if int64(len(mintNumbers)) > constants.MAX_TOKEN_MINT_NUMBERS_FILTER {
 			return nil, apierrors.NewValidationError(fmt.Sprintf("too many mint_numbers: max %d", constants.MAX_TOKEN_MINT_NUMBERS_FILTER))
