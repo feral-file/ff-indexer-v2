@@ -16,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
@@ -816,4 +817,68 @@ func TestTriggerReleaseIndexing_LongIdentifierAccepted(t *testing.T) {
 
 	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", longID, "", []int64{1})
 	require.NoError(t, err)
+}
+
+func TestTriggerReleaseIndexing_WhitespacePaddedIDIsNormalized(t *testing.T) {
+	t.Parallel()
+
+	// A whitespace-padded identifier should be accepted and enqueued with the
+	// trimmed value, not the raw padded string. Without normalization the worker
+	// would receive "  some-id  " and fail during Art Blocks contract parsing or
+	// vendor slug resolution.
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJobQueue := mocks.NewMockJobQueue(ctrl)
+	mockBlacklist := mocks.NewMockBlacklistRegistry(ctrl)
+
+	var capturedOpts jobs.EnqueueOptions
+	mockJobQueue.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			capturedOpts = opts
+			return &schema.Job{ID: 1}, true, nil
+		})
+
+	exec := executor.NewExecutor(
+		mockStore, mockJobQueue, "token_index", mockBlacklist,
+		adapter.NewJSON(), adapter.NewClock(),
+		domain.Chain("tezos:mainnet"), domain.Chain("eip155:1"),
+	)
+
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "  some-id  ", "", []int64{1})
+	require.NoError(t, err)
+
+	// Args[1] is the enqueued vendorReleaseID — must be trimmed.
+	require.Len(t, capturedOpts.Args, 4)
+	assert.Equal(t, "some-id", capturedOpts.Args[1], "vendorReleaseID must be normalized before enqueueing")
+}
+
+func TestTriggerReleaseIndexing_WhitespacePaddedSlugIsNormalized(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJobQueue := mocks.NewMockJobQueue(ctrl)
+	mockBlacklist := mocks.NewMockBlacklistRegistry(ctrl)
+
+	var capturedOpts jobs.EnqueueOptions
+	mockJobQueue.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			capturedOpts = opts
+			return &schema.Job{ID: 1}, true, nil
+		})
+
+	exec := executor.NewExecutor(
+		mockStore, mockJobQueue, "token_index", mockBlacklist,
+		adapter.NewJSON(), adapter.NewClock(),
+		domain.Chain("tezos:mainnet"), domain.Chain("eip155:1"),
+	)
+
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "", "\t industrial-park \n", []int64{1})
+	require.NoError(t, err)
+
+	// Args[2] is the enqueued vendorReleaseSlug — must be trimmed.
+	require.Len(t, capturedOpts.Args, 4)
+	assert.Equal(t, "industrial-park", capturedOpts.Args[2], "vendorReleaseSlug must be normalized before enqueueing")
 }

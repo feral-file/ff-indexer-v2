@@ -2,6 +2,7 @@ package fxhash_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -374,4 +375,59 @@ func TestResolveSlug_NotFound(t *testing.T) {
 	_, err := client.ResolveSlug(context.Background(), "nonexistent-slug")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "slug not found")
+}
+
+// TestGetGentksByIteration_UsesVariablesNotInterpolation verifies that the generative
+// token ID is sent via GraphQL variables, not interpolated into the query string.
+// A caller-supplied ID containing a quote character must not break the query structure.
+func TestGetGentksByIteration_UsesVariablesNotInterpolation(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	var capturedBody []byte
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ map[string]string, body io.Reader) ([]byte, error) {
+			var err error
+			capturedBody, err = io.ReadAll(body)
+			require.NoError(t, err)
+			return []byte(`{"data":{"onchain":{"objkt":[]}}}`), nil
+		})
+
+	// An ID that would break query-string interpolation but is safe as a variable.
+	_, _ = client.GetGentksByIteration(context.Background(), `9997"} injection{`, 1, 1)
+
+	// The query field must not contain the raw ID — it must appear only in variables.
+	assert.NotContains(t, string(capturedBody), `9997"} injection{`,
+		"ID must not be interpolated into the query string")
+	assert.Contains(t, string(capturedBody), `"variables"`,
+		"request must include a variables object")
+	assert.Contains(t, string(capturedBody), `"tokenId"`,
+		"ID must be sent as a named variable")
+}
+
+// TestResolveSlug_UsesVariablesNotInterpolation verifies that the slug is sent via
+// GraphQL variables, not interpolated into the query string.
+func TestResolveSlug_UsesVariablesNotInterpolation(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	var capturedBody []byte
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ map[string]string, body io.Reader) ([]byte, error) {
+			var err error
+			capturedBody, err = io.ReadAll(body)
+			require.NoError(t, err)
+			return []byte(`{"data":{"onchain":{"generative_token":[]}}}`), nil
+		})
+
+	_, _ = client.ResolveSlug(context.Background(), `malicious"} injection{`)
+
+	assert.NotContains(t, string(capturedBody), `malicious"} injection{`,
+		"slug must not be interpolated into the query string")
+	assert.Contains(t, string(capturedBody), `"variables"`)
+	assert.Contains(t, string(capturedBody), `"slug"`)
 }

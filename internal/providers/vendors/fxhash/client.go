@@ -173,16 +173,12 @@ func NewClient(httpClient adapter.HTTPClient, rateLimiter ratelimit.Limiter, api
 	}
 }
 
-// GetGentk fetches a fxhash gentk by its on-chain identity.
-// The fxhash v2 API identifies gentks by the composite key "{contract}-{tokenID}".
-// This matches the on-chain (fa_contract, token_id) pair used by objkt.
-func (c *fxhashClient) GetGentk(ctx context.Context, contractAddress, tokenID string) (*Gentk, error) {
-	// The fxhash v2 objkt_by_pk id is "{contract}-{tokenID}".
-	gentkID := fmt.Sprintf("%s-%s", contractAddress, tokenID)
-
-	query := fmt.Sprintf(`query GetGentk {
+// getGentkQuery is the static GraphQL query for GetGentk.
+// Using a variable rather than fmt.Sprintf interpolation prevents GraphQL injection
+// from malformed contractAddress or tokenID values.
+const getGentkQuery = `query GetGentk($id: String!) {
   onchain {
-    objkt_by_pk(id: "%s") {
+    objkt_by_pk(id: $id) {
       iteration
       display_uri
       thumbnail_uri
@@ -202,11 +198,22 @@ func (c *fxhashClient) GetGentk(ctx context.Context, contractAddress, tokenID st
       }
     }
   }
-}`, gentkID)
+}`
+
+type getGentkVars struct {
+	ID string `json:"id"`
+}
+
+// GetGentk fetches a fxhash gentk by its on-chain identity.
+// The fxhash v2 API identifies gentks by the composite key "{contract}-{tokenID}".
+// This matches the on-chain (fa_contract, token_id) pair used by objkt.
+func (c *fxhashClient) GetGentk(ctx context.Context, contractAddress, tokenID string) (*Gentk, error) {
+	// The fxhash v2 objkt_by_pk id is "{contract}-{tokenID}".
+	gentkID := fmt.Sprintf("%s-%s", contractAddress, tokenID)
 
 	reqBody := GQLRequest{
-		Query:         query,
-		Variables:     nil,
+		Query:         getGentkQuery,
+		Variables:     getGentkVars{ID: gentkID},
 		OperationName: "GetGentk",
 	}
 
@@ -238,6 +245,39 @@ func (c *fxhashClient) GetGentk(ctx context.Context, contractAddress, tokenID st
 	return resp.Data.Onchain.ObjktByPK, nil
 }
 
+// getGentksByIterationQuery is the static GraphQL query for GetGentksByIteration.
+// All caller-supplied values (generative token ID, iteration bounds, page controls)
+// are passed via variables to prevent GraphQL injection.
+//
+// order_by: [{iteration: asc}] is required for deterministic multi-page pagination.
+// Without a stable sort, Hasura can return different row orderings across pages,
+// causing iterations to be duplicated or skipped when the span exceeds one page.
+//
+// iteration is a numeric column in the fxhash Postgres schema (confirmed by live API).
+// Hasura serializes numeric values as JSON strings in responses and expects numeric variables.
+// limit/offset use Int! (Hasura's standard pagination scalar).
+const getGentksByIterationQuery = `query GetGentksByIteration($tokenId: String!, $iterationFrom: numeric!, $iterationTo: numeric!, $limit: Int!, $offset: Int!) {
+  onchain {
+    objkt(
+      where: {generative_token: {id: {_eq: $tokenId}}, iteration: {_gte: $iterationFrom, _lte: $iterationTo}}
+      order_by: [{iteration: asc}]
+      limit: $limit
+      offset: $offset
+    ) {
+      id
+      iteration
+    }
+  }
+}`
+
+type getGentksByIterationVars struct {
+	TokenID       string `json:"tokenId"`
+	IterationFrom int64  `json:"iterationFrom"`
+	IterationTo   int64  `json:"iterationTo"`
+	Limit         int    `json:"limit"`
+	Offset        int64  `json:"offset"`
+}
+
 // GetGentksByIteration fetches all fxhash gentks for a generative token within the
 // given 1-based iteration range, paginating internally with fxhashIterationPageSize.
 //
@@ -250,26 +290,15 @@ func (c *fxhashClient) GetGentksByIteration(ctx context.Context, generativeToken
 	offset := int64(0)
 
 	for {
-		// order_by iteration asc is required for deterministic multi-page pagination.
-		// Without a stable sort, Hasura can return different row orderings across pages,
-		// causing iterations to be duplicated or skipped when the span exceeds one page.
-		query := fmt.Sprintf(`query GetGentksByIteration {
-  onchain {
-    objkt(
-      where: {generative_token: {id: {_eq: "%s"}}, iteration: {_gte: %d, _lte: %d}}
-      order_by: [{iteration: asc}]
-      limit: %d
-      offset: %d
-    ) {
-      id
-      iteration
-    }
-  }
-}`, generativeTokenID, iterationFrom, iterationTo, fxhashIterationPageSize, offset)
-
 		reqBody := GQLRequest{
-			Query:         query,
-			Variables:     nil,
+			Query: getGentksByIterationQuery,
+			Variables: getGentksByIterationVars{
+				TokenID:       generativeTokenID,
+				IterationFrom: iterationFrom,
+				IterationTo:   iterationTo,
+				Limit:         fxhashIterationPageSize,
+				Offset:        offset,
+			},
 			OperationName: "GetGentksByIteration",
 		}
 
@@ -320,23 +349,29 @@ func (c *fxhashClient) GetGentksByIteration(ctx context.Context, generativeToken
 	return all, nil
 }
 
+// resolveSlugQuery is the static GraphQL query for ResolveSlug.
+// The slug variable is caller-supplied and must not be interpolated into the query string.
+const resolveSlugQuery = `query ResolveSlug($slug: String!) {
+  onchain {
+    generative_token(where: {slug: {_eq: $slug}}, limit: 1) {
+      id
+    }
+  }
+}`
+
+type resolveSlugVars struct {
+	Slug string `json:"slug"`
+}
+
 // ResolveSlug resolves a fxhash URL slug to the generative token ID used as vendor_release_id.
 //
 // Queries onchain.generative_token(where:{slug:{_eq:$slug}}) to map the human-readable slug
 // from fxhash.xyz URLs to the stable numeric token ID. The numeric ID is used internally
 // because it is stable; slugs can be renamed by artists.
 func (c *fxhashClient) ResolveSlug(ctx context.Context, slug string) (string, error) {
-	query := fmt.Sprintf(`query ResolveSlug {
-  onchain {
-    generative_token(where: {slug: {_eq: "%s"}}, limit: 1) {
-      id
-    }
-  }
-}`, slug)
-
 	reqBody := GQLRequest{
-		Query:         query,
-		Variables:     nil,
+		Query:         resolveSlugQuery,
+		Variables:     resolveSlugVars{Slug: slug},
 		OperationName: "ResolveSlug",
 	}
 

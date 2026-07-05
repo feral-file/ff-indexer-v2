@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"testing"
 
@@ -327,4 +328,69 @@ func TestClient_GetToken_FAFieldNullFA(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Nil(t, token.FA, "nil FA in response should yield nil FA pointer")
+}
+
+// TestGetFA_UsesVariablesNotInterpolation verifies that contractAddress is sent via
+// GraphQL variables, not interpolated into the query string.
+// A value containing a quote must not break the query structure.
+func TestGetFA_UsesVariablesNotInterpolation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := objkt.NewClient(mockHTTPClient, nil, OBJKT_API_URL, "", mockJSON)
+
+	var capturedBody []byte
+	mockHTTPClient.
+		EXPECT().
+		PostBytes(gomock.Any(), OBJKT_API_URL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ map[string]string, body io.Reader) ([]byte, error) {
+			var err error
+			capturedBody, err = io.ReadAll(body)
+			require.NoError(t, err)
+			return []byte(`{"data":{"fa":[]}}`), nil
+		})
+
+	// A contract address that would break inline query interpolation.
+	_, _ = client.GetFA(ctx, `KT1abc"} injection{`)
+
+	assert.NotContains(t, string(capturedBody), `KT1abc"} injection{`,
+		"contract address must not be interpolated into the query string")
+	assert.Contains(t, string(capturedBody), `"variables"`)
+	assert.Contains(t, string(capturedBody), `"contract"`)
+}
+
+// TestGetToken_UsesVariablesNotInterpolation verifies that contractAddress and tokenID
+// are sent via GraphQL variables, not interpolated into the query string.
+func TestGetToken_UsesVariablesNotInterpolation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockJSON := adapter.NewJSON()
+	client := objkt.NewClient(mockHTTPClient, nil, OBJKT_API_URL, "", mockJSON)
+
+	var capturedBody []byte
+	mockHTTPClient.
+		EXPECT().
+		PostBytes(gomock.Any(), OBJKT_API_URL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ map[string]string, body io.Reader) ([]byte, error) {
+			var err error
+			capturedBody, err = io.ReadAll(body)
+			require.NoError(t, err)
+			return []byte(`{"data":{"token":[{"name":"t","creators":[]}]}}`), nil
+		})
+
+	_, _ = client.GetToken(ctx, `KT1abc"} injection{`, `1"} injection{`)
+
+	assert.NotContains(t, string(capturedBody), `KT1abc"} injection{`,
+		"contract address must not be interpolated into the query string")
+	assert.NotContains(t, string(capturedBody), `1"} injection{`,
+		"token ID must not be interpolated into the query string")
+	assert.Contains(t, string(capturedBody), `"variables"`)
+	assert.Contains(t, string(capturedBody), `"faContract"`)
+	assert.Contains(t, string(capturedBody), `"tokenId"`)
 }

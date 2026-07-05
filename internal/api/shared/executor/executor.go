@@ -655,10 +655,17 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 		return nil, apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
 	}
 
+	// Normalize identifiers: trim leading/trailing whitespace before any further use.
+	// Without normalization, a whitespace-padded caller could receive a 202 (the padded
+	// value dedupes correctly against the trimmed digest) but the worker receives the raw
+	// padded value and may fail during vendor slug resolution or contract address parsing.
+	vendorReleaseID = strings.TrimSpace(vendorReleaseID)
+	vendorReleaseSlug = strings.TrimSpace(vendorReleaseSlug)
+
 	// Validate identifier — mirrors the REST DTO check but must also live here because the
 	// GraphQL resolver calls the executor directly, bypassing DTO.Validate.
-	hasID := strings.TrimSpace(vendorReleaseID) != ""
-	hasSlug := strings.TrimSpace(vendorReleaseSlug) != ""
+	hasID := vendorReleaseID != ""
+	hasSlug := vendorReleaseSlug != ""
 	if !hasID && !hasSlug {
 		return nil, apierrors.NewValidationError("exactly one of vendor_release_id or vendor_release_slug is required")
 	}
@@ -670,9 +677,9 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 	// column at a fixed size regardless of identifier length, avoiding PostgreSQL btree
 	// index-row-size errors. Deduplication semantics are preserved: two calls with the same
 	// identifier produce the same digest and resolve to the same active job.
-	rawIdentifier := strings.TrimSpace(vendorReleaseID)
+	rawIdentifier := vendorReleaseID
 	if rawIdentifier == "" {
-		rawIdentifier = strings.TrimSpace(vendorReleaseSlug)
+		rawIdentifier = vendorReleaseSlug
 	}
 	digest := sha256.Sum256([]byte(rawIdentifier))
 	releaseIdentifier := "sha256:" + hex.EncodeToString(digest[:])

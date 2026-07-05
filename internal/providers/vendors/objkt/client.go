@@ -106,12 +106,13 @@ func NewClient(httpClient adapter.HTTPClient, rateLimiter ratelimit.Limiter, api
 	}
 }
 
-// GetToken fetches token data from objkt v3 API using GraphQL
-func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID string) (*Token, error) {
-	// Construct the GraphQL query
-	query := fmt.Sprintf(`query GetToken {
+// getTokenQuery is the static GraphQL query for GetToken.
+// Caller-supplied contractAddress and tokenID are passed via variables, not interpolated.
+//
+//nolint:gosec // G101 false positive: "token_id" is a GraphQL field name, not a credential.
+const getTokenQuery = `query GetToken($faContract: String!, $tokenId: String!) {
   token(
-    where: {fa_contract: {_eq: "%s"}, token_id: {_eq: "%s"}}
+    where: {fa_contract: {_eq: $faContract}, token_id: {_eq: $tokenId}}
   ) {
     artifact_uri
     description
@@ -132,12 +133,18 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
       collection_type
     }
   }
-}`, contractAddress, tokenID)
+}`
 
-	// Create GraphQL request
+type getTokenVars struct {
+	FAContract string `json:"faContract"`
+	TokenID    string `json:"tokenId"`
+}
+
+// GetToken fetches token data from objkt v3 API using GraphQL.
+func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID string) (*Token, error) {
 	request := GraphQLRequest{
-		Query:         query,
-		Variables:     nil,
+		Query:         getTokenQuery,
+		Variables:     getTokenVars{FAContract: contractAddress, TokenID: tokenID},
 		OperationName: "GetToken",
 	}
 
@@ -185,20 +192,27 @@ func (c *ObjktClient) GetToken(ctx context.Context, contractAddress, tokenID str
 //
 // Returns ErrCollectionNotCustom when the contract exists but is not a "custom" type
 // so callers can surface a clear, actionable error.
-func (c *ObjktClient) GetFA(ctx context.Context, contractAddress string) (*FA, error) {
-	query := fmt.Sprintf(`query GetFA {
+// getFAQuery is the static GraphQL query for GetFA.
+// The contractAddress is caller-supplied through the public release-indexing endpoint
+// and must be passed via a variable, not interpolated into the query string.
+const getFAQuery = `query GetFA($contract: String!) {
   fa(
-    where: {contract: {_eq: "%s"}}
+    where: {contract: {_eq: $contract}}
   ) {
     name
     editions
     collection_type
   }
-}`, contractAddress)
+}`
 
+type getFAVars struct {
+	Contract string `json:"contract"`
+}
+
+func (c *ObjktClient) GetFA(ctx context.Context, contractAddress string) (*FA, error) {
 	request := GraphQLRequest{
-		Query:         query,
-		Variables:     nil,
+		Query:         getFAQuery,
+		Variables:     getFAVars{Contract: contractAddress},
 		OperationName: "GetFA",
 	}
 
