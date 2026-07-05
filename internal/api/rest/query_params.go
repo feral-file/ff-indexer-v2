@@ -160,8 +160,15 @@ func (p *ListTokensQueryParams) Validate() error {
 		}
 	}
 
+	// release_vendor_slug is only unique per vendor (DB UNIQUE (vendor, vendor_release_slug)).
+	// Without release_vendor, a slug-only query can match releases across multiple vendors,
+	// breaking the mint_number ordering contract. Require release_vendor or release_id.
+	if strings.TrimSpace(p.ReleaseVendorSlug) != "" && p.ParsedReleaseVendor == nil && p.ReleaseID == nil {
+		return apierrors.NewValidationError("release_vendor_slug requires release_vendor or release_id (slug uniqueness is scoped per vendor)")
+	}
+
 	// hasReleaseContext is true when at least one release filter is present.
-	// sort_by=mint_number and mint_from/mint_to require this context so that
+	// sort_by=mint_number and mint_numbers require this context so that
 	// mint_number ordering is meaningful.
 	hasReleaseContext := p.ReleaseID != nil || p.ParsedReleaseVendor != nil || strings.TrimSpace(p.ReleaseVendorSlug) != ""
 

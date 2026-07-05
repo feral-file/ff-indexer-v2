@@ -546,14 +546,52 @@ func TestListTokensQueryParamsMintNumberWithReleaseVendor(t *testing.T) {
 	assert.NoError(t, params.Validate())
 }
 
-// TestListTokensQueryParamsMintNumbersWithVendorSlug verifies that release_vendor_slug alone
-// is sufficient context to enable mint_numbers.
-func TestListTokensQueryParamsMintNumbersWithVendorSlug(t *testing.T) {
+// TestListTokensQueryParamsSlugAloneRejected verifies that release_vendor_slug without
+// release_vendor or release_id is rejected. Slug uniqueness is scoped per vendor
+// (UNIQUE (vendor, vendor_release_slug)), so a slug-only filter can match multiple
+// releases across vendors, making mint_number ordering ambiguous.
+func TestListTokensQueryParamsSlugAloneRejected(t *testing.T) {
 	t.Parallel()
 
 	params := ListTokensQueryParams{
 		ReleaseVendorSlug: "fidenza-by-tyler-hobbs",
 		MintNumbers:       []int64{1, 25, 50},
+		SortBy:            types.TokenSortByMintNumber,
+		SortOrder:         types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "release_vendor_slug requires release_vendor or release_id")
+}
+
+// TestListTokensQueryParamsMintNumbersWithVendorAndSlug verifies that release_vendor_slug
+// combined with release_vendor is accepted and enables mint_numbers.
+func TestListTokensQueryParamsMintNumbersWithVendorAndSlug(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor:     "artblocks",
+		ReleaseVendorSlug: "fidenza-by-tyler-hobbs",
+		MintNumbers:       []int64{1, 25, 50},
+		SortBy:            types.TokenSortByMintNumber,
+		SortOrder:         types.OrderAsc,
+	}
+
+	assert.NoError(t, params.Validate())
+}
+
+// TestListTokensQueryParamsSlugWithReleaseIDAccepted verifies that release_vendor_slug
+// combined with release_id (no release_vendor) is accepted.
+func TestListTokensQueryParamsSlugWithReleaseIDAccepted(t *testing.T) {
+	t.Parallel()
+
+	id := uint64(5)
+	params := ListTokensQueryParams{
+		ReleaseID:         &id,
+		ReleaseVendorSlug: "fidenza-by-tyler-hobbs",
 		SortBy:            types.TokenSortByMintNumber,
 		SortOrder:         types.OrderAsc,
 	}

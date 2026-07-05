@@ -23,6 +23,9 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
+// int64Ptr returns a pointer to v; used in tests to construct *int64 literal values.
+func int64Ptr(v int64) *int64 { return &v }
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Local test fakes (avoid mocks import cycle)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -341,8 +344,8 @@ func TestDeriveFeralFileCIDs_EthereumArtworks(t *testing.T) {
 		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
 		feralfileClient: &fakeFFClient{
 			artworks: []feralfile.ArtworkRef{
-				{Index: 0, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "1"},
-				{Index: 1, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "2"},
+				{Index: int64Ptr(0), Chain: "ethereum", ContractAddress: "0xabc", TokenID: "1"},
+				{Index: int64Ptr(1), Chain: "ethereum", ContractAddress: "0xabc", TokenID: "2"},
 			},
 		},
 	}
@@ -363,7 +366,7 @@ func TestDeriveFeralFileCIDs_TezosArtworks(t *testing.T) {
 		config: CoreWorkflowsConfig{TezosChainID: domain.ChainTezosMainnet},
 		feralfileClient: &fakeFFClient{
 			artworks: []feralfile.ArtworkRef{
-				{Index: 0, Chain: "tezos", ContractAddress: "KT1def", TokenID: "5"},
+				{Index: int64Ptr(0), Chain: "tezos", ContractAddress: "KT1def", TokenID: "5"},
 			},
 		},
 	}
@@ -390,9 +393,9 @@ func TestDeriveFeralFileCIDs_FiltersByIndex(t *testing.T) {
 		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
 		feralfileClient: &fakeFFClient{
 			artworks: []feralfile.ArtworkRef{
-				{Index: 0, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "10"},
-				{Index: 1, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "11"}, // not requested
-				{Index: 2, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "12"},
+				{Index: int64Ptr(0), Chain: "ethereum", ContractAddress: "0xabc", TokenID: "10"},
+				{Index: int64Ptr(1), Chain: "ethereum", ContractAddress: "0xabc", TokenID: "11"}, // not requested
+				{Index: int64Ptr(2), Chain: "ethereum", ContractAddress: "0xabc", TokenID: "12"},
 			},
 		},
 	}
@@ -415,9 +418,9 @@ func TestDeriveFeralFileCIDs_SkipsBitmarkArtworks(t *testing.T) {
 		},
 		feralfileClient: &fakeFFClient{
 			artworks: []feralfile.ArtworkRef{
-				{Index: 0, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "1"},
-				{Index: 1, Chain: "bitmark", ContractAddress: "", TokenID: "some-bitmark-id"},
-				{Index: 2, Chain: "tezos", ContractAddress: "KT1def", TokenID: "5"},
+				{Index: int64Ptr(0), Chain: "ethereum", ContractAddress: "0xabc", TokenID: "1"},
+				{Index: int64Ptr(1), Chain: "bitmark", ContractAddress: "", TokenID: "some-bitmark-id"},
+				{Index: int64Ptr(2), Chain: "tezos", ContractAddress: "KT1def", TokenID: "5"},
 			},
 		},
 	}
@@ -438,8 +441,8 @@ func TestDeriveFeralFileCIDs_AllBitmarkSkipped(t *testing.T) {
 	w := &coreWorkflows{
 		feralfileClient: &fakeFFClient{
 			artworks: []feralfile.ArtworkRef{
-				{Index: 0, Chain: "bitmark", ContractAddress: "", TokenID: "b1"},
-				{Index: 1, Chain: "bitmark", ContractAddress: "", TokenID: "b2"},
+				{Index: int64Ptr(0), Chain: "bitmark", ContractAddress: "", TokenID: "b1"},
+				{Index: int64Ptr(1), Chain: "bitmark", ContractAddress: "", TokenID: "b2"},
 			},
 		},
 	}
@@ -448,6 +451,55 @@ func TestDeriveFeralFileCIDs_AllBitmarkSkipped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, skipped)
 	assert.Len(t, cids, 0)
+}
+
+// TestDeriveFeralFileCIDs_NilIndexSkipped verifies that artworks with a nil Index are
+// counted as skipped and do not match any requested mint number — including mint 1.
+// A nil Index means the FF API omitted the edition number; coercing nil→0 would
+// cause the artwork to match mint_number=1 (0+1), which is incorrect.
+func TestDeriveFeralFileCIDs_NilIndexSkipped(t *testing.T) {
+	t.Parallel()
+
+	w := &coreWorkflows{
+		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
+		feralfileClient: &fakeFFClient{
+			artworks: []feralfile.ArtworkRef{
+				// nil Index: release membership is unknown — must not match mint 1.
+				{Index: nil, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "10"},
+				// Known index 1 (mint 2): should be returned.
+				{Index: int64Ptr(1), Chain: "ethereum", ContractAddress: "0xabc", TokenID: "11"},
+			},
+		},
+	}
+	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1, 2})
+
+	require.NoError(t, err)
+	// skipped tracks API artworks we couldn't use (nil-index here), not unfound mint numbers.
+	// The nil-index artwork is counted as skipped; index-1 (mint 2) is returned.
+	assert.Equal(t, 1, skipped)
+	require.Len(t, cids, 1)
+	assert.Contains(t, string(cids[0]), ":11")
+}
+
+// TestDeriveFeralFileCIDs_AllNilIndexSkipped verifies that a response of all nil-index
+// artworks returns no CIDs and skips all requested mints.
+func TestDeriveFeralFileCIDs_AllNilIndexSkipped(t *testing.T) {
+	t.Parallel()
+
+	w := &coreWorkflows{
+		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
+		feralfileClient: &fakeFFClient{
+			artworks: []feralfile.ArtworkRef{
+				{Index: nil, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "1"},
+				{Index: nil, Chain: "ethereum", ContractAddress: "0xabc", TokenID: "2"},
+			},
+		},
+	}
+	cids, skipped, err := w.deriveFeralFileCIDs(context.Background(), "series-uuid", []int64{1, 2})
+
+	require.NoError(t, err)
+	assert.Len(t, cids, 0)
+	assert.Equal(t, 2, skipped) // both requested mints unresolved
 }
 
 func TestDeriveFeralFileCIDs_NilClient(t *testing.T) {
@@ -479,7 +531,7 @@ func TestDeriveFeralFileCIDs_MissingContractSkipped(t *testing.T) {
 		config: CoreWorkflowsConfig{EthereumChainID: domain.ChainEthereumMainnet},
 		feralfileClient: &fakeFFClient{
 			artworks: []feralfile.ArtworkRef{
-				{Index: 0, Chain: "ethereum", ContractAddress: "", TokenID: "1"},
+				{Index: int64Ptr(0), Chain: "ethereum", ContractAddress: "", TokenID: "1"},
 			},
 		},
 	}

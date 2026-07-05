@@ -229,13 +229,14 @@ func TestQueryResolverTokensMintNumberRequiresReleaseContext(t *testing.T) {
 }
 
 // TestQueryResolverTokensMintNumbersWithVendorSlug verifies that release_vendor_slug
-// alone is sufficient context to accept mint_numbers.
+// combined with release_vendor is accepted and enables mint_numbers.
 func TestQueryResolverTokensMintNumbersWithVendorSlug(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	vendor := "artblocks"
 	slug := "fidenza-by-tyler-hobbs"
 	mintNums := []int{1, 25, 50}
 
@@ -252,8 +253,30 @@ func TestQueryResolverTokensMintNumbersWithVendorSlug(t *testing.T) {
 	_, err := resolver.Query().Tokens(
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
-		nil, &slug,
+		&vendor, &slug,
 		mintNums, nil, nil, nil, nil, nil,
 	)
 	require.NoError(t, err)
+}
+
+// TestQueryResolverTokensSlugAloneRejected verifies that release_vendor_slug without
+// release_vendor is rejected. Slug uniqueness is scoped per vendor.
+func TestQueryResolverTokensSlugAloneRejected(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	slug := "fidenza-by-tyler-hobbs"
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		nil, &slug,
+		nil, nil, nil, nil, nil, nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "release_vendor_slug requires release_vendor or release_id")
 }

@@ -452,6 +452,12 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		parsedReleaseVendorSlug = &releaseVendorSlugVal
 	}
 
+	// release_vendor_slug is only unique per vendor. Without release_vendor, a slug-only
+	// query can match releases across multiple vendors, breaking mint_number ordering.
+	if parsedReleaseVendorSlug != nil && parsedReleaseVendor == nil && releaseIDPtr == nil {
+		return nil, apierrors.NewValidationError("release_vendor_slug requires release_vendor or release_id (slug uniqueness is scoped per vendor)")
+	}
+
 	// hasReleaseContext — at least one release filter enables sort_by=mint_number and mint_numbers.
 	hasReleaseContext := releaseIDPtr != nil || parsedReleaseVendor != nil || parsedReleaseVendorSlug != nil
 

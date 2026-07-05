@@ -39,8 +39,10 @@ type ArtworkResponse struct {
 // and no usable on-chain token ID for this indexer.
 type ArtworkRef struct {
 	// Index is the 0-based edition number within the series (artwork.index in FF API).
-	// MintNumber = Index + 1.
-	Index int64
+	// MintNumber = *Index + 1. Nil means the API omitted the index field, which indicates
+	// unknown release membership; callers must skip artworks with a nil Index rather than
+	// treating them as mint number 1 (which would be the result of Index==0).
+	Index *int64
 	// Chain is the resolved chain string: "ethereum", "tezos", or "bitmark".
 	Chain string
 	// ContractAddress is the on-chain contract (swapped contract if swap is complete,
@@ -252,16 +254,10 @@ func (c *FeralFileClient) GetSeriesArtworks(ctx context.Context, seriesID string
 		}
 
 		for _, raw := range resp.Result {
-			idx := int64(0)
-			if raw.Index != nil {
-				idx = *raw.Index
-			}
-			all = append(all, ArtworkRef{
-				Index:           idx,
-				Chain:           raw.Chain,
-				ContractAddress: raw.ContractAddress,
-				TokenID:         raw.TokenID,
-			})
+			// Preserve nil: a missing index means release membership is unknown.
+			// Callers must skip artworks with Index==nil rather than treating them
+			// as mint 1 (which would happen if nil were coerced to 0).
+			all = append(all, ArtworkRef(raw))
 		}
 
 		if int64(len(resp.Result)) < pageLimit {
@@ -279,7 +275,9 @@ func (c *FeralFileClient) GetSeriesArtworks(ctx context.Context, seriesID string
 // stable series UUID. The UUID is used internally as vendor_release_id because it is stable
 // across slug renames.
 func (c *FeralFileClient) ResolveSlug(ctx context.Context, slug string) (string, error) {
-	apiURL := fmt.Sprintf("%s/series?slug=%s&limit=1", c.apiBaseURL, slug)
+	// Use url.QueryEscape so reserved characters in caller-supplied slugs (e.g. &, =, %)
+	// cannot alter the query string structure of the outbound vendor request.
+	apiURL := fmt.Sprintf("%s/series?slug=%s&limit=1", c.apiBaseURL, url.QueryEscape(slug))
 
 	var resp seriesListResponse
 	if err := c.httpClient.GetAndUnmarshal(ctx, apiURL, &resp); err != nil {

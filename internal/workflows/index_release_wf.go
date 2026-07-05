@@ -415,8 +415,18 @@ func (w *coreWorkflows) deriveFeralFileCIDs(ctx context.Context, vendorReleaseID
 	skipped := 0
 
 	for _, artwork := range artworks {
+		// A nil Index means the FF API omitted the edition number, so release
+		// membership cannot be determined. Skip rather than coercing nil→0→mint 1.
+		if artwork.Index == nil {
+			logger.InfoCtx(ctx, "IndexRelease: skipping artwork with unknown index (nil)",
+				zap.String("seriesID", vendorReleaseID),
+			)
+			skipped++
+			continue
+		}
+
 		// artwork.Index is 0-based; mintNumber is 1-based.
-		mintNumber := artwork.Index + 1
+		mintNumber := *artwork.Index + 1
 		if _, ok := wanted[mintNumber]; !ok {
 			continue // not in requested set
 		}
@@ -426,7 +436,7 @@ func (w *coreWorkflows) deriveFeralFileCIDs(ctx context.Context, vendorReleaseID
 			// Artwork is still on Bitmark — no EVM/Tezos identity yet.
 			logger.InfoCtx(ctx, "IndexRelease: skipping unswapped Bitmark artwork",
 				zap.String("seriesID", vendorReleaseID),
-				zap.Int64("index", artwork.Index),
+				zap.Int64("index", *artwork.Index),
 			)
 			skipped++
 			continue
@@ -434,12 +444,12 @@ func (w *coreWorkflows) deriveFeralFileCIDs(ctx context.Context, vendorReleaseID
 		// Validate that the artwork's chain matches the indexer's configured chain for
 		// that blockchain family. A mismatch means the release targets a different network.
 		if err := w.validateChain(schema.VendorFeralFile, chain); err != nil {
-			return nil, 0, fmt.Errorf("artwork index=%d chain=%q: %w", artwork.Index, artwork.Chain, err)
+			return nil, 0, fmt.Errorf("artwork index=%d chain=%q: %w", *artwork.Index, artwork.Chain, err)
 		}
 		if artwork.ContractAddress == "" || artwork.TokenID == "" {
 			logger.WarnCtx(ctx, "IndexRelease: skipping artwork with missing contract or token ID",
 				zap.String("seriesID", vendorReleaseID),
-				zap.Int64("index", artwork.Index),
+				zap.Int64("index", *artwork.Index),
 				zap.String("chain", artwork.Chain),
 			)
 			skipped++

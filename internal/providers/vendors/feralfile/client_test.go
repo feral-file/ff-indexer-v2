@@ -466,12 +466,43 @@ func TestGetSeriesArtworks_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, refs, 2)
-	assert.Equal(t, int64(0), refs[0].Index)
+	require.NotNil(t, refs[0].Index)
+	assert.Equal(t, int64(0), *refs[0].Index)
 	assert.Equal(t, "ethereum", refs[0].Chain)
 	assert.Equal(t, "0xabc", refs[0].ContractAddress)
 	assert.Equal(t, "1", refs[0].TokenID)
-	assert.Equal(t, int64(1), refs[1].Index)
+	require.NotNil(t, refs[1].Index)
+	assert.Equal(t, int64(1), *refs[1].Index)
 	assert.Equal(t, "tezos", refs[1].Chain)
+}
+
+// TestGetSeriesArtworks_NilIndex verifies that an artwork whose "index" field is absent
+// in the JSON is represented as a nil pointer in ArtworkRef, not coerced to 0.
+func TestGetSeriesArtworks_NilIndex(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, result interface{}) error {
+			// "index" is intentionally absent to simulate an unresolved release membership.
+			return json.Unmarshal([]byte(`{
+				"result": [
+					{"chain":"ethereum","contractAddress":"0xabc","tokenID":"1"}
+				]
+			}`), result)
+		}).
+		Times(1)
+
+	refs, err := client.GetSeriesArtworks(context.Background(), "series-uuid", 1, 1)
+
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	assert.Nil(t, refs[0].Index, "absent 'index' in JSON must produce a nil pointer, not 0")
+	assert.Equal(t, "ethereum", refs[0].Chain)
 }
 
 // TestGetSeriesArtworks_EmptyResult verifies that an empty API result returns an empty slice.
