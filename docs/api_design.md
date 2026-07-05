@@ -158,7 +158,7 @@ Using an explicit list (instead of a contiguous range) lets callers target only 
 
 **Auth:** Open (no API key required), same as `POST /api/v1/tokens/index`. Max list cap of **50** mints per call prevents large queue floods; clients batch larger collections themselves.
 
-**GraphQL:** `triggerReleaseIndexing(vendor, vendorReleaseId, vendorReleaseSlug, mintNumbers)` — same behavior; exactly one of `vendorReleaseId` / `vendorReleaseSlug` must be supplied; `mintNumbers` is required and non-empty.
+**GraphQL:** `triggerReleaseIndexing(vendor, vendor_release_id, vendor_release_slug, mint_numbers)` — same behavior; exactly one of `vendor_release_id` / `vendor_release_slug` must be supplied; `mint_numbers` is required and non-empty.
 
 ## Async operations and job tracking
 
