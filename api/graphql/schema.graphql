@@ -298,7 +298,7 @@ type Query {
     release_vendor: String
     # release_vendor_slug filters tokens to the release whose vendor_release_slug matches
     # (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
-    # Must be combined with release_vendor (slug uniqueness is scoped per vendor).
+    # Must be combined with release_vendor or release_id (slug uniqueness is scoped per vendor).
     release_vendor_slug: String
     # mint_numbers is an explicit 1-based list of mint positions to include (max 50, no duplicates).
     # Requires release_id, or both release_vendor and release_vendor_slug.

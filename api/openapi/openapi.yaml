@@ -363,9 +363,9 @@ paths:
         - name: release_vendor
           in: query
           description: |
-            Filter tokens to releases from a given vendor. Any of release_id, release_vendor, or
-            release_vendor_slug may be supplied (all ANDed). Providing at least one release context
-            enables sort_by=mint_number and mint_number filters.
+            Filter tokens to releases from a given vendor (ANDed with other release filters).
+            This alone does NOT enable sort_by=mint_number or mint_number filtering; a specific
+            release must be identified via release_id, or both release_vendor and release_vendor_slug.
           schema:
             type: string
             enum: [artblocks, feralfile, fxhash, objkt, opensea]
