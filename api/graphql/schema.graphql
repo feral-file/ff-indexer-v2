@@ -385,8 +385,9 @@ type Mutation {
   # Trigger asynchronous indexing for an explicit list of mint numbers within a vendor release.
   # Equivalent to: POST /api/v1/releases/index
   # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
-  # After Phase 1 succeeds, poll tokens(release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true)
+  # After Phase 1 succeeds, poll tokens(release_vendor: "...", release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true)
   # with the same mint_numbers to track exactly which mints have been indexed.
+  # release_vendor is required when polling by slug (slug uniqueness is scoped per vendor).
   # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
   # Provide exactly one of vendor_release_id or vendor_release_slug.
   # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates).

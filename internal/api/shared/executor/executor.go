@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -664,6 +666,17 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 		return nil, apierrors.NewValidationError("vendor_release_id and vendor_release_slug are mutually exclusive; provide exactly one")
 	}
 
+	// Hash the release identifier for the unique key. SHA-256 keeps the jobs.unique_key TEXT
+	// column at a fixed size regardless of identifier length, avoiding PostgreSQL btree
+	// index-row-size errors. Deduplication semantics are preserved: two calls with the same
+	// identifier produce the same digest and resolve to the same active job.
+	rawIdentifier := strings.TrimSpace(vendorReleaseID)
+	if rawIdentifier == "" {
+		rawIdentifier = strings.TrimSpace(vendorReleaseSlug)
+	}
+	digest := sha256.Sum256([]byte(rawIdentifier))
+	releaseIdentifier := "sha256:" + hex.EncodeToString(digest[:])
+
 	// Validate mint numbers — mirrors DTO.Validate for the GraphQL path.
 	if len(mintNumbers) == 0 {
 		return nil, apierrors.NewValidationError("mint_numbers is required and must not be empty")
@@ -708,10 +721,6 @@ func (e *executor) TriggerReleaseIndexing(ctx context.Context, vendor string, ve
 		parts[i] = strconv.FormatInt(n, 10)
 	}
 
-	releaseIdentifier := vendorReleaseID
-	if releaseIdentifier == "" {
-		releaseIdentifier = vendorReleaseSlug
-	}
 	uniqueKey := fmt.Sprintf("index-release-%s-%s-%s", vendor, releaseIdentifier, strings.Join(parts, ","))
 	j, _, err := e.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
 		Queue:     e.tokenQueue,

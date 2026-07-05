@@ -314,6 +314,36 @@ func TestGetGentksByIteration_Pagination(t *testing.T) {
 	assert.Len(t, refs, pageSize+1)
 }
 
+// TestGetGentksByIteration_MalformedIDReturnsError verifies that a gentk entry with an
+// unparseable composite ID causes GetGentksByIteration to return an error rather than
+// silently skipping the entry. A parse failure signals an unexpected API schema change.
+func TestGetGentksByIteration_MalformedIDReturnsError(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	// "BADSEPARATOR1" has no hyphen so parseGentkRef returns an error.
+	responseBody := []byte(`{
+		"data": {
+			"onchain": {
+				"objkt": [
+					{"id": "BADSEPARATOR1", "iteration": "1"}
+				]
+			}
+		}
+	}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 1)
+
+	assert.Error(t, err)
+	assert.Nil(t, refs)
+	assert.Contains(t, err.Error(), "malformed fxhash gentk ref")
+}
+
 func TestResolveSlug_Success(t *testing.T) {
 	client, httpClient, ctrl := newTestClient(t)
 	defer ctrl.Finish()

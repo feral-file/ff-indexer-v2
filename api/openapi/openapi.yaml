@@ -374,7 +374,9 @@ paths:
           in: query
           description: |
             Filter tokens to the release whose vendor_release_slug matches (e.g. "fidenza-by-tyler-hobbs").
-            Case-sensitive. May be combined with release_id and/or release_vendor.
+            Case-sensitive. Must be combined with release_vendor or release_id — slug uniqueness is scoped
+            per vendor (UNIQUE (vendor, vendor_release_slug)), so a slug-only query would match releases
+            across multiple vendors and make mint_number ordering ambiguous. Returns 422 without a vendor context.
           schema:
             type: string
           example: "fidenza-by-tyler-hobbs"
@@ -732,8 +734,9 @@ paths:
         **Phase 2** (per-token indexing) runs independently as IndexTokens child jobs on the same queue.
 
         Poll `GET /api/v1/jobs/{job_id}` for Phase 1 status, then
-        `GET /api/v1/tokens?release_vendor_slug=...&mint_number=N&mint_number=M` with the same
-        `mint_numbers` to track exactly which mints have been indexed.
+        `GET /api/v1/tokens?release_vendor=...&release_vendor_slug=...&mint_number=N&mint_number=M` with
+        the same `mint_numbers` to track exactly which mints have been indexed.
+        `release_vendor` is required when polling by slug.
 
         **Vendor strategies:**
         - `artblocks` — deterministic CID math; vendor_release_id format: `{chainID}-{contract}-{projectID}`

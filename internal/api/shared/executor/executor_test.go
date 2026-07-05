@@ -3,6 +3,7 @@ package executor_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -802,5 +803,17 @@ func TestTriggerReleaseIndexing_SpanNotAppliedToObjkt(t *testing.T) {
 	exec := newReleaseIndexingExecutorWithEnqueue(t)
 	_, err := exec.TriggerReleaseIndexing(context.Background(), "objkt", "KT1SomeContract", "", []int64{1, 999000})
 
+	require.NoError(t, err)
+}
+
+func TestTriggerReleaseIndexing_LongIdentifierAccepted(t *testing.T) {
+	t.Parallel()
+
+	// A very long identifier must be accepted — the executor hashes it to keep the
+	// unique_key within the PostgreSQL btree index-row size limit.
+	longID := strings.Repeat("x", 2048)
+	exec := newReleaseIndexingExecutorWithEnqueue(t)
+
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", longID, "", []int64{1})
 	require.NoError(t, err)
 }

@@ -301,9 +301,11 @@ func (c *fxhashClient) GetGentksByIteration(ctx context.Context, generativeToken
 		for _, item := range page {
 			ref, err := parseGentkRef(item.ID, item.Iteration)
 			if err != nil {
-				// Skip malformed entries rather than failing the entire batch;
-				// a parse error here indicates an unexpected API schema change.
-				continue
+				// Return an error for malformed entries. A parse failure here means the
+				// fxhash API returned an unexpected token shape, which indicates an API
+				// schema change. Surfacing it immediately is preferable to silently
+				// producing a truncated result that drops requested mint numbers.
+				return nil, fmt.Errorf("malformed fxhash gentk ref: %w", err)
 			}
 			all = append(all, ref)
 		}
