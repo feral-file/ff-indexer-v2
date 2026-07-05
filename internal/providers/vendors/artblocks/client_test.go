@@ -353,3 +353,54 @@ func TestParseArtBlocksTokenID(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveSlug_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	jsonAdapter := adapter.NewJSON()
+	client := artblocks.NewClient(mockHTTPClient, "https://api.artblocks.io/graphql", jsonAdapter)
+
+	respBody, _ := json.Marshal(map[string]interface{}{
+		"data": map[string]interface{}{
+			"projects_metadata": []map[string]interface{}{
+				{
+					"chain_id": 1,
+					"id":       "0xabcdef-78",
+				},
+			},
+		},
+	})
+
+	mockHTTPClient.EXPECT().
+		PostBytes(gomock.Any(), "https://api.artblocks.io/graphql", gomock.Any(), gomock.Any()).
+		Return(respBody, nil)
+
+	id, err := client.ResolveSlug(context.Background(), 1, "fidenza-by-tyler-hobbs")
+	require.NoError(t, err)
+	assert.Equal(t, "1-0xabcdef-78", id)
+}
+
+func TestResolveSlug_NotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	jsonAdapter := adapter.NewJSON()
+	client := artblocks.NewClient(mockHTTPClient, "https://api.artblocks.io/graphql", jsonAdapter)
+
+	respBody, _ := json.Marshal(map[string]interface{}{
+		"data": map[string]interface{}{
+			"projects_metadata": []map[string]interface{}{},
+		},
+	})
+
+	mockHTTPClient.EXPECT().
+		PostBytes(gomock.Any(), "https://api.artblocks.io/graphql", gomock.Any(), gomock.Any()).
+		Return(respBody, nil)
+
+	_, err := client.ResolveSlug(context.Background(), 1, "no-such-slug")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "slug not found")
+}

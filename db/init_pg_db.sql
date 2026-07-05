@@ -91,12 +91,19 @@ CREATE TABLE releases (
     id BIGSERIAL PRIMARY KEY,
     vendor vendor_type NOT NULL,
     vendor_release_id TEXT NOT NULL,
+    vendor_release_slug TEXT,
     name TEXT,
     total_mints BIGINT CHECK (total_mints IS NULL OR total_mints > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (vendor, vendor_release_id)
 );
+
+-- Partial unique index: slug uniqueness per vendor, only when slug is not null.
+-- Allows multiple not-yet-enriched rows while preventing slug collisions.
+CREATE UNIQUE INDEX releases_vendor_slug_idx
+    ON releases (vendor, vendor_release_slug)
+    WHERE vendor_release_slug IS NOT NULL;
 
 -- Release Members table - Ordered member tokens for a release
 CREATE TABLE release_members (
@@ -586,6 +593,7 @@ COMMENT ON TABLE release_members IS 'Ordered member tokens for a release; mint_n
 COMMENT ON COLUMN releases.vendor_release_id IS 'External release key: FF seriesID UUID or AB {chainID}-{contract}-{projectID} (chain-qualified to prevent cross-chain collisions)';
 COMMENT ON COLUMN releases.name IS 'Human-readable release title (e.g. "Fidenza"); populated from vendor enrichment';
 COMMENT ON COLUMN releases.total_mints IS 'Declared max edition size from vendor (AB max_invocations, FF series.settings.maxArtwork); nullable when unknown';
+COMMENT ON COLUMN releases.vendor_release_slug IS 'URL slug for the release on the vendor website; nullable (backfilled via enrichment). For objkt, equals vendor_release_id (KT1 address). Unique per vendor when not null.';
 COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
 COMMENT ON TABLE token_media_health IS 'Tracks health check status for media URLs associated with tokens. Includes source information to distinguish between metadata/enrichment and image/animation URLs. Automatically synchronized when token_metadata or enrichment_sources are updated.';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';

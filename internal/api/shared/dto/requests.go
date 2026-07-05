@@ -2,6 +2,7 @@ package dto
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/constants"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
@@ -94,6 +95,97 @@ func (r *TriggerMetadataIndexingRequest) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+// TriggerReleaseIndexingRequest represents the request body for POST /api/v1/releases/index.
+// It triggers asynchronous indexing of tokens within a mint range for a given vendor release.
+// Exactly one of VendorReleaseID or VendorReleaseSlug must be provided.
+type TriggerReleaseIndexingRequest struct {
+	// Vendor identifies the source platform. Must be one of: artblocks, feralfile, fxhash, objkt.
+	// opensea is not supported for release indexing — OpenSea tokens are indexed via
+	// on-chain events (IndexTokens path) where mint_number is derived from the actual
+	// token identifier during enrichment.
+	Vendor string `json:"vendor"`
+	// VendorReleaseID is the platform-specific release key:
+	//   artblocks: "{chainID}-{contract}-{projectID}" (e.g. "1-0xa7d...-78")
+	//   feralfile: series UUID (e.g. "abc-123-...")
+	//   fxhash:    generative token ID (e.g. "9997")
+	//   objkt:     KT1 contract address (e.g. "KT1abc...") — must be a "custom" collection
+	// Mutually exclusive with VendorReleaseSlug.
+	VendorReleaseID string `json:"vendor_release_id"`
+	// VendorReleaseSlug is the human-readable URL slug from the vendor's website.
+	//   artblocks: "fidenza-by-tyler-hobbs"
+	//   feralfile: "data-pilgrims-01-769"
+	//   fxhash:    "industrial-park"
+	//   objkt:     KT1 contract address (same as vendor_release_id)
+	// Mutually exclusive with VendorReleaseID. The indexer resolves the slug to a
+	// vendor_release_id before enqueuing the job.
+	VendorReleaseSlug string `json:"vendor_release_slug"`
+	// MintNumbers is the explicit list of 1-based mint positions to index (required, non-empty,
+	// max 50, no duplicates). Using an explicit list instead of a range lets callers target only
+	// the mints that are still missing without re-indexing already-completed positions.
+	MintNumbers []int64 `json:"mint_numbers"`
+}
+
+// Validate validates the TriggerReleaseIndexingRequest.
+// Exactly one of vendor_release_id or vendor_release_slug must be provided.
+// mint_numbers must be non-empty, each >= 1, no duplicates, and at most MAX_RELEASE_MINT_NUMBERS entries.
+// For API-based vendors (fxhash, feralfile) the span max(mint_numbers)-min(mint_numbers) is additionally
+// capped at MAX_API_VENDOR_MINT_SPAN because those vendors fetch the full [min,max] interval from their
+// API and paginate it; a large sparse span would cause an avoidable number of vendor API calls.
+func (r *TriggerReleaseIndexingRequest) Validate() error {
+	if strings.TrimSpace(r.Vendor) == "" {
+		return apierrors.NewValidationError("vendor is required")
+	}
+	switch r.Vendor {
+	case "artblocks", "feralfile", "fxhash", "objkt":
+		// valid
+	default:
+		return apierrors.NewValidationError(fmt.Sprintf("unsupported vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", r.Vendor))
+	}
+
+	hasID := strings.TrimSpace(r.VendorReleaseID) != ""
+	hasSlug := strings.TrimSpace(r.VendorReleaseSlug) != ""
+	if !hasID && !hasSlug {
+		return apierrors.NewValidationError("exactly one of vendor_release_id or vendor_release_slug is required")
+	}
+	if hasID && hasSlug {
+		return apierrors.NewValidationError("vendor_release_id and vendor_release_slug are mutually exclusive; provide exactly one")
+	}
+
+	if len(r.MintNumbers) == 0 {
+		return apierrors.NewValidationError("mint_numbers is required and must not be empty")
+	}
+	if int64(len(r.MintNumbers)) > constants.MAX_RELEASE_MINT_NUMBERS {
+		return apierrors.NewValidationError(fmt.Sprintf("too many mint_numbers: max %d per request", constants.MAX_RELEASE_MINT_NUMBERS))
+	}
+	mintMin, mintMax := r.MintNumbers[0], r.MintNumbers[0]
+	seen := make(map[int64]struct{}, len(r.MintNumbers))
+	for _, n := range r.MintNumbers {
+		if n < 1 {
+			return apierrors.NewValidationError("each mint_number must be >= 1")
+		}
+		if _, dup := seen[n]; dup {
+			return apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", n))
+		}
+		seen[n] = struct{}{}
+		if n < mintMin {
+			mintMin = n
+		}
+		if n > mintMax {
+			mintMax = n
+		}
+	}
+	// Span cap for API-based vendors: derivation fetches the full [min,max] interval and
+	// paginates at 100 items/page. Cap prevents a sparse list like [1, 50000] from forcing
+	// 500 vendor API pages to resolve 2 mints. artblocks and objkt are deterministic and exempt.
+	if (r.Vendor == "fxhash" || r.Vendor == "feralfile") && mintMax-mintMin > constants.MAX_API_VENDOR_MINT_SPAN {
+		return apierrors.NewValidationError(fmt.Sprintf(
+			"mint_numbers span (%d) exceeds maximum allowed for %s (%d); split into smaller non-overlapping batches",
+			mintMax-mintMin, r.Vendor, constants.MAX_API_VENDOR_MINT_SPAN,
+		))
+	}
 	return nil
 }
 

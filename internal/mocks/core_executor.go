@@ -453,3 +453,17 @@ func (mr *MockCoreExecutorMockRecorder) UpdateTokenTransfer(ctx, event any) *gom
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenTransfer", reflect.TypeOf((*MockCoreExecutor)(nil).UpdateTokenTransfer), ctx, event)
 }
+
+// UpsertReleaseMetadata mocks base method.
+func (m *MockCoreExecutor) UpsertReleaseMetadata(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertReleaseMetadata", ctx, vendor, vendorReleaseID, name, totalMints, slug)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertReleaseMetadata indicates an expected call of UpsertReleaseMetadata.
+func (mr *MockCoreExecutorMockRecorder) UpsertReleaseMetadata(ctx, vendor, vendorReleaseID, name, totalMints, slug any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertReleaseMetadata", reflect.TypeOf((*MockCoreExecutor)(nil).UpsertReleaseMetadata), ctx, vendor, vendorReleaseID, name, totalMints, slug)
+}

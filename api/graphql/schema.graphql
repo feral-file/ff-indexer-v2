@@ -209,6 +209,9 @@ type ReleaseSummary {
   id: Uint64!
   vendor: String!
   vendor_release_id: String!
+  # URL slug from the vendor's website (e.g. "fidenza-by-tyler-hobbs"). Null when not yet enriched.
+  # For objkt, equals vendor_release_id (KT1 address).
+  vendor_release_slug: String
   name: String
   total_mints: Int
 }
@@ -218,6 +221,9 @@ type Release {
   id: Uint64!
   vendor: String!
   vendor_release_id: String!
+  # URL slug from the vendor's website (e.g. "fidenza-by-tyler-hobbs"). Null when not yet enriched.
+  # For objkt, equals vendor_release_id (KT1 address).
+  vendor_release_slug: String
   # Human-readable release title (e.g. "Fidenza"); REST GET /api/v1/releases/{id} `name`.
   name: String
   # Declared max edition size from vendor; REST GET /api/v1/releases/{id} `total_mints`.
@@ -282,7 +288,22 @@ type Query {
     token_numbers: [String!]
     token_ids: [Uint64!]
     token_cids: [String!]
+    # release_id, release_vendor, and release_vendor_slug are all optional and ANDed.
+    # release_vendor alone is a broad vendor filter; it does NOT enable sort_by=mint_number
+    # or mint_numbers by itself because a vendor covers many releases and mint numbers repeat
+    # across them. To use mint semantics, supply release_id, or both release_vendor and
+    # release_vendor_slug together.
     release_id: Uint64
+    # release_vendor filters tokens to releases from a given vendor (e.g. "artblocks").
+    release_vendor: String
+    # release_vendor_slug filters tokens to the release whose vendor_release_slug matches
+    # (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
+    # Must be combined with release_vendor or release_id (slug uniqueness is scoped per vendor).
+    release_vendor_slug: String
+    # mint_numbers is an explicit 1-based list of mint positions to include (max 50, no duplicates).
+    # Requires release_id, or both release_vendor and release_vendor_slug.
+    # Use this to poll for exactly the mints triggered via triggerReleaseIndexing.
+    mint_numbers: [Int!]
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
@@ -294,13 +315,15 @@ type Query {
   # Equivalent to: GET /api/v1/releases/:id
   release(id: Uint64!): Release
 
-  # List releases filtered by ids, vendor, and/or vendor_release_id (metadata only)
-  # Equivalent to: GET /api/v1/releases?ids=1&ids=2&vendor=...&vendor_release_id=...
-  # At least one of ids, vendor, or vendor_release_id is required.
+  # List releases filtered by ids, vendor, vendor_release_id, and/or vendor_release_slug (metadata only)
+  # Equivalent to: GET /api/v1/releases?ids=1&ids=2&vendor=...&vendor_release_id=...&vendor_release_slug=...
+  # At least one of ids, vendor, vendor_release_id, or vendor_release_slug is required.
   releases(
     ids: [Uint64!]
     vendor: String
     vendor_release_id: String
+    # URL slug from the vendor's website. Can be used instead of vendor_release_id.
+    vendor_release_slug: String
     limit: Uint8 = 20
     offset: Uint64 = 0
   ): ReleaseList!
@@ -361,6 +384,27 @@ type Mutation {
   triggerMetadataIndexing(
     token_ids: [Uint64!]
     token_cids: [String!]
+  ): TriggerIndexingResult
+
+  # Trigger asynchronous indexing for an explicit list of mint numbers within a vendor release.
+  # Equivalent to: POST /api/v1/releases/index
+  # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
+  # After Phase 1 succeeds, poll tokens(release_vendor: "...", release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true)
+  # with the same mint_numbers to track exactly which mints have been indexed.
+  # release_vendor is required when polling by slug (slug uniqueness is scoped per vendor).
+  # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
+  # Provide exactly one of vendor_release_id or vendor_release_slug.
+  # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates).
+  #   For fxhash and feralfile: max(mint_numbers)-min(mint_numbers) must be <= 1000 (MAX_API_VENDOR_MINT_SPAN).
+  #   Those vendors fetch the full [min,max] interval from their APIs; a wide sparse span forces many
+  #   API calls. artblocks and objkt are deterministic and not subject to this span cap.
+  triggerReleaseIndexing(
+    vendor: String!
+    vendor_release_id: String
+    # URL slug from the vendor's website. The indexer resolves the slug to a vendor_release_id.
+    # For objkt, use the KT1 contract address (same as vendor_release_id).
+    vendor_release_slug: String
+    mint_numbers: [Int!]!
   ): TriggerIndexingResult
 
   # Create a new webhook client (requires API key authentication only, JWT not accepted)

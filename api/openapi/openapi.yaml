@@ -246,7 +246,7 @@ paths:
         - `sort_by` - Field to sort by (default: `latest_provenance`)
           - `created_at` - Sort by token creation timestamp
           - `latest_provenance` - Sort by latest provenance event timestamp (respects owner filter when provided) (default)
-          - `mint_number` - Sort by authoritative mint order within a release (requires `release_id`)
+          - `mint_number` - Sort by authoritative mint order within a release (requires `release_id`, or both `release_vendor` and `release_vendor_slug`; `release_vendor` alone is insufficient because it covers many releases)
         - `sort_order` - Sort direction (default: `desc`)
           - `asc` - Ascending order (oldest first)
           - `desc` - Descending order (newest first)
@@ -355,11 +355,49 @@ paths:
           example: ["eip155:1:erc721:0xabc123:1234"]
         - name: release_id
           in: query
-          description: Filter by internal release ID
+          description: Filter by internal release ID. May be combined with release_vendor and/or release_vendor_slug (ANDed).
           schema:
             type: integer
             format: int64
           example: 42
+        - name: release_vendor
+          in: query
+          description: |
+            Filter tokens to releases from a given vendor (ANDed with other release filters).
+            This alone does NOT enable sort_by=mint_number or mint_number filtering; a specific
+            release must be identified via release_id, or both release_vendor and release_vendor_slug.
+          schema:
+            type: string
+            enum: [artblocks, feralfile, fxhash, objkt, opensea]
+          example: artblocks
+        - name: release_vendor_slug
+          in: query
+          description: |
+            Filter tokens to the release whose vendor_release_slug matches (e.g. "fidenza-by-tyler-hobbs").
+            Case-sensitive. Must be combined with release_vendor or release_id — slug uniqueness is scoped
+            per vendor (UNIQUE (vendor, vendor_release_slug)), so a slug-only query would match releases
+            across multiple vendors and make mint_number ordering ambiguous. Returns 422 without a vendor context.
+          schema:
+            type: string
+          example: "fidenza-by-tyler-hobbs"
+        - name: mint_number
+          in: query
+          description: |
+            Explicit 1-based mint positions to include (repeatable; max 50 values, no duplicates).
+            Requires release_id, or both release_vendor and release_vendor_slug (vendor alone is
+            insufficient because mint numbers repeat across releases from the same vendor).
+            Use this to poll for exactly the mints you triggered via POST /api/v1/releases/index.
+            Each value must be >= 1.
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int64
+              minimum: 1
+            maxItems: 50
+          style: form
+          explode: true
+          example: [1, 2, 3]
         - name: include_unviewable
           in: query
           description: Include tokens with unviewable media (no accessible media URLs). Default is false - only tokens with accessible media are returned.
@@ -375,7 +413,7 @@ paths:
             Sort options:
             - `created_at` - Sort by token creation timestamp
             - `latest_provenance` - Sort by latest provenance event timestamp. When owner filter is provided, sorts by the latest provenance event for those specific owners. Without owner filter, uses the token's last provenance timestamp. (default)
-            - `mint_number` - Sort by mint order within a release (requires `release_id`)
+            - `mint_number` - Sort by mint order within a release (requires `release_id`, or both `release_vendor` and `release_vendor_slug`)
           schema:
             type: string
             enum: [created_at, latest_provenance, mint_number]
@@ -567,10 +605,10 @@ paths:
           example: [1, 2]
         - name: vendor
           in: query
-          description: Filter by source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
+          description: Filter by source vendor (`artblocks`, `feralfile`, `fxhash`, `objkt`, or `opensea`)
           schema:
             type: string
-            enum: [artblocks, feralfile, fxhash, objkt]
+            enum: [artblocks, feralfile, fxhash, objkt, opensea]
           example: artblocks
         - name: vendor_release_id
           in: query
@@ -673,6 +711,62 @@ paths:
                 $ref: '#/components/schemas/APIError'
         '422':
           description: Validation error - Invalid release id or query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+
+  /api/v1/releases/index:
+    post:
+      summary: Trigger release indexing by vendor and release identifier
+      description: |
+        Enqueues an IndexRelease job for an explicit list of mint numbers within a vendor release.
+
+        **Phase 1** (CID derivation + IndexTokens fan-out) runs as a background job. Phase 1 is fast
+        for deterministic vendors (artblocks, objkt) and may take seconds-to-minutes for API-based
+        vendors (fxhash, feralfile) depending on list size and API latency.
+
+        **Phase 2** (per-token indexing) runs independently as IndexTokens child jobs on the same queue.
+
+        Poll `GET /api/v1/jobs/{job_id}` for Phase 1 status, then
+        `GET /api/v1/tokens?release_vendor=...&release_vendor_slug=...&mint_number=N&mint_number=M` with
+        the same `mint_numbers` to track exactly which mints have been indexed.
+        `release_vendor` is required when polling by slug.
+
+        **Vendor strategies:**
+        - `artblocks` — deterministic CID math; vendor_release_id format: `{chainID}-{contract}-{projectID}`
+        - `objkt` — requires a "custom" collection contract (pre-checked via objkt API); vendor_release_id is the KT1 contract address
+        - `fxhash` — API-based; vendor_release_id is the generative token ID
+        - `feralfile` — API-based; vendor_release_id is the series UUID
+
+        **Note:** `opensea` is not supported for release indexing. OpenSea tokens are indexed
+        via on-chain events where mint_number is derived from the actual token identifier during enrichment.
+
+        **Authentication:** None required (open endpoint, same as `POST /api/v1/tokens/index`).
+      operationId: triggerReleaseIndexing
+      tags:
+        - releases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerReleaseIndexingRequest'
+      responses:
+        '202':
+          description: Release indexing triggered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerIndexingResponse'
+        '422':
+          description: Validation error — invalid vendor, mint_numbers, or missing identifier
           content:
             application/json:
               schema:
@@ -2021,12 +2115,19 @@ components:
           example: 42
         vendor:
           type: string
-          description: Source vendor (`artblocks`, `feralfile`, `fxhash`, or `objkt`)
+          description: Source vendor (`artblocks`, `feralfile`, `fxhash`, `objkt`, or `opensea`). opensea tokens are indexed via on-chain events, not via release indexing.
           example: artblocks
         vendor_release_id:
           type: string
           description: External release key — AB `{chainID}-{contract}-{projectID}` (chain-qualified), FF series UUID, fxhash generative token id, or objkt KT1 contract address
           example: "1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-1"
+        vendor_release_slug:
+          type: [string, "null"]
+          description: |
+            Human-readable URL slug from the vendor's website (e.g. "fidenza-by-tyler-hobbs").
+            For OpenSea, equals vendor_release_id (the collection slug). Null when not yet
+            resolved or not available for the vendor.
+          example: "fidenza-by-tyler-hobbs"
         name:
           type: [string, "null"]
           description: Human-readable release title (e.g. "Fidenza")
@@ -2057,6 +2158,52 @@ components:
           format: uint64
           description: Next offset for pagination (null if there are no more results)
           example: 20
+
+    TriggerReleaseIndexingRequest:
+      type: object
+      required:
+        - vendor
+        - mint_numbers
+      properties:
+        vendor:
+          type: string
+          description: Source vendor. opensea is not accepted for release indexing.
+          enum: [artblocks, feralfile, fxhash, objkt]
+          example: objkt
+        vendor_release_id:
+          type: string
+          description: |
+            Vendor-specific release identifier. Provide exactly one of vendor_release_id or vendor_release_slug.
+            - artblocks: `{chainID}-{contract}-{projectID}` (e.g. `1-0xa7d8d9ef8d8ce8992df33d8b8cf4aebabd5bd270-78`)
+            - objkt: KT1 contract address for a "custom" collection (e.g. `KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton`)
+            - fxhash: generative token ID (e.g. `9997`)
+            - feralfile: series UUID
+          example: KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton
+        vendor_release_slug:
+          type: string
+          description: |
+            URL slug from the vendor's website. The indexer resolves the slug to a vendor_release_id.
+            For objkt, use the KT1 contract address (same as vendor_release_id).
+          example: industrial-park
+        mint_numbers:
+          type: array
+          items:
+            type: integer
+            format: int64
+            minimum: 1
+          description: |
+            Explicit 1-based list of mint positions to index (required, non-empty, max 50, no duplicates).
+            Using an explicit list lets callers target only the mints that are still missing without
+            re-indexing already-completed positions.
+
+            **Span cap for API-based vendors (fxhash, feralfile):** `max(mint_numbers) - min(mint_numbers)`
+            must be ≤ 1000. These vendors fetch the full `[min, max]` interval from their API and paginate
+            at 100 items per page; a large sparse span would force many vendor API calls to index a few
+            mints. Split wide sparse lists into batches of span ≤ 1000. artblocks and objkt are
+            deterministic and are not subject to this span cap.
+          minItems: 1
+          maxItems: 50
+          example: [1, 2, 3]
 
     TriggerTokenIndexingRequest:
       type: object

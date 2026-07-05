@@ -56,3 +56,33 @@ func (mr *MockFxhashClientMockRecorder) GetGentk(ctx, contractAddress, tokenID a
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGentk", reflect.TypeOf((*MockFxhashClient)(nil).GetGentk), ctx, contractAddress, tokenID)
 }
+
+// GetGentksByIteration mocks base method.
+func (m *MockFxhashClient) GetGentksByIteration(ctx context.Context, generativeTokenID string, iterationFrom, iterationTo int64) ([]fxhash.GentkRef, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetGentksByIteration", ctx, generativeTokenID, iterationFrom, iterationTo)
+	ret0, _ := ret[0].([]fxhash.GentkRef)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetGentksByIteration indicates an expected call of GetGentksByIteration.
+func (mr *MockFxhashClientMockRecorder) GetGentksByIteration(ctx, generativeTokenID, iterationFrom, iterationTo any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGentksByIteration", reflect.TypeOf((*MockFxhashClient)(nil).GetGentksByIteration), ctx, generativeTokenID, iterationFrom, iterationTo)
+}
+
+// ResolveSlug mocks base method.
+func (m *MockFxhashClient) ResolveSlug(ctx context.Context, slug string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveSlug", ctx, slug)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveSlug indicates an expected call of ResolveSlug.
+func (mr *MockFxhashClientMockRecorder) ResolveSlug(ctx, slug any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveSlug", reflect.TypeOf((*MockFxhashClient)(nil).ResolveSlug), ctx, slug)
+}

@@ -171,6 +171,15 @@ func registerWorkerCore(
 			MediaTaskQueue:                     cfg.Jobs.MediaQueue,
 			BudgetedIndexingModeEnabled:        cfg.BudgetedIndexingEnabled,
 			BudgetedIndexingDefaultDailyQuota:  cfg.BudgetedIndexingDefaultDailyQuota,
+			// Vendor clients for IndexRelease CID derivation and slug resolution.
+			// fxhash and Feral File require API calls for CID derivation.
+			// AB requires a client only for slug resolution (CID derivation is deterministic).
+			// objkt requires a client to verify the contract is a custom collection before
+			// enqueuing CIDs; only custom contracts have per-contract sequential token IDs.
+			FxhashClient:    fxhashClient,
+			FeralFileClient: feralfileClient,
+			ArtBlocksClient: artblocksClient,
+			ObjktClient:     objktClient,
 		}, blacklistRegistry, jobQueue)
 
 	reg := jobs.NewRegistry(jsonAdapter)
@@ -189,6 +198,7 @@ func registerWorkerCore(
 	reg.Register("IndexEthereumTokenOwner", core.IndexEthereumTokenOwner)
 	reg.Register("NotifyWebhookClients", core.NotifyWebhookClients)
 	reg.Register("DeliverWebhook", core.DeliverWebhook)
+	reg.Register("IndexRelease", core.IndexRelease)
 
 	tw := cfg.Jobs.TokenWorker
 	jWorker := jobs.NewWorker(dataStore, reg, jobs.WorkerConfig{

@@ -528,13 +528,52 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		sortOrder = SortOrderDesc // Default
 	}
 
-	needsReleaseJoin := filter.ReleaseID != nil || sortBy == TokenSortByMintNumber
-	if needsReleaseJoin {
+	// Determine whether we need a release_members join and what kind.
+	//
+	// Three cases drive the release join:
+	//   1. ReleaseID — INNER JOIN with the release_id baked into the ON clause (cheapest path).
+	//   2. ReleaseVendor / ReleaseVendorSlug — INNER JOIN without a specific release_id; a
+	//      second JOIN to the releases table adds the vendor/slug WHERE filters.
+	//   3. sort_by=mint_number only (no release filter) — LEFT JOIN so tokens without a
+	//      release membership are still included but sort last (NULLS LAST).
+	//
+	// Cases 1 and 2 can be combined: if ReleaseID is set together with vendor/slug, we
+	// keep the efficient ON-clause condition and additionally join releases for the
+	// vendor/slug filters.
+	hasVendorFilter := filter.ReleaseVendor != nil || filter.ReleaseVendorSlug != nil
+	needsReleaseMembersJoin := filter.ReleaseID != nil || hasVendorFilter || sortBy == TokenSortByMintNumber
+
+	if needsReleaseMembersJoin {
 		if filter.ReleaseID != nil {
+			// Specific release: push the equality into the ON clause for the planner.
 			query = query.Joins("JOIN release_members ON release_members.token_id = tokens.id AND release_members.release_id = ?", *filter.ReleaseID)
+		} else if hasVendorFilter {
+			// Vendor/slug filter: plain INNER JOIN; the releases table join below provides filtering.
+			query = query.Joins("JOIN release_members ON release_members.token_id = tokens.id")
 		} else {
+			// sort_by=mint_number only: LEFT JOIN preserves tokens outside any release.
 			query = query.Joins("LEFT JOIN release_members ON release_members.token_id = tokens.id")
 		}
+	}
+
+	// When filtering by vendor or slug, join releases and apply WHERE clauses.
+	// This also handles the combined case where ReleaseID + vendor/slug are both set.
+	if hasVendorFilter {
+		query = query.Joins("JOIN releases ON releases.id = release_members.release_id")
+		if filter.ReleaseVendor != nil {
+			query = query.Where("releases.vendor = ?", *filter.ReleaseVendor)
+		}
+		if filter.ReleaseVendorSlug != nil {
+			query = query.Where("releases.vendor_release_slug = ?", *filter.ReleaseVendorSlug)
+		}
+	}
+
+	// MintNumbers filter — applied whenever a release context is present.
+	// Constrains release_members.mint_number to the exact set requested so callers
+	// can poll for precisely the mints they triggered via IndexRelease.
+	hasReleaseContext := filter.ReleaseID != nil || hasVendorFilter
+	if hasReleaseContext && len(filter.MintNumbers) > 0 {
+		query = query.Where("release_members.mint_number IN ?", filter.MintNumbers)
 	}
 
 	// If filtering by owners and sorting by last_owner_provenance_timestamp,
@@ -1131,17 +1170,21 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 // UpsertRelease creates or returns an existing release for a vendor release id.
 //
 // Uses INSERT ... ON CONFLICT (vendor, vendor_release_id) DO UPDATE SET updated_at = now()
-// (and name/total_mints when provided) RETURNING id so the operation is atomic under concurrent
+// (and name/total_mints/slug when provided) RETURNING id so the operation is atomic under concurrent
 // callers. FirstOrCreate is intentionally avoided here: it issues a SELECT then INSERT in two
 // separate statements, which causes a unique-constraint race when multiple workers index tokens
 // from the same new release simultaneously — one call would get a constraint violation instead of
 // the existing row. The ON CONFLICT path is idempotent and always returns the canonical row id.
-func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error) {
+//
+// slug is the URL slug from the vendor website (e.g. "fidenza-by-tyler-hobbs"). A nil slug is
+// treated as "no update" — the existing value is preserved. A non-nil slug overwrites on conflict.
+func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) (*schema.Release, error) {
 	release := schema.Release{
-		Vendor:          vendor,
-		VendorReleaseID: vendorReleaseID,
-		Name:            name,
-		TotalMints:      totalMints,
+		Vendor:            vendor,
+		VendorReleaseID:   vendorReleaseID,
+		Name:              name,
+		TotalMints:        totalMints,
+		VendorReleaseSlug: slug,
 	}
 
 	assignments := map[string]interface{}{
@@ -1152,6 +1195,9 @@ func (s *pgStore) UpsertRelease(ctx context.Context, vendor schema.Vendor, vendo
 	}
 	if totalMints != nil && *totalMints > 0 {
 		assignments["total_mints"] = *totalMints
+	}
+	if slug != nil && strings.TrimSpace(*slug) != "" {
+		assignments["vendor_release_slug"] = strings.TrimSpace(*slug)
 	}
 
 	err := s.db.WithContext(ctx).
@@ -1215,7 +1261,7 @@ func (s *pgStore) GetReleaseByID(ctx context.Context, id uint64) (*schema.Releas
 }
 
 // ListReleases returns releases matching the provided filter fields (ANDed).
-// At least one of IDs, Vendor, or VendorReleaseID must be set in the filter.
+// At least one of IDs, Vendor, VendorReleaseID, or VendorReleaseSlug must be set in the filter.
 func (s *pgStore) ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error) {
 	query := s.db.WithContext(ctx).Model(&schema.Release{})
 	if len(filter.IDs) > 0 {
@@ -1226,6 +1272,9 @@ func (s *pgStore) ListReleases(ctx context.Context, filter ReleaseQueryFilter) (
 	}
 	if filter.VendorReleaseID != nil {
 		query = query.Where("vendor_release_id = ?", *filter.VendorReleaseID)
+	}
+	if filter.VendorReleaseSlug != nil {
+		query = query.Where("vendor_release_slug = ?", *filter.VendorReleaseSlug)
 	}
 
 	var releases []schema.Release

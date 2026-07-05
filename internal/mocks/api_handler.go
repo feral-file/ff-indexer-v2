@@ -184,6 +184,18 @@ func (mr *MockAPIHandlerMockRecorder) TriggerMetadataIndexing(c any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerMetadataIndexing", reflect.TypeOf((*MockAPIHandler)(nil).TriggerMetadataIndexing), c)
 }
 
+// TriggerReleaseIndexing mocks base method.
+func (m *MockAPIHandler) TriggerReleaseIndexing(c *gin.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "TriggerReleaseIndexing", c)
+}
+
+// TriggerReleaseIndexing indicates an expected call of TriggerReleaseIndexing.
+func (mr *MockAPIHandlerMockRecorder) TriggerReleaseIndexing(c any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TriggerReleaseIndexing", reflect.TypeOf((*MockAPIHandler)(nil).TriggerReleaseIndexing), c)
+}
+
 // TriggerTokenIndexing mocks base method.
 func (m *MockAPIHandler) TriggerTokenIndexing(c *gin.Context) {
 	m.ctrl.T.Helper()

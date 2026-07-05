@@ -208,6 +208,24 @@ func (r *mutationResolver) TriggerMetadataIndexing(ctx context.Context, tokenIds
 	return wr, nil
 }
 
+// TriggerReleaseIndexing is the resolver for the triggerReleaseIndexing field.
+func (r *mutationResolver) TriggerReleaseIndexing(ctx context.Context, vendor string, vendorReleaseID *string, vendorReleaseSlug *string, mintNumbers []int) (*dto.TriggerIndexingResponse, error) {
+	id := ""
+	if vendorReleaseID != nil {
+		id = *vendorReleaseID
+	}
+	slug := ""
+	if vendorReleaseSlug != nil {
+		slug = *vendorReleaseSlug
+	}
+	// Convert []int (GraphQL Int scalar) to []int64 for the executor.
+	mintNums := make([]int64, len(mintNumbers))
+	for i, n := range mintNumbers {
+		mintNums[i] = int64(n)
+	}
+	return r.executor.TriggerReleaseIndexing(ctx, vendor, id, slug, mintNums)
+}
+
 // CreateWebhookClient is the resolver for the createWebhookClient field.
 func (r *mutationResolver) CreateWebhookClient(ctx context.Context, webhookURL string, eventFilters []string, retryMaxAttempts *int) (*dto.CreateWebhookClientResponse, error) {
 	// Validate: webhook URL must be provided
@@ -355,7 +373,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
@@ -414,11 +432,68 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		releaseIDPtr = &id
 	}
 
-	if sortBy != nil && *sortBy == types.TokenSortByMintNumber && releaseIDPtr == nil {
-		return nil, apierrors.NewValidationError("sort_by=mint_number requires release_id")
+	// Validate and parse release_vendor.
+	var parsedReleaseVendor *schema.Vendor
+	releaseVendorVal := strings.TrimSpace(internalTypes.SafeString(releaseVendor))
+	if releaseVendorVal != "" {
+		v := schema.Vendor(strings.ToLower(releaseVendorVal))
+		switch v {
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt, schema.VendorOpenSea:
+			parsedReleaseVendor = &v
+		default:
+			return nil, apierrors.NewValidationError(fmt.Sprintf("Invalid release_vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", releaseVendorVal))
+		}
 	}
 
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+	// Normalize release_vendor_slug.
+	var parsedReleaseVendorSlug *string
+	releaseVendorSlugVal := strings.TrimSpace(internalTypes.SafeString(releaseVendorSlug))
+	if releaseVendorSlugVal != "" {
+		parsedReleaseVendorSlug = &releaseVendorSlugVal
+	}
+
+	// release_vendor_slug is only unique per vendor. Without release_vendor, a slug-only
+	// query can match releases across multiple vendors, breaking mint_number ordering.
+	if parsedReleaseVendorSlug != nil && parsedReleaseVendor == nil && releaseIDPtr == nil {
+		return nil, apierrors.NewValidationError("release_vendor_slug requires release_vendor or release_id (slug uniqueness is scoped per vendor)")
+	}
+
+	// hasReleaseContext is true when the query is scoped to a specific release.
+	// release_vendor alone is not sufficient because a vendor covers many releases;
+	// mint_number=1 with release_vendor=artblocks would return #1 from every
+	// Art Blocks release. A specific release must be identified by release_id, or
+	// by release_vendor+release_vendor_slug together.
+	hasReleaseContext := releaseIDPtr != nil || (parsedReleaseVendor != nil && parsedReleaseVendorSlug != nil)
+
+	if sortBy != nil && *sortBy == types.TokenSortByMintNumber && !hasReleaseContext {
+		return nil, apierrors.NewValidationError("sort_by=mint_number requires release_id, or both release_vendor and release_vendor_slug")
+	}
+
+	// Validate mint_numbers list — requires specific release context.
+	var mintNums []int64
+	if len(mintNumbers) > 0 {
+		if !hasReleaseContext {
+			return nil, apierrors.NewValidationError("mint_numbers requires release_id, or both release_vendor and release_vendor_slug")
+		}
+		if int64(len(mintNumbers)) > constants.MAX_TOKEN_MINT_NUMBERS_FILTER {
+			return nil, apierrors.NewValidationError(fmt.Sprintf("too many mint_numbers: max %d", constants.MAX_TOKEN_MINT_NUMBERS_FILTER))
+		}
+		seen := make(map[int64]struct{}, len(mintNumbers))
+		mintNums = make([]int64, len(mintNumbers))
+		for i, n := range mintNumbers {
+			v := int64(n)
+			if v < 1 {
+				return nil, apierrors.NewValidationError("each mint_number must be >= 1")
+			}
+			if _, dup := seen[v]; dup {
+				return nil, apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", v))
+			}
+			seen[v] = struct{}{}
+			mintNums[i] = v
+		}
+	}
+
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, parsedReleaseVendor, parsedReleaseVendorSlug, mintNums, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
 }
 
 // Release is the resolver for the release field.
@@ -440,11 +515,12 @@ func (r *queryResolver) Release(ctx context.Context, id Uint64) (*dto.ReleaseRes
 }
 
 // Releases is the resolver for the releases field.
-func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
+func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error) {
 	vendorVal := strings.TrimSpace(internalTypes.SafeString(vendor))
 	vendorReleaseIDVal := strings.TrimSpace(internalTypes.SafeString(vendorReleaseID))
-	if len(ids) == 0 && vendorVal == "" && vendorReleaseIDVal == "" {
-		return nil, apierrors.NewValidationError("at least one of ids, vendor, or vendor_release_id is required")
+	vendorReleaseSlugVal := strings.TrimSpace(internalTypes.SafeString(vendorReleaseSlug))
+	if len(ids) == 0 && vendorVal == "" && vendorReleaseIDVal == "" && vendorReleaseSlugVal == "" {
+		return nil, apierrors.NewValidationError("at least one of ids, vendor, vendor_release_id, or vendor_release_slug is required")
 	}
 	for _, id := range ids {
 		if id == 0 {
@@ -460,10 +536,10 @@ func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *stri
 	if vendorVal != "" {
 		v := schema.Vendor(strings.ToLower(vendorVal))
 		switch v {
-		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt:
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt, schema.VendorOpenSea:
 			parsedVendor = &v
 		default:
-			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendorVal))
+			return nil, apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", vendorVal))
 		}
 	}
 
@@ -472,7 +548,12 @@ func (r *queryResolver) Releases(ctx context.Context, ids []Uint64, vendor *stri
 		parsedVendorReleaseID = &vendorReleaseIDVal
 	}
 
-	return r.executor.ListReleases(ctx, convertToUint64(ids), parsedVendor, parsedVendorReleaseID, ToNativeUint8(limit), ToNativeUint64(offset))
+	var parsedVendorReleaseSlug *string
+	if vendorReleaseSlugVal != "" {
+		parsedVendorReleaseSlug = &vendorReleaseSlugVal
+	}
+
+	return r.executor.ListReleases(ctx, convertToUint64(ids), parsedVendor, parsedVendorReleaseID, parsedVendorReleaseSlug, ToNativeUint8(limit), ToNativeUint64(offset))
 }
 
 // JobStatus is the resolver for the jobStatus field.
@@ -617,7 +698,7 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 		sortOrder = &defaultOrder
 	}
 
-	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
 }
 
 // Offset is the resolver for the offset field.

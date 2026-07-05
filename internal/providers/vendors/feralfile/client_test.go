@@ -442,6 +442,138 @@ func TestArtwork_CanonicalName(t *testing.T) {
 	}
 }
 
+// TestGetSeriesArtworks_Success verifies that artworks are parsed and returned correctly.
+func TestGetSeriesArtworks_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, result interface{}) error {
+			return json.Unmarshal([]byte(`{
+				"result": [
+					{"index":0,"chain":"ethereum","contractAddress":"0xabc","tokenID":"1"},
+					{"index":1,"chain":"tezos","contractAddress":"KT1xyz","tokenID":"2"}
+				]
+			}`), result)
+		}).
+		Times(1)
+
+	refs, err := client.GetSeriesArtworks(context.Background(), "series-uuid", 1, 2)
+
+	require.NoError(t, err)
+	require.Len(t, refs, 2)
+	require.NotNil(t, refs[0].Index)
+	assert.Equal(t, int64(0), *refs[0].Index)
+	assert.Equal(t, "ethereum", refs[0].Chain)
+	assert.Equal(t, "0xabc", refs[0].ContractAddress)
+	assert.Equal(t, "1", refs[0].TokenID)
+	require.NotNil(t, refs[1].Index)
+	assert.Equal(t, int64(1), *refs[1].Index)
+	assert.Equal(t, "tezos", refs[1].Chain)
+}
+
+// TestGetSeriesArtworks_NilIndex verifies that an artwork whose "index" field is absent
+// in the JSON is represented as a nil pointer in ArtworkRef, not coerced to 0.
+func TestGetSeriesArtworks_NilIndex(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, result interface{}) error {
+			// "index" is intentionally absent to simulate an unresolved release membership.
+			return json.Unmarshal([]byte(`{
+				"result": [
+					{"chain":"ethereum","contractAddress":"0xabc","tokenID":"1"}
+				]
+			}`), result)
+		}).
+		Times(1)
+
+	refs, err := client.GetSeriesArtworks(context.Background(), "series-uuid", 1, 1)
+
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	assert.Nil(t, refs[0].Index, "absent 'index' in JSON must produce a nil pointer, not 0")
+	assert.Equal(t, "ethereum", refs[0].Chain)
+}
+
+// TestGetSeriesArtworks_EmptyResult verifies that an empty API result returns an empty slice.
+func TestGetSeriesArtworks_EmptyResult(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, result interface{}) error {
+			return json.Unmarshal([]byte(`{"result":[]}`), result)
+		}).
+		Times(1)
+
+	refs, err := client.GetSeriesArtworks(context.Background(), "series-uuid", 1, 10)
+
+	require.NoError(t, err)
+	assert.Empty(t, refs)
+}
+
+// TestGetSeriesArtworks_HTTPError verifies that HTTP errors are propagated.
+func TestGetSeriesArtworks_HTTPError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("connection refused")).
+		Times(1)
+
+	refs, err := client.GetSeriesArtworks(context.Background(), "series-uuid", 1, 10)
+
+	assert.Error(t, err)
+	assert.Nil(t, refs)
+	assert.Contains(t, err.Error(), "failed to call Feral File artworks API")
+}
+
+// TestGetSeriesArtworks_URLContainsSeriesAndOffset verifies that the correct API URL is
+// constructed with the seriesID, sortBy, sortOrder, offset, and limit parameters.
+func TestGetSeriesArtworks_URLContainsSeriesAndOffset(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	var capturedURL string
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, url string, result interface{}) error {
+			capturedURL = url
+			return json.Unmarshal([]byte(`{"result":[]}`), result)
+		}).
+		Times(1)
+
+	_, _ = client.GetSeriesArtworks(context.Background(), "abc-123", 3, 5)
+
+	// mintFrom=3 → offset=(3-1)=2; range=3 → limit=3
+	assert.Contains(t, capturedURL, "seriesID=abc-123")
+	assert.Contains(t, capturedURL, "sortBy=index")
+	assert.Contains(t, capturedURL, "sortOrder=ASC")
+	assert.Contains(t, capturedURL, "offset=2")
+	assert.Contains(t, capturedURL, "limit=3")
+}
+
 // TestURL tests the URL helper function
 func TestURL(t *testing.T) {
 	tests := []struct {
@@ -502,4 +634,80 @@ func TestURL(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestResolveSlug_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	ctx := context.Background()
+	expectedUUID := "series-uuid-123"
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(ctx, "https://feralfile.com/api/series?slug=data-pilgrims-01-769&limit=1", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, out interface{}) error {
+			data := []byte(`{"result":[{"id":"series-uuid-123","slug":"data-pilgrims-01-769"}]}`)
+			return json.Unmarshal(data, out)
+		})
+
+	id, err := client.ResolveSlug(ctx, "data-pilgrims-01-769")
+	require.NoError(t, err)
+	assert.Equal(t, expectedUUID, id)
+}
+
+func TestResolveSlug_NotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+
+	ctx := context.Background()
+
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(ctx, "https://feralfile.com/api/series?slug=no-such-series&limit=1", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, out interface{}) error {
+			data := []byte(`{"result":[]}`)
+			return json.Unmarshal(data, out)
+		})
+
+	_, err := client.ResolveSlug(ctx, "no-such-series")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "slug not found")
+}
+
+// TestGetSeriesArtworks_ReservedCharsInSeriesIDEncoded verifies that reserved URL characters
+// in seriesID (e.g. &, =, %) are percent-encoded in the outbound request. Without encoding,
+// a seriesID like "abc&foo=bar" would append extra query parameters to the Feral File URL.
+func TestGetSeriesArtworks_ReservedCharsInSeriesIDEncoded(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	client := feralfile.NewClient(mockHTTPClient, "https://feralfile.com/api")
+	ctx := context.Background()
+
+	// seriesID with reserved characters that must not alter the query string.
+	seriesID := "abc&foo=bar"
+
+	var capturedURL string
+	mockHTTPClient.EXPECT().
+		GetAndUnmarshal(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, u string, out interface{}) error {
+			capturedURL = u
+			// Return an empty result to stop pagination.
+			return json.Unmarshal([]byte(`{"result":[]}`), out)
+		})
+
+	_, err := client.GetSeriesArtworks(ctx, seriesID, 1, 1)
+	require.NoError(t, err)
+
+	// The raw seriesID must not appear in the URL; the encoded form must.
+	assert.NotContains(t, capturedURL, "abc&foo=bar",
+		"raw seriesID must not appear in URL; reserved chars must be encoded")
+	assert.Contains(t, capturedURL, "abc%26foo%3Dbar",
+		"seriesID must be percent-encoded in the URL")
 }

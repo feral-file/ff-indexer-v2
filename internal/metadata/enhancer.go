@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -27,9 +28,12 @@ import (
 // ReleaseInfo carries release membership data extracted during vendor enrichment.
 type ReleaseInfo struct {
 	VendorReleaseID string
-	MintNumber      int64
-	Name            *string
-	TotalMints      *int64
+	// Slug is the URL slug for this release on the vendor's website.
+	// For objkt, this equals VendorReleaseID (KT1 address). Nil when not available.
+	Slug       *string
+	MintNumber int64
+	Name       *string
+	TotalMints *int64
 }
 
 // EnhancedMetadata represents metadata enhanced from vendor APIs
@@ -66,6 +70,9 @@ type enhancer struct {
 	openseaClient   opensea.Client
 	json            adapter.JSON
 	jcs             adapter.JCS
+	// openSeaCollectionCache avoids repeated GetCollection calls when indexing many
+	// tokens from the same OpenSea release in one worker process.
+	openSeaCollectionCache sync.Map
 }
 
 // NewEnhancer creates a new metadata enhancer that routes vendor-specific enrichment
@@ -259,6 +266,9 @@ func (e *enhancer) enhanceArtBlocks(ctx context.Context, chain domain.Chain, con
 		total := int64(project.MaxInvocations)
 		enhanced.Release.TotalMints = &total
 	}
+	if slug := strings.TrimSpace(project.Slug); slug != "" {
+		enhanced.Release.Slug = &slug
+	}
 
 	return enhanced, nil
 }
@@ -363,6 +373,9 @@ func (e *enhancer) enhanceFeralFile(ctx context.Context, chain domain.Chain, con
 		if artwork.Series.Settings.MaxArtwork > 0 {
 			enhanced.Release.TotalMints = &artwork.Series.Settings.MaxArtwork
 		}
+		if slug := strings.TrimSpace(artwork.Series.Slug); slug != "" {
+			enhanced.Release.Slug = &slug
+		}
 	}
 
 	return enhanced, nil
@@ -453,12 +466,16 @@ func (e *enhancer) enhanceFxhash(ctx context.Context, contractAddress, tokenNumb
 			}
 
 			releaseName := gt.Name
-			enhanced.Release = &ReleaseInfo{
+			release := &ReleaseInfo{
 				VendorReleaseID: gt.ID,
 				MintNumber:      iteration,
 				Name:            &releaseName,
 				TotalMints:      totalMints,
 			}
+			if slug := strings.TrimSpace(gt.Slug); slug != "" {
+				release.Slug = &slug
+			}
+			enhanced.Release = release
 		}
 	}
 
@@ -555,8 +572,14 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 		mintNum, parseErr := strconv.ParseInt(tokenNumber, 10, 64)
 		if parseErr == nil && mintNum > 0 {
 			faName := token.FA.Name
+			// For objkt, the KT1 contract address is also the URL identifier
+			// (objkt.com/collections/KT1...) — there is no separate human slug.
+			// We set Slug = VendorReleaseID so clients can use vendor_release_slug
+			// with the same value they see in the URL.
+			contractAddressCopy := contractAddress
 			release := &ReleaseInfo{
 				VendorReleaseID: contractAddress, // KT1 address is chain-unique; no chain prefix needed
+				Slug:            &contractAddressCopy,
 				MintNumber:      mintNum,
 				Name:            &faName,
 			}
@@ -574,15 +597,31 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 	return enhanced, nil
 }
 
-// enhanceOpenSea enhances metadata from OpenSea API for Ethereum tokens
+// enhanceOpenSea enhances metadata from OpenSea API for Ethereum tokens.
+//
+// Returns (nil, nil) — skip, no error — for two expected non-failure cases:
+//  1. No API key configured (ErrNoAPIKey): degraded mode, token created without enrichment.
+//  2. Token not found on OpenSea (ErrNFTNotFound): the on-chain token ID does not exist in
+//     OpenSea's index. This can happen for token ID 0 on 1-based ERC-721 collections or for
+//     IDs that were minted but not yet indexed by OpenSea. Treating it as a skip prevents
+//     infinite retries for tokens that OpenSea cannot return.
 func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNumber string) (*EnhancedMetadata, error) {
 	logger.InfoCtx(ctx, "Enhancing OpenSea metadata", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
 
-	// Fetch NFT data from OpenSea API
 	nft, err := e.openseaClient.GetNFT(ctx, contractAddress, tokenNumber)
 	if err != nil {
 		if errors.Is(err, opensea.ErrNoAPIKey) {
-			logger.WarnCtx(ctx, "No API key provided for OpenSea", zap.String("contractAddress", contractAddress), zap.String("tokenNumber", tokenNumber))
+			logger.WarnCtx(ctx, "OpenSea enrichment skipped: no API key configured",
+				zap.String("contractAddress", contractAddress),
+				zap.String("tokenNumber", tokenNumber))
+			return nil, nil
+		}
+		if errors.Is(err, opensea.ErrNFTNotFound) {
+			// Token ID does not exist in OpenSea's index. Log at info (not warn) because
+			// it is not a transient failure and retrying would not help.
+			logger.InfoCtx(ctx, "OpenSea enrichment skipped: token not found (may be outside collection token ID range)",
+				zap.String("contractAddress", contractAddress),
+				zap.String("tokenNumber", tokenNumber))
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to fetch OpenSea NFT: %w", err)
@@ -597,6 +636,34 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorOpenSea,
 		VendorJSON: vendorJSON,
+	}
+
+	// Populate release info from the single-NFT response.
+	// nft.Collection is the collection slug — for OpenSea this IS the vendor_release_id.
+	//
+	// Release membership is only recorded when a positive (1-based) mint number can be
+	// derived. ExtractMintNumber returns ok=false for tokens with non-numeric identifiers
+	// and no "#N" pattern in their name; mintNum==0 would violate the release_members
+	// DB constraint (mint_number > 0). Skipping here avoids a repeated persistence
+	// failure for CryptoPunks V1 / tokens without parseable edition numbers.
+	if nft.Collection != "" {
+		slug := nft.Collection
+		var nftName string
+		if nft.Name != nil {
+			nftName = *nft.Name
+		}
+		mintNum, ok := opensea.ExtractMintNumber(nftName, nft.Identifier)
+		if ok && mintNum > 0 {
+			release := &ReleaseInfo{
+				VendorReleaseID: slug,
+				Slug:            &slug,
+				MintNumber:      mintNum,
+			}
+			// Collection metadata (name/total_mints) is best-effort; GetCollection
+			// failure does not block token-level enrichment. See openSeaCollectionReleaseMetadata.
+			release.Name, release.TotalMints = e.openSeaCollectionReleaseMetadata(ctx, slug)
+			enhanced.Release = release
+		}
 	}
 
 	// Set name
@@ -641,4 +708,35 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 	}
 
 	return enhanced, nil
+}
+
+// openSeaCollectionReleaseMetadata fetches collection-level name and total_mints for a slug,
+// using an in-process cache to avoid N+1 GetCollection calls during release indexing.
+//
+// Collection metadata is best-effort: failures are logged and (nil, nil) is returned so the
+// caller can still persist token-level enrichment (name, image, description). There is no
+// retry path here because the token metadata workflow treats EnhanceTokenMetadata errors
+// as non-fatal (index_metadata_wf.go). A future re-enrichment run can backfill the fields
+// once GetCollection succeeds.
+func (e *enhancer) openSeaCollectionReleaseMetadata(ctx context.Context, slug string) (name *string, totalMints *int64) {
+	if slug == "" {
+		return nil, nil
+	}
+	if cached, ok := e.openSeaCollectionCache.Load(slug); ok {
+		return opensea.ReleaseMetadataFromCollection(cached.(*opensea.CollectionMetadata))
+	}
+
+	collection, err := e.openseaClient.GetCollection(ctx, slug)
+	if err != nil {
+		if !errors.Is(err, opensea.ErrNoAPIKey) {
+			logger.WarnCtx(ctx, "Failed to fetch OpenSea collection for release metadata (best-effort; token enrichment continues)",
+				zap.String("slug", slug),
+				zap.Error(err),
+			)
+		}
+		return nil, nil
+	}
+
+	e.openSeaCollectionCache.Store(slug, collection)
+	return opensea.ReleaseMetadataFromCollection(collection)
 }

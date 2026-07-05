@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,10 @@ type Handler interface {
 	// TriggerTokenIndexing triggers indexing for tokens by CIDs (open, no authentication required)
 	// POST /api/v1/tokens/index
 	TriggerTokenIndexing(c *gin.Context)
+
+	// TriggerReleaseIndexing triggers asynchronous indexing for all tokens in a vendor release within a mint range (open, no auth required)
+	// POST /api/v1/releases/index
+	TriggerReleaseIndexing(c *gin.Context)
 
 	// TriggerAddressIndexing triggers indexing for tokens by owner addresses with job tracking (requires authentication)
 	// POST /api/v1/tokens/addresses/index
@@ -175,6 +180,12 @@ func (h *handler) ListTokens(c *gin.Context) {
 	sortBy := &queryParams.SortBy
 	sortOrder := &queryParams.SortOrder
 
+	// Build optional release_vendor_slug pointer (empty string means not provided).
+	var releaseVendorSlug *string
+	if slug := strings.TrimSpace(queryParams.ReleaseVendorSlug); slug != "" {
+		releaseVendorSlug = &slug
+	}
+
 	response, err := h.executor.GetTokens(
 		c.Request.Context(),
 		queryParams.Owners,
@@ -184,6 +195,9 @@ func (h *handler) ListTokens(c *gin.Context) {
 		queryParams.TokenIDs,
 		queryParams.TokenCIDs,
 		queryParams.ReleaseID,
+		queryParams.ParsedReleaseVendor,
+		releaseVendorSlug,
+		queryParams.MintNumbers,
 		limit,
 		offset,
 		includeUnviewable,
@@ -221,6 +235,7 @@ func (h *handler) ListReleases(c *gin.Context) {
 		queryParams.ParsedIDs,
 		queryParams.ParsedVendor,
 		queryParams.ParsedVendorReleaseID,
+		queryParams.ParsedVendorReleaseSlug,
 		limit,
 		offset,
 	)
@@ -281,6 +296,9 @@ func (h *handler) GetRelease(c *gin.Context) {
 		nil,
 		nil,
 		&releaseID,
+		nil, // no release vendor filter for member listing
+		nil, // no release vendor slug filter for member listing
+		nil, // no mint_numbers filter for member listing
 		limit,
 		offset,
 		&includeUnviewable,
@@ -320,6 +338,35 @@ func (h *handler) TriggerTokenIndexing(c *gin.Context) {
 
 	if err != nil {
 		respondInternalError(c, err, "Failed to trigger indexing")
+		return
+	}
+
+	c.JSON(http.StatusAccepted, response)
+}
+
+// TriggerReleaseIndexing triggers asynchronous indexing for all tokens in a vendor release within a mint range.
+// POST /api/v1/releases/index
+func (h *handler) TriggerReleaseIndexing(c *gin.Context) {
+	var req dto.TriggerReleaseIndexingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondValidationError(c, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	if err := req.Validate(); err != nil {
+		respondValidationError(c, err.Error())
+		return
+	}
+
+	response, err := h.executor.TriggerReleaseIndexing(
+		c.Request.Context(),
+		req.Vendor,
+		req.VendorReleaseID,
+		req.VendorReleaseSlug,
+		req.MintNumbers,
+	)
+	if err != nil {
+		respondInternalError(c, err, "Failed to trigger release indexing")
 		return
 	}
 

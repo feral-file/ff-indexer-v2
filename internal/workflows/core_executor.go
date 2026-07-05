@@ -144,6 +144,10 @@ type CoreExecutor interface {
 
 	// UpdateIndexingJobProgress updates job progress metrics
 	UpdateIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error
+
+	// UpsertReleaseMetadata upserts vendor release row metadata (name, total_mints, slug).
+	// Nil name, totalMints, or slug are preserved on conflict (see store.UpsertRelease).
+	UpsertReleaseMetadata(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) error
 }
 
 // BlockRangeResult represents the result of getting an indexing block range
@@ -603,7 +607,7 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 	}
 
 	if enhanced.Release != nil {
-		release, err := e.store.UpsertRelease(ctx, enhanced.Vendor, enhanced.Release.VendorReleaseID, enhanced.Release.Name, enhanced.Release.TotalMints)
+		release, err := e.store.UpsertRelease(ctx, enhanced.Vendor, enhanced.Release.VendorReleaseID, enhanced.Release.Name, enhanced.Release.TotalMints, enhanced.Release.Slug)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upsert release: %w", err)
 		}
@@ -1762,4 +1766,19 @@ func (e *coreExecutor) UpdateIndexingJobStatus(ctx context.Context, jobID int64,
 // UpdateIndexingJobProgress updates job progress metrics
 func (e *coreExecutor) UpdateIndexingJobProgress(ctx context.Context, jobID int64, tokensProcessed int, minBlock, maxBlock uint64) error {
 	return e.store.UpdateAddressIndexingJobProgress(ctx, jobID, tokensProcessed, minBlock, maxBlock)
+}
+
+// UpsertReleaseMetadata upserts vendor release row metadata without linking tokens.
+//
+// This is a utility method for callers that want to persist release name, total_mints,
+// or slug independently of token enrichment. IndexRelease does not call this method;
+// release metadata for feralfile and fxhash is populated during per-token enrichment
+// as each child IndexTokens job processes its chunk. OpenSea release metadata is also
+// persisted during per-token enrichment from on-chain events.
+// Nil fields are preserved on conflict (see store.UpsertRelease).
+func (e *coreExecutor) UpsertReleaseMetadata(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) error {
+	if _, err := e.store.UpsertRelease(ctx, vendor, vendorReleaseID, name, totalMints, slug); err != nil {
+		return fmt.Errorf("failed to upsert release metadata: %w", err)
+	}
+	return nil
 }

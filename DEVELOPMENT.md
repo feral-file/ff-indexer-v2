@@ -305,6 +305,56 @@ SELECT vendor, COUNT(*) FROM releases GROUP BY vendor;
 SELECT COUNT(*) FROM release_members;
 ```
 
+### Migration 019_reindex: re-enrich OpenSea tokens and backfill release slugs
+
+Migration `019_reindex.sql` has two parts:
+
+**Part 1 — Re-enrich all OpenSea tokens**
+
+Inserts one `IndexTokenMetadata` job per token with `vendor = 'opensea'` in `enrichment_sources`. OpenSea was excluded from `018_reindex` because full OpenSea release support was added later. Re-enrichment populates two new fields on the release row:
+
+- `name` — collection name from `GetCollection`
+- `total_mints` — collection `total_supply` from `GetCollection`
+- `vendor_release_slug` — the collection slug (equals `vendor_release_id` for OpenSea)
+
+**Part 2 — Slug backfill for all other vendor releases**
+
+For every non-OpenSea release where `vendor_release_slug IS NULL`, inserts one `IndexTokenMetadata` job for the first release member (lowest `mint_number`). The token is queued unconditionally — filtering to un-enriched tokens only would miss releases whose members were enriched before the slug column existed.
+
+Enriching a single token is enough to call the vendor API and upsert `vendor_release_slug` on the release row.
+
+**What happens after migration 019_reindex runs:**
+
+1. Jobs are inserted into the `token_index` queue with `status=pending`.
+2. The token worker picks them up and calls `EnhanceTokenMetadata` for each token.
+3. For OpenSea tokens, the enhancer calls `GetCollection` (cached per slug per worker process) and upserts `name`, `total_mints`, and `vendor_release_slug` on the release row.
+4. For non-OpenSea tokens, normal enrichment upserts the slug via `UpsertRelease`.
+
+**Idempotency:** Uses `ON CONFLICT ... DO NOTHING` on the partial unique index `jobs_unique_key_active`. Safe to re-run.
+
+**Fresh installs:** Both INSERTs produce no rows. `db/init_pg_db.sql` does not need updating.
+
+**Verify progress after deployment:**
+
+```sql
+-- Releases still missing a slug (expected to shrink as worker runs)
+SELECT vendor, COUNT(*)
+FROM releases
+WHERE vendor_release_slug IS NULL
+GROUP BY vendor;
+
+-- OpenSea releases: name and total_mints should be populated after Part 1
+SELECT vendor_release_id, name, total_mints, vendor_release_slug
+FROM releases
+WHERE vendor = 'opensea';
+
+-- Jobs inserted by migration 019_reindex (all statuses)
+SELECT status, COUNT(*)
+FROM jobs
+WHERE kind = 'IndexTokenMetadata'
+GROUP BY status;
+```
+
 ### Reset Database
 
 To reset the database (WARNING: deletes all data):

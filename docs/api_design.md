@@ -72,26 +72,32 @@ Design rules:
 
 - **Pagination:** `limit` (default **20**, max **255**), `offset` (default **0**).
 - **Filters:** Repeatable query parameters; **AND** across different filter types, **OR** within the same parameter. Document new filters with the same semantics.
-  - **`release_id`:** Filter tokens to members of a specific release (internal integer id). When combined with `sort_by=mint_number`, results are ordered by their authoritative mint position within the release.
-- **Sorting:** `sort_by` (`created_at` | `latest_provenance` | `mint_number`), `sort_order` (`asc` | `desc`). When `owner` is present, `latest_provenance` follows documented owner-scoped behavior (see OpenAPI). `mint_number` **requires** `release_id` to be set; the API returns a validation error if `mint_number` is requested without a `release_id` filter.
+  - **`release_id`:** Filter tokens to members of a specific release (internal integer id). May be combined with `release_vendor` and/or `release_vendor_slug` (all ANDed).
+  - **`release_vendor`:** Filter tokens to releases from a specific vendor (e.g. `artblocks`, `feralfile`, `fxhash`, `objkt`, `opensea`). May be used alone or combined with `release_id` / `release_vendor_slug`.
+  - **`release_vendor_slug`:** Filter tokens to the release whose `vendor_release_slug` matches (e.g. `fidenza-by-tyler-hobbs`). Case-sensitive. **Must be combined with `release_vendor` or `release_id`** — slug uniqueness is scoped per vendor (`UNIQUE (vendor, vendor_release_slug)`), so a slug-only query would match releases across multiple vendors and make `mint_number` ordering ambiguous. A slug-only request returns **`422`**.
+  - **`mint_number` (repeatable):** Explicit 1-based list of mint positions to include (max **50** per request, no duplicates). Requires `release_id`, or **both** `release_vendor` and `release_vendor_slug` (`release_vendor` alone is insufficient because mint numbers repeat across releases for the same vendor). Providing `mint_number` values without specific release context returns a **`422`** validation error. Each value must be `≥ 1`. Omitting all `mint_number` values returns all members in the release context. The primary use case is polling `IndexRelease` job progress: query `GET /api/v1/tokens?release_vendor=X&release_vendor_slug=Y&mint_number=N1&mint_number=N2&include_unviewable=true` with the same `mint_numbers` you passed to `POST /api/v1/releases/index` and accumulate returned tokens until all requested mints appear. (`paging.total` is deprecated and always returns 0; do not rely on it for termination.)
+- **Sorting:** `sort_by` (`created_at` | `latest_provenance` | `mint_number`), `sort_order` (`asc` | `desc`). When `owner` is present, `latest_provenance` follows documented owner-scoped behavior (see OpenAPI). `sort_by=mint_number` requires `release_id`, or both `release_vendor` and `release_vendor_slug`; `release_vendor` alone does not provide sufficient release identity. The API returns a validation error if the required context is absent.
 - **Invalid sort parameters (behavior change, release abstraction / #93):** Unrecognized `sort_by` or `sort_order` values return **`422`** with a validation error. Previously the list endpoint silently rewrote invalid values to `latest_provenance` / `desc`; that masking was removed so validation matches the OpenAPI enum contract and the release member endpoint (which already rejected invalid `sort_order`). Clients that sent typos and depended on silent defaults must send valid enum values.
 - **`include_unviewable`:** Default **`false`**; changing defaults is a **compatibility** decision.
+- **GraphQL:** `tokens(release_id, release_vendor, release_vendor_slug, mint_numbers, limit, offset, ...)` exposes the same filters; the same validation rules apply.
 
 ### List releases (`GET /api/v1/releases`)
 
-- Returns a paginated list of release metadata rows filtered by **`ids`**, **`vendor`**, and/or **`vendor_release_id`**. At least one filter is required; when multiple are provided they are combined with AND semantics.
+- Returns a paginated list of release metadata rows filtered by **`ids`**, **`vendor`**, **`vendor_release_id`**, and/or **`vendor_release_slug`**. At least one filter is required; when multiple are provided they are combined with AND semantics.
 - **`ids`:** One or more internal release IDs (positive integers). Repeat the parameter for multiple values: `?ids=1&ids=2`. All IDs must be positive; zero is rejected.
-- **`vendor`:** `artblocks`, `feralfile`, `fxhash`, or `objkt` (all vendors that populate the `releases` table).
+- **`vendor`:** `artblocks`, `feralfile`, `fxhash`, `objkt`, or `opensea`. OpenSea releases are created during token enrichment (not via `POST /api/v1/releases/index`) when a positive mint number is successfully extracted from the on-chain token identifier.
 - **`vendor_release_id`:** External release key as stored during indexing (FF series UUID, AB `{chainID}-{contract}-{projectID}`, fxhash generative token numeric id, or objkt custom-collection KT1 contract address). May be used without `vendor`; results can span vendors in theory but are typically 0–1 rows.
-- **Response:** `items` array of release metadata (`id`, `vendor`, `vendor_release_id`, optional `name`, optional `total_mints`). **No `members`** — use `GET /api/v1/releases/{id}` or `GET /api/v1/tokens?release_id=...` for member tokens.
+- **`vendor_release_slug`:** Human-readable URL slug from the vendor's website (e.g. `industrial-park` for fxhash, `fidenza-by-tyler-hobbs` for Art Blocks, `data-pilgrims-01-769` for Feral File; for objkt this equals the KT1 contract address). Nullable; only rows where `vendor_release_slug` is non-null and matches are returned.
+- **Response:** `items` array of release metadata (`id`, `vendor`, `vendor_release_id`, optional `vendor_release_slug`, optional `name`, optional `total_mints`). **No `members`** — use `GET /api/v1/releases/{id}` or `GET /api/v1/tokens?release_id=...` for member tokens.
 - **Pagination:** `limit` (default **20**, max **255**), `offset` (default **0**); empty match set returns **`200`** with `"items": []`.
-- **GraphQL:** `releases(ids, vendor, vendor_release_id, limit, offset)` exposes the same contract via `ReleaseList`.
+- **GraphQL:** `releases(ids, vendor, vendor_release_id, vendor_release_slug, limit, offset)` exposes the same contract via `ReleaseList`.
 
 ### Release endpoint (`GET /api/v1/releases/{id}`)
 
 - Returns a release by internal id (integer) with its complete, mint-ordered member token list.
-- **Release metadata:** Optional read-only `name` (human-readable title, e.g. `"Fidenza"`) and `total_mints` (declared max edition size from vendor: AB `max_invocations`, FF `series.settings.maxArtwork`). Both are nullable when vendor data is unavailable.
+- **Release metadata:** Optional read-only `name` (human-readable title, e.g. `"Fidenza"`), `total_mints` (declared max edition size from vendor: AB `max_invocations`, FF `series.settings.maxArtwork`), and `vendor_release_slug` (URL slug from the vendor's website, populated during enrichment). All are nullable when vendor data is unavailable; `vendor_release_slug` is also null for older rows not yet re-enriched.
 - **Membership completeness:** All members are returned regardless of `is_viewable` state so the list is stable across viewability changes (tokens may be temporarily unviewable during media processing). Callers needing only publicly visible members should use `GET /api/v1/tokens?release_id=...` with the default `include_unviewable=false`.
+- **OpenSea membership caveat:** OpenSea releases are built incrementally during enrichment rather than via `IndexRelease`. A token joins a release row only when its on-chain token ID (or embedded `#N` pattern in its name) resolves to a positive integer mint number. Tokens whose identifier is non-numeric or equals `0` (e.g. some zero-based ERC-721 collections) are enriched normally but do not receive a `release_members` row. Release membership for OpenSea collections may therefore be incomplete for zero-indexed or non-standard collections.
 - **Pagination:** `limit` / `offset` on member list; `sort_order` (`asc` | `desc`). Sort is always by `mint_number` (not configurable here).
 - **GraphQL:** `release(id)` query exposes the same release with a `members` field that follows the same membership-completeness contract.
 
@@ -121,6 +127,38 @@ Design rules:
 ### GraphQL
 
 - Expansions are **inferred from the selection set**; keep parity with REST expansions and document any intentional differences in schema comments.
+
+### Release indexing (`POST /api/v1/releases/index`)
+
+Triggers asynchronous indexing for an explicit list of mint numbers within a vendor release. The response arrives immediately (HTTP **202**) with a `job_id`; the actual token indexing runs in the background via the jobs queue.
+
+Using an explicit list (instead of a contiguous range) lets callers target only the mints that are still missing without re-indexing already-completed positions.
+
+**Request body:**
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `vendor` | string | yes | `artblocks`, `feralfile`, `fxhash`, or `objkt` |
+| `vendor_release_id` | string | one of | Vendor-specific release key (see list releases docs for format per vendor). Mutually exclusive with `vendor_release_slug`. |
+| `vendor_release_slug` | string | one of | Human-readable URL slug from the vendor's website (e.g. `industrial-park`). The workflow resolves the slug to a canonical `vendor_release_id` via the vendor's API before CID derivation. Mutually exclusive with `vendor_release_id`. For `objkt`, slug equals the KT1 contract address (no resolution API call needed). |
+| `mint_numbers` | int64[] | yes | Explicit 1-based list of mint positions to index (required, non-empty, max **50**, no duplicates). |
+
+**Validation:**
+- Exactly one of `vendor_release_id` or `vendor_release_slug` must be supplied.
+- `mint_numbers` must be non-empty; each value must be `≥ 1`; no duplicates; at most **50** entries per request (see `MAX_RELEASE_MINT_NUMBERS`). Clients must batch larger collections themselves by issuing multiple non-overlapping requests.
+- **Span cap for `fxhash` and `feralfile`:** `max(mint_numbers) - min(mint_numbers)` must be `≤ 1000` (see `MAX_API_VENDOR_MINT_SPAN`). These vendors fetch the full `[min, max]` interval from their vendor APIs and paginate at 100 items/page; a large sparse span (e.g. `[1, 50000]`) would force ~500 vendor API calls to index 2 mints. Split wide sparse lists into batches with span `≤ 1000`. `artblocks` and `objkt` are deterministic and not subject to this cap.
+
+**Response (`202`):** `TriggerIndexingResponse` with `job_id`. Use `GET /api/v1/jobs/{job_id}` to check whether Phase 1 (CID derivation + child-job enqueueing) succeeded. After the `job_id` reaches a terminal state, track per-token completion via `GET /api/v1/tokens?release_vendor=X&release_vendor_slug=Y&mint_number=N1&mint_number=N2&include_unviewable=true` with the same `mint_numbers` you submitted (see List tokens documentation above). `release_vendor` is required when polling by slug.
+
+**Per-vendor CID derivation strategy:**
+- `artblocks` — fully deterministic; zero API calls; `vendor_release_id` is `"{chainID}-{contract}-{projectID}"`; slug resolution calls the AB GraphQL API once.
+- `objkt` — fully deterministic; zero API calls; `vendor_release_id` is the KT1 FA2 contract address; slug equals the KT1 address (no extra call).
+- `fxhash` — calls `GetGentksByIteration([min, max])` once and filters returned gentks to only those whose iteration is in the requested `mint_numbers` set; slug resolution calls the fxhash GraphQL API once.
+- `feralfile` — calls `GetSeriesArtworks([min, max])` once and filters returned artworks to only those whose index (1-based) is in the requested `mint_numbers` set; artworks still on the Bitmark chain (not yet swapped to EVM/Tezos) are skipped and counted as `tokens_skipped`; slug resolution calls the FF series list API once.
+
+**Auth:** Open (no API key required), same as `POST /api/v1/tokens/index`. Max list cap of **50** mints per call prevents large queue floods; clients batch larger collections themselves.
+
+**GraphQL:** `triggerReleaseIndexing(vendor, vendor_release_id, vendor_release_slug, mint_numbers)` — same behavior; exactly one of `vendor_release_id` / `vendor_release_slug` must be supplied; `mint_numbers` is required and non-empty.
 
 ## Async operations and job tracking
 

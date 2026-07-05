@@ -166,14 +166,15 @@ type UpsertTokenBalanceForOwnerInput struct {
 }
 
 // ReleaseQueryFilter represents filters for release list queries.
-// IDs, Vendor, and VendorReleaseID are ANDed when multiple are provided.
-// At least one of IDs, Vendor, or VendorReleaseID must be set.
+// IDs, Vendor, VendorReleaseID, and VendorReleaseSlug are ANDed when multiple are provided.
+// At least one of IDs, Vendor, VendorReleaseID, or VendorReleaseSlug must be set.
 type ReleaseQueryFilter struct {
-	IDs             []uint64
-	Vendor          *schema.Vendor
-	VendorReleaseID *string
-	Limit           int
-	Offset          uint64
+	IDs               []uint64
+	Vendor            *schema.Vendor
+	VendorReleaseID   *string
+	VendorReleaseSlug *string
+	Limit             int
+	Offset            uint64
 }
 
 // TokenQueryFilter represents filters for token queries
@@ -184,9 +185,23 @@ type TokenQueryFilter struct {
 	TokenNumbers      []string
 	TokenIDs          []uint64
 	TokenCIDs         []string
-	ReleaseID         *uint64
+	// ReleaseID filters tokens to a specific release by internal id.
+	// Any of ReleaseID, ReleaseVendor, or ReleaseVendorSlug may be set; they are ANDed.
+	ReleaseID *uint64
+	// ReleaseVendor filters tokens to releases from the given vendor (e.g. "artblocks").
+	// May be combined with ReleaseVendorSlug or ReleaseID.
+	ReleaseVendor *schema.Vendor
+	// ReleaseVendorSlug filters tokens to the release whose vendor_release_slug matches.
+	// Together with ReleaseVendor this typically identifies a single release.
+	ReleaseVendorSlug *string
+	// MintNumbers is an explicit 1-based list of mint positions to include.
+	// Requires at least one release context (ReleaseID, ReleaseVendor, or ReleaseVendorSlug).
+	// Constrains release_members.mint_number via IN (?), allowing clients to poll for exactly
+	// the mints they triggered via IndexRelease without re-fetching already-indexed positions.
+	// Max 50 entries (MAX_TOKEN_MINT_NUMBERS_FILTER); each entry must be >= 1.
+	MintNumbers       []int64
 	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
-	SortBy            TokenSortBy // Sort field: created_at or last_owner_provenance_timestamp
+	SortBy            TokenSortBy // Sort field: created_at, latest_provenance, or mint_number
 	SortOrder         SortOrder   // Sort order: asc or desc
 	Limit             int
 	Offset            uint64 // Offset for pagination
@@ -332,14 +347,17 @@ type Store interface {
 	// =============================================================================
 
 	// UpsertRelease creates or returns an existing release for a vendor release id.
-	// When name or totalMints are provided, they are written on insert and updated on conflict.
-	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64) (*schema.Release, error)
+	// When name, totalMints, or slug are provided, they are written on insert and updated on conflict.
+	// slug is the URL slug from the vendor's website (e.g. "fidenza-by-tyler-hobbs"); nil leaves
+	// any existing slug unchanged.
+	UpsertRelease(ctx context.Context, vendor schema.Vendor, vendorReleaseID string, name *string, totalMints *int64, slug *string) (*schema.Release, error)
 	// UpsertReleaseMember associates a token with a release at the given mint number.
 	UpsertReleaseMember(ctx context.Context, releaseID uint64, tokenID uint64, mintNumber int64) error
 	// GetReleaseByID retrieves a release by internal id.
 	GetReleaseByID(ctx context.Context, id uint64) (*schema.Release, error)
-	// ListReleases returns releases matching optional vendor and vendor_release_id filters.
-	// At least one filter should be set by callers; results are ordered by id ascending.
+	// ListReleases returns releases matching the provided filter fields (ANDed).
+	// At least one of IDs, Vendor, VendorReleaseID, or VendorReleaseSlug must be set.
+	// Results are ordered by id ascending.
 	ListReleases(ctx context.Context, filter ReleaseQueryFilter) ([]schema.Release, error)
 	// GetReleaseMembersByTokenIDs returns release membership keyed by token id.
 	GetReleaseMembersByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64]*schema.ReleaseMember, error)

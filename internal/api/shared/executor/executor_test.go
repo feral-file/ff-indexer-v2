@@ -3,6 +3,7 @@ package executor_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	internalTypes "github.com/feral-file/ff-indexer-v2/internal/types"
@@ -308,7 +310,7 @@ func TestGetTokens_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
 
 	result, err := exec.GetTokens(context.Background(),
 		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
-		nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset})
 
 	require.NoError(t, err)
@@ -442,7 +444,7 @@ func TestGetTokens_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 
 	result, err := exec.GetTokens(context.Background(),
 		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
-		nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay})
 
 	require.Error(t, err, "GetTokens must propagate health query failure as an error")
@@ -515,7 +517,7 @@ func TestListReleases_ByVendor(t *testing.T) {
 			VendorReleaseID: "0xabc-1",
 		}}, nil)
 
-	result, err := exec.ListReleases(context.Background(), nil, &vendor, nil, &limit, &offset)
+	result, err := exec.ListReleases(context.Background(), nil, &vendor, nil, nil, &limit, &offset)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(7), result.Items[0].ID)
@@ -542,7 +544,7 @@ func TestListReleases_Pagination(t *testing.T) {
 			{ID: 2, Vendor: schema.VendorFeralFile, VendorReleaseID: "other"},
 		}, nil)
 
-	result, err := exec.ListReleases(context.Background(), nil, nil, &vendorReleaseID, &limit, &offset)
+	result, err := exec.ListReleases(context.Background(), nil, nil, &vendorReleaseID, nil, &limit, &offset)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(1), result.Items[0].ID)
@@ -570,7 +572,7 @@ func TestListReleases_ByIDs(t *testing.T) {
 			{ID: 7, Vendor: schema.VendorArtBlocks, VendorReleaseID: "0xabc-1"},
 		}, nil)
 
-	result, err := exec.ListReleases(context.Background(), ids, nil, nil, &limit, &offset)
+	result, err := exec.ListReleases(context.Background(), ids, nil, nil, nil, &limit, &offset)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 2)
 	assert.Equal(t, uint64(3), result.Items[0].ID)
@@ -610,4 +612,273 @@ func TestGetToken_AppliesReleaseMembership(t *testing.T) {
 	require.NotNil(t, result.MintNumber)
 	assert.Equal(t, uint64(99), *result.ReleaseID)
 	assert.Equal(t, int64(3), *result.MintNumber)
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TriggerReleaseIndexing validation
+//
+// The executor is the shared validation layer for both REST and GraphQL. REST goes
+// through dto.TriggerReleaseIndexingRequest.Validate first, but GraphQL calls the
+// executor directly. These tests cover the executor-level guards.
+// ──────────────────────────────────────────────────────────────────────────────
+
+// newReleaseIndexingExecutor builds an executor whose job-queue mock never expects
+// a call. Validation errors must be returned before any enqueue attempt.
+func newReleaseIndexingExecutor(t *testing.T) executor.Executor {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJobQueue := mocks.NewMockJobQueue(ctrl)
+	mockBlacklist := mocks.NewMockBlacklistRegistry(ctrl)
+	// No EXPECT calls — any enqueue call would fail the test.
+	return executor.NewExecutor(
+		mockStore,
+		mockJobQueue,
+		"token_index",
+		mockBlacklist,
+		adapter.NewJSON(),
+		adapter.NewClock(),
+		domain.Chain("tezos:mainnet"),
+		domain.Chain("eip155:1"),
+	)
+}
+
+func TestTriggerReleaseIndexing_BothIdentifiersEmpty(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "", "", []int64{1, 2})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
+}
+
+func TestTriggerReleaseIndexing_BothIdentifiersProvided(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "some-id", "some-slug", []int64{1, 2})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
+func TestTriggerReleaseIndexing_WhitespaceOnlyIDTreatedAsAbsent(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	// Whitespace-only vendor_release_id should be treated the same as empty.
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "   ", "", []int64{1})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
+}
+
+func TestTriggerReleaseIndexing_WhitespaceOnlySlugTreatedAsAbsent(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "", "\t \n", []int64{1})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one of vendor_release_id or vendor_release_slug is required")
+}
+
+func TestTriggerReleaseIndexing_ZeroMintNumberRejected(t *testing.T) {
+	t.Parallel()
+
+	for _, vendor := range []string{"artblocks", "feralfile", "fxhash", "objkt"} {
+		vendor := vendor
+		t.Run(vendor, func(t *testing.T) {
+			t.Parallel()
+
+			exec := newReleaseIndexingExecutor(t)
+			_, err := exec.TriggerReleaseIndexing(context.Background(), vendor, "some-id", "", []int64{0})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "mint_number must be")
+		})
+	}
+}
+
+func TestTriggerReleaseIndexing_EmptyMintNumbersRejected(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "some-id", "", []int64{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mint_numbers is required")
+}
+
+func TestTriggerReleaseIndexing_DuplicateMintNumberRejected(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "some-id", "", []int64{1, 2, 1})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate mint_number")
+}
+
+func TestTriggerReleaseIndexing_OpenSeaVendorRejected(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "opensea", "boredapeyachtclub", "", []int64{1, 2, 3})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported vendor")
+}
+
+// ── API-vendor span cap (executor layer, covers the GraphQL path) ─────────────
+
+func TestTriggerReleaseIndexing_SpanTooWideForFxhash(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	// span = 50000 - 1 = 49999, exceeds MAX_API_VENDOR_MINT_SPAN = 1000
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "some-id", "", []int64{1, 50000})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mint_numbers span")
+	assert.Contains(t, err.Error(), "fxhash")
+}
+
+func TestTriggerReleaseIndexing_SpanTooWideForFeralFile(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutor(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "feralfile", "some-uuid", "", []int64{1, 50000})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mint_numbers span")
+	assert.Contains(t, err.Error(), "feralfile")
+}
+
+// newReleaseIndexingExecutorWithEnqueue creates an executor whose job queue accepts one
+// Enqueue call. Used by exemption tests that verify validation passes and the request
+// reaches the enqueue stage.
+func newReleaseIndexingExecutorWithEnqueue(t *testing.T) executor.Executor {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJobQueue := mocks.NewMockJobQueue(ctrl)
+	mockBlacklist := mocks.NewMockBlacklistRegistry(ctrl)
+	mockJobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(&schema.Job{ID: 1}, false, nil).AnyTimes()
+	return executor.NewExecutor(
+		mockStore,
+		mockJobQueue,
+		"token_index",
+		mockBlacklist,
+		adapter.NewJSON(),
+		adapter.NewClock(),
+		domain.Chain("tezos:mainnet"),
+		domain.Chain("eip155:1"),
+	)
+}
+
+func TestTriggerReleaseIndexing_SpanAtLimitForFxhash(t *testing.T) {
+	t.Parallel()
+
+	// span = 1001 - 1 = 1000 = MAX_API_VENDOR_MINT_SPAN — must pass span validation.
+	exec := newReleaseIndexingExecutorWithEnqueue(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "some-id", "", []int64{1, 1001})
+
+	require.NoError(t, err)
+}
+
+func TestTriggerReleaseIndexing_SpanNotAppliedToArtBlocks(t *testing.T) {
+	t.Parallel()
+
+	// artblocks is deterministic — a wide sparse span must pass span validation entirely.
+	exec := newReleaseIndexingExecutorWithEnqueue(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "1-0xabc-78", "", []int64{1, 999000})
+
+	require.NoError(t, err)
+}
+
+func TestTriggerReleaseIndexing_SpanNotAppliedToObjkt(t *testing.T) {
+	t.Parallel()
+
+	exec := newReleaseIndexingExecutorWithEnqueue(t)
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "objkt", "KT1SomeContract", "", []int64{1, 999000})
+
+	require.NoError(t, err)
+}
+
+func TestTriggerReleaseIndexing_LongIdentifierAccepted(t *testing.T) {
+	t.Parallel()
+
+	// A very long identifier must be accepted — the executor hashes it to keep the
+	// unique_key within the PostgreSQL btree index-row size limit.
+	longID := strings.Repeat("x", 2048)
+	exec := newReleaseIndexingExecutorWithEnqueue(t)
+
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", longID, "", []int64{1})
+	require.NoError(t, err)
+}
+
+func TestTriggerReleaseIndexing_WhitespacePaddedIDIsNormalized(t *testing.T) {
+	t.Parallel()
+
+	// A whitespace-padded identifier should be accepted and enqueued with the
+	// trimmed value, not the raw padded string. Without normalization the worker
+	// would receive "  some-id  " and fail during Art Blocks contract parsing or
+	// vendor slug resolution.
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJobQueue := mocks.NewMockJobQueue(ctrl)
+	mockBlacklist := mocks.NewMockBlacklistRegistry(ctrl)
+
+	var capturedOpts jobs.EnqueueOptions
+	mockJobQueue.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			capturedOpts = opts
+			return &schema.Job{ID: 1}, true, nil
+		})
+
+	exec := executor.NewExecutor(
+		mockStore, mockJobQueue, "token_index", mockBlacklist,
+		adapter.NewJSON(), adapter.NewClock(),
+		domain.Chain("tezos:mainnet"), domain.Chain("eip155:1"),
+	)
+
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "artblocks", "  some-id  ", "", []int64{1})
+	require.NoError(t, err)
+
+	// Args[1] is the enqueued vendorReleaseID — must be trimmed.
+	require.Len(t, capturedOpts.Args, 4)
+	assert.Equal(t, "some-id", capturedOpts.Args[1], "vendorReleaseID must be normalized before enqueueing")
+}
+
+func TestTriggerReleaseIndexing_WhitespacePaddedSlugIsNormalized(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockStore := mocks.NewMockStore(ctrl)
+	mockJobQueue := mocks.NewMockJobQueue(ctrl)
+	mockBlacklist := mocks.NewMockBlacklistRegistry(ctrl)
+
+	var capturedOpts jobs.EnqueueOptions
+	mockJobQueue.EXPECT().
+		Enqueue(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			capturedOpts = opts
+			return &schema.Job{ID: 1}, true, nil
+		})
+
+	exec := executor.NewExecutor(
+		mockStore, mockJobQueue, "token_index", mockBlacklist,
+		adapter.NewJSON(), adapter.NewClock(),
+		domain.Chain("tezos:mainnet"), domain.Chain("eip155:1"),
+	)
+
+	_, err := exec.TriggerReleaseIndexing(context.Background(), "fxhash", "", "\t industrial-park \n", []int64{1})
+	require.NoError(t, err)
+
+	// Args[2] is the enqueued vendorReleaseSlug — must be trimmed.
+	require.Len(t, capturedOpts.Args, 4)
+	assert.Equal(t, "industrial-park", capturedOpts.Args[2], "vendorReleaseSlug must be normalized before enqueueing")
 }

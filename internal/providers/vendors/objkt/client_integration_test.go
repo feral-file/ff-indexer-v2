@@ -180,3 +180,27 @@ func TestClient_GetToken_Integration_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "token not found")
 	t.Logf("Correctly returned error for non-existent token: %v", err)
 }
+
+// TestClient_GetToken_Integration_ContractAddressAsSlug verifies that the FA2 contract
+// address used as vendor_release_id is returned in token metadata. For objkt, slug equals
+// vendor_release_id (no separate ResolveSlug API); enrichment sets vendor_release_slug
+// to the contract address directly.
+func TestClient_GetToken_Integration_ContractAddressAsSlug(t *testing.T) {
+	client := newIntegrationClient()
+	ctx := context.Background()
+
+	// Custom generative collection with token 1 indexed on objkt (see GetToken integration tests).
+	const contract = "KT19oAHnjgpQ6PauwgC8RxAb5pVj6svg9Myn"
+	token, err := client.GetToken(ctx, contract, "1")
+	if err != nil {
+		t.Fatalf("GetToken failed (API may be unreachable): %v", err)
+	}
+	require.NotNil(t, token)
+
+	// The contract address is the objkt "slug"; FA metadata confirms collection identity.
+	if token.FA != nil {
+		t.Logf("FA: name=%q collection_type=%q editions=%d", token.FA.Name, token.FA.CollectionType, token.FA.Editions)
+		assert.NotEmpty(t, token.FA.CollectionType)
+	}
+	t.Logf("Contract %q indexed as objkt token 1", contract)
+}

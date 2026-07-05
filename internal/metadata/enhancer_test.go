@@ -339,6 +339,32 @@ func TestEnhancer_Enhance_NoPublisher(t *testing.T) {
 	assert.Nil(t, result) // Should return nil when OpenSea has no API key
 }
 
+// TestEnhancer_Enhance_OpenSeaNFTNotFound verifies that ErrNFTNotFound from GetNFT is
+// treated as a skip (nil result, no error) rather than a hard failure. This prevents
+// infinite retries for phantom token IDs produced by the mintNum-1 mapping when a
+// collection uses 1-based token IDs and mintFrom=1 derives tokenID=0.
+func TestEnhancer_Enhance_OpenSeaNFTNotFound(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "0")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Token #0"},
+		Publisher: nil,
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "0").
+		Return(nil, opensea.ErrNFTNotFound)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result, "ErrNFTNotFound must be treated as a skip, not a hard error")
+}
+
 func TestEnhancer_Enhance_NoPublisherName(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
@@ -1779,6 +1805,15 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
 		Return(nftMetadata, nil)
 
+	mocks.openseaClient.
+		EXPECT().
+		GetCollection(gomock.Any(), "bored-ape-yacht-club").
+		Return(&opensea.CollectionMetadata{
+			Collection:  "bored-ape-yacht-club",
+			Name:        "Bored Ape Yacht Club",
+			TotalSupply: 10000,
+		}, nil)
+
 	// Mock JSON marshal for NFT metadata
 	vendorJSON := []byte(`{"identifier":"1","collection":"bored-ape-yacht-club","name":"Bored Ape #1","description":"A Bored Ape from OpenSea"}`)
 	mocks.json.
@@ -1817,6 +1852,12 @@ func TestEnhancer_Enhance_OpenSea(t *testing.T) {
 	assert.Len(t, result.Artists, 1)
 	assert.Equal(t, "Yuga Labs", result.Artists[0].Name)
 	assert.NotNil(t, result.MimeType)
+	require.NotNil(t, result.Release)
+	assert.Equal(t, "bored-ape-yacht-club", result.Release.VendorReleaseID)
+	require.NotNil(t, result.Release.Name)
+	assert.Equal(t, "Bored Ape Yacht Club", *result.Release.Name)
+	require.NotNil(t, result.Release.TotalMints)
+	assert.Equal(t, int64(10000), *result.Release.TotalMints)
 }
 
 func TestEnhancer_Enhance_OpenSea_MinimalFields(t *testing.T) {
@@ -1847,6 +1888,15 @@ func TestEnhancer_Enhance_OpenSea_MinimalFields(t *testing.T) {
 		EXPECT().
 		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "1").
 		Return(nftMetadata, nil)
+
+	mocks.openseaClient.
+		EXPECT().
+		GetCollection(gomock.Any(), "test-collection").
+		Return(&opensea.CollectionMetadata{
+			Collection:  "test-collection",
+			Name:        "Test Collection",
+			TotalSupply: 500,
+		}, nil)
 
 	// Mock JSON marshal
 	vendorJSON := []byte(`{"identifier":"1","collection":"test-collection","name":"Minimal NFT"}`)
@@ -2027,6 +2077,97 @@ func TestEnhancer_Enhance_OpenSea_WithArtistTrait(t *testing.T) {
 	assert.Empty(t, result.Artists[0].DID)
 }
 
+// TestEnhancer_Enhance_OpenSea_NoMintNumber_NonNumericIdentifier verifies that
+// Release is nil when ExtractMintNumber returns ok=false (non-numeric identifier,
+// no "#N" pattern in name). Persisting mintNum=0 would violate the DB constraint
+// release_members.mint_number > 0.
+func TestEnhancer_Enhance_OpenSea_NoMintNumber_NonNumericIdentifier(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	// Identifier is a hex hash — not parseable as int64 and name has no "#N" pattern.
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "abc123def456")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Test NFT"},
+		Publisher: nil,
+	}
+
+	name := "No Edition Token"
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "abc123def456",
+		Collection: "test-collection",
+		Contract:   "0x0000000000000000000000000000000000000123",
+		Name:       &name,
+		Traits:     []opensea.Trait{},
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "abc123def456").
+		Return(nftMetadata, nil)
+
+	vendorJSON := []byte(`{"identifier":"abc123def456","collection":"test-collection"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return(vendorJSON, nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, schema.VendorOpenSea, result.Vendor)
+	// Release must not be populated: ExtractMintNumber returned ok=false.
+	assert.Nil(t, result.Release)
+}
+
+// TestEnhancer_Enhance_OpenSea_NoMintNumber_ZeroTokenID verifies that Release is nil
+// when ExtractMintNumber returns mintNum=0 (identifier=="0"). The DB constraint
+// release_members.mint_number > 0 forbids inserting mint_number=0.
+func TestEnhancer_Enhance_OpenSea_NoMintNumber_ZeroTokenID(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	// Token ID "0" parses to mintNum=0, ok=true — this must not populate Release.
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000000123", "0")
+
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Test NFT"},
+		Publisher: nil,
+	}
+
+	name := "CryptoPunk #0"
+	nftMetadata := &opensea.NFTMetadata{
+		// Name contains "#0" — ExtractMintNumber parses it as 0, which is still
+		// blocked by the mintNum > 0 guard added to enhanceOpenSea.
+		Identifier: "0",
+		Collection: "cryptopunks",
+		Contract:   "0x0000000000000000000000000000000000000123",
+		Name:       &name,
+		Traits:     []opensea.Trait{},
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0x0000000000000000000000000000000000000123", "0").
+		Return(nftMetadata, nil)
+
+	vendorJSON := []byte(`{"identifier":"0","collection":"cryptopunks"}`)
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return(vendorJSON, nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, schema.VendorOpenSea, result.Vendor)
+	// Release must not be populated: mintNum == 0 violates the DB constraint.
+	assert.Nil(t, result.Release)
+}
+
 func TestEnhancer_Enhance_Objkt_URIResolverSuccess(t *testing.T) {
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
@@ -2171,4 +2312,110 @@ func TestEnhancer_Enhance_Objkt_URIResolverFallback(t *testing.T) {
 	// Verify that fallback default gateway URLs are used when URI resolver fails
 	assert.Equal(t, "https://ipfs.io/ipfs/QmTest123", *result.ImageURL)
 	assert.Equal(t, "https://ipfs.io/ipfs/QmTest456", *result.AnimationURL)
+}
+
+// TestEnhancer_Enhance_OpenSea_GetCollectionTransientErrorDoesNotBlockNFTEnrichment verifies
+// that when GetNFT succeeds but GetCollection returns a transient error (rate limit, network),
+// token-level enrichment (name, image, release membership) is still persisted and Enhance
+// returns success. Collection metadata (name/total_mints) is best-effort.
+//
+// The token metadata workflow (index_metadata_wf.go) treats EnhanceTokenMetadata errors as
+// non-fatal and continues, so returning an error from here would simply discard the already-
+// fetched NFT data without providing a retry path. A future re-enrichment run can backfill
+// collection name/total_mints once GetCollection succeeds.
+func TestEnhancer_Enhance_OpenSea_GetCollectionTransientErrorDoesNotBlockNFTEnrichment(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1")
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Test NFT"},
+		Publisher: nil,
+	}
+
+	name := "Bored Ape #1"
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "1",
+		Collection: "bored-ape-yacht-club",
+		Contract:   "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+		Name:       &name,
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
+		Return(nftMetadata, nil)
+
+	// Transient error (rate limit, network). Collection metadata is best-effort; token
+	// enrichment must still succeed.
+	mocks.openseaClient.
+		EXPECT().
+		GetCollection(gomock.Any(), "bored-ape-yacht-club").
+		Return(nil, fmt.Errorf("opensea: 429 too many requests"))
+
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return([]byte(`{"identifier":"1"}`), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	require.NoError(t, err, "transient GetCollection failure must not block token enrichment")
+	require.NotNil(t, result)
+	// NFT-level name must still be set from GetNFT.
+	require.NotNil(t, result.Name)
+	assert.Equal(t, "Bored Ape #1", *result.Name)
+	// Release membership is still created with VendorReleaseID and mint number.
+	require.NotNil(t, result.Release)
+	assert.Equal(t, "bored-ape-yacht-club", result.Release.VendorReleaseID)
+	// Collection-level fields are nil because GetCollection failed.
+	assert.Nil(t, result.Release.Name, "name must be nil when GetCollection fails")
+	assert.Nil(t, result.Release.TotalMints, "total_mints must be nil when GetCollection fails")
+}
+
+// TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyBestEffort verifies that when
+// GetCollection returns ErrNoAPIKey (permanent configuration issue), Enhance succeeds and
+// the release is populated without collection-level name/total_mints — same best-effort
+// behavior as transient failures.
+func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyBestEffort(t *testing.T) {
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1")
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "Test NFT"},
+		Publisher: nil,
+	}
+
+	name := "Bored Ape #1"
+	nftMetadata := &opensea.NFTMetadata{
+		Identifier: "1",
+		Collection: "bored-ape-yacht-club",
+		Contract:   "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+		Name:       &name,
+	}
+
+	mocks.openseaClient.
+		EXPECT().
+		GetNFT(gomock.Any(), "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", "1").
+		Return(nftMetadata, nil)
+
+	mocks.openseaClient.
+		EXPECT().
+		GetCollection(gomock.Any(), "bored-ape-yacht-club").
+		Return(nil, opensea.ErrNoAPIKey)
+
+	mocks.json.
+		EXPECT().
+		Marshal(nftMetadata).
+		Return([]byte(`{"identifier":"1"}`), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Release)
+	assert.Equal(t, "bored-ape-yacht-club", result.Release.VendorReleaseID)
+	assert.Nil(t, result.Release.Name, "name must be nil when API key is absent")
+	assert.Nil(t, result.Release.TotalMints, "total_mints must be nil when API key is absent")
 }

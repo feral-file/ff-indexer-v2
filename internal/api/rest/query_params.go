@@ -59,8 +59,19 @@ type ListTokensQueryParams struct {
 	TokenNumbers      []string       `form:"token_number"`
 	TokenIDs          []uint64       `form:"token_id"`
 	TokenCIDs         []string       `form:"token_cid"`
-	ReleaseID         *uint64        `form:"release_id"`
-	IncludeUnviewable bool           `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
+	// ReleaseID narrows results to a specific release by internal integer id.
+	// Any of ReleaseID, ReleaseVendor, and ReleaseVendorSlug may be combined (ANDed).
+	ReleaseID *uint64 `form:"release_id"`
+	// ReleaseVendor filters tokens to releases from a given vendor (e.g. "artblocks").
+	ReleaseVendor string `form:"release_vendor"`
+	// ReleaseVendorSlug filters tokens to the release whose vendor_release_slug matches
+	// (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
+	ReleaseVendorSlug string `form:"release_vendor_slug"`
+	// MintNumbers is an explicit 1-based list of mint positions to include (max 50).
+	// Requires at least one release context (release_id, release_vendor, or release_vendor_slug).
+	// Clients use this to poll for exactly the mints they triggered via IndexRelease.
+	MintNumbers       []int64 `form:"mint_number"`
+	IncludeUnviewable bool    `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`
@@ -72,6 +83,9 @@ type ListTokensQueryParams struct {
 
 	// Expansion
 	Expansions []types.Expansion `form:"expand"`
+
+	// ParsedReleaseVendor is populated by Validate().
+	ParsedReleaseVendor *schema.Vendor
 }
 
 // Validate validates the query parameters for GET /tokens
@@ -134,8 +148,58 @@ func (p *ListTokensQueryParams) Validate() error {
 		return apierrors.NewValidationError("Invalid release_id: must be a positive integer")
 	}
 
-	if p.SortBy == types.TokenSortByMintNumber && p.ReleaseID == nil {
-		return apierrors.NewValidationError("sort_by=mint_number requires release_id")
+	// Validate and parse release_vendor when present.
+	releaseVendor := strings.TrimSpace(p.ReleaseVendor)
+	if releaseVendor != "" {
+		v := schema.Vendor(strings.ToLower(releaseVendor))
+		switch v {
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt, schema.VendorOpenSea:
+			p.ParsedReleaseVendor = &v
+		default:
+			return apierrors.NewValidationError(fmt.Sprintf("Invalid release_vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", releaseVendor))
+		}
+	}
+
+	// release_vendor_slug is only unique per vendor (DB UNIQUE (vendor, vendor_release_slug)).
+	// Without release_vendor, a slug-only query can match releases across multiple vendors,
+	// breaking the mint_number ordering contract. Require release_vendor or release_id.
+	if strings.TrimSpace(p.ReleaseVendorSlug) != "" && p.ParsedReleaseVendor == nil && p.ReleaseID == nil {
+		return apierrors.NewValidationError("release_vendor_slug requires release_vendor or release_id (slug uniqueness is scoped per vendor)")
+	}
+
+	// hasReleaseContext is true when the query is scoped to a specific release.
+	// sort_by=mint_number and mint_numbers require this context so that
+	// mint_number ordering is unambiguous.
+	//
+	// release_vendor alone is not sufficient: a vendor covers many releases, so
+	// mint_number=1 with release_vendor=artblocks would return #1 from every
+	// Art Blocks release. A specific release must be identified by release_id,
+	// or by release_vendor+release_vendor_slug together.
+	vendorSlugPresent := strings.TrimSpace(p.ReleaseVendorSlug) != ""
+	hasReleaseContext := p.ReleaseID != nil || (p.ParsedReleaseVendor != nil && vendorSlugPresent)
+
+	if p.SortBy == types.TokenSortByMintNumber && !hasReleaseContext {
+		return apierrors.NewValidationError("sort_by=mint_number requires release_id, or both release_vendor and release_vendor_slug")
+	}
+
+	// Validate mint_number list — requires specific release context.
+	if len(p.MintNumbers) > 0 {
+		if !hasReleaseContext {
+			return apierrors.NewValidationError("mint_number requires release_id, or both release_vendor and release_vendor_slug")
+		}
+		if int64(len(p.MintNumbers)) > constants.MAX_TOKEN_MINT_NUMBERS_FILTER {
+			return apierrors.NewValidationError(fmt.Sprintf("too many mint_number values: max %d", constants.MAX_TOKEN_MINT_NUMBERS_FILTER))
+		}
+		seen := make(map[int64]struct{}, len(p.MintNumbers))
+		for _, n := range p.MintNumbers {
+			if n < 1 {
+				return apierrors.NewValidationError("each mint_number must be >= 1")
+			}
+			if _, dup := seen[n]; dup {
+				return apierrors.NewValidationError(fmt.Sprintf("duplicate mint_number: %d", n))
+			}
+			seen[n] = struct{}{}
+		}
 	}
 
 	// Validate sort_order
@@ -239,31 +303,34 @@ func ParseGetReleaseQuery(c *gin.Context) (*GetReleaseQueryParams, error) {
 }
 
 // ListReleasesQueryParams holds query parameters for GET /releases.
-// Call Validate() before using ParsedVendor, ParsedVendorReleaseID, and ParsedIDs.
+// Call Validate() before using ParsedVendor, ParsedVendorReleaseID, ParsedVendorReleaseSlug, and ParsedIDs.
 type ListReleasesQueryParams struct {
 	// IDs is a repeated query parameter: ?ids=1&ids=2
-	IDs             []uint64 `form:"ids"`
-	Vendor          string   `form:"vendor"`
-	VendorReleaseID string   `form:"vendor_release_id"`
-	Limit           uint8    `form:"limit,default=20"`
-	Offset          uint64   `form:"offset,default=0"`
+	IDs               []uint64 `form:"ids"`
+	Vendor            string   `form:"vendor"`
+	VendorReleaseID   string   `form:"vendor_release_id"`
+	VendorReleaseSlug string   `form:"vendor_release_slug"`
+	Limit             uint8    `form:"limit,default=20"`
+	Offset            uint64   `form:"offset,default=0"`
 
-	// ParsedVendor, ParsedVendorReleaseID, and ParsedIDs are populated by Validate().
-	ParsedIDs             []uint64
-	ParsedVendor          *schema.Vendor
-	ParsedVendorReleaseID *string
+	// Parsed fields are populated by Validate().
+	ParsedIDs               []uint64
+	ParsedVendor            *schema.Vendor
+	ParsedVendorReleaseID   *string
+	ParsedVendorReleaseSlug *string
 }
 
 // Validate validates the query parameters for GET /releases.
-// It populates ParsedVendor, ParsedVendorReleaseID, and ParsedIDs on success.
-// At least one of ids, vendor, or vendor_release_id is required.
+// It populates ParsedVendor, ParsedVendorReleaseID, ParsedVendorReleaseSlug, and ParsedIDs on success.
+// At least one of ids, vendor, vendor_release_id, or vendor_release_slug is required.
 // Accepted vendor values: artblocks, feralfile, fxhash, objkt.
 func (p *ListReleasesQueryParams) Validate() error {
 	vendor := strings.TrimSpace(p.Vendor)
 	vendorReleaseID := strings.TrimSpace(p.VendorReleaseID)
+	vendorReleaseSlug := strings.TrimSpace(p.VendorReleaseSlug)
 
-	if len(p.IDs) == 0 && vendor == "" && vendorReleaseID == "" {
-		return apierrors.NewValidationError("at least one of ids, vendor, or vendor_release_id is required")
+	if len(p.IDs) == 0 && vendor == "" && vendorReleaseID == "" && vendorReleaseSlug == "" {
+		return apierrors.NewValidationError("at least one of ids, vendor, vendor_release_id, or vendor_release_slug is required")
 	}
 
 	if p.Limit == 0 {
@@ -282,15 +349,19 @@ func (p *ListReleasesQueryParams) Validate() error {
 	if vendor != "" {
 		v := schema.Vendor(strings.ToLower(vendor))
 		switch v {
-		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt:
+		case schema.VendorArtBlocks, schema.VendorFeralFile, schema.VendorFXHash, schema.VendorObjkt, schema.VendorOpenSea:
 			p.ParsedVendor = &v
 		default:
-			return apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt", vendor))
+			return apierrors.NewValidationError(fmt.Sprintf("invalid vendor: %s. Must be one of: artblocks, feralfile, fxhash, objkt, opensea", vendor))
 		}
 	}
 
 	if vendorReleaseID != "" {
 		p.ParsedVendorReleaseID = &vendorReleaseID
+	}
+
+	if vendorReleaseSlug != "" {
+		p.ParsedVendorReleaseSlug = &vendorReleaseSlug
 	}
 
 	return nil

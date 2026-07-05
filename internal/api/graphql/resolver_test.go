@@ -14,6 +14,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 )
 
@@ -63,7 +64,7 @@ func TestQueryResolverReleasesReturnsList(t *testing.T) {
 	vendor := "artblocks"
 	nextOffset := uint64(20)
 	mockExec.EXPECT().
-		ListReleases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ListReleases(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.ReleaseListResponse{
 			Items: []dto.ReleaseResponse{{
 				ID:              3,
@@ -73,7 +74,7 @@ func TestQueryResolverReleasesReturnsList(t *testing.T) {
 			Offset: &nextOffset,
 		}, nil)
 
-	result, err := resolver.Query().Releases(context.Background(), nil, &vendor, nil, nil, nil)
+	result, err := resolver.Query().Releases(context.Background(), nil, &vendor, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, uint64(3), result.Items[0].ID)
@@ -90,9 +91,9 @@ func TestQueryResolverReleasesRequiresFilter(t *testing.T) {
 	mockExec := mocks.NewMockAPIExecutor(ctrl)
 	resolver := NewResolver(false, mockExec)
 
-	_, err := resolver.Query().Releases(context.Background(), nil, nil, nil, nil, nil)
+	_, err := resolver.Query().Releases(context.Background(), nil, nil, nil, nil, nil, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one of ids, vendor, or vendor_release_id is required")
+	assert.Contains(t, err.Error(), "at least one of ids, vendor, vendor_release_id, or vendor_release_slug is required")
 }
 
 func TestQueryResolverReleasesRejectsZeroID(t *testing.T) {
@@ -105,7 +106,7 @@ func TestQueryResolverReleasesRejectsZeroID(t *testing.T) {
 	resolver := NewResolver(false, mockExec)
 
 	ids := []Uint64{1, 0, 3}
-	_, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil)
+	_, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be a positive integer")
 }
@@ -121,7 +122,7 @@ func TestQueryResolverReleasesReturnsByIDs(t *testing.T) {
 
 	ids := []Uint64{3, 7}
 	mockExec.EXPECT().
-		ListReleases(gomock.Any(), []uint64{3, 7}, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ListReleases(gomock.Any(), []uint64{3, 7}, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.ReleaseListResponse{
 			Items: []dto.ReleaseResponse{
 				{ID: 3, Vendor: "feralfile", VendorReleaseID: "uuid-3"},
@@ -129,7 +130,7 @@ func TestQueryResolverReleasesReturnsByIDs(t *testing.T) {
 			},
 		}, nil)
 
-	result, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil)
+	result, err := resolver.Query().Releases(context.Background(), ids, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Items, 2)
 	assert.Equal(t, uint64(3), result.Items[0].ID)
@@ -179,4 +180,128 @@ func TestTokenResolverReleaseID_LargeID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, Uint64(9_999_999_999), *result)
+}
+
+// --- tokens(release_vendor, release_vendor_slug) ---
+
+// TestQueryResolverTokensRejectsInvalidReleaseVendor ensures an unrecognized
+// release_vendor value returns a validation error.
+func TestQueryResolverTokensRejectsInvalidReleaseVendor(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	vendor := "superrare"
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		&vendor, nil,
+		nil, nil, nil, nil, nil, nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Invalid release_vendor")
+}
+
+// TestQueryResolverTokensMintNumberRequiresReleaseContext verifies that
+// sort_by=mint_number without any release context is rejected.
+func TestQueryResolverTokensMintNumberRequiresReleaseContext(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	sortBy := types.TokenSortByMintNumber
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		nil, nil,
+		nil, nil, nil, nil, &sortBy, nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sort_by=mint_number requires release_id")
+}
+
+// TestQueryResolverTokensVendorAloneRejectsForMintNumber verifies that release_vendor alone
+// (without release_vendor_slug) is rejected for sort_by=mint_number. A vendor covers many
+// releases, so mint-number ordering is ambiguous without a specific release identifier.
+func TestQueryResolverTokensVendorAloneRejectsForMintNumber(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	vendor := "artblocks"
+	sortBy := types.TokenSortByMintNumber
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		&vendor, nil,
+		nil, nil, nil, nil, &sortBy, nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sort_by=mint_number requires release_id")
+}
+
+// TestQueryResolverTokensMintNumbersWithVendorSlug verifies that release_vendor_slug
+// combined with release_vendor is accepted and enables mint_numbers.
+func TestQueryResolverTokensMintNumbersWithVendorSlug(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	vendor := "artblocks"
+	slug := "fidenza-by-tyler-hobbs"
+	mintNums := []int{1, 25, 50}
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), // release vendor + slug
+			gomock.Any(), // mint_numbers
+			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&dto.TokenListResponse{}, nil)
+
+	resolver := NewResolver(false, mockExec)
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		&vendor, &slug,
+		mintNums, nil, nil, nil, nil, nil,
+	)
+	require.NoError(t, err)
+}
+
+// TestQueryResolverTokensSlugAloneRejected verifies that release_vendor_slug without
+// release_vendor is rejected. Slug uniqueness is scoped per vendor.
+func TestQueryResolverTokensSlugAloneRejected(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	slug := "fidenza-by-tyler-hobbs"
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+	_, err := resolver.Query().Tokens(
+		context.Background(),
+		nil, nil, nil, nil, nil, nil, nil,
+		nil, &slug,
+		nil, nil, nil, nil, nil, nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "release_vendor_slug requires release_vendor or release_id")
 }

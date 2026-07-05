@@ -112,3 +112,95 @@ func TestClient_GetArtwork_Integration_ContextCancellation(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, artwork)
 }
+
+// TestClient_ResolveSlug_Integration verifies slug → series UUID resolution against the
+// live Feral File API. Slugs are stable public URL segments on feralfile.com.
+func TestClient_ResolveSlug_Integration(t *testing.T) {
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	client := feralfile.NewClient(httpClient, feralfile.API_ENDPOINT)
+	ctx := context.Background()
+
+	cases := []struct {
+		name         string
+		slug         string
+		wantSeriesID string
+	}{
+		{
+			name:         "Data_Pilgrims_01",
+			slug:         "data-pilgrims-01-769",
+			wantSeriesID: "8379d2a7-575f-4cde-aade-18b2aa044f7e",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seriesID, err := client.ResolveSlug(ctx, tc.slug)
+			if err != nil {
+				t.Fatalf("ResolveSlug failed (API may be unreachable): %v", err)
+			}
+			assert.Equal(t, tc.wantSeriesID, seriesID)
+			t.Logf("slug %q → series UUID %q", tc.slug, seriesID)
+		})
+	}
+}
+
+// TestClient_ResolveSlug_Integration_NotFound verifies unknown slugs return an error.
+func TestClient_ResolveSlug_Integration_NotFound(t *testing.T) {
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	client := feralfile.NewClient(httpClient, feralfile.API_ENDPOINT)
+
+	_, err := client.ResolveSlug(context.Background(), "no-such-feralfile-series-slug")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "slug not found")
+}
+
+// TestClient_GetSeriesArtworks_Integration fetches mint-ordered artworks for a known series.
+// Used by IndexRelease to derive token CIDs for Feral File releases.
+func TestClient_GetSeriesArtworks_Integration(t *testing.T) {
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	client := feralfile.NewClient(httpClient, feralfile.API_ENDPOINT)
+	ctx := context.Background()
+
+	// Resolve slug first (same path as IndexRelease when triggered by vendor_release_slug).
+	const slug = "data-pilgrims-01-769"
+	seriesID, err := client.ResolveSlug(ctx, slug)
+	if err != nil {
+		t.Fatalf("ResolveSlug failed: %v", err)
+	}
+
+	artworks, err := client.GetSeriesArtworks(ctx, seriesID, 1, 3)
+	if err != nil {
+		t.Fatalf("GetSeriesArtworks failed: %v", err)
+	}
+
+	require.NotEmpty(t, artworks, "expected at least one artwork in mint range 1..3")
+	for i, ref := range artworks {
+		t.Logf("artwork[%d]: index=%d chain=%q contract=%q tokenID=%q",
+			i, ref.Index, ref.Chain, ref.ContractAddress, ref.TokenID)
+		// Bitmark-origin artworks may appear before swap; on-chain refs must have chain + tokenID.
+		if ref.Chain != "bitmark" && ref.Chain != "" {
+			assert.NotEmpty(t, ref.ContractAddress, "on-chain artwork must have contract")
+			assert.NotEmpty(t, ref.TokenID, "on-chain artwork must have tokenID")
+		}
+	}
+}
+
+// TestClient_GetArtwork_Integration_SlugField verifies nested series.slug is returned by
+// the live artwork API (used during enrichment to populate vendor_release_slug).
+func TestClient_GetArtwork_Integration_SlugField(t *testing.T) {
+	httpClient := adapter.NewHTTPClient(30 * time.Second)
+	client := feralfile.NewClient(httpClient, feralfile.API_ENDPOINT)
+	ctx := context.Background()
+
+	// Known artwork from Money Vortex series (slug verified on feralfile.com).
+	const tokenID = "68133196527112232794835997367314869505960984666033462681082934679485439444096"
+	artwork, err := client.GetArtwork(ctx, tokenID)
+	if err != nil {
+		t.Fatalf("GetArtwork failed: %v", err)
+	}
+
+	require.NotNil(t, artwork)
+	assert.Equal(t, "money-vortex-zja", artwork.Series.Slug)
+	assert.NotEmpty(t, artwork.Series.Title)
+	t.Logf("Series slug=%q title=%q", artwork.Series.Slug, artwork.Series.Title)
+}

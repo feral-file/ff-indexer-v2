@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	apierrors "github.com/feral-file/ff-indexer-v2/internal/api/shared/errors"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
@@ -93,7 +94,7 @@ func TestListReleasesQueryParamsValidateRequiresFilter(t *testing.T) {
 	require.Error(t, err)
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, err, &apiErr)
-	assert.Contains(t, apiErr.Details, "at least one of ids, vendor, or vendor_release_id is required")
+	assert.Contains(t, apiErr.Details, "at least one of ids, vendor, vendor_release_id, or vendor_release_slug is required")
 }
 
 func TestListReleasesQueryParamsValidateIDsRejectsZero(t *testing.T) {
@@ -161,6 +162,20 @@ func TestListReleasesQueryParamsValidateVendorReleaseIDOnly(t *testing.T) {
 	assert.Nil(t, params.ParsedVendor)
 	require.NotNil(t, params.ParsedVendorReleaseID)
 	assert.Equal(t, "series-uuid", *params.ParsedVendorReleaseID)
+}
+
+func TestListReleasesQueryParamsValidateVendorReleaseSlugOnly(t *testing.T) {
+	t.Parallel()
+
+	params := ListReleasesQueryParams{
+		VendorReleaseSlug: "industrial-park",
+		Limit:             20,
+	}
+	require.NoError(t, params.Validate())
+	assert.Nil(t, params.ParsedVendor)
+	assert.Nil(t, params.ParsedVendorReleaseID)
+	require.NotNil(t, params.ParsedVendorReleaseSlug)
+	assert.Equal(t, "industrial-park", *params.ParsedVendorReleaseSlug)
 }
 
 func TestListReleasesQueryParamsValidateInvalidVendor(t *testing.T) {
@@ -260,7 +275,7 @@ func TestListTokensQueryParamsValidateMintNumberRequiresReleaseID(t *testing.T) 
 	require.Error(t, err)
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, err, &apiErr)
-	assert.Equal(t, "sort_by=mint_number requires release_id", apiErr.Details)
+	assert.Contains(t, apiErr.Details, "sort_by=mint_number requires release_id")
 }
 
 func TestListTokensQueryParamsValidateMintNumberWithReleaseID(t *testing.T) {
@@ -324,4 +339,324 @@ func TestParseListTokensQueryInvalidSortOrderPassesThroughToValidate(t *testing.
 	var apiErr *apierrors.APIError
 	require.ErrorAs(t, validateErr, &apiErr)
 	assert.Contains(t, apiErr.Details, "Invalid sort_order")
+}
+
+// ─── MintNumbers filter on ListTokensQueryParams ─────────────────────────────
+
+func TestListTokensQueryParamsMintNumbersRequiresReleaseContext(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		MintNumbers: []int64{1, 2, 3},
+		SortOrder:   types.OrderAsc,
+		SortBy:      types.TokenLatestProvenance,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "release_id")
+}
+
+func TestListTokensQueryParamsMintNumbersValidWithReleaseID(t *testing.T) {
+	t.Parallel()
+
+	releaseID := uint64(5)
+	params := ListTokensQueryParams{
+		ReleaseID:   &releaseID,
+		MintNumbers: []int64{1, 5, 50},
+		SortBy:      types.TokenSortByMintNumber,
+		SortOrder:   types.OrderAsc,
+	}
+
+	assert.NoError(t, params.Validate())
+}
+
+func TestListTokensQueryParamsMintNumberZeroInvalid(t *testing.T) {
+	t.Parallel()
+
+	releaseID := uint64(5)
+	params := ListTokensQueryParams{
+		ReleaseID:   &releaseID,
+		MintNumbers: []int64{0},
+		SortBy:      types.TokenSortByMintNumber,
+		SortOrder:   types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "mint_number must be >= 1")
+}
+
+func TestListTokensQueryParamsMintNumbersDuplicate(t *testing.T) {
+	t.Parallel()
+
+	releaseID := uint64(5)
+	params := ListTokensQueryParams{
+		ReleaseID:   &releaseID,
+		MintNumbers: []int64{1, 3, 1},
+		SortBy:      types.TokenSortByMintNumber,
+		SortOrder:   types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "duplicate mint_number")
+}
+
+func TestListTokensQueryParamsMintNumbersTooMany(t *testing.T) {
+	t.Parallel()
+
+	releaseID := uint64(5)
+	nums := make([]int64, 51)
+	for i := range nums {
+		nums[i] = int64(i + 1)
+	}
+	params := ListTokensQueryParams{
+		ReleaseID:   &releaseID,
+		MintNumbers: nums,
+		SortBy:      types.TokenSortByMintNumber,
+		SortOrder:   types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "too many mint_number")
+}
+
+func TestParseListTokensQueryMintNumbers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/tokens?release_id=7&mint_number=3&mint_number=10&mint_number=25&sort_by=mint_number&sort_order=asc", nil)
+
+	params, err := ParseListTokensQuery(c)
+	require.NoError(t, err)
+	require.NotNil(t, params)
+
+	require.Len(t, params.MintNumbers, 3)
+	assert.Equal(t, []int64{3, 10, 25}, params.MintNumbers)
+
+	assert.NoError(t, params.Validate())
+}
+
+// ─── TriggerReleaseIndexingRequest DTO ───────────────────────────────────────
+
+func TestTriggerReleaseIndexingRequestValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		vendor      string
+		id          string
+		slug        string
+		mintNumbers []int64
+		wantErr     string // matched against APIError.Details (empty = expect no error)
+	}{
+		{"valid artblocks with id", "artblocks", "1-0xabc-78", "", []int64{1, 50, 100}, ""},
+		{"valid feralfile with id", "feralfile", "series-uuid", "", []int64{1, 2, 3}, ""},
+		{"valid fxhash with id", "fxhash", "9997", "", []int64{5, 10}, ""},
+		{"valid objkt with id", "objkt", "KT1abc", "", []int64{1}, ""},
+		{"valid fxhash with slug", "fxhash", "", "industrial-park", []int64{1, 2}, ""},
+		{"valid feralfile with slug", "feralfile", "", "data-pilgrims-01-769", []int64{3}, ""},
+		{"missing vendor", "", "abc", "", []int64{1}, "vendor is required"},
+		{"invalid vendor", "superrare", "abc", "", []int64{1}, "unsupported vendor"},
+		{"missing release id", "artblocks", "", "", []int64{1}, "exactly one of vendor_release_id or vendor_release_slug is required"},
+		{"both id and slug", "artblocks", "1-0xabc-78", "fidenza-by-tyler-hobbs", []int64{1}, "mutually exclusive"},
+		{"empty mint_numbers", "artblocks", "abc", "", []int64{}, "mint_numbers is required"},
+		{"zero mint_number", "artblocks", "abc", "", []int64{0}, "mint_number must be"},
+		{"duplicate mint_number", "artblocks", "abc", "", []int64{1, 2, 1}, "duplicate mint_number"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := dto.TriggerReleaseIndexingRequest{
+				Vendor:            tt.vendor,
+				VendorReleaseID:   tt.id,
+				VendorReleaseSlug: tt.slug,
+				MintNumbers:       tt.mintNumbers,
+			}
+			err := req.Validate()
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				var apiErr *apierrors.APIError
+				require.ErrorAs(t, err, &apiErr)
+				assert.Contains(t, apiErr.Details, tt.wantErr)
+			}
+		})
+	}
+}
+
+// ─── release_vendor and release_vendor_slug on ListTokensQueryParams ──────────
+
+// TestListTokensQueryParamsReleaseVendorValid checks that a valid vendor is parsed.
+func TestListTokensQueryParamsReleaseVendorValid(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor: "artblocks",
+		SortBy:        types.TokenLatestProvenance,
+		SortOrder:     types.OrderDesc,
+	}
+
+	assert.NoError(t, params.Validate())
+	require.NotNil(t, params.ParsedReleaseVendor)
+	assert.Equal(t, schema.VendorArtBlocks, *params.ParsedReleaseVendor)
+}
+
+// TestListTokensQueryParamsReleaseVendorInvalid checks that an unrecognized vendor is rejected.
+func TestListTokensQueryParamsReleaseVendorInvalid(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor: "superrare",
+		SortBy:        types.TokenLatestProvenance,
+		SortOrder:     types.OrderDesc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "Invalid release_vendor")
+}
+
+// TestListTokensQueryParamsMintNumberWithReleaseVendorAndSlug verifies that release_vendor
+// combined with release_vendor_slug is sufficient context to enable sort_by=mint_number.
+// release_vendor alone is no longer sufficient because a vendor covers many releases.
+func TestListTokensQueryParamsMintNumberWithReleaseVendorAndSlug(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor:     "feralfile",
+		ReleaseVendorSlug: "data-pilgrims-01-769",
+		SortBy:            types.TokenSortByMintNumber,
+		SortOrder:         types.OrderAsc,
+	}
+
+	assert.NoError(t, params.Validate())
+}
+
+// TestListTokensQueryParamsSlugAloneRejected verifies that release_vendor_slug without
+// release_vendor or release_id is rejected. Slug uniqueness is scoped per vendor
+// (UNIQUE (vendor, vendor_release_slug)), so a slug-only filter can match multiple
+// releases across vendors, making mint_number ordering ambiguous.
+func TestListTokensQueryParamsSlugAloneRejected(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendorSlug: "fidenza-by-tyler-hobbs",
+		MintNumbers:       []int64{1, 25, 50},
+		SortBy:            types.TokenSortByMintNumber,
+		SortOrder:         types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Contains(t, apiErr.Details, "release_vendor_slug requires release_vendor or release_id")
+}
+
+// TestListTokensQueryParamsMintNumbersWithVendorAndSlug verifies that release_vendor_slug
+// combined with release_vendor is accepted and enables mint_numbers.
+func TestListTokensQueryParamsMintNumbersWithVendorAndSlug(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor:     "artblocks",
+		ReleaseVendorSlug: "fidenza-by-tyler-hobbs",
+		MintNumbers:       []int64{1, 25, 50},
+		SortBy:            types.TokenSortByMintNumber,
+		SortOrder:         types.OrderAsc,
+	}
+
+	assert.NoError(t, params.Validate())
+}
+
+// TestListTokensQueryParamsSlugWithReleaseIDAccepted verifies that release_vendor_slug
+// combined with release_id (no release_vendor) is accepted.
+func TestListTokensQueryParamsSlugWithReleaseIDAccepted(t *testing.T) {
+	t.Parallel()
+
+	id := uint64(5)
+	params := ListTokensQueryParams{
+		ReleaseID:         &id,
+		ReleaseVendorSlug: "fidenza-by-tyler-hobbs",
+		SortBy:            types.TokenSortByMintNumber,
+		SortOrder:         types.OrderAsc,
+	}
+
+	assert.NoError(t, params.Validate())
+}
+
+// TestListTokensQueryParamsVendorAloneRejectsForMintNumber verifies that release_vendor
+// alone (without release_vendor_slug) is rejected when mint_number is requested. A vendor
+// covers many releases; mint numbers repeat across them, making ordering ambiguous.
+func TestListTokensQueryParamsVendorAloneRejectsForMintNumber(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor: "artblocks",
+		MintNumbers:   []int64{1, 2},
+		SortBy:        types.TokenSortByMintNumber,
+		SortOrder:     types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, apierrors.ErrCodeValidationFailed, apiErr.Code)
+	assert.Contains(t, apiErr.Details, "mint_number requires release_id")
+}
+
+// TestListTokensQueryParamsVendorAloneRejectsForSortByMintNumber verifies that
+// sort_by=mint_number with only release_vendor (no slug) is also rejected.
+func TestListTokensQueryParamsVendorAloneRejectsForSortByMintNumber(t *testing.T) {
+	t.Parallel()
+
+	params := ListTokensQueryParams{
+		ReleaseVendor: "artblocks",
+		SortBy:        types.TokenSortByMintNumber,
+		SortOrder:     types.OrderAsc,
+	}
+
+	err := params.Validate()
+	require.Error(t, err)
+	var apiErr *apierrors.APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, apierrors.ErrCodeValidationFailed, apiErr.Code)
+	assert.Contains(t, apiErr.Details, "sort_by=mint_number requires release_id")
+}
+
+// TestParseListTokensQueryReleaseVendorSlug verifies that release_vendor_slug and
+// release_vendor are parsed from the query string.
+func TestParseListTokensQueryReleaseVendorSlug(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET",
+		"/tokens?release_vendor=artblocks&release_vendor_slug=fidenza-by-tyler-hobbs&sort_by=mint_number&sort_order=asc", nil)
+
+	params, err := ParseListTokensQuery(c)
+	require.NoError(t, err)
+	require.NotNil(t, params)
+	assert.Equal(t, "artblocks", params.ReleaseVendor)
+	assert.Equal(t, "fidenza-by-tyler-hobbs", params.ReleaseVendorSlug)
+	assert.NoError(t, params.Validate())
+	require.NotNil(t, params.ParsedReleaseVendor)
+	assert.Equal(t, schema.VendorArtBlocks, *params.ParsedReleaseVendor)
 }

@@ -2,7 +2,10 @@ package fxhash_test
 
 import (
 	"context"
+	"io"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,4 +187,247 @@ func TestGetGentk_CompositeID(t *testing.T) {
 	gentk, err := client.GetGentk(context.Background(), "KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE", "777")
 	require.NoError(t, err)
 	assert.Nil(t, gentk)
+}
+
+// TestGetGentksByIteration_Success verifies that a single-page result is returned correctly.
+func TestGetGentksByIteration_Success(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{
+		"data": {
+			"onchain": {
+				"objkt": [
+					{"id": "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi-1", "iteration": "1"},
+					{"id": "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi-2", "iteration": "2"},
+					{"id": "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi-3", "iteration": "3"}
+				]
+			}
+		}
+	}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 3)
+
+	require.NoError(t, err)
+	require.Len(t, refs, 3)
+	assert.Equal(t, "KT1U6EHmNxJTkvaWJ4ThczG4FSDaHC21ssvi", refs[0].ContractAddress)
+	assert.Equal(t, "1", refs[0].TokenID)
+	assert.Equal(t, int64(1), refs[0].Iteration)
+	assert.Equal(t, "2", refs[1].TokenID)
+	assert.Equal(t, int64(2), refs[1].Iteration)
+	assert.Equal(t, "3", refs[2].TokenID)
+}
+
+// TestGetGentksByIteration_EmptyResult verifies that an empty API response returns an empty slice.
+func TestGetGentksByIteration_EmptyResult(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{"data":{"onchain":{"objkt":[]}}}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 10)
+
+	require.NoError(t, err)
+	assert.Empty(t, refs)
+}
+
+// TestGetGentksByIteration_HTTPError verifies that HTTP errors are propagated.
+func TestGetGentksByIteration_HTTPError(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(nil, assert.AnError)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 10)
+
+	assert.Error(t, err)
+	assert.Nil(t, refs)
+	assert.Contains(t, err.Error(), "failed to call fxhash v2 API")
+}
+
+// TestGetGentksByIteration_GraphQLError verifies that GraphQL-level errors are returned as errors.
+func TestGetGentksByIteration_GraphQLError(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{"errors": [{"message": "query timeout"}]}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 10)
+
+	assert.Error(t, err)
+	assert.Nil(t, refs)
+	assert.Contains(t, err.Error(), "fxhash API error")
+}
+
+// TestGetGentksByIteration_Pagination verifies that results spanning more than one page
+// trigger a second HTTP request and that both pages are combined into the result.
+func TestGetGentksByIteration_Pagination(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	// Build a JSON page of `count` gentk objects.
+	buildPage := func(startIdx, count int) []byte {
+		items := make([]string, count)
+		for i := 0; i < count; i++ {
+			n := startIdx + i
+			items[i] = `{"id":"KT1abc-` + strconv.Itoa(n) + `","iteration":"` + strconv.Itoa(n) + `"}`
+		}
+		return []byte(`{"data":{"onchain":{"objkt":[` + strings.Join(items, ",") + `]}}}`)
+	}
+
+	const pageSize = 100 // matches fxhashIterationPageSize in client.go
+
+	// First call returns a full page (triggers pagination).
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(buildPage(1, pageSize), nil).
+		Times(1)
+
+	// Second call returns a partial page (signals last page).
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(buildPage(pageSize+1, 1), nil).
+		Times(1)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, pageSize+1)
+
+	require.NoError(t, err)
+	assert.Len(t, refs, pageSize+1)
+}
+
+// TestGetGentksByIteration_MalformedIDReturnsError verifies that a gentk entry with an
+// unparseable composite ID causes GetGentksByIteration to return an error rather than
+// silently skipping the entry. A parse failure signals an unexpected API schema change.
+func TestGetGentksByIteration_MalformedIDReturnsError(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	// "BADSEPARATOR1" has no hyphen so parseGentkRef returns an error.
+	responseBody := []byte(`{
+		"data": {
+			"onchain": {
+				"objkt": [
+					{"id": "BADSEPARATOR1", "iteration": "1"}
+				]
+			}
+		}
+	}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	refs, err := client.GetGentksByIteration(context.Background(), "9997", 1, 1)
+
+	assert.Error(t, err)
+	assert.Nil(t, refs)
+	assert.Contains(t, err.Error(), "malformed fxhash gentk ref")
+}
+
+func TestResolveSlug_Success(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{"data":{"onchain":{"generative_token":[{"id":"9997"}]}}}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	id, err := client.ResolveSlug(context.Background(), "anticyclone")
+	require.NoError(t, err)
+	assert.Equal(t, "9997", id)
+}
+
+func TestResolveSlug_NotFound(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	responseBody := []byte(`{"data":{"onchain":{"generative_token":[]}}}`)
+
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		Return(responseBody, nil)
+
+	_, err := client.ResolveSlug(context.Background(), "nonexistent-slug")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "slug not found")
+}
+
+// TestGetGentksByIteration_UsesVariablesNotInterpolation verifies that the generative
+// token ID is sent via GraphQL variables, not interpolated into the query string.
+// A caller-supplied ID containing a quote character must not break the query structure.
+func TestGetGentksByIteration_UsesVariablesNotInterpolation(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	var capturedBody []byte
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ map[string]string, body io.Reader) ([]byte, error) {
+			var err error
+			capturedBody, err = io.ReadAll(body)
+			require.NoError(t, err)
+			return []byte(`{"data":{"onchain":{"objkt":[]}}}`), nil
+		})
+
+	// An ID that would break query-string interpolation but is safe as a variable.
+	_, _ = client.GetGentksByIteration(context.Background(), `9997"} injection{`, 1, 1)
+
+	// The query field must not contain the raw ID — it must appear only in variables.
+	assert.NotContains(t, string(capturedBody), `9997"} injection{`,
+		"ID must not be interpolated into the query string")
+	assert.Contains(t, string(capturedBody), `"variables"`,
+		"request must include a variables object")
+	assert.Contains(t, string(capturedBody), `"tokenId"`,
+		"ID must be sent as a named variable")
+}
+
+// TestResolveSlug_UsesVariablesNotInterpolation verifies that the slug is sent via
+// GraphQL variables, not interpolated into the query string.
+func TestResolveSlug_UsesVariablesNotInterpolation(t *testing.T) {
+	client, httpClient, ctrl := newTestClient(t)
+	defer ctrl.Finish()
+
+	var capturedBody []byte
+	httpClient.
+		EXPECT().
+		PostBytes(gomock.Any(), testAPIURL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ map[string]string, body io.Reader) ([]byte, error) {
+			var err error
+			capturedBody, err = io.ReadAll(body)
+			require.NoError(t, err)
+			return []byte(`{"data":{"onchain":{"generative_token":[]}}}`), nil
+		})
+
+	_, _ = client.ResolveSlug(context.Background(), `malicious"} injection{`)
+
+	assert.NotContains(t, string(capturedBody), `malicious"} injection{`,
+		"slug must not be interpolated into the query string")
+	assert.Contains(t, string(capturedBody), `"variables"`)
+	assert.Contains(t, string(capturedBody), `"slug"`)
 }
