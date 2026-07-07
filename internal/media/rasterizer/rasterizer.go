@@ -5,8 +5,10 @@ package rasterizer
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"go.uber.org/zap"
@@ -113,17 +115,36 @@ func (r *rasterizer) Rasterize(ctx context.Context, svgData []byte) ([]byte, err
 	return r.rasterizeWithResvg(ctx, svgData)
 }
 
-// willCrashResvg reports whether the SVG contains feDisplacementMap, the only filter primitive
-// confirmed to trigger a fatal Rust assertion in resvg (SIGABRT via CGO). Such SVGs must never
-// reach resvg.Render because an OS abort cannot be caught by Go's recover().
+// willCrashResvg reports whether the SVG contains a <feDisplacementMap> XML element, the only
+// filter primitive confirmed to trigger a fatal Rust assertion in resvg (SIGABRT via CGO).
+// Such SVGs must never reach resvg.Render because an OS abort cannot be caught by Go's recover().
 //
 // feDisplacementMap asserts that source, map, and dest buffers share the same width; certain
-// SVG inputs violate this and cause: "assertion failed: src.width == map.width" → SIGABRT.
+// SVG inputs violate this: "assertion failed: src.width == map.width" → SIGABRT.
 // See linebender/resvg#1007, #1019, #1021. feTurbulence and feComposite are handled separately
-// in requiresBrowserRendering — they degrade without crashing, so hard-blocking them would
-// silently skip valid SVGs when no browser is available.
+// in requiresBrowserRendering — they degrade without crashing.
+//
+// Detection is XML-aware: the string "feDisplacementMap" appearing only in a comment, <desc>,
+// or other text content does not trigger this guard and the SVG reaches resvg normally.
+// On XML parse failure (malformed SVG), falls back to conservative byte matching — over-blocking
+// one edge-case SVG is preferable to missing a real element and letting resvg SIGABRT.
 func willCrashResvg(svgData []byte) bool {
-	return strings.Contains(string(svgData), "feDisplacementMap")
+	dec := xml.NewDecoder(bytes.NewReader(svgData))
+	dec.Strict = false
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return false
+		}
+		if err != nil {
+			// Malformed XML: conservative fallback — string match so a real feDisplacementMap
+			// element in an otherwise unparseable SVG is never silently missed.
+			return bytes.Contains(svgData, []byte("feDisplacementMap"))
+		}
+		if se, ok := tok.(xml.StartElement); ok && se.Name.Local == "feDisplacementMap" {
+			return true
+		}
+	}
 }
 
 // requiresBrowserRendering analyzes SVG content to determine if browser rendering is preferred.

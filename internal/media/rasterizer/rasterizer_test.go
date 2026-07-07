@@ -204,6 +204,48 @@ func TestRasterize_FeDisplacementMap_NoBrowser(t *testing.T) {
 	}
 }
 
+// TestRasterize_FeDisplacementMap_MentionedButNotUsed verifies that the crash guard is
+// XML-aware: the string "feDisplacementMap" appearing only in a comment or <desc> text node
+// does NOT block the SVG — resvg is called normally because no actual element is present.
+// Regression for the original strings.Contains over-blocking that would fail valid SVGs.
+func TestRasterize_FeDisplacementMap_MentionedButNotUsed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockResvg := mocks.NewMockResvgClient(ctrl)
+	mockEncoder := mocks.NewMockImageEncoder(ctrl)
+	testImg := createTestImage()
+
+	safeSVGs := []struct {
+		name string
+		svg  string
+	}{
+		{
+			name: "feDisplacementMap in XML comment only",
+			svg:  `<svg xmlns="http://www.w3.org/2000/svg"><!-- feDisplacementMap technique --><rect width="10" height="10" fill="red"/></svg>`,
+		},
+		{
+			name: "feDisplacementMap in desc element only",
+			svg:  `<svg xmlns="http://www.w3.org/2000/svg"><desc>Uses feDisplacementMap approach</desc><rect width="10" height="10" fill="blue"/></svg>`,
+		},
+	}
+
+	for _, tc := range safeSVGs {
+		t.Run(tc.name, func(t *testing.T) {
+			svgBytes := []byte(tc.svg)
+			// resvg MUST be called — text mention of feDisplacementMap is not a crash risk.
+			mockResvg.EXPECT().Render(svgBytes, 0).Return(testImg, nil)
+			mockEncoder.EXPECT().EncodePNG(gomock.Any(), testImg).DoAndReturn(func(w *bytes.Buffer, img image.Image) error {
+				w.Write([]byte{0x89, 0x50, 0x4E, 0x47})
+				return nil
+			})
+			r := rasterizer.NewRasterizer(mockResvg, mockEncoder, nil, nil)
+			_, err := r.Rasterize(context.Background(), svgBytes)
+			require.NoError(t, err, "feDisplacementMap text mention must not block resvg")
+		})
+	}
+}
+
 // TestRasterize_FeTurbulenceFeComposite_FallsBackToResvg verifies that SVGs containing
 // feTurbulence or feComposite (without feDisplacementMap) are NOT hard-blocked — they attempt
 // browser rendering first, then fall back to resvg when no browser is available. This avoids
