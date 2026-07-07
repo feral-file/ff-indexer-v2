@@ -13,9 +13,11 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
+	"github.com/feral-file/ff-indexer-v2/internal/downloader"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	mediaprovider "github.com/feral-file/ff-indexer-v2/internal/media/provider"
+	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -245,4 +247,68 @@ func TestProcess_VideoEnabled(t *testing.T) {
 	)
 
 	require.NoError(t, proc.Process(ctx, videoURL))
+}
+
+// TestProcess_SVGUnsupportedFilter verifies that ErrUnsupportedSVGFilter (returned by the
+// rasterizer when an SVG contains feDisplacementMap and no browser is available) propagates
+// as a real error from processor.Process. The job must be marked failed with last_error set,
+// NOT silently swallowed as a successful skip — which would hide the failure from operators.
+func TestProcess_SVGUnsupportedFilter(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx := context.Background()
+	jsonAdapter := adapter.NewJSON()
+	svgURL := "https://example.com/crash.svg"
+
+	httpClient := mocks.NewMockHTTPClient(ctrl)
+	uriResolver := mocks.NewMockURIResolver(ctrl)
+	dataChecker := mocks.NewMockDataURIChecker(ctrl)
+	st := mocks.NewMockStore(ctrl)
+	raster := mocks.NewMockRasterizer(ctrl)
+	fs := mocks.NewMockFileSystem(ctrl)
+	ioAdapter := mocks.NewMockIO(ctrl)
+	dl := mocks.NewMockDownloader(ctrl)
+	trans := mocks.NewMockTransformer(ctrl)
+	provider := mocks.NewMockMediaProvider(ctrl)
+
+	provider.EXPECT().Name().Return("cloudflare").AnyTimes()
+
+	httpClient.EXPECT().Head(gomock.Any(), svgURL).Return(&http.Response{
+		StatusCode:    http.StatusOK,
+		Header:        http.Header{"Content-Type": []string{"image/svg+xml"}},
+		ContentLength: 512,
+		Body:          io.NopCloser(strings.NewReader("")),
+	}, nil)
+
+	svgBody := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feDisplacementMap in="SourceGraphic" scale="10"/></filter></svg>`)
+	dl.EXPECT().Download(gomock.Any(), svgURL).Return(
+		&downloader.DownloadResult{}, nil,
+	)
+	ioAdapter.EXPECT().ReadAll(gomock.Any()).Return(svgBody, nil)
+
+	// Rasterizer returns ErrUnsupportedSVGFilter (feDisplacementMap + no browser).
+	raster.EXPECT().Rasterize(gomock.Any(), svgBody).Return(nil, rasterizer.ErrUnsupportedSVGFilter)
+
+	proc := processor.NewProcessor(
+		httpClient,
+		uriResolver,
+		dataChecker,
+		provider,
+		st,
+		raster,
+		fs,
+		ioAdapter,
+		jsonAdapter,
+		dl,
+		trans,
+		10*1024*1024,
+		300*1024*1024,
+		false,
+	)
+
+	err := proc.Process(ctx, svgURL)
+	// Must propagate as a real error so the caller marks the job failed, not succeeded.
+	require.Error(t, err, "ErrUnsupportedSVGFilter must not be silently swallowed as success")
+	require.ErrorIs(t, err, rasterizer.ErrUnsupportedSVGFilter)
 }
