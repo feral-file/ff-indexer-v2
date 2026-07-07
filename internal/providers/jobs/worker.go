@@ -180,20 +180,35 @@ func (w *Worker) ctxErr(ctx context.Context) error {
 	return nil
 }
 
-// claimAndDispatch claims jobs up to batch size and dispatches them to w.pool (created in Run).
-// The pool ensures the running job count never exceeds Concurrency.
+// claimAndDispatch claims only as many jobs as the pool can immediately absorb and dispatches
+// them to w.pool (created in Run).
 //
-// Reason: Using pond.Pool provides consistent goroutine management across the codebase and
-// automatic handling of worker lifecycle. Jobs run asynchronously, with the pool tracking
-// completion and the fatalErr channel enabling fail-fast on terminal state persistence failures.
+// Reason: ClaimJobs marks rows running in the DB immediately upon claim. Without backpressure,
+// every poll tick could claim up to BatchSize rows and mark them all running, while only
+// Concurrency handlers actually execute — inflating the observable running count in the DB far
+// beyond the configured limit. Gating claim size on pool availability (RunningWorkers +
+// WaitingTasks) keeps DB running rows ≈ actual executing goroutines.
+//
+// Trade-offs: BatchSize still sets the pond queue buffer (WithQueueSize) as a safety valve for
+// burst, but it no longer drives how many jobs are claimed per tick. Poll latency (PollInterval)
+// bounds how quickly new work is picked up after capacity opens.
 func (w *Worker) claimAndDispatch(ctx context.Context, fatalErr chan<- error) error {
 	if err := w.ctxErr(ctx); err != nil {
 		return err
 	}
 
-	// Claim jobs up to the batch size
-	// Pool will naturally limit concurrent execution to Concurrency
-	jobs, err := w.store.ClaimJobs(ctx, w.config.Queue, w.config.BatchSize)
+	// Only claim what the pool can absorb right now. RunningWorkers + WaitingTasks equals the
+	// number of already-claimed jobs that have not yet completed. Claiming more would mark
+	// additional rows running in the DB while they sit idle in the pond queue.
+	// WaitingTasks returns uint64 but is bounded by BatchSize (a small configured int),
+	// so the conversion to int cannot overflow in practice.
+	inUse := int(w.pool.RunningWorkers()) + int(w.pool.WaitingTasks()) //nolint:gosec // bounded by BatchSize
+	available := w.config.Concurrency - inUse
+	if available <= 0 {
+		return nil
+	}
+
+	jobs, err := w.store.ClaimJobs(ctx, w.config.Queue, available)
 	if err != nil {
 		return err
 	}

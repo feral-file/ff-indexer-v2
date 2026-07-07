@@ -3,6 +3,7 @@ package jobs_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -567,26 +568,27 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "q").Return(true, func() {}, nil)
 	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q").Return(int64(0), nil)
 
-	// With pond, we claim up to BatchSize, and pond queues internally
+	// With backpressure, ClaimJobs is called with the number of available pool slots, not BatchSize.
+	// Return exactly `limit` jobs per call so the pool fills to Concurrency correctly.
 	var claimCallCount atomic.Int32
-	st.EXPECT().ClaimJobs(gomock.Any(), "q", 10).AnyTimes().DoAndReturn(
+	st.EXPECT().ClaimJobs(gomock.Any(), "q", gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, _ string, limit int) ([]*schema.Job, error) {
 			callNum := claimCallCount.Add(1)
 
-			// First 2 calls: return jobs
+			// First 2 calls: return exactly limit jobs (backpressure keeps limit ≤ Concurrency).
 			if callNum <= 2 {
-				jobs := make([]*schema.Job, 0, 10)
-				for i := 0; i < 10; i++ {
-					jobs = append(jobs, &schema.Job{
+				result := make([]*schema.Job, limit)
+				for i := range result {
+					result[i] = &schema.Job{
 						ID:      int64(callNum)*100 + int64(i),
 						Kind:    "slow",
 						Queue:   "q",
 						Payload: []byte("[]"),
-					})
+					}
 				}
-				return jobs, nil
+				return result, nil
 			}
-			// After 2 calls, return nothing
+			// After 2 calls, return nothing.
 			return nil, nil
 		},
 	)
@@ -595,8 +597,8 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	st.EXPECT().SweepCanceledPendingJobs(gomock.Any(), "q").Return(int64(0), nil).AnyTimes()
 
-	// Configure worker with Concurrency=2, BatchSize=10
-	// Pond will queue up to 10 jobs but only execute 2 concurrently
+	// BatchSize > Concurrency; backpressure ensures ClaimJobs is called with Concurrency (2),
+	// not BatchSize (10). The pool enforces that only 2 handlers run simultaneously.
 	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{
 		Queue:          "q",
 		Concurrency:    2,
@@ -670,6 +672,94 @@ func TestWorker_Run_DoesNotClaimCanceledPendingJobs(t *testing.T) {
 
 	// Verify the handler was never executed
 	require.False(t, handlerCalled.Load(), "handler should not execute for canceled pending jobs")
+}
+
+// TestWorker_Run_ClaimBackpressure verifies that claimAndDispatch uses pool occupancy to gate
+// how many jobs it claims per tick, keeping DB running rows ≈ executing goroutines.
+// With Concurrency=2 and BatchSize=100, the first claim must request 2, not 100.
+// While both goroutines are occupied, no further claims must be made.
+func TestWorker_Run_ClaimBackpressure(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	st := mocks.NewMockStore(ctrl)
+	reg := jobs.NewRegistry(adapter.NewJSON())
+
+	// Jobs block until release is closed so we can observe pool state while it is full.
+	release := make(chan struct{})
+	allStarted := make(chan struct{})
+	var startCount atomic.Int32
+	reg.Register("slow", func(ctx context.Context) error {
+		if startCount.Add(1) == 2 {
+			close(allStarted)
+		}
+		<-release
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var claimLimits []int // limits passed to ClaimJobs, in call order
+	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "q").Return(true, func() {}, nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q").Return(int64(0), nil)
+	st.EXPECT().ClaimJobs(gomock.Any(), "q", gomock.Any()).AnyTimes().DoAndReturn(
+		func(_ context.Context, _ string, limit int) ([]*schema.Job, error) {
+			mu.Lock()
+			claimLimits = append(claimLimits, limit)
+			isFirst := len(claimLimits) == 1
+			mu.Unlock()
+			if isFirst {
+				// Return exactly limit slow jobs to fill the pool.
+				result := make([]*schema.Job, limit)
+				for i := range result {
+					result[i] = &schema.Job{
+						ID:      int64(i + 1),
+						Kind:    "slow",
+						Queue:   "q",
+						Payload: []byte("[]"),
+					}
+				}
+				return result, nil
+			}
+			return nil, nil
+		},
+	)
+	st.EXPECT().MarkJobSucceeded(gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	st.EXPECT().ListInFlightJobsWithCancelRequest(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	w := jobs.NewWorker(st, reg, jobs.WorkerConfig{
+		Queue:          "q",
+		Concurrency:    2,
+		BatchSize:      100, // deliberately >> Concurrency; backpressure must prevent over-claiming
+		PollInterval:   20 * time.Millisecond,
+		CancelInterval: time.Hour,
+	})
+	errC := goRun(w, ctx)
+
+	// Wait for both slow jobs to start (pool now at capacity), then let several poll ticks fire.
+	<-allStarted
+	claimsWhileFull := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(claimLimits)
+	}
+	countBefore := claimsWhileFull()
+	time.Sleep(100 * time.Millisecond) // ~5 poll ticks while pool is at capacity
+
+	// ClaimJobs must not have been called again while the pool was full.
+	require.Equal(t, countBefore, claimsWhileFull(), "ClaimJobs must not be called while pool is at capacity")
+
+	// Release all slow jobs and let the worker drain cleanly.
+	close(release)
+	cancel()
+	require.NoError(t, <-errC)
+
+	mu.Lock()
+	defer mu.Unlock()
+	// The first (and only pre-release) claim must use Concurrency (2), not BatchSize (100).
+	require.NotEmpty(t, claimLimits, "expected at least one ClaimJobs call")
+	require.Equal(t, 2, claimLimits[0], "first claim must be limited to Concurrency, not BatchSize")
 }
 
 func goRun(w *jobs.Worker, ctx context.Context) <-chan error {
