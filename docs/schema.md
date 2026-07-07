@@ -438,6 +438,7 @@ Durable work queue: one row per unit of background work. Logical queues (e.g. `t
 | run_after | TIMESTAMPTZ | Do not run before this time (scheduling, quota resume, operator reschedule) |
 | last_error | TEXT | Set when a handler fails (terminal for `failed` status) |
 | cancel_requested | BOOLEAN | Worker observes this and cancels the handler context |
+| attempt_count | INTEGER | Incremented each time the job is claimed by a worker; reset to 0 on clean reschedule. Used by `SweepOrphanedJobs` to detect crash loops: a job orphaned (left running after a process crash) with `attempt_count >= max_attempts` is permanently failed instead of reset to pending. |
 | created_at | TIMESTAMPTZ | Row creation time |
 | updated_at | TIMESTAMPTZ | Last update time |
 | started_at | TIMESTAMPTZ | When a worker claimed the job |
@@ -454,11 +455,13 @@ Workers **claim** work in PostgreSQL using a transaction that selects candidate 
 
 **State machine (v1)**:
 
-- **`pending` → `running`**: on successful claim by a worker.
+- **`pending` → `running`**: on successful claim by a worker. `attempt_count` is incremented atomically.
 - **`running` → `succeeded`**: handler returns with no error.
 - **`running` → `failed`**: handler returns an error (other than a controlled reschedule sentinel). `last_error` is populated. **There is no automatic retry**: operators must re-enqueue or fix upstream and enqueue again.
-- **`running` → `pending`**: handler requests reschedule (e.g. quota not yet reset) with a new `run_after` time.
-- **Startup / crash recovery**: rows left `running` (e.g. after process death) are swept back to **`pending`** with cleared `started_at` so they can be claimed again. This is a deliberate trade-off: a handler that was mid-flight may run twice; idempotent handlers and dedup keys mitigate duplicates.
+- **`running` → `pending`** (clean reschedule): handler requests reschedule (e.g. quota not yet reset) with a new `run_after` time. `attempt_count` is **reset to 0** because the handler ran and made a deliberate retry decision — this does not count as a crash.
+- **Startup / crash recovery** (`SweepOrphanedJobs`): rows left `running` after process death are evaluated by `attempt_count` vs the configured `max_attempts` (default 3):
+  - `attempt_count < max_attempts` → reset to **`pending`** for retry. The job may run twice; idempotent handlers and dedup keys mitigate duplicates.
+  - `attempt_count >= max_attempts` → permanently **`failed`** with `last_error = "crash-loop terminated: ..."`. This breaks infinite crash loops (e.g. an SVG with `feDisplacementMap` triggering a Rust assertion in resvg via CGO — SIGABRT kills the process before the job can be marked failed, so the sweep must make it terminal). `max_attempts` is operator-tunable via `FF_INDEXER_JOBS_{TOKEN,MEDIA}_WORKER_MAX_ATTEMPTS`.
 - **Cancel**: `cancel_requested` is set; the worker cancels the handler context and drives the row to **`canceled`**.
 
 **Relationships**:

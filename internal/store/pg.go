@@ -3426,16 +3426,23 @@ func (s *pgStore) MarkJobFailed(ctx context.Context, id int64, lastErr string) e
 }
 
 // RescheduleJob moves a running job back to pending with a new run_after.
+//
+// Reason: attempt_count is reset to 0 here because a clean reschedule (e.g. quota exhaustion via
+// jobs.ErrReschedule) represents a deliberate handler decision, not a crash. Without the reset,
+// repeated quota-triggered reschedules would accumulate attempt_count and cause SweepOrphanedJobs
+// to permanently fail a healthy job after maxAttempts cycles — defeating the crash-loop cap which
+// is intended only for jobs that killed the process (SIGABRT/OOM).
 func (s *pgStore) RescheduleJob(ctx context.Context, id int64, runAfter time.Time) error {
 	runAfter = runAfter.UTC()
 	now := time.Now().UTC()
 	result := s.db.WithContext(ctx).Model(&schema.Job{}).
 		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
 		Updates(map[string]any{
-			"status":     schema.JobStatusPending,
-			"run_after":  runAfter,
-			"started_at": gorm.Expr("NULL"),
-			"updated_at": now,
+			"status":        schema.JobStatusPending,
+			"run_after":     runAfter,
+			"started_at":    gorm.Expr("NULL"),
+			"attempt_count": 0,
+			"updated_at":    now,
 		})
 	if result.Error != nil {
 		return result.Error

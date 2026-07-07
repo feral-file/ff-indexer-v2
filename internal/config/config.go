@@ -520,10 +520,12 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("jobs.token_worker.poll_interval", 2*time.Second)
 	v.SetDefault("jobs.token_worker.batch_size", 100)
 	v.SetDefault("jobs.token_worker.cancel_interval", 5*time.Second)
+	v.SetDefault("jobs.token_worker.max_attempts", 3)
 	v.SetDefault("jobs.media_worker.concurrency", 2)
 	v.SetDefault("jobs.media_worker.poll_interval", 2*time.Second)
 	v.SetDefault("jobs.media_worker.batch_size", 100)
 	v.SetDefault("jobs.media_worker.cancel_interval", 5*time.Second)
+	v.SetDefault("jobs.media_worker.max_attempts", 3)
 
 	v.SetDefault("media_enabled", false)
 	v.SetDefault("video_processing_enabled", false)
@@ -682,10 +684,12 @@ func bindAllEnvVars(v *viper.Viper) {
 		"jobs.token_worker.poll_interval",
 		"jobs.token_worker.batch_size",
 		"jobs.token_worker.cancel_interval",
+		"jobs.token_worker.max_attempts",
 		"jobs.media_worker.concurrency",
 		"jobs.media_worker.poll_interval",
 		"jobs.media_worker.batch_size",
 		"jobs.media_worker.cancel_interval",
+		"jobs.media_worker.max_attempts",
 		"media_enabled",
 		"video_processing_enabled",
 		// Vendors

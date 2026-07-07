@@ -117,7 +117,7 @@ func (r *rasterizer) Rasterize(ctx context.Context, svgData []byte) ([]byte, err
 	return r.rasterizeWithResvg(ctx, svgData)
 }
 
-// willCrashResvg reports whether the SVG contains filter primitives known to trigger a fatal
+// willCrashResvg reports whether the SVG contains filter primitives confirmed to trigger a fatal
 // Rust assertion in resvg (SIGABRT). These SVGs must never reach resvg.Render because an OS
 // abort cannot be caught by Go's recover() — it terminates the entire process.
 //
@@ -129,29 +129,24 @@ func (r *rasterizer) Rasterize(ctx context.Context, svgData []byte) ([]byte, err
 //	fatal runtime error: failed to initiate panic, error 5
 //	SIGABRT: abort
 //
-// Trade-offs: String matching is conservative (false-positive safe — over-routing to the browser
-// is better than crashing). Constraints: If the browser renderer is also unavailable, callers
-// must return domain.ErrUnsupportedMediaFile to skip the job without crashing.
+// Scope: Only feDisplacementMap is hard-blocked here because it is the confirmed crash trigger
+// (linebender/resvg issues #1007, #1019, #1021). feTurbulence and feComposite may appear in
+// combination with feDisplacementMap but do not cause SIGABRT on their own — they are handled
+// as browser-preferred but resvg-safe in requiresBrowserRendering. Over-blocking standalone
+// feTurbulence or feComposite would silently skip valid SVGs when no browser is available.
+//
+// Trade-offs: String matching is conservative but deliberately narrow — routing only confirmed
+// crash-inducing constructs away from resvg. Constraints: If the browser renderer is also
+// unavailable, callers must return domain.ErrUnsupportedMediaFile to skip the job without crashing.
 func willCrashResvg(svgData []byte) (bool, []string) {
 	content := string(svgData)
 	var reasons []string
 
-	// feDisplacementMap triggers a Rust assertion failure in resvg when buffer dimensions
-	// don't match after compositing — a known resvg bug on certain SVG inputs.
+	// feDisplacementMap triggers a Rust assertion failure in resvg when intermediate buffer
+	// dimensions don't match — a confirmed resvg bug (linebender/resvg#1007, #1019, #1021).
+	// This is the only primitive reliably confirmed to SIGABRT the process.
 	if strings.Contains(content, "feDisplacementMap") {
 		reasons = append(reasons, "feDisplacementMap")
-	}
-
-	// feComposite can produce mismatched buffer dimensions when composed with certain filter chains.
-	if strings.Contains(content, "feComposite") {
-		reasons = append(reasons, "feComposite")
-	}
-
-	// feTurbulence → feDisplacementMap is the most common crash-inducing pattern on production.
-	// Detect feTurbulence independently so that combination is caught even if feDisplacementMap
-	// check above ever becomes more targeted.
-	if strings.Contains(content, "feTurbulence") {
-		reasons = append(reasons, "feTurbulence")
 	}
 
 	return len(reasons) > 0, reasons
@@ -187,6 +182,17 @@ func (r *rasterizer) requiresBrowserRendering(svgData []byte) (bool, []string) {
 		strings.Contains(content, "<animateMotion") ||
 		strings.Contains(content, "<set") {
 		reasons = append(reasons, "smil-animation")
+	}
+
+	// feTurbulence and feComposite are handled by resvg without crashing, but produce degraded
+	// or incorrect output for complex filter chains (resvg#268, #760). Prefer the browser when
+	// available so generative/noise-based artworks render accurately. resvg is used as fallback.
+	// Note: feDisplacementMap is handled in willCrashResvg (process-fatal, not just degraded).
+	if strings.Contains(content, "feTurbulence") {
+		reasons = append(reasons, "feTurbulence")
+	}
+	if strings.Contains(content, "feComposite") {
+		reasons = append(reasons, "feComposite")
 	}
 
 	return len(reasons) > 0, reasons

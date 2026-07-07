@@ -224,6 +224,11 @@ func (w *Worker) claimAndDispatch(ctx context.Context, fatalErr chan<- error) er
 	if available <= 0 {
 		return nil
 	}
+	// Also cap by BatchSize so the claim limit stays within the operator-configured batch bound
+	// regardless of concurrency setting (e.g. concurrency=50, batch_size=16 → claim at most 16).
+	if available > w.config.BatchSize {
+		available = w.config.BatchSize
+	}
 
 	jobs, err := w.store.ClaimJobs(ctx, w.config.Queue, available)
 	if err != nil {

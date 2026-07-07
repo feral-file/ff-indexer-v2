@@ -166,15 +166,17 @@ func TestRasterize_EncodingError(t *testing.T) {
 }
 
 // TestRasterize_FeDisplacementMap_NoBrowser verifies that SVGs containing feDisplacementMap
-// (which crash resvg via SIGABRT) return ErrUnsupportedSVGFilter when no browser is available,
-// instead of calling resvg.Render and aborting the process.
+// (the only confirmed SIGABRT trigger in resvg) return ErrUnsupportedSVGFilter when no browser
+// is available, instead of calling resvg.Render and aborting the process.
+// Note: feTurbulence and feComposite alone are not hard-blocked — they go through browser-preferred
+// routing but fall back to resvg if no browser is available (non-fatal degraded output).
 func TestRasterize_FeDisplacementMap_NoBrowser(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockResvg := mocks.NewMockResvgClient(ctrl)
 	mockEncoder := mocks.NewMockImageEncoder(ctrl)
-	// resvg.Render must NEVER be called for crash-inducing SVGs.
+	// resvg.Render must NEVER be called for SVGs containing feDisplacementMap.
 	mockResvg.EXPECT().Render(gomock.Any(), gomock.Any()).Times(0)
 
 	crashSVGs := []struct {
@@ -182,16 +184,8 @@ func TestRasterize_FeDisplacementMap_NoBrowser(t *testing.T) {
 		svg  string
 	}{
 		{
-			name: "feDisplacementMap",
+			name: "feDisplacementMap alone",
 			svg:  `<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feDisplacementMap in="SourceGraphic" scale="10"/></filter></svg>`,
-		},
-		{
-			name: "feTurbulence",
-			svg:  `<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feTurbulence type="fractalNoise" baseFrequency="0.9"/></filter></svg>`,
-		},
-		{
-			name: "feComposite",
-			svg:  `<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feComposite in="SourceGraphic" in2="BackgroundImage" operator="over"/></filter></svg>`,
 		},
 		{
 			name: "feDisplacementMap+feTurbulence combination",
@@ -206,6 +200,49 @@ func TestRasterize_FeDisplacementMap_NoBrowser(t *testing.T) {
 			_, err := r.Rasterize(context.Background(), []byte(tc.svg))
 			require.ErrorIs(t, err, rasterizer.ErrUnsupportedSVGFilter,
 				"must return ErrUnsupportedSVGFilter, not call resvg.Render which would SIGABRT")
+		})
+	}
+}
+
+// TestRasterize_FeTurbulenceFeComposite_FallsBackToResvg verifies that SVGs containing
+// feTurbulence or feComposite (without feDisplacementMap) are NOT hard-blocked — they attempt
+// browser rendering first, then fall back to resvg when no browser is available. This avoids
+// silently skipping valid SVGs that happen to use those filter primitives without hitting the
+// confirmed crash path.
+func TestRasterize_FeTurbulenceFeComposite_FallsBackToResvg(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockResvg := mocks.NewMockResvgClient(ctrl)
+	mockEncoder := mocks.NewMockImageEncoder(ctrl)
+	testImg := createTestImage()
+
+	browserPreferredSVGs := []struct {
+		name string
+		svg  string
+	}{
+		{
+			name: "feTurbulence alone",
+			svg:  `<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feTurbulence type="fractalNoise" baseFrequency="0.9"/></filter></svg>`,
+		},
+		{
+			name: "feComposite alone",
+			svg:  `<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feComposite in="SourceGraphic" in2="BackgroundImage" operator="over"/></filter></svg>`,
+		},
+	}
+
+	for _, tc := range browserPreferredSVGs {
+		t.Run(tc.name, func(t *testing.T) {
+			svgBytes := []byte(tc.svg)
+			// No browser available: resvg.Render IS called as fallback (degraded but not fatal).
+			mockResvg.EXPECT().Render(svgBytes, 0).Return(testImg, nil)
+			mockEncoder.EXPECT().EncodePNG(gomock.Any(), testImg).DoAndReturn(func(w *bytes.Buffer, img image.Image) error {
+				w.Write([]byte{0x89, 0x50, 0x4E, 0x47})
+				return nil
+			})
+			r := rasterizer.NewRasterizer(mockResvg, mockEncoder, nil, nil)
+			_, err := r.Rasterize(context.Background(), svgBytes)
+			require.NoError(t, err, "feTurbulence/feComposite alone must not return ErrUnsupportedSVGFilter")
 		})
 	}
 }
