@@ -84,18 +84,14 @@ func (r *rasterizer) Rasterize(ctx context.Context, svgData []byte) ([]byte, err
 
 	// Check for SVG features that will crash resvg at the OS level (SIGABRT via CGO).
 	// These cannot be handled by resvg under any circumstance.
-	if crash, reasons := willCrashResvg(svgData); crash {
-		logger.WarnCtx(ctx, "SVG contains filter primitives that crash resvg; must use browser renderer",
-			zap.Strings("reasons", reasons),
-		)
+	if willCrashResvg(svgData) {
+		logger.WarnCtx(ctx, "SVG contains feDisplacementMap which crashes resvg; routing to browser renderer")
 		if r.enableBrowser && r.browserRasterizer != nil {
 			return r.rasterizeWithBrowser(ctx, svgData)
 		}
 		// Browser not available: return a skippable error so the job is marked failed
 		// rather than crashing the process and looping forever via SweepOrphanedJobs.
-		logger.WarnCtx(ctx, "Browser renderer unavailable for crash-inducing SVG; skipping",
-			zap.Strings("reasons", reasons),
-		)
+		logger.WarnCtx(ctx, "Browser renderer unavailable for crash-inducing SVG; skipping")
 		return nil, ErrUnsupportedSVGFilter
 	}
 
@@ -117,39 +113,17 @@ func (r *rasterizer) Rasterize(ctx context.Context, svgData []byte) ([]byte, err
 	return r.rasterizeWithResvg(ctx, svgData)
 }
 
-// willCrashResvg reports whether the SVG contains filter primitives confirmed to trigger a fatal
-// Rust assertion in resvg (SIGABRT). These SVGs must never reach resvg.Render because an OS
-// abort cannot be caught by Go's recover() — it terminates the entire process.
+// willCrashResvg reports whether the SVG contains feDisplacementMap, the only filter primitive
+// confirmed to trigger a fatal Rust assertion in resvg (SIGABRT via CGO). Such SVGs must never
+// reach resvg.Render because an OS abort cannot be caught by Go's recover().
 //
-// Reason: resvg's feDisplacementMap implementation asserts that the source, map, and destination
-// buffers share the same width. Certain SVGs violate this assumption and trigger the assertion:
-//
-//	assertion failed: src.width == map.width && src.width == dest.width
-//	note: run with RUST_BACKTRACE=1 ...
-//	fatal runtime error: failed to initiate panic, error 5
-//	SIGABRT: abort
-//
-// Scope: Only feDisplacementMap is hard-blocked here because it is the confirmed crash trigger
-// (linebender/resvg issues #1007, #1019, #1021). feTurbulence and feComposite may appear in
-// combination with feDisplacementMap but do not cause SIGABRT on their own — they are handled
-// as browser-preferred but resvg-safe in requiresBrowserRendering. Over-blocking standalone
-// feTurbulence or feComposite would silently skip valid SVGs when no browser is available.
-//
-// Trade-offs: String matching is conservative but deliberately narrow — routing only confirmed
-// crash-inducing constructs away from resvg. Constraints: If the browser renderer is also
-// unavailable, callers must return domain.ErrUnsupportedMediaFile to skip the job without crashing.
-func willCrashResvg(svgData []byte) (bool, []string) {
-	content := string(svgData)
-	var reasons []string
-
-	// feDisplacementMap triggers a Rust assertion failure in resvg when intermediate buffer
-	// dimensions don't match — a confirmed resvg bug (linebender/resvg#1007, #1019, #1021).
-	// This is the only primitive reliably confirmed to SIGABRT the process.
-	if strings.Contains(content, "feDisplacementMap") {
-		reasons = append(reasons, "feDisplacementMap")
-	}
-
-	return len(reasons) > 0, reasons
+// feDisplacementMap asserts that source, map, and dest buffers share the same width; certain
+// SVG inputs violate this and cause: "assertion failed: src.width == map.width" → SIGABRT.
+// See linebender/resvg#1007, #1019, #1021. feTurbulence and feComposite are handled separately
+// in requiresBrowserRendering — they degrade without crashing, so hard-blocking them would
+// silently skip valid SVGs when no browser is available.
+func willCrashResvg(svgData []byte) bool {
+	return strings.Contains(string(svgData), "feDisplacementMap")
 }
 
 // requiresBrowserRendering analyzes SVG content to determine if browser rendering is preferred.
