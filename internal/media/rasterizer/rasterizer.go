@@ -5,6 +5,7 @@ package rasterizer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,12 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
+
+// ErrUnsupportedSVGFilter is returned when an SVG contains filter primitives that would crash
+// resvg (SIGABRT via CGO) and no browser renderer is available to handle it safely. Callers
+// should treat this as a skippable condition — the job is marked failed rather than retried
+// indefinitely, which would otherwise loop via SweepOrphanedJobs after each process crash.
+var ErrUnsupportedSVGFilter = errors.New("SVG contains filter primitives unsupported by resvg (no browser renderer available)")
 
 // Rasterizer handles SVG to PNG conversion using resvg or browser fallback
 //
@@ -60,40 +67,99 @@ func NewRasterizer(
 	}
 }
 
-// Rasterize converts SVG data to PNG format
+// Rasterize converts SVG data to PNG format.
+//
+// Routing priority:
+//  1. willCrashResvg — SVG features that cause SIGABRT in resvg (e.g. feDisplacementMap).
+//     These MUST use the browser renderer. If the browser is unavailable, return
+//     ErrUnsupportedSVGFilter so the caller can skip the job safely instead of crashing the process.
+//  2. requiresBrowserRendering — SVG features resvg cannot render faithfully but that will not
+//     crash (e.g. <foreignObject>, SMIL animations). Prefer browser; fall back to resvg if needed.
+//  3. Standard SVGs — use the fast resvg path.
 func (r *rasterizer) Rasterize(ctx context.Context, svgData []byte) ([]byte, error) {
 	logger.InfoCtx(ctx, "Starting SVG rasterization to PNG",
 		zap.Int("svgSize", len(svgData)),
 		zap.Int("targetWidth", r.width),
 	)
 
-	// Detect if SVG requires browser rendering
-	needsBrowser, reasons := r.requiresBrowserRendering(svgData)
-
-	if needsBrowser {
-		logger.InfoCtx(ctx, "SVG requires browser rendering",
+	// Check for SVG features that will crash resvg at the OS level (SIGABRT via CGO).
+	// These cannot be handled by resvg under any circumstance.
+	if crash, reasons := willCrashResvg(svgData); crash {
+		logger.WarnCtx(ctx, "SVG contains filter primitives that crash resvg; must use browser renderer",
 			zap.Strings("reasons", reasons),
 		)
-
-		if !r.enableBrowser {
-			logger.WarnCtx(ctx, "Browser rendering required but disabled, falling back to resvg")
-			return r.rasterizeWithResvg(ctx, svgData)
+		if r.enableBrowser && r.browserRasterizer != nil {
+			return r.rasterizeWithBrowser(ctx, svgData)
 		}
-
-		if r.browserRasterizer == nil {
-			logger.WarnCtx(ctx, "Browser rasterizer not configured, falling back to resvg")
-			return r.rasterizeWithResvg(ctx, svgData)
-		}
-
-		return r.rasterizeWithBrowser(ctx, svgData)
+		// Browser not available: return a skippable error so the job is marked failed
+		// rather than crashing the process and looping forever via SweepOrphanedJobs.
+		logger.WarnCtx(ctx, "Browser renderer unavailable for crash-inducing SVG; skipping",
+			zap.Strings("reasons", reasons),
+		)
+		return nil, ErrUnsupportedSVGFilter
 	}
 
-	// Use fast path (resvg) for standard SVGs
+	// Check for SVG features that resvg cannot render faithfully (degraded but not crashing).
+	if needsBrowser, reasons := r.requiresBrowserRendering(svgData); needsBrowser {
+		logger.InfoCtx(ctx, "SVG prefers browser rendering",
+			zap.Strings("reasons", reasons),
+		)
+		if r.enableBrowser && r.browserRasterizer != nil {
+			return r.rasterizeWithBrowser(ctx, svgData)
+		}
+		logger.WarnCtx(ctx, "Browser rendering preferred but unavailable, falling back to resvg",
+			zap.Strings("reasons", reasons),
+		)
+	}
+
+	// Standard SVG: use the fast resvg path.
 	logger.InfoCtx(ctx, "Using resvg for standard SVG")
 	return r.rasterizeWithResvg(ctx, svgData)
 }
 
-// requiresBrowserRendering analyzes SVG content to determine if browser rendering is needed
+// willCrashResvg reports whether the SVG contains filter primitives known to trigger a fatal
+// Rust assertion in resvg (SIGABRT). These SVGs must never reach resvg.Render because an OS
+// abort cannot be caught by Go's recover() — it terminates the entire process.
+//
+// Reason: resvg's feDisplacementMap implementation asserts that the source, map, and destination
+// buffers share the same width. Certain SVGs violate this assumption and trigger the assertion:
+//
+//	assertion failed: src.width == map.width && src.width == dest.width
+//	note: run with RUST_BACKTRACE=1 ...
+//	fatal runtime error: failed to initiate panic, error 5
+//	SIGABRT: abort
+//
+// Trade-offs: String matching is conservative (false-positive safe — over-routing to the browser
+// is better than crashing). Constraints: If the browser renderer is also unavailable, callers
+// must return domain.ErrUnsupportedMediaFile to skip the job without crashing.
+func willCrashResvg(svgData []byte) (bool, []string) {
+	content := string(svgData)
+	var reasons []string
+
+	// feDisplacementMap triggers a Rust assertion failure in resvg when buffer dimensions
+	// don't match after compositing — a known resvg bug on certain SVG inputs.
+	if strings.Contains(content, "feDisplacementMap") {
+		reasons = append(reasons, "feDisplacementMap")
+	}
+
+	// feComposite can produce mismatched buffer dimensions when composed with certain filter chains.
+	if strings.Contains(content, "feComposite") {
+		reasons = append(reasons, "feComposite")
+	}
+
+	// feTurbulence → feDisplacementMap is the most common crash-inducing pattern on production.
+	// Detect feTurbulence independently so that combination is caught even if feDisplacementMap
+	// check above ever becomes more targeted.
+	if strings.Contains(content, "feTurbulence") {
+		reasons = append(reasons, "feTurbulence")
+	}
+
+	return len(reasons) > 0, reasons
+}
+
+// requiresBrowserRendering analyzes SVG content to determine if browser rendering is preferred.
+// These are features resvg cannot render faithfully but where falling back to resvg still
+// produces a non-crashing (if degraded) result. For features that cause SIGABRT, see willCrashResvg.
 func (r *rasterizer) requiresBrowserRendering(svgData []byte) (bool, []string) {
 	content := string(svgData)
 	var reasons []string

@@ -42,6 +42,10 @@ type Job struct {
 	LastError *string `gorm:"column:last_error"`
 	// CancelRequested is set by RequestJobCancel; the worker stops the handler and moves to canceled when observed.
 	CancelRequested bool `gorm:"column:cancel_requested;not null;default:false"`
+	// AttemptCount is incremented by ClaimJobs each time the job is claimed. SweepOrphanedJobs
+	// uses this to permanently fail jobs that have crashed the process too many times, breaking
+	// the restart → orphan → sweep → pending → crash loop caused by CGO/Rust SIGABRT panics.
+	AttemptCount int `gorm:"column:attempt_count;not null;default:0"`
 	// CreatedAt is when the row was inserted.
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now()"`
 	// UpdatedAt is maintained by the updated_at trigger.

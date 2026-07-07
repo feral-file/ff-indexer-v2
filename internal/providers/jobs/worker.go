@@ -30,6 +30,12 @@ type WorkerConfig struct {
 	BatchSize int
 	// CancelInterval is how often to scan for in-flight jobs with cancel_requested and cancel ctx.
 	CancelInterval time.Duration
+	// MaxAttempts is the maximum number of times a job may be claimed before SweepOrphanedJobs
+	// permanently fails it instead of resetting it to pending. This breaks the crash loop caused
+	// by CGO/Rust SIGABRT panics (e.g. resvg feDisplacementMap): without a cap, a job that
+	// crashes the process is orphaned, swept back to pending, and re-executed indefinitely.
+	// Default: 3 (allows recovery from transient host pressure; terminates deterministic loops).
+	MaxAttempts int
 }
 
 // Worker runs a single-queue consumer: advisory lock, startup sweep, poll loop, and cancel
@@ -74,6 +80,9 @@ func NewWorker(st store.Store, reg *Registry, cfg WorkerConfig) *Worker {
 	if cfg.CancelInterval <= 0 {
 		cfg.CancelInterval = 5 * time.Second
 	}
+	if cfg.MaxAttempts < 1 {
+		cfg.MaxAttempts = 3
+	}
 	return &Worker{
 		store:    st,
 		registry: reg,
@@ -107,8 +116,16 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 	defer release()
 
-	if _, err := w.store.SweepOrphanedJobs(ctx, w.config.Queue); err != nil {
+	reset, failed, err := w.store.SweepOrphanedJobs(ctx, w.config.Queue, w.config.MaxAttempts)
+	if err != nil {
 		return err
+	}
+	if reset > 0 || failed > 0 {
+		logger.InfoCtx(ctx, "swept orphaned jobs on startup",
+			zap.Int64("reset_to_pending", reset),
+			zap.Int64("failed_crash_loop", failed),
+			zap.Int("max_attempts", w.config.MaxAttempts),
+		)
 	}
 
 	// Create worker pool with context

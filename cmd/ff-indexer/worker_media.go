@@ -121,6 +121,7 @@ func registerWorkerMedia(
 		PollInterval:   mw.PollInterval,
 		BatchSize:      mw.BatchSize,
 		CancelInterval: mw.CancelInterval,
+		MaxAttempts:    mw.MaxAttempts,
 	})
 
 	// Run until worker stops or ctx is canceled; cleanup closes transform resources.

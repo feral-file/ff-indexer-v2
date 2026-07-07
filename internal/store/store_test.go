@@ -6495,19 +6495,53 @@ func testJobQueue(t *testing.T, store Store) {
 		assert.WithinDuration(t, next, after.RunAfter, time.Second)
 	})
 
-	t.Run("sweep returns orphaned running to pending", func(t *testing.T) {
+	t.Run("sweep returns orphaned running to pending when under max_attempts", func(t *testing.T) {
 		job, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: "q_sweep", Kind: "K", Payload: []byte(`{}`)})
 		require.NoError(t, err)
 		claimed, err := store.ClaimJobs(ctx, "q_sweep", 1)
 		require.NoError(t, err)
 		require.Len(t, claimed, 1)
 		assert.Equal(t, schema.JobStatusRunning, claimed[0].Status)
-		n, err := store.SweepOrphanedJobs(ctx, "q_sweep")
+		assert.Equal(t, 1, claimed[0].AttemptCount)
+		// maxAttempts=3: attempt_count=1 < 3, so job should be reset to pending.
+		reset, failed, err := store.SweepOrphanedJobs(ctx, "q_sweep", 3)
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), n)
+		assert.Equal(t, int64(1), reset)
+		assert.Equal(t, int64(0), failed)
 		after, err := store.GetJob(ctx, job.ID)
 		require.NoError(t, err)
 		assert.Equal(t, schema.JobStatusPending, after.Status)
+	})
+
+	t.Run("sweep permanently fails orphaned job at max_attempts", func(t *testing.T) {
+		q := "q_sweep_maxattempts"
+		job, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: q, Kind: "K", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		// Claim the job maxAttempts times so attempt_count reaches the threshold.
+		const maxAttempts = 3
+		for i := range maxAttempts {
+			claimed, err := store.ClaimJobs(ctx, q, 1)
+			require.NoError(t, err)
+			if i < maxAttempts-1 {
+				// Reset back to pending for subsequent claims (simulates crash sweep).
+				reset, failed, err := store.SweepOrphanedJobs(ctx, q, maxAttempts)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1), reset)
+				assert.Equal(t, int64(0), failed)
+			} else {
+				// Last claim: attempt_count == maxAttempts — final sweep must fail the job.
+				assert.Equal(t, maxAttempts, claimed[0].AttemptCount)
+				reset, failed, err := store.SweepOrphanedJobs(ctx, q, maxAttempts)
+				require.NoError(t, err)
+				assert.Equal(t, int64(0), reset, "exhausted job must not be reset to pending")
+				assert.Equal(t, int64(1), failed, "exhausted job must be marked failed")
+			}
+		}
+		after, err := store.GetJob(ctx, job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.JobStatusFailed, after.Status)
+		require.NotNil(t, after.LastError)
+		assert.Contains(t, *after.LastError, "crash-loop terminated")
 	})
 
 	t.Run("request cancel and list in-flight with cancel flag", func(t *testing.T) {

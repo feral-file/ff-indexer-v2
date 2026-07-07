@@ -73,6 +73,9 @@ type WorkerPoolConfig struct {
 	PollInterval   time.Duration `mapstructure:"poll_interval"`
 	BatchSize      int           `mapstructure:"batch_size"`
 	CancelInterval time.Duration `mapstructure:"cancel_interval"`
+	// MaxAttempts is the maximum number of times a job may be claimed before it is permanently
+	// failed by SweepOrphanedJobs. This breaks the crash loop caused by CGO/Rust SIGABRT panics.
+	MaxAttempts int `mapstructure:"max_attempts"`
 }
 
 // JobsConfig holds job queue names and worker pool settings for token_index and media_index.

@@ -40,7 +40,7 @@ func TestWorker_Run_LockNotAcquired(t *testing.T) {
 	ctx := context.Background()
 	st.EXPECT().AcquireJobQueueLock(ctx, "tok").Return(false, func() {}, nil)
 	// Sweep must not run when the lock is not held.
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), gomock.Any()).Times(0)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	w := jobs.NewWorker(st, jobs.NewRegistry(adapter.NewJSON()), jobs.WorkerConfig{Queue: "tok"})
 	require.NoError(t, w.Run(ctx))
@@ -64,7 +64,7 @@ func TestWorker_Run_SweepError(t *testing.T) {
 	ctx := context.Background()
 	want := errors.New("sweep")
 	st.EXPECT().AcquireJobQueueLock(ctx, "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(ctx, "tok").Return(int64(0), want)
+	st.EXPECT().SweepOrphanedJobs(ctx, "tok", gomock.Any()).Return(int64(0), int64(0), want)
 	w := jobs.NewWorker(st, jobs.NewRegistry(adapter.NewJSON()), jobs.WorkerConfig{Queue: "tok"})
 	require.ErrorIs(t, w.Run(ctx), want)
 }
@@ -82,7 +82,7 @@ func TestWorker_Run_ClaimsJobAndMarksSucceeded(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -117,7 +117,7 @@ func TestWorker_Run_HandlerReschedules(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -151,7 +151,7 @@ func TestWorker_Run_HandlerFails(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -190,7 +190,7 @@ func TestWorker_Run_CancelObserverMarksCanceled(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -240,7 +240,7 @@ func TestWorker_Run_OnShutdownReschedules(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -276,7 +276,7 @@ func TestWorker_Run_MarkJobSucceededFails_WorkerExits(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -309,7 +309,7 @@ func TestWorker_Run_MarkJobFailedFails_WorkerExits(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -343,7 +343,7 @@ func TestWorker_Run_RescheduleJobFails_WorkerExits(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -381,7 +381,7 @@ func TestWorker_Run_ShutdownRescheduleFails_WorkerExits(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -435,7 +435,7 @@ func TestWorker_Run_FatalErrorCancelsBlockingHandlers(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -502,7 +502,7 @@ func TestWorker_Run_MarkJobCanceledFails_WorkerExits(t *testing.T) {
 
 	var claimCalls int32
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "tok").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "tok", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "tok", gomock.Any()).AnyTimes().DoAndReturn(
 		func(context.Context, string, int) ([]*schema.Job, error) {
 			if atomic.AddInt32(&claimCalls, 1) == 1 {
@@ -566,7 +566,7 @@ func TestWorker_Run_RespectsConcurrencyWhenClaiming(t *testing.T) {
 	defer cancel()
 
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "q").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q", gomock.Any()).Return(int64(0), int64(0), nil)
 
 	// With backpressure, ClaimJobs is called with the number of available pool slots, not BatchSize.
 	// Return exactly `limit` jobs per call so the pool fills to Concurrency correctly.
@@ -641,7 +641,7 @@ func TestWorker_Run_DoesNotClaimCanceledPendingJobs(t *testing.T) {
 	defer cancel()
 
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "q").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q", gomock.Any()).Return(int64(0), int64(0), nil)
 
 	// ClaimJobs should filter out canceled jobs (due to cancel_requested=false in SQL)
 	st.EXPECT().ClaimJobs(gomock.Any(), "q", gomock.Any()).AnyTimes().Return(nil, nil)
@@ -702,7 +702,7 @@ func TestWorker_Run_ClaimBackpressure(t *testing.T) {
 	var mu sync.Mutex
 	var claimLimits []int // limits passed to ClaimJobs, in call order
 	st.EXPECT().AcquireJobQueueLock(gomock.Any(), "q").Return(true, func() {}, nil)
-	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q").Return(int64(0), nil)
+	st.EXPECT().SweepOrphanedJobs(gomock.Any(), "q", gomock.Any()).Return(int64(0), int64(0), nil)
 	st.EXPECT().ClaimJobs(gomock.Any(), "q", gomock.Any()).AnyTimes().DoAndReturn(
 		func(_ context.Context, _ string, limit int) ([]*schema.Job, error) {
 			mu.Lock()

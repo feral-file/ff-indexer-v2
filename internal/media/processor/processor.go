@@ -495,6 +495,16 @@ func (p *processor) processSVGBytes(ctx context.Context, svgData []byte, origina
 
 	pngData, err := p.rasterizer.Rasterize(ctx, svgData)
 	if err != nil {
+		// ErrUnsupportedSVGFilter means the SVG contains filter primitives (e.g. feDisplacementMap)
+		// that would crash resvg at the OS level (SIGABRT) and no browser renderer is available.
+		// Treat as unsupported so the job is skipped cleanly rather than retried indefinitely
+		// after each process restart via SweepOrphanedJobs.
+		if errors.Is(err, rasterizer.ErrUnsupportedSVGFilter) {
+			logger.WarnCtx(ctx, "SVG uses unsupported filter primitives; skipping media indexing",
+				zap.Error(err),
+			)
+			return nil, "", 0, domain.ErrUnsupportedMediaFile
+		}
 		logger.ErrorCtx(ctx, err)
 		return nil, "", 0, fmt.Errorf("failed to rasterize SVG: %w", err)
 	}
