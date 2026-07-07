@@ -318,6 +318,7 @@ CREATE TABLE jobs (
     run_after TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_error TEXT,
     cancel_requested BOOLEAN NOT NULL DEFAULT false,
+    attempt_count INTEGER NOT NULL DEFAULT 0, -- incremented on each claim; used by SweepOrphanedJobs to break crash loops
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,

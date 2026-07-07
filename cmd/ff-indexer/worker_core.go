@@ -207,6 +207,7 @@ func registerWorkerCore(
 		PollInterval:   tw.PollInterval,
 		BatchSize:      tw.BatchSize,
 		CancelInterval: tw.CancelInterval,
+		MaxAttempts:    tw.MaxAttempts,
 	})
 
 	// Run blocks until worker exits or ctx is canceled; cleanup closes the Ethereum RPC client.

@@ -531,14 +531,18 @@ type Store interface {
 	RequestJobCancel(ctx context.Context, id int64) error
 	// MarkJobCanceled sets status=canceled and finished_at when the handler observes cancelation.
 	MarkJobCanceled(ctx context.Context, id int64) error
-	// SweepOrphanedJobs returns running jobs in a queue to pending at worker startup (crash recovery) when no
-	// per-job heartbeat/lease is stored.
+	// SweepOrphanedJobs recovers running jobs left behind by a crashed worker.
+	// Jobs whose attempt_count < maxAttempts are reset to pending for retry.
+	// Jobs whose attempt_count >= maxAttempts are permanently failed with a crash-loop message
+	// in last_error — preventing an infinite restart → crash → orphan → pending → crash loop
+	// caused by CGO/Rust SIGABRT panics (e.g. resvg feDisplacementMap assertion failures).
 	//
 	// Reason: A running row without a live worker must not block the queue.
-	// Trade-offs: A slow shutdown can briefly duplicate work if a new worker starts before the old one exits, but
-	// v1 uses unique keys and idempotent flows where that matters; otherwise duplicate execution is a known ops edge.
-	// Constraints: Only rows with the given queue and status=running are updated. Returns the number of rows changed.
-	SweepOrphanedJobs(ctx context.Context, queue string) (int64, error)
+	// Trade-offs: A slow shutdown can briefly duplicate work if a new worker starts before the
+	// old one exits, but v1 uses unique keys and idempotent flows where that matters.
+	// Constraints: Only rows with the given queue and status=running are updated.
+	// Returns (reset count, failed count, error).
+	SweepOrphanedJobs(ctx context.Context, queue string, maxAttempts int) (reset int64, failed int64, err error)
 	// SweepCanceledPendingJobs transitions pending jobs with cancel_requested=true to canceled status.
 	// This ensures user cancellation intent is reflected in terminal job state, since ClaimJobs now filters
 	// out jobs with cancel_requested=true (preventing their execution).

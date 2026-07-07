@@ -496,6 +496,11 @@ func (p *processor) processSVGBytes(ctx context.Context, svgData []byte, origina
 	pngData, err := p.rasterizer.Rasterize(ctx, svgData)
 	if err != nil {
 		logger.ErrorCtx(ctx, err)
+		// ErrUnsupportedSVGFilter: the SVG contains a filter primitive (e.g. feDisplacementMap)
+		// that would SIGABRT resvg and no browser renderer is available. Propagate as a real
+		// error so the job is marked failed with last_error set, making it operationally visible.
+		// Do NOT map to ErrUnsupportedMediaFile — the executor swallows that sentinel as a
+		// successful skip, hiding the failure from operators and Codecov.
 		return nil, "", 0, fmt.Errorf("failed to rasterize SVG: %w", err)
 	}
 

@@ -30,6 +30,12 @@ type WorkerConfig struct {
 	BatchSize int
 	// CancelInterval is how often to scan for in-flight jobs with cancel_requested and cancel ctx.
 	CancelInterval time.Duration
+	// MaxAttempts is the maximum number of times a job may be claimed before SweepOrphanedJobs
+	// permanently fails it instead of resetting it to pending. This breaks the crash loop caused
+	// by CGO/Rust SIGABRT panics (e.g. resvg feDisplacementMap): without a cap, a job that
+	// crashes the process is orphaned, swept back to pending, and re-executed indefinitely.
+	// Default: 3 (allows recovery from transient host pressure; terminates deterministic loops).
+	MaxAttempts int
 }
 
 // Worker runs a single-queue consumer: advisory lock, startup sweep, poll loop, and cancel
@@ -74,6 +80,9 @@ func NewWorker(st store.Store, reg *Registry, cfg WorkerConfig) *Worker {
 	if cfg.CancelInterval <= 0 {
 		cfg.CancelInterval = 5 * time.Second
 	}
+	if cfg.MaxAttempts < 1 {
+		cfg.MaxAttempts = 3
+	}
 	return &Worker{
 		store:    st,
 		registry: reg,
@@ -107,8 +116,16 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 	defer release()
 
-	if _, err := w.store.SweepOrphanedJobs(ctx, w.config.Queue); err != nil {
+	reset, failed, err := w.store.SweepOrphanedJobs(ctx, w.config.Queue, w.config.MaxAttempts)
+	if err != nil {
 		return err
+	}
+	if reset > 0 || failed > 0 {
+		logger.InfoCtx(ctx, "swept orphaned jobs on startup",
+			zap.Int64("reset_to_pending", reset),
+			zap.Int64("failed_crash_loop", failed),
+			zap.Int("max_attempts", w.config.MaxAttempts),
+		)
 	}
 
 	// Create worker pool with context
@@ -180,20 +197,40 @@ func (w *Worker) ctxErr(ctx context.Context) error {
 	return nil
 }
 
-// claimAndDispatch claims jobs up to batch size and dispatches them to w.pool (created in Run).
-// The pool ensures the running job count never exceeds Concurrency.
+// claimAndDispatch claims only as many jobs as the pool can immediately absorb and dispatches
+// them to w.pool (created in Run).
 //
-// Reason: Using pond.Pool provides consistent goroutine management across the codebase and
-// automatic handling of worker lifecycle. Jobs run asynchronously, with the pool tracking
-// completion and the fatalErr channel enabling fail-fast on terminal state persistence failures.
+// Reason: ClaimJobs marks rows running in the DB immediately upon claim. Without backpressure,
+// every poll tick could claim up to BatchSize rows and mark them all running, while only
+// Concurrency handlers actually execute — inflating the observable running count in the DB far
+// beyond the configured limit. Gating claim size on pool availability (RunningWorkers +
+// WaitingTasks) keeps DB running rows ≈ actual executing goroutines.
+//
+// Trade-offs: BatchSize still sets the pond queue buffer (WithQueueSize) as a safety valve for
+// burst, but it no longer drives how many jobs are claimed per tick. Poll latency (PollInterval)
+// bounds how quickly new work is picked up after capacity opens.
 func (w *Worker) claimAndDispatch(ctx context.Context, fatalErr chan<- error) error {
 	if err := w.ctxErr(ctx); err != nil {
 		return err
 	}
 
-	// Claim jobs up to the batch size
-	// Pool will naturally limit concurrent execution to Concurrency
-	jobs, err := w.store.ClaimJobs(ctx, w.config.Queue, w.config.BatchSize)
+	// Only claim what the pool can absorb right now. RunningWorkers + WaitingTasks equals the
+	// number of already-claimed jobs that have not yet completed. Claiming more would mark
+	// additional rows running in the DB while they sit idle in the pond queue.
+	// WaitingTasks returns uint64 but is bounded by BatchSize (a small configured int),
+	// so the conversion to int cannot overflow in practice.
+	inUse := int(w.pool.RunningWorkers()) + int(w.pool.WaitingTasks()) //nolint:gosec // bounded by BatchSize
+	available := w.config.Concurrency - inUse
+	if available <= 0 {
+		return nil
+	}
+	// Also cap by BatchSize so the claim limit stays within the operator-configured batch bound
+	// regardless of concurrency setting (e.g. concurrency=50, batch_size=16 → claim at most 16).
+	if available > w.config.BatchSize {
+		available = w.config.BatchSize
+	}
+
+	jobs, err := w.store.ClaimJobs(ctx, w.config.Queue, available)
 	if err != nil {
 		return err
 	}

@@ -6479,13 +6479,14 @@ func testJobQueue(t *testing.T, store Store) {
 		assert.Empty(t, claimed)
 	})
 
-	t.Run("reschedule running job to pending with new run_after", func(t *testing.T) {
+	t.Run("reschedule running job to pending with new run_after and resets attempt_count", func(t *testing.T) {
 		_, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: "q_rs", Kind: "K", Payload: []byte(`{}`)})
 		require.NoError(t, err)
 		claimed, err := store.ClaimJobs(ctx, "q_rs", 1)
 		require.NoError(t, err)
 		require.Len(t, claimed, 1)
 		assert.Equal(t, schema.JobStatusRunning, claimed[0].Status)
+		assert.Equal(t, 1, claimed[0].AttemptCount, "attempt_count should be 1 after claim")
 		next := time.Now().UTC().Add(5 * time.Minute)
 		require.NoError(t, store.RescheduleJob(ctx, claimed[0].ID, next))
 		after, err := store.GetJob(ctx, claimed[0].ID)
@@ -6493,21 +6494,94 @@ func testJobQueue(t *testing.T, store Store) {
 		assert.Equal(t, schema.JobStatusPending, after.Status)
 		assert.Nil(t, after.StartedAt)
 		assert.WithinDuration(t, next, after.RunAfter, time.Second)
+		// Regression: attempt_count must be reset to 0 on clean reschedule so that quota-triggered
+		// reschedules do not accumulate toward the crash-loop cap in SweepOrphanedJobs.
+		assert.Equal(t, 0, after.AttemptCount, "RescheduleJob must reset attempt_count to 0")
 	})
 
-	t.Run("sweep returns orphaned running to pending", func(t *testing.T) {
+	t.Run("sweep returns orphaned running to pending when under max_attempts", func(t *testing.T) {
 		job, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: "q_sweep", Kind: "K", Payload: []byte(`{}`)})
 		require.NoError(t, err)
 		claimed, err := store.ClaimJobs(ctx, "q_sweep", 1)
 		require.NoError(t, err)
 		require.Len(t, claimed, 1)
 		assert.Equal(t, schema.JobStatusRunning, claimed[0].Status)
-		n, err := store.SweepOrphanedJobs(ctx, "q_sweep")
+		assert.Equal(t, 1, claimed[0].AttemptCount)
+		// maxAttempts=3: attempt_count=1 < 3, so job should be reset to pending.
+		reset, failed, err := store.SweepOrphanedJobs(ctx, "q_sweep", 3)
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), n)
+		assert.Equal(t, int64(1), reset)
+		assert.Equal(t, int64(0), failed)
 		after, err := store.GetJob(ctx, job.ID)
 		require.NoError(t, err)
 		assert.Equal(t, schema.JobStatusPending, after.Status)
+	})
+
+	t.Run("sweep permanently fails orphaned job at max_attempts", func(t *testing.T) {
+		q := "q_sweep_maxattempts"
+		job, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: q, Kind: "K", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+		// Claim the job maxAttempts times so attempt_count reaches the threshold.
+		const maxAttempts = 3
+		for i := range maxAttempts {
+			claimed, err := store.ClaimJobs(ctx, q, 1)
+			require.NoError(t, err)
+			if i < maxAttempts-1 {
+				// Reset back to pending for subsequent claims (simulates crash sweep).
+				reset, failed, err := store.SweepOrphanedJobs(ctx, q, maxAttempts)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1), reset)
+				assert.Equal(t, int64(0), failed)
+			} else {
+				// Last claim: attempt_count == maxAttempts — final sweep must fail the job.
+				assert.Equal(t, maxAttempts, claimed[0].AttemptCount)
+				reset, failed, err := store.SweepOrphanedJobs(ctx, q, maxAttempts)
+				require.NoError(t, err)
+				assert.Equal(t, int64(0), reset, "exhausted job must not be reset to pending")
+				assert.Equal(t, int64(1), failed, "exhausted job must be marked failed")
+			}
+		}
+		after, err := store.GetJob(ctx, job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.JobStatusFailed, after.Status)
+		require.NotNil(t, after.LastError)
+		assert.Contains(t, *after.LastError, "crash-loop terminated")
+	})
+
+	t.Run("sweep does not fail a job that only rescheduled cleanly past maxAttempts", func(t *testing.T) {
+		// Regression: attempt_count was not reset on RescheduleJob, so repeated quota-triggered
+		// reschedules could accumulate the counter and cause SweepOrphanedJobs to permanently
+		// fail a healthy job that was never in a crash loop.
+		q := "q_reschedule_no_fail"
+		job, _, err := store.EnqueueJob(ctx, EnqueueJobInput{Queue: q, Kind: "K", Payload: []byte(`{}`)})
+		require.NoError(t, err)
+
+		const maxAttempts = 3
+		// Simulate maxAttempts clean reschedules (quota exhaustion, ErrReschedule, etc.).
+		// Each cycle: claim (increments attempt_count) → reschedule (must reset attempt_count to 0).
+		for range maxAttempts {
+			claimed, err := store.ClaimJobs(ctx, q, 1)
+			require.NoError(t, err)
+			require.Len(t, claimed, 1)
+			// attempt_count was incremented by claim.
+			assert.Equal(t, 1, claimed[0].AttemptCount, "attempt_count should be 1 after each fresh claim")
+			// Clean reschedule: simulates handler returning ErrReschedule (quota reset, etc.).
+			require.NoError(t, store.RescheduleJob(ctx, job.ID, time.Now().UTC()))
+			after, err := store.GetJob(ctx, job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, 0, after.AttemptCount, "RescheduleJob must reset attempt_count to 0")
+		}
+
+		// Now leave the job running (claim without completing) and sweep orphans.
+		claimed, err := store.ClaimJobs(ctx, q, 1)
+		require.NoError(t, err)
+		require.Len(t, claimed, 1)
+		// attempt_count is 1 (fresh claim after last reschedule reset it); < maxAttempts → must reset, not fail.
+		assert.Equal(t, 1, claimed[0].AttemptCount)
+		reset, failed, err := store.SweepOrphanedJobs(ctx, q, maxAttempts)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), reset, "job orphaned after clean reschedules must be reset, not failed")
+		assert.Equal(t, int64(0), failed, "job must NOT be permanently failed — it was never in a crash loop")
 	})
 
 	t.Run("request cancel and list in-flight with cancel flag", func(t *testing.T) {

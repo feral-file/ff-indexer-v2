@@ -73,6 +73,9 @@ type WorkerPoolConfig struct {
 	PollInterval   time.Duration `mapstructure:"poll_interval"`
 	BatchSize      int           `mapstructure:"batch_size"`
 	CancelInterval time.Duration `mapstructure:"cancel_interval"`
+	// MaxAttempts is the maximum number of times a job may be claimed before it is permanently
+	// failed by SweepOrphanedJobs. This breaks the crash loop caused by CGO/Rust SIGABRT panics.
+	MaxAttempts int `mapstructure:"max_attempts"`
 }
 
 // JobsConfig holds job queue names and worker pool settings for token_index and media_index.
@@ -517,10 +520,12 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("jobs.token_worker.poll_interval", 2*time.Second)
 	v.SetDefault("jobs.token_worker.batch_size", 100)
 	v.SetDefault("jobs.token_worker.cancel_interval", 5*time.Second)
+	v.SetDefault("jobs.token_worker.max_attempts", 3)
 	v.SetDefault("jobs.media_worker.concurrency", 2)
 	v.SetDefault("jobs.media_worker.poll_interval", 2*time.Second)
 	v.SetDefault("jobs.media_worker.batch_size", 100)
 	v.SetDefault("jobs.media_worker.cancel_interval", 5*time.Second)
+	v.SetDefault("jobs.media_worker.max_attempts", 3)
 
 	v.SetDefault("media_enabled", false)
 	v.SetDefault("video_processing_enabled", false)
@@ -679,10 +684,12 @@ func bindAllEnvVars(v *viper.Viper) {
 		"jobs.token_worker.poll_interval",
 		"jobs.token_worker.batch_size",
 		"jobs.token_worker.cancel_interval",
+		"jobs.token_worker.max_attempts",
 		"jobs.media_worker.concurrency",
 		"jobs.media_worker.poll_interval",
 		"jobs.media_worker.batch_size",
 		"jobs.media_worker.cancel_interval",
+		"jobs.media_worker.max_attempts",
 		"media_enabled",
 		"video_processing_enabled",
 		// Vendors

@@ -5,7 +5,10 @@ package rasterizer
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"go.uber.org/zap"
@@ -13,6 +16,12 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 )
+
+// ErrUnsupportedSVGFilter is returned when an SVG contains filter primitives that would crash
+// resvg (SIGABRT via CGO) and no browser renderer is available to handle it safely. Callers
+// should treat this as a skippable condition — the job is marked failed rather than retried
+// indefinitely, which would otherwise loop via SweepOrphanedJobs after each process crash.
+var ErrUnsupportedSVGFilter = errors.New("SVG contains filter primitives unsupported by resvg (no browser renderer available)")
 
 // Rasterizer handles SVG to PNG conversion using resvg or browser fallback
 //
@@ -60,40 +69,87 @@ func NewRasterizer(
 	}
 }
 
-// Rasterize converts SVG data to PNG format
+// Rasterize converts SVG data to PNG format.
+//
+// Routing priority:
+//  1. willCrashResvg — SVG features that cause SIGABRT in resvg (e.g. feDisplacementMap).
+//     These MUST use the browser renderer. If the browser is unavailable, return
+//     ErrUnsupportedSVGFilter so the caller can skip the job safely instead of crashing the process.
+//  2. requiresBrowserRendering — SVG features resvg cannot render faithfully but that will not
+//     crash (e.g. <foreignObject>, SMIL animations). Prefer browser; fall back to resvg if needed.
+//  3. Standard SVGs — use the fast resvg path.
 func (r *rasterizer) Rasterize(ctx context.Context, svgData []byte) ([]byte, error) {
 	logger.InfoCtx(ctx, "Starting SVG rasterization to PNG",
 		zap.Int("svgSize", len(svgData)),
 		zap.Int("targetWidth", r.width),
 	)
 
-	// Detect if SVG requires browser rendering
-	needsBrowser, reasons := r.requiresBrowserRendering(svgData)
-
-	if needsBrowser {
-		logger.InfoCtx(ctx, "SVG requires browser rendering",
-			zap.Strings("reasons", reasons),
-		)
-
-		if !r.enableBrowser {
-			logger.WarnCtx(ctx, "Browser rendering required but disabled, falling back to resvg")
-			return r.rasterizeWithResvg(ctx, svgData)
+	// Check for SVG features that will crash resvg at the OS level (SIGABRT via CGO).
+	// These cannot be handled by resvg under any circumstance.
+	if willCrashResvg(svgData) {
+		logger.WarnCtx(ctx, "SVG contains feDisplacementMap which crashes resvg; routing to browser renderer")
+		if r.enableBrowser && r.browserRasterizer != nil {
+			return r.rasterizeWithBrowser(ctx, svgData)
 		}
-
-		if r.browserRasterizer == nil {
-			logger.WarnCtx(ctx, "Browser rasterizer not configured, falling back to resvg")
-			return r.rasterizeWithResvg(ctx, svgData)
-		}
-
-		return r.rasterizeWithBrowser(ctx, svgData)
+		// Browser not available: return a skippable error so the job is marked failed
+		// rather than crashing the process and looping forever via SweepOrphanedJobs.
+		logger.WarnCtx(ctx, "Browser renderer unavailable for crash-inducing SVG; skipping")
+		return nil, ErrUnsupportedSVGFilter
 	}
 
-	// Use fast path (resvg) for standard SVGs
+	// Check for SVG features that resvg cannot render faithfully (degraded but not crashing).
+	if needsBrowser, reasons := r.requiresBrowserRendering(svgData); needsBrowser {
+		logger.InfoCtx(ctx, "SVG prefers browser rendering",
+			zap.Strings("reasons", reasons),
+		)
+		if r.enableBrowser && r.browserRasterizer != nil {
+			return r.rasterizeWithBrowser(ctx, svgData)
+		}
+		logger.WarnCtx(ctx, "Browser rendering preferred but unavailable, falling back to resvg",
+			zap.Strings("reasons", reasons),
+		)
+	}
+
+	// Standard SVG: use the fast resvg path.
 	logger.InfoCtx(ctx, "Using resvg for standard SVG")
 	return r.rasterizeWithResvg(ctx, svgData)
 }
 
-// requiresBrowserRendering analyzes SVG content to determine if browser rendering is needed
+// willCrashResvg reports whether the SVG contains a <feDisplacementMap> XML element, the only
+// filter primitive confirmed to trigger a fatal Rust assertion in resvg (SIGABRT via CGO).
+// Such SVGs must never reach resvg.Render because an OS abort cannot be caught by Go's recover().
+//
+// feDisplacementMap asserts that source, map, and dest buffers share the same width; certain
+// SVG inputs violate this: "assertion failed: src.width == map.width" → SIGABRT.
+// See linebender/resvg#1007, #1019, #1021. feTurbulence and feComposite are handled separately
+// in requiresBrowserRendering — they degrade without crashing.
+//
+// Detection is XML-aware: the string "feDisplacementMap" appearing only in a comment, <desc>,
+// or other text content does not trigger this guard and the SVG reaches resvg normally.
+// On XML parse failure (malformed SVG), falls back to conservative byte matching — over-blocking
+// one edge-case SVG is preferable to missing a real element and letting resvg SIGABRT.
+func willCrashResvg(svgData []byte) bool {
+	dec := xml.NewDecoder(bytes.NewReader(svgData))
+	dec.Strict = false
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return false
+		}
+		if err != nil {
+			// Malformed XML: conservative fallback — string match so a real feDisplacementMap
+			// element in an otherwise unparseable SVG is never silently missed.
+			return bytes.Contains(svgData, []byte("feDisplacementMap"))
+		}
+		if se, ok := tok.(xml.StartElement); ok && se.Name.Local == "feDisplacementMap" {
+			return true
+		}
+	}
+}
+
+// requiresBrowserRendering analyzes SVG content to determine if browser rendering is preferred.
+// These are features resvg cannot render faithfully but where falling back to resvg still
+// produces a non-crashing (if degraded) result. For features that cause SIGABRT, see willCrashResvg.
 func (r *rasterizer) requiresBrowserRendering(svgData []byte) (bool, []string) {
 	content := string(svgData)
 	var reasons []string
@@ -121,6 +177,17 @@ func (r *rasterizer) requiresBrowserRendering(svgData []byte) (bool, []string) {
 		strings.Contains(content, "<animateMotion") ||
 		strings.Contains(content, "<set") {
 		reasons = append(reasons, "smil-animation")
+	}
+
+	// feTurbulence and feComposite are handled by resvg without crashing, but produce degraded
+	// or incorrect output for complex filter chains (resvg#268, #760). Prefer the browser when
+	// available so generative/noise-based artworks render accurately. resvg is used as fallback.
+	// Note: feDisplacementMap is handled in willCrashResvg (process-fatal, not just degraded).
+	if strings.Contains(content, "feTurbulence") {
+		reasons = append(reasons, "feTurbulence")
+	}
+	if strings.Contains(content, "feComposite") {
+		reasons = append(reasons, "feComposite")
 	}
 
 	return len(reasons) > 0, reasons

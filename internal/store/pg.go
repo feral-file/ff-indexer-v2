@@ -3341,8 +3341,13 @@ func (s *pgStore) GetJob(ctx context.Context, id int64) (*schema.Job, error) {
 	return &j, nil
 }
 
-// ClaimJobs claims pending, due jobs and marks them running.
+// ClaimJobs claims pending, due jobs, marks them running, and increments attempt_count.
 // Jobs with cancel_requested=true are excluded to prevent executing user-canceled work.
+//
+// Reason: Incrementing attempt_count atomically in the claim UPDATE (not in a separate query)
+// ensures the count is accurate even when the process crashes mid-execution. SweepOrphanedJobs
+// reads attempt_count to decide whether to reset a crashed job to pending or permanently fail it,
+// breaking the restart → orphan → sweep → pending → crash loop caused by CGO/Rust SIGABRT panics.
 func (s *pgStore) ClaimJobs(ctx context.Context, queue string, limit int) ([]*schema.Job, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -3363,11 +3368,12 @@ WITH picked AS (
 UPDATE jobs
 SET
 	status = 'running',
+	attempt_count = attempt_count + 1,
 	started_at = ?,
 	updated_at = ?
 FROM picked
 WHERE jobs.id = picked.id
-RETURNING jobs.id, jobs.queue, jobs.kind, jobs.payload, jobs.status, jobs.unique_key, jobs.run_after, jobs.last_error, jobs.cancel_requested, jobs.created_at, jobs.updated_at, jobs.started_at, jobs.finished_at
+RETURNING jobs.id, jobs.queue, jobs.kind, jobs.payload, jobs.status, jobs.unique_key, jobs.run_after, jobs.last_error, jobs.cancel_requested, jobs.attempt_count, jobs.created_at, jobs.updated_at, jobs.started_at, jobs.finished_at
 `
 	var rows []schema.Job
 	if err := s.db.WithContext(ctx).Raw(claimSQL, queue, now, limit, now, now).Scan(&rows).Error; err != nil {
@@ -3420,16 +3426,23 @@ func (s *pgStore) MarkJobFailed(ctx context.Context, id int64, lastErr string) e
 }
 
 // RescheduleJob moves a running job back to pending with a new run_after.
+//
+// Reason: attempt_count is reset to 0 here because a clean reschedule (e.g. quota exhaustion via
+// jobs.ErrReschedule) represents a deliberate handler decision, not a crash. Without the reset,
+// repeated quota-triggered reschedules would accumulate attempt_count and cause SweepOrphanedJobs
+// to permanently fail a healthy job after maxAttempts cycles — defeating the crash-loop cap which
+// is intended only for jobs that killed the process (SIGABRT/OOM).
 func (s *pgStore) RescheduleJob(ctx context.Context, id int64, runAfter time.Time) error {
 	runAfter = runAfter.UTC()
 	now := time.Now().UTC()
 	result := s.db.WithContext(ctx).Model(&schema.Job{}).
 		Where("id = ? AND status = ?", id, schema.JobStatusRunning).
 		Updates(map[string]any{
-			"status":     schema.JobStatusPending,
-			"run_after":  runAfter,
-			"started_at": gorm.Expr("NULL"),
-			"updated_at": now,
+			"status":        schema.JobStatusPending,
+			"run_after":     runAfter,
+			"started_at":    gorm.Expr("NULL"),
+			"attempt_count": 0,
+			"updated_at":    now,
 		})
 	if result.Error != nil {
 		return result.Error
@@ -3477,20 +3490,53 @@ func (s *pgStore) MarkJobCanceled(ctx context.Context, id int64) error {
 	return nil
 }
 
-// SweepOrphanedJobs resets running jobs in a queue to pending (crash recovery).
-func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string) (int64, error) {
+// SweepOrphanedJobs recovers running jobs left behind by a crashed worker process.
+//
+// Jobs whose attempt_count < maxAttempts are reset to pending so the worker can retry them.
+// Jobs whose attempt_count >= maxAttempts are permanently transitioned to failed with a
+// last_error message that records the crash-loop termination reason.
+//
+// Reason: Without the attempt cap, any job that crashes the process via SIGABRT (e.g. an SVG
+// with an feDisplacementMap filter that triggers a Rust assertion in resvg via CGO) would loop
+// forever: run → SIGABRT → orphan → sweep → pending → run → SIGABRT ...
+// The attempt cap makes the loop finite: after maxAttempts crashes the job is marked failed and
+// never re-queued, giving operators a permanent durable signal in jobs.last_error.
+//
+// Trade-offs: maxAttempts must be > 1 to allow transient-failure recovery (e.g. OOM killed by
+// the OS mid-job). A value of 3 is the recommended default: handles transient host pressure
+// while still breaking deterministic crash loops quickly.
+//
+// Returns (reset count, failed count, error).
+func (s *pgStore) SweepOrphanedJobs(ctx context.Context, queue string, maxAttempts int) (int64, int64, error) {
 	now := time.Now().UTC()
-	result := s.db.WithContext(ctx).Model(&schema.Job{}).
+
+	// Permanently fail jobs that have crashed maxAttempts or more times.
+	// These will never be retried, giving operators a clear terminal signal.
+	failedResult := s.db.WithContext(ctx).Model(&schema.Job{}).
+		Where("queue = ? AND status = ? AND attempt_count >= ?", queue, schema.JobStatusRunning, maxAttempts).
+		Updates(map[string]any{
+			"status":      schema.JobStatusFailed,
+			"last_error":  fmt.Sprintf("crash-loop terminated: job failed %d time(s) without completing (process crash or SIGABRT)", maxAttempts),
+			"finished_at": now,
+			"updated_at":  now,
+		})
+	if failedResult.Error != nil {
+		return 0, 0, failedResult.Error
+	}
+
+	// Reset remaining orphaned jobs (attempt_count < maxAttempts) back to pending for retry.
+	resetResult := s.db.WithContext(ctx).Model(&schema.Job{}).
 		Where("queue = ? AND status = ?", queue, schema.JobStatusRunning).
 		Updates(map[string]any{
 			"status":     schema.JobStatusPending,
 			"started_at": gorm.Expr("NULL"),
 			"updated_at": now,
 		})
-	if result.Error != nil {
-		return 0, result.Error
+	if resetResult.Error != nil {
+		return 0, failedResult.RowsAffected, resetResult.Error
 	}
-	return result.RowsAffected, nil
+
+	return resetResult.RowsAffected, failedResult.RowsAffected, nil
 }
 
 // SweepCanceledPendingJobs transitions pending jobs with cancel_requested to canceled status.

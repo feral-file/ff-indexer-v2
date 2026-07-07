@@ -397,7 +397,18 @@ psql -h localhost -U postgres -d ff_indexer -c "SELECT * FROM key_value_store WH
 
 Work is stored in the **`jobs`** table (`queue`, `kind`, `status`, `payload`, `unique_key`, `run_after`, …). See [`docs/schema.md`](../docs/schema.md#jobs) for the full state machine and indexes.
 
-**No automatic retry (v1).** A handler error sets **`failed`** and **`last_error`**. The service does not apply exponential backoff or re-drive failed rows automatically. Webhook deliveries are also single-shot for delivery semantics; `webhook_clients.retry_max_attempts` is retained in the schema/API for compatibility but is not used to retry delivery. Operators **re-enqueue** work (e.g. new API trigger or ingestion event) or fix configuration/upstreams, then watch new jobs succeed.
+**No automatic retry (v1) — except crash recovery.** A handler error sets **`failed`** and **`last_error`**. The service does not apply exponential backoff or re-drive failed rows automatically. Webhook deliveries are also single-shot for delivery semantics; `webhook_clients.retry_max_attempts` is retained in the schema/API for compatibility but is not used to retry delivery. Operators **re-enqueue** work (e.g. new API trigger or ingestion event) or fix configuration/upstreams, then watch new jobs succeed.
+
+**Bounded crash-loop recovery.** Jobs left `running` after a process crash are swept by `SweepOrphanedJobs` on worker startup. The `jobs.attempt_count` column (incremented on each claim, reset to 0 on clean reschedule) determines the outcome:
+
+- `attempt_count < max_attempts` → reset to `pending` for retry (default: up to 3 attempts total).
+- `attempt_count >= max_attempts` → permanently `failed` with `last_error = "crash-loop terminated: ..."`.
+
+This breaks infinite loops caused by CGO/Rust panics (e.g. resvg SIGABRT on certain SVG filter primitives) that kill the process before the job can be marked failed. `max_attempts` is operator-tunable via `FF_INDEXER_JOBS_TOKEN_WORKER_MAX_ATTEMPTS` and `FF_INDEXER_JOBS_MEDIA_WORKER_MAX_ATTEMPTS` (default 3).
+
+**Claim backpressure.** Workers claim at most `min(concurrency - in_use, batch_size)` jobs per poll tick. This keeps DB `running` counts aligned with actual executing goroutines and prevents inflating observable queue health metrics.
+
+See [`docs/schema.md`](../docs/schema.md#jobs) for the full state machine and `attempt_count` semantics.
 
 **Claiming and scaling.** At runtime, workers **poll** for `pending` jobs ready by `run_after` and **claim** them inside a database transaction with **`SELECT … FOR UPDATE SKIP LOCKED`**, so different sessions can claim different rows without waiting on each other’s row locks. A **per-queue advisory lock** (`pg_try_advisory_lock` on a hash of the queue name) ensures only one process in the default model **polls** a given `queue` name; do not start multiple competing pollers for the same queue name without a deliberate operational plan.
 
