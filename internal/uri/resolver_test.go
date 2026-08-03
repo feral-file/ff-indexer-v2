@@ -65,7 +65,10 @@ func TestResolver_Resolve(t *testing.T) {
 				IPFSGateways: []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
 			},
 			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				// First gateway fails
+				// First gateway fails to ensure deterministic behavior
+				// (only second gateway succeeds, so it will always be returned)
+				// Use AnyTimes() since the resolver may return early when the
+				// winning gateway responds before this goroutine runs
 				mockResp1 := &http.Response{
 					StatusCode: http.StatusNotFound,
 					Body:       io.NopCloser(bytes.NewReader(nil)),
@@ -73,7 +76,8 @@ func TestResolver_Resolve(t *testing.T) {
 				mockHTTP.
 					EXPECT().
 					Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil)
+					Return(mockResp1, nil).
+					AnyTimes()
 
 				// Second gateway succeeds
 				mockResp2 := &http.Response{

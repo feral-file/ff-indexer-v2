@@ -1,18 +1,12 @@
 name: Test
 
 on:
+  # No paths filter on pull_request: this workflow's job is a required check
+  # on main, and a path-filtered workflow never reports on a docs-only PR —
+  # the PR then blocks forever on a check that cannot run. Pushes keep the
+  # filter. (Same always-report convention as ff-exhibition testing.yaml.)
   pull_request:
     branches: [main, develop]
-    paths:
-      - '**/*.go'
-      - 'go.mod'
-      - 'go.sum'
-      - '.golangci.yaml'
-      - 'Makefile'
-      - 'db/**'
-      - 'internal/api/graphql/**'
-      - '.github/workflows/**'
-      - '.github/actions/**'
   push:
     branches: [main, develop]
     paths:
