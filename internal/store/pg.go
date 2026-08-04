@@ -3070,22 +3070,35 @@ func (s *pgStore) UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isS
 	changed := false
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Step 1: Update only when the verdict differs from the stored value
-		result := tx.Model(&schema.Token{}).
-			Where("id = ? AND is_spam != ?", tokenID, isSpam).
-			Update("is_spam", isSpam)
-		if result.Error != nil {
-			return fmt.Errorf("failed to update token spam status: %w", result.Error)
+		// Step 1: Update only when the verdict differs from the stored value.
+		// RETURNING token_cid so the event can carry it (see step 2).
+		var updated []struct {
+			TokenCID string `gorm:"column:token_cid"`
 		}
-		if result.RowsAffected == 0 {
+		if err := tx.Raw(
+			`UPDATE tokens SET is_spam = ? WHERE id = ? AND is_spam != ? RETURNING token_cid`,
+			isSpam, tokenID, isSpam,
+		).Scan(&updated).Error; err != nil {
+			return fmt.Errorf("failed to update token spam status: %w", err)
+		}
+		if len(updated) == 0 {
 			// Either the token does not exist or the verdict is unchanged; both are no-ops.
 			return nil
 		}
 		changed = true
 
-		// Step 2: Broadcast the change to all owners via the collection sync feed,
-		// mirroring the viewability_changed event shape.
-		spamMeta := schema.SpamStatusChangeMetadata{IsSpam: isSpam}
+		// Step 2: Broadcast the change to all owners via the collection sync feed.
+		//
+		// The payload carries token_cid, unlike viewability_changed which sends only the
+		// new state. Sync clients key their local rows by CID but the event envelope
+		// carries only the numeric token_id, so resolving one to the other means calling
+		// back into tokens(...) — a lookup this very filter excludes by default. Without
+		// the CID here a client can observe "this token became spam" and still be unable
+		// to identify which local row to drop.
+		spamMeta := schema.SpamStatusChangeMetadata{
+			IsSpam:   isSpam,
+			TokenCID: updated[0].TokenCID,
+		}
 		spamJSON, err := json.Marshal(spamMeta)
 		if err != nil {
 			return fmt.Errorf("failed to marshal spam status event: %w", err)

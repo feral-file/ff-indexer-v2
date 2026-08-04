@@ -447,7 +447,7 @@ type TokenEvent {
   id: Uint64!
   # Token ID
   token_id: Uint64!
-  # Event type: acquired, released, metadata_updated, enrichment_updated, viewability_changed
+  # Event type: acquired, released, metadata_updated, enrichment_updated, viewability_changed, spam_status_changed
   event_type: String!
   # Owner address (NULL for attribute events that broadcast to all current owners)
   owner_address: String

@@ -882,3 +882,48 @@ func TestTriggerReleaseIndexing_WhitespacePaddedSlugIsNormalized(t *testing.T) {
 	require.Len(t, capturedOpts.Args, 4)
 	assert.Equal(t, "industrial-park", capturedOpts.Args[2], "vendorReleaseSlug must be normalized before enqueueing")
 }
+
+// TestGetTokens_SpamAndViewabilityFlagsMapToFilter pins the two adjacent *bool parameters
+// to their store-filter fields. Every other GetTokens test passes nil for both and matches
+// the filter with gomock.Any(), so swapping includeUnviewable and includeSpam at any call
+// site — or wiring one to the other's field — would not fail a single existing test while
+// silently inverting what users see.
+func TestGetTokens_SpamAndViewabilityFlagsMapToFilter(t *testing.T) {
+	tests := []struct {
+		name              string
+		includeUnviewable *bool
+		includeSpam       *bool
+		wantUnviewable    bool
+		wantSpam          bool
+	}{
+		{"defaults exclude both", nil, nil, false, false},
+		{"spam only", boolPtr(false), boolPtr(true), false, true},
+		{"unviewable only", boolPtr(true), boolPtr(false), true, false},
+		{"both", boolPtr(true), boolPtr(true), true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			exec, mockStore := newTestExecutor(t, ctrl)
+
+			mockStore.EXPECT().
+				GetTokensByFilter(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, filter store.TokenQueryFilter) ([]schema.Token, error) {
+					assert.Equal(t, tt.wantUnviewable, filter.IncludeUnviewable, "IncludeUnviewable mismatch")
+					assert.Equal(t, tt.wantSpam, filter.IncludeSpam, "IncludeSpam mismatch")
+					return nil, nil
+				})
+
+			_, err := exec.GetTokens(context.Background(),
+				nil, nil, nil, nil, nil, nil, nil,
+				nil, nil, nil, nil, nil,
+				tt.includeUnviewable, tt.includeSpam, nil, nil, nil)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }

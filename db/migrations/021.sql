@@ -13,7 +13,20 @@
 --
 -- Default false: no vendor signal means the token stays visible (fail-open) — hiding a
 -- user's real asset by mistake is worse than letting spam through until the next sweep.
+--
+-- LOCKING: run steps 1 and 2 as written. Step 1 is a metadata-only ADD COLUMN (no table
+-- rewrite on PG11+) and is safe under normal traffic. Step 2 deliberately splits the CHECK
+-- constraint into ADD ... NOT VALID (brief ACCESS EXCLUSIVE, no scan) followed by VALIDATE
+-- in its own transaction (SHARE UPDATE EXCLUSIVE, does not block reads or writes) — a plain
+-- ADD CONSTRAINT would validate every row of token_events, which holds millions of broadcast
+-- events, under ACCESS EXCLUSIVE and stall the sync API for every FF1 and mobile client.
+--
+-- No index is created on is_spam: the only predicate in the read path is `is_spam = false`,
+-- which matches nearly every row, so a partial index on the true side could never serve it
+-- and a full index would not beat the existing filter. Revisit when the periodic spam
+-- sweeper lands and starts querying the flagged set directly.
 
+-- Step 1: column (safe under load)
 BEGIN;
 
 ALTER TABLE tokens
@@ -24,14 +37,13 @@ COMMENT ON COLUMN tokens.is_spam IS
     'flag=banned for this token. Read paths exclude flagged tokens unless include_spam '
     'is requested. Tag-not-drop: the row stays fully indexed for reversibility.';
 
--- Partial index: the flagged set is tiny relative to the table, and the default read
--- path predicate is `is_spam = false`; a partial index on the true side keeps the
--- anti-join cheap without indexing the entire table.
-CREATE INDEX idx_tokens_is_spam ON tokens (id) WHERE is_spam;
+COMMIT;
 
--- token_events.event_type is guarded by a CHECK constraint (migration 014); widen it to
--- accept the broadcast event emitted when a token's spam verdict changes, so collection
--- sync clients can drop or restore the token.
+-- Step 2a: widen the event_type CHECK constraint (from migration 014) without scanning.
+-- NOT VALID skips validation of existing rows; they already satisfy the widened predicate
+-- because it only adds a value.
+BEGIN;
+
 ALTER TABLE token_events DROP CONSTRAINT token_events_event_type_check;
 ALTER TABLE token_events ADD CONSTRAINT token_events_event_type_check CHECK (event_type IN (
     'acquired',
@@ -40,6 +52,10 @@ ALTER TABLE token_events ADD CONSTRAINT token_events_event_type_check CHECK (eve
     'enrichment_updated',
     'viewability_changed',
     'spam_status_changed'
-));
+)) NOT VALID;
 
 COMMIT;
+
+-- Step 2b: validate in a separate transaction. Takes SHARE UPDATE EXCLUSIVE, so concurrent
+-- reads and writes to token_events continue while the scan runs.
+ALTER TABLE token_events VALIDATE CONSTRAINT token_events_event_type_check;

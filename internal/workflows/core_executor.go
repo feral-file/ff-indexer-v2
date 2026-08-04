@@ -566,7 +566,14 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 		return nil, fmt.Errorf("failed to enhance metadata: %w", err)
 	}
 
-	// If no enhancement is available, skip
+	// If no enhancement is available, skip.
+	//
+	// Note this leaves any existing spam verdict untouched: a vendor that stops answering
+	// (missing API key, item dropped from its index) yields no signal, not an "all clear",
+	// so the last real moderation decision stands rather than being silently cleared by an
+	// outage. The cost is that a token flagged once can stay flagged while the vendor keeps
+	// skipping it, and today the enricher is the only writer of is_spam — there is no
+	// operator path to clear it. The deferred spam sweeper is where that reversal belongs.
 	if enhanced == nil {
 		logger.InfoCtx(ctx, "No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
 		return nil, nil

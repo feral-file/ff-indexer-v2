@@ -34,7 +34,7 @@ type TokenEvent struct {
 	//   metadata_updated: {"changed_fields": ["name", "image_url"]}
 	//   enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
 	//   viewability_changed: {"is_viewable": true}
-	//   spam_status_changed: {"is_spam": true}
+	//   spam_status_changed: {"is_spam": true, "token_cid": "eip155:1:erc721:0x...:1"}
 	Metadata []byte `gorm:"column:metadata;type:jsonb"`
 	// CreatedAt is the timestamp when this event was recorded in the database
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
@@ -77,7 +77,12 @@ type ViewabilityChangeMetadata struct {
 	IsViewable bool `json:"is_viewable"` // New viewability state
 }
 
-// SpamStatusChangeMetadata contains reference data for spam status change events
+// SpamStatusChangeMetadata contains reference data for spam status change events.
+// TokenCID is included (unlike ViewabilityChangeMetadata) because sync clients key
+// their local rows by CID: the event envelope carries only the numeric token_id, and
+// resolving it back to a CID requires a tokens(...) lookup that the spam filter itself
+// excludes by default.
 type SpamStatusChangeMetadata struct {
-	IsSpam bool `json:"is_spam"` // New spam verdict
+	IsSpam   bool   `json:"is_spam"`             // New spam verdict
+	TokenCID string `json:"token_cid,omitempty"` // CID of the affected token
 }

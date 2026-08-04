@@ -364,7 +364,6 @@ CREATE INDEX idx_tokens_current_owner ON tokens (current_owner) WHERE current_ow
 CREATE INDEX idx_tokens_burned ON tokens (burned) WHERE burned;
 CREATE INDEX idx_tokens_created_at ON tokens (created_at);
 CREATE INDEX idx_tokens_viewable ON tokens (is_viewable);
-CREATE INDEX idx_tokens_is_spam ON tokens (id) WHERE is_spam;
 CREATE INDEX idx_tokens_chain_owner_viewable ON tokens (chain, current_owner, is_viewable) WHERE current_owner IS NOT NULL;
 CREATE INDEX idx_tokens_token_cid_viewable ON tokens (token_cid, is_viewable);
 CREATE INDEX idx_tokens_last_prov_timestamp_id ON tokens (last_provenance_timestamp DESC NULLS LAST, id DESC);

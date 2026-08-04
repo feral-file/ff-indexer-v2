@@ -497,6 +497,7 @@ paths:
            - **metadata_updated**: Token metadata changed (broadcast to all current owners)
            - **enrichment_updated**: Token enrichment changed (broadcast to all current owners)
            - **viewability_changed**: Token viewability changed (broadcast to all current owners)
+           - **spam_status_changed**: Token spam verdict changed (broadcast to all current owners)
         3. If `next_checkpoint` is returned, use it for pagination (more events available)
         4. If `next_checkpoint` is null and `has_more` is false, client has caught up
         
@@ -1575,6 +1576,7 @@ components:
         - token_number
         - burned
         - viewable
+        - is_spam
         - version
         - created_at
         - updated_at
@@ -2384,7 +2386,7 @@ components:
           example: 987
         event_type:
           type: string
-          enum: [acquired, released, metadata_updated, enrichment_updated, viewability_changed]
+          enum: [acquired, released, metadata_updated, enrichment_updated, viewability_changed, spam_status_changed]
           description: |
             Type of event:
             - `acquired`: Token added to owner's collection
@@ -2392,12 +2394,13 @@ components:
             - `metadata_updated`: Token metadata changed (broadcast to all current owners)
             - `enrichment_updated`: Token enrichment changed (broadcast to all current owners)
             - `viewability_changed`: Token viewability changed (broadcast to all current owners)
+            - `spam_status_changed`: Token spam verdict changed (broadcast to all current owners); metadata carries `is_spam` and `token_cid`
           example: "acquired"
         owner_address:
           type: string
           description: |
             Owner address for ownership events (acquired/released).
-            NULL for attribute events (metadata_updated, enrichment_updated, viewability_changed) that broadcast to all current owners.
+            NULL for attribute events (metadata_updated, enrichment_updated, viewability_changed, spam_status_changed) that broadcast to all current owners.
           example: "0x1234567890123456789012345678901234567890"
         occurred_at:
           type: string

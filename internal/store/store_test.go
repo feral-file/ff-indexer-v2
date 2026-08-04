@@ -7021,6 +7021,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByCIDs", testGetTokensByCIDs},
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
+		{"UpdateTokenSpamStatus", testUpdateTokenSpamStatus},
 		{"ReleaseOperations", testReleaseOperations},
 		{"ListReleases", testListReleases},
 		{"UpsertReleaseMetadata", testUpsertReleaseMetadata},
@@ -7056,4 +7057,121 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 			tt.fn(t, store)
 		})
 	}
+}
+
+// testUpdateTokenSpamStatus exercises the vendor spam verdict against a real Postgres
+// schema: the guarded update, the broadcast event it emits, and idempotency on repeat
+// calls. Running against the real database is the point — the event insert is guarded by
+// the token_events.event_type CHECK constraint (migration 014, widened in 021), which a
+// mock-based test cannot exercise. A regression there silently rolls back the whole
+// persist transaction.
+func testUpdateTokenSpamStatus(t *testing.T, store Store) {
+	ctx := context.Background()
+	contract := "0x29539a0109fec46b916a6125f352c629d9304c73"
+	owner := "0x1234567890123456789012345678901234567890"
+
+	input := CreateTokenMintInput{
+		Token:   buildTestToken(domain.ChainEthereumMainnet, domain.StandardERC1155, contract, "0"),
+		Balance: buildTestBalance(owner, "1"),
+		ProvenanceEvent: buildTestProvenanceEvent(
+			domain.ChainEthereumMainnet, schema.ProvenanceEventTypeMint,
+			nil, &owner, "1", "0xspamtx", 100,
+		),
+	}
+	require.NoError(t, store.CreateTokenMint(ctx, input))
+
+	token, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	require.False(t, token.IsSpam, "tokens must default to not-spam (fail-open)")
+
+	t.Run("flagging emits a broadcast event carrying the CID", func(t *testing.T) {
+		changed, err := store.UpdateTokenSpamStatus(ctx, token.ID, true)
+		require.NoError(t, err)
+		assert.True(t, changed)
+
+		updated, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+		assert.True(t, updated.IsSpam)
+
+		events := getSpamStatusEvents(t, store, token.ID)
+		require.Len(t, events, 1, "exactly one spam event must be emitted")
+		assert.Nil(t, events[0].OwnerAddress, "spam events broadcast to all owners")
+
+		var meta schema.SpamStatusChangeMetadata
+		require.NoError(t, json.Unmarshal(events[0].Metadata, &meta))
+		assert.True(t, meta.IsSpam)
+		// Sync clients key local rows by CID and cannot look it up through the
+		// spam-filtered token query, so the event must carry it.
+		assert.Equal(t, input.Token.TokenCID, meta.TokenCID)
+	})
+
+	t.Run("repeat call with same verdict is a no-op", func(t *testing.T) {
+		changed, err := store.UpdateTokenSpamStatus(ctx, token.ID, true)
+		require.NoError(t, err)
+		assert.False(t, changed, "unchanged verdict must not report a change")
+
+		events := getSpamStatusEvents(t, store, token.ID)
+		assert.Len(t, events, 1, "no duplicate event for an unchanged verdict")
+	})
+
+	t.Run("filter hides flagged tokens by default", func(t *testing.T) {
+		hidden, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			TokenCIDs:         []string{input.Token.TokenCID},
+			IncludeUnviewable: true,
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, hidden, "flagged token must be excluded by default")
+
+		shown, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			TokenCIDs:         []string{input.Token.TokenCID},
+			IncludeUnviewable: true,
+			IncludeSpam:       true,
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		require.Len(t, shown, 1, "IncludeSpam must opt back in")
+		assert.True(t, shown[0].IsSpam)
+	})
+
+	t.Run("unflagging restores visibility and emits a second event", func(t *testing.T) {
+		changed, err := store.UpdateTokenSpamStatus(ctx, token.ID, false)
+		require.NoError(t, err)
+		assert.True(t, changed)
+
+		events := getSpamStatusEvents(t, store, token.ID)
+		require.Len(t, events, 2)
+		var meta schema.SpamStatusChangeMetadata
+		require.NoError(t, json.Unmarshal(events[1].Metadata, &meta))
+		assert.False(t, meta.IsSpam)
+
+		visible, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			TokenCIDs:         []string{input.Token.TokenCID},
+			IncludeUnviewable: true,
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		assert.Len(t, visible, 1, "unflagged token is visible again (tag-not-drop is reversible)")
+	})
+
+	t.Run("unknown token id is a no-op", func(t *testing.T) {
+		changed, err := store.UpdateTokenSpamStatus(ctx, 999999, true)
+		require.NoError(t, err)
+		assert.False(t, changed)
+	})
+}
+
+// getSpamStatusEvents returns spam_status_changed events for a token, oldest first.
+func getSpamStatusEvents(t *testing.T, store Store, tokenID uint64) []schema.TokenEvent {
+	t.Helper()
+	pg, ok := store.(*pgStore)
+	require.True(t, ok, "expected pgStore")
+
+	var events []schema.TokenEvent
+	require.NoError(t, pg.db.
+		Where("token_id = ? AND event_type = ?", tokenID, schema.EventTypeSpamStatusChanged).
+		Order("id ASC").
+		Find(&events).Error)
+	return events
 }

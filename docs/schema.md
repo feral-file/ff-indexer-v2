@@ -18,7 +18,7 @@ The database includes the following main tables:
 - `token_metadata` - NFT metadata (name, description, media, attributes, etc.)
 - `enrichment_sources` - Additional data sources enriching token information
 - `balances` - Current token ownership balances (multi-edition tokens)
-- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability); ownership rows with `metadata.tx_hash` are unique per `(token_id, owner_address, event_type, tx_hash)` via `token_events_ownership_unique`
+- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability / spam status); ownership rows with `metadata.tx_hash` are unique per `(token_id, owner_address, event_type, tx_hash)` via `token_events_ownership_unique`
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
@@ -46,6 +46,7 @@ Primary entity for tracking tokens across all supported blockchains.
 | current_owner | TEXT | Current owner address (NULL for multi-owner tokens) |
 | burned | BOOLEAN | Whether token has been burned |
 | is_viewable | BOOLEAN | Whether token has accessible media URLs (for filtering unviewable tokens) |
+| is_spam | BOOLEAN | Vendor moderation verdict (OpenSea `is_disabled` / objkt `flag=banned`); read paths exclude flagged tokens unless `include_spam` is set |
 | last_provenance_timestamp | TIMESTAMPTZ | Cached timestamp of most recent provenance event (denormalized for query performance) |
 | version | BIGINT | Incremented on user-visible changes (ownership, metadata, enrichment, viewability, burn status); used for scoped state sync |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
