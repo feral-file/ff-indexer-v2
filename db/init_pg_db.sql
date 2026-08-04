@@ -29,6 +29,7 @@ CREATE TABLE tokens (
     current_owner TEXT,
     burned BOOLEAN NOT NULL DEFAULT FALSE,
     is_viewable BOOLEAN NOT NULL DEFAULT FALSE,
+    is_spam BOOLEAN NOT NULL DEFAULT FALSE,  -- Vendor moderation verdict (OpenSea is_disabled / objkt banned; added in migration 021)
     last_provenance_timestamp TIMESTAMPTZ,  -- Cached timestamp of most recent provenance event (added in migration 011)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -207,7 +208,8 @@ CREATE TABLE token_events (
         'released',              -- Token removed from owner's collection
         'metadata_updated',      -- Token metadata changed
         'enrichment_updated',    -- Token enrichment changed
-        'viewability_changed'    -- Token viewability changed
+        'viewability_changed',   -- Token viewability changed
+        'spam_status_changed'    -- Vendor spam verdict changed (added in migration 021)
     )),
     
     -- Owner address (set for ownership events, NULL for attribute events that broadcast to all owners)
@@ -362,6 +364,7 @@ CREATE INDEX idx_tokens_current_owner ON tokens (current_owner) WHERE current_ow
 CREATE INDEX idx_tokens_burned ON tokens (burned) WHERE burned;
 CREATE INDEX idx_tokens_created_at ON tokens (created_at);
 CREATE INDEX idx_tokens_viewable ON tokens (is_viewable);
+CREATE INDEX idx_tokens_is_spam ON tokens (id) WHERE is_spam;
 CREATE INDEX idx_tokens_chain_owner_viewable ON tokens (chain, current_owner, is_viewable) WHERE current_owner IS NOT NULL;
 CREATE INDEX idx_tokens_token_cid_viewable ON tokens (token_cid, is_viewable);
 CREATE INDEX idx_tokens_last_prov_timestamp_id ON tokens (last_provenance_timestamp DESC NULLS LAST, id DESC);

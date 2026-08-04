@@ -14,11 +14,10 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
-	gqlparser "github.com/vektah/gqlparser/v2"
-	"github.com/vektah/gqlparser/v2/ast"
-
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	"github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
+	gqlparser "github.com/vektah/gqlparser/v2"
+	"github.com/vektah/gqlparser/v2/ast"
 )
 
 // region    ************************** generated!.gotpl **************************
@@ -203,7 +202,7 @@ type ComplexityRoot struct {
 		Releases       func(childComplexity int, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) int
 		SyncCollection func(childComplexity int, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) int
 		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
-		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
+		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID *string) int
 	}
 
@@ -251,6 +250,7 @@ type ComplexityRoot struct {
 		Display                 func(childComplexity int) int
 		EnrichmentSource        func(childComplexity int) int
 		ID                      func(childComplexity int) int
+		IsSpam                  func(childComplexity int) int
 		LastProvenanceTimestamp func(childComplexity int) int
 		MediaAssets             func(childComplexity int) int
 		Metadata                func(childComplexity int) int
@@ -381,7 +381,7 @@ type ProvenanceEventResolver interface {
 }
 type QueryResolver interface {
 	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
-	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
+	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
 	Release(ctx context.Context, id Uint64) (*dto.ReleaseResponse, error)
 	Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error)
 	JobStatus(ctx context.Context, jobID int) (*dto.JobStatusResponse, error)
@@ -1094,7 +1094,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["release_id"].(*Uint64), args["release_vendor"].(*string), args["release_vendor_slug"].(*string), args["mint_numbers"].([]int), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
+		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["release_id"].(*Uint64), args["release_vendor"].(*string), args["release_vendor_slug"].(*string), args["mint_numbers"].([]int), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["include_spam"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
 	case "Query.workflowStatus":
 		if e.complexity.Query.WorkflowStatus == nil {
 			break
@@ -1285,6 +1285,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.ID(childComplexity), true
+	case "Token.is_spam":
+		if e.complexity.Token.IsSpam == nil {
+			break
+		}
+
+		return e.complexity.Token.IsSpam(childComplexity), true
 	case "Token.last_provenance_timestamp":
 		if e.complexity.Token.LastProvenanceTimestamp == nil {
 			break
@@ -1912,6 +1918,9 @@ type Token {
   current_owner: String
   burned: Boolean!
   viewable: Boolean!
+  # Vendor moderation verdict: true when OpenSea reports is_disabled or objkt reports
+  # flag=banned. Flagged tokens are excluded from queries unless include_spam: true.
+  is_spam: Boolean!
   last_provenance_timestamp: Time
   release_id: Uint64
   mint_number: Int
@@ -2024,20 +2033,27 @@ type Query {
     token_ids: [Uint64!]
     token_cids: [String!]
     # release_id, release_vendor, and release_vendor_slug are all optional and ANDed.
-    # Any one of them is sufficient to enable sort_by=mint_number and mint_numbers.
+    # release_vendor alone is a broad vendor filter; it does NOT enable sort_by=mint_number
+    # or mint_numbers by itself because a vendor covers many releases and mint numbers repeat
+    # across them. To use mint semantics, supply release_id, or both release_vendor and
+    # release_vendor_slug together.
     release_id: Uint64
     # release_vendor filters tokens to releases from a given vendor (e.g. "artblocks").
     release_vendor: String
     # release_vendor_slug filters tokens to the release whose vendor_release_slug matches
     # (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
+    # Must be combined with release_vendor or release_id (slug uniqueness is scoped per vendor).
     release_vendor_slug: String
     # mint_numbers is an explicit 1-based list of mint positions to include (max 50, no duplicates).
-    # Requires at least one of release_id, release_vendor, or release_vendor_slug.
+    # Requires release_id, or both release_vendor and release_vendor_slug.
     # Use this to poll for exactly the mints triggered via triggerReleaseIndexing.
     mint_numbers: [Int!]
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
+    # include_spam controls whether vendor-flagged spam tokens (OpenSea is_disabled /
+    # objkt banned) are returned. Default false: spam is filtered for every consumer.
+    include_spam: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
   ): TokenList
@@ -2120,11 +2136,15 @@ type Mutation {
   # Trigger asynchronous indexing for an explicit list of mint numbers within a vendor release.
   # Equivalent to: POST /api/v1/releases/index
   # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
-  # After Phase 1 succeeds, poll tokens(release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true)
+  # After Phase 1 succeeds, poll tokens(release_vendor: "...", release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true)
   # with the same mint_numbers to track exactly which mints have been indexed.
+  # release_vendor is required when polling by slug (slug uniqueness is scoped per vendor).
   # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
   # Provide exactly one of vendor_release_id or vendor_release_slug.
-  # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates)
+  # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates).
+  #   For fxhash and feralfile: max(mint_numbers)-min(mint_numbers) must be <= 1000 (MAX_API_VENDOR_MINT_SPAN).
+  #   Those vendors fetch the full [min,max] interval from their APIs; a wide sparse span forces many
+  #   API calls. artblocks and objkt are deterministic and not subject to this span cap.
   triggerReleaseIndexing(
     vendor: String!
     vendor_release_id: String
@@ -2528,16 +2548,21 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["include_unviewable"] = arg12
-	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "sort_by", ec.unmarshalOTokenSortBy2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐTokenSortBy)
+	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "include_spam", ec.unmarshalOBoolean2ᚖbool)
 	if err != nil {
 		return nil, err
 	}
-	args["sort_by"] = arg13
-	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "sort_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
+	args["include_spam"] = arg13
+	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "sort_by", ec.unmarshalOTokenSortBy2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐTokenSortBy)
 	if err != nil {
 		return nil, err
 	}
-	args["sort_order"] = arg14
+	args["sort_by"] = arg14
+	arg15, err := graphql.ProcessArgField(ctx, rawArgs, "sort_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
+	if err != nil {
+		return nil, err
+	}
+	args["sort_order"] = arg15
 	return args, nil
 }
 
@@ -5403,6 +5428,8 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_burned(ctx, field)
 			case "viewable":
 				return ec.fieldContext_Token_viewable(ctx, field)
+			case "is_spam":
+				return ec.fieldContext_Token_is_spam(ctx, field)
 			case "last_provenance_timestamp":
 				return ec.fieldContext_Token_last_provenance_timestamp(ctx, field)
 			case "release_id":
@@ -5453,7 +5480,7 @@ func (ec *executionContext) _Query_tokens(ctx context.Context, field graphql.Col
 		ec.fieldContext_Query_tokens,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["release_id"].(*Uint64), fc.Args["release_vendor"].(*string), fc.Args["release_vendor_slug"].(*string), fc.Args["mint_numbers"].([]int), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order))
+			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["release_id"].(*Uint64), fc.Args["release_vendor"].(*string), fc.Args["release_vendor_slug"].(*string), fc.Args["mint_numbers"].([]int), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["include_spam"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,
@@ -6833,6 +6860,35 @@ func (ec *executionContext) fieldContext_Token_viewable(_ context.Context, field
 	return fc, nil
 }
 
+func (ec *executionContext) _Token_is_spam(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Token_is_spam,
+		func(ctx context.Context) (any, error) {
+			return obj.IsSpam, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Token_is_spam(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Token",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Token_last_provenance_timestamp(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -7732,6 +7788,8 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_burned(ctx, field)
 			case "viewable":
 				return ec.fieldContext_Token_viewable(ctx, field)
+			case "is_spam":
+				return ec.fieldContext_Token_is_spam(ctx, field)
 			case "last_provenance_timestamp":
 				return ec.fieldContext_Token_last_provenance_timestamp(ctx, field)
 			case "release_id":
@@ -12258,6 +12316,11 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			}
 		case "viewable":
 			out.Values[i] = ec._Token_viewable(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "is_spam":
+			out.Values[i] = ec._Token_is_spam(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}

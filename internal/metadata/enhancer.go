@@ -47,6 +47,11 @@ type EnhancedMetadata struct {
 	Artists      []Artist
 	MimeType     *string
 	Release      *ReleaseInfo
+	// IsSpam is the vendor moderation verdict: true when OpenSea reports the item
+	// disabled or objkt reports it banned. False for vendors without a moderation
+	// signal (fail-open) — trusted-publisher branches (ArtBlocks, Feral File, fxhash)
+	// never set it.
+	IsSpam bool
 }
 
 // Enhancer defines the interface for enhancing metadata from vendors
@@ -501,6 +506,8 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorObjkt,
 		VendorJSON: vendorJSON,
+		// objkt's moderation verdict: banned tokens are spam on the display surface.
+		IsSpam: token.IsBanned(),
 	}
 
 	// Set the token name
@@ -636,6 +643,10 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorOpenSea,
 		VendorJSON: vendorJSON,
+		// OpenSea's moderation verdict: disabled items (delisted from opensea.io) are
+		// spam on the display surface. is_suspicious (stolen-item reports) and is_nsfw
+		// (content rating) are deliberately NOT part of this verdict.
+		IsSpam: nft.IsDisabled,
 	}
 
 	// Populate release info from the single-NFT response.

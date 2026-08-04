@@ -310,7 +310,7 @@ func TestGetTokens_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
 
 	result, err := exec.GetTokens(context.Background(),
 		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset})
 
 	require.NoError(t, err)
@@ -444,7 +444,7 @@ func TestGetTokens_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 
 	result, err := exec.GetTokens(context.Background(),
 		nil, nil, nil, nil, []uint64{f.tokenID}, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 		[]types.Expansion{types.ExpansionDisplay})
 
 	require.Error(t, err, "GetTokens must propagate health query failure as an error")

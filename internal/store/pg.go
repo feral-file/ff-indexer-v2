@@ -598,6 +598,11 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 		query = query.Where("tokens.is_viewable = ?", true)
 	}
 
+	// Apply spam filter: vendor-flagged tokens are hidden unless explicitly requested
+	if !filter.IncludeSpam {
+		query = query.Where("tokens.is_spam = ?", false)
+	}
+
 	// Apply owner filter: check current ownership via balances table
 	if len(filter.Owners) > 0 {
 		query = query.Where("tokens.id IN (?)",
@@ -3055,6 +3060,56 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 	}
 
 	return changes, nil
+}
+
+// UpdateTokenSpamStatus sets the vendor spam verdict for a token, inserting a broadcast
+// spam_status_changed token event in the same transaction when the value actually changes.
+// The guarded UPDATE (is_spam != new value) keeps repeat enrichments idempotent: unchanged
+// verdicts touch nothing and emit nothing.
+func (s *pgStore) UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isSpam bool) (bool, error) {
+	changed := false
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Step 1: Update only when the verdict differs from the stored value
+		result := tx.Model(&schema.Token{}).
+			Where("id = ? AND is_spam != ?", tokenID, isSpam).
+			Update("is_spam", isSpam)
+		if result.Error != nil {
+			return fmt.Errorf("failed to update token spam status: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			// Either the token does not exist or the verdict is unchanged; both are no-ops.
+			return nil
+		}
+		changed = true
+
+		// Step 2: Broadcast the change to all owners via the collection sync feed,
+		// mirroring the viewability_changed event shape.
+		spamMeta := schema.SpamStatusChangeMetadata{IsSpam: isSpam}
+		spamJSON, err := json.Marshal(spamMeta)
+		if err != nil {
+			return fmt.Errorf("failed to marshal spam status event: %w", err)
+		}
+
+		event := schema.TokenEvent{
+			TokenID:      tokenID,
+			EventType:    schema.EventTypeSpamStatusChanged,
+			OwnerAddress: nil, // Broadcast to all owners
+			OccurredAt:   time.Now(),
+			Metadata:     spamJSON,
+		}
+		if err := tx.Create(&event).Error; err != nil {
+			return fmt.Errorf("failed to create spam status event: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return false, err
+	}
+
+	return changed, nil
 }
 
 // =============================================================================

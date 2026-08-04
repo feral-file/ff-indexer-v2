@@ -200,7 +200,7 @@ func TestQueryResolverTokensRejectsInvalidReleaseVendor(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		&vendor, nil,
-		nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Invalid release_vendor")
@@ -222,7 +222,7 @@ func TestQueryResolverTokensMintNumberRequiresReleaseContext(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		nil, nil,
-		nil, nil, nil, nil, &sortBy, nil,
+		nil, nil, nil, nil, nil, &sortBy, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sort_by=mint_number requires release_id")
@@ -247,7 +247,7 @@ func TestQueryResolverTokensVendorAloneRejectsForMintNumber(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		&vendor, nil,
-		nil, nil, nil, nil, &sortBy, nil,
+		nil, nil, nil, nil, nil, &sortBy, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sort_by=mint_number requires release_id")
@@ -271,7 +271,7 @@ func TestQueryResolverTokensMintNumbersWithVendorSlug(t *testing.T) {
 			gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), // release vendor + slug
 			gomock.Any(), // mint_numbers
-			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.TokenListResponse{}, nil)
 
 	resolver := NewResolver(false, mockExec)
@@ -279,7 +279,7 @@ func TestQueryResolverTokensMintNumbersWithVendorSlug(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		&vendor, &slug,
-		mintNums, nil, nil, nil, nil, nil,
+		mintNums, nil, nil, nil, nil, nil, nil,
 	)
 	require.NoError(t, err)
 }
@@ -300,7 +300,7 @@ func TestQueryResolverTokensSlugAloneRejected(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		nil, &slug,
-		nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "release_vendor_slug requires release_vendor or release_id")

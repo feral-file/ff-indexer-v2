@@ -27,6 +27,12 @@ type Token struct {
 	// IsViewable indicates if this token has healthy media URLs and can be displayed to users
 	// Logic: Has at least one healthy animation URL, OR (no animations AND has healthy image URL)
 	IsViewable bool `gorm:"column:is_viewable;not null;default:false"`
+	// IsSpam records the vendor moderation verdict: true when OpenSea reports is_disabled
+	// or objkt reports flag=banned for this token. Read paths exclude flagged tokens by
+	// default (include_spam opts in). Tag-not-drop: the row stays fully indexed so the
+	// verdict is reversible, unlike the write-time contract blacklist. Default false =
+	// fail-open: no vendor signal means the token stays visible.
+	IsSpam bool `gorm:"column:is_spam;not null;default:false"`
 	// LastProvenanceTimestamp is the cached timestamp of the most recent provenance event for this token
 	// This is actually the known latest provenance timestamp for this token, not the actual latest provenance timestamp
 	LastProvenanceTimestamp *time.Time `gorm:"column:last_provenance_timestamp;type:timestamptz"`

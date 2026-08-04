@@ -394,3 +394,61 @@ func TestGetToken_UsesVariablesNotInterpolation(t *testing.T) {
 	assert.Contains(t, string(capturedBody), `"faContract"`)
 	assert.Contains(t, string(capturedBody), `"tokenId"`)
 }
+
+// TestTokenIsBanned verifies the moderation-flag helper across the observed flag values.
+func TestTokenIsBanned(t *testing.T) {
+	banned := objkt.FlagBanned
+	none := "none"
+
+	tests := []struct {
+		name  string
+		token objkt.Token
+		want  bool
+	}{
+		{name: "nil flag", token: objkt.Token{Flag: nil}, want: false},
+		{name: "flag none", token: objkt.Token{Flag: &none}, want: false},
+		{name: "flag banned", token: objkt.Token{Flag: &banned}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.token.IsBanned())
+		})
+	}
+}
+
+// TestGetTokenQueryRequestsFlag ensures the GraphQL query selects the moderation flag —
+// the spam signal would silently disappear if the field were dropped from the query.
+func TestGetTokenQueryRequestsFlag(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
+	client := objkt.NewClient(mockHTTPClient, mockLimiter, OBJKT_API_URL, "", adapter.NewJSON())
+	ctx := context.Background()
+
+	mockLimiter.EXPECT().
+		Do(gomock.Any(), objkt.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
+
+	var capturedBody []byte
+	mockHTTPClient.
+		EXPECT().
+		PostBytes(gomock.Any(), OBJKT_API_URL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ map[string]string, body io.Reader) ([]byte, error) {
+			var err error
+			capturedBody, err = io.ReadAll(body)
+			require.NoError(t, err)
+			return []byte(`{"data":{"token":[{"name":"t","flag":"banned","creators":[]}]}}`), nil
+		})
+
+	token, err := client.GetToken(ctx, "KT1abc", "1")
+	require.NoError(t, err)
+
+	assert.Contains(t, string(capturedBody), "flag", "GetToken query must select the flag field")
+	require.NotNil(t, token.Flag)
+	assert.True(t, token.IsBanned())
+}

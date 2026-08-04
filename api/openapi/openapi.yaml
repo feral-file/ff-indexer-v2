@@ -405,6 +405,13 @@ paths:
             type: boolean
             default: false
           example: false
+        - name: include_spam
+          in: query
+          description: Include vendor-flagged spam tokens (OpenSea is_disabled / objkt banned). Default is false - spam tokens are excluded for every consumer.
+          schema:
+            type: boolean
+            default: false
+          example: false
         - name: sort_by
           in: query
           description: |
@@ -1605,6 +1612,10 @@ components:
           type: boolean
           description: Whether the token has accessible media URLs
           example: true
+        is_spam:
+          type: boolean
+          description: Vendor moderation verdict - true when OpenSea reports is_disabled or objkt reports flag=banned. Flagged tokens are excluded from queries unless include_spam=true.
+          example: false
         last_provenance_timestamp:
           type: [string, "null"]
           format: date-time

@@ -11,6 +11,7 @@ const (
 	EventTypeMetadataUpdated    TokenEventType = "metadata_updated"
 	EventTypeEnrichmentUpdated  TokenEventType = "enrichment_updated"
 	EventTypeViewabilityChanged TokenEventType = "viewability_changed"
+	EventTypeSpamStatusChanged  TokenEventType = "spam_status_changed"
 )
 
 // TokenEvent represents the token_events table - unified event log for ownership and attribute changes
@@ -20,7 +21,7 @@ type TokenEvent struct {
 	ID uint64 `gorm:"column:id;primaryKey;autoIncrement"`
 	// TokenID references the token this event relates to
 	TokenID uint64 `gorm:"column:token_id;not null"`
-	// EventType indicates the type of event (acquired, released, metadata_updated, enrichment_updated, viewability_changed)
+	// EventType indicates the type of event (acquired, released, metadata_updated, enrichment_updated, viewability_changed, spam_status_changed)
 	EventType TokenEventType `gorm:"column:event_type;not null;type:text"`
 	// OwnerAddress is the blockchain address for ownership events (NULL for attribute events that broadcast to all owners)
 	OwnerAddress *string `gorm:"column:owner_address;type:text"`
@@ -33,6 +34,7 @@ type TokenEvent struct {
 	//   metadata_updated: {"changed_fields": ["name", "image_url"]}
 	//   enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
 	//   viewability_changed: {"is_viewable": true}
+	//   spam_status_changed: {"is_spam": true}
 	Metadata []byte `gorm:"column:metadata;type:jsonb"`
 	// CreatedAt is the timestamp when this event was recorded in the database
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
@@ -73,4 +75,9 @@ type EnrichmentUpdateMetadata struct {
 // ViewabilityChangeMetadata contains reference data for viewability change events
 type ViewabilityChangeMetadata struct {
 	IsViewable bool `json:"is_viewable"` // New viewability state
+}
+
+// SpamStatusChangeMetadata contains reference data for spam status change events
+type SpamStatusChangeMetadata struct {
+	IsSpam bool `json:"is_spam"` // New spam verdict
 }

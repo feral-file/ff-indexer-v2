@@ -72,6 +72,9 @@ type ListTokensQueryParams struct {
 	// Clients use this to poll for exactly the mints they triggered via IndexRelease.
 	MintNumbers       []int64 `form:"mint_number"`
 	IncludeUnviewable bool    `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
+	// IncludeSpam includes vendor-flagged spam tokens (is_spam=true). Default false so
+	// every consumer inherits the spam filter unless it explicitly opts in.
+	IncludeSpam bool `form:"include_spam,default=false"`
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`

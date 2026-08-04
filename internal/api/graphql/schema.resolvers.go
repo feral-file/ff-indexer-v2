@@ -373,7 +373,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 }
 
 // Tokens is the resolver for the tokens field.
-func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error) {
 	expansions := autoDetectTokenExpansions(ctx)
 	blockchains := convertChainStrings(chains)
 
@@ -493,7 +493,7 @@ func (r *queryResolver) Tokens(ctx context.Context, owners []string, chains []st
 		}
 	}
 
-	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, parsedReleaseVendor, parsedReleaseVendorSlug, mintNums, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, owners, blockchains, contractAddresses, tokenNumbers, convertToUint64(tokenIds), tokenCids, releaseIDPtr, parsedReleaseVendor, parsedReleaseVendorSlug, mintNums, ToNativeUint8(limit), ToNativeUint64(offset), includeUnviewable, includeSpam, sortBy, sortOrder, expansions)
 }
 
 // Release is the resolver for the release field.
@@ -690,15 +690,17 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 	sortBy := types.TokenSortByMintNumber
 	// Release membership is a data relationship, not a viewability gate — all members
 	// are returned so the list is stable across viewability state changes. This mirrors
-	// the REST GET /api/v1/releases/{id} contract.
+	// the REST GET /api/v1/releases/{id} contract. The same reasoning applies to the
+	// spam verdict: membership listings stay complete regardless of moderation state.
 	includeUnviewable := true
+	includeSpam := true
 
 	if sortOrder == nil {
 		defaultOrder := types.OrderAsc
 		sortOrder = &defaultOrder
 	}
 
-	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &includeSpam, &sortBy, sortOrder, expansions)
 }
 
 // Offset is the resolver for the offset field.

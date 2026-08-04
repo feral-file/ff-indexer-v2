@@ -14,11 +14,10 @@ import (
 	reflect "reflect"
 	time "time"
 
-	gomock "go.uber.org/mock/gomock"
-
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	store "github.com/feral-file/ff-indexer-v2/internal/store"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockStore is a mock of Store interface.
@@ -1097,6 +1096,21 @@ func (m *MockStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string,
 func (mr *MockStoreMockRecorder) UpdateTokenMediaHealthByURL(ctx, url, status, lastError any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenMediaHealthByURL", reflect.TypeOf((*MockStore)(nil).UpdateTokenMediaHealthByURL), ctx, url, status, lastError)
+}
+
+// UpdateTokenSpamStatus mocks base method.
+func (m *MockStore) UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isSpam bool) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateTokenSpamStatus", ctx, tokenID, isSpam)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateTokenSpamStatus indicates an expected call of UpdateTokenSpamStatus.
+func (mr *MockStoreMockRecorder) UpdateTokenSpamStatus(ctx, tokenID, isSpam any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenSpamStatus", reflect.TypeOf((*MockStore)(nil).UpdateTokenSpamStatus), ctx, tokenID, isSpam)
 }
 
 // UpdateTokenTransfer mocks base method.

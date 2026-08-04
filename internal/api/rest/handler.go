@@ -177,6 +177,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 	offset := &queryParams.Offset
 	expansions := queryParams.Expansions
 	includeUnviewable := &queryParams.IncludeUnviewable
+	includeSpam := &queryParams.IncludeSpam
 	sortBy := &queryParams.SortBy
 	sortOrder := &queryParams.SortOrder
 
@@ -201,6 +202,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 		limit,
 		offset,
 		includeUnviewable,
+		includeSpam,
 		sortBy,
 		sortOrder,
 		expansions,
@@ -287,6 +289,9 @@ func (h *handler) GetRelease(c *gin.Context) {
 	// GET /api/v1/tokens?release_id=... with include_unviewable omitted (default false).
 	sortBy := types.TokenSortByMintNumber
 	includeUnviewable := true
+	// Same reasoning for the spam verdict: membership listings stay complete
+	// regardless of moderation state.
+	includeSpam := true
 	members, err := h.executor.GetTokens(
 		c.Request.Context(),
 		nil,
@@ -302,6 +307,7 @@ func (h *handler) GetRelease(c *gin.Context) {
 		limit,
 		offset,
 		&includeUnviewable,
+		&includeSpam,
 		&sortBy,
 		sortOrder,
 		queryParams.Expansions,

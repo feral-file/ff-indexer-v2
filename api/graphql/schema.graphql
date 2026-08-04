@@ -177,6 +177,9 @@ type Token {
   current_owner: String
   burned: Boolean!
   viewable: Boolean!
+  # Vendor moderation verdict: true when OpenSea reports is_disabled or objkt reports
+  # flag=banned. Flagged tokens are excluded from queries unless include_spam: true.
+  is_spam: Boolean!
   last_provenance_timestamp: Time
   release_id: Uint64
   mint_number: Int
@@ -307,6 +310,9 @@ type Query {
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
+    # include_spam controls whether vendor-flagged spam tokens (OpenSea is_disabled /
+    # objkt banned) are returned. Default false: spam is filtered for every consumer.
+    include_spam: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
   ): TokenList

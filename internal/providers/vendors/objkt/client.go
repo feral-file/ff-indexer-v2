@@ -36,6 +36,11 @@ type FA struct {
 	CollectionType string `json:"collection_type"`
 }
 
+// FlagBanned is the objkt moderation flag value for banned tokens. The `flag` enum's
+// only observed values are "none" and "banned"; banned is objkt's active moderation
+// verdict and feeds the spam flag on the indexed token.
+const FlagBanned = "banned"
+
 // Token represents a token from objkt v3 API
 type Token struct {
 	Name         *string   `json:"name"`
@@ -47,6 +52,14 @@ type Token struct {
 	Metadata     any       `json:"metadata"`
 	Creators     []Creator `json:"creators"`
 	FA           *FA       `json:"fa"`
+	// Flag is objkt's moderation state for the token ("none", "banned"). "banned" means
+	// objkt actively removed the token from its marketplace — the spam signal for Tezos.
+	Flag *string `json:"flag"`
+}
+
+// IsBanned reports whether objkt has banned this token.
+func (t *Token) IsBanned() bool {
+	return t.Flag != nil && *t.Flag == FlagBanned
 }
 
 // Creator represents a creator/artist in objkt API
@@ -117,6 +130,7 @@ const getTokenQuery = `query GetToken($faContract: String!, $tokenId: String!) {
     artifact_uri
     description
     display_uri
+    flag
     mime
     name
     thumbnail_uri

@@ -43,7 +43,7 @@ type Executor interface {
 	// and slug respectively; they may be combined with releaseID (all ANDed).
 	// mintNumberFrom/To and sort_by=mint_number require at least one of releaseID,
 	// releaseVendor, or releaseVendorSlug.
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
 
 	// GetRelease retrieves a release by internal id without member tokens.
 	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
@@ -232,7 +232,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -245,6 +245,10 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 	if includeUnviewable == nil {
 		defaultIncludeUnviewable := false
 		includeUnviewable = &defaultIncludeUnviewable
+	}
+	if includeSpam == nil {
+		defaultIncludeSpam := false
+		includeSpam = &defaultIncludeSpam
 	}
 	if sortBy == nil {
 		defaultSortBy := types.TokenLatestProvenance
@@ -293,6 +297,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		ReleaseVendorSlug: releaseVendorSlug,
 		MintNumbers:       mintNumbers,
 		IncludeUnviewable: *includeUnviewable,
+		IncludeSpam:       *includeSpam,
 		SortBy:            storeSortBy,
 		SortOrder:         storeSortOrder,
 		Limit:             int(*limit) + 1, // limit+1 to detect whether there are more results

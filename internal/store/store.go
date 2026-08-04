@@ -200,11 +200,15 @@ type TokenQueryFilter struct {
 	// the mints they triggered via IndexRelease without re-fetching already-indexed positions.
 	// Max 50 entries (MAX_TOKEN_MINT_NUMBERS_FILTER); each entry must be >= 1.
 	MintNumbers       []int64
-	IncludeUnviewable bool        // If false (default), only return tokens with is_viewable=true
-	SortBy            TokenSortBy // Sort field: created_at, latest_provenance, or mint_number
-	SortOrder         SortOrder   // Sort order: asc or desc
-	Limit             int
-	Offset            uint64 // Offset for pagination
+	IncludeUnviewable bool // If false (default), only return tokens with is_viewable=true
+	// IncludeSpam controls whether vendor-flagged spam tokens (is_spam=true) are returned.
+	// False (default) excludes them — every consumer (app, FF1 dynamic playlists) inherits
+	// the spam filter unless it explicitly opts in to see flagged tokens.
+	IncludeSpam bool
+	SortBy      TokenSortBy // Sort field: created_at, latest_provenance, or mint_number
+	SortOrder   SortOrder   // Sort order: asc or desc
+	Limit       int
+	Offset      uint64 // Offset for pagination
 }
 
 // TokensWithMetadataResult represents a token with its metadata
@@ -386,6 +390,16 @@ type Store interface {
 	// BatchUpdateTokensViewability computes and updates is_viewable for multiple tokens in one query
 	// Returns a list of tokens whose viewability actually changed
 	BatchUpdateTokensViewability(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityChange, error)
+
+	// =============================================================================
+	// Token Spam Operations
+	// =============================================================================
+
+	// UpdateTokenSpamStatus sets the vendor spam verdict for a token. When the value
+	// actually changes it also inserts a broadcast spam_status_changed token event in
+	// the same transaction (mirroring the viewability pattern) so collection sync
+	// clients drop or restore the token. Returns whether the stored value changed.
+	UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isSpam bool) (bool, error)
 
 	// =============================================================================
 	// Token Ownership & Balances
