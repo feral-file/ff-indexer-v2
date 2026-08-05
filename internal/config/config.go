@@ -264,12 +264,23 @@ type MediaHealthSweeperConfig struct {
 	Worker       WorkerConfig  `mapstructure:"worker"`
 }
 
+// SpamSweeperConfig holds configuration for the spam verdict sweeper
+type SpamSweeperConfig struct {
+	BatchSize              int           `mapstructure:"batch_size"`
+	InitialRecheckInterval time.Duration `mapstructure:"initial_recheck_interval"`
+	MaxRecheckInterval     time.Duration `mapstructure:"max_recheck_interval"`
+	FailureBackoffInitial  time.Duration `mapstructure:"failure_backoff_initial"`
+	MaxConsecutiveFailures int           `mapstructure:"max_consecutive_failures"`
+	Worker                 WorkerConfig  `mapstructure:"worker"`
+}
+
 // SweeperConfig holds configuration for the sweeper program
 type SweeperConfig struct {
 	BaseConfig         `mapstructure:",squash"`
 	Database           DatabaseConfig           `mapstructure:"database"`
 	Jobs               JobsConfig               `mapstructure:"jobs"`
 	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
+	SpamSweeper        SpamSweeperConfig        `mapstructure:"spam_sweeper"`
 }
 
 // SecurityConfig holds process-wide security controls (optional sections keyed under `security:`).
@@ -309,6 +320,7 @@ type AppConfig struct {
 	Rasterizer             RasterizerConfig         `mapstructure:"rasterizer"`
 	Transform              TransformConfig          `mapstructure:"transform"`
 	MediaHealthSweeper     MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
+	SpamSweeper            SpamSweeperConfig        `mapstructure:"spam_sweeper"`
 
 	EthereumTokenSweepStartBlock uint64 `mapstructure:"ethereum_token_sweep_start_block"`
 	TezosTokenSweepStartBlock    uint64 `mapstructure:"tezos_token_sweep_start_block"`
@@ -486,13 +498,14 @@ func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
 	}
 }
 
-// ToSweeperConfig maps AppConfig for the media health sweeper.
+// ToSweeperConfig maps AppConfig for the sweepers (media health + spam verdict).
 func (a *AppConfig) ToSweeperConfig() *SweeperConfig {
 	return &SweeperConfig{
 		BaseConfig:         a.BaseConfig,
 		Database:           a.Database,
 		Jobs:               a.Jobs,
 		MediaHealthSweeper: a.MediaHealthSweeper,
+		SpamSweeper:        a.SpamSweeper,
 	}
 }
 
@@ -602,6 +615,18 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("media_health_sweeper.worker.pool_size", 5)
 	v.SetDefault("media_health_sweeper.worker.queue_size", 100)
 	v.SetDefault("media_health_sweeper.recheck_after", "24h")
+
+	// Spam verdict sweeper. initial_recheck_interval must stay in step with
+	// store.DefaultSpamRecheckInterval (the enricher's first-sweep schedule).
+	// Conservative batch size: each row costs one vendor API call against
+	// OpenSea's ~4 rps shared budget.
+	v.SetDefault("spam_sweeper.batch_size", 100)
+	v.SetDefault("spam_sweeper.worker.pool_size", 2)
+	v.SetDefault("spam_sweeper.worker.queue_size", 100)
+	v.SetDefault("spam_sweeper.initial_recheck_interval", "24h")
+	v.SetDefault("spam_sweeper.max_recheck_interval", "720h")
+	v.SetDefault("spam_sweeper.failure_backoff_initial", "1h")
+	v.SetDefault("spam_sweeper.max_consecutive_failures", 5)
 
 	// SSRF protection for media health HTTP client (recommended enabled in production).
 	v.SetDefault("security.ssrf_protection.enabled", true)
@@ -742,6 +767,14 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
 		"media_health_sweeper.uri.onchfs_gateways",
+		// Spam Verdict Sweeper config
+		"spam_sweeper.batch_size",
+		"spam_sweeper.worker.pool_size",
+		"spam_sweeper.worker.queue_size",
+		"spam_sweeper.initial_recheck_interval",
+		"spam_sweeper.max_recheck_interval",
+		"spam_sweeper.failure_backoff_initial",
+		"spam_sweeper.max_consecutive_failures",
 		"security.ssrf_protection.enabled",
 		"security.ssrf_protection.max_redirects",
 		"security.ssrf_protection.block_multicast",

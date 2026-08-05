@@ -23,6 +23,8 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -170,6 +172,22 @@ func run() int {
 	}
 	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue)
 
+	// Spam verdict sweeper: re-checks OpenSea/objkt moderation verdicts on the
+	// token_spam_verdicts schedule. Its vendor clients share rateLimiter with
+	// worker-core's enrichment clients, so the per-provider API budget (opensea,
+	// objkt) is enforced process-wide rather than per subsystem.
+	spamSweeperConfig := &sweeper.SpamVerdictSweeperConfig{
+		BatchSize:              sweeperCfg.SpamSweeper.BatchSize,
+		WorkerPoolSize:         sweeperCfg.SpamSweeper.Worker.WorkerPoolSize,
+		InitialRecheckInterval: sweeperCfg.SpamSweeper.InitialRecheckInterval,
+		MaxRecheckInterval:     sweeperCfg.SpamSweeper.MaxRecheckInterval,
+		FailureBackoffInitial:  sweeperCfg.SpamSweeper.FailureBackoffInitial,
+		MaxConsecutiveFailures: sweeperCfg.SpamSweeper.MaxConsecutiveFailures,
+	}
+	spamObjktClient := objkt.NewClient(httpClient, rateLimiter, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
+	spamOpenSeaClient := opensea.NewClient(httpClient, rateLimiter, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
+	spamSweeper := sweeper.NewSpamVerdictSweeper(spamSweeperConfig, dataStore, spamOpenSeaClient, spamObjktClient, clock)
+
 	// Worker-media: media task queue (requires CGO build).
 	wMediaCfg := cfg.ToWorkerMediaConfig()
 	runWorkerMedia, cleanupWorkerMedia, err := registerWorkerMedia(rootCtx, wMediaCfg, db)
@@ -208,6 +226,11 @@ func run() int {
 	g.Go(func() error {
 		componentCtx := logger.WithComponent(ctx, logger.ComponentSweeper)
 		return runSweeper(componentCtx, mediaSweeper)
+	})
+
+	g.Go(func() error {
+		componentCtx := logger.WithComponent(ctx, logger.ComponentSweeper)
+		return runSweeper(componentCtx, spamSweeper)
 	})
 
 	if err := waitForSubsystems(rootCtx, g, cleanupWorkerMedia, cleanupWorkerCore); err != nil {
@@ -292,10 +315,10 @@ func runHTTPServer(ctx context.Context, srv *server.Server) error {
 	}
 }
 
-func runSweeper(ctx context.Context, mediaSweeper sweeper.Sweeper) error {
+func runSweeper(ctx context.Context, s sweeper.Sweeper) error {
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- mediaSweeper.Start(ctx)
+		errCh <- s.Start(ctx)
 	}()
 	select {
 	case err := <-errCh:
@@ -303,7 +326,7 @@ func runSweeper(ctx context.Context, mediaSweeper sweeper.Sweeper) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = mediaSweeper.Stop(shutdownCtx)
+		_ = s.Stop(shutdownCtx)
 		return ctx.Err()
 	}
 }
