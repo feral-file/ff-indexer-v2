@@ -180,7 +180,8 @@ func (s *spamVerdictSweeper) runSweepCycle(ctx context.Context) error {
 }
 
 // sweepSource fetches and processes one source's due batch, returning how many
-// rows were due.
+// rows were due — or 0 when the source turned out to be unconfigured, so the
+// caller treats it as idle and sleeps (see the unconfigured note in checkItem).
 func (s *spamVerdictSweeper) sweepSource(ctx context.Context, source schema.SpamSource) (int, error) {
 	items, err := s.store.GetTokenSpamVerdictsDueForCheck(ctx, source, s.config.BatchSize)
 	if err != nil {
@@ -200,25 +201,39 @@ func (s *spamVerdictSweeper) sweepSource(ctx context.Context, source schema.Spam
 		pond.WithQueueSize(s.config.BatchSize),
 		pond.WithContext(ctx),
 	)
+	var unconfigured atomic.Bool
 	for _, item := range items {
 		s.pool.Submit(func() {
-			s.checkItem(ctx, source, item)
+			s.checkItem(ctx, source, item, &unconfigured)
 		})
 	}
 	s.pool.StopAndWait()
+
+	if unconfigured.Load() {
+		// Report idle: these rows were not processed and their next_check_at did
+		// not move, so counting them as due would keep runSweepCycle from
+		// sleeping and spin the same batch at full speed.
+		return 0, nil
+	}
 
 	return len(items), nil
 }
 
 // checkItem re-asks the vendor about one token and persists the outcome.
-func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem) {
+// unconfigured is set when the vendor turns out to have no API key, which is a
+// source-wide condition rather than a per-row failure.
+func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem, unconfigured *atomic.Bool) {
 	verdict, detail, err := s.fetchVendorVerdict(ctx, source, item)
 	if err != nil {
 		// ErrNoAPIKey means the whole source is unconfigured, not that this row
 		// failed: writing failure state would walk every row's backoff to the
-		// max for no reason. Leave rows untouched; they stay due until a key is
-		// configured. The cycle sleep keeps this from tight-looping.
+		// max for no reason. Leave rows untouched — they stay due until a key is
+		// configured — and flag the batch so the cycle treats the source as idle
+		// and sleeps. Without that flag the untouched rows stay due, the cycle
+		// never sleeps, and the batch respins with no HTTP call to throttle it
+		// (ErrNoAPIKey is returned before the request and the rate limiter).
 		if errors.Is(err, opensea.ErrNoAPIKey) {
+			unconfigured.Store(true)
 			logger.WarnCtx(ctx, "Skipping spam verdict re-check: vendor has no API key",
 				zap.String("source", source.String()))
 			return
@@ -302,13 +317,22 @@ func (s *spamVerdictSweeper) recordFailure(ctx context.Context, source schema.Sp
 // Flagged tokens poll at the fixed maximum (appeals are rare). Clean tokens
 // double their previous interval — derived as next_check_at − last_checked_at
 // from the row itself, so no interval column is needed — clamped to
-// [InitialRecheckInterval, MaxRecheckInterval]. A degenerate derivation (first
-// sweep after enrichment, clock skew) resets to the floor, which is the safe
-// direction: checking a token too often is a quota cost, too rarely is a
-// moderation gap.
+// [InitialRecheckInterval, MaxRecheckInterval].
+//
+// Constraints: the derivation is only valid when the row's next_check_at was
+// last set by a successful check. RecordTokenSpamCheckFailure advances
+// next_check_at while deliberately leaving last_checked_at frozen, so after any
+// failure the difference measures the failure backoff instead of the previous
+// success cadence — doubling that would push a clean token straight to the
+// 30-day maximum because a vendor had a transient outage. Rows carrying
+// failures therefore restart from the floor: checking too often costs quota,
+// checking too rarely is a moderation gap.
 func (s *spamVerdictSweeper) successInterval(item store.TokenSpamCheckItem, verdict bool) time.Duration {
 	if verdict {
 		return s.config.MaxRecheckInterval
+	}
+	if item.ConsecutiveFailures > 0 {
+		return s.config.InitialRecheckInterval
 	}
 	prev := item.NextCheckAt.Sub(item.LastCheckedAt)
 	next := 2 * prev
@@ -321,6 +345,13 @@ func (s *spamVerdictSweeper) successInterval(item store.TokenSpamCheckItem, verd
 	return next
 }
 
+// maxFailureShift bounds the failure backoff shift. A doubling past this would
+// overflow time.Duration (int64 nanoseconds ≈ 292 years) and wrap to a negative
+// or zero interval, scheduling the row in the past and respinning it every
+// cycle. Reached only under a misconfigured max_consecutive_failures, but the
+// failure mode is a hot loop, so it is clamped rather than trusted.
+const maxFailureShift = 40
+
 // failureInterval picks the next re-check delay after a failed check: the
 // initial failure backoff doubled per prior consecutive failure, pinned at
 // MaxRecheckInterval once MaxConsecutiveFailures is reached (permanently
@@ -330,8 +361,12 @@ func (s *spamVerdictSweeper) failureInterval(item store.TokenSpamCheckItem) time
 	if failures >= s.config.MaxConsecutiveFailures {
 		return s.config.MaxRecheckInterval
 	}
-	interval := s.config.FailureBackoffInitial << (failures - 1)
-	if interval > s.config.MaxRecheckInterval {
+	shift := failures - 1
+	if shift > maxFailureShift {
+		return s.config.MaxRecheckInterval
+	}
+	interval := s.config.FailureBackoffInitial << shift
+	if interval <= 0 || interval > s.config.MaxRecheckInterval {
 		return s.config.MaxRecheckInterval
 	}
 	return interval

@@ -63,13 +63,23 @@ late flags and reversals converge:
 - **Clean token**: previous interval (derived as `next_check_at − last_checked_at`
   from the row itself, no interval column) doubled, clamped to
   [`initial_recheck_interval` (24h), `max_recheck_interval` (720h)].
+- **Clean token with prior failures**: restarts at `initial_recheck_interval`. The
+  derivation above is only meaningful when `next_check_at` was last set by a
+  *successful* check — the failure path advances it while freezing
+  `last_checked_at`, so after an outage the difference measures the failure backoff.
+  Doubling that would demote a clean token to the 30-day cadence because a vendor
+  had a bad hour.
 - **Flagged token**: fixed `max_recheck_interval` — appeals are rare, poll slowly.
 - **Check failure**: `failure_backoff_initial` (1h) doubled per consecutive failure;
   once `max_consecutive_failures` (5) is reached the row pins at
   `max_recheck_interval` — permanently missing tokens stop burning API quota but
   never leave the queue for good.
 - **OpenSea `ErrNoAPIKey`**: source-wide condition, not a per-row failure — rows are
-  left untouched (they stay due until a key is configured).
+  left untouched (they stay due until a key is configured) and the source reports
+  itself idle for the cycle. That last part matters: untouched rows stay due, so
+  counting them as work would keep the cycle from sleeping, and `ErrNoAPIKey` is
+  returned before the HTTP request and the rate limiter, leaving nothing to throttle
+  the respin.
 
 Per-source queues (`GetTokenSpamVerdictsDueForCheck`) with a partial index
 `(source, next_check_at) WHERE next_check_at IS NOT NULL` keep one vendor's API quota

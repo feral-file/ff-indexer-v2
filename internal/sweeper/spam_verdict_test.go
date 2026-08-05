@@ -3,6 +3,8 @@ package sweeper_test
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,11 +45,19 @@ func spamSweeperTestConfig() *sweeper.SpamVerdictSweeperConfig {
 	}
 }
 
+// spamSweeperLoggerOnce guards the package-global logger init. Re-initializing
+// per test races with the previous test's still-draining sweeper goroutines,
+// which log through the same global on their way down.
+var spamSweeperLoggerOnce sync.Once
+
 // setupTestSpamSweeper creates all the mocks and sweeper for testing
 func setupTestSpamSweeper(t *testing.T) *testSpamSweeperMocks {
-	err := logger.Initialize(logger.Config{Debug: true})
-	if err != nil {
-		t.Fatalf("Failed to initialize logger: %v", err)
+	var initErr error
+	spamSweeperLoggerOnce.Do(func() {
+		initErr = logger.Initialize(logger.Config{Debug: true})
+	})
+	if initErr != nil {
+		t.Fatalf("Failed to initialize logger: %v", initErr)
 	}
 
 	ctrl := gomock.NewController(t)
@@ -296,6 +306,67 @@ func TestSpamVerdictSweeper_NoAPIKey_LeavesRowsUntouched(t *testing.T) {
 	runOneSweep(t, tm)
 }
 
+// TestSpamVerdictSweeper_NoAPIKey_DoesNotHotLoop pins the throttling half of the
+// unconfigured-vendor contract, which the "leaves rows untouched" test above
+// cannot see: because those rows keep their next_check_at, the same batch stays
+// due forever. If the cycle counted them as work it would never sleep, and
+// ErrNoAPIKey is returned before the HTTP request and the rate limiter, so
+// nothing else throttles the respin — the sweeper would saturate the database
+// with due-fetches. Here the store always reports the batch as due, so the only
+// thing that can bound the loop is the cycle sleep.
+func TestSpamVerdictSweeper_NoAPIKey_DoesNotHotLoop(t *testing.T) {
+	tm := setupTestSpamSweeper(t)
+	defer tearDownTestSpamSweeper(tm)
+
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	tm.clock.EXPECT().Now().Return(now).AnyTimes()
+
+	item := store.TokenSpamCheckItem{
+		TokenID:         5,
+		TokenCID:        testTokenCID("eip155:1", "erc721", "0xabc", "5"),
+		ContractAddress: "0xabc",
+		TokenNumber:     "5",
+		LastCheckedAt:   now.Add(-25 * time.Hour),
+		NextCheckAt:     now.Add(-1 * time.Hour),
+	}
+
+	var fetches atomic.Int32
+	tm.store.EXPECT().
+		GetTokenSpamVerdictsDueForCheck(gomock.Any(), schema.SpamSourceOpenSea, 10).
+		DoAndReturn(func(_ context.Context, _ schema.SpamSource, _ int) ([]store.TokenSpamCheckItem, error) {
+			fetches.Add(1)
+			return []store.TokenSpamCheckItem{item}, nil
+		}).
+		AnyTimes()
+	tm.store.EXPECT().
+		GetTokenSpamVerdictsDueForCheck(gomock.Any(), schema.SpamSourceObjkt, 10).
+		Return(nil, nil).
+		AnyTimes()
+	tm.openseaClient.EXPECT().
+		GetNFT(gomock.Any(), "0xabc", "5").
+		Return(nil, opensea.ErrNoAPIKey).
+		AnyTimes()
+	// The idle sleep must actually be taken; without it the loop respins freely.
+	tm.clock.EXPECT().
+		After(sweeper.SWEEP_CYCLE_INTERVAL).
+		DoAndReturn(func(_ time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				ch <- time.Now()
+			}()
+			return ch
+		}).
+		MinTimes(1)
+
+	runOneSweep(t, tm)
+
+	// ~100ms of running at a 20ms mocked sleep is a handful of cycles. A
+	// regression spins thousands.
+	assert.Less(t, fetches.Load(), int32(50),
+		"unconfigured vendor must not respin the due batch without sleeping")
+}
+
 func TestSpamVerdictSweeper_ObjktBanned(t *testing.T) {
 	tm := setupTestSpamSweeper(t)
 	defer tearDownTestSpamSweeper(tm)
@@ -327,6 +398,52 @@ func TestSpamVerdictSweeper_ObjktBanned(t *testing.T) {
 			assert.True(t, input.Verdict)
 			assert.JSONEq(t, `{"flag":"banned"}`, string(input.Detail))
 			return true, nil
+		})
+	expectIdleAfterFirstCycle(tm)
+
+	runOneSweep(t, tm)
+}
+
+// TestSpamVerdictSweeper_CleanVerdictAfterFailures_RestartsAtFloor pins that a
+// transient vendor outage cannot silently demote a clean token's cadence. The
+// failure path advances next_check_at while freezing last_checked_at, so the
+// usual "previous interval = next_check_at − last_checked_at" derivation would
+// measure the failure backoff instead — here 720h, which doubled and clamped
+// would schedule the next check 30 days out on a token that is being polled
+// precisely to catch a late takedown.
+func TestSpamVerdictSweeper_CleanVerdictAfterFailures_RestartsAtFloor(t *testing.T) {
+	tm := setupTestSpamSweeper(t)
+	defer tearDownTestSpamSweeper(tm)
+
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	tm.clock.EXPECT().Now().Return(now).AnyTimes()
+
+	item := store.TokenSpamCheckItem{
+		TokenID:         7,
+		TokenCID:        testTokenCID("eip155:1", "erc721", "0xabc", "7"),
+		ContractAddress: "0xabc",
+		TokenNumber:     "7",
+		Verdict:         false,
+		// Five prior failures pinned next_check_at at the 720h ceiling while
+		// last_checked_at stayed at the last successful confirmation.
+		ConsecutiveFailures: 5,
+		LastCheckedAt:       now.Add(-721 * time.Hour),
+		NextCheckAt:         now.Add(-1 * time.Hour),
+	}
+	tm.store.EXPECT().
+		GetTokenSpamVerdictsDueForCheck(gomock.Any(), schema.SpamSourceOpenSea, 10).
+		Return([]store.TokenSpamCheckItem{item}, nil).
+		Times(1)
+	tm.openseaClient.EXPECT().
+		GetNFT(gomock.Any(), "0xabc", "7").
+		Return(&opensea.NFTMetadata{IsDisabled: false}, nil)
+	tm.store.EXPECT().
+		UpsertTokenSpamVerdict(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.UpsertTokenSpamVerdictInput) (bool, error) {
+			require.NotNil(t, input.NextCheckAt)
+			assert.Equal(t, now.Add(24*time.Hour), *input.NextCheckAt,
+				"a recovered token restarts at the floor, not the failure ceiling")
+			return false, nil
 		})
 	expectIdleAfterFirstCycle(tm)
 
