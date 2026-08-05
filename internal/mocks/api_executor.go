@@ -13,12 +13,13 @@ import (
 	context "context"
 	reflect "reflect"
 
+	gomock "go.uber.org/mock/gomock"
+
 	dto "github.com/feral-file/ff-indexer-v2/internal/api/shared/dto"
 	executor "github.com/feral-file/ff-indexer-v2/internal/api/shared/executor"
 	types "github.com/feral-file/ff-indexer-v2/internal/api/shared/types"
 	domain "github.com/feral-file/ff-indexer-v2/internal/domain"
 	schema "github.com/feral-file/ff-indexer-v2/internal/store/schema"
-	gomock "go.uber.org/mock/gomock"
 )
 
 // MockAPIExecutor is a mock of Executor interface.

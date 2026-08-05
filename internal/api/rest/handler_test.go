@@ -198,3 +198,68 @@ func TestHandlerTriggerReleaseIndexingValidationError_InvalidJSON(t *testing.T) 
 
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }
+
+// ─── ListTokens handler ──────────────────────────────────────────────────────
+
+func TestHandlerListTokensWithIncludeSpam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	includeUnviewableFalse := false
+	includeSpamTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			&includeUnviewableFalse, &includeSpamTrue, gomock.Any(), gomock.Any(), gomock.Nil()).
+		Return(&dto.TokenListResponse{
+			Tokens: []dto.TokenResponse{{TokenCID: "test"}},
+		}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens?include_spam=true", nil)
+
+	h.ListTokens(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+// ─── GetRelease handler ──────────────────────────────────────────────────────
+
+func TestHandlerGetReleaseWithIncludeSpam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	releaseID := uint64(42)
+	mockExec.EXPECT().
+		GetRelease(gomock.Any(), releaseID).
+		Return(&dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}, nil)
+
+	includeSpamTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			gomock.Any(), &includeSpamTrue, gomock.Any(), gomock.Any(), gomock.Nil()).
+		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases/42", nil)
+	c.Params = append(c.Params, gin.Param{Key: "id", Value: "42"})
+
+	h.GetRelease(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
