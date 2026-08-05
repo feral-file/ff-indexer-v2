@@ -1658,10 +1658,9 @@ func TestEnhanceTokenMetadata_Success(t *testing.T) {
 			return nil
 		})
 
-	// Mock spam verdict persistence: no vendor flag on this token → is_spam=false, unchanged
-	mocks.store.EXPECT().
-		UpdateTokenSpamStatus(ctx, token.ID, false).
-		Return(false, nil)
+	// No UpdateTokenSpamStatus expectation: ArtBlocks publishes no moderation signal, so
+	// EnhancedMetadata.IsSpam stays nil and the verdict must be left untouched. gomock
+	// fails the test if the executor writes one anyway.
 
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
 
@@ -1710,9 +1709,6 @@ func TestEnhanceTokenMetadata_PersistsReleaseMembership(t *testing.T) {
 		UpsertEnrichmentSource(ctx, gomock.Any()).
 		Return(nil)
 	mocks.store.EXPECT().
-		UpdateTokenSpamStatus(ctx, token.ID, false).
-		Return(false, nil)
-	mocks.store.EXPECT().
 		UpsertRelease(ctx, schema.VendorArtBlocks, "0x1234567890123456789012345678901234567890-1", nil, nil, nil).
 		Return(&schema.Release{ID: 99}, nil)
 	mocks.store.EXPECT().
@@ -1747,7 +1743,7 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 		Vendor:     schema.VendorOpenSea,
 		VendorJSON: []byte(`{"is_disabled":true}`),
 		Name:       types.StringPtr("Visit ether-pool.net to claim rewards"),
-		IsSpam:     true,
+		IsSpam:     types.BoolPtr(true),
 	}
 
 	mocks.store.EXPECT().
@@ -1765,6 +1761,49 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 	mocks.store.EXPECT().
 		UpdateTokenSpamStatus(ctx, token.ID, true).
 		Return(true, nil)
+
+	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
+
+	assert.NoError(t, err)
+	assert.Equal(t, enhancedMetadata, result)
+}
+
+// TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched pins the tri-state
+// contract at the layer where getting it wrong is silent. A vendor that publishes no
+// moderation signal leaves IsSpam nil; writing its zero value instead would clear a real
+// flag whenever routing changes — e.g. a gentk flagged via the objkt fallback gets
+// un-flagged the moment fxhash starts indexing it. gomock fails on any unexpected
+// UpdateTokenSpamStatus call, which is the assertion here.
+func TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "1")
+
+	normalizedMetadata := &metadata.NormalizedMetadata{Name: "Gentk"}
+	token := &schema.Token{ID: 11, TokenCID: tokenCID.String()}
+
+	// fxhash enriches this token and reports no moderation verdict.
+	enhancedMetadata := &metadata.EnhancedMetadata{
+		Vendor:     schema.VendorFXHash,
+		VendorJSON: []byte(`{}`),
+		Name:       types.StringPtr("Gentk"),
+		IsSpam:     nil,
+	}
+
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(token, nil)
+	mocks.metadataEnhancer.EXPECT().
+		Enhance(ctx, tokenCID, normalizedMetadata).
+		Return(enhancedMetadata, nil)
+	mocks.metadataEnhancer.EXPECT().
+		VendorJsonHash(enhancedMetadata).
+		Return([]byte("hash"), nil)
+	mocks.store.EXPECT().
+		UpsertEnrichmentSource(ctx, gomock.Any()).
+		Return(nil)
 
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
 

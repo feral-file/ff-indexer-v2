@@ -225,6 +225,7 @@ CREATE TABLE token_events (
     --   metadata_updated: {"changed_fields": ["name", "image_url"]}
     --   enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
     --   viewability_changed: {"is_viewable": true}
+    --   spam_status_changed: {"is_spam": true, "token_cid": "eip155:1:erc721:0x...:1"}
     metadata JSONB,
     
     -- When this event was recorded in the database

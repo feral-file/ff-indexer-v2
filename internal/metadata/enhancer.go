@@ -48,10 +48,15 @@ type EnhancedMetadata struct {
 	MimeType     *string
 	Release      *ReleaseInfo
 	// IsSpam is the vendor moderation verdict: true when OpenSea reports the item
-	// disabled or objkt reports it banned. False for vendors without a moderation
-	// signal (fail-open) — trusted-publisher branches (ArtBlocks, Feral File, fxhash)
-	// never set it.
-	IsSpam bool
+	// disabled or objkt reports it banned, false when that same vendor reports it clean.
+	//
+	// nil means the enriching vendor publishes no moderation signal at all (ArtBlocks,
+	// Feral File, fxhash), which is NOT the same as a clean verdict and must not be
+	// persisted as one. A gentk that fxhash does not yet index falls through to objkt
+	// and can be flagged there; once fxhash catches up, that branch enriches the same
+	// token, and writing its zero value would silently clear a real moderation decision
+	// because vendor routing changed rather than because the verdict did.
+	IsSpam *bool
 }
 
 // Enhancer defines the interface for enhancing metadata from vendors
@@ -503,11 +508,12 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 	}
 
 	// Build enhanced metadata
+	objktBanned := token.IsBanned()
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorObjkt,
 		VendorJSON: vendorJSON,
 		// objkt's moderation verdict: banned tokens are spam on the display surface.
-		IsSpam: token.IsBanned(),
+		IsSpam: &objktBanned,
 	}
 
 	// Set the token name
@@ -640,13 +646,14 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 	}
 
 	// Build enhanced metadata
+	openSeaDisabled := nft.IsDisabled
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorOpenSea,
 		VendorJSON: vendorJSON,
 		// OpenSea's moderation verdict: disabled items (delisted from opensea.io) are
 		// spam on the display surface. is_suspicious (stolen-item reports) and is_nsfw
 		// (content rating) are deliberately NOT part of this verdict.
-		IsSpam: nft.IsDisabled,
+		IsSpam: &openSeaDisabled,
 	}
 
 	// Populate release info from the single-NFT response.

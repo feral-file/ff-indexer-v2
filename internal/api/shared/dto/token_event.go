@@ -15,7 +15,7 @@ type TokenEvent struct {
 	// TokenID: token ID
 	TokenID uint64 `json:"token_id"`
 
-	// EventType: acquired, released, metadata_updated, enrichment_updated, viewability_changed
+	// EventType: acquired, released, metadata_updated, enrichment_updated, viewability_changed, spam_status_changed
 	EventType string `json:"event_type"`
 
 	// OwnerAddress: owner address (NULL for attribute events that broadcast to all current owners)

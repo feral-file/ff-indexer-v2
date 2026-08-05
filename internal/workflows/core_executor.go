@@ -613,19 +613,25 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 		return nil, fmt.Errorf("failed to upsert enrichment source: %w", err)
 	}
 
-	// Persist the vendor spam verdict (OpenSea is_disabled / objkt banned). This runs on
-	// every enrichment so a token whose verdict flips (vendor takedown after indexing, or
-	// a reversed decision) converges on the next refresh; the store call is a no-op when
-	// the value is unchanged and broadcasts a spam_status_changed event when it isn't.
-	spamChanged, err := e.store.UpdateTokenSpamStatus(ctx, token.ID, enhanced.IsSpam)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update token spam status: %w", err)
-	}
-	if spamChanged {
-		logger.InfoCtx(ctx, "Token spam status changed",
-			zap.String("tokenCID", tokenCID.String()),
-			zap.Bool("is_spam", enhanced.IsSpam),
-			zap.String("vendor", string(enhanced.Vendor)))
+	// Persist the vendor spam verdict (OpenSea is_disabled / objkt banned) whenever the
+	// enriching vendor actually publishes one. Vendors without a moderation signal leave
+	// IsSpam nil and must not touch the stored verdict — writing their zero value would
+	// clear a real flag whenever vendor routing changes (see EnhancedMetadata.IsSpam).
+	//
+	// For vendors that do report, this runs on every enrichment, so a verdict that flips
+	// (a takedown after indexing, or a reversal) converges on the next refresh; the store
+	// call is a no-op when unchanged and broadcasts spam_status_changed when it isn't.
+	if enhanced.IsSpam != nil {
+		spamChanged, err := e.store.UpdateTokenSpamStatus(ctx, token.ID, *enhanced.IsSpam)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update token spam status: %w", err)
+		}
+		if spamChanged {
+			logger.InfoCtx(ctx, "Token spam status changed",
+				zap.String("tokenCID", tokenCID.String()),
+				zap.Bool("is_spam", *enhanced.IsSpam),
+				zap.String("vendor", string(enhanced.Vendor)))
+		}
 	}
 
 	if enhanced.Release != nil {

@@ -2417,6 +2417,7 @@ components:
             - metadata_updated: {"changed_fields": ["name", "image_url"]}
             - enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
             - viewability_changed: {"is_viewable": true}
+            - spam_status_changed: {"is_spam": true, "token_cid": "eip155:1:erc721:0x...:1"}
           example: {"tx_hash": "0xabc123...", "quantity": "1"}
 
     AddressIndexingJobInfo:

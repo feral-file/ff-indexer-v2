@@ -2419,3 +2419,108 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyBestEffort(t *testing.
 	assert.Nil(t, result.Release.Name, "name must be nil when API key is absent")
 	assert.Nil(t, result.Release.TotalMints, "total_mints must be nil when API key is absent")
 }
+
+// TestEnhancer_Enhance_SpamVerdict covers the vendor→verdict mapping end to end through
+// Enhance, which is the seam the rest of the spam feature hangs off. Asserting on the
+// clients and on the persistence layer separately leaves this mapping untested: deleting
+// the IsSpam assignments in enhanceObjkt/enhanceOpenSea keeps every other test green.
+//
+// It also pins the tri-state contract: vendors with no moderation signal must leave the
+// verdict nil, not report a clean one, so a routing change cannot clear a real flag.
+func TestEnhancer_Enhance_SpamVerdict(t *testing.T) {
+	banned := objkt.FlagBanned
+	none := "none"
+
+	t.Run("objkt banned flags the token", func(t *testing.T) {
+		result := enhanceObjktForSpam(t, &banned)
+		require.NotNil(t, result.IsSpam, "objkt publishes a moderation signal")
+		assert.True(t, *result.IsSpam)
+	})
+
+	t.Run("objkt none reports a clean verdict", func(t *testing.T) {
+		result := enhanceObjktForSpam(t, &none)
+		require.NotNil(t, result.IsSpam)
+		assert.False(t, *result.IsSpam, "an explicit clean verdict must be recorded so flags are reversible")
+	})
+
+	t.Run("objkt missing flag reports clean", func(t *testing.T) {
+		result := enhanceObjktForSpam(t, nil)
+		require.NotNil(t, result.IsSpam)
+		assert.False(t, *result.IsSpam)
+	})
+
+	t.Run("opensea disabled flags the token", func(t *testing.T) {
+		result := enhanceOpenSeaForSpam(t, true)
+		require.NotNil(t, result.IsSpam, "opensea publishes a moderation signal")
+		assert.True(t, *result.IsSpam)
+	})
+
+	t.Run("opensea enabled reports a clean verdict", func(t *testing.T) {
+		result := enhanceOpenSeaForSpam(t, false)
+		require.NotNil(t, result.IsSpam)
+		assert.False(t, *result.IsSpam)
+	})
+}
+
+// enhanceObjktForSpam routes a Tezos token through the default → objkt branch with the
+// given moderation flag and returns the enhanced metadata.
+func enhanceObjktForSpam(t *testing.T, flag *string) *metadata.EnhancedMetadata {
+	t.Helper()
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "1")
+	publisherName := registry.PublisherName("some_tezos_publisher")
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "t"},
+		Publisher: &metadata.Publisher{Name: &publisherName},
+	}
+
+	name := "Visit example.net to claim rewards"
+	mime := "image/png"
+	objktToken := &objkt.Token{Name: &name, Mime: &mime, Flag: flag}
+
+	mocks.objktClient.EXPECT().
+		GetToken(gomock.Any(), "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "1").
+		Return(objktToken, nil)
+	mocks.json.EXPECT().Marshal(objktToken).Return([]byte(`{}`), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, schema.VendorObjkt, result.Vendor)
+	return result
+}
+
+// enhanceOpenSeaForSpam routes an Ethereum token through the default → OpenSea branch
+// with the given is_disabled value and returns the enhanced metadata.
+func enhanceOpenSeaForSpam(t *testing.T, isDisabled bool) *metadata.EnhancedMetadata {
+	t.Helper()
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	contract := "0x29539a0109fec46b916a6125f352c629d9304c73"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contract, "0")
+	normalizedMeta := &metadata.NormalizedMetadata{Raw: map[string]interface{}{"name": "t"}}
+
+	name := "Visit example.net to claim rewards"
+	nft := &opensea.NFTMetadata{
+		Identifier: "0",
+		Contract:   contract,
+		Name:       &name,
+		IsDisabled: isDisabled,
+	}
+
+	// The contract arrives checksum-cased from the parsed CID; this test is about the
+	// verdict mapping, not address casing.
+	mocks.openseaClient.EXPECT().
+		GetNFT(gomock.Any(), gomock.Any(), "0").
+		Return(nft, nil)
+	mocks.json.EXPECT().Marshal(nft).Return([]byte(`{}`), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, schema.VendorOpenSea, result.Vendor)
+	return result
+}
