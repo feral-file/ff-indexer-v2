@@ -571,9 +571,10 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 	// Note this leaves any existing spam verdict untouched: a vendor that stops answering
 	// (missing API key, item dropped from its index) yields no signal, not an "all clear",
 	// so the last real moderation decision stands rather than being silently cleared by an
-	// outage. The cost is that a token flagged once can stay flagged while the vendor keeps
-	// skipping it, and today the enricher is the only writer of is_spam — there is no
-	// operator path to clear it. The deferred spam sweeper is where that reversal belongs.
+	// outage. Tokens in this state that already have a verdict row keep getting re-checked
+	// by the spam sweeper; tokens without one stay outside the sweep queue entirely — a
+	// verdict row is only ever created by a first successful vendor signal (coverage gap
+	// accepted and documented in docs/spam_filtering.md).
 	if enhanced == nil {
 		logger.InfoCtx(ctx, "No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
 		return nil, nil
@@ -615,16 +616,32 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 
 	// Persist the vendor spam verdict (OpenSea is_disabled / objkt banned) whenever the
 	// enriching vendor actually publishes one. Vendors without a moderation signal leave
-	// IsSpam nil and must not touch the stored verdict — writing their zero value would
+	// IsSpam nil and must not touch the stored verdicts — writing their zero value would
 	// clear a real flag whenever vendor routing changes (see EnhancedMetadata.IsSpam).
 	//
-	// For vendors that do report, this runs on every enrichment, so a verdict that flips
-	// (a takedown after indexing, or a reversal) converges on the next refresh; the store
-	// call is a no-op when unchanged and broadcasts spam_status_changed when it isn't.
+	// The verdict is recorded per source; the store recomputes the materialized
+	// tokens.is_spam from all sources (a feralfile row would win outright) and
+	// broadcasts spam_status_changed only when the combined value flips. Scheduling
+	// the first sweeper re-check at now+DefaultSpamRecheckInterval is what puts the
+	// token into the sweep queue — a fresh enrichment always resets that schedule
+	// (fresh signal, fresh schedule).
 	if enhanced.IsSpam != nil {
-		spamChanged, err := e.store.UpdateTokenSpamStatus(ctx, token.ID, *enhanced.IsSpam)
+		source, ok := schema.SpamSourceForVendor(enhanced.Vendor)
+		if !ok {
+			// Defensive: IsSpam set by a vendor with no mapped spam source would
+			// mean an enhancer branch and the source mapping went out of sync.
+			return nil, fmt.Errorf("vendor %s published a spam verdict but has no spam source", enhanced.Vendor)
+		}
+		nextCheck := e.clock.Now().Add(store.DefaultSpamRecheckInterval)
+		spamChanged, err := e.store.UpsertTokenSpamVerdict(ctx, store.UpsertTokenSpamVerdictInput{
+			TokenID:     token.ID,
+			Source:      source,
+			Verdict:     *enhanced.IsSpam,
+			Detail:      enhanced.SpamDetail,
+			NextCheckAt: &nextCheck,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to update token spam status: %w", err)
+			return nil, fmt.Errorf("failed to upsert token spam verdict: %w", err)
 		}
 		if spamChanged {
 			logger.InfoCtx(ctx, "Token spam status changed",

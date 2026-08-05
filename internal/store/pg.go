@@ -3243,43 +3243,6 @@ func (s *pgStore) GetTokenSpamVerdictsDueForCheck(ctx context.Context, source sc
 	return items, nil
 }
 
-// UpdateTokenSpamStatus sets the vendor spam verdict for a token, inserting a broadcast
-// spam_status_changed token event in the same transaction when the value actually changes.
-// The guarded UPDATE (is_spam != new value) keeps repeat enrichments idempotent: unchanged
-// verdicts touch nothing and emit nothing.
-//
-// Deprecated: superseded by UpsertTokenSpamVerdict; removed once the enricher call site migrates.
-func (s *pgStore) UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isSpam bool) (bool, error) {
-	changed := false
-
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Update only when the verdict differs from the stored value.
-		// RETURNING token_cid so the event can carry it.
-		var updated []struct {
-			TokenCID string `gorm:"column:token_cid"`
-		}
-		if err := tx.Raw(
-			`UPDATE tokens SET is_spam = ? WHERE id = ? AND is_spam != ? RETURNING token_cid`,
-			isSpam, tokenID, isSpam,
-		).Scan(&updated).Error; err != nil {
-			return fmt.Errorf("failed to update token spam status: %w", err)
-		}
-		if len(updated) == 0 {
-			// Either the token does not exist or the verdict is unchanged; both are no-ops.
-			return nil
-		}
-		changed = true
-
-		return insertSpamStatusEvent(tx, tokenID, updated[0].TokenCID, isSpam)
-	})
-
-	if err != nil {
-		return false, err
-	}
-
-	return changed, nil
-}
-
 // =============================================================================
 // Collection Sync Operations
 // =============================================================================

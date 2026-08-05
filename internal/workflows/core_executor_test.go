@@ -1658,8 +1658,8 @@ func TestEnhanceTokenMetadata_Success(t *testing.T) {
 			return nil
 		})
 
-	// No UpdateTokenSpamStatus expectation: ArtBlocks publishes no moderation signal, so
-	// EnhancedMetadata.IsSpam stays nil and the verdict must be left untouched. gomock
+	// No UpsertTokenSpamVerdict expectation: ArtBlocks publishes no moderation signal, so
+	// EnhancedMetadata.IsSpam stays nil and the verdicts must be left untouched. gomock
 	// fails the test if the executor writes one anyway.
 
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
@@ -1744,6 +1744,65 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 		VendorJSON: []byte(`{"is_disabled":true}`),
 		Name:       types.StringPtr("Visit ether-pool.net to claim rewards"),
 		IsSpam:     types.BoolPtr(true),
+		SpamDetail: []byte(`{"is_disabled":true}`),
+	}
+
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(token, nil)
+	mocks.metadataEnhancer.EXPECT().
+		Enhance(ctx, tokenCID, normalizedMetadata).
+		Return(enhancedMetadata, nil)
+	mocks.metadataEnhancer.EXPECT().
+		VendorJsonHash(enhancedMetadata).
+		Return([]byte("vendorhash123"), nil)
+	mocks.store.EXPECT().
+		UpsertEnrichmentSource(ctx, gomock.Any()).
+		Return(nil)
+	mocks.clock.EXPECT().Now().Return(now)
+	mocks.store.EXPECT().
+		UpsertTokenSpamVerdict(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.UpsertTokenSpamVerdictInput) (bool, error) {
+			assert.Equal(t, token.ID, input.TokenID)
+			assert.Equal(t, schema.SpamSourceOpenSea, input.Source, "vendor must map to its spam source")
+			assert.True(t, input.Verdict)
+			assert.JSONEq(t, `{"is_disabled":true}`, string(input.Detail))
+			// A fresh vendor signal always schedules the first sweeper re-check;
+			// this is what puts the token into the sweep queue.
+			require.NotNil(t, input.NextCheckAt)
+			assert.Equal(t, now.Add(store.DefaultSpamRecheckInterval), *input.NextCheckAt)
+			return true, nil
+		})
+
+	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
+
+	assert.NoError(t, err)
+	assert.Equal(t, enhancedMetadata, result)
+}
+
+// TestEnhanceTokenMetadata_PersistsCleanVerdict pins the reversal direction: a vendor
+// that previously flagged a token and now reports it clean must write verdict=false —
+// the un-flag path that lets an appealed takedown restore visibility. Only the store
+// recompute decides whether the combined is_spam actually flips (a feralfile pin could
+// hold it); the executor's job is just to pass the vendor's word through unmodified.
+func TestEnhanceTokenMetadata_PersistsCleanVerdict(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x29539a0109fec46b916a6125f352c629d9304c73", "0")
+
+	normalizedMetadata := &metadata.NormalizedMetadata{Name: "Rehabilitated artwork"}
+	token := &schema.Token{ID: 7, TokenCID: tokenCID.String()}
+
+	enhancedMetadata := &metadata.EnhancedMetadata{
+		Vendor:     schema.VendorOpenSea,
+		VendorJSON: []byte(`{"is_disabled":false}`),
+		Name:       types.StringPtr("Rehabilitated artwork"),
+		IsSpam:     types.BoolPtr(false),
+		SpamDetail: []byte(`{"is_disabled":false}`),
 	}
 
 	mocks.store.EXPECT().
@@ -1758,9 +1817,13 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 	mocks.store.EXPECT().
 		UpsertEnrichmentSource(ctx, gomock.Any()).
 		Return(nil)
+	mocks.clock.EXPECT().Now().Return(time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC))
 	mocks.store.EXPECT().
-		UpdateTokenSpamStatus(ctx, token.ID, true).
-		Return(true, nil)
+		UpsertTokenSpamVerdict(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.UpsertTokenSpamVerdictInput) (bool, error) {
+			assert.False(t, input.Verdict, "a clean vendor verdict must be written, not dropped")
+			return true, nil
+		})
 
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
 
@@ -1773,7 +1836,7 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 // moderation signal leaves IsSpam nil; writing its zero value instead would clear a real
 // flag whenever routing changes — e.g. a gentk flagged via the objkt fallback gets
 // un-flagged the moment fxhash starts indexing it. gomock fails on any unexpected
-// UpdateTokenSpamStatus call, which is the assertion here.
+// UpsertTokenSpamVerdict call, which is the assertion here.
 func TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)

@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -57,6 +58,10 @@ type EnhancedMetadata struct {
 	// token, and writing its zero value would silently clear a real moderation decision
 	// because vendor routing changed rather than because the verdict did.
 	IsSpam *bool
+	// SpamDetail carries the raw moderation fields behind IsSpam, and only those
+	// ({"is_disabled":true} / {"flag":"banned"}) — the full payload already lives in
+	// enrichment_sources.vendor_json. nil exactly when IsSpam is nil.
+	SpamDetail []byte
 }
 
 // Enhancer defines the interface for enhancing metadata from vendors
@@ -509,11 +514,19 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 
 	// Build enhanced metadata
 	objktBanned := token.IsBanned()
+	// stdlib json, not e.json: the vendor adapter is for canonicalizing whole
+	// payloads (hashing); this two-field detail cannot fail to marshal and must
+	// not disturb the adapter's mock expectations in tests.
+	spamDetail, err := json.Marshal(map[string]any{"flag": token.Flag})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal objkt spam detail: %w", err)
+	}
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorObjkt,
 		VendorJSON: vendorJSON,
 		// objkt's moderation verdict: banned tokens are spam on the display surface.
-		IsSpam: &objktBanned,
+		IsSpam:     &objktBanned,
+		SpamDetail: spamDetail,
 	}
 
 	// Set the token name
@@ -647,13 +660,20 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 
 	// Build enhanced metadata
 	openSeaDisabled := nft.IsDisabled
+	// stdlib json for the same reason as the objkt branch: tiny fixed detail,
+	// no canonicalization or mock-adapter involvement needed.
+	spamDetail, err := json.Marshal(map[string]any{"is_disabled": nft.IsDisabled})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal OpenSea spam detail: %w", err)
+	}
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorOpenSea,
 		VendorJSON: vendorJSON,
 		// OpenSea's moderation verdict: disabled items (delisted from opensea.io) are
 		// spam on the display surface. is_suspicious (stolen-item reports) and is_nsfw
 		// (content rating) are deliberately NOT part of this verdict.
-		IsSpam: &openSeaDisabled,
+		IsSpam:     &openSeaDisabled,
+		SpamDetail: spamDetail,
 	}
 
 	// Populate release info from the single-NFT response.

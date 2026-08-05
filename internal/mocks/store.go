@@ -1127,21 +1127,6 @@ func (mr *MockStoreMockRecorder) UpdateTokenMediaHealthByURL(ctx, url, status, l
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenMediaHealthByURL", reflect.TypeOf((*MockStore)(nil).UpdateTokenMediaHealthByURL), ctx, url, status, lastError)
 }
 
-// UpdateTokenSpamStatus mocks base method.
-func (m *MockStore) UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isSpam bool) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateTokenSpamStatus", ctx, tokenID, isSpam)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// UpdateTokenSpamStatus indicates an expected call of UpdateTokenSpamStatus.
-func (mr *MockStoreMockRecorder) UpdateTokenSpamStatus(ctx, tokenID, isSpam any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTokenSpamStatus", reflect.TypeOf((*MockStore)(nil).UpdateTokenSpamStatus), ctx, tokenID, isSpam)
-}
-
 // UpdateTokenTransfer mocks base method.
 func (m *MockStore) UpdateTokenTransfer(ctx context.Context, input store.UpdateTokenTransferInput) error {
 	m.ctrl.T.Helper()

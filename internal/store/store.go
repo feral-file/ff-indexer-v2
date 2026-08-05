@@ -454,15 +454,6 @@ type Store interface {
 	// vendor clients need. Rows with next_check_at NULL (feralfile) never appear.
 	GetTokenSpamVerdictsDueForCheck(ctx context.Context, source schema.SpamSource, limit int) ([]TokenSpamCheckItem, error)
 
-	// UpdateTokenSpamStatus sets the vendor spam verdict for a token. When the value
-	// actually changes it also inserts a broadcast spam_status_changed token event in
-	// the same transaction (mirroring the viewability pattern) so collection sync
-	// clients drop or restore the token. Returns whether the stored value changed.
-	//
-	// Deprecated: superseded by UpsertTokenSpamVerdict, which records the verdict
-	// per source before materializing. Removed once the enricher call site migrates.
-	UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isSpam bool) (bool, error)
-
 	// =============================================================================
 	// Token Ownership & Balances
 	// =============================================================================
