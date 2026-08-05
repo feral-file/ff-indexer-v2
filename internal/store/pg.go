@@ -3062,16 +3062,199 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 	return changes, nil
 }
 
+// insertSpamStatusEvent broadcasts a spam verdict change to all owners via the
+// collection sync feed.
+//
+// The payload carries token_cid, unlike viewability_changed which sends only the
+// new state. Sync clients key their local rows by CID but the event envelope
+// carries only the numeric token_id, so resolving one to the other means calling
+// back into tokens(...) — a lookup the spam filter excludes by default. Without
+// the CID here a client can observe "this token became spam" and still be unable
+// to identify which local row to drop.
+func insertSpamStatusEvent(tx *gorm.DB, tokenID uint64, tokenCID string, isSpam bool) error {
+	spamMeta := schema.SpamStatusChangeMetadata{
+		IsSpam:   isSpam,
+		TokenCID: tokenCID,
+	}
+	spamJSON, err := json.Marshal(spamMeta)
+	if err != nil {
+		return fmt.Errorf("failed to marshal spam status event: %w", err)
+	}
+
+	event := schema.TokenEvent{
+		TokenID:      tokenID,
+		EventType:    schema.EventTypeSpamStatusChanged,
+		OwnerAddress: nil, // Broadcast to all owners
+		OccurredAt:   time.Now(),
+		Metadata:     spamJSON,
+	}
+	if err := tx.Create(&event).Error; err != nil {
+		return fmt.Errorf("failed to create spam status event: %w", err)
+	}
+	return nil
+}
+
+// computeFinalSpamVerdict combines per-source verdict rows into the materialized
+// value for tokens.is_spam: a feralfile row wins outright in both directions
+// (true pins spam against vendor reversals, false whitelists against vendor
+// flags), otherwise any vendor saying spam makes the token spam.
+func computeFinalSpamVerdict(rows []schema.TokenSpamVerdict) bool {
+	vendorSpam := false
+	for _, row := range rows {
+		if row.Source == schema.SpamSourceFeralFile {
+			return row.Verdict
+		}
+		vendorSpam = vendorSpam || row.Verdict
+	}
+	return vendorSpam
+}
+
+// UpsertTokenSpamVerdict records one source's spam verdict and recomputes the
+// materialized tokens.is_spam in the same transaction.
+//
+// Reason: sources must never overwrite each other (OpenSea clearing its flag must
+// not clear a Feral File pin), so each writes its own row and the combined value
+// is always recomputed from the full row set.
+// Constraints: the tokens row is locked FOR UPDATE before any verdict write — all
+// writers take that lock first (uniform ordering, no deadlocks), which serializes
+// the read-all-rows/recompute step and prevents two concurrent writers from each
+// materializing a value computed from a row set missing the other's write.
+// Trade-offs: the lock is held across three cheap statements on one token; writer
+// concurrency per token is negligible (enricher, sweeper, future FF system).
+func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenSpamVerdictInput) (bool, error) {
+	changed := false
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Step 1: Lock the token row to serialize per-token recompute.
+		var current []struct {
+			TokenCID string `gorm:"column:token_cid"`
+			IsSpam   bool   `gorm:"column:is_spam"`
+		}
+		if err := tx.Raw(
+			`SELECT token_cid, is_spam FROM tokens WHERE id = ? FOR UPDATE`,
+			input.TokenID,
+		).Scan(&current).Error; err != nil {
+			return fmt.Errorf("failed to lock token for spam verdict: %w", err)
+		}
+		if len(current) == 0 {
+			// Token does not exist (deleted or never indexed): no-op.
+			return nil
+		}
+
+		// Step 2: Upsert this source's verdict row. last_checked_at advances
+		// unconditionally — an unchanged verdict is still a fresh confirmation —
+		// and a successful check clears the sweeper's failure state. Go-side
+		// time.Now() rather than SQL now(): matches the media health convention
+		// and stays observable inside a single transaction (PG now() is frozen
+		// at transaction start).
+		if err := tx.Exec(
+			`INSERT INTO token_spam_verdicts
+			    (token_id, source, verdict, detail, last_checked_at, next_check_at, consecutive_failures, last_error)
+			 VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
+			 ON CONFLICT (token_id, source) DO UPDATE SET
+			    verdict = EXCLUDED.verdict,
+			    detail = EXCLUDED.detail,
+			    last_checked_at = EXCLUDED.last_checked_at,
+			    next_check_at = EXCLUDED.next_check_at,
+			    consecutive_failures = 0,
+			    last_error = NULL`,
+			input.TokenID, input.Source, input.Verdict, input.Detail, time.Now(), input.NextCheckAt,
+		).Error; err != nil {
+			return fmt.Errorf("failed to upsert token spam verdict: %w", err)
+		}
+
+		// Step 3: Recompute from ALL rows, not just the one written — a vendor
+		// clearing its flag must not clear a feralfile pin, and vice versa.
+		var rows []schema.TokenSpamVerdict
+		if err := tx.Select("source", "verdict").
+			Where("token_id = ?", input.TokenID).
+			Find(&rows).Error; err != nil {
+			return fmt.Errorf("failed to read token spam verdicts: %w", err)
+		}
+		final := computeFinalSpamVerdict(rows)
+
+		// Step 4: Materialize + broadcast only when the combined verdict changed.
+		if final == current[0].IsSpam {
+			return nil
+		}
+		if err := tx.Exec(
+			`UPDATE tokens SET is_spam = ? WHERE id = ?`,
+			final, input.TokenID,
+		).Error; err != nil {
+			return fmt.Errorf("failed to update token spam status: %w", err)
+		}
+		if err := insertSpamStatusEvent(tx, input.TokenID, current[0].TokenCID, final); err != nil {
+			return err
+		}
+		changed = true
+
+		return nil
+	})
+
+	if err != nil {
+		return false, err
+	}
+
+	return changed, nil
+}
+
+// RecordTokenSpamCheckFailure bumps the sweeper failure state on an existing verdict row.
+//
+// Reason: a vendor error is not a verdict (tri-state), so the row's verdict and
+// last_checked_at stay untouched — only the scheduling state advances, otherwise
+// the sweeper would re-pick the same failing row every cycle.
+// Constraints: no tokens-row lock (nothing is recomputed); a missing row (token
+// CASCADE-deleted between batch fetch and this write) is a silent no-op.
+func (s *pgStore) RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time) error {
+	err := s.db.WithContext(ctx).Exec(
+		`UPDATE token_spam_verdicts
+		 SET consecutive_failures = consecutive_failures + 1, last_error = ?, next_check_at = ?
+		 WHERE token_id = ? AND source = ?`,
+		checkErr, nextCheckAt, tokenID, source,
+	).Error
+	if err != nil {
+		return fmt.Errorf("failed to record token spam check failure: %w", err)
+	}
+	return nil
+}
+
+// GetTokenSpamVerdictsDueForCheck returns due verdict rows for one source, oldest
+// first, joined with the token identity the vendor clients need to re-query.
+//
+// Per-source queues keep one vendor's API quota from starving another's; the
+// partial index idx_token_spam_verdicts_due serves exactly this predicate. No
+// SKIP LOCKED — a single sweeper instance owns the queue, matching the media
+// health sweeper's stance in GetURLsForChecking.
+func (s *pgStore) GetTokenSpamVerdictsDueForCheck(ctx context.Context, source schema.SpamSource, limit int) ([]TokenSpamCheckItem, error) {
+	var items []TokenSpamCheckItem
+	err := s.db.WithContext(ctx).Raw(
+		`SELECT v.token_id, t.token_cid, t.chain, t.contract_address, t.token_number,
+		        v.verdict, v.consecutive_failures, v.last_checked_at, v.next_check_at
+		 FROM token_spam_verdicts v
+		 JOIN tokens t ON t.id = v.token_id
+		 WHERE v.source = ? AND v.next_check_at <= now()
+		 ORDER BY v.next_check_at ASC
+		 LIMIT ?`,
+		source, limit,
+	).Scan(&items).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get token spam verdicts due for check: %w", err)
+	}
+	return items, nil
+}
+
 // UpdateTokenSpamStatus sets the vendor spam verdict for a token, inserting a broadcast
 // spam_status_changed token event in the same transaction when the value actually changes.
 // The guarded UPDATE (is_spam != new value) keeps repeat enrichments idempotent: unchanged
 // verdicts touch nothing and emit nothing.
+//
+// Deprecated: superseded by UpsertTokenSpamVerdict; removed once the enricher call site migrates.
 func (s *pgStore) UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isSpam bool) (bool, error) {
 	changed := false
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Step 1: Update only when the verdict differs from the stored value.
-		// RETURNING token_cid so the event can carry it (see step 2).
+		// Update only when the verdict differs from the stored value.
+		// RETURNING token_cid so the event can carry it.
 		var updated []struct {
 			TokenCID string `gorm:"column:token_cid"`
 		}
@@ -3087,35 +3270,7 @@ func (s *pgStore) UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isS
 		}
 		changed = true
 
-		// Step 2: Broadcast the change to all owners via the collection sync feed.
-		//
-		// The payload carries token_cid, unlike viewability_changed which sends only the
-		// new state. Sync clients key their local rows by CID but the event envelope
-		// carries only the numeric token_id, so resolving one to the other means calling
-		// back into tokens(...) — a lookup this very filter excludes by default. Without
-		// the CID here a client can observe "this token became spam" and still be unable
-		// to identify which local row to drop.
-		spamMeta := schema.SpamStatusChangeMetadata{
-			IsSpam:   isSpam,
-			TokenCID: updated[0].TokenCID,
-		}
-		spamJSON, err := json.Marshal(spamMeta)
-		if err != nil {
-			return fmt.Errorf("failed to marshal spam status event: %w", err)
-		}
-
-		event := schema.TokenEvent{
-			TokenID:      tokenID,
-			EventType:    schema.EventTypeSpamStatusChanged,
-			OwnerAddress: nil, // Broadcast to all owners
-			OccurredAt:   time.Now(),
-			Metadata:     spamJSON,
-		}
-		if err := tx.Create(&event).Error; err != nil {
-			return fmt.Errorf("failed to create spam status event: %w", err)
-		}
-
-		return nil
+		return insertSpamStatusEvent(tx, tokenID, updated[0].TokenCID, isSpam)
 	})
 
 	if err != nil {

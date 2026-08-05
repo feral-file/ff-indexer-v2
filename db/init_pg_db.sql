@@ -13,6 +13,7 @@ CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
 CREATE TYPE indexing_job_status AS ENUM ('running', 'paused', 'failed', 'completed', 'canceled');
 CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken');
 CREATE TYPE job_status AS ENUM ('pending', 'running', 'succeeded', 'failed', 'canceled');
+CREATE TYPE spam_source AS ENUM ('opensea', 'objkt', 'feralfile');  -- added in migration 021
 
 -- ============================================================================
 -- CORE TABLES
@@ -162,6 +163,26 @@ CREATE TABLE token_media_health (
     
     -- One health record per token per URL hash per source (using hash for efficiency)
     UNIQUE(token_id, media_url_hash, media_source)
+);
+
+-- Token Spam Verdicts table - Source of truth for spam moderation (added in migration 021)
+-- One row per (token, source); a source is a moderating vendor ('opensea', 'objkt') or
+-- Feral File's own future moderation system ('feralfile'). Rows exist only after a source
+-- has actually published a verdict — absence means "no opinion", deliberately distinct from
+-- a clean verdict (tri-state). tokens.is_spam is the materialized combination: a feralfile
+-- row wins outright in both directions, otherwise OR of vendor verdicts.
+CREATE TABLE token_spam_verdicts (
+    token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
+    source spam_source NOT NULL,
+    verdict BOOLEAN NOT NULL,
+    detail JSONB,                                        -- raw moderation fields only ({"is_disabled":true} / {"flag":"banned"})
+    last_checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),  -- last time the source CONFIRMED the stored verdict; failed checks do not touch it
+    next_check_at TIMESTAMPTZ,                           -- sweep due time; NULL = never swept (feralfile rows)
+    consecutive_failures INT NOT NULL DEFAULT 0,         -- sweeper error backoff state; reset on every successful check
+    last_error TEXT,                                     -- error message from the last failed check (NULL after a successful one)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (token_id, source)
 );
 
 -- Provenance Events table - Optional audit trail of blockchain events
@@ -403,6 +424,13 @@ CREATE INDEX idx_token_media_health_url_hash ON token_media_health (media_url_ha
 CREATE INDEX idx_token_media_health_last_checked ON token_media_health (last_checked_at);
 CREATE INDEX idx_token_media_health_token_status_source ON token_media_health (token_id, health_status, media_source);
 
+-- Token Spam Verdicts table indexes (added in migration 021)
+-- The spam sweeper's work queue: per-source so one vendor's API quota cannot starve
+-- another's, partial so feralfile rows (next_check_at IS NULL) never occupy the index.
+CREATE INDEX idx_token_spam_verdicts_due
+    ON token_spam_verdicts (source, next_check_at)
+    WHERE next_check_at IS NOT NULL;
+
 -- Token Events table indexes
 -- Primary index for owner-scoped sync queries (uses created_at for consistent pagination)
 CREATE INDEX idx_token_events_owner_created ON token_events(owner_address, created_at ASC, id ASC) WHERE owner_address IS NOT NULL;
@@ -524,6 +552,10 @@ CREATE TRIGGER update_media_assets_updated_at
 -- Apply updated_at trigger to token_media_health
 CREATE TRIGGER update_token_media_health_updated_at
     BEFORE UPDATE ON token_media_health
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_token_spam_verdicts_updated_at
+    BEFORE UPDATE ON token_spam_verdicts
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Apply updated_at trigger to provenance_events

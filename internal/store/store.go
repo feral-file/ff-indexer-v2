@@ -140,6 +140,42 @@ type TokenViewabilityChange struct {
 	NewViewable bool   `gorm:"column:new_viewable"`
 }
 
+// DefaultSpamRecheckInterval is the first re-check delay for a fresh vendor spam
+// verdict. Shared by the enricher (which schedules the first sweep when it creates
+// a verdict row) and the spam sweeper's default config so the two writers agree on
+// what "fresh" means without a workflows→sweeper import.
+const DefaultSpamRecheckInterval = 24 * time.Hour
+
+// UpsertTokenSpamVerdictInput represents the input for recording one source's spam verdict
+type UpsertTokenSpamVerdictInput struct {
+	TokenID uint64
+	Source  schema.SpamSource
+	Verdict bool
+	// Detail carries the raw moderation fields only ({"is_disabled":true} /
+	// {"flag":"banned"}); nil is allowed
+	Detail []byte
+	// NextCheckAt schedules the next sweeper re-check. The caller owns the policy
+	// (vendors pass now+interval, feralfile passes nil = never swept); the store
+	// stays mechanical and persists it as-is.
+	NextCheckAt *time.Time
+}
+
+// TokenSpamCheckItem is one due entry from the spam sweeper's work queue, joined
+// with the token identity the vendor clients need to re-query the verdict.
+type TokenSpamCheckItem struct {
+	TokenID             uint64       `gorm:"column:token_id"`
+	TokenCID            string       `gorm:"column:token_cid"`
+	Chain               domain.Chain `gorm:"column:chain"`
+	ContractAddress     string       `gorm:"column:contract_address"`
+	TokenNumber         string       `gorm:"column:token_number"`
+	Verdict             bool         `gorm:"column:verdict"`
+	ConsecutiveFailures int          `gorm:"column:consecutive_failures"`
+	// LastCheckedAt and NextCheckAt let the sweeper derive the previous re-check
+	// interval (NextCheckAt − LastCheckedAt) without storing an interval column.
+	LastCheckedAt time.Time `gorm:"column:last_checked_at"`
+	NextCheckAt   time.Time `gorm:"column:next_check_at"`
+}
+
 // UpdateTokenTransferInput represents the input for updating a token transfer (assumes token exists)
 type UpdateTokenTransferInput struct {
 	TokenCID              string
@@ -395,10 +431,36 @@ type Store interface {
 	// Token Spam Operations
 	// =============================================================================
 
+	// UpsertTokenSpamVerdict records one source's spam verdict and recomputes the
+	// materialized tokens.is_spam in a single transaction: a feralfile row wins
+	// outright (in both directions), otherwise OR of vendor verdicts. When the
+	// combined verdict actually changes it also inserts a broadcast
+	// spam_status_changed token event (mirroring the viewability pattern) so
+	// collection sync clients drop or restore the token. Serialized per token via
+	// a tokens-row lock so concurrent writers cannot recompute from stale row sets.
+	// Unknown token is a no-op. Returns whether the combined verdict changed.
+	UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenSpamVerdictInput) (bool, error)
+
+	// RecordTokenSpamCheckFailure bumps the sweeper failure state on an existing
+	// verdict row: increments consecutive_failures, stores the error, and advances
+	// next_check_at. It deliberately does NOT touch verdict or last_checked_at —
+	// a vendor error is not a verdict (tri-state), so the last real moderation
+	// decision stands. Missing row (e.g. token deleted mid-flight) is a no-op.
+	RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time) error
+
+	// GetTokenSpamVerdictsDueForCheck returns verdict rows due for a sweeper
+	// re-check for ONE source (per-source queues so one vendor's API quota cannot
+	// starve another's), oldest due first, joined with the token identity the
+	// vendor clients need. Rows with next_check_at NULL (feralfile) never appear.
+	GetTokenSpamVerdictsDueForCheck(ctx context.Context, source schema.SpamSource, limit int) ([]TokenSpamCheckItem, error)
+
 	// UpdateTokenSpamStatus sets the vendor spam verdict for a token. When the value
 	// actually changes it also inserts a broadcast spam_status_changed token event in
 	// the same transaction (mirroring the viewability pattern) so collection sync
 	// clients drop or restore the token. Returns whether the stored value changed.
+	//
+	// Deprecated: superseded by UpsertTokenSpamVerdict, which records the verdict
+	// per source before materializing. Removed once the enricher call site migrates.
 	UpdateTokenSpamStatus(ctx context.Context, tokenID uint64, isSpam bool) (bool, error)
 
 	// =============================================================================
