@@ -399,3 +399,57 @@ func TestQueryResolverTokenFilteredSpamIsNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 }
+
+// --- Release.members(include_spam) ---
+
+// TestReleaseResolverMembersDefaultsToExcludingSpam mirrors the REST contract:
+// members is a renderable TokenList, so it is filtered unless the caller opts in.
+// include_unviewable stays true — that one is a transient pipeline state, not a
+// content decision.
+func TestReleaseResolverMembersDefaultsToExcludingSpam(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	releaseID := uint64(42)
+	includeSpamFalse := false
+	includeUnviewableTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			&includeUnviewableTrue, &includeSpamFalse, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
+
+	obj := &dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}
+	_, err := resolver.Release().Members(context.Background(), obj, nil, nil, nil, nil)
+	require.NoError(t, err)
+}
+
+func TestReleaseResolverMembersForwardsIncludeSpam(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	releaseID := uint64(42)
+	includeSpamTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			gomock.Any(), &includeSpamTrue, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
+
+	obj := &dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}
+	optIn := true
+	_, err := resolver.Release().Members(context.Background(), obj, nil, nil, nil, &optIn)
+	require.NoError(t, err)
+}

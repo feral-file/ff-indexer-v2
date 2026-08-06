@@ -231,7 +231,12 @@ type Release {
   name: String
   # Declared max edition size from vendor; REST GET /api/v1/releases/{id} `total_mints`.
   total_mints: Int
-  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc): TokenList!
+  # include_spam includes vendor-flagged spam tokens among the members. Default
+  # false, matching every other token-returning path: `members` is a full
+  # TokenList a client can render directly, so it is filtered unless the caller
+  # opts in. Note members are still returned regardless of viewability — that is
+  # a transient pipeline state, whereas a spam verdict is a content decision.
+  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc, include_spam: Boolean = false): TokenList!
 }
 
 # Result of triggering indexing

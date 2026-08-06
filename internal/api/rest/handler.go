@@ -290,9 +290,12 @@ func (h *handler) GetRelease(c *gin.Context) {
 	// GET /api/v1/tokens?release_id=... with include_unviewable omitted (default false).
 	sortBy := types.TokenSortByMintNumber
 	includeUnviewable := true
-	// Same reasoning for the spam verdict: membership listings stay complete
-	// regardless of moderation state.
-	includeSpam := true
+	// The spam verdict does NOT get that exception. Unviewability is a transient
+	// pipeline state, but a moderation verdict is a decision about the content,
+	// and `members` is a full TokenList a client can render straight from — so it
+	// is filtered by default like every other token-returning path, with
+	// include_spam=true to opt back in.
+	includeSpam := queryParams.IncludeSpam
 	members, err := h.executor.GetTokens(
 		c.Request.Context(),
 		nil,

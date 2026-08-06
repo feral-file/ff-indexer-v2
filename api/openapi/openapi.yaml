@@ -719,6 +719,22 @@ paths:
               enum: [metadata, owners, owner_provenances, provenance_events, enrichment_source, display, media_asset]
           style: form
           explode: false
+        - name: include_spam
+          in: query
+          description: |
+            Include vendor-flagged spam members (OpenSea `is_disabled` / objkt
+            `flag=banned`). Defaults to `false`, the same as every other
+            token-returning path — `members` is a full token list a client can
+            render directly, so it is filtered unless the caller opts in.
+
+            Note this differs from viewability: members are returned regardless
+            of `is_viewable`, because that is a transient media-processing state,
+            whereas a moderation verdict is a decision about the content. A gap
+            between `total_mints` and the member count can therefore mean either
+            "indexing incomplete" or "some members filtered".
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Release with mint-ordered member tokens

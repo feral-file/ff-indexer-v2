@@ -209,7 +209,7 @@ type ComplexityRoot struct {
 
 	Release struct {
 		ID                func(childComplexity int) int
-		Members           func(childComplexity int, limit *Uint8, offset *Uint64, sortOrder *types.Order) int
+		Members           func(childComplexity int, limit *Uint8, offset *Uint64, sortOrder *types.Order, includeSpam *bool) int
 		Name              func(childComplexity int) int
 		TotalMints        func(childComplexity int) int
 		Vendor            func(childComplexity int) int
@@ -393,7 +393,7 @@ type QueryResolver interface {
 type ReleaseResolver interface {
 	ID(ctx context.Context, obj *dto.ReleaseResponse) (Uint64, error)
 
-	Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order) (*dto.TokenListResponse, error)
+	Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order, includeSpam *bool) (*dto.TokenListResponse, error)
 }
 type ReleaseListResolver interface {
 	Offset(ctx context.Context, obj *dto.ReleaseListResponse) (*Uint64, error)
@@ -1124,7 +1124,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Release.Members(childComplexity, args["limit"].(*Uint8), args["offset"].(*Uint64), args["sort_order"].(*types.Order)), true
+		return e.complexity.Release.Members(childComplexity, args["limit"].(*Uint8), args["offset"].(*Uint64), args["sort_order"].(*types.Order), args["include_spam"].(*bool)), true
 	case "Release.name":
 		if e.complexity.Release.Name == nil {
 			break
@@ -1973,7 +1973,12 @@ type Release {
   name: String
   # Declared max edition size from vendor; REST GET /api/v1/releases/{id} ` + "`" + `total_mints` + "`" + `.
   total_mints: Int
-  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc): TokenList!
+  # include_spam includes vendor-flagged spam tokens among the members. Default
+  # false, matching every other token-returning path: ` + "`" + `members` + "`" + ` is a full
+  # TokenList a client can render directly, so it is filtered unless the caller
+  # opts in. Note members are still returned regardless of viewability — that is
+  # a transient pipeline state, whereas a spam verdict is a content decision.
+  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc, include_spam: Boolean = false): TokenList!
 }
 
 # Result of triggering indexing
@@ -2611,6 +2616,11 @@ func (ec *executionContext) field_Release_members_args(ctx context.Context, rawA
 		return nil, err
 	}
 	args["sort_order"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "include_spam", ec.unmarshalOBoolean2ᚖbool)
+	if err != nil {
+		return nil, err
+	}
+	args["include_spam"] = arg3
 	return args, nil
 }
 
@@ -6158,7 +6168,7 @@ func (ec *executionContext) _Release_members(ctx context.Context, field graphql.
 		ec.fieldContext_Release_members,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Release().Members(ctx, obj, fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["sort_order"].(*types.Order))
+			return ec.resolvers.Release().Members(ctx, obj, fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["sort_order"].(*types.Order), fc.Args["include_spam"].(*bool))
 		},
 		nil,
 		ec.marshalNTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,

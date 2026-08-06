@@ -269,6 +269,11 @@ type GetReleaseQueryParams struct {
 	Offset     uint64            `form:"offset,default=0"`
 	SortOrder  types.Order       `form:"sort_order,default=asc"`
 	Expansions []types.Expansion `form:"expand"`
+	// IncludeSpam includes vendor-flagged spam tokens among the members.
+	// Default false, the same as every other token-returning read path —
+	// `members` is a full TokenList that a client can render directly, so an
+	// exception here would be one more way for a flagged token to reach a wall.
+	IncludeSpam bool `form:"include_spam,default=false"`
 }
 
 // Validate validates the query parameters for GET /releases/:id

@@ -669,7 +669,7 @@ func (r *releaseResolver) ID(ctx context.Context, obj *dto.ReleaseResponse) (Uin
 }
 
 // Members is the resolver for the members field.
-func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order) (*dto.TokenListResponse, error) {
+func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order, includeSpam *bool) (*dto.TokenListResponse, error) {
 	if obj == nil {
 		return nil, apierrors.NewValidationError("Release is required")
 	}
@@ -690,17 +690,19 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 	sortBy := types.TokenSortByMintNumber
 	// Release membership is a data relationship, not a viewability gate — all members
 	// are returned so the list is stable across viewability state changes. This mirrors
-	// the REST GET /api/v1/releases/{id} contract. The same reasoning applies to the
-	// spam verdict: membership listings stay complete regardless of moderation state.
+	// the REST GET /api/v1/releases/{id} contract. The spam verdict does not get that
+	// exception: viewability is a transient pipeline state, a moderation verdict is a
+	// decision about the content, and members is a renderable TokenList — so it is
+	// filtered by default with an explicit opt-in.
 	includeUnviewable := true
-	includeSpam := true
+	filterSpam := includeSpam != nil && *includeSpam
 
 	if sortOrder == nil {
 		defaultOrder := types.OrderAsc
 		sortOrder = &defaultOrder
 	}
 
-	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &includeSpam, &sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &filterSpam, &sortBy, sortOrder, expansions)
 }
 
 // Offset is the resolver for the offset field.

@@ -232,7 +232,46 @@ func TestHandlerListTokensWithIncludeSpam(t *testing.T) {
 
 // ─── GetRelease handler ──────────────────────────────────────────────────────
 
-func TestHandlerGetReleaseWithIncludeSpam(t *testing.T) {
+// TestHandlerGetReleaseDefaultsToExcludingSpam pins that release membership is
+// filtered like every other token-returning path. `members` is a full TokenList a
+// client can render straight from, so an exception here would be one more route
+// for a flagged token to reach a wall. Note this differs from include_unviewable,
+// which stays true: unviewability is a transient pipeline state, a moderation
+// verdict is a decision about the content.
+func TestHandlerGetReleaseDefaultsToExcludingSpam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	releaseID := uint64(42)
+	mockExec.EXPECT().
+		GetRelease(gomock.Any(), releaseID).
+		Return(&dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}, nil)
+
+	includeSpamFalse := false
+	includeUnviewableTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			&includeUnviewableTrue, &includeSpamFalse, gomock.Any(), gomock.Any(), gomock.Nil()).
+		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases/42", nil)
+	c.Params = append(c.Params, gin.Param{Key: "id", Value: "42"})
+
+	h.GetRelease(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestHandlerGetReleaseForwardsIncludeSpam(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctrl := gomock.NewController(t)
@@ -256,7 +295,7 @@ func TestHandlerGetReleaseWithIncludeSpam(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases/42", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases/42?include_spam=true", nil)
 	c.Params = append(c.Params, gin.Param{Key: "id", Value: "42"})
 
 	h.GetRelease(c)
