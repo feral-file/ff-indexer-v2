@@ -129,12 +129,17 @@ type WorkerCoreConfig struct {
 	URI         URIConfig         `mapstructure:"uri"`
 	RateLimiter RateLimiterConfig `mapstructure:"rate_limiter"`
 	// Security mirrors AppConfig.security for token-worker outbound HTTP (metadata / URI resolution).
-	Security                     SecurityConfig `mapstructure:"security"`
-	MediaEnabled                 bool           `mapstructure:"media_enabled"`
-	EthereumTokenSweepStartBlock uint64         `mapstructure:"ethereum_token_sweep_start_block"`
-	TezosTokenSweepStartBlock    uint64         `mapstructure:"tezos_token_sweep_start_block"`
-	PublisherRegistryPath        string         `mapstructure:"publisher_registry_path"`
-	BlacklistPath                string         `mapstructure:"blacklist_path"`
+	Security SecurityConfig `mapstructure:"security"`
+	// SpamSweeper is mirrored here because the enricher schedules a fresh spam
+	// verdict's first sweeper re-check from spam_sweeper.initial_recheck_interval —
+	// the writer and the sweeper must share one knob or the operator guidance to
+	// raise it (see the 021_reindex runbook) silently does nothing.
+	SpamSweeper                  SpamSweeperConfig `mapstructure:"spam_sweeper"`
+	MediaEnabled                 bool              `mapstructure:"media_enabled"`
+	EthereumTokenSweepStartBlock uint64            `mapstructure:"ethereum_token_sweep_start_block"`
+	TezosTokenSweepStartBlock    uint64            `mapstructure:"tezos_token_sweep_start_block"`
+	PublisherRegistryPath        string            `mapstructure:"publisher_registry_path"`
+	BlacklistPath                string            `mapstructure:"blacklist_path"`
 
 	// Budgeted Indexing Mode Configuration
 	BudgetedIndexingEnabled           bool `mapstructure:"budgeted_indexing_enabled"`
@@ -437,6 +442,53 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 		return fmt.Errorf("missing required config values: %s", strings.Join(missingFields, ", "))
 	}
 
+	return validateSpamSweeperConfig(&cfg.SpamSweeper)
+}
+
+// validateSpamSweeperConfig rejects spam sweeper settings whose failure mode is a
+// vendor-quota burn loop rather than a visible startup error.
+//
+// Reason: the sweeper's scheduling math assumes positive intervals — a zero or
+// negative max_recheck_interval schedules every successful flagged check as
+// immediately due again, and a non-positive failure_backoff_initial does the same
+// after transient vendor errors. Those loops run at the vendor rate limit, so they
+// silently spend the shared OpenSea/objkt budget instead of crashing. The same
+// class of bug was fixed three separate times in the sweeper's own loop logic;
+// this closes the configuration route into it. Constraints: only spam_sweeper.*
+// is validated here — the media health sweeper's settings predate this branch and
+// keep their existing (unvalidated) behavior.
+func validateSpamSweeperConfig(c *SpamSweeperConfig) error {
+	invalid := make([]string, 0)
+
+	if c.BatchSize < 1 {
+		invalid = append(invalid, "spam_sweeper.batch_size must be at least 1")
+	}
+	if c.Worker.WorkerPoolSize < 1 {
+		invalid = append(invalid, "spam_sweeper.worker.pool_size must be at least 1")
+	}
+	if c.InitialRecheckInterval <= 0 {
+		invalid = append(invalid, "spam_sweeper.initial_recheck_interval must be positive")
+	}
+	if c.MaxRecheckInterval <= 0 {
+		invalid = append(invalid, "spam_sweeper.max_recheck_interval must be positive")
+	}
+	if c.FailureBackoffInitial <= 0 {
+		invalid = append(invalid, "spam_sweeper.failure_backoff_initial must be positive")
+	}
+	if c.MaxConsecutiveFailures < 1 {
+		invalid = append(invalid, "spam_sweeper.max_consecutive_failures must be at least 1")
+	}
+	// Relationship checks only make sense once both sides are individually valid.
+	if c.InitialRecheckInterval > 0 && c.MaxRecheckInterval > 0 && c.InitialRecheckInterval > c.MaxRecheckInterval {
+		invalid = append(invalid, "spam_sweeper.initial_recheck_interval must not exceed spam_sweeper.max_recheck_interval")
+	}
+	if c.FailureBackoffInitial > 0 && c.MaxRecheckInterval > 0 && c.FailureBackoffInitial > c.MaxRecheckInterval {
+		invalid = append(invalid, "spam_sweeper.failure_backoff_initial must not exceed spam_sweeper.max_recheck_interval")
+	}
+
+	if len(invalid) > 0 {
+		return fmt.Errorf("invalid config values: %s", strings.Join(invalid, "; "))
+	}
 	return nil
 }
 
@@ -466,6 +518,7 @@ func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
 		URI:                                a.URI,
 		RateLimiter:                        a.RateLimiter,
 		Security:                           a.Security,
+		SpamSweeper:                        a.SpamSweeper,
 		MediaEnabled:                       a.MediaEnabled,
 		EthereumTokenSweepStartBlock:       a.EthereumTokenSweepStartBlock,
 		TezosTokenSweepStartBlock:          a.TezosTokenSweepStartBlock,
@@ -616,10 +669,11 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("media_health_sweeper.worker.queue_size", 100)
 	v.SetDefault("media_health_sweeper.recheck_after", "24h")
 
-	// Spam verdict sweeper. initial_recheck_interval must stay in step with
-	// store.DefaultSpamRecheckInterval (the enricher's first-sweep schedule).
-	// Conservative batch size: each row costs one vendor API call against
-	// OpenSea's ~4 rps shared budget.
+	// Spam verdict sweeper. initial_recheck_interval is the single knob for a
+	// fresh verdict's first re-check — the enricher and the sweeper both read it
+	// at runtime; its default is anchored to store.DefaultSpamRecheckInterval
+	// (enforced by a config test). Conservative batch size: each row costs one
+	// vendor API call against OpenSea's ~4 rps shared budget.
 	v.SetDefault("spam_sweeper.batch_size", 100)
 	v.SetDefault("spam_sweeper.worker.pool_size", 2)
 	v.SetDefault("spam_sweeper.worker.queue_size", 100)

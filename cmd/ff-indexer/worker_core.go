@@ -152,7 +152,8 @@ func registerWorkerCore(
 		ioAdapter,
 		blacklistRegistry,
 		urlChecker,
-		dataURIChecker)
+		dataURIChecker,
+		cfg.SpamSweeper.InitialRecheckInterval)
 
 	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)
 

@@ -182,11 +182,18 @@ type coreExecutor struct {
 	blacklist        registry.BlacklistRegistry
 	urlChecker       uri.URLChecker
 	dataURIChecker   uri.DataURIChecker
+	// spamRecheckInterval schedules a fresh vendor spam verdict's first sweeper
+	// re-check (spam_sweeper.initial_recheck_interval). Threaded from config
+	// rather than read from store.DefaultSpamRecheckInterval so the operator
+	// knob actually reaches the writer — the deploy runbook tells operators to
+	// raise it to soften the first sweep after the 021_reindex backfill, which
+	// only works if the enricher honors it.
+	spamRecheckInterval time.Duration
 }
 
 // NewCoreExecutor creates a new core executor instance.
 func NewCoreExecutor(
-	store store.Store,
+	st store.Store,
 	metadataResolver metadata.Resolver,
 	metadataEnhancer metadata.Enhancer,
 	ethClient ethereum.EthereumClient,
@@ -198,21 +205,28 @@ func NewCoreExecutor(
 	blacklist registry.BlacklistRegistry,
 	urlChecker uri.URLChecker,
 	dataURIChecker uri.DataURIChecker,
-
+	spamRecheckInterval time.Duration,
 ) CoreExecutor {
+	// Non-positive means the caller did not thread a configured value (zero-value
+	// struct in tests, or a future call site that predates the knob). Fall back to
+	// the package default rather than scheduling re-checks in the past.
+	if spamRecheckInterval <= 0 {
+		spamRecheckInterval = store.DefaultSpamRecheckInterval
+	}
 	return &coreExecutor{
-		store:            store,
-		metadataResolver: metadataResolver,
-		metadataEnhancer: metadataEnhancer,
-		ethClient:        ethClient,
-		tzktClient:       tzktClient,
-		json:             jsonAdapter,
-		clock:            clock,
-		httpClient:       httpClient,
-		io:               io,
-		blacklist:        blacklist,
-		urlChecker:       urlChecker,
-		dataURIChecker:   dataURIChecker,
+		store:               st,
+		metadataResolver:    metadataResolver,
+		metadataEnhancer:    metadataEnhancer,
+		ethClient:           ethClient,
+		tzktClient:          tzktClient,
+		json:                jsonAdapter,
+		clock:               clock,
+		httpClient:          httpClient,
+		io:                  io,
+		blacklist:           blacklist,
+		urlChecker:          urlChecker,
+		dataURIChecker:      dataURIChecker,
+		spamRecheckInterval: spamRecheckInterval,
 	}
 }
 
@@ -622,9 +636,10 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 	// The verdict is recorded per source; the store recomputes the materialized
 	// tokens.is_spam from all sources (a feralfile row would win outright) and
 	// broadcasts spam_status_changed only when the combined value flips. Scheduling
-	// the first sweeper re-check at now+DefaultSpamRecheckInterval is what puts the
-	// token into the sweep queue — a fresh enrichment always resets that schedule
-	// (fresh signal, fresh schedule).
+	// the first sweeper re-check at now+spamRecheckInterval (the configured
+	// spam_sweeper.initial_recheck_interval) is what puts the token into the sweep
+	// queue — a fresh enrichment always resets that schedule (fresh signal, fresh
+	// schedule).
 	if enhanced.IsSpam != nil {
 		source, ok := schema.SpamSourceForVendor(enhanced.Vendor)
 		if !ok {
@@ -632,7 +647,7 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 			// mean an enhancer branch and the source mapping went out of sync.
 			return nil, fmt.Errorf("vendor %s published a spam verdict but has no spam source", enhanced.Vendor)
 		}
-		nextCheck := e.clock.Now().Add(store.DefaultSpamRecheckInterval)
+		nextCheck := e.clock.Now().Add(e.spamRecheckInterval)
 		spamChanged, err := e.store.UpsertTokenSpamVerdict(ctx, store.UpsertTokenSpamVerdictInput{
 			TokenID:     token.ID,
 			Source:      source,

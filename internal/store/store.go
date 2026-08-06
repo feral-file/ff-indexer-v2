@@ -140,10 +140,13 @@ type TokenViewabilityChange struct {
 	NewViewable bool   `gorm:"column:new_viewable"`
 }
 
-// DefaultSpamRecheckInterval is the first re-check delay for a fresh vendor spam
-// verdict. Shared by the enricher (which schedules the first sweep when it creates
-// a verdict row) and the spam sweeper's default config so the two writers agree on
-// what "fresh" means without a workflows→sweeper import.
+// DefaultSpamRecheckInterval is the default value of
+// spam_sweeper.initial_recheck_interval — the first re-check delay for a fresh
+// vendor spam verdict. Both writers (the enricher when it creates a verdict row,
+// the spam sweeper as its clean-token floor) read the configured value at
+// runtime; this constant only anchors the config default and serves as the
+// enricher's fallback when no configured value was threaded in. Operators tune
+// the config key, not this constant.
 const DefaultSpamRecheckInterval = 24 * time.Hour
 
 // UpsertTokenSpamVerdictInput represents the input for recording one source's spam verdict

@@ -49,7 +49,7 @@ mistake is worse than letting spam through until the next sweep.
 
 | Writer | Source | When |
 |--------|--------|------|
-| Enricher (`EnhanceTokenMetadata`) | `opensea` / `objkt` | Every enrichment where the vendor publishes a moderation signal; schedules the first sweep at now + `store.DefaultSpamRecheckInterval` (fresh signal → fresh schedule) |
+| Enricher (`EnhanceTokenMetadata`) | `opensea` / `objkt` | Every enrichment where the vendor publishes a moderation signal; schedules the first sweep at now + the configured `spam_sweeper.initial_recheck_interval` (fresh signal → fresh schedule) |
 | Spam verdict sweeper (`internal/sweeper/spam_verdict.go`) | `opensea` / `objkt` | Rows due per `next_check_at`, per-source queues |
 | Future FF moderation system | `feralfile` | **Reserved — no writer exists yet.** User reports, operator decisions, or any FF-side pipeline slots in as just another `UpsertTokenSpamVerdict` caller with no schema change. `feralfile` rows carry `next_check_at = NULL` so the sweeper never touches them |
 
@@ -86,8 +86,10 @@ Per-source queues (`GetTokenSpamVerdictsDueForCheck`) with a partial index
 from starving another's. The sweeper's vendor clients share the process-wide rate
 limiter with the enricher, so the per-provider budget holds across subsystems.
 
-Config: `spam_sweeper.*` (see `config/.env`); `initial_recheck_interval` must stay in
-step with `store.DefaultSpamRecheckInterval`.
+Config: `spam_sweeper.*` (see `config/.env`). `initial_recheck_interval` is the single
+knob for a fresh verdict's first re-check — the enricher and the sweeper both read it
+at runtime (its default is anchored to `store.DefaultSpamRecheckInterval` by a config
+test), so raising it genuinely reschedules newly written verdicts.
 
 ## Backfill at deploy
 

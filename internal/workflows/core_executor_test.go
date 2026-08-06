@@ -31,6 +31,13 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
+// testSpamRecheckInterval is the spam re-check interval injected into every test
+// executor. Deliberately different from store.DefaultSpamRecheckInterval (24h):
+// assertions against it prove the configured value flows through to the verdict
+// writer, where an assertion against the default could pass even if the executor
+// ignored its configuration and used the constant.
+const testSpamRecheckInterval = 36 * time.Hour
+
 // testExecutorMocks contains all the mocks needed for testing the executor
 type testExecutorMocks struct {
 	ctrl             *gomock.Controller
@@ -124,6 +131,7 @@ func setupTestExecutor(t *testing.T, opts ...executorTestOption) *testExecutorMo
 		tm.blacklist,
 		tm.urlChecker,
 		tm.dataURIChecker,
+		testSpamRecheckInterval,
 	)
 
 	return tm
@@ -1770,9 +1778,14 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 			assert.True(t, input.Verdict)
 			assert.JSONEq(t, `{"is_disabled":true}`, string(input.Detail))
 			// A fresh vendor signal always schedules the first sweeper re-check;
-			// this is what puts the token into the sweep queue.
+			// this is what puts the token into the sweep queue. Asserted against
+			// the interval the test injected — deliberately NOT the package
+			// default — to pin that the configured value reaches the writer.
+			// The deploy runbook tells operators to raise this knob to soften
+			// the post-backfill sweep; a hardcoded default here made that
+			// guidance silently ineffective.
 			require.NotNil(t, input.NextCheckAt)
-			assert.Equal(t, now.Add(store.DefaultSpamRecheckInterval), *input.NextCheckAt)
+			assert.Equal(t, now.Add(testSpamRecheckInterval), *input.NextCheckAt)
 			return true, nil
 		})
 
