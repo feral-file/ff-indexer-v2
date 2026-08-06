@@ -122,18 +122,18 @@ func (mr *MockAPIExecutorMockRecorder) GetRelease(ctx, releaseID any) *gomock.Ca
 }
 
 // GetToken mocks base method.
-func (m *MockAPIExecutor) GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+func (m *MockAPIExecutor) GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeSpam bool) (*dto.TokenResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetToken", ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
+	ret := m.ctrl.Call(m, "GetToken", ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeSpam)
 	ret0, _ := ret[0].(*dto.TokenResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetToken indicates an expected call of GetToken.
-func (mr *MockAPIExecutorMockRecorder) GetToken(ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder any) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) GetToken(ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeSpam any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetToken", reflect.TypeOf((*MockAPIExecutor)(nil).GetToken), ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetToken", reflect.TypeOf((*MockAPIExecutor)(nil).GetToken), ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeSpam)
 }
 
 // GetTokens mocks base method.

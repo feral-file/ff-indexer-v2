@@ -1327,11 +1327,26 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 			return fmt.Errorf("failed to get token: %w", err)
 		}
 
-		// 2. Update the token: set burned = true, current_owner = nil
+		// 2. Update the token: set burned = true, current_owner = nil.
+		//
+		// Scoped to the two columns this operation owns rather than Save(), which
+		// writes every column from the row read above. Other columns on tokens are
+		// materialized out-of-band by writers that do not hold this transaction's
+		// row — is_spam by UpsertTokenSpamVerdict, is_viewable by
+		// BatchUpdateTokensViewability — so a full-row write here would silently
+		// revert whichever of them committed between the read and the write. For
+		// is_spam that means a token the vendor flagged goes back to visible while
+		// its verdict row still says spam, and nothing re-flips it until the next
+		// sweep (24h at the earliest).
 		token.Burned = true
 		token.CurrentOwner = nil
 
-		if err := tx.Save(&token).Error; err != nil {
+		if err := tx.Model(&schema.Token{}).
+			Where("id = ?", token.ID).
+			Updates(map[string]any{
+				"burned":        true,
+				"current_owner": nil,
+			}).Error; err != nil {
 			return fmt.Errorf("failed to update token burn: %w", err)
 		}
 
@@ -1474,10 +1489,18 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 			return fmt.Errorf("failed to get token: %w", err)
 		}
 
-		// 2. Update the token
+		// 2. Update the token.
+		//
+		// Scoped to current_owner rather than Save() for the same reason as
+		// UpdateTokenBurn: a full-row write would revert is_spam / is_viewable if
+		// their out-of-band writers committed between the read above and here.
 		token.CurrentOwner = input.CurrentOwner
 
-		if err := tx.Save(&token).Error; err != nil {
+		if err := tx.Model(&schema.Token{}).
+			Where("id = ?", token.ID).
+			Updates(map[string]any{
+				"current_owner": input.CurrentOwner,
+			}).Error; err != nil {
 			return fmt.Errorf("failed to update token: %w", err)
 		}
 

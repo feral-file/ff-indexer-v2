@@ -188,6 +188,18 @@ paths:
             type: string
             enum: [asc, desc]
             default: desc
+        - name: include_spam
+          in: query
+          description: |
+            Return the token even when it is vendor-flagged as spam (OpenSea
+            `is_disabled` / objkt `flag=banned`). Defaults to `false`, matching
+            `GET /api/v1/tokens`: a detail lookup is still a render path, so a
+            flagged token responds `404` unless the caller explicitly opts in.
+            The `404` is deliberate — it does not distinguish "unknown CID" from
+            "flagged", so the endpoint cannot be used to enumerate flagged tokens.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Token found and returned successfully

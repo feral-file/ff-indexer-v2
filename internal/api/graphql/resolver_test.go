@@ -305,3 +305,97 @@ func TestQueryResolverTokensSlugAloneRejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "release_vendor_slug requires release_vendor or release_id")
 }
+
+// --- token(cid, include_spam) ---
+
+// TestQueryResolverTokenDefaultsToExcludingSpam pins the GraphQL half of the
+// detail-lookup wiring. gqlgen applies the schema default (false) when the caller
+// omits the argument, but the resolver still has to forward it; if it does not,
+// the endpoint renders flagged tokens regardless of what the executor decides.
+func TestQueryResolverTokenDefaultsToExcludingSpam(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	includeSpam := false
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), false).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, &includeSpam)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, cid, result.TokenCID)
+}
+
+// TestQueryResolverTokenNilIncludeSpamIsFalse covers the argument being absent
+// entirely, which reaches the resolver as a nil pointer rather than false.
+func TestQueryResolverTokenNilIncludeSpamIsFalse(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), false).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+}
+
+func TestQueryResolverTokenForwardsIncludeSpam(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	includeSpam := true
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), true).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, &includeSpam)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+}
+
+// TestQueryResolverTokenFilteredSpamIsNotFound pins that a token the executor
+// suppresses surfaces as a not-found error rather than a nil token with no error,
+// so clients get a consistent shape whether the CID is unknown or flagged.
+func TestQueryResolverTokenFilteredSpamIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), false).
+		Return(nil, nil)
+
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, nil)
+	require.Error(t, err)
+	assert.Nil(t, result)
+}

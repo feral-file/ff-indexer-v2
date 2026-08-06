@@ -278,6 +278,11 @@ type Query {
     provenance_events_limit: Uint8 = 10
     provenance_events_offset: Uint64 = 0
     provenance_events_order: Order = desc
+    # include_spam returns the token even when it is vendor-flagged as spam
+    # (OpenSea is_disabled / objkt flag=banned). Default false, matching the
+    # tokens list: a detail lookup is still a render path, so a flagged token
+    # resolves to null unless the caller explicitly opts in.
+    include_spam: Boolean = false
   ): Token
 
   # List tokens with filters

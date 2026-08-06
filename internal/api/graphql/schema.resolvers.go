@@ -346,7 +346,7 @@ func (r *provenanceEventResolver) Raw(ctx context.Context, obj *dto.ProvenanceEv
 }
 
 // Token is the resolver for the token field.
-func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order, includeSpam *bool) (*dto.TokenResponse, error) {
 	// Validate token CID
 	if !domain.TokenCID(cid).Valid() {
 		return nil, apierrors.NewValidationError("Invalid token CID")
@@ -360,7 +360,7 @@ func (r *queryResolver) Token(ctx context.Context, cid string, ownersLimit *Uint
 	}
 
 	// Get token
-	token, err := r.executor.GetToken(ctx, cid, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder)
+	token, err := r.executor.GetToken(ctx, cid, expansions, ToNativeUint8(ownersLimit), ToNativeUint64(ownersOffset), ToNativeUint8(provenanceEventsLimit), ToNativeUint64(provenanceEventsOffset), provenanceEventsOrder, includeSpam != nil && *includeSpam)
 	if err != nil {
 		return nil, err
 	}

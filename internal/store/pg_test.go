@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
@@ -250,5 +251,126 @@ func TestConcurrentUpsertRelease(t *testing.T) {
 	require.NotZero(t, first)
 	for i, id := range ids {
 		assert.Equal(t, first, id, "goroutine %d returned a different release id", i)
+	}
+}
+
+// TestSpamVerdictSurvivesConcurrentOwnershipWrite pins that an ownership write
+// cannot silently revert a spam verdict that commits while it is in flight.
+//
+// UpdateTokenTransfer reads the token row, sets current_owner, and writes back.
+// When that write-back was a full-row Save(), a verdict committing between the
+// read and the write was overwritten with the stale value: token_spam_verdicts
+// still said spam, tokens.is_spam was back to false, and nothing re-flipped it
+// until the sweeper came round (24h at the earliest, 720h once the row had
+// backed off).
+//
+// A sequential test cannot catch this — the read would already see the fresh
+// verdict — so this races the two writers and asserts the invariant that
+// actually matters: whenever a verdict row says spam, the materialized flag
+// agrees. Like TestConcurrentUpsertRelease it uses the pool-backed testDB, since
+// the transaction-wrapped store from initPGTestDB shares one connection and
+// cannot be driven from concurrent goroutines.
+func TestSpamVerdictSurvivesConcurrentOwnershipWrite(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
+	}
+
+	store := NewPGStore(testDB)
+	ctx := context.Background()
+	const contract = "0x000000000000000000000000000000000000dddd"
+
+	t.Cleanup(func() {
+		testDB.Exec(`DELETE FROM token_spam_verdicts WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM provenance_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM token_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM balances WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM tokens WHERE contract_address = ?`, contract)
+	})
+
+	const rounds = 12
+	for round := range rounds {
+		owner1 := fmt.Sprintf("0xowner_race_a_%02d", round)
+		owner2 := fmt.Sprintf("0xowner_race_b_%02d", round)
+
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contract,
+			fmt.Sprintf("%d", 9000+round),
+			owner1,
+		)
+		require.NoError(t, store.CreateTokenMint(ctx, mintInput))
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token)
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		errs := make(chan error, 2)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, uErr := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+				TokenID: token.ID,
+				Source:  schema.SpamSourceOpenSea,
+				Verdict: true,
+				Detail:  []byte(`{"is_disabled":true}`),
+			})
+			errs <- uErr
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- store.UpdateTokenTransfer(ctx, UpdateTokenTransferInput{
+				TokenCID:     mintInput.Token.TokenCID,
+				CurrentOwner: &owner2,
+				SenderBalanceUpdate: &UpdateBalanceInput{
+					OwnerAddress: owner1,
+					Delta:        "1",
+				},
+				ReceiverBalanceUpdate: &UpdateBalanceInput{
+					OwnerAddress: owner2,
+					Delta:        "1",
+				},
+				ProvenanceEvent: buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeTransfer,
+					&owner1,
+					&owner2,
+					"1",
+					fmt.Sprintf("0xrace%02d", round),
+					uint64(2000+round),
+				),
+			})
+		}()
+
+		close(start)
+		wg.Wait()
+		close(errs)
+		for e := range errs {
+			require.NoError(t, e)
+		}
+
+		var verdict schema.TokenSpamVerdict
+		require.NoError(t, testDB.Where("token_id = ? AND source = ?",
+			token.ID, schema.SpamSourceOpenSea).First(&verdict).Error)
+		require.True(t, verdict.Verdict, "round %d: verdict row must record spam", round)
+
+		after, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, after)
+		assert.True(t, after.IsSpam,
+			"round %d: verdict row says spam but tokens.is_spam was reverted by the concurrent transfer", round)
+		require.NotNil(t, after.CurrentOwner, "round %d: transfer must still have applied", round)
+		assert.Equal(t, owner2, *after.CurrentOwner, "round %d: transfer must still have applied", round)
 	}
 }

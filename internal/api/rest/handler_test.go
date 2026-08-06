@@ -263,3 +263,59 @@ func TestHandlerGetReleaseWithIncludeSpam(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 }
+
+// ─── GetToken handler: spam filtering ────────────────────────────────────────
+
+// TestHandlerGetTokenDefaultsToExcludingSpam pins the wiring, not the policy: the
+// executor decides what include_spam means, but the handler has to actually pass
+// the parsed value. Without it the detail endpoint silently renders flagged
+// tokens no matter what the executor does.
+func TestHandlerGetTokenDefaultsToExcludingSpam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), false).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+cid, nil)
+	c.Params = append(c.Params, gin.Param{Key: "cid", Value: cid})
+
+	h.GetToken(c)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+func TestHandlerGetTokenForwardsIncludeSpam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), true).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+cid+"?include_spam=true", nil)
+	c.Params = append(c.Params, gin.Param{Key: "cid", Value: cid})
+
+	h.GetToken(c)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}

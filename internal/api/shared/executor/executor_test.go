@@ -267,7 +267,7 @@ func TestGetToken_DisplayAndMediaAsset_HealthOnlyURL(t *testing.T) {
 	const rawCID = "eip155:1:erc721:0xdef456:2" //nolint:gosec
 	result, err := exec.GetToken(context.Background(), rawCID,
 		[]types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset},
-		nil, nil, nil, nil, nil)
+		nil, nil, nil, nil, nil, false)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -340,7 +340,7 @@ func TestGetToken_DisplayAndMediaAsset_HealthFiltered(t *testing.T) {
 	f.setupMocks(mockStore)
 
 	expansions := []types.Expansion{types.ExpansionDisplay, types.ExpansionMediaAsset}
-	result, err := exec.GetToken(context.Background(), f.rawCID, expansions, nil, nil, nil, nil, nil)
+	result, err := exec.GetToken(context.Background(), f.rawCID, expansions, nil, nil, nil, nil, nil, false)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -372,7 +372,7 @@ func TestGetToken_DisplayAndMediaAsset_ReverseExpansionOrder(t *testing.T) {
 
 	// Reverse order: media_asset before display — this was the broken case before the fix.
 	expansions := []types.Expansion{types.ExpansionMediaAsset, types.ExpansionDisplay}
-	result, err := exec.GetToken(context.Background(), f.rawCID, expansions, nil, nil, nil, nil, nil)
+	result, err := exec.GetToken(context.Background(), f.rawCID, expansions, nil, nil, nil, nil, nil, false)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -413,7 +413,7 @@ func TestGetToken_DisplayExpansion_HealthQueryFailure(t *testing.T) {
 	expectNoReleaseMembership(mockStore, []uint64{f.tokenID})
 
 	result, err := exec.GetToken(context.Background(), f.rawCID,
-		[]types.Expansion{types.ExpansionDisplay}, nil, nil, nil, nil, nil)
+		[]types.Expansion{types.ExpansionDisplay}, nil, nil, nil, nil, nil, false)
 
 	require.Error(t, err, "GetToken must propagate health query failure as an error")
 	assert.Nil(t, result, "result must be nil on health query failure")
@@ -605,7 +605,7 @@ func TestGetToken_AppliesReleaseMembership(t *testing.T) {
 			},
 		}, nil)
 
-	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil)
+	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil, false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.ReleaseID)
@@ -927,3 +927,71 @@ func TestGetTokens_SpamAndViewabilityFlagsMapToFilter(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestGetToken_SpamFilteredByDefault pins the detail lookup to the same default as
+// the list endpoint. A CID lookup is a render path — display surfaces resolve a
+// token by CID before showing it — so a flagged token leaking through here would
+// leave it fully renderable and defeat the filter entirely.
+func TestGetToken_SpamFilteredByDefault(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	const rawCID = "eip155:1:erc721:0xdef456:2" //nolint:gosec
+	normalizedCID := domain.TokenCID(rawCID).Normalized().String()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+	// Release membership must not be queried: the token is filtered before any
+	// expansion work, so a flagged CID costs one lookup and nothing more.
+	mockStore.EXPECT().
+		GetTokenByTokenCID(gomock.Any(), normalizedCID).
+		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, IsSpam: true}, nil)
+
+	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil, false)
+
+	require.NoError(t, err, "a flagged token is reported as absent, not as an error")
+	assert.Nil(t, result, "spam token must not be returned by default")
+}
+
+// TestGetToken_SpamReturnedWhenIncludeSpam covers the opt-in half: operators and
+// moderation tooling still need to fetch a flagged token by CID.
+func TestGetToken_SpamReturnedWhenIncludeSpam(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	const rawCID = "eip155:1:erc721:0xdef456:2" //nolint:gosec
+	normalizedCID := domain.TokenCID(rawCID).Normalized().String()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+	mockStore.EXPECT().
+		GetTokenByTokenCID(gomock.Any(), normalizedCID).
+		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, IsSpam: true}, nil)
+	expectNoReleaseMembership(mockStore, []uint64{7})
+
+	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil, true)
+
+	require.NoError(t, err)
+	require.NotNil(t, result, "include_spam=true must return the flagged token")
+	assert.Equal(t, normalizedCID, result.TokenCID)
+}
+
+// TestGetToken_CleanTokenUnaffected guards against the filter being applied too
+// broadly — the default must only suppress tokens actually flagged.
+func TestGetToken_CleanTokenUnaffected(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	const rawCID = "eip155:1:erc721:0xdef456:2" //nolint:gosec
+	normalizedCID := domain.TokenCID(rawCID).Normalized().String()
+
+	exec, mockStore := newTestExecutor(t, ctrl)
+	mockStore.EXPECT().
+		GetTokenByTokenCID(gomock.Any(), normalizedCID).
+		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, IsSpam: false}, nil)
+	expectNoReleaseMembership(mockStore, []uint64{7})
+
+	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil, false)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, normalizedCID, result.TokenCID)
+}

@@ -26,6 +26,13 @@ type GetTokenQueryParams struct {
 	ProvenanceEventLimit  uint8       `form:"provenance_events.limit,default=10"`
 	ProvenanceEventOffset uint64      `form:"provenance_events.offset,default=0"`
 	ProvenanceEventOrder  types.Order `form:"provenance_events.order,default=desc"`
+
+	// IncludeSpam returns the token even when it is vendor-flagged as spam
+	// (is_spam=true). Default false, matching the list endpoint: a detail lookup
+	// is still a render path — display surfaces resolve a token by CID before
+	// showing it — so letting it through by default would leave the flagged
+	// token fully renderable and defeat the filter.
+	IncludeSpam bool `form:"include_spam,default=false"`
 }
 
 // Validate validates the query parameters for GET /tokens/:cid

@@ -140,6 +140,7 @@ func (h *handler) GetToken(c *gin.Context) {
 		provenanceEventsLimit,
 		provenanceEventsOffset,
 		provenanceEventsOrder,
+		queryParams.IncludeSpam,
 	)
 
 	if err != nil {

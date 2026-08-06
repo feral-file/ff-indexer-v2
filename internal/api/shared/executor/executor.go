@@ -32,8 +32,10 @@ import (
 //
 //go:generate mockgen -source=executor.go -destination=../../../mocks/api_executor.go -package=mocks -mock_names=Executor=MockAPIExecutor
 type Executor interface {
-	// GetToken retrieves a single token by its CID with optional expansions
-	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
+	// GetToken retrieves a single token by its CID with optional expansions.
+	// Vendor-flagged spam tokens are omitted (reported as not found) unless
+	// includeSpam is true, matching the default on the list endpoint.
+	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeSpam bool) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions (bulk: fixed sub-page sizes for owners/provenance per token).
 	// mintNumberFrom and mintNumberTo are 1-based range filters that apply only when releaseID is also set;
@@ -123,7 +125,7 @@ func NewExecutor(store store.Store, jobQueue jobs.JobQueue, tokenQueue string, b
 	}
 }
 
-func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error) {
+func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeSpam bool) (*dto.TokenResponse, error) {
 	// Normalize token CID
 	normalizedTokenCID := domain.TokenCID(tokenCID).Normalized().String()
 
@@ -134,6 +136,16 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	}
 
 	if token == nil {
+		return nil, nil
+	}
+
+	// Spam filtering happens here rather than in GetTokenByTokenCID: that store
+	// method is also the lookup used by chain ingestion and the enricher, which
+	// must keep seeing flagged tokens in order to keep indexing and re-checking
+	// them (the verdict is reversible — hiding the row from its own writers would
+	// strand it). Reported as not-found rather than a distinct error so the
+	// endpoint does not become an oracle for "this CID exists but is flagged".
+	if token.IsSpam && !includeSpam {
 		return nil, nil
 	}
 

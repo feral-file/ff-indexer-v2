@@ -202,7 +202,7 @@ type ComplexityRoot struct {
 		Release        func(childComplexity int, id Uint64) int
 		Releases       func(childComplexity int, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) int
 		SyncCollection func(childComplexity int, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) int
-		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
+		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order, includeSpam *bool) int
 		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID *string) int
 	}
@@ -381,7 +381,7 @@ type ProvenanceEventResolver interface {
 	Raw(ctx context.Context, obj *dto.ProvenanceEventResponse) (JSON, error)
 }
 type QueryResolver interface {
-	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
+	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order, includeSpam *bool) (*dto.TokenResponse, error)
 	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
 	Release(ctx context.Context, id Uint64) (*dto.ReleaseResponse, error)
 	Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error)
@@ -1084,7 +1084,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order), args["include_spam"].(*bool)), true
 	case "Query.tokens":
 		if e.complexity.Query.Tokens == nil {
 			break
@@ -2020,6 +2020,11 @@ type Query {
     provenance_events_limit: Uint8 = 10
     provenance_events_offset: Uint64 = 0
     provenance_events_order: Order = desc
+    # include_spam returns the token even when it is vendor-flagged as spam
+    # (OpenSea is_disabled / objkt flag=banned). Default false, matching the
+    # tokens list: a detail lookup is still a render path, so a flagged token
+    # resolves to null unless the caller explicitly opts in.
+    include_spam: Boolean = false
   ): Token
 
   # List tokens with filters
@@ -2478,6 +2483,11 @@ func (ec *executionContext) field_Query_token_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["provenance_events_order"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "include_spam", ec.unmarshalOBoolean2ᚖbool)
+	if err != nil {
+		return nil, err
+	}
+	args["include_spam"] = arg6
 	return args, nil
 }
 
@@ -5394,7 +5404,7 @@ func (ec *executionContext) _Query_token(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_token,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order), fc.Args["include_spam"].(*bool))
 		},
 		nil,
 		ec.marshalOToken2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenResponse,
