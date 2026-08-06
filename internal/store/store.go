@@ -161,6 +161,22 @@ type UpsertTokenSpamVerdictInput struct {
 	// (vendors pass now+interval, feralfile passes nil = never swept); the store
 	// stays mechanical and persists it as-is.
 	NextCheckAt *time.Time
+	// ExpectedLastCheckedAt turns the upsert into a compare-and-set against the
+	// row the caller read: the update applies only while last_checked_at still
+	// holds this value, and is a no-op otherwise.
+	//
+	// Set it when persisting a vendor response fetched some time ago — the sweeper
+	// reads a due row, waits on a rate-limited vendor request, and only then
+	// writes. The tokens-row lock serializes the writes but cannot order the
+	// responses, so without this guard an older sweeper response can land after a
+	// newer enricher response and overwrite it, along with the schedule and the
+	// failure counters. The stale verdict would then stand until the next sweep,
+	// which is 24h at the earliest.
+	//
+	// Leave nil when the write is itself the freshest known state (the enricher,
+	// which fetches and writes within one workflow step). A nil value keeps the
+	// unconditional last-writer-wins behavior.
+	ExpectedLastCheckedAt *time.Time
 }
 
 // TokenSpamCheckItem is one due entry from the spam sweeper's work queue, joined

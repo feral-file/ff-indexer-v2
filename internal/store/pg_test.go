@@ -374,3 +374,124 @@ func TestSpamVerdictSurvivesConcurrentOwnershipWrite(t *testing.T) {
 		assert.Equal(t, owner2, *after.CurrentOwner, "round %d: transfer must still have applied", round)
 	}
 }
+
+// TestStaleSweeperVerdictDoesNotOverwriteNewer pins the compare-and-set on
+// UpsertTokenSpamVerdictInput.ExpectedLastCheckedAt.
+//
+// The sweeper reads a due row, then waits on a rate-limited vendor request before
+// writing. If the enricher persists a fresher verdict for the same (token, source)
+// during that window, the sweeper's older response must not land on top of it. The
+// tokens-row lock serializes the two writes but cannot order the responses, so
+// without the guard the last writer wins regardless of which response is newer —
+// and the stale verdict would stand until the next sweep, 24h at the earliest.
+//
+// Simulated deterministically rather than by racing goroutines: capture what the
+// sweeper would have read, let the enricher write, then attempt the sweeper's
+// write with the now-stale expectation.
+func TestStaleSweeperVerdictDoesNotOverwriteNewer(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
+	}
+
+	store := NewPGStore(testDB)
+	ctx := context.Background()
+	const contract = "0x000000000000000000000000000000000000cccc"
+
+	t.Cleanup(func() {
+		testDB.Exec(`DELETE FROM token_spam_verdicts WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM token_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM balances WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM tokens WHERE contract_address = ?`, contract)
+	})
+
+	mintInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		contract,
+		"1",
+		"0xowner_stale_race",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, mintInput))
+	token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	// Seed the row the sweeper would later find due: vendor said clean.
+	seedNext := time.Now().Add(-time.Hour)
+	_, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		TokenID:     token.ID,
+		Source:      SpamSourceForTest(),
+		Verdict:     false,
+		Detail:      []byte(`{"is_disabled":false}`),
+		NextCheckAt: &seedNext,
+	})
+	require.NoError(t, err)
+
+	// The sweeper picks it up and holds this snapshot while it calls the vendor.
+	due, err := store.GetTokenSpamVerdictsDueForCheck(ctx, SpamSourceForTest(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	sweeperSnapshot := due[0]
+
+	// Mid-flight, the enricher persists a fresher verdict: the vendor has since
+	// flagged the token.
+	enricherNext := time.Now().Add(24 * time.Hour)
+	changed, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		TokenID:     token.ID,
+		Source:      SpamSourceForTest(),
+		Verdict:     true,
+		Detail:      []byte(`{"is_disabled":true}`),
+		NextCheckAt: &enricherNext,
+	})
+	require.NoError(t, err)
+	require.True(t, changed, "the enricher's write should have flipped the combined verdict")
+
+	// Now the sweeper's older response arrives and tries to write "clean".
+	sweeperNext := time.Now().Add(48 * time.Hour)
+	changed, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		TokenID:               token.ID,
+		Source:                SpamSourceForTest(),
+		Verdict:               false,
+		Detail:                []byte(`{"is_disabled":false}`),
+		NextCheckAt:           &sweeperNext,
+		ExpectedLastCheckedAt: &sweeperSnapshot.LastCheckedAt,
+	})
+	require.NoError(t, err, "losing the race is a no-op, not an error")
+	assert.False(t, changed, "a dropped write must not report a verdict change")
+
+	var row schema.TokenSpamVerdict
+	require.NoError(t, testDB.Where("token_id = ? AND source = ?",
+		token.ID, SpamSourceForTest()).First(&row).Error)
+	assert.True(t, row.Verdict, "the newer enricher verdict must survive the stale sweeper write")
+
+	after, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	assert.True(t, after.IsSpam, "materialized flag must still reflect the newer verdict")
+
+	// And the sweeper's write with a current expectation still applies, so the
+	// guard rejects only stale responses rather than disabling the sweeper.
+	fresh, err := store.GetTokenSpamVerdictsDueForCheck(ctx, SpamSourceForTest(), 10)
+	require.NoError(t, err)
+	if len(fresh) == 0 {
+		// Enricher pushed next_check_at into the future, as expected; read the row
+		// directly to get the current last_checked_at.
+		fresh = []TokenSpamCheckItem{{TokenID: token.ID, LastCheckedAt: row.LastCheckedAt}}
+	}
+	clearNext := time.Now().Add(72 * time.Hour)
+	changed, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		TokenID:               token.ID,
+		Source:                SpamSourceForTest(),
+		Verdict:               false,
+		Detail:                []byte(`{"is_disabled":false}`),
+		NextCheckAt:           &clearNext,
+		ExpectedLastCheckedAt: &fresh[0].LastCheckedAt,
+	})
+	require.NoError(t, err)
+	assert.True(t, changed, "a write with a current expectation must still apply")
+}
+
+// SpamSourceForTest keeps the source choice in one place for the race tests.
+func SpamSourceForTest() schema.SpamSource { return schema.SpamSourceOpenSea }

@@ -3170,8 +3170,11 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 		// time.Now() rather than SQL now(): matches the media health convention
 		// and stays observable inside a single transaction (PG now() is frozen
 		// at transaction start).
-		if err := tx.Exec(
-			`INSERT INTO token_spam_verdicts
+		//
+		// ExpectedLastCheckedAt makes the DO UPDATE conditional (see the field's
+		// doc comment): a caller persisting a response it fetched earlier only
+		// wins while nobody else has written since it read.
+		upsertSQL := `INSERT INTO token_spam_verdicts
 			    (token_id, source, verdict, detail, last_checked_at, next_check_at, consecutive_failures, last_error)
 			 VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
 			 ON CONFLICT (token_id, source) DO UPDATE SET
@@ -3180,10 +3183,27 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 			    last_checked_at = EXCLUDED.last_checked_at,
 			    next_check_at = EXCLUDED.next_check_at,
 			    consecutive_failures = 0,
-			    last_error = NULL`,
-			input.TokenID, input.Source, input.Verdict, input.Detail, time.Now(), input.NextCheckAt,
-		).Error; err != nil {
-			return fmt.Errorf("failed to upsert token spam verdict: %w", err)
+			    last_error = NULL`
+		args := []any{input.TokenID, input.Source, input.Verdict, input.Detail, time.Now(), input.NextCheckAt}
+		if input.ExpectedLastCheckedAt != nil {
+			upsertSQL += `
+			 WHERE token_spam_verdicts.last_checked_at = ?`
+			args = append(args, *input.ExpectedLastCheckedAt)
+		}
+
+		res := tx.Exec(upsertSQL, args...)
+		if res.Error != nil {
+			return fmt.Errorf("failed to upsert token spam verdict: %w", res.Error)
+		}
+		if input.ExpectedLastCheckedAt != nil && res.RowsAffected == 0 {
+			// Lost the race: someone wrote a newer verdict for this (token, source)
+			// while this caller's vendor request was in flight. Their write already
+			// moved next_check_at, so the row is no longer due and there is nothing
+			// to retry — drop this response instead of reverting theirs.
+			logger.InfoCtx(ctx, "Skipped stale spam verdict write",
+				zap.Uint64("token_id", input.TokenID),
+				zap.String("source", input.Source.String()))
+			return nil
 		}
 
 		// Step 3: Recompute from ALL rows, not just the one written — a vendor

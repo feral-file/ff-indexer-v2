@@ -253,12 +253,19 @@ func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSo
 	}
 
 	next := s.clock.Now().Add(s.successInterval(item, verdict))
+	// ExpectedLastCheckedAt guards against persisting a response that went stale
+	// while it was in flight: the vendor call above is rate-limited and can take
+	// seconds, and the enricher may write a fresher verdict for the same
+	// (token, source) in that window. Without the guard this older response would
+	// overwrite the newer one and its schedule, and the stale value would stand
+	// until the next sweep.
 	changed, err := s.store.UpsertTokenSpamVerdict(ctx, store.UpsertTokenSpamVerdictInput{
-		TokenID:     item.TokenID,
-		Source:      source,
-		Verdict:     verdict,
-		Detail:      detail,
-		NextCheckAt: &next,
+		TokenID:               item.TokenID,
+		Source:                source,
+		Verdict:               verdict,
+		Detail:                detail,
+		NextCheckAt:           &next,
+		ExpectedLastCheckedAt: &item.LastCheckedAt,
 	})
 	if err != nil {
 		logger.ErrorCtx(ctx, fmt.Errorf("failed to upsert re-checked spam verdict: %w", err),
