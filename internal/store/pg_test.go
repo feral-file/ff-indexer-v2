@@ -471,26 +471,80 @@ func TestStaleSweeperVerdictDoesNotOverwriteNewer(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, after.IsSpam, "materialized flag must still reflect the newer verdict")
 
-	// And the sweeper's write with a current expectation still applies, so the
-	// guard rejects only stale responses rather than disabling the sweeper.
-	fresh, err := store.GetTokenSpamVerdictsDueForCheck(ctx, SpamSourceForTest(), 10)
-	require.NoError(t, err)
-	if len(fresh) == 0 {
-		// Enricher pushed next_check_at into the future, as expected; read the row
-		// directly to get the current last_checked_at.
-		fresh = []TokenSpamCheckItem{{TokenID: token.ID, LastCheckedAt: row.LastCheckedAt}}
+}
+
+// TestCurrentSweeperVerdictStillApplies is the other half of the compare-and-set
+// contract, and the more dangerous one to get wrong: the guard must reject only
+// stale responses. If the timestamp did not survive the round trip through
+// Postgres timestamptz and back into TokenSpamCheckItem, every sweeper write
+// would be rejected and the sweeper would silently stop persisting anything —
+// worse than the overwrite bug the guard exists to prevent, and invisible.
+//
+// So the expectation here is deliberately taken from GetTokenSpamVerdictsDueForCheck,
+// the query the sweeper actually reads from, rather than from a direct row read.
+// Seeding next_check_at in the past is what makes that query return the row.
+func TestCurrentSweeperVerdictStillApplies(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
 	}
-	clearNext := time.Now().Add(72 * time.Hour)
-	changed, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
-		TokenID:               token.ID,
-		Source:                SpamSourceForTest(),
-		Verdict:               false,
-		Detail:                []byte(`{"is_disabled":false}`),
-		NextCheckAt:           &clearNext,
-		ExpectedLastCheckedAt: &fresh[0].LastCheckedAt,
+
+	store := NewPGStore(testDB)
+	ctx := context.Background()
+	const contract = "0x000000000000000000000000000000000000bbbb"
+
+	t.Cleanup(func() {
+		testDB.Exec(`DELETE FROM token_spam_verdicts WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM token_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM balances WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM tokens WHERE contract_address = ?`, contract)
+	})
+
+	mintInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		contract,
+		"1",
+		"0xowner_cas_positive",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, mintInput))
+	token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	overdue := time.Now().Add(-time.Hour)
+	_, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		TokenID:     token.ID,
+		Source:      SpamSourceForTest(),
+		Verdict:     false,
+		Detail:      []byte(`{"is_disabled":false}`),
+		NextCheckAt: &overdue,
 	})
 	require.NoError(t, err)
-	assert.True(t, changed, "a write with a current expectation must still apply")
+
+	due, err := store.GetTokenSpamVerdictsDueForCheck(ctx, SpamSourceForTest(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1, "the seeded row must be due, otherwise this test proves nothing")
+
+	next := time.Now().Add(24 * time.Hour)
+	changed, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		TokenID:               token.ID,
+		Source:                SpamSourceForTest(),
+		Verdict:               true,
+		Detail:                []byte(`{"is_disabled":true}`),
+		NextCheckAt:           &next,
+		ExpectedLastCheckedAt: &due[0].LastCheckedAt,
+	})
+	require.NoError(t, err)
+	assert.True(t, changed,
+		"a write whose expectation came straight from the due query must apply; "+
+			"if this fails the guard rejects every sweeper write and the sweeper is a no-op")
+
+	after, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	assert.True(t, after.IsSpam, "the applied verdict must be materialized")
 }
 
 // SpamSourceForTest keeps the source choice in one place for the race tests.

@@ -163,9 +163,18 @@ func TestSpamVerdictSweeper_CleanVerdict_DoublesInterval(t *testing.T) {
 			assert.Equal(t, uint64(1), input.TokenID)
 			assert.Equal(t, schema.SpamSourceOpenSea, input.Source)
 			assert.False(t, input.Verdict)
+			// The compare-and-set expectation must be the snapshot the due query
+			// returned, or the store cannot tell a stale response from a current
+			// one. Dropping it would silently reopen the overwrite race; passing
+			// the wrong value would reject every write and mute the sweeper.
+			if assert.NotNil(t, input.ExpectedLastCheckedAt,
+				"sweeper writes must be conditional on the row they read") {
+				assert.Equal(t, item.LastCheckedAt, *input.ExpectedLastCheckedAt)
+			}
 			assert.JSONEq(t, `{"is_disabled":false}`, string(input.Detail))
-			require.NotNil(t, input.NextCheckAt)
-			assert.Equal(t, now.Add(48*time.Hour), *input.NextCheckAt)
+			if assert.NotNil(t, input.NextCheckAt) {
+				assert.Equal(t, now.Add(48*time.Hour), *input.NextCheckAt)
+			}
 			return false, nil
 		})
 	expectIdleAfterFirstCycle(tm)
@@ -200,9 +209,10 @@ func TestSpamVerdictSweeper_FlaggedVerdict_MaxInterval(t *testing.T) {
 		UpsertTokenSpamVerdict(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, input store.UpsertTokenSpamVerdictInput) (bool, error) {
 			assert.True(t, input.Verdict)
-			require.NotNil(t, input.NextCheckAt)
 			// Flagged tokens poll at the fixed maximum: appeals are rare.
-			assert.Equal(t, now.Add(720*time.Hour), *input.NextCheckAt)
+			if assert.NotNil(t, input.NextCheckAt) {
+				assert.Equal(t, now.Add(720*time.Hour), *input.NextCheckAt)
+			}
 			return true, nil
 		})
 	expectIdleAfterFirstCycle(tm)
@@ -540,9 +550,10 @@ func TestSpamVerdictSweeper_CleanVerdictAfterFailures_RestartsAtFloor(t *testing
 	tm.store.EXPECT().
 		UpsertTokenSpamVerdict(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, input store.UpsertTokenSpamVerdictInput) (bool, error) {
-			require.NotNil(t, input.NextCheckAt)
-			assert.Equal(t, now.Add(24*time.Hour), *input.NextCheckAt,
-				"a recovered token restarts at the floor, not the failure ceiling")
+			if assert.NotNil(t, input.NextCheckAt) {
+				assert.Equal(t, now.Add(24*time.Hour), *input.NextCheckAt,
+					"a recovered token restarts at the floor, not the failure ceiling")
+			}
 			return false, nil
 		})
 	expectIdleAfterFirstCycle(tm)
