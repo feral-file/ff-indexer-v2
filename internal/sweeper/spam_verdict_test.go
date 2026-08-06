@@ -367,6 +367,47 @@ func TestSpamVerdictSweeper_NoAPIKey_DoesNotHotLoop(t *testing.T) {
 		"unconfigured vendor must not respin the due batch without sleeping")
 }
 
+// TestSpamVerdictSweeper_StoreError_DoesNotHotLoop covers the other way into the
+// same trap as the unconfigured-vendor test above. A failing due-query returns
+// before the idle sleep, and Start only logs the error before re-entering the
+// cycle — so with no HTTP request issued, neither the rate limiter nor the idle
+// sleep bounds the retry. A database blip would otherwise pin a core and flood
+// Sentry for the length of the outage.
+func TestSpamVerdictSweeper_StoreError_DoesNotHotLoop(t *testing.T) {
+	tm := setupTestSpamSweeper(t)
+	defer tearDownTestSpamSweeper(tm)
+
+	tm.clock.EXPECT().Now().Return(time.Now()).AnyTimes()
+
+	var fetches atomic.Int32
+	tm.store.EXPECT().
+		GetTokenSpamVerdictsDueForCheck(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ schema.SpamSource, _ int) ([]store.TokenSpamCheckItem, error) {
+			fetches.Add(1)
+			return nil, errors.New("connection refused")
+		}).
+		AnyTimes()
+	// The back-off must be taken on the error path, not just the idle path.
+	tm.clock.EXPECT().
+		After(sweeper.SWEEP_CYCLE_INTERVAL).
+		DoAndReturn(func(_ time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				ch <- time.Now()
+			}()
+			return ch
+		}).
+		MinTimes(1)
+
+	runOneSweep(t, tm)
+
+	// ~100ms of running at a 20ms mocked back-off is a handful of cycles. A
+	// regression spins thousands.
+	assert.Less(t, fetches.Load(), int32(50),
+		"a failing due-query must back off before the cycle retries")
+}
+
 func TestSpamVerdictSweeper_ObjktBanned(t *testing.T) {
 	tm := setupTestSpamSweeper(t)
 	defer tearDownTestSpamSweeper(tm)

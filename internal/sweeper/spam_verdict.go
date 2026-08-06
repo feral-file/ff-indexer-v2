@@ -158,12 +158,20 @@ func (s *spamVerdictSweeper) Stop(ctx context.Context) error {
 
 // runSweepCycle re-checks one due batch per vendor source. Sources are separate
 // queues (separate store queries) so OpenSea's API quota cannot starve objkt's
-// and vice versa. Sleeps only when every source is idle.
+// and vice versa. Sleeps when every source is idle, and also before surfacing a
+// store error (see below).
 func (s *spamVerdictSweeper) runSweepCycle(ctx context.Context) error {
 	totalDue := 0
 	for _, source := range []schema.SpamSource{schema.SpamSourceOpenSea, schema.SpamSourceObjkt} {
 		n, err := s.sweepSource(ctx, source)
 		if err != nil {
+			// Back off before returning: Start only logs the error and re-enters
+			// this function immediately, and a failed due-query issues no HTTP
+			// request, so neither the rate limiter nor the idle sleep below would
+			// throttle the retry. Without this the loop spins at full speed —
+			// saturating the database and Sentry — for the whole outage. Same
+			// reasoning as the unconfigured-vendor path in checkItem.
+			_ = s.sleep(ctx, SWEEP_CYCLE_INTERVAL)
 			return err
 		}
 		totalDue += n
@@ -345,12 +353,16 @@ func (s *spamVerdictSweeper) successInterval(item store.TokenSpamCheckItem, verd
 	return next
 }
 
-// maxFailureShift bounds the failure backoff shift. A doubling past this would
-// overflow time.Duration (int64 nanoseconds ≈ 292 years) and wrap to a negative
-// or zero interval, scheduling the row in the past and respinning it every
-// cycle. Reached only under a misconfigured max_consecutive_failures, but the
-// failure mode is a hot loop, so it is clamped rather than trusted.
-const maxFailureShift = 40
+// maxFailureShift bounds the failure backoff shift so the doubling cannot overflow
+// time.Duration. An int64 of nanoseconds tops out around 292 years; the smallest
+// backoff worth configuring is a second, and 1s << 34 already exceeds that, so 34
+// is past any real setting while still leaving the shift itself well-defined.
+// Overflow would wrap to a negative or zero interval, scheduling the row in the
+// past and respinning it every cycle — reachable only under a misconfigured
+// max_consecutive_failures, but the failure mode is a hot loop, so it is clamped
+// rather than trusted. The interval <= 0 guard below is the second line of defence
+// for backoffs larger than a second.
+const maxFailureShift = 34
 
 // failureInterval picks the next re-check delay after a failed check: the
 // initial failure backoff doubled per prior consecutive failure, pinned at

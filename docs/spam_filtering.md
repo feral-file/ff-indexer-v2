@@ -89,15 +89,44 @@ limiter with the enricher, so the per-provider budget holds across subsystems.
 Config: `spam_sweeper.*` (see `config/.env`); `initial_recheck_interval` must stay in
 step with `store.DefaultSpamRecheckInterval`.
 
+## Backfill at deploy
+
+Neither writer discovers tokens on its own: the enricher only writes at indexing
+time, and the sweeper's due-query reads `FROM token_spam_verdicts` (an inner join —
+no `NOT EXISTS` discovery pass). So on a database that already holds tokens, this
+feature would cover exactly nothing until each token happened to be re-indexed for
+some unrelated reason.
+
+Migration 021 closes that with a Step 3 backfill: one `IndexTokenMetadata` job per
+token already enriched by a moderating vendor, enqueued into the existing
+`token_index` queue so the running worker re-asks the vendor for real and the
+enricher writes the first verdict row. It deliberately does not derive verdicts
+from stored `enrichment_sources.vendor_json` — that column is a snapshot of
+whatever fields the enricher kept at the time, not a guarantee that
+`flag`/`is_disabled` was captured on every historical row (migration
+`018_reindex.sql`, whose pattern this reuses, documents the same failure mode for
+other fields). Idempotent via the `jobs_unique_key_active` partial unique index;
+a no-op on fresh installs, which have no `enrichment_sources` rows.
+
+**Operational note**: the backfill enqueues work proportional to the existing
+opensea/objkt token count, and every backfilled row lands at `now +
+initial_recheck_interval`, so the first sweeper round after deploy is a burst
+against the same shared vendor rate limiter the enricher uses. Size it against the
+real table (`SELECT vendor, count(*) FROM enrichment_sources WHERE vendor IN
+('opensea','objkt') GROUP BY 1`) before deploying, and consider a longer
+`initial_recheck_interval` or splitting Step 3 into a separately-paced script if
+the count is large.
+
 ## Coverage policy (accepted gaps)
 
 - Verdict rows exist only after a **first successful vendor signal**. Tokens routed
   to no-signal vendors are intentionally never swept: those vendors are curated
   surfaces, and burning OpenSea quota on ArtBlocks mints buys nothing.
 - A token whose first enrichment errored has no row and stays outside the sweep
-  queue until something re-triggers its metadata indexing. Accepted for now; the
-  alternative (seeding rows at token creation) costs quota proportional to the whole
-  token table.
+  queue until something re-triggers its metadata indexing (the deploy-time backfill
+  above covers only tokens that already reached `enrichment_sources`). Accepted for
+  now; the alternative (seeding rows at token creation) costs quota proportional to
+  the whole token table.
 - OpenSea coverage is Ethereum-only (the client hardcodes the `ethereum` chain
   segment); objkt covers Tezos.
 

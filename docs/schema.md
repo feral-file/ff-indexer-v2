@@ -234,6 +234,9 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 - Enables API clients to filter out tokens with broken media URLs
 - Tracks health of both metadata and enrichment source URLs
 - Supports alternative gateway discovery for IPFS/Arweave/OnChFS
+- Animation URLs have precedence over image URLs for filtering
+
+**Note**: The `media_url_hash` column uses MD5 hashing to enable efficient URL lookups without index size limitations. This is particularly important for long URLs that would otherwise exceed PostgreSQL's B-tree index size limits.
 
 ### token_spam_verdicts
 
@@ -262,9 +265,6 @@ Source of truth for spam moderation: one row per (token, source), where a source
 - Lets moderation sources record verdicts independently so they never overwrite each other
 - Reserves the `feralfile` source slot so a future FF moderation system (user reports, operator decisions) slots in as just another writer with no schema change
 - Drives the spam verdict sweeper's re-check scheduling (late vendor takedowns and appealed reversals both converge)
-- Animation URLs have precedence over image URLs for filtering
-
-**Note**: The `media_url_hash` column uses MD5 hashing to enable efficient URL lookups without index size limitations. This is particularly important for long URLs that would otherwise exceed PostgreSQL's B-tree index size limits.
 
 ### provenance_events
 
