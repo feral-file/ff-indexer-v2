@@ -360,7 +360,7 @@ func (s *spamVerdictSweeper) successInterval(item store.TokenSpamCheckItem, verd
 // Overflow would wrap to a negative or zero interval, scheduling the row in the
 // past and respinning it every cycle — reachable only under a misconfigured
 // max_consecutive_failures, but the failure mode is a hot loop, so it is clamped
-// rather than trusted. The interval <= 0 guard below is the second line of defence
+// rather than trusted. The interval <= 0 guard below is the second line of defense
 // for backoffs larger than a second.
 const maxFailureShift = 34
 
