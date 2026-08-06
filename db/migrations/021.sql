@@ -35,6 +35,18 @@
 -- `is_spam = false`, which matches nearly every row, so a partial index on the true side
 -- could never serve it and a full index would not beat the existing filter. The spam
 -- sweeper's work queue is served by the partial index on token_spam_verdicts instead.
+--
+-- Step 3 backfills pre-existing tokens: token_spam_verdicts starts empty, and both the
+-- enricher (indexing time) and the sweeper (GetTokenSpamVerdictsDueForCheck, which reads
+-- FROM token_spam_verdicts) only ever touch rows that already exist. Without a backfill,
+-- every token indexed before this migration — including ones a vendor has already flagged —
+-- stays invisible to the sweeper forever; nothing re-asks the vendor on its own. This
+-- mirrors migration 018_reindex's fix for the same class of gap (new per-token data needed
+-- from vendors, old rows can't have it). Like that migration, it does not derive the verdict
+-- from stored enrichment_sources.vendor_json — vendor_json is a snapshot of whatever fields
+-- the enricher chose to keep at the time, not a contract that `flag`/`is_disabled` was
+-- captured for every historical row (018's own comment documents exactly this failure mode
+-- for other fields). It re-asks the vendor for real via the existing job queue instead.
 
 -- Step 1: materialized column, verdict source table, and sweep-queue index (safe under load)
 BEGIN;
@@ -103,3 +115,29 @@ COMMIT;
 -- Step 2b: validate in a separate transaction. Takes SHARE UPDATE EXCLUSIVE, so concurrent
 -- reads and writes to token_events continue while the scan runs.
 ALTER TABLE token_events VALIDATE CONSTRAINT token_events_event_type_check;
+
+-- Step 3: enqueue one IndexTokenMetadata job per token already enriched by a moderating
+-- vendor, so the running worker re-fetches real vendor data and the enricher writes the
+-- first token_spam_verdicts row for it (see the migration header for why this re-asks the
+-- vendor instead of trusting stored vendor_json).
+--
+-- Idempotency: the partial unique index jobs_unique_key_active enforces at most one active
+-- (pending or running) job per (queue, kind, unique_key), so this migration is safe to run
+-- again — it only skips tokens that already have one of these jobs in flight, not ones
+-- whose job already finished.
+--
+-- Fresh installs have no enrichment_sources rows, so this INSERT produces no rows. No
+-- changes to db/init_pg_db.sql are required (same as migration 018_reindex).
+INSERT INTO jobs (queue, kind, payload, status, unique_key)
+SELECT
+    'token_index'                          AS queue,
+    'IndexTokenMetadata'                   AS kind,
+    jsonb_build_array(t.token_cid, null)   AS payload,
+    'pending'                              AS status,
+    'index-metadata-' || t.token_cid       AS unique_key
+FROM enrichment_sources es
+JOIN tokens t ON t.id = es.token_id
+WHERE es.vendor IN ('opensea', 'objkt')
+ON CONFLICT (queue, kind, unique_key)
+    WHERE status IN ('pending', 'running') AND unique_key IS NOT NULL
+DO NOTHING;
