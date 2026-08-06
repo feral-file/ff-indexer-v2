@@ -58,10 +58,16 @@ BEGIN;
 --
 -- Vendor predicate
 -- ----------------
--- opensea and objkt are the only moderating vendors — they match schema.SpamSourceForVendor,
--- which returns ok=false for everything else. fxhash needs no separate entry: the fxhash
--- enrichment path falls back to enhanceObjkt and stores those rows as vendor='objkt', so
--- they are already covered.
+-- opensea and objkt are the only moderating vendors, matching schema.SpamSourceForVendor,
+-- which returns ok=false for every other vendor. Rows from those vendors get no verdict at
+-- indexing time either, so enqueueing them here would spend vendor quota to write nothing.
+--
+-- fxhash is deliberately NOT covered, and only partly by accident: enhanceFxhash falls back
+-- to enhanceObjkt when the fxhash API has no gentk for the token, and those rows are stored
+-- as vendor='objkt', so that subset is picked up here. Tokens fxhash does index are stored
+-- as vendor='fxhash' and are skipped — consistent with the enricher, which writes no verdict
+-- for them. That is the intended coverage gap for curated surfaces (see the accepted-gaps
+-- list in docs/spam_filtering.md), not an oversight in this predicate.
 --
 -- Idempotency
 -- -----------

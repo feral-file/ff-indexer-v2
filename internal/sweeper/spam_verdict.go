@@ -188,8 +188,15 @@ func (s *spamVerdictSweeper) runSweepCycle(ctx context.Context) error {
 }
 
 // sweepSource fetches and processes one source's due batch, returning how many
-// rows were due — or 0 when the source turned out to be unconfigured, so the
-// caller treats it as idle and sleeps (see the unconfigured note in checkItem).
+// rows were due — or 0 when the batch made no progress at all, so the caller
+// treats the source as idle and sleeps.
+//
+// Reason for the no-progress signal: a row only leaves the due set when something
+// moves its next_check_at. Every path that fails to do so (an unconfigured vendor,
+// a failed verdict upsert, a failed failure-record) leaves the identical batch due,
+// so reporting it as work would keep runSweepCycle from ever sleeping and respin
+// the batch continuously — burning either CPU or paid vendor quota, depending on
+// whether the failing path reached the rate-limited HTTP call.
 func (s *spamVerdictSweeper) sweepSource(ctx context.Context, source schema.SpamSource) (int, error) {
 	items, err := s.store.GetTokenSpamVerdictsDueForCheck(ctx, source, s.config.BatchSize)
 	if err != nil {
@@ -209,44 +216,39 @@ func (s *spamVerdictSweeper) sweepSource(ctx context.Context, source schema.Spam
 		pond.WithQueueSize(s.config.BatchSize),
 		pond.WithContext(ctx),
 	)
-	var unconfigured atomic.Bool
+	var progressed atomic.Bool
 	for _, item := range items {
 		s.pool.Submit(func() {
-			s.checkItem(ctx, source, item, &unconfigured)
+			s.checkItem(ctx, source, item, &progressed)
 		})
 	}
 	s.pool.StopAndWait()
 
-	if unconfigured.Load() {
-		// Report idle: these rows were not processed and their next_check_at did
-		// not move, so counting them as due would keep runSweepCycle from
-		// sleeping and spin the same batch at full speed.
+	if !progressed.Load() {
 		return 0, nil
 	}
 
 	return len(items), nil
 }
 
-// checkItem re-asks the vendor about one token and persists the outcome.
-// unconfigured is set when the vendor turns out to have no API key, which is a
-// source-wide condition rather than a per-row failure.
-func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem, unconfigured *atomic.Bool) {
+// checkItem re-asks the vendor about one token and persists the outcome. It sets
+// progressed when it manages to move the row's next_check_at, by either route —
+// see the no-progress note on sweepSource for why that matters.
+func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem, progressed *atomic.Bool) {
 	verdict, detail, err := s.fetchVendorVerdict(ctx, source, item)
 	if err != nil {
 		// ErrNoAPIKey means the whole source is unconfigured, not that this row
 		// failed: writing failure state would walk every row's backoff to the
-		// max for no reason. Leave rows untouched — they stay due until a key is
-		// configured — and flag the batch so the cycle treats the source as idle
-		// and sleeps. Without that flag the untouched rows stay due, the cycle
-		// never sleeps, and the batch respins with no HTTP call to throttle it
-		// (ErrNoAPIKey is returned before the request and the rate limiter).
+		// max for no reason. Leave the rows untouched — they stay due until a key
+		// is configured — and make no progress, so the cycle sleeps instead of
+		// respinning them. ErrNoAPIKey is returned before the request and the
+		// rate limiter, so nothing else would throttle that respin.
 		if errors.Is(err, opensea.ErrNoAPIKey) {
-			unconfigured.Store(true)
 			logger.WarnCtx(ctx, "Skipping spam verdict re-check: vendor has no API key",
 				zap.String("source", source.String()))
 			return
 		}
-		s.recordFailure(ctx, source, item, err)
+		s.recordFailure(ctx, source, item, err, progressed)
 		return
 	}
 
@@ -264,6 +266,7 @@ func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSo
 			zap.String("source", source.String()))
 		return
 	}
+	progressed.Store(true)
 	if changed {
 		logger.InfoCtx(ctx, "Token spam status changed by sweeper re-check",
 			zap.String("token_cid", item.TokenCID),
@@ -304,8 +307,10 @@ func (s *spamVerdictSweeper) fetchVendorVerdict(ctx context.Context, source sche
 	}
 }
 
-// recordFailure advances the row's failure backoff without touching its verdict.
-func (s *spamVerdictSweeper) recordFailure(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem, checkErr error) {
+// recordFailure advances the row's failure backoff without touching its verdict,
+// and reports that as progress: the row leaves the due set even though the check
+// itself failed.
+func (s *spamVerdictSweeper) recordFailure(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem, checkErr error, progressed *atomic.Bool) {
 	next := s.clock.Now().Add(s.failureInterval(item))
 	if err := s.store.RecordTokenSpamCheckFailure(ctx, item.TokenID, source, checkErr.Error(), next); err != nil {
 		logger.ErrorCtx(ctx, fmt.Errorf("failed to record spam check failure: %w", err),
@@ -313,6 +318,7 @@ func (s *spamVerdictSweeper) recordFailure(ctx context.Context, source schema.Sp
 			zap.String("source", source.String()))
 		return
 	}
+	progressed.Store(true)
 	logger.WarnCtx(ctx, "Spam verdict re-check failed",
 		zap.String("token_cid", item.TokenCID),
 		zap.String("source", source.String()),

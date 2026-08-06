@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
 func TestDatabaseConfig_DSN(t *testing.T) {
@@ -104,6 +106,39 @@ tezos:
 	require.NotNil(t, cfg)
 	assert.Equal(t, "localhost", cfg.Database.Host)
 	assert.Equal(t, "db", cfg.Database.DBName)
+}
+
+// TestSpamSweeperDefaultMatchesStoreConstant enforces what three separate comments
+// currently only ask for in prose. The enricher schedules a fresh verdict's first
+// re-check at store.DefaultSpamRecheckInterval, while the sweeper reads its floor
+// from spam_sweeper.initial_recheck_interval; if the two drift, freshly enriched
+// rows and swept rows disagree about the base cadence and the doubling schedule
+// starts from the wrong place. Nothing but this test couples the two literals.
+func TestSpamSweeperDefaultMatchesStoreConstant(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	yaml := `
+database:
+  host: localhost
+  user: u
+  password: p
+  dbname: db
+jobs:
+  token_queue: token_index
+  media_queue: media_index
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  api_url: https://api.tzkt.io
+  websocket_url: wss://ws.tzkt.io
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yaml), 0600))
+
+	cfg, err := LoadAppConfig(configPath, "")
+	require.NoError(t, err)
+	assert.Equal(t, store.DefaultSpamRecheckInterval, cfg.SpamSweeper.InitialRecheckInterval,
+		"spam_sweeper.initial_recheck_interval default must match store.DefaultSpamRecheckInterval")
 }
 
 func TestLoadAppConfig_requiresDatabase(t *testing.T) {

@@ -359,7 +359,9 @@ GROUP BY status;
 
 Migration `021.sql` creates `token_spam_verdicts` but leaves it empty, and neither writer discovers tokens on its own — the enricher writes a verdict only while indexing a token, and the spam sweeper's queue query reads `FROM token_spam_verdicts` (an inner join, no discovery pass). On a database that already holds tokens the feature would therefore cover nothing until each token happened to be re-indexed for an unrelated reason, leaving already-flagged spam rendering indefinitely.
 
-`021_reindex.sql` inserts one `IndexTokenMetadata` job per token with `vendor IN ('opensea', 'objkt')` in `enrichment_sources`. Those are the only moderating vendors (they match `schema.SpamSourceForVendor`); fxhash needs no separate entry because its enrichment path falls back to `enhanceObjkt` and stores rows as `vendor='objkt'`.
+`021_reindex.sql` inserts one `IndexTokenMetadata` job per token with `vendor IN ('opensea', 'objkt')` in `enrichment_sources`. Those are the only moderating vendors, matching `schema.SpamSourceForVendor` — other vendors get no verdict at indexing time either, so re-enriching them would spend vendor quota to write nothing.
+
+fxhash is deliberately not covered. `enhanceFxhash` falls back to `enhanceObjkt` when the fxhash API has no gentk for a token, and those rows are stored as `vendor='objkt'`, so that subset is picked up; tokens fxhash does index are stored as `vendor='fxhash'` and are skipped. This matches the enricher's behavior and is the intended coverage gap for curated surfaces — see the accepted-gaps list in `docs/spam_filtering.md`.
 
 **Why reindex rather than derive from stored vendor JSON:** `enrichment_sources.vendor_json` often does contain objkt's `flag` and OpenSea's `is_disabled` today, but it is a snapshot of whatever fields the enricher kept at the time it ran — accumulated across every version of that code — not a guarantee that any given field exists on every historical row. Migration `018_reindex` hit exactly this and documents four fields missing from older rows.
 

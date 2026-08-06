@@ -408,6 +408,65 @@ func TestSpamVerdictSweeper_StoreError_DoesNotHotLoop(t *testing.T) {
 		"a failing due-query must back off before the cycle retries")
 }
 
+// TestSpamVerdictSweeper_UpsertError_DoesNotHotLoop covers the third way a batch
+// can make no progress: the vendor answers, but persisting the verdict fails, so
+// next_check_at never moves and the same rows stay due. This one does reach the
+// rate-limited vendor call, so a regression burns paid API quota rather than CPU —
+// quieter than the other two, and more expensive.
+func TestSpamVerdictSweeper_UpsertError_DoesNotHotLoop(t *testing.T) {
+	tm := setupTestSpamSweeper(t)
+	defer tearDownTestSpamSweeper(tm)
+
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	tm.clock.EXPECT().Now().Return(now).AnyTimes()
+
+	item := store.TokenSpamCheckItem{
+		TokenID:         9,
+		TokenCID:        testTokenCID("eip155:1", "erc721", "0xabc", "9"),
+		ContractAddress: "0xabc",
+		TokenNumber:     "9",
+		LastCheckedAt:   now.Add(-25 * time.Hour),
+		NextCheckAt:     now.Add(-1 * time.Hour),
+	}
+
+	var vendorCalls atomic.Int32
+	tm.store.EXPECT().
+		GetTokenSpamVerdictsDueForCheck(gomock.Any(), schema.SpamSourceOpenSea, 10).
+		Return([]store.TokenSpamCheckItem{item}, nil).
+		AnyTimes()
+	tm.store.EXPECT().
+		GetTokenSpamVerdictsDueForCheck(gomock.Any(), schema.SpamSourceObjkt, 10).
+		Return(nil, nil).
+		AnyTimes()
+	tm.openseaClient.EXPECT().
+		GetNFT(gomock.Any(), "0xabc", "9").
+		DoAndReturn(func(_ context.Context, _, _ string) (*opensea.NFTMetadata, error) {
+			vendorCalls.Add(1)
+			return &opensea.NFTMetadata{IsDisabled: true}, nil
+		}).
+		AnyTimes()
+	tm.store.EXPECT().
+		UpsertTokenSpamVerdict(gomock.Any(), gomock.Any()).
+		Return(false, errors.New("deadlock detected")).
+		AnyTimes()
+	tm.clock.EXPECT().
+		After(sweeper.SWEEP_CYCLE_INTERVAL).
+		DoAndReturn(func(_ time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				ch <- time.Now()
+			}()
+			return ch
+		}).
+		MinTimes(1)
+
+	runOneSweep(t, tm)
+
+	assert.Less(t, vendorCalls.Load(), int32(50),
+		"a batch that cannot persist its verdict must back off, not respin the vendor")
+}
+
 func TestSpamVerdictSweeper_ObjktBanned(t *testing.T) {
 	tm := setupTestSpamSweeper(t)
 	defer tearDownTestSpamSweeper(tm)

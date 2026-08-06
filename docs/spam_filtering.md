@@ -97,25 +97,39 @@ no `NOT EXISTS` discovery pass). So on a database that already holds tokens, thi
 feature would cover exactly nothing until each token happened to be re-indexed for
 some unrelated reason.
 
-Migration 021 closes that with a Step 3 backfill: one `IndexTokenMetadata` job per
-token already enriched by a moderating vendor, enqueued into the existing
-`token_index` queue so the running worker re-asks the vendor for real and the
-enricher writes the first verdict row. It deliberately does not derive verdicts
-from stored `enrichment_sources.vendor_json` — that column is a snapshot of
-whatever fields the enricher kept at the time, not a guarantee that
-`flag`/`is_disabled` was captured on every historical row (migration
-`018_reindex.sql`, whose pattern this reuses, documents the same failure mode for
-other fields). Idempotent via the `jobs_unique_key_active` partial unique index;
-a no-op on fresh installs, which have no `enrichment_sources` rows.
+`db/migrations/021_reindex.sql` closes that: one `IndexTokenMetadata` job per token
+already enriched by a moderating vendor, enqueued into the existing `token_index`
+queue so the running worker re-asks the vendor for real and the enricher writes the
+first verdict row. It deliberately does not derive verdicts from stored
+`enrichment_sources.vendor_json` — that column is a snapshot of whatever fields the
+enricher kept at the time, not a guarantee that `flag`/`is_disabled` was captured on
+every historical row (migration `018_reindex.sql`, whose pattern this reuses,
+documents the same failure mode for other fields). Idempotent via the
+`jobs_unique_key_active` partial unique index; a no-op on fresh installs, which have
+no `enrichment_sources` rows.
 
-**Operational note**: the backfill enqueues work proportional to the existing
-opensea/objkt token count, and every backfilled row lands at `now +
-initial_recheck_interval`, so the first sweeper round after deploy is a burst
-against the same shared vendor rate limiter the enricher uses. Size it against the
-real table (`SELECT vendor, count(*) FROM enrichment_sources WHERE vendor IN
-('opensea','objkt') GROUP BY 1`) before deploying, and consider a longer
-`initial_recheck_interval` or splitting Step 3 into a separately-paced script if
-the count is large.
+**⚠️ Run it AFTER the new code is deployed** — the reverse of the usual
+migrations-first rule, which still applies to `021.sql`. `021_reindex.sql` enqueues
+work rather than changing schema, so a worker still running pre-021 code claims
+those jobs, runs the old enricher, writes no verdict row, and marks them succeeded.
+The jobs then leave the active set and the backfill has silently done nothing — no
+error anywhere. Recovery is to re-run `021_reindex.sql` alone (finished jobs do not
+block re-insertion); do not re-run `021.sql`, which fails at `ADD COLUMN`. See the
+`Migration 021_reindex` section in `DEVELOPMENT.md` for the full runbook.
+
+**Volume**: the backfill enqueues work proportional to the existing opensea/objkt
+token count, and every backfilled row lands at `now + initial_recheck_interval`, so
+the first sweeper round after the queue drains is a burst against the same shared
+vendor rate limiter the enricher uses. Size it against the real table before
+deploying:
+
+```sql
+SELECT vendor, count(*) FROM enrichment_sources
+ WHERE vendor IN ('opensea','objkt') GROUP BY vendor;
+```
+
+If the count is large, consider a longer `initial_recheck_interval`, or pacing the
+`021_reindex.sql` INSERT in batches rather than running it as one statement.
 
 ## Coverage policy (accepted gaps)
 
