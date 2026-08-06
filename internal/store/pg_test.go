@@ -549,3 +549,113 @@ func TestCurrentSweeperVerdictStillApplies(t *testing.T) {
 
 // SpamSourceForTest keeps the source choice in one place for the race tests.
 func SpamSourceForTest() schema.SpamSource { return schema.SpamSourceOpenSea }
+
+// TestStaleSweeperFailureDoesNotDeferFreshRow is the failure-path counterpart to
+// TestStaleSweeperVerdictDoesNotOverwriteNewer.
+//
+// A failed vendor request is exactly as stale as a successful one, and landing it
+// after a newer enrichment does more damage: the backoff is computed by the
+// sweeper from the consecutive_failures it read, while the SQL increments whatever
+// is stored now. A row the enricher just reset to zero failures would take a
+// long-backoff next_check_at while recording a single failure — at the sweeper's
+// max, a token that was just confirmed clean gets deferred 30 days.
+func TestStaleSweeperFailureDoesNotDeferFreshRow(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
+	}
+
+	store := NewPGStore(testDB)
+	ctx := context.Background()
+	const contract = "0x000000000000000000000000000000000000aaab"
+
+	t.Cleanup(func() {
+		testDB.Exec(`DELETE FROM token_spam_verdicts WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM token_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM balances WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM tokens WHERE contract_address = ?`, contract)
+	})
+
+	mintInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		contract,
+		"1",
+		"0xowner_stale_failure",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, mintInput))
+	token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	overdue := time.Now().Add(-time.Hour)
+	_, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		TokenID:     token.ID,
+		Source:      SpamSourceForTest(),
+		Verdict:     false,
+		Detail:      []byte(`{"is_disabled":false}`),
+		NextCheckAt: &overdue,
+	})
+	require.NoError(t, err)
+
+	// The sweeper picks it up and holds this snapshot while its vendor call runs.
+	due, err := store.GetTokenSpamVerdictsDueForCheck(ctx, SpamSourceForTest(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	sweeperSnapshot := due[0]
+
+	// Mid-flight the enricher succeeds and puts the row on a fresh 24h schedule.
+	enricherNext := time.Now().Add(24 * time.Hour)
+	_, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		TokenID:     token.ID,
+		Source:      SpamSourceForTest(),
+		Verdict:     false,
+		Detail:      []byte(`{"is_disabled":false}`),
+		NextCheckAt: &enricherNext,
+	})
+	require.NoError(t, err)
+
+	fresh := getVerdictRowForTest(t, token.ID)
+	require.Equal(t, 0, fresh.ConsecutiveFailures, "a successful write clears the failure state")
+
+	// Now the sweeper's failed request lands, carrying the max backoff it computed
+	// from the stale snapshot.
+	staleBackoff := time.Now().Add(720 * time.Hour)
+	applied, err := store.RecordTokenSpamCheckFailure(
+		ctx, token.ID, SpamSourceForTest(), "opensea: 502 bad gateway",
+		staleBackoff, sweeperSnapshot.LastCheckedAt)
+	require.NoError(t, err, "losing the race is a no-op, not an error")
+	assert.False(t, applied, "a stale failure must not report as applied")
+
+	after := getVerdictRowForTest(t, token.ID)
+	assert.Equal(t, 0, after.ConsecutiveFailures,
+		"the stale failure must not increment a counter the enricher just cleared")
+	assert.Nil(t, after.LastError, "the stale failure must not stamp an error on a healthy row")
+	require.NotNil(t, after.NextCheckAt)
+	assert.WithinDuration(t, enricherNext, *after.NextCheckAt, time.Second,
+		"the enricher's fresh schedule must survive; a 720h deferral here would hide the token for 30 days")
+
+	// A failure whose expectation is current still applies, so the guard rejects
+	// only stale responses rather than disabling failure tracking entirely.
+	currentBackoff := time.Now().Add(time.Hour)
+	applied, err = store.RecordTokenSpamCheckFailure(
+		ctx, token.ID, SpamSourceForTest(), "opensea: 502 bad gateway",
+		currentBackoff, after.LastCheckedAt)
+	require.NoError(t, err)
+	assert.True(t, applied, "a failure with a current expectation must apply")
+
+	final := getVerdictRowForTest(t, token.ID)
+	assert.Equal(t, 1, final.ConsecutiveFailures)
+}
+
+// getVerdictRowForTest reads the verdict row straight from the DB for assertions
+// on columns the store API does not surface.
+func getVerdictRowForTest(t *testing.T, tokenID uint64) schema.TokenSpamVerdict {
+	t.Helper()
+	var row schema.TokenSpamVerdict
+	require.NoError(t, testDB.Where("token_id = ? AND source = ?",
+		tokenID, SpamSourceForTest()).First(&row).Error)
+	return row
+}

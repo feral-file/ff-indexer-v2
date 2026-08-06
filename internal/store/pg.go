@@ -3241,24 +3241,37 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 	return changed, nil
 }
 
-// RecordTokenSpamCheckFailure bumps the sweeper failure state on an existing verdict row.
+// RecordTokenSpamCheckFailure bumps the sweeper failure state on an existing verdict
+// row, and reports whether the update applied.
 //
 // Reason: a vendor error is not a verdict (tri-state), so the row's verdict and
 // last_checked_at stay untouched — only the scheduling state advances, otherwise
 // the sweeper would re-pick the same failing row every cycle.
-// Constraints: no tokens-row lock (nothing is recomputed); a missing row (token
-// CASCADE-deleted between batch fetch and this write) is a silent no-op.
-func (s *pgStore) RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time) error {
-	err := s.db.WithContext(ctx).Exec(
+//
+// expectedLastCheckedAt makes this a compare-and-set on the row the sweeper read,
+// for the same reason UpsertTokenSpamVerdict has one: the vendor request that
+// failed was issued before the read-to-write window opened, so an enricher may
+// have persisted a fresh verdict in the meantime. Landing the failure anyway is
+// worse here than on the success path — the backoff is computed Go-side from the
+// caller's stale consecutive_failures while the SQL increments whatever is stored
+// now, so the row ends up with a low failure count on a long-backoff schedule. A
+// token that just got a clean verdict could be deferred by the 720h maximum.
+//
+// Constraints: no tokens-row lock (nothing is recomputed). Returns applied=false
+// for both a lost race and a missing row (token CASCADE-deleted between the batch
+// fetch and this write) — neither leaves the row due, so the caller does not need
+// to tell them apart.
+func (s *pgStore) RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time, expectedLastCheckedAt time.Time) (bool, error) {
+	res := s.db.WithContext(ctx).Exec(
 		`UPDATE token_spam_verdicts
 		 SET consecutive_failures = consecutive_failures + 1, last_error = ?, next_check_at = ?
-		 WHERE token_id = ? AND source = ?`,
-		checkErr, nextCheckAt, tokenID, source,
-	).Error
-	if err != nil {
-		return fmt.Errorf("failed to record token spam check failure: %w", err)
+		 WHERE token_id = ? AND source = ? AND last_checked_at = ?`,
+		checkErr, nextCheckAt, tokenID, source, expectedLastCheckedAt,
+	)
+	if res.Error != nil {
+		return false, fmt.Errorf("failed to record token spam check failure: %w", res.Error)
 	}
-	return nil
+	return res.RowsAffected > 0, nil
 }
 
 // GetTokenSpamVerdictsDueForCheck returns due verdict rows for one source, oldest

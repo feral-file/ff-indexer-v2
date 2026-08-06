@@ -317,10 +317,26 @@ func (s *spamVerdictSweeper) fetchVendorVerdict(ctx context.Context, source sche
 // recordFailure advances the row's failure backoff without touching its verdict,
 // and reports that as progress: the row leaves the due set even though the check
 // itself failed.
+//
+// The write is conditional on the row the sweeper read, mirroring the success
+// path. A failed request is just as stale as a successful one, and landing it
+// after a newer enrichment is worse: the backoff is derived here from the
+// caller's consecutive_failures while the SQL increments the stored value, so a
+// freshly re-checked token could be pushed out by the 720h maximum on a row that
+// only records one failure. When the guard rejects, the winner already moved
+// next_check_at, so the row is not due and there is nothing to retry.
 func (s *spamVerdictSweeper) recordFailure(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem, checkErr error, progressed *atomic.Bool) {
 	next := s.clock.Now().Add(s.failureInterval(item))
-	if err := s.store.RecordTokenSpamCheckFailure(ctx, item.TokenID, source, checkErr.Error(), next); err != nil {
+	applied, err := s.store.RecordTokenSpamCheckFailure(
+		ctx, item.TokenID, source, checkErr.Error(), next, item.LastCheckedAt)
+	if err != nil {
 		logger.ErrorCtx(ctx, fmt.Errorf("failed to record spam check failure: %w", err),
+			zap.String("token_cid", item.TokenCID),
+			zap.String("source", source.String()))
+		return
+	}
+	if !applied {
+		logger.InfoCtx(ctx, "Skipped stale spam check failure",
 			zap.String("token_cid", item.TokenCID),
 			zap.String("source", source.String()))
 		return

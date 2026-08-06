@@ -944,17 +944,18 @@ func (mr *MockStoreMockRecorder) MarkJobSucceeded(ctx, id any) *gomock.Call {
 }
 
 // RecordTokenSpamCheckFailure mocks base method.
-func (m *MockStore) RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time) error {
+func (m *MockStore) RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt, expectedLastCheckedAt time.Time) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordTokenSpamCheckFailure", ctx, tokenID, source, checkErr, nextCheckAt)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "RecordTokenSpamCheckFailure", ctx, tokenID, source, checkErr, nextCheckAt, expectedLastCheckedAt)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RecordTokenSpamCheckFailure indicates an expected call of RecordTokenSpamCheckFailure.
-func (mr *MockStoreMockRecorder) RecordTokenSpamCheckFailure(ctx, tokenID, source, checkErr, nextCheckAt any) *gomock.Call {
+func (mr *MockStoreMockRecorder) RecordTokenSpamCheckFailure(ctx, tokenID, source, checkErr, nextCheckAt, expectedLastCheckedAt any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordTokenSpamCheckFailure", reflect.TypeOf((*MockStore)(nil).RecordTokenSpamCheckFailure), ctx, tokenID, source, checkErr, nextCheckAt)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordTokenSpamCheckFailure", reflect.TypeOf((*MockStore)(nil).RecordTokenSpamCheckFailure), ctx, tokenID, source, checkErr, nextCheckAt, expectedLastCheckedAt)
 }
 
 // RequestJobCancel mocks base method.

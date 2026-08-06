@@ -246,8 +246,9 @@ func TestSpamVerdictSweeper_Failure_TakesErrorBackoff(t *testing.T) {
 		GetNFT(gomock.Any(), "0xabc", "3").
 		Return(nil, opensea.ErrNFTNotFound)
 	tm.store.EXPECT().
-		RecordTokenSpamCheckFailure(gomock.Any(), uint64(3), schema.SpamSourceOpenSea, gomock.Any(), now.Add(time.Hour)).
-		Return(nil)
+		RecordTokenSpamCheckFailure(gomock.Any(), uint64(3), schema.SpamSourceOpenSea, gomock.Any(),
+			now.Add(time.Hour), item.LastCheckedAt).
+		Return(true, nil)
 	expectIdleAfterFirstCycle(tm)
 
 	runOneSweep(t, tm)
@@ -279,8 +280,9 @@ func TestSpamVerdictSweeper_Failure_PinsAtMaxAfterRepeats(t *testing.T) {
 	// Permanently failing rows settle at the max interval instead of leaving the
 	// queue for good: quota stops burning but a recovered vendor still converges.
 	tm.store.EXPECT().
-		RecordTokenSpamCheckFailure(gomock.Any(), uint64(4), schema.SpamSourceOpenSea, gomock.Any(), now.Add(720*time.Hour)).
-		Return(nil)
+		RecordTokenSpamCheckFailure(gomock.Any(), uint64(4), schema.SpamSourceOpenSea, gomock.Any(),
+			now.Add(720*time.Hour), item.LastCheckedAt).
+		Return(true, nil)
 	expectIdleAfterFirstCycle(tm)
 
 	runOneSweep(t, tm)

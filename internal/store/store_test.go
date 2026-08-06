@@ -7236,8 +7236,11 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 		before := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceOpenSea)
 		failNext := time.Now().Add(time.Hour)
 
-		require.NoError(t, store.RecordTokenSpamCheckFailure(
-			ctx, token.ID, schema.SpamSourceOpenSea, "opensea: 502 bad gateway", failNext))
+		applied, err := store.RecordTokenSpamCheckFailure(
+			ctx, token.ID, schema.SpamSourceOpenSea, "opensea: 502 bad gateway", failNext,
+			before.LastCheckedAt)
+		require.NoError(t, err)
+		require.True(t, applied, "the expectation matches the stored row, so it must apply")
 
 		after := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceOpenSea)
 		assert.Equal(t, before.Verdict, after.Verdict, "an error is not a verdict")
@@ -7250,7 +7253,7 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 		assert.WithinDuration(t, failNext, *after.NextCheckAt, time.Second)
 
 		// A later successful check resets the failure state.
-		_, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		_, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
 			TokenID:     token.ID,
 			Source:      schema.SpamSourceOpenSea,
 			Verdict:     true,

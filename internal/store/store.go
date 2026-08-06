@@ -464,8 +464,15 @@ type Store interface {
 	// verdict row: increments consecutive_failures, stores the error, and advances
 	// next_check_at. It deliberately does NOT touch verdict or last_checked_at —
 	// a vendor error is not a verdict (tri-state), so the last real moderation
-	// decision stands. Missing row (e.g. token deleted mid-flight) is a no-op.
-	RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time) error
+	// decision stands.
+	//
+	// expectedLastCheckedAt is the compare-and-set counterpart to
+	// UpsertTokenSpamVerdictInput.ExpectedLastCheckedAt: the update applies only
+	// while last_checked_at still holds the value the caller read, so a failure
+	// from a request issued before a newer enrichment cannot clobber the fresh
+	// schedule. Returns whether the update applied; false covers both a lost race
+	// and a missing row (token deleted mid-flight).
+	RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time, expectedLastCheckedAt time.Time) (bool, error)
 
 	// GetTokenSpamVerdictsDueForCheck returns verdict rows due for a sweeper
 	// re-check for ONE source (per-source queues so one vendor's API quota cannot
