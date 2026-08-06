@@ -1338,9 +1338,6 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 		// is_spam that means a token the vendor flagged goes back to visible while
 		// its verdict row still says spam, and nothing re-flips it until the next
 		// sweep (24h at the earliest).
-		token.Burned = true
-		token.CurrentOwner = nil
-
 		if err := tx.Model(&schema.Token{}).
 			Where("id = ?", token.ID).
 			Updates(map[string]any{
@@ -1494,8 +1491,6 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 		// Scoped to current_owner rather than Save() for the same reason as
 		// UpdateTokenBurn: a full-row write would revert is_spam / is_viewable if
 		// their out-of-band writers committed between the read above and here.
-		token.CurrentOwner = input.CurrentOwner
-
 		if err := tx.Model(&schema.Token{}).
 			Where("id = ?", token.ID).
 			Updates(map[string]any{

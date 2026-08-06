@@ -36,10 +36,33 @@ type FA struct {
 	CollectionType string `json:"collection_type"`
 }
 
-// FlagBanned is the objkt moderation flag value for banned tokens. The `flag` enum's
-// only observed values are "none" and "banned"; banned is objkt's active moderation
-// verdict and feeds the spam flag on the indexed token.
-const FlagBanned = "banned"
+// objkt moderation flag values. The enum has four states, confirmed against the
+// live API (`token(distinct_on: flag)`): none, banned, flagged, removed.
+//
+// Only "banned" feeds the spam verdict. That is not an assumption — sampling the
+// API for phishing-shaped names (claim / reward / airdrop / a domain in the title)
+// returns them almost exclusively under "banned", which is also where the known
+// airdrop scams this feature was built for live. "removed" returned zero such
+// matches and "flagged" only a handful; both are dominated by ordinary artwork,
+// so they read as takedowns for other reasons (copyright, artist request, reports
+// under review) rather than objkt's scam verdict. Treating them as spam would hide
+// real art, which the design explicitly weighs as worse than letting spam through
+// until the next sweep.
+//
+// This mirrors the OpenSea side, where only is_disabled counts and is_suspicious /
+// is_nsfw are excluded for the same reason. Re-sample before changing any of this;
+// objkt documents no semantics for the enum.
+const (
+	// FlagNone is objkt's "no moderation action" state.
+	FlagNone = "none"
+	// FlagBanned is objkt's scam/spam takedown — the spam signal.
+	FlagBanned = "banned"
+	// FlagFlagged marks a token as reported. Not a spam verdict.
+	FlagFlagged = "flagged"
+	// FlagRemoved marks a token taken down for reasons other than the scam
+	// verdict. Not a spam signal (see above).
+	FlagRemoved = "removed"
+)
 
 // Token represents a token from objkt v3 API
 type Token struct {
@@ -60,6 +83,35 @@ type Token struct {
 // IsBanned reports whether objkt has banned this token.
 func (t *Token) IsBanned() bool {
 	return t.Flag != nil && *t.Flag == FlagBanned
+}
+
+// SpamVerdict maps objkt's flag onto the indexer's tri-state spam signal:
+// true = spam, false = affirmatively clean, nil = objkt has no usable opinion.
+//
+// Only "banned" is spam and only "none" is clean. "flagged" and "removed" are
+// moderation states this indexer does not classify (see the flag constants), and
+// they must return nil rather than false: writing an affirmative clean verdict for
+// a token objkt has acted on would claim a confirmation the vendor never gave, and
+// would clear an existing spam verdict — a token banned yesterday and re-flagged
+// today would flip back to visible. nil leaves whatever verdict is stored alone,
+// which is what "no opinion" means everywhere else in this feature.
+//
+// A missing flag (nil, or an enum value added after this was written) is also nil
+// for the same reason.
+func (t *Token) SpamVerdict() *bool {
+	if t.Flag == nil {
+		return nil
+	}
+	switch *t.Flag {
+	case FlagBanned:
+		spam := true
+		return &spam
+	case FlagNone:
+		clean := false
+		return &clean
+	default:
+		return nil
+	}
 }
 
 // Creator represents a creator/artist in objkt API

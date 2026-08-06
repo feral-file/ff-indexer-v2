@@ -638,11 +638,22 @@ func TestStaleSweeperFailureDoesNotDeferFreshRow(t *testing.T) {
 		"the enricher's fresh schedule must survive; a 720h deferral here would hide the token for 30 days")
 
 	// A failure whose expectation is current still applies, so the guard rejects
-	// only stale responses rather than disabling failure tracking entirely.
+	// only stale responses rather than disabling failure tracking entirely. The
+	// expectation deliberately comes from GetTokenSpamVerdictsDueForCheck — the
+	// query the sweeper actually reads — because that is the round trip that
+	// would silently reject every failure write if it ever stopped comparing
+	// equal. Rewind next_check_at so the row is due again and the query returns it.
+	require.NoError(t, testDB.Exec(
+		`UPDATE token_spam_verdicts SET next_check_at = ? WHERE token_id = ? AND source = ?`,
+		time.Now().Add(-time.Hour), token.ID, SpamSourceForTest()).Error)
+	redue, err := store.GetTokenSpamVerdictsDueForCheck(ctx, SpamSourceForTest(), 10)
+	require.NoError(t, err)
+	require.Len(t, redue, 1, "the rewound row must be due, otherwise this proves nothing")
+
 	currentBackoff := time.Now().Add(time.Hour)
 	applied, err = store.RecordTokenSpamCheckFailure(
 		ctx, token.ID, SpamSourceForTest(), "opensea: 502 bad gateway",
-		currentBackoff, after.LastCheckedAt)
+		currentBackoff, redue[0].LastCheckedAt)
 	require.NoError(t, err)
 	assert.True(t, applied, "a failure with a current expectation must apply")
 

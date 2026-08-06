@@ -2443,10 +2443,33 @@ func TestEnhancer_Enhance_SpamVerdict(t *testing.T) {
 		assert.False(t, *result.IsSpam, "an explicit clean verdict must be recorded so flags are reversible")
 	})
 
-	t.Run("objkt missing flag reports clean", func(t *testing.T) {
+	// objkt's flag enum has four values, not two. Only "banned" is a spam verdict
+	// and only "none" is a clean one; the rest carry no verdict this indexer can
+	// act on, so they must leave the stored verdict alone rather than assert a
+	// confirmation objkt never gave. Recording "clean" for them would also clear a
+	// real flag — a token banned yesterday and re-flagged today would flip back to
+	// visible.
+	t.Run("objkt flagged reports no verdict", func(t *testing.T) {
+		flagged := "flagged"
+		result := enhanceObjktForSpam(t, &flagged)
+		assert.Nil(t, result.IsSpam,
+			"a reported-but-unclassified token is not an affirmative clean verdict")
+		assert.JSONEq(t, `{"flag":"flagged"}`, string(result.SpamDetail),
+			"the raw flag stays observable even when the verdict is nil")
+	})
+
+	t.Run("objkt removed reports no verdict", func(t *testing.T) {
+		removed := "removed"
+		result := enhanceObjktForSpam(t, &removed)
+		assert.Nil(t, result.IsSpam,
+			"objkt removed the token for some reason other than its scam verdict; "+
+				"sampling shows these are ordinary artwork, so it is neither spam nor confirmed clean")
+	})
+
+	t.Run("objkt missing flag reports no verdict", func(t *testing.T) {
 		result := enhanceObjktForSpam(t, nil)
-		require.NotNil(t, result.IsSpam)
-		assert.False(t, *result.IsSpam)
+		assert.Nil(t, result.IsSpam,
+			"absence of a flag is absence of a signal, which is the tri-state nil, not clean")
 	})
 
 	t.Run("opensea disabled flags the token", func(t *testing.T) {

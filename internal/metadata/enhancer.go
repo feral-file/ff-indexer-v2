@@ -512,8 +512,14 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 		return nil, fmt.Errorf("failed to marshal objkt token: %w", err)
 	}
 
-	// Build enhanced metadata
-	objktBanned := token.IsBanned()
+	// Build enhanced metadata.
+	//
+	// objkt's flag enum has four states and only two of them are a verdict this
+	// indexer can act on: banned is spam, none is clean, and flagged/removed are
+	// moderation states we do not classify — SpamVerdict returns nil for those so
+	// no verdict row is written or cleared. Attaching the detail unconditionally
+	// keeps the raw flag observable even when the verdict itself is nil.
+	objktSpam := token.SpamVerdict()
 	// stdlib json, not e.json: the vendor adapter is for canonicalizing whole
 	// payloads (hashing); this two-field detail cannot fail to marshal and must
 	// not disturb the adapter's mock expectations in tests.
@@ -524,8 +530,7 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorObjkt,
 		VendorJSON: vendorJSON,
-		// objkt's moderation verdict: banned tokens are spam on the display surface.
-		IsSpam:     &objktBanned,
+		IsSpam:     objktSpam,
 		SpamDetail: spamDetail,
 	}
 

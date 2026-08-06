@@ -602,3 +602,65 @@ func TestSpamVerdictSweeper_DoubleStart(t *testing.T) {
 	_ = tm.sweeper.Stop(ctx)
 	require.NoError(t, <-errChan)
 }
+
+// TestSpamVerdictSweeper_StaleFailure_DoesNotHotLoop covers the fourth no-progress
+// path: the vendor call fails, but the failure write loses its compare-and-set
+// because a newer enrichment already wrote. The row's next_check_at was moved by
+// that winner, so it is no longer due — but the sweeper must not count the batch
+// as work, or the cycle would skip its sleep and respin the same rows through the
+// rate-limited vendor call.
+func TestSpamVerdictSweeper_StaleFailure_DoesNotHotLoop(t *testing.T) {
+	tm := setupTestSpamSweeper(t)
+	defer tearDownTestSpamSweeper(tm)
+
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	tm.clock.EXPECT().Now().Return(now).AnyTimes()
+
+	item := store.TokenSpamCheckItem{
+		TokenID:         11,
+		TokenCID:        testTokenCID("eip155:1", "erc721", "0xabc", "11"),
+		ContractAddress: "0xabc",
+		TokenNumber:     "11",
+		LastCheckedAt:   now.Add(-25 * time.Hour),
+		NextCheckAt:     now.Add(-1 * time.Hour),
+	}
+
+	var vendorCalls atomic.Int32
+	tm.store.EXPECT().
+		GetTokenSpamVerdictsDueForCheck(gomock.Any(), schema.SpamSourceOpenSea, 10).
+		Return([]store.TokenSpamCheckItem{item}, nil).
+		AnyTimes()
+	tm.store.EXPECT().
+		GetTokenSpamVerdictsDueForCheck(gomock.Any(), schema.SpamSourceObjkt, 10).
+		Return(nil, nil).
+		AnyTimes()
+	tm.openseaClient.EXPECT().
+		GetNFT(gomock.Any(), "0xabc", "11").
+		DoAndReturn(func(_ context.Context, _, _ string) (*opensea.NFTMetadata, error) {
+			vendorCalls.Add(1)
+			return nil, errors.New("opensea: 502 bad gateway")
+		}).
+		AnyTimes()
+	// The compare-and-set rejects: applied=false, so this is not progress.
+	tm.store.EXPECT().
+		RecordTokenSpamCheckFailure(gomock.Any(), uint64(11), schema.SpamSourceOpenSea,
+			gomock.Any(), gomock.Any(), item.LastCheckedAt).
+		Return(false, nil).
+		AnyTimes()
+	tm.clock.EXPECT().
+		After(sweeper.SWEEP_CYCLE_INTERVAL).
+		DoAndReturn(func(_ time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				ch <- time.Now()
+			}()
+			return ch
+		}).
+		MinTimes(1)
+
+	runOneSweep(t, tm)
+
+	assert.Less(t, vendorCalls.Load(), int32(50),
+		"a batch whose failure writes all lose the race must back off, not respin the vendor")
+}

@@ -452,3 +452,41 @@ func TestGetTokenQueryRequestsFlag(t *testing.T) {
 	require.NotNil(t, token.Flag)
 	assert.True(t, token.IsBanned())
 }
+
+// TestTokenSpamVerdict pins the mapping from objkt's four-state flag enum onto the
+// indexer's tri-state spam signal. The enum values were confirmed against the live
+// API; only "banned" is a spam verdict and only "none" is a clean one, because
+// sampling shows phishing-shaped tokens sit almost exclusively under "banned"
+// while "flagged" and "removed" are dominated by ordinary artwork.
+func TestTokenSpamVerdict(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+
+	cases := []struct {
+		name string
+		flag *string
+		want *bool
+	}{
+		{"banned is spam", ptr(objkt.FlagBanned), boolPtrForTest(true)},
+		{"none is affirmatively clean", ptr(objkt.FlagNone), boolPtrForTest(false)},
+		{"flagged carries no verdict", ptr(objkt.FlagFlagged), nil},
+		{"removed carries no verdict", ptr(objkt.FlagRemoved), nil},
+		{"missing flag carries no verdict", nil, nil},
+		{"unknown future value carries no verdict", ptr("some_new_state"), nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := (&objkt.Token{Flag: tc.flag}).SpamVerdict()
+			if tc.want == nil {
+				assert.Nil(t, got,
+					"anything but banned/none must leave the stored verdict untouched")
+				return
+			}
+			if assert.NotNil(t, got) {
+				assert.Equal(t, *tc.want, *got)
+			}
+		})
+	}
+}
+
+func boolPtrForTest(b bool) *bool { return &b }

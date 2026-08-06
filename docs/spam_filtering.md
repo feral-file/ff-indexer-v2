@@ -36,6 +36,25 @@ Foundation, SuperRare, the feralfile *enrichment* vendor) never create rows
 either: the failure path (`RecordTokenSpamCheckFailure`) advances only scheduling
 state, never `verdict` or `last_checked_at`.
 
+That also applies *within* a vendor's own moderation states. Neither vendor exposes a
+single boolean:
+
+| Vendor | Spam | Clean | No verdict |
+|--------|------|-------|------------|
+| OpenSea | `is_disabled` | `is_disabled` false | `is_suspicious`, `is_nsfw` — not read |
+| objkt | `flag = banned` | `flag = none` | `flag = flagged`, `flag = removed`, missing/unknown |
+
+objkt's `flag` enum has four values, confirmed against the live API
+(`token(distinct_on: flag)`). Only `banned` counts: sampling for phishing-shaped
+names returns them almost exclusively under `banned`, while `flagged` and `removed`
+are dominated by ordinary artwork and read as takedowns for other reasons (copyright,
+artist request, reports under review). Those map to **nil**, not to `false` — writing
+an affirmative clean verdict for a token the vendor has acted on would both claim a
+confirmation the vendor never gave and clear an existing flag, so a token banned
+yesterday and re-flagged today would flip back to visible. Same reasoning as excluding
+OpenSea's `is_suspicious`. Re-sample before changing any of it; objkt documents no
+semantics for the enum.
+
 **Tag-not-drop**: unlike the write-time contract blacklist (which drops events so
 blacklisted tokens are never stored and cannot be un-hidden), flagged tokens stay
 fully indexed — the verdict is reversible and clients are notified of flips via
