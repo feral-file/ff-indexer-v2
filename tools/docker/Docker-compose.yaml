@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: ${FF_INDEXER_DATABASE_PASSWORD:-postgres}
       POSTGRES_DB: ${FF_INDEXER_DATABASE_DBNAME:-ff_indexer}
     ports:
-      - "${FF_INDEXER_DB_HOST_PORT:-5432}:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../../db/init_pg_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
@@ -50,9 +50,6 @@ services:
       - ../../config/.env.local
     environment:
       - FF_INDEXER_DATABASE_HOST=postgres
-      # Inside the compose network postgres always listens on 5432; .env.local may remap
-      # the HOST port (FF_INDEXER_DB_HOST_PORT/DATABASE_PORT) for host-side runs only.
-      - FF_INDEXER_DATABASE_PORT=5432
       # Default image uses CGO_ENABLED=0 (media worker stub). .env.local often sets media true;
       # that requires a CGO build (`docker compose build --build-arg CGO_ENABLED=1 ff-indexer`).
       - FF_INDEXER_MEDIA_ENABLED=false
