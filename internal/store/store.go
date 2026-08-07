@@ -140,20 +140,22 @@ type TokenViewabilityChange struct {
 	NewViewable bool   `gorm:"column:new_viewable"`
 }
 
-// DefaultSpamRecheckInterval is the default value of
-// spam_sweeper.initial_recheck_interval — the first re-check delay for a fresh
+// DefaultModerationRecheckInterval is the default value of
+// moderation_sweeper.initial_recheck_interval — the first re-check delay for a fresh
 // vendor spam verdict. Both writers (the enricher when it creates a verdict row,
 // the spam sweeper as its clean-token floor) read the configured value at
 // runtime; this constant only anchors the config default and serves as the
 // enricher's fallback when no configured value was threaded in. Operators tune
 // the config key, not this constant.
-const DefaultSpamRecheckInterval = 24 * time.Hour
+const DefaultModerationRecheckInterval = 24 * time.Hour
 
-// UpsertTokenSpamVerdictInput represents the input for recording one source's spam verdict
-type UpsertTokenSpamVerdictInput struct {
+// UpsertTokenModerationVerdictInput represents the input for recording one source's moderation verdict
+type UpsertTokenModerationVerdictInput struct {
 	TokenID uint64
-	Source  schema.SpamSource
-	Verdict bool
+	Source  schema.ModerationSource
+	// Verdict is this source's decision ("none" | "spam"); an enum rather than a
+	// boolean so new verdict kinds need no schema or signature change.
+	Verdict schema.ModerationStatus
 	// Detail carries the raw moderation fields only ({"is_disabled":true} /
 	// {"flag":"banned"}); nil is allowed
 	Detail []byte
@@ -179,16 +181,16 @@ type UpsertTokenSpamVerdictInput struct {
 	ExpectedLastCheckedAt *time.Time
 }
 
-// TokenSpamCheckItem is one due entry from the spam sweeper's work queue, joined
+// TokenModerationCheckItem is one due entry from the spam sweeper's work queue, joined
 // with the token identity the vendor clients need to re-query the verdict.
-type TokenSpamCheckItem struct {
-	TokenID             uint64       `gorm:"column:token_id"`
-	TokenCID            string       `gorm:"column:token_cid"`
-	Chain               domain.Chain `gorm:"column:chain"`
-	ContractAddress     string       `gorm:"column:contract_address"`
-	TokenNumber         string       `gorm:"column:token_number"`
-	Verdict             bool         `gorm:"column:verdict"`
-	ConsecutiveFailures int          `gorm:"column:consecutive_failures"`
+type TokenModerationCheckItem struct {
+	TokenID             uint64                  `gorm:"column:token_id"`
+	TokenCID            string                  `gorm:"column:token_cid"`
+	Chain               domain.Chain            `gorm:"column:chain"`
+	ContractAddress     string                  `gorm:"column:contract_address"`
+	TokenNumber         string                  `gorm:"column:token_number"`
+	Verdict             schema.ModerationStatus `gorm:"column:verdict"`
+	ConsecutiveFailures int                     `gorm:"column:consecutive_failures"`
 	// LastCheckedAt and NextCheckAt let the sweeper derive the previous re-check
 	// interval (NextCheckAt − LastCheckedAt) without storing an interval column.
 	LastCheckedAt time.Time `gorm:"column:last_checked_at"`
@@ -256,14 +258,14 @@ type TokenQueryFilter struct {
 	// Max 50 entries (MAX_TOKEN_MINT_NUMBERS_FILTER); each entry must be >= 1.
 	MintNumbers       []int64
 	IncludeUnviewable bool // If false (default), only return tokens with is_viewable=true
-	// IncludeSpam controls whether vendor-flagged spam tokens (is_spam=true) are returned.
+	// IncludeModerated controls whether moderated tokens (moderation_status <> 'none') are returned.
 	// False (default) excludes them — every consumer (app, FF1 dynamic playlists) inherits
 	// the spam filter unless it explicitly opts in to see flagged tokens.
-	IncludeSpam bool
-	SortBy      TokenSortBy // Sort field: created_at, latest_provenance, or mint_number
-	SortOrder   SortOrder   // Sort order: asc or desc
-	Limit       int
-	Offset      uint64 // Offset for pagination
+	IncludeModerated bool
+	SortBy           TokenSortBy // Sort field: created_at, latest_provenance, or mint_number
+	SortOrder        SortOrder   // Sort order: asc or desc
+	Limit            int
+	Offset           uint64 // Offset for pagination
 }
 
 // TokensWithMetadataResult represents a token with its metadata
@@ -450,35 +452,35 @@ type Store interface {
 	// Token Spam Operations
 	// =============================================================================
 
-	// UpsertTokenSpamVerdict records one source's spam verdict and recomputes the
-	// materialized tokens.is_spam in a single transaction: a feralfile row wins
+	// UpsertTokenModerationVerdict records one source's moderation verdict and recomputes the
+	// materialized tokens.moderation_status in a single transaction: a feralfile row wins
 	// outright (in both directions), otherwise OR of vendor verdicts. When the
 	// combined verdict actually changes it also inserts a broadcast
-	// spam_status_changed token event (mirroring the viewability pattern) so
+	// moderation_status_changed token event (mirroring the viewability pattern) so
 	// collection sync clients drop or restore the token. Serialized per token via
 	// a tokens-row lock so concurrent writers cannot recompute from stale row sets.
 	// Unknown token is a no-op. Returns whether the combined verdict changed.
-	UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenSpamVerdictInput) (bool, error)
+	UpsertTokenModerationVerdict(ctx context.Context, input UpsertTokenModerationVerdictInput) (bool, error)
 
-	// RecordTokenSpamCheckFailure bumps the sweeper failure state on an existing
+	// RecordTokenModerationCheckFailure bumps the sweeper failure state on an existing
 	// verdict row: increments consecutive_failures, stores the error, and advances
 	// next_check_at. It deliberately does NOT touch verdict or last_checked_at —
 	// a vendor error is not a verdict (tri-state), so the last real moderation
 	// decision stands.
 	//
 	// expectedLastCheckedAt is the compare-and-set counterpart to
-	// UpsertTokenSpamVerdictInput.ExpectedLastCheckedAt: the update applies only
+	// UpsertTokenModerationVerdictInput.ExpectedLastCheckedAt: the update applies only
 	// while last_checked_at still holds the value the caller read, so a failure
 	// from a request issued before a newer enrichment cannot clobber the fresh
 	// schedule. Returns whether the update applied; false covers both a lost race
 	// and a missing row (token deleted mid-flight).
-	RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time, expectedLastCheckedAt time.Time) (bool, error)
+	RecordTokenModerationCheckFailure(ctx context.Context, tokenID uint64, source schema.ModerationSource, checkErr string, nextCheckAt time.Time, expectedLastCheckedAt time.Time) (bool, error)
 
-	// GetTokenSpamVerdictsDueForCheck returns verdict rows due for a sweeper
+	// GetTokenModerationVerdictsDueForCheck returns verdict rows due for a sweeper
 	// re-check for ONE source (per-source queues so one vendor's API quota cannot
 	// starve another's), oldest due first, joined with the token identity the
 	// vendor clients need. Rows with next_check_at NULL (feralfile) never appear.
-	GetTokenSpamVerdictsDueForCheck(ctx context.Context, source schema.SpamSource, limit int) ([]TokenSpamCheckItem, error)
+	GetTokenModerationVerdictsDueForCheck(ctx context.Context, source schema.ModerationSource, limit int) ([]TokenModerationCheckItem, error)
 
 	// =============================================================================
 	// Token Ownership & Balances

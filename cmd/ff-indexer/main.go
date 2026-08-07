@@ -173,20 +173,20 @@ func run() int {
 	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue)
 
 	// Spam verdict sweeper: re-checks OpenSea/objkt moderation verdicts on the
-	// token_spam_verdicts schedule. Its vendor clients share rateLimiter with
+	// token_moderation_verdicts schedule. Its vendor clients share rateLimiter with
 	// worker-core's enrichment clients, so the per-provider API budget (opensea,
 	// objkt) is enforced process-wide rather than per subsystem.
-	spamSweeperConfig := &sweeper.SpamVerdictSweeperConfig{
-		BatchSize:              sweeperCfg.SpamSweeper.BatchSize,
-		WorkerPoolSize:         sweeperCfg.SpamSweeper.Worker.WorkerPoolSize,
-		InitialRecheckInterval: sweeperCfg.SpamSweeper.InitialRecheckInterval,
-		MaxRecheckInterval:     sweeperCfg.SpamSweeper.MaxRecheckInterval,
-		FailureBackoffInitial:  sweeperCfg.SpamSweeper.FailureBackoffInitial,
-		MaxConsecutiveFailures: sweeperCfg.SpamSweeper.MaxConsecutiveFailures,
+	moderationSweeperConfig := &sweeper.ModerationVerdictSweeperConfig{
+		BatchSize:              sweeperCfg.ModerationSweeper.BatchSize,
+		WorkerPoolSize:         sweeperCfg.ModerationSweeper.Worker.WorkerPoolSize,
+		InitialRecheckInterval: sweeperCfg.ModerationSweeper.InitialRecheckInterval,
+		MaxRecheckInterval:     sweeperCfg.ModerationSweeper.MaxRecheckInterval,
+		FailureBackoffInitial:  sweeperCfg.ModerationSweeper.FailureBackoffInitial,
+		MaxConsecutiveFailures: sweeperCfg.ModerationSweeper.MaxConsecutiveFailures,
 	}
-	spamObjktClient := objkt.NewClient(httpClient, rateLimiter, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
-	spamOpenSeaClient := opensea.NewClient(httpClient, rateLimiter, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
-	spamSweeper := sweeper.NewSpamVerdictSweeper(spamSweeperConfig, dataStore, spamOpenSeaClient, spamObjktClient, clock)
+	moderationObjktClient := objkt.NewClient(httpClient, rateLimiter, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
+	moderationOpenSeaClient := opensea.NewClient(httpClient, rateLimiter, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
+	moderationSweeper := sweeper.NewModerationVerdictSweeper(moderationSweeperConfig, dataStore, moderationOpenSeaClient, moderationObjktClient, clock)
 
 	// Worker-media: media task queue (requires CGO build).
 	wMediaCfg := cfg.ToWorkerMediaConfig()
@@ -230,7 +230,7 @@ func run() int {
 
 	g.Go(func() error {
 		componentCtx := logger.WithComponent(ctx, logger.ComponentSweeper)
-		return runSweeper(componentCtx, spamSweeper)
+		return runSweeper(componentCtx, moderationSweeper)
 	})
 
 	if err := waitForSubsystems(rootCtx, g, cleanupWorkerMedia, cleanupWorkerCore); err != nil {

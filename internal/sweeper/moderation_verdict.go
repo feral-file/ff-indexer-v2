@@ -19,13 +19,13 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
-// SpamVerdictSweeperConfig holds configuration for the spam verdict sweeper
-type SpamVerdictSweeperConfig struct {
+// ModerationVerdictSweeperConfig holds configuration for the spam verdict sweeper
+type ModerationVerdictSweeperConfig struct {
 	BatchSize      int // Verdict rows to re-check per source per cycle
 	WorkerPoolSize int // Concurrent workers
 	// InitialRecheckInterval is the floor for a clean token's re-check delay
 	// (also what the enricher schedules for a fresh verdict, see
-	// store.DefaultSpamRecheckInterval). Successive clean checks double the
+	// store.DefaultModerationRecheckInterval). Successive clean checks double the
 	// delay up to MaxRecheckInterval.
 	InitialRecheckInterval time.Duration
 	// MaxRecheckInterval caps the clean-token backoff and is the fixed re-check
@@ -41,7 +41,7 @@ type SpamVerdictSweeperConfig struct {
 	MaxConsecutiveFailures int
 }
 
-// spamVerdictSweeper implements the Sweeper interface for re-checking vendor spam verdicts.
+// moderationVerdictSweeper implements the Sweeper interface for re-checking vendor spam verdicts.
 //
 // Reason: the enricher only sees a vendor's moderation verdict at indexing time,
 // which is exactly when moderation has not happened yet — takedowns land hours to
@@ -53,8 +53,8 @@ type SpamVerdictSweeperConfig struct {
 // successful vendor signal; the sweeper widens no coverage, it only refreshes.
 // Verdict writes go through the same store recompute as the enricher, so a
 // feralfile pin always wins and events broadcast only on real flips.
-type spamVerdictSweeper struct {
-	config        *SpamVerdictSweeperConfig
+type moderationVerdictSweeper struct {
+	config        *ModerationVerdictSweeperConfig
 	store         store.Store
 	openseaClient opensea.Client
 	objktClient   objkt.Client
@@ -65,15 +65,15 @@ type spamVerdictSweeper struct {
 	stoppedCh     chan struct{}
 }
 
-// NewSpamVerdictSweeper creates a new spam verdict sweeper
-func NewSpamVerdictSweeper(
-	config *SpamVerdictSweeperConfig,
+// NewModerationVerdictSweeper creates a new spam verdict sweeper
+func NewModerationVerdictSweeper(
+	config *ModerationVerdictSweeperConfig,
 	st store.Store,
 	openseaClient opensea.Client,
 	objktClient objkt.Client,
 	clock adapter.Clock,
 ) Sweeper {
-	return &spamVerdictSweeper{
+	return &moderationVerdictSweeper{
 		config:        config,
 		store:         st,
 		openseaClient: openseaClient,
@@ -85,12 +85,12 @@ func NewSpamVerdictSweeper(
 }
 
 // Name returns the sweeper's name
-func (s *spamVerdictSweeper) Name() string {
-	return "spam-verdict-sweeper"
+func (s *moderationVerdictSweeper) Name() string {
+	return "moderation-verdict-sweeper"
 }
 
 // Start begins the sweeper's main loop - continuously re-checks due verdicts
-func (s *spamVerdictSweeper) Start(ctx context.Context) error {
+func (s *moderationVerdictSweeper) Start(ctx context.Context) error {
 	if !s.running.CompareAndSwap(false, true) {
 		return fmt.Errorf("sweeper already running")
 	}
@@ -128,14 +128,14 @@ func (s *spamVerdictSweeper) Start(ctx context.Context) error {
 }
 
 // cleanup stops the worker pool and waits for tasks to complete
-func (s *spamVerdictSweeper) cleanup() {
+func (s *moderationVerdictSweeper) cleanup() {
 	if s.pool != nil {
 		s.pool.StopAndWait()
 	}
 }
 
 // Stop gracefully stops the sweeper with timeout support
-func (s *spamVerdictSweeper) Stop(ctx context.Context) error {
+func (s *moderationVerdictSweeper) Stop(ctx context.Context) error {
 	if !s.running.CompareAndSwap(true, false) {
 		return nil // Already stopped
 	}
@@ -160,9 +160,9 @@ func (s *spamVerdictSweeper) Stop(ctx context.Context) error {
 // queues (separate store queries) so OpenSea's API quota cannot starve objkt's
 // and vice versa. Sleeps when every source is idle, and also before surfacing a
 // store error (see below).
-func (s *spamVerdictSweeper) runSweepCycle(ctx context.Context) error {
+func (s *moderationVerdictSweeper) runSweepCycle(ctx context.Context) error {
 	totalDue := 0
-	for _, source := range []schema.SpamSource{schema.SpamSourceOpenSea, schema.SpamSourceObjkt} {
+	for _, source := range []schema.ModerationSource{schema.ModerationSourceOpenSea, schema.ModerationSourceObjkt} {
 		n, err := s.sweepSource(ctx, source)
 		if err != nil {
 			// Back off before returning: Start only logs the error and re-enters
@@ -197,8 +197,8 @@ func (s *spamVerdictSweeper) runSweepCycle(ctx context.Context) error {
 // so reporting it as work would keep runSweepCycle from ever sleeping and respin
 // the batch continuously — burning either CPU or paid vendor quota, depending on
 // whether the failing path reached the rate-limited HTTP call.
-func (s *spamVerdictSweeper) sweepSource(ctx context.Context, source schema.SpamSource) (int, error) {
-	items, err := s.store.GetTokenSpamVerdictsDueForCheck(ctx, source, s.config.BatchSize)
+func (s *moderationVerdictSweeper) sweepSource(ctx context.Context, source schema.ModerationSource) (int, error) {
+	items, err := s.store.GetTokenModerationVerdictsDueForCheck(ctx, source, s.config.BatchSize)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get due spam verdicts for %s: %w", source, err)
 	}
@@ -234,7 +234,7 @@ func (s *spamVerdictSweeper) sweepSource(ctx context.Context, source schema.Spam
 // checkItem re-asks the vendor about one token and persists the outcome. It sets
 // progressed when it manages to move the row's next_check_at, by either route —
 // see the no-progress note on sweepSource for why that matters.
-func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem, progressed *atomic.Bool) {
+func (s *moderationVerdictSweeper) checkItem(ctx context.Context, source schema.ModerationSource, item store.TokenModerationCheckItem, progressed *atomic.Bool) {
 	verdict, detail, err := s.fetchVendorVerdict(ctx, source, item)
 	if err != nil {
 		// ErrNoAPIKey means the whole source is unconfigured, not that this row
@@ -259,7 +259,7 @@ func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSo
 	// (token, source) in that window. Without the guard this older response would
 	// overwrite the newer one and its schedule, and the stale value would stand
 	// until the next sweep.
-	changed, err := s.store.UpsertTokenSpamVerdict(ctx, store.UpsertTokenSpamVerdictInput{
+	changed, err := s.store.UpsertTokenModerationVerdict(ctx, store.UpsertTokenModerationVerdictInput{
 		TokenID:               item.TokenID,
 		Source:                source,
 		Verdict:               verdict,
@@ -268,50 +268,62 @@ func (s *spamVerdictSweeper) checkItem(ctx context.Context, source schema.SpamSo
 		ExpectedLastCheckedAt: &item.LastCheckedAt,
 	})
 	if err != nil {
-		logger.ErrorCtx(ctx, fmt.Errorf("failed to upsert re-checked spam verdict: %w", err),
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to upsert re-checked moderation verdict: %w", err),
 			zap.String("token_cid", item.TokenCID),
 			zap.String("source", source.String()))
 		return
 	}
 	progressed.Store(true)
 	if changed {
-		logger.InfoCtx(ctx, "Token spam status changed by sweeper re-check",
+		logger.InfoCtx(ctx, "Token moderation status changed by sweeper re-check",
 			zap.String("token_cid", item.TokenCID),
 			zap.String("source", source.String()),
-			zap.Bool("is_spam", verdict))
+			zap.String("moderation_status", verdict.String()))
 	}
 }
 
-// fetchVendorVerdict queries the vendor moderation signal for one token.
-func (s *spamVerdictSweeper) fetchVendorVerdict(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem) (bool, []byte, error) {
+// fetchVendorVerdict queries the vendor moderation signal for one token and
+// normalizes it into a verdict. Vendor clients expose their own API's shape
+// (see objkt.Token.IsSpam), so the mapping onto schema.ModerationStatus happens
+// here, matching what the enricher does on the indexing path.
+func (s *moderationVerdictSweeper) fetchVendorVerdict(ctx context.Context, source schema.ModerationSource, item store.TokenModerationCheckItem) (schema.ModerationStatus, []byte, error) {
 	switch source {
-	case schema.SpamSourceOpenSea:
+	case schema.ModerationSourceOpenSea:
 		nft, err := s.openseaClient.GetNFT(ctx, item.ContractAddress, item.TokenNumber)
 		if err != nil {
 			// ErrNFTNotFound included: OpenSea dropping the item entirely is
 			// "no opinion", not a verdict — the stored one stands (tri-state).
-			return false, nil, err
+			return "", nil, err
 		}
 		detail, err := json.Marshal(map[string]any{"is_disabled": nft.IsDisabled})
 		if err != nil {
-			return false, nil, err
+			return "", nil, err
 		}
-		return nft.IsDisabled, detail, nil
-	case schema.SpamSourceObjkt:
+		return moderationStatusFromVendorSpam(nft.IsDisabled), detail, nil
+	case schema.ModerationSourceObjkt:
 		token, err := s.objktClient.GetToken(ctx, item.ContractAddress, item.TokenNumber)
 		if err != nil {
 			// objkt has no not-found sentinel; every error takes the failure
 			// path and backs off, settling at MaxRecheckInterval when permanent.
-			return false, nil, err
+			return "", nil, err
 		}
 		detail, err := json.Marshal(map[string]any{"flag": token.Flag})
 		if err != nil {
-			return false, nil, err
+			return "", nil, err
 		}
-		return token.IsBanned(), detail, nil
+		return moderationStatusFromVendorSpam(token.IsSpam()), detail, nil
 	default:
-		return false, nil, fmt.Errorf("spam source %s has no vendor client", source)
+		return "", nil, fmt.Errorf("moderation source %s has no vendor client", source)
 	}
+}
+
+// moderationStatusFromVendorSpam normalizes a vendor's own boolean moderation
+// signal into the indexer's verdict enum.
+func moderationStatusFromVendorSpam(spam bool) schema.ModerationStatus {
+	if spam {
+		return schema.ModerationStatusSpam
+	}
+	return schema.ModerationStatusNone
 }
 
 // recordFailure advances the row's failure backoff without touching its verdict,
@@ -325,18 +337,18 @@ func (s *spamVerdictSweeper) fetchVendorVerdict(ctx context.Context, source sche
 // freshly re-checked token could be pushed out by the 720h maximum on a row that
 // only records one failure. When the guard rejects, the winner already moved
 // next_check_at, so the row is not due and there is nothing to retry.
-func (s *spamVerdictSweeper) recordFailure(ctx context.Context, source schema.SpamSource, item store.TokenSpamCheckItem, checkErr error, progressed *atomic.Bool) {
+func (s *moderationVerdictSweeper) recordFailure(ctx context.Context, source schema.ModerationSource, item store.TokenModerationCheckItem, checkErr error, progressed *atomic.Bool) {
 	next := s.clock.Now().Add(s.failureInterval(item))
-	applied, err := s.store.RecordTokenSpamCheckFailure(
+	applied, err := s.store.RecordTokenModerationCheckFailure(
 		ctx, item.TokenID, source, checkErr.Error(), next, item.LastCheckedAt)
 	if err != nil {
-		logger.ErrorCtx(ctx, fmt.Errorf("failed to record spam check failure: %w", err),
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to record moderation check failure: %w", err),
 			zap.String("token_cid", item.TokenCID),
 			zap.String("source", source.String()))
 		return
 	}
 	if !applied {
-		logger.InfoCtx(ctx, "Skipped stale spam check failure",
+		logger.InfoCtx(ctx, "Skipped stale moderation check failure",
 			zap.String("token_cid", item.TokenCID),
 			zap.String("source", source.String()))
 		return
@@ -351,21 +363,21 @@ func (s *spamVerdictSweeper) recordFailure(ctx context.Context, source schema.Sp
 
 // successInterval picks the next re-check delay after a successful check.
 //
-// Flagged tokens poll at the fixed maximum (appeals are rare). Clean tokens
+// Moderated tokens poll at the fixed maximum (appeals are rare). Clean tokens
 // double their previous interval — derived as next_check_at − last_checked_at
 // from the row itself, so no interval column is needed — clamped to
 // [InitialRecheckInterval, MaxRecheckInterval].
 //
 // Constraints: the derivation is only valid when the row's next_check_at was
-// last set by a successful check. RecordTokenSpamCheckFailure advances
+// last set by a successful check. RecordTokenModerationCheckFailure advances
 // next_check_at while deliberately leaving last_checked_at frozen, so after any
 // failure the difference measures the failure backoff instead of the previous
 // success cadence — doubling that would push a clean token straight to the
 // 30-day maximum because a vendor had a transient outage. Rows carrying
 // failures therefore restart from the floor: checking too often costs quota,
 // checking too rarely is a moderation gap.
-func (s *spamVerdictSweeper) successInterval(item store.TokenSpamCheckItem, verdict bool) time.Duration {
-	if verdict {
+func (s *moderationVerdictSweeper) successInterval(item store.TokenModerationCheckItem, verdict schema.ModerationStatus) time.Duration {
+	if verdict != schema.ModerationStatusNone {
 		return s.config.MaxRecheckInterval
 	}
 	if item.ConsecutiveFailures > 0 {
@@ -397,7 +409,7 @@ const maxFailureShift = 34
 // initial failure backoff doubled per prior consecutive failure, pinned at
 // MaxRecheckInterval once MaxConsecutiveFailures is reached (permanently
 // missing tokens stop burning quota).
-func (s *spamVerdictSweeper) failureInterval(item store.TokenSpamCheckItem) time.Duration {
+func (s *moderationVerdictSweeper) failureInterval(item store.TokenModerationCheckItem) time.Duration {
 	failures := item.ConsecutiveFailures + 1 // counting the failure being recorded
 	if failures >= s.config.MaxConsecutiveFailures {
 		return s.config.MaxRecheckInterval
@@ -415,7 +427,7 @@ func (s *spamVerdictSweeper) failureInterval(item store.TokenSpamCheckItem) time
 
 // sleep waits for the duration, returning false if interrupted by context
 // cancellation or a stop request.
-func (s *spamVerdictSweeper) sleep(ctx context.Context, duration time.Duration) bool {
+func (s *moderationVerdictSweeper) sleep(ctx context.Context, duration time.Duration) bool {
 	select {
 	case <-s.clock.After(duration):
 		return true // Sleep completed

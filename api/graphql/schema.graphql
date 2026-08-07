@@ -177,9 +177,10 @@ type Token {
   current_owner: String
   burned: Boolean!
   viewable: Boolean!
-  # Vendor moderation verdict: true when OpenSea reports is_disabled or objkt reports
-  # flag=banned. Flagged tokens are excluded from queries unless include_spam: true.
-  is_spam: Boolean!
+  # Combined moderation verdict across sources: "none" or "spam". A string enum
+  # rather than a boolean so new verdict kinds do not break the field's type.
+  # Anything but "none" is excluded from queries unless include_moderated: true.
+  moderation_status: String!
   last_provenance_timestamp: Time
   release_id: Uint64
   mint_number: Int
@@ -231,12 +232,12 @@ type Release {
   name: String
   # Declared max edition size from vendor; REST GET /api/v1/releases/{id} `total_mints`.
   total_mints: Int
-  # include_spam includes vendor-flagged spam tokens among the members. Default
+  # include_moderated includes moderated tokens among the members. Default
   # false, matching every other token-returning path: `members` is a full
   # TokenList a client can render directly, so it is filtered unless the caller
   # opts in. Note members are still returned regardless of viewability — that is
-  # a transient pipeline state, whereas a spam verdict is a content decision.
-  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc, include_spam: Boolean = false): TokenList!
+  # a transient pipeline state, whereas a moderation verdict is a content decision.
+  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc, include_moderated: Boolean = false): TokenList!
 }
 
 # Result of triggering indexing
@@ -283,11 +284,11 @@ type Query {
     provenance_events_limit: Uint8 = 10
     provenance_events_offset: Uint64 = 0
     provenance_events_order: Order = desc
-    # include_spam returns the token even when it is vendor-flagged as spam
-    # (OpenSea is_disabled / objkt flag=banned). Default false, matching the
-    # tokens list: a detail lookup is still a render path, so a flagged token
-    # resolves to null unless the caller explicitly opts in.
-    include_spam: Boolean = false
+    # include_moderated returns the token even when it is moderated (OpenSea
+    # is_disabled / objkt takedown). Default false, matching the tokens list: a
+    # detail lookup is still a render path, so a moderated token resolves to null
+    # unless the caller explicitly opts in.
+    include_moderated: Boolean = false
   ): Token
 
   # List tokens with filters
@@ -320,9 +321,9 @@ type Query {
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
-    # include_spam controls whether vendor-flagged spam tokens (OpenSea is_disabled /
-    # objkt banned) are returned. Default false: spam is filtered for every consumer.
-    include_spam: Boolean = false
+    # include_moderated controls whether moderated tokens (OpenSea is_disabled /
+    # objkt takedown) are returned. Default false: filtered for every consumer.
+    include_moderated: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
   ): TokenList
@@ -405,7 +406,7 @@ type Mutation {
   # Trigger asynchronous indexing for an explicit list of mint numbers within a vendor release.
   # Equivalent to: POST /api/v1/releases/index
   # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
-  # After Phase 1 succeeds, poll tokens(release_vendor: "...", release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true, include_spam: true)
+  # After Phase 1 succeeds, poll tokens(release_vendor: "...", release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true, include_moderated: true)
   # with the same mint_numbers to track exactly which mints have been indexed.
   # release_vendor is required when polling by slug (slug uniqueness is scoped per vendor).
   # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
@@ -457,7 +458,7 @@ type TokenEvent {
   id: Uint64!
   # Token ID
   token_id: Uint64!
-  # Event type: acquired, released, metadata_updated, enrichment_updated, viewability_changed, spam_status_changed
+  # Event type: acquired, released, metadata_updated, enrichment_updated, viewability_changed, moderation_status_changed
   event_type: String!
   # Owner address (NULL for attribute events that broadcast to all current owners)
   owner_address: String

@@ -1,16 +1,16 @@
 BEGIN;
 
 -- Migration 021_reindex: Enqueue IndexTokenMetadata jobs so pre-existing tokens get a
--- first spam verdict.
+-- first moderation verdict.
 --
 -- Context
 -- -------
--- Migration 021 adds token_spam_verdicts, but leaves it empty. Neither writer discovers
+-- Migration 021 adds token_moderation_verdicts, but leaves it empty. Neither writer discovers
 -- tokens on its own:
 --
 --   * the enricher writes a verdict only while indexing a token, and
---   * the spam sweeper's queue query (GetTokenSpamVerdictsDueForCheck) reads
---     FROM token_spam_verdicts JOIN tokens — an inner join starting at the verdicts
+--   * the moderation sweeper's queue query (GetTokenModerationVerdictsDueForCheck) reads
+--     FROM token_moderation_verdicts JOIN tokens — an inner join starting at the verdicts
 --     table, with no NOT EXISTS / LEFT JOIN discovery pass.
 --
 -- So on a database that already holds tokens, the feature covers exactly nothing until
@@ -53,12 +53,12 @@ BEGIN;
 --   SELECT vendor, count(*) FROM enrichment_sources
 --    WHERE vendor IN ('opensea', 'objkt') GROUP BY vendor;
 --
--- See docs/spam_filtering.md for mitigations (longer initial_recheck_interval, or pacing
+-- See docs/token_moderation.md for mitigations (longer initial_recheck_interval, or pacing
 -- this INSERT in batches) if the count is large.
 --
 -- Vendor predicate
 -- ----------------
--- opensea and objkt are the only moderating vendors, matching schema.SpamSourceForVendor,
+-- opensea and objkt are the only moderating vendors, matching schema.ModerationSourceForVendor,
 -- which returns ok=false for every other vendor. Rows from those vendors get no verdict at
 -- indexing time either, so enqueueing them here would spend vendor quota to write nothing.
 --
@@ -67,7 +67,7 @@ BEGIN;
 -- as vendor='objkt', so that subset is picked up here. Tokens fxhash does index are stored
 -- as vendor='fxhash' and are skipped — consistent with the enricher, which writes no verdict
 -- for them. That is the intended coverage gap for curated surfaces (see the accepted-gaps
--- list in docs/spam_filtering.md), not an oversight in this predicate.
+-- list in docs/token_moderation.md), not an oversight in this predicate.
 --
 -- Idempotency
 -- -----------

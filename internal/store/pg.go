@@ -599,8 +599,8 @@ func (s *pgStore) GetTokensByFilter(ctx context.Context, filter TokenQueryFilter
 	}
 
 	// Apply spam filter: vendor-flagged tokens are hidden unless explicitly requested
-	if !filter.IncludeSpam {
-		query = query.Where("tokens.is_spam = ?", false)
+	if !filter.IncludeModerated {
+		query = query.Where("tokens.moderation_status = ?", schema.ModerationStatusNone)
 	}
 
 	// Apply owner filter: check current ownership via balances table
@@ -1332,10 +1332,10 @@ func (s *pgStore) UpdateTokenBurn(ctx context.Context, input CreateTokenBurnInpu
 		// Scoped to the two columns this operation owns rather than Save(), which
 		// writes every column from the row read above. Other columns on tokens are
 		// materialized out-of-band by writers that do not hold this transaction's
-		// row — is_spam by UpsertTokenSpamVerdict, is_viewable by
+		// row — moderation_status by UpsertTokenModerationVerdict, is_viewable by
 		// BatchUpdateTokensViewability — so a full-row write here would silently
 		// revert whichever of them committed between the read and the write. For
-		// is_spam that means a token the vendor flagged goes back to visible while
+		// moderation_status that means a token the vendor flagged goes back to visible while
 		// its verdict row still says spam, and nothing re-flips it until the next
 		// sweep (24h at the earliest).
 		if err := tx.Model(&schema.Token{}).
@@ -1489,7 +1489,7 @@ func (s *pgStore) UpdateTokenTransfer(ctx context.Context, input UpdateTokenTran
 		// 2. Update the token.
 		//
 		// Scoped to current_owner rather than Save() for the same reason as
-		// UpdateTokenBurn: a full-row write would revert is_spam / is_viewable if
+		// UpdateTokenBurn: a full-row write would revert moderation_status / is_viewable if
 		// their out-of-band writers committed between the read above and here.
 		if err := tx.Model(&schema.Token{}).
 			Where("id = ?", token.ID).
@@ -3080,55 +3080,66 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 	return changes, nil
 }
 
-// insertSpamStatusEvent broadcasts a spam verdict change to all owners via the
-// collection sync feed.
+// insertModerationStatusEvent broadcasts a moderation status change to all owners
+// via the collection sync feed.
 //
 // The payload carries token_cid, unlike viewability_changed which sends only the
 // new state. Sync clients key their local rows by CID but the event envelope
 // carries only the numeric token_id, so resolving one to the other means calling
-// back into tokens(...) — a lookup the spam filter excludes by default. Without
-// the CID here a client can observe "this token became spam" and still be unable
-// to identify which local row to drop.
-func insertSpamStatusEvent(tx *gorm.DB, tokenID uint64, tokenCID string, isSpam bool) error {
-	spamMeta := schema.SpamStatusChangeMetadata{
-		IsSpam:   isSpam,
+// back into tokens(...) — a lookup the moderation filter excludes by default.
+// Without the CID here a client can observe "this token became spam" and still be
+// unable to identify which local row to drop.
+func insertModerationStatusEvent(tx *gorm.DB, tokenID uint64, tokenCID string, status schema.ModerationStatus) error {
+	meta := schema.ModerationStatusChangeMetadata{
+		Status:   status,
 		TokenCID: tokenCID,
 	}
-	spamJSON, err := json.Marshal(spamMeta)
+	metaJSON, err := json.Marshal(meta)
 	if err != nil {
-		return fmt.Errorf("failed to marshal spam status event: %w", err)
+		return fmt.Errorf("failed to marshal moderation status event: %w", err)
 	}
 
 	event := schema.TokenEvent{
 		TokenID:      tokenID,
-		EventType:    schema.EventTypeSpamStatusChanged,
+		EventType:    schema.EventTypeModerationStatusChanged,
 		OwnerAddress: nil, // Broadcast to all owners
 		OccurredAt:   time.Now(),
-		Metadata:     spamJSON,
+		Metadata:     metaJSON,
 	}
 	if err := tx.Create(&event).Error; err != nil {
-		return fmt.Errorf("failed to create spam status event: %w", err)
+		return fmt.Errorf("failed to create moderation status event: %w", err)
 	}
 	return nil
 }
 
-// computeFinalSpamVerdict combines per-source verdict rows into the materialized
-// value for tokens.is_spam: a feralfile row wins outright in both directions
-// (true pins spam against vendor reversals, false whitelists against vendor
-// flags), otherwise any vendor saying spam makes the token spam.
-func computeFinalSpamVerdict(rows []schema.TokenSpamVerdict) bool {
-	vendorSpam := false
+// computeFinalModerationStatus combines per-source verdict rows into the
+// materialized value for tokens.moderation_status: a feralfile row wins outright
+// in both directions (a non-none status pins the token against vendor reversals,
+// "none" whitelists it against vendor flags), otherwise the most severe vendor
+// verdict stands.
+//
+// Severity ordering rather than a boolean OR because the verdict is an enum: with
+// only none/spam today the two are equivalent, but once a second non-none status
+// exists the combination has to pick one, and "most severe" is the only choice
+// that cannot make a token less hidden than a source asked for. Statuses this
+// binary does not know rank lowest (schema.ModerationStatus.Severity), so a
+// verdict written by a newer deployment degrades to visible rather than hiding
+// tokens for reasons this code cannot explain.
+func computeFinalModerationStatus(rows []schema.TokenModerationVerdict) schema.ModerationStatus {
+	worst := schema.ModerationStatusNone
 	for _, row := range rows {
-		if row.Source == schema.SpamSourceFeralFile {
+		if row.Source == schema.ModerationSourceFeralFile {
 			return row.Verdict
 		}
-		vendorSpam = vendorSpam || row.Verdict
+		if row.Verdict.Severity() > worst.Severity() {
+			worst = row.Verdict
+		}
 	}
-	return vendorSpam
+	return worst
 }
 
-// UpsertTokenSpamVerdict records one source's spam verdict and recomputes the
-// materialized tokens.is_spam in the same transaction.
+// UpsertTokenModerationVerdict records one source's moderation verdict and recomputes
+// the materialized tokens.moderation_status in the same transaction.
 //
 // Reason: sources must never overwrite each other (OpenSea clearing its flag must
 // not clear a Feral File pin), so each writes its own row and the combined value
@@ -3139,20 +3150,20 @@ func computeFinalSpamVerdict(rows []schema.TokenSpamVerdict) bool {
 // materializing a value computed from a row set missing the other's write.
 // Trade-offs: the lock is held across three cheap statements on one token; writer
 // concurrency per token is negligible (enricher, sweeper, future FF system).
-func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenSpamVerdictInput) (bool, error) {
+func (s *pgStore) UpsertTokenModerationVerdict(ctx context.Context, input UpsertTokenModerationVerdictInput) (bool, error) {
 	changed := false
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Step 1: Lock the token row to serialize per-token recompute.
 		var current []struct {
-			TokenCID string `gorm:"column:token_cid"`
-			IsSpam   bool   `gorm:"column:is_spam"`
+			TokenCID         string                  `gorm:"column:token_cid"`
+			ModerationStatus schema.ModerationStatus `gorm:"column:moderation_status"`
 		}
 		if err := tx.Raw(
-			`SELECT token_cid, is_spam FROM tokens WHERE id = ? FOR UPDATE`,
+			`SELECT token_cid, moderation_status FROM tokens WHERE id = ? FOR UPDATE`,
 			input.TokenID,
 		).Scan(&current).Error; err != nil {
-			return fmt.Errorf("failed to lock token for spam verdict: %w", err)
+			return fmt.Errorf("failed to lock token for moderation verdict: %w", err)
 		}
 		if len(current) == 0 {
 			// Token does not exist (deleted or never indexed): no-op.
@@ -3169,7 +3180,7 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 		// ExpectedLastCheckedAt makes the DO UPDATE conditional (see the field's
 		// doc comment): a caller persisting a response it fetched earlier only
 		// wins while nobody else has written since it read.
-		upsertSQL := `INSERT INTO token_spam_verdicts
+		upsertSQL := `INSERT INTO token_moderation_verdicts
 			    (token_id, source, verdict, detail, last_checked_at, next_check_at, consecutive_failures, last_error)
 			 VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
 			 ON CONFLICT (token_id, source) DO UPDATE SET
@@ -3182,20 +3193,20 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 		args := []any{input.TokenID, input.Source, input.Verdict, input.Detail, time.Now(), input.NextCheckAt}
 		if input.ExpectedLastCheckedAt != nil {
 			upsertSQL += `
-			 WHERE token_spam_verdicts.last_checked_at = ?`
+			 WHERE token_moderation_verdicts.last_checked_at = ?`
 			args = append(args, *input.ExpectedLastCheckedAt)
 		}
 
 		res := tx.Exec(upsertSQL, args...)
 		if res.Error != nil {
-			return fmt.Errorf("failed to upsert token spam verdict: %w", res.Error)
+			return fmt.Errorf("failed to upsert token moderation verdict: %w", res.Error)
 		}
 		if input.ExpectedLastCheckedAt != nil && res.RowsAffected == 0 {
 			// Lost the race: someone wrote a newer verdict for this (token, source)
 			// while this caller's vendor request was in flight. Their write already
 			// moved next_check_at, so the row is no longer due and there is nothing
 			// to retry — drop this response instead of reverting theirs.
-			logger.InfoCtx(ctx, "Skipped stale spam verdict write",
+			logger.InfoCtx(ctx, "Skipped stale moderation verdict write",
 				zap.Uint64("token_id", input.TokenID),
 				zap.String("source", input.Source.String()))
 			return nil
@@ -3203,25 +3214,25 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 
 		// Step 3: Recompute from ALL rows, not just the one written — a vendor
 		// clearing its flag must not clear a feralfile pin, and vice versa.
-		var rows []schema.TokenSpamVerdict
+		var rows []schema.TokenModerationVerdict
 		if err := tx.Select("source", "verdict").
 			Where("token_id = ?", input.TokenID).
 			Find(&rows).Error; err != nil {
-			return fmt.Errorf("failed to read token spam verdicts: %w", err)
+			return fmt.Errorf("failed to read token moderation verdicts: %w", err)
 		}
-		final := computeFinalSpamVerdict(rows)
+		final := computeFinalModerationStatus(rows)
 
 		// Step 4: Materialize + broadcast only when the combined verdict changed.
-		if final == current[0].IsSpam {
+		if final == current[0].ModerationStatus {
 			return nil
 		}
 		if err := tx.Exec(
-			`UPDATE tokens SET is_spam = ? WHERE id = ?`,
+			`UPDATE tokens SET moderation_status = ? WHERE id = ?`,
 			final, input.TokenID,
 		).Error; err != nil {
-			return fmt.Errorf("failed to update token spam status: %w", err)
+			return fmt.Errorf("failed to update token moderation status: %w", err)
 		}
-		if err := insertSpamStatusEvent(tx, input.TokenID, current[0].TokenCID, final); err != nil {
+		if err := insertModerationStatusEvent(tx, input.TokenID, current[0].TokenCID, final); err != nil {
 			return err
 		}
 		changed = true
@@ -3236,7 +3247,7 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 	return changed, nil
 }
 
-// RecordTokenSpamCheckFailure bumps the sweeper failure state on an existing verdict
+// RecordTokenModerationCheckFailure bumps the sweeper failure state on an existing verdict
 // row, and reports whether the update applied.
 //
 // Reason: a vendor error is not a verdict (tri-state), so the row's verdict and
@@ -3244,7 +3255,7 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 // the sweeper would re-pick the same failing row every cycle.
 //
 // expectedLastCheckedAt makes this a compare-and-set on the row the sweeper read,
-// for the same reason UpsertTokenSpamVerdict has one: the vendor request that
+// for the same reason UpsertTokenModerationVerdict has one: the vendor request that
 // failed was issued before the read-to-write window opened, so an enricher may
 // have persisted a fresh verdict in the meantime. Landing the failure anyway is
 // worse here than on the success path — the backoff is computed Go-side from the
@@ -3256,32 +3267,32 @@ func (s *pgStore) UpsertTokenSpamVerdict(ctx context.Context, input UpsertTokenS
 // for both a lost race and a missing row (token CASCADE-deleted between the batch
 // fetch and this write) — neither leaves the row due, so the caller does not need
 // to tell them apart.
-func (s *pgStore) RecordTokenSpamCheckFailure(ctx context.Context, tokenID uint64, source schema.SpamSource, checkErr string, nextCheckAt time.Time, expectedLastCheckedAt time.Time) (bool, error) {
+func (s *pgStore) RecordTokenModerationCheckFailure(ctx context.Context, tokenID uint64, source schema.ModerationSource, checkErr string, nextCheckAt time.Time, expectedLastCheckedAt time.Time) (bool, error) {
 	res := s.db.WithContext(ctx).Exec(
-		`UPDATE token_spam_verdicts
+		`UPDATE token_moderation_verdicts
 		 SET consecutive_failures = consecutive_failures + 1, last_error = ?, next_check_at = ?
 		 WHERE token_id = ? AND source = ? AND last_checked_at = ?`,
 		checkErr, nextCheckAt, tokenID, source, expectedLastCheckedAt,
 	)
 	if res.Error != nil {
-		return false, fmt.Errorf("failed to record token spam check failure: %w", res.Error)
+		return false, fmt.Errorf("failed to record token moderation check failure: %w", res.Error)
 	}
 	return res.RowsAffected > 0, nil
 }
 
-// GetTokenSpamVerdictsDueForCheck returns due verdict rows for one source, oldest
+// GetTokenModerationVerdictsDueForCheck returns due verdict rows for one source, oldest
 // first, joined with the token identity the vendor clients need to re-query.
 //
 // Per-source queues keep one vendor's API quota from starving another's; the
-// partial index idx_token_spam_verdicts_due serves exactly this predicate. No
+// partial index idx_token_moderation_verdicts_due serves exactly this predicate. No
 // SKIP LOCKED — a single sweeper instance owns the queue, matching the media
 // health sweeper's stance in GetURLsForChecking.
-func (s *pgStore) GetTokenSpamVerdictsDueForCheck(ctx context.Context, source schema.SpamSource, limit int) ([]TokenSpamCheckItem, error) {
-	var items []TokenSpamCheckItem
+func (s *pgStore) GetTokenModerationVerdictsDueForCheck(ctx context.Context, source schema.ModerationSource, limit int) ([]TokenModerationCheckItem, error) {
+	var items []TokenModerationCheckItem
 	err := s.db.WithContext(ctx).Raw(
 		`SELECT v.token_id, t.token_cid, t.chain, t.contract_address, t.token_number,
 		        v.verdict, v.consecutive_failures, v.last_checked_at, v.next_check_at
-		 FROM token_spam_verdicts v
+		 FROM token_moderation_verdicts v
 		 JOIN tokens t ON t.id = v.token_id
 		 WHERE v.source = ? AND v.next_check_at <= now()
 		 ORDER BY v.next_check_at ASC

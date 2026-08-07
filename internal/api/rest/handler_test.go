@@ -201,7 +201,7 @@ func TestHandlerTriggerReleaseIndexingValidationError_InvalidJSON(t *testing.T) 
 
 // ─── ListTokens handler ──────────────────────────────────────────────────────
 
-func TestHandlerListTokensWithIncludeSpam(t *testing.T) {
+func TestHandlerListTokensWithIncludeModerated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctrl := gomock.NewController(t)
@@ -211,19 +211,19 @@ func TestHandlerListTokensWithIncludeSpam(t *testing.T) {
 	h := NewHandler(false, mockExec)
 
 	includeUnviewableFalse := false
-	includeSpamTrue := true
+	includeModeratedTrue := true
 	mockExec.EXPECT().
 		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
-			&includeUnviewableFalse, &includeSpamTrue, gomock.Any(), gomock.Any(), gomock.Nil()).
+			&includeUnviewableFalse, &includeModeratedTrue, gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(&dto.TokenListResponse{
 			Tokens: []dto.TokenResponse{{TokenCID: "test"}},
 		}, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens?include_spam=true", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens?include_moderated=true", nil)
 
 	h.ListTokens(c)
 
@@ -252,13 +252,13 @@ func TestHandlerGetReleaseDefaultsToExcludingSpam(t *testing.T) {
 		GetRelease(gomock.Any(), releaseID).
 		Return(&dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}, nil)
 
-	includeSpamFalse := false
+	includeModeratedFalse := false
 	includeUnviewableTrue := true
 	mockExec.EXPECT().
 		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
-			&includeUnviewableTrue, &includeSpamFalse, gomock.Any(), gomock.Any(), gomock.Nil()).
+			&includeUnviewableTrue, &includeModeratedFalse, gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
 
 	w := httptest.NewRecorder()
@@ -271,7 +271,7 @@ func TestHandlerGetReleaseDefaultsToExcludingSpam(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestHandlerGetReleaseForwardsIncludeSpam(t *testing.T) {
+func TestHandlerGetReleaseForwardsIncludeModerated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctrl := gomock.NewController(t)
@@ -285,17 +285,17 @@ func TestHandlerGetReleaseForwardsIncludeSpam(t *testing.T) {
 		GetRelease(gomock.Any(), releaseID).
 		Return(&dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}, nil)
 
-	includeSpamTrue := true
+	includeModeratedTrue := true
 	mockExec.EXPECT().
 		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
-			gomock.Any(), &includeSpamTrue, gomock.Any(), gomock.Any(), gomock.Nil()).
+			gomock.Any(), &includeModeratedTrue, gomock.Any(), gomock.Any(), gomock.Nil()).
 		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases/42?include_spam=true", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases/42?include_moderated=true", nil)
 	c.Params = append(c.Params, gin.Param{Key: "id", Value: "42"})
 
 	h.GetRelease(c)
@@ -306,7 +306,7 @@ func TestHandlerGetReleaseForwardsIncludeSpam(t *testing.T) {
 // ─── GetToken handler: spam filtering ────────────────────────────────────────
 
 // TestHandlerGetTokenDefaultsToExcludingSpam pins the wiring, not the policy: the
-// executor decides what include_spam means, but the handler has to actually pass
+// executor decides what include_moderated means, but the handler has to actually pass
 // the parsed value. Without it the detail endpoint silently renders flagged
 // tokens no matter what the executor does.
 func TestHandlerGetTokenDefaultsToExcludingSpam(t *testing.T) {
@@ -334,7 +334,7 @@ func TestHandlerGetTokenDefaultsToExcludingSpam(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
-func TestHandlerGetTokenForwardsIncludeSpam(t *testing.T) {
+func TestHandlerGetTokenForwardsIncludeModerated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctrl := gomock.NewController(t)
@@ -351,7 +351,7 @@ func TestHandlerGetTokenForwardsIncludeSpam(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+cid+"?include_spam=true", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+cid+"?include_moderated=true", nil)
 	c.Params = append(c.Params, gin.Param{Key: "cid", Value: cid})
 
 	h.GetToken(c)

@@ -6,12 +6,12 @@ import "time"
 type TokenEventType string
 
 const (
-	EventTypeAcquired           TokenEventType = "acquired"
-	EventTypeReleased           TokenEventType = "released"
-	EventTypeMetadataUpdated    TokenEventType = "metadata_updated"
-	EventTypeEnrichmentUpdated  TokenEventType = "enrichment_updated"
-	EventTypeViewabilityChanged TokenEventType = "viewability_changed"
-	EventTypeSpamStatusChanged  TokenEventType = "spam_status_changed"
+	EventTypeAcquired                TokenEventType = "acquired"
+	EventTypeReleased                TokenEventType = "released"
+	EventTypeMetadataUpdated         TokenEventType = "metadata_updated"
+	EventTypeEnrichmentUpdated       TokenEventType = "enrichment_updated"
+	EventTypeViewabilityChanged      TokenEventType = "viewability_changed"
+	EventTypeModerationStatusChanged TokenEventType = "moderation_status_changed"
 )
 
 // TokenEvent represents the token_events table - unified event log for ownership and attribute changes
@@ -21,7 +21,7 @@ type TokenEvent struct {
 	ID uint64 `gorm:"column:id;primaryKey;autoIncrement"`
 	// TokenID references the token this event relates to
 	TokenID uint64 `gorm:"column:token_id;not null"`
-	// EventType indicates the type of event (acquired, released, metadata_updated, enrichment_updated, viewability_changed, spam_status_changed)
+	// EventType indicates the type of event (acquired, released, metadata_updated, enrichment_updated, viewability_changed, moderation_status_changed)
 	EventType TokenEventType `gorm:"column:event_type;not null;type:text"`
 	// OwnerAddress is the blockchain address for ownership events (NULL for attribute events that broadcast to all owners)
 	OwnerAddress *string `gorm:"column:owner_address;type:text"`
@@ -34,7 +34,7 @@ type TokenEvent struct {
 	//   metadata_updated: {"changed_fields": ["name", "image_url"]}
 	//   enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
 	//   viewability_changed: {"is_viewable": true}
-	//   spam_status_changed: {"is_spam": true, "token_cid": "eip155:1:erc721:0x...:1"}
+	//   moderation_status_changed: {"moderation_status": "spam", "token_cid": "eip155:1:erc721:0x...:1"}
 	Metadata []byte `gorm:"column:metadata;type:jsonb"`
 	// CreatedAt is the timestamp when this event was recorded in the database
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now();type:timestamptz"`
@@ -77,12 +77,12 @@ type ViewabilityChangeMetadata struct {
 	IsViewable bool `json:"is_viewable"` // New viewability state
 }
 
-// SpamStatusChangeMetadata contains reference data for spam status change events.
-// TokenCID is included (unlike ViewabilityChangeMetadata) because sync clients key
-// their local rows by CID: the event envelope carries only the numeric token_id, and
-// resolving it back to a CID requires a tokens(...) lookup that the spam filter itself
-// excludes by default.
-type SpamStatusChangeMetadata struct {
-	IsSpam   bool   `json:"is_spam"`             // New spam verdict
-	TokenCID string `json:"token_cid,omitempty"` // CID of the affected token
+// ModerationStatusChangeMetadata contains reference data for moderation status
+// change events. TokenCID is included (unlike ViewabilityChangeMetadata) because
+// sync clients key their local rows by CID: the event envelope carries only the
+// numeric token_id, and resolving it back to a CID requires a tokens(...) lookup
+// that the moderation filter itself excludes by default.
+type ModerationStatusChangeMetadata struct {
+	Status   ModerationStatus `json:"moderation_status"`   // New combined moderation status
+	TokenCID string           `json:"token_cid,omitempty"` // CID of the affected token
 }

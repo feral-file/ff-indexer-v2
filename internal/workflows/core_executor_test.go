@@ -31,12 +31,12 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
-// testSpamRecheckInterval is the spam re-check interval injected into every test
-// executor. Deliberately different from store.DefaultSpamRecheckInterval (24h):
+// testModerationRecheckInterval is the spam re-check interval injected into every test
+// executor. Deliberately different from store.DefaultModerationRecheckInterval (24h):
 // assertions against it prove the configured value flows through to the verdict
 // writer, where an assertion against the default could pass even if the executor
 // ignored its configuration and used the constant.
-const testSpamRecheckInterval = 36 * time.Hour
+const testModerationRecheckInterval = 36 * time.Hour
 
 // testExecutorMocks contains all the mocks needed for testing the executor
 type testExecutorMocks struct {
@@ -131,7 +131,7 @@ func setupTestExecutor(t *testing.T, opts ...executorTestOption) *testExecutorMo
 		tm.blacklist,
 		tm.urlChecker,
 		tm.dataURIChecker,
-		testSpamRecheckInterval,
+		testModerationRecheckInterval,
 	)
 
 	return tm
@@ -1666,8 +1666,8 @@ func TestEnhanceTokenMetadata_Success(t *testing.T) {
 			return nil
 		})
 
-	// No UpsertTokenSpamVerdict expectation: ArtBlocks publishes no moderation signal, so
-	// EnhancedMetadata.IsSpam stays nil and the verdicts must be left untouched. gomock
+	// No UpsertTokenModerationVerdict expectation: ArtBlocks publishes no moderation signal, so
+	// EnhancedMetadata.ModerationStatus stays nil and the verdicts must be left untouched. gomock
 	// fails the test if the executor writes one anyway.
 
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
@@ -1729,9 +1729,9 @@ func TestEnhanceTokenMetadata_PersistsReleaseMembership(t *testing.T) {
 	assert.Equal(t, enhancedMetadata, result)
 }
 
-// TestEnhanceTokenMetadata_PersistsSpamVerdict verifies the vendor moderation verdict
+// TestEnhanceTokenMetadata_PersistsModerationVerdict verifies the vendor moderation verdict
 // (OpenSea is_disabled / objkt banned) is written to the token when the vendor flags it.
-func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
+func TestEnhanceTokenMetadata_PersistsModerationVerdict(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
@@ -1748,11 +1748,11 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 	}
 
 	enhancedMetadata := &metadata.EnhancedMetadata{
-		Vendor:     schema.VendorOpenSea,
-		VendorJSON: []byte(`{"is_disabled":true}`),
-		Name:       types.StringPtr("Visit ether-pool.net to claim rewards"),
-		IsSpam:     types.BoolPtr(true),
-		SpamDetail: []byte(`{"is_disabled":true}`),
+		Vendor:           schema.VendorOpenSea,
+		VendorJSON:       []byte(`{"is_disabled":true}`),
+		Name:             types.StringPtr("Visit ether-pool.net to claim rewards"),
+		ModerationStatus: moderationStatusPtr(schema.ModerationStatusSpam),
+		ModerationDetail: []byte(`{"is_disabled":true}`),
 	}
 
 	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
@@ -1771,11 +1771,11 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 		Return(nil)
 	mocks.clock.EXPECT().Now().Return(now)
 	mocks.store.EXPECT().
-		UpsertTokenSpamVerdict(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input store.UpsertTokenSpamVerdictInput) (bool, error) {
+		UpsertTokenModerationVerdict(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.UpsertTokenModerationVerdictInput) (bool, error) {
 			assert.Equal(t, token.ID, input.TokenID)
-			assert.Equal(t, schema.SpamSourceOpenSea, input.Source, "vendor must map to its spam source")
-			assert.True(t, input.Verdict)
+			assert.Equal(t, schema.ModerationSourceOpenSea, input.Source, "vendor must map to its moderation source")
+			assert.Equal(t, schema.ModerationStatusSpam, input.Verdict)
 			assert.JSONEq(t, `{"is_disabled":true}`, string(input.Detail))
 			// A fresh vendor signal always schedules the first sweeper re-check;
 			// this is what puts the token into the sweep queue. Asserted against
@@ -1785,7 +1785,7 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 			// the post-backfill sweep; a hardcoded default here made that
 			// guidance silently ineffective.
 			require.NotNil(t, input.NextCheckAt)
-			assert.Equal(t, now.Add(testSpamRecheckInterval), *input.NextCheckAt)
+			assert.Equal(t, now.Add(testModerationRecheckInterval), *input.NextCheckAt)
 			return true, nil
 		})
 
@@ -1798,7 +1798,7 @@ func TestEnhanceTokenMetadata_PersistsSpamVerdict(t *testing.T) {
 // TestEnhanceTokenMetadata_PersistsCleanVerdict pins the reversal direction: a vendor
 // that previously flagged a token and now reports it clean must write verdict=false —
 // the un-flag path that lets an appealed takedown restore visibility. Only the store
-// recompute decides whether the combined is_spam actually flips (a feralfile pin could
+// recompute decides whether the combined moderation_status actually flips (a feralfile pin could
 // hold it); the executor's job is just to pass the vendor's word through unmodified.
 func TestEnhanceTokenMetadata_PersistsCleanVerdict(t *testing.T) {
 	mocks := setupTestExecutor(t)
@@ -1811,11 +1811,11 @@ func TestEnhanceTokenMetadata_PersistsCleanVerdict(t *testing.T) {
 	token := &schema.Token{ID: 7, TokenCID: tokenCID.String()}
 
 	enhancedMetadata := &metadata.EnhancedMetadata{
-		Vendor:     schema.VendorOpenSea,
-		VendorJSON: []byte(`{"is_disabled":false}`),
-		Name:       types.StringPtr("Rehabilitated artwork"),
-		IsSpam:     types.BoolPtr(false),
-		SpamDetail: []byte(`{"is_disabled":false}`),
+		Vendor:           schema.VendorOpenSea,
+		VendorJSON:       []byte(`{"is_disabled":false}`),
+		Name:             types.StringPtr("Rehabilitated artwork"),
+		ModerationStatus: moderationStatusPtr(schema.ModerationStatusNone),
+		ModerationDetail: []byte(`{"is_disabled":false}`),
 	}
 
 	mocks.store.EXPECT().
@@ -1832,9 +1832,9 @@ func TestEnhanceTokenMetadata_PersistsCleanVerdict(t *testing.T) {
 		Return(nil)
 	mocks.clock.EXPECT().Now().Return(time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC))
 	mocks.store.EXPECT().
-		UpsertTokenSpamVerdict(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input store.UpsertTokenSpamVerdictInput) (bool, error) {
-			assert.False(t, input.Verdict, "a clean vendor verdict must be written, not dropped")
+		UpsertTokenModerationVerdict(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.UpsertTokenModerationVerdictInput) (bool, error) {
+			assert.Equal(t, schema.ModerationStatusNone, input.Verdict, "a clean vendor verdict must be written, not dropped")
 			return true, nil
 		})
 
@@ -1846,10 +1846,10 @@ func TestEnhanceTokenMetadata_PersistsCleanVerdict(t *testing.T) {
 
 // TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched pins the tri-state
 // contract at the layer where getting it wrong is silent. A vendor that publishes no
-// moderation signal leaves IsSpam nil; writing its zero value instead would clear a real
+// moderation signal leaves ModerationStatus nil; writing a zero value instead would clear a real
 // flag whenever routing changes — e.g. a gentk flagged via the objkt fallback gets
 // un-flagged the moment fxhash starts indexing it. gomock fails on any unexpected
-// UpsertTokenSpamVerdict call, which is the assertion here.
+// UpsertTokenModerationVerdict call, which is the assertion here.
 func TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
@@ -1862,10 +1862,10 @@ func TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched(t *testing.T)
 
 	// fxhash enriches this token and reports no moderation verdict.
 	enhancedMetadata := &metadata.EnhancedMetadata{
-		Vendor:     schema.VendorFXHash,
-		VendorJSON: []byte(`{}`),
-		Name:       types.StringPtr("Gentk"),
-		IsSpam:     nil,
+		Vendor:           schema.VendorFXHash,
+		VendorJSON:       []byte(`{}`),
+		Name:             types.StringPtr("Gentk"),
+		ModerationStatus: nil,
 	}
 
 	mocks.store.EXPECT().
@@ -5624,3 +5624,7 @@ func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerAdapterAuthority(t *
 	err := mocks.executor.IndexTokenWithFullProvenancesByTokenCID(ctx, tokenCID)
 	require.NoError(t, err)
 }
+
+// moderationStatusPtr returns a pointer to a moderation status, for building
+// EnhancedMetadata fixtures where nil means "vendor publishes no signal".
+func moderationStatusPtr(s schema.ModerationStatus) *schema.ModerationStatus { return &s }

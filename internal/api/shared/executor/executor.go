@@ -34,8 +34,8 @@ import (
 type Executor interface {
 	// GetToken retrieves a single token by its CID with optional expansions.
 	// Vendor-flagged spam tokens are omitted (reported as not found) unless
-	// includeSpam is true, matching the default on the list endpoint.
-	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeSpam bool) (*dto.TokenResponse, error)
+	// includeModerated is true, matching the default on the list endpoint.
+	GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeModerated bool) (*dto.TokenResponse, error)
 
 	// GetTokens retrieves tokens with optional filters and expansions (bulk: fixed sub-page sizes for owners/provenance per token).
 	// mintNumberFrom and mintNumberTo are 1-based range filters that apply only when releaseID is also set;
@@ -45,7 +45,7 @@ type Executor interface {
 	// and slug respectively; they may be combined with releaseID (all ANDed).
 	// mintNumberFrom/To and sort_by=mint_number require at least one of releaseID,
 	// releaseVendor, or releaseVendorSlug.
-	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
+	GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, includeModerated *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error)
 
 	// GetRelease retrieves a release by internal id without member tokens.
 	GetRelease(ctx context.Context, releaseID uint64) (*dto.ReleaseResponse, error)
@@ -125,7 +125,7 @@ func NewExecutor(store store.Store, jobQueue jobs.JobQueue, tokenQueue string, b
 	}
 }
 
-func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeSpam bool) (*dto.TokenResponse, error) {
+func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeModerated bool) (*dto.TokenResponse, error) {
 	// Normalize token CID
 	normalizedTokenCID := domain.TokenCID(tokenCID).Normalized().String()
 
@@ -139,13 +139,13 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 		return nil, nil
 	}
 
-	// Spam filtering happens here rather than in GetTokenByTokenCID: that store
-	// method is also the lookup used by chain ingestion and the enricher, which
-	// must keep seeing flagged tokens in order to keep indexing and re-checking
-	// them (the verdict is reversible — hiding the row from its own writers would
-	// strand it). Reported as not-found rather than a distinct error so the
-	// endpoint does not become an oracle for "this CID exists but is flagged".
-	if token.IsSpam && !includeSpam {
+	// Moderation filtering happens here rather than in GetTokenByTokenCID: that
+	// store method is also the lookup used by chain ingestion and the enricher,
+	// which must keep seeing moderated tokens in order to keep indexing and
+	// re-checking them (the verdict is reversible — hiding the row from its own
+	// writers would strand it). Reported as not-found rather than a distinct error
+	// so the endpoint does not become an oracle for "this CID exists but is hidden".
+	if token.ModerationStatus.IsModerated() && !includeModerated {
 		return nil, nil
 	}
 
@@ -244,7 +244,7 @@ func (e *executor) GetToken(ctx context.Context, tokenCID string, expansions []t
 	return tokenDTO, nil
 }
 
-func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
+func (e *executor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses []string, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable *bool, includeModerated *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	// Use defaults if not provided
 	if limit == nil {
 		defaultLimit := constants.DEFAULT_TOKENS_LIMIT
@@ -258,9 +258,9 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		defaultIncludeUnviewable := false
 		includeUnviewable = &defaultIncludeUnviewable
 	}
-	if includeSpam == nil {
-		defaultIncludeSpam := false
-		includeSpam = &defaultIncludeSpam
+	if includeModerated == nil {
+		defaultIncludeModerated := false
+		includeModerated = &defaultIncludeModerated
 	}
 	if sortBy == nil {
 		defaultSortBy := types.TokenLatestProvenance
@@ -309,7 +309,7 @@ func (e *executor) GetTokens(ctx context.Context, owners []string, chains []doma
 		ReleaseVendorSlug: releaseVendorSlug,
 		MintNumbers:       mintNumbers,
 		IncludeUnviewable: *includeUnviewable,
-		IncludeSpam:       *includeSpam,
+		IncludeModerated:  *includeModerated,
 		SortBy:            storeSortBy,
 		SortOrder:         storeSortOrder,
 		Limit:             int(*limit) + 1, // limit+1 to detect whether there are more results

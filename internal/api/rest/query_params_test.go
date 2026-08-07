@@ -661,10 +661,10 @@ func TestParseListTokensQueryReleaseVendorSlug(t *testing.T) {
 	assert.Equal(t, schema.VendorArtBlocks, *params.ParsedReleaseVendor)
 }
 
-// TestParseListTokensQueryIncludeSpam covers binding of the spam opt-in, including its
+// TestParseListTokensQueryIncludeModerated covers binding of the spam opt-in, including its
 // default. The default is a compatibility-relevant contract: omitting the parameter must
 // filter flagged tokens for every existing client.
-func TestParseListTokensQueryIncludeSpam(t *testing.T) {
+func TestParseListTokensQueryIncludeModerated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -673,8 +673,8 @@ func TestParseListTokensQueryIncludeSpam(t *testing.T) {
 		want  bool
 	}{
 		{"omitted defaults to false", "/tokens", false},
-		{"explicit true", "/tokens?include_spam=true", true},
-		{"explicit false", "/tokens?include_spam=false", false},
+		{"explicit true", "/tokens?include_moderated=true", true},
+		{"explicit false", "/tokens?include_moderated=false", false},
 	}
 
 	for _, tt := range tests {
@@ -686,7 +686,7 @@ func TestParseListTokensQueryIncludeSpam(t *testing.T) {
 			params, err := ParseListTokensQuery(c)
 			require.NoError(t, err)
 			require.NotNil(t, params)
-			assert.Equal(t, tt.want, params.IncludeSpam)
+			assert.Equal(t, tt.want, params.IncludeModerated)
 		})
 	}
 }

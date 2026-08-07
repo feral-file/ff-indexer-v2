@@ -122,33 +122,33 @@ func (mr *MockAPIExecutorMockRecorder) GetRelease(ctx, releaseID any) *gomock.Ca
 }
 
 // GetToken mocks base method.
-func (m *MockAPIExecutor) GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeSpam bool) (*dto.TokenResponse, error) {
+func (m *MockAPIExecutor) GetToken(ctx context.Context, tokenCID string, expansions []types.Expansion, ownersLimit *uint8, ownersOffset *uint64, provenanceEventsLimit *uint8, provenanceEventsOffset *uint64, provenanceEventsOrder *types.Order, includeModerated bool) (*dto.TokenResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetToken", ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeSpam)
+	ret := m.ctrl.Call(m, "GetToken", ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeModerated)
 	ret0, _ := ret[0].(*dto.TokenResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetToken indicates an expected call of GetToken.
-func (mr *MockAPIExecutorMockRecorder) GetToken(ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeSpam any) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) GetToken(ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeModerated any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetToken", reflect.TypeOf((*MockAPIExecutor)(nil).GetToken), ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeSpam)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetToken", reflect.TypeOf((*MockAPIExecutor)(nil).GetToken), ctx, tokenCID, expansions, ownersLimit, ownersOffset, provenanceEventsLimit, provenanceEventsOffset, provenanceEventsOrder, includeModerated)
 }
 
 // GetTokens mocks base method.
-func (m *MockAPIExecutor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable, includeSpam *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
+func (m *MockAPIExecutor) GetTokens(ctx context.Context, owners []string, chains []domain.Chain, contractAddresses, tokenNumbers []string, tokenIDs []uint64, tokenCIDs []string, releaseID *uint64, releaseVendor *schema.Vendor, releaseVendorSlug *string, mintNumbers []int64, limit *uint8, offset *uint64, includeUnviewable, includeModerated *bool, sortBy *types.TokenSortBy, sortOrder *types.Order, expansions []types.Expansion) (*dto.TokenListResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTokens", ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, releaseID, releaseVendor, releaseVendorSlug, mintNumbers, limit, offset, includeUnviewable, includeSpam, sortBy, sortOrder, expansions)
+	ret := m.ctrl.Call(m, "GetTokens", ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, releaseID, releaseVendor, releaseVendorSlug, mintNumbers, limit, offset, includeUnviewable, includeModerated, sortBy, sortOrder, expansions)
 	ret0, _ := ret[0].(*dto.TokenListResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTokens indicates an expected call of GetTokens.
-func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, releaseID, releaseVendor, releaseVendorSlug, mintNumbers, limit, offset, includeUnviewable, includeSpam, sortBy, sortOrder, expansions any) *gomock.Call {
+func (mr *MockAPIExecutorMockRecorder) GetTokens(ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, releaseID, releaseVendor, releaseVendorSlug, mintNumbers, limit, offset, includeUnviewable, includeModerated, sortBy, sortOrder, expansions any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokens", reflect.TypeOf((*MockAPIExecutor)(nil).GetTokens), ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, releaseID, releaseVendor, releaseVendorSlug, mintNumbers, limit, offset, includeUnviewable, includeSpam, sortBy, sortOrder, expansions)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokens", reflect.TypeOf((*MockAPIExecutor)(nil).GetTokens), ctx, owners, chains, contractAddresses, tokenNumbers, tokenIDs, tokenCIDs, releaseID, releaseVendor, releaseVendorSlug, mintNumbers, limit, offset, includeUnviewable, includeModerated, sortBy, sortOrder, expansions)
 }
 
 // ListReleases mocks base method.

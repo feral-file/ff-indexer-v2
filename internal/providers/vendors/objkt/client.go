@@ -55,12 +55,14 @@ type FA struct {
 const (
 	// FlagNone is objkt's "no moderation action" state.
 	FlagNone = "none"
-	// FlagBanned is objkt's scam/spam takedown — the spam signal.
+	// FlagBanned is objkt's scam/spam takedown.
 	FlagBanned = "banned"
-	// FlagFlagged marks a token as reported. Not a spam verdict.
+	// FlagFlagged marks a token as reported but not acted on — not a takedown,
+	// so not spam (see IsSpam).
 	FlagFlagged = "flagged"
-	// FlagRemoved marks a token taken down for reasons other than the scam
-	// verdict. Not a spam signal (see above).
+	// FlagRemoved marks a token objkt took down for reasons beyond the scam
+	// verdict (copyright, artist request). Counted as spam: a takedown is a
+	// takedown (see IsSpam).
 	FlagRemoved = "removed"
 )
 
@@ -75,43 +77,31 @@ type Token struct {
 	Metadata     any       `json:"metadata"`
 	Creators     []Creator `json:"creators"`
 	FA           *FA       `json:"fa"`
-	// Flag is objkt's moderation state for the token ("none", "banned"). "banned" means
-	// objkt actively removed the token from its marketplace — the spam signal for Tezos.
+	// Flag is objkt's moderation state ("none", "banned", "flagged", "removed") —
+	// the moderation signal for Tezos, mapped to a verdict by IsSpam.
 	Flag *string `json:"flag"`
 }
 
-// IsBanned reports whether objkt has banned this token.
-func (t *Token) IsBanned() bool {
-	return t.Flag != nil && *t.Flag == FlagBanned
-}
-
-// SpamVerdict maps objkt's flag onto the indexer's tri-state spam signal:
-// true = spam, false = affirmatively clean, nil = objkt has no usable opinion.
+// IsSpam maps objkt's four-state moderation flag onto a spam verdict: a token
+// objkt has taken down ("banned" or "removed") is spam, everything else ("none",
+// "flagged", a missing flag, unknown future states) is clean.
 //
-// Only "banned" is spam and only "none" is clean. "flagged" and "removed" are
-// moderation states this indexer does not classify (see the flag constants), and
-// they must return nil rather than false: writing an affirmative clean verdict for
-// a token objkt has acted on would claim a confirmation the vendor never gave, and
-// would clear an existing spam verdict — a token banned yesterday and re-flagged
-// today would flip back to visible. nil leaves whatever verdict is stored alone,
-// which is what "no opinion" means everywhere else in this feature.
+// Reason: a takedown is a takedown — if objkt no longer displays the token,
+// neither do we, whatever the stated reason. Trade-offs: "removed" also covers
+// non-scam takedowns (copyright, artist request), which this mapping hides; the
+// verdict is reversible (tag-not-drop) and a feralfile whitelist row pins any
+// mistake visible again. A missing or unknown flag reads as clean (fail-open),
+// so an objkt enum change surfaces as tokens staying visible, never as real
+// assets disappearing.
 //
-// A missing flag (nil, or an enum value added after this was written) is also nil
-// for the same reason.
-func (t *Token) SpamVerdict() *bool {
+// This returns a bool rather than schema.ModerationStatus deliberately: vendor
+// clients describe their own API and stay free of storage types. Callers
+// normalize at the boundary (the enricher and the moderation sweeper).
+func (t *Token) IsSpam() bool {
 	if t.Flag == nil {
-		return nil
+		return false
 	}
-	switch *t.Flag {
-	case FlagBanned:
-		spam := true
-		return &spam
-	case FlagNone:
-		clean := false
-		return &clean
-	default:
-		return nil
-	}
+	return *t.Flag == FlagBanned || *t.Flag == FlagRemoved
 }
 
 // Creator represents a creator/artist in objkt API

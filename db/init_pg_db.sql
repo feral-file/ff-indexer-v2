@@ -13,7 +13,8 @@ CREATE TYPE webhook_delivery_status AS ENUM ('pending', 'success', 'failed');
 CREATE TYPE indexing_job_status AS ENUM ('running', 'paused', 'failed', 'completed', 'canceled');
 CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken');
 CREATE TYPE job_status AS ENUM ('pending', 'running', 'succeeded', 'failed', 'canceled');
-CREATE TYPE spam_source AS ENUM ('opensea', 'objkt', 'feralfile');  -- added in migration 021
+CREATE TYPE moderation_source AS ENUM ('opensea', 'objkt', 'feralfile');  -- added in migration 021
+CREATE TYPE moderation_status AS ENUM ('none', 'spam');  -- added in migration 021
 
 -- ============================================================================
 -- CORE TABLES
@@ -30,7 +31,7 @@ CREATE TABLE tokens (
     current_owner TEXT,
     burned BOOLEAN NOT NULL DEFAULT FALSE,
     is_viewable BOOLEAN NOT NULL DEFAULT FALSE,
-    is_spam BOOLEAN NOT NULL DEFAULT FALSE,  -- Vendor moderation verdict (OpenSea is_disabled / objkt banned; added in migration 021)
+    moderation_status moderation_status NOT NULL DEFAULT 'none',  -- Combined moderation verdict across sources (added in migration 021)
     last_provenance_timestamp TIMESTAMPTZ,  -- Cached timestamp of most recent provenance event (added in migration 011)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -169,12 +170,12 @@ CREATE TABLE token_media_health (
 -- One row per (token, source); a source is a moderating vendor ('opensea', 'objkt') or
 -- Feral File's own future moderation system ('feralfile'). Rows exist only after a source
 -- has actually published a verdict — absence means "no opinion", deliberately distinct from
--- a clean verdict (tri-state). tokens.is_spam is the materialized combination: a feralfile
+-- a clean verdict (tri-state). tokens.moderation_status is the materialized combination: a feralfile
 -- row wins outright in both directions, otherwise OR of vendor verdicts.
-CREATE TABLE token_spam_verdicts (
+CREATE TABLE token_moderation_verdicts (
     token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
-    source spam_source NOT NULL,
-    verdict BOOLEAN NOT NULL,
+    source moderation_source NOT NULL,
+    verdict moderation_status NOT NULL,
     detail JSONB,                                        -- raw moderation fields only ({"is_disabled":true} / {"flag":"banned"})
     last_checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),  -- last time the source CONFIRMED the stored verdict; failed checks do not touch it
     next_check_at TIMESTAMPTZ,                           -- sweep due time; NULL = never swept (feralfile rows)
@@ -230,7 +231,7 @@ CREATE TABLE token_events (
         'metadata_updated',      -- Token metadata changed
         'enrichment_updated',    -- Token enrichment changed
         'viewability_changed',   -- Token viewability changed
-        'spam_status_changed'    -- Vendor spam verdict changed (added in migration 021)
+        'moderation_status_changed'    -- Combined moderation verdict changed (added in migration 021)
     )),
     
     -- Owner address (set for ownership events, NULL for attribute events that broadcast to all owners)
@@ -246,7 +247,7 @@ CREATE TABLE token_events (
     --   metadata_updated: {"changed_fields": ["name", "image_url"]}
     --   enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
     --   viewability_changed: {"is_viewable": true}
-    --   spam_status_changed: {"is_spam": true, "token_cid": "eip155:1:erc721:0x...:1"}
+    --   moderation_status_changed: {"moderation_status": "spam", "token_cid": "eip155:1:erc721:0x...:1"}
     metadata JSONB,
     
     -- When this event was recorded in the database
@@ -427,8 +428,8 @@ CREATE INDEX idx_token_media_health_token_status_source ON token_media_health (t
 -- Token Spam Verdicts table indexes (added in migration 021)
 -- The spam sweeper's work queue: per-source so one vendor's API quota cannot starve
 -- another's, partial so feralfile rows (next_check_at IS NULL) never occupy the index.
-CREATE INDEX idx_token_spam_verdicts_due
-    ON token_spam_verdicts (source, next_check_at)
+CREATE INDEX idx_token_moderation_verdicts_due
+    ON token_moderation_verdicts (source, next_check_at)
     WHERE next_check_at IS NOT NULL;
 
 -- Token Events table indexes
@@ -554,8 +555,8 @@ CREATE TRIGGER update_token_media_health_updated_at
     BEFORE UPDATE ON token_media_health
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_token_spam_verdicts_updated_at
-    BEFORE UPDATE ON token_spam_verdicts
+CREATE TRIGGER update_token_moderation_verdicts_updated_at
+    BEFORE UPDATE ON token_moderation_verdicts
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Apply updated_at trigger to provenance_events
@@ -632,8 +633,8 @@ COMMENT ON COLUMN releases.total_mints IS 'Declared max edition size from vendor
 COMMENT ON COLUMN releases.vendor_release_slug IS 'URL slug for the release on the vendor website; nullable (backfilled via enrichment). For objkt, equals vendor_release_id (KT1 address). Unique per vendor when not null.';
 COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
 COMMENT ON TABLE token_media_health IS 'Tracks health check status for media URLs associated with tokens. Includes source information to distinguish between metadata/enrichment and image/animation URLs. Automatically synchronized when token_metadata or enrichment_sources are updated.';
-COMMENT ON TABLE token_spam_verdicts IS 'Source of truth for spam moderation: one row per (token, source). Rows exist only after a source has actually published a verdict — absence means "no opinion", which is deliberately distinct from a clean verdict (tri-state). tokens.is_spam is the materialized combination.';
-COMMENT ON COLUMN tokens.is_spam IS 'Materialized combined spam verdict, recomputed from token_spam_verdicts on every verdict write: a feralfile row wins outright, otherwise OR of vendor verdicts. Read paths exclude flagged tokens unless include_spam is requested. Tag-not-drop: the row stays fully indexed for reversibility.';
+COMMENT ON TABLE token_moderation_verdicts IS 'Source of truth for token moderation: one row per (token, source). Rows exist only after a source has actually published a verdict — absence means "no opinion", which is deliberately distinct from a "none" verdict. tokens.moderation_status is the materialized combination.';
+COMMENT ON COLUMN tokens.moderation_status IS 'Materialized combined moderation verdict, recomputed from token_moderation_verdicts on every verdict write: a feralfile row wins outright, otherwise the most severe vendor verdict. An enum so new verdict kinds need no schema change; only none/spam exist today. Read paths exclude moderated tokens unless include_moderated is requested. Tag-not-drop: the row stays fully indexed for reversibility.';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';
 COMMENT ON TABLE token_ownership_provenance IS 'Tracks the most recent provenance event per token-owner pair. Enables fast owner-filtered queries without LATERAL JOINs by denormalizing latest timestamp for each address that received tokens (to_address only, not from_address). Maintained by application code with monotonic timestamp enforcement in UPSERT WHERE clause.';
 COMMENT ON TABLE watched_addresses IS 'For owner-based indexing functionality';

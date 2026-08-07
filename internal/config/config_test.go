@@ -108,14 +108,14 @@ tezos:
 	assert.Equal(t, "db", cfg.Database.DBName)
 }
 
-// TestSpamSweeperDefaultMatchesStoreConstant anchors the config default to
-// store.DefaultSpamRecheckInterval. Both writers read the configured
-// spam_sweeper.initial_recheck_interval at runtime, but the constant still
+// TestModerationSweeperDefaultMatchesStoreConstant anchors the config default to
+// store.DefaultModerationRecheckInterval. Both writers read the configured
+// moderation_sweeper.initial_recheck_interval at runtime, but the constant still
 // serves as NewCoreExecutor's fallback when no value is threaded in — if the
 // viper default drifted from it, a default-config deployment and a
 // fallback-path caller would schedule first re-checks differently. Nothing but
 // this test couples the two literals.
-func TestSpamSweeperDefaultMatchesStoreConstant(t *testing.T) {
+func TestModerationSweeperDefaultMatchesStoreConstant(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	yaml := `
@@ -138,8 +138,8 @@ tezos:
 
 	cfg, err := LoadAppConfig(configPath, "")
 	require.NoError(t, err)
-	assert.Equal(t, store.DefaultSpamRecheckInterval, cfg.SpamSweeper.InitialRecheckInterval,
-		"spam_sweeper.initial_recheck_interval default must match store.DefaultSpamRecheckInterval")
+	assert.Equal(t, store.DefaultModerationRecheckInterval, cfg.ModerationSweeper.InitialRecheckInterval,
+		"moderation_sweeper.initial_recheck_interval default must match store.DefaultModerationRecheckInterval")
 }
 
 func TestLoadAppConfig_requiresDatabase(t *testing.T) {
@@ -151,11 +151,11 @@ func TestLoadAppConfig_requiresDatabase(t *testing.T) {
 	require.Error(t, err)
 }
 
-// validSpamSweeperConfig returns spam sweeper settings that pass validation, for
+// validModerationSweeperConfig returns moderation sweeper settings that pass validation, for
 // tests that hand-build an AppConfig instead of going through LoadAppConfig (and
 // therefore never receive the viper defaults).
-func validSpamSweeperConfig() SpamSweeperConfig {
-	return SpamSweeperConfig{
+func validModerationSweeperConfig() ModerationSweeperConfig {
+	return ModerationSweeperConfig{
 		BatchSize:              100,
 		InitialRecheckInterval: 24 * time.Hour,
 		MaxRecheckInterval:     720 * time.Hour,
@@ -167,7 +167,7 @@ func validSpamSweeperConfig() SpamSweeperConfig {
 
 func TestValidateRequiredConfigValues(t *testing.T) {
 	cfg := &AppConfig{
-		SpamSweeper: validSpamSweeperConfig(),
+		ModerationSweeper: validModerationSweeperConfig(),
 		Database: DatabaseConfig{
 			Host:   "localhost",
 			DBName: "ff_indexer",
@@ -191,8 +191,8 @@ func TestValidateRequiredConfigValues(t *testing.T) {
 
 func TestValidateRequiredConfigValues_MediaDisabled_EmptyMediaQueue(t *testing.T) {
 	cfg := &AppConfig{
-		SpamSweeper:  validSpamSweeperConfig(),
-		MediaEnabled: false,
+		ModerationSweeper: validModerationSweeperConfig(),
+		MediaEnabled:      false,
 		Database: DatabaseConfig{
 			Host:   "localhost",
 			DBName: "ff_indexer",
@@ -216,8 +216,8 @@ func TestValidateRequiredConfigValues_MediaDisabled_EmptyMediaQueue(t *testing.T
 
 func TestValidateRequiredConfigValues_MediaEnabled_MissingMediaQueue(t *testing.T) {
 	cfg := &AppConfig{
-		SpamSweeper:  validSpamSweeperConfig(),
-		MediaEnabled: true,
+		ModerationSweeper: validModerationSweeperConfig(),
+		MediaEnabled:      true,
 		Database: DatabaseConfig{
 			Host:   "localhost",
 			DBName: "ff_indexer",
@@ -243,7 +243,7 @@ func TestValidateRequiredConfigValues_MediaEnabled_MissingMediaQueue(t *testing.
 
 func TestValidateRequiredConfigValues_MissingFields(t *testing.T) {
 	cfg := &AppConfig{
-		SpamSweeper: validSpamSweeperConfig(),
+		ModerationSweeper: validModerationSweeperConfig(),
 		Database: DatabaseConfig{
 			Host: "localhost",
 		},
@@ -493,82 +493,82 @@ func TestToWorkerMediaConfig_includesSecurityForSSRF(t *testing.T) {
 	require.NotNil(t, v)
 }
 
-// TestValidateSpamSweeperConfig rejects settings whose failure mode is a silent
+// TestValidateModerationSweeperConfig rejects settings whose failure mode is a silent
 // vendor-quota burn loop rather than a visible error: a non-positive
 // max_recheck_interval makes every successful flagged check immediately due
 // again, and a non-positive failure_backoff_initial does the same after
 // transient vendor errors. The sweeper's loop guards were fixed three times for
 // this exact shape; this pins the configuration route shut.
-func TestValidateSpamSweeperConfig(t *testing.T) {
-	valid := validSpamSweeperConfig()
-	require.NoError(t, validateSpamSweeperConfig(&valid))
+func TestValidateModerationSweeperConfig(t *testing.T) {
+	valid := validModerationSweeperConfig()
+	require.NoError(t, validateModerationSweeperConfig(&valid))
 
 	cases := []struct {
 		name    string
-		mutate  func(*SpamSweeperConfig)
+		mutate  func(*ModerationSweeperConfig)
 		wantErr string
 	}{
 		{
 			name:    "zero batch size",
-			mutate:  func(c *SpamSweeperConfig) { c.BatchSize = 0 },
-			wantErr: "spam_sweeper.batch_size",
+			mutate:  func(c *ModerationSweeperConfig) { c.BatchSize = 0 },
+			wantErr: "moderation_sweeper.batch_size",
 		},
 		{
 			name:    "zero pool size",
-			mutate:  func(c *SpamSweeperConfig) { c.Worker.WorkerPoolSize = 0 },
-			wantErr: "spam_sweeper.worker.pool_size",
+			mutate:  func(c *ModerationSweeperConfig) { c.Worker.WorkerPoolSize = 0 },
+			wantErr: "moderation_sweeper.worker.pool_size",
 		},
 		{
 			name:    "zero initial recheck interval",
-			mutate:  func(c *SpamSweeperConfig) { c.InitialRecheckInterval = 0 },
-			wantErr: "spam_sweeper.initial_recheck_interval must be positive",
+			mutate:  func(c *ModerationSweeperConfig) { c.InitialRecheckInterval = 0 },
+			wantErr: "moderation_sweeper.initial_recheck_interval must be positive",
 		},
 		{
 			name:    "negative initial recheck interval",
-			mutate:  func(c *SpamSweeperConfig) { c.InitialRecheckInterval = -time.Hour },
-			wantErr: "spam_sweeper.initial_recheck_interval must be positive",
+			mutate:  func(c *ModerationSweeperConfig) { c.InitialRecheckInterval = -time.Hour },
+			wantErr: "moderation_sweeper.initial_recheck_interval must be positive",
 		},
 		{
 			name:    "zero max recheck interval",
-			mutate:  func(c *SpamSweeperConfig) { c.MaxRecheckInterval = 0 },
-			wantErr: "spam_sweeper.max_recheck_interval must be positive",
+			mutate:  func(c *ModerationSweeperConfig) { c.MaxRecheckInterval = 0 },
+			wantErr: "moderation_sweeper.max_recheck_interval must be positive",
 		},
 		{
 			name:    "zero failure backoff",
-			mutate:  func(c *SpamSweeperConfig) { c.FailureBackoffInitial = 0 },
-			wantErr: "spam_sweeper.failure_backoff_initial must be positive",
+			mutate:  func(c *ModerationSweeperConfig) { c.FailureBackoffInitial = 0 },
+			wantErr: "moderation_sweeper.failure_backoff_initial must be positive",
 		},
 		{
 			name:    "zero max consecutive failures",
-			mutate:  func(c *SpamSweeperConfig) { c.MaxConsecutiveFailures = 0 },
-			wantErr: "spam_sweeper.max_consecutive_failures",
+			mutate:  func(c *ModerationSweeperConfig) { c.MaxConsecutiveFailures = 0 },
+			wantErr: "moderation_sweeper.max_consecutive_failures",
 		},
 		{
 			name:    "initial exceeds max",
-			mutate:  func(c *SpamSweeperConfig) { c.InitialRecheckInterval = c.MaxRecheckInterval + time.Hour },
-			wantErr: "spam_sweeper.initial_recheck_interval must not exceed",
+			mutate:  func(c *ModerationSweeperConfig) { c.InitialRecheckInterval = c.MaxRecheckInterval + time.Hour },
+			wantErr: "moderation_sweeper.initial_recheck_interval must not exceed",
 		},
 		{
 			name:    "failure backoff exceeds max",
-			mutate:  func(c *SpamSweeperConfig) { c.FailureBackoffInitial = c.MaxRecheckInterval + time.Hour },
-			wantErr: "spam_sweeper.failure_backoff_initial must not exceed",
+			mutate:  func(c *ModerationSweeperConfig) { c.FailureBackoffInitial = c.MaxRecheckInterval + time.Hour },
+			wantErr: "moderation_sweeper.failure_backoff_initial must not exceed",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := validSpamSweeperConfig()
+			c := validModerationSweeperConfig()
 			tc.mutate(&c)
-			err := validateSpamSweeperConfig(&c)
+			err := validateModerationSweeperConfig(&c)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
 }
 
-// TestLoadAppConfig_rejectsInvalidSpamSweeper pins that the validation actually
+// TestLoadAppConfig_rejectsInvalidModerationSweeper pins that the validation actually
 // runs on the load path operators hit, not just as a standalone function.
-func TestLoadAppConfig_rejectsInvalidSpamSweeper(t *testing.T) {
+func TestLoadAppConfig_rejectsInvalidModerationSweeper(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	yaml := `
@@ -586,12 +586,12 @@ ethereum:
 tezos:
   api_url: https://api.tzkt.io
   websocket_url: wss://ws.tzkt.io
-spam_sweeper:
+moderation_sweeper:
   max_recheck_interval: 0s
 `
 	require.NoError(t, os.WriteFile(configPath, []byte(yaml), 0600))
 
 	_, err := LoadAppConfig(configPath, "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spam_sweeper.max_recheck_interval")
+	assert.Contains(t, err.Error(), "moderation_sweeper.max_recheck_interval")
 }

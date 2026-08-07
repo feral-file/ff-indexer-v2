@@ -885,14 +885,14 @@ func TestTriggerReleaseIndexing_WhitespacePaddedSlugIsNormalized(t *testing.T) {
 
 // TestGetTokens_SpamAndViewabilityFlagsMapToFilter pins the two adjacent *bool parameters
 // to their store-filter fields. Every other GetTokens test passes nil for both and matches
-// the filter with gomock.Any(), so swapping includeUnviewable and includeSpam at any call
+// the filter with gomock.Any(), so swapping includeUnviewable and includeModerated at any call
 // site — or wiring one to the other's field — would not fail a single existing test while
 // silently inverting what users see.
 func TestGetTokens_SpamAndViewabilityFlagsMapToFilter(t *testing.T) {
 	tests := []struct {
 		name              string
 		includeUnviewable *bool
-		includeSpam       *bool
+		includeModerated  *bool
 		wantUnviewable    bool
 		wantSpam          bool
 	}{
@@ -913,14 +913,14 @@ func TestGetTokens_SpamAndViewabilityFlagsMapToFilter(t *testing.T) {
 				GetTokensByFilter(gomock.Any(), gomock.Any()).
 				DoAndReturn(func(_ context.Context, filter store.TokenQueryFilter) ([]schema.Token, error) {
 					assert.Equal(t, tt.wantUnviewable, filter.IncludeUnviewable, "IncludeUnviewable mismatch")
-					assert.Equal(t, tt.wantSpam, filter.IncludeSpam, "IncludeSpam mismatch")
+					assert.Equal(t, tt.wantSpam, filter.IncludeModerated, "IncludeModerated mismatch")
 					return nil, nil
 				})
 
 			_, err := exec.GetTokens(context.Background(),
 				nil, nil, nil, nil, nil, nil, nil,
 				nil, nil, nil, nil, nil,
-				tt.includeUnviewable, tt.includeSpam, nil, nil, nil)
+				tt.includeUnviewable, tt.includeModerated, nil, nil, nil)
 			require.NoError(t, err)
 		})
 	}
@@ -928,11 +928,11 @@ func TestGetTokens_SpamAndViewabilityFlagsMapToFilter(t *testing.T) {
 
 func boolPtr(b bool) *bool { return &b }
 
-// TestGetToken_SpamFilteredByDefault pins the detail lookup to the same default as
+// TestGetToken_ModerationFilteredByDefault pins the detail lookup to the same default as
 // the list endpoint. A CID lookup is a render path — display surfaces resolve a
 // token by CID before showing it — so a flagged token leaking through here would
 // leave it fully renderable and defeat the filter entirely.
-func TestGetToken_SpamFilteredByDefault(t *testing.T) {
+func TestGetToken_ModerationFilteredByDefault(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -944,7 +944,7 @@ func TestGetToken_SpamFilteredByDefault(t *testing.T) {
 	// expansion work, so a flagged CID costs one lookup and nothing more.
 	mockStore.EXPECT().
 		GetTokenByTokenCID(gomock.Any(), normalizedCID).
-		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, IsSpam: true}, nil)
+		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, ModerationStatus: schema.ModerationStatusSpam}, nil)
 
 	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil, false)
 
@@ -952,9 +952,9 @@ func TestGetToken_SpamFilteredByDefault(t *testing.T) {
 	assert.Nil(t, result, "spam token must not be returned by default")
 }
 
-// TestGetToken_SpamReturnedWhenIncludeSpam covers the opt-in half: operators and
+// TestGetToken_SpamReturnedWhenIncludeModerated covers the opt-in half: operators and
 // moderation tooling still need to fetch a flagged token by CID.
-func TestGetToken_SpamReturnedWhenIncludeSpam(t *testing.T) {
+func TestGetToken_SpamReturnedWhenIncludeModerated(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -964,13 +964,13 @@ func TestGetToken_SpamReturnedWhenIncludeSpam(t *testing.T) {
 	exec, mockStore := newTestExecutor(t, ctrl)
 	mockStore.EXPECT().
 		GetTokenByTokenCID(gomock.Any(), normalizedCID).
-		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, IsSpam: true}, nil)
+		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, ModerationStatus: schema.ModerationStatusSpam}, nil)
 	expectNoReleaseMembership(mockStore, []uint64{7})
 
 	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil, true)
 
 	require.NoError(t, err)
-	require.NotNil(t, result, "include_spam=true must return the flagged token")
+	require.NotNil(t, result, "include_moderated=true must return the flagged token")
 	assert.Equal(t, normalizedCID, result.TokenCID)
 }
 
@@ -986,7 +986,7 @@ func TestGetToken_CleanTokenUnaffected(t *testing.T) {
 	exec, mockStore := newTestExecutor(t, ctrl)
 	mockStore.EXPECT().
 		GetTokenByTokenCID(gomock.Any(), normalizedCID).
-		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, IsSpam: false}, nil)
+		Return(&schema.Token{ID: 7, TokenCID: normalizedCID, ModerationStatus: schema.ModerationStatusNone}, nil)
 	expectNoReleaseMembership(mockStore, []uint64{7})
 
 	result, err := exec.GetToken(context.Background(), rawCID, nil, nil, nil, nil, nil, nil, false)

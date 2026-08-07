@@ -2420,74 +2420,63 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyBestEffort(t *testing.
 	assert.Nil(t, result.Release.TotalMints, "total_mints must be nil when API key is absent")
 }
 
-// TestEnhancer_Enhance_SpamVerdict covers the vendor→verdict mapping end to end through
-// Enhance, which is the seam the rest of the spam feature hangs off. Asserting on the
-// clients and on the persistence layer separately leaves this mapping untested: deleting
-// the IsSpam assignments in enhanceObjkt/enhanceOpenSea keeps every other test green.
+// TestEnhancer_Enhance_ModerationVerdict covers the vendor→verdict mapping end to end
+// through Enhance, which is the seam the rest of the moderation feature hangs off.
+// Asserting on the clients and on the persistence layer separately leaves this mapping
+// untested: deleting the ModerationStatus assignments in enhanceObjkt/enhanceOpenSea
+// keeps every other test green.
 //
-// It also pins the tri-state contract: vendors with no moderation signal must leave the
-// verdict nil, not report a clean one, so a routing change cannot clear a real flag.
-func TestEnhancer_Enhance_SpamVerdict(t *testing.T) {
-	banned := objkt.FlagBanned
-	none := "none"
+// It also pins the tri-state contract at the vendor-routing level: vendors that publish
+// no moderation signal at all must leave ModerationStatus nil rather than report "none",
+// so a routing change cannot clear a real verdict.
+func TestEnhancer_Enhance_ModerationVerdict(t *testing.T) {
+	cases := []struct {
+		name string
+		flag *string
+		want schema.ModerationStatus
+		why  string
+	}{
+		{"banned is spam", types.StringPtr(objkt.FlagBanned), schema.ModerationStatusSpam,
+			"objkt's scam takedown is the primary spam signal for Tezos"},
+		{"removed is spam", types.StringPtr(objkt.FlagRemoved), schema.ModerationStatusSpam,
+			"a takedown is a takedown: if objkt stopped displaying it, so do we"},
+		{"none is clean", types.StringPtr(objkt.FlagNone), schema.ModerationStatusNone,
+			"an explicit clean verdict must be recorded so verdicts stay reversible"},
+		{"flagged is clean", types.StringPtr(objkt.FlagFlagged), schema.ModerationStatusNone,
+			"a report alone is not a takedown, so it must not hide the token"},
+		{"missing flag is clean", nil, schema.ModerationStatusNone,
+			"fail-open: absence of a flag must never hide a real asset"},
+	}
+	for _, tc := range cases {
+		t.Run("objkt "+tc.name, func(t *testing.T) {
+			result := enhanceObjktForModeration(t, tc.flag)
+			require.NotNil(t, result.ModerationStatus, "objkt publishes a moderation signal")
+			assert.Equal(t, tc.want, *result.ModerationStatus, tc.why)
+		})
+	}
 
-	t.Run("objkt banned flags the token", func(t *testing.T) {
-		result := enhanceObjktForSpam(t, &banned)
-		require.NotNil(t, result.IsSpam, "objkt publishes a moderation signal")
-		assert.True(t, *result.IsSpam)
+	t.Run("objkt keeps the raw flag observable in the detail", func(t *testing.T) {
+		result := enhanceObjktForModeration(t, types.StringPtr(objkt.FlagFlagged))
+		assert.JSONEq(t, `{"flag":"flagged"}`, string(result.ModerationDetail),
+			"the verdict collapses four states to two, so the raw flag must survive for operators")
 	})
 
-	t.Run("objkt none reports a clean verdict", func(t *testing.T) {
-		result := enhanceObjktForSpam(t, &none)
-		require.NotNil(t, result.IsSpam)
-		assert.False(t, *result.IsSpam, "an explicit clean verdict must be recorded so flags are reversible")
+	t.Run("opensea disabled is spam", func(t *testing.T) {
+		result := enhanceOpenSeaForModeration(t, true)
+		require.NotNil(t, result.ModerationStatus, "opensea publishes a moderation signal")
+		assert.Equal(t, schema.ModerationStatusSpam, *result.ModerationStatus)
 	})
 
-	// objkt's flag enum has four values, not two. Only "banned" is a spam verdict
-	// and only "none" is a clean one; the rest carry no verdict this indexer can
-	// act on, so they must leave the stored verdict alone rather than assert a
-	// confirmation objkt never gave. Recording "clean" for them would also clear a
-	// real flag — a token banned yesterday and re-flagged today would flip back to
-	// visible.
-	t.Run("objkt flagged reports no verdict", func(t *testing.T) {
-		flagged := "flagged"
-		result := enhanceObjktForSpam(t, &flagged)
-		assert.Nil(t, result.IsSpam,
-			"a reported-but-unclassified token is not an affirmative clean verdict")
-		assert.JSONEq(t, `{"flag":"flagged"}`, string(result.SpamDetail),
-			"the raw flag stays observable even when the verdict is nil")
-	})
-
-	t.Run("objkt removed reports no verdict", func(t *testing.T) {
-		removed := "removed"
-		result := enhanceObjktForSpam(t, &removed)
-		assert.Nil(t, result.IsSpam,
-			"objkt removed the token for some reason other than its scam verdict; "+
-				"sampling shows these are ordinary artwork, so it is neither spam nor confirmed clean")
-	})
-
-	t.Run("objkt missing flag reports no verdict", func(t *testing.T) {
-		result := enhanceObjktForSpam(t, nil)
-		assert.Nil(t, result.IsSpam,
-			"absence of a flag is absence of a signal, which is the tri-state nil, not clean")
-	})
-
-	t.Run("opensea disabled flags the token", func(t *testing.T) {
-		result := enhanceOpenSeaForSpam(t, true)
-		require.NotNil(t, result.IsSpam, "opensea publishes a moderation signal")
-		assert.True(t, *result.IsSpam)
-	})
-
-	t.Run("opensea enabled reports a clean verdict", func(t *testing.T) {
-		result := enhanceOpenSeaForSpam(t, false)
-		require.NotNil(t, result.IsSpam)
-		assert.False(t, *result.IsSpam)
+	t.Run("opensea enabled is clean", func(t *testing.T) {
+		result := enhanceOpenSeaForModeration(t, false)
+		require.NotNil(t, result.ModerationStatus)
+		assert.Equal(t, schema.ModerationStatusNone, *result.ModerationStatus)
 	})
 }
 
-// enhanceObjktForSpam routes a Tezos token through the default → objkt branch with the
+// enhanceObjktForModeration routes a Tezos token through the default → objkt branch with the
 // given moderation flag and returns the enhanced metadata.
-func enhanceObjktForSpam(t *testing.T, flag *string) *metadata.EnhancedMetadata {
+func enhanceObjktForModeration(t *testing.T, flag *string) *metadata.EnhancedMetadata {
 	t.Helper()
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)
@@ -2515,9 +2504,9 @@ func enhanceObjktForSpam(t *testing.T, flag *string) *metadata.EnhancedMetadata 
 	return result
 }
 
-// enhanceOpenSeaForSpam routes an Ethereum token through the default → OpenSea branch
+// enhanceOpenSeaForModeration routes an Ethereum token through the default → OpenSea branch
 // with the given is_disabled value and returns the enhanced metadata.
-func enhanceOpenSeaForSpam(t *testing.T, isDisabled bool) *metadata.EnhancedMetadata {
+func enhanceOpenSeaForModeration(t *testing.T, isDisabled bool) *metadata.EnhancedMetadata {
 	t.Helper()
 	mocks := setupTestEnhancer(t)
 	defer tearDownTestEnhancer(mocks)

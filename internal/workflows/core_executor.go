@@ -182,13 +182,13 @@ type coreExecutor struct {
 	blacklist        registry.BlacklistRegistry
 	urlChecker       uri.URLChecker
 	dataURIChecker   uri.DataURIChecker
-	// spamRecheckInterval schedules a fresh vendor spam verdict's first sweeper
-	// re-check (spam_sweeper.initial_recheck_interval). Threaded from config
-	// rather than read from store.DefaultSpamRecheckInterval so the operator
+	// moderationRecheckInterval schedules a fresh vendor spam verdict's first sweeper
+	// re-check (moderation_sweeper.initial_recheck_interval). Threaded from config
+	// rather than read from store.DefaultModerationRecheckInterval so the operator
 	// knob actually reaches the writer — the deploy runbook tells operators to
 	// raise it to soften the first sweep after the 021_reindex backfill, which
 	// only works if the enricher honors it.
-	spamRecheckInterval time.Duration
+	moderationRecheckInterval time.Duration
 }
 
 // NewCoreExecutor creates a new core executor instance.
@@ -205,28 +205,28 @@ func NewCoreExecutor(
 	blacklist registry.BlacklistRegistry,
 	urlChecker uri.URLChecker,
 	dataURIChecker uri.DataURIChecker,
-	spamRecheckInterval time.Duration,
+	moderationRecheckInterval time.Duration,
 ) CoreExecutor {
 	// Non-positive means the caller did not thread a configured value (zero-value
 	// struct in tests, or a future call site that predates the knob). Fall back to
 	// the package default rather than scheduling re-checks in the past.
-	if spamRecheckInterval <= 0 {
-		spamRecheckInterval = store.DefaultSpamRecheckInterval
+	if moderationRecheckInterval <= 0 {
+		moderationRecheckInterval = store.DefaultModerationRecheckInterval
 	}
 	return &coreExecutor{
-		store:               st,
-		metadataResolver:    metadataResolver,
-		metadataEnhancer:    metadataEnhancer,
-		ethClient:           ethClient,
-		tzktClient:          tzktClient,
-		json:                jsonAdapter,
-		clock:               clock,
-		httpClient:          httpClient,
-		io:                  io,
-		blacklist:           blacklist,
-		urlChecker:          urlChecker,
-		dataURIChecker:      dataURIChecker,
-		spamRecheckInterval: spamRecheckInterval,
+		store:                     st,
+		metadataResolver:          metadataResolver,
+		metadataEnhancer:          metadataEnhancer,
+		ethClient:                 ethClient,
+		tzktClient:                tzktClient,
+		json:                      jsonAdapter,
+		clock:                     clock,
+		httpClient:                httpClient,
+		io:                        io,
+		blacklist:                 blacklist,
+		urlChecker:                urlChecker,
+		dataURIChecker:            dataURIChecker,
+		moderationRecheckInterval: moderationRecheckInterval,
 	}
 }
 
@@ -586,9 +586,9 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 	// (missing API key, item dropped from its index) yields no signal, not an "all clear",
 	// so the last real moderation decision stands rather than being silently cleared by an
 	// outage. Tokens in this state that already have a verdict row keep getting re-checked
-	// by the spam sweeper; tokens without one stay outside the sweep queue entirely — a
+	// by the moderation sweeper; tokens without one stay outside the sweep queue entirely — a
 	// verdict row is only ever created by a first successful vendor signal (coverage gap
-	// accepted and documented in docs/spam_filtering.md).
+	// accepted and documented in docs/token_moderation.md).
 	if enhanced == nil {
 		logger.InfoCtx(ctx, "No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
 		return nil, nil
@@ -628,40 +628,41 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 		return nil, fmt.Errorf("failed to upsert enrichment source: %w", err)
 	}
 
-	// Persist the vendor spam verdict (OpenSea is_disabled / objkt banned) whenever the
-	// enriching vendor actually publishes one. Vendors without a moderation signal leave
-	// IsSpam nil and must not touch the stored verdicts — writing their zero value would
-	// clear a real flag whenever vendor routing changes (see EnhancedMetadata.IsSpam).
+	// Persist the vendor moderation verdict (OpenSea is_disabled / objkt flag) whenever
+	// the enriching vendor actually publishes one. Vendors without a moderation signal
+	// leave ModerationStatus nil and must not touch the stored verdicts — writing a zero
+	// value would clear a real verdict whenever vendor routing changes (see
+	// EnhancedMetadata.ModerationStatus).
 	//
 	// The verdict is recorded per source; the store recomputes the materialized
-	// tokens.is_spam from all sources (a feralfile row would win outright) and
-	// broadcasts spam_status_changed only when the combined value flips. Scheduling
-	// the first sweeper re-check at now+spamRecheckInterval (the configured
-	// spam_sweeper.initial_recheck_interval) is what puts the token into the sweep
+	// tokens.moderation_status from all sources (a feralfile row would win outright) and
+	// broadcasts moderation_status_changed only when the combined value flips. Scheduling
+	// the first sweeper re-check at now+moderationRecheckInterval (the configured
+	// moderation_sweeper.initial_recheck_interval) is what puts the token into the sweep
 	// queue — a fresh enrichment always resets that schedule (fresh signal, fresh
 	// schedule).
-	if enhanced.IsSpam != nil {
-		source, ok := schema.SpamSourceForVendor(enhanced.Vendor)
+	if enhanced.ModerationStatus != nil {
+		source, ok := schema.ModerationSourceForVendor(enhanced.Vendor)
 		if !ok {
-			// Defensive: IsSpam set by a vendor with no mapped spam source would
-			// mean an enhancer branch and the source mapping went out of sync.
-			return nil, fmt.Errorf("vendor %s published a spam verdict but has no spam source", enhanced.Vendor)
+			// Defensive: a status set by a vendor with no mapped moderation source
+			// would mean an enhancer branch and the source mapping went out of sync.
+			return nil, fmt.Errorf("vendor %s published a moderation verdict but has no moderation source", enhanced.Vendor)
 		}
-		nextCheck := e.clock.Now().Add(e.spamRecheckInterval)
-		spamChanged, err := e.store.UpsertTokenSpamVerdict(ctx, store.UpsertTokenSpamVerdictInput{
+		nextCheck := e.clock.Now().Add(e.moderationRecheckInterval)
+		moderationChanged, err := e.store.UpsertTokenModerationVerdict(ctx, store.UpsertTokenModerationVerdictInput{
 			TokenID:     token.ID,
 			Source:      source,
-			Verdict:     *enhanced.IsSpam,
-			Detail:      enhanced.SpamDetail,
+			Verdict:     *enhanced.ModerationStatus,
+			Detail:      enhanced.ModerationDetail,
 			NextCheckAt: &nextCheck,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to upsert token spam verdict: %w", err)
+			return nil, fmt.Errorf("failed to upsert token moderation verdict: %w", err)
 		}
-		if spamChanged {
-			logger.InfoCtx(ctx, "Token spam status changed",
+		if moderationChanged {
+			logger.InfoCtx(ctx, "Token moderation status changed",
 				zap.String("tokenCID", tokenCID.String()),
-				zap.Bool("is_spam", *enhanced.IsSpam),
+				zap.String("moderation_status", enhanced.ModerationStatus.String()),
 				zap.String("vendor", string(enhanced.Vendor)))
 		}
 	}

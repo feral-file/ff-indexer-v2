@@ -7021,7 +7021,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByCIDs", testGetTokensByCIDs},
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
-		{"TokenSpamVerdicts", testTokenSpamVerdicts},
+		{"TokenModerationVerdicts", testTokenModerationVerdicts},
 		{"ReleaseOperations", testReleaseOperations},
 		{"ListReleases", testListReleases},
 		{"UpsertReleaseMetadata", testUpsertReleaseMetadata},
@@ -7059,12 +7059,12 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 	}
 }
 
-// testTokenSpamVerdicts exercises the per-source verdict table and the recompute of the
-// materialized tokens.is_spam against a real Postgres schema. Real-database testing is
+// testTokenModerationVerdicts exercises the per-source verdict table and the recompute of the
+// materialized tokens.moderation_status against a real Postgres schema. Real-database testing is
 // the point twice over: the event insert is guarded by the token_events.event_type CHECK
-// constraint, and the verdict upsert exercises the spam_source enum plus the composite-PK
+// constraint, and the verdict upsert exercises the moderation_source enum plus the composite-PK
 // ON CONFLICT clause — none of which a mock can regress on.
-func testTokenSpamVerdicts(t *testing.T, store Store) {
+func testTokenModerationVerdicts(t *testing.T, store Store) {
 	ctx := context.Background()
 	contract := "0x29539a0109fec46b916a6125f352c629d9304c73"
 	owner := "0x1234567890123456789012345678901234567890"
@@ -7082,15 +7082,15 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 	token, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
 	require.NoError(t, err)
 	require.NotNil(t, token)
-	require.False(t, token.IsSpam, "tokens must default to not-spam (fail-open)")
+	require.Equal(t, schema.ModerationStatusNone, token.ModerationStatus, "tokens must default to not-spam (fail-open)")
 
 	next := time.Now().Add(24 * time.Hour)
 
 	t.Run("first vendor verdict flags the token and emits a broadcast event", func(t *testing.T) {
-		changed, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID:     token.ID,
-			Source:      schema.SpamSourceOpenSea,
-			Verdict:     true,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusSpam,
 			Detail:      []byte(`{"is_disabled":true}`),
 			NextCheckAt: &next,
 		})
@@ -7099,23 +7099,23 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 
 		updated, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
 		require.NoError(t, err)
-		assert.True(t, updated.IsSpam)
+		assert.Equal(t, schema.ModerationStatusSpam, updated.ModerationStatus)
 
-		events := getSpamStatusEvents(t, store, token.ID)
+		events := getModerationStatusEvents(t, store, token.ID)
 		require.Len(t, events, 1)
 		assert.Nil(t, events[0].OwnerAddress, "spam events broadcast to all owners")
-		var meta schema.SpamStatusChangeMetadata
+		var meta schema.ModerationStatusChangeMetadata
 		require.NoError(t, json.Unmarshal(events[0].Metadata, &meta))
-		assert.True(t, meta.IsSpam)
+		assert.Equal(t, schema.ModerationStatusSpam, meta.Status)
 		assert.Equal(t, input.Token.TokenCID, meta.TokenCID)
 
-		row := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceOpenSea)
-		assert.True(t, row.Verdict)
+		row := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
+		assert.Equal(t, schema.ModerationStatusSpam, row.Verdict)
 		assert.JSONEq(t, `{"is_disabled":true}`, string(row.Detail))
 		require.NotNil(t, row.NextCheckAt)
 		assert.WithinDuration(t, next, *row.NextCheckAt, time.Second)
 
-		// Read path: hidden by default, IncludeSpam opts back in.
+		// Read path: hidden by default, IncludeModerated opts back in.
 		hidden, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			TokenCIDs:         []string{input.Token.TokenCID},
 			IncludeUnviewable: true,
@@ -7126,38 +7126,38 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 		shown, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			TokenCIDs:         []string{input.Token.TokenCID},
 			IncludeUnviewable: true,
-			IncludeSpam:       true,
+			IncludeModerated:  true,
 			Limit:             10,
 		})
 		require.NoError(t, err)
-		require.Len(t, shown, 1, "IncludeSpam must opt back in")
-		assert.True(t, shown[0].IsSpam)
+		require.Len(t, shown, 1, "IncludeModerated must opt back in")
+		assert.Equal(t, schema.ModerationStatusSpam, shown[0].ModerationStatus)
 	})
 
 	t.Run("repeat identical verdict refreshes freshness without a duplicate event", func(t *testing.T) {
-		before := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceOpenSea)
+		before := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
 
-		changed, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID:     token.ID,
-			Source:      schema.SpamSourceOpenSea,
-			Verdict:     true,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusSpam,
 			Detail:      []byte(`{"is_disabled":true}`),
 			NextCheckAt: &next,
 		})
 		require.NoError(t, err)
 		assert.False(t, changed, "unchanged combined verdict must not report a change")
-		assert.Len(t, getSpamStatusEvents(t, store, token.ID), 1, "no duplicate event")
+		assert.Len(t, getModerationStatusEvents(t, store, token.ID), 1, "no duplicate event")
 
-		after := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceOpenSea)
+		after := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
 		assert.True(t, after.LastCheckedAt.After(before.LastCheckedAt),
 			"an unchanged verdict is still a fresh confirmation — last_checked_at must advance")
 	})
 
 	t.Run("OR of vendors: a clean objkt verdict does not clear the opensea flag", func(t *testing.T) {
-		changed, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID:     token.ID,
-			Source:      schema.SpamSourceObjkt,
-			Verdict:     false,
+			Source:      schema.ModerationSourceObjkt,
+			Verdict:     schema.ModerationStatusNone,
 			Detail:      []byte(`{"flag":"none"}`),
 			NextCheckAt: &next,
 		})
@@ -7166,25 +7166,25 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 
 		updated, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
 		require.NoError(t, err)
-		assert.True(t, updated.IsSpam)
+		assert.Equal(t, schema.ModerationStatusSpam, updated.ModerationStatus)
 	})
 
 	t.Run("flagging vendor reversing its verdict clears the combined flag", func(t *testing.T) {
-		changed, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID:     token.ID,
-			Source:      schema.SpamSourceOpenSea,
-			Verdict:     false,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusNone,
 			Detail:      []byte(`{"is_disabled":false}`),
 			NextCheckAt: &next,
 		})
 		require.NoError(t, err)
 		assert.True(t, changed)
 
-		events := getSpamStatusEvents(t, store, token.ID)
+		events := getModerationStatusEvents(t, store, token.ID)
 		require.Len(t, events, 2)
-		var meta schema.SpamStatusChangeMetadata
+		var meta schema.ModerationStatusChangeMetadata
 		require.NoError(t, json.Unmarshal(events[1].Metadata, &meta))
-		assert.False(t, meta.IsSpam)
+		assert.Equal(t, schema.ModerationStatusNone, meta.Status)
 
 		visible, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
 			TokenCIDs:         []string{input.Token.TokenCID},
@@ -7197,30 +7197,30 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 
 	t.Run("feralfile verdict wins over vendors in both directions", func(t *testing.T) {
 		// Pin spam while both vendors say clean.
-		changed, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID: token.ID,
-			Source:  schema.SpamSourceFeralFile,
-			Verdict: true,
+			Source:  schema.ModerationSourceFeralFile,
+			Verdict: schema.ModerationStatusSpam,
 			// NextCheckAt nil: feralfile rows are never swept
 		})
 		require.NoError(t, err)
 		assert.True(t, changed, "feralfile pin flags the token despite clean vendors")
-		row := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceFeralFile)
+		row := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceFeralFile)
 		assert.Nil(t, row.NextCheckAt, "feralfile rows must stay out of the sweep queue")
 
 		// A vendor re-flagging while feralfile whitelists must not resurface the flag.
-		changed, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		changed, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID: token.ID,
-			Source:  schema.SpamSourceFeralFile,
-			Verdict: false,
+			Source:  schema.ModerationSourceFeralFile,
+			Verdict: schema.ModerationStatusNone,
 		})
 		require.NoError(t, err)
 		assert.True(t, changed, "feralfile whitelist clears the token")
 
-		changed, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		changed, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID:     token.ID,
-			Source:      schema.SpamSourceOpenSea,
-			Verdict:     true,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusSpam,
 			Detail:      []byte(`{"is_disabled":true}`),
 			NextCheckAt: &next,
 		})
@@ -7229,20 +7229,20 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 
 		updated, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
 		require.NoError(t, err)
-		assert.False(t, updated.IsSpam)
+		assert.Equal(t, schema.ModerationStatusNone, updated.ModerationStatus)
 	})
 
 	t.Run("check failure advances scheduling without touching the verdict", func(t *testing.T) {
-		before := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceOpenSea)
+		before := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
 		failNext := time.Now().Add(time.Hour)
 
-		applied, err := store.RecordTokenSpamCheckFailure(
-			ctx, token.ID, schema.SpamSourceOpenSea, "opensea: 502 bad gateway", failNext,
+		applied, err := store.RecordTokenModerationCheckFailure(
+			ctx, token.ID, schema.ModerationSourceOpenSea, "opensea: 502 bad gateway", failNext,
 			before.LastCheckedAt)
 		require.NoError(t, err)
 		require.True(t, applied, "the expectation matches the stored row, so it must apply")
 
-		after := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceOpenSea)
+		after := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
 		assert.Equal(t, before.Verdict, after.Verdict, "an error is not a verdict")
 		assert.Equal(t, before.LastCheckedAt.UTC(), after.LastCheckedAt.UTC(),
 			"last_checked_at means 'last confirmed', failures must not touch it")
@@ -7253,15 +7253,15 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 		assert.WithinDuration(t, failNext, *after.NextCheckAt, time.Second)
 
 		// A later successful check resets the failure state.
-		_, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
+		_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID:     token.ID,
-			Source:      schema.SpamSourceOpenSea,
-			Verdict:     true,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusSpam,
 			Detail:      []byte(`{"is_disabled":true}`),
 			NextCheckAt: &next,
 		})
 		require.NoError(t, err)
-		reset := getSpamVerdictRow(t, store, token.ID, schema.SpamSourceOpenSea)
+		reset := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
 		assert.Zero(t, reset.ConsecutiveFailures)
 		assert.Nil(t, reset.LastError)
 	})
@@ -7282,17 +7282,17 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 
 		overdueOld := time.Now().Add(-2 * time.Hour)
 		overdueNew := time.Now().Add(-1 * time.Hour)
-		_, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
-			TokenID: token2.ID, Source: schema.SpamSourceOpenSea, Verdict: false, NextCheckAt: &overdueOld,
+		_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID: token2.ID, Source: schema.ModerationSourceOpenSea, Verdict: schema.ModerationStatusNone, NextCheckAt: &overdueOld,
 		})
 		require.NoError(t, err)
-		_, err = store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
-			TokenID: token.ID, Source: schema.SpamSourceOpenSea, Verdict: true,
+		_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID: token.ID, Source: schema.ModerationSourceOpenSea, Verdict: schema.ModerationStatusSpam,
 			Detail: []byte(`{"is_disabled":true}`), NextCheckAt: &overdueNew,
 		})
 		require.NoError(t, err)
 
-		due, err := store.GetTokenSpamVerdictsDueForCheck(ctx, schema.SpamSourceOpenSea, 10)
+		due, err := store.GetTokenModerationVerdictsDueForCheck(ctx, schema.ModerationSourceOpenSea, 10)
 		require.NoError(t, err)
 		require.Len(t, due, 2)
 		assert.Equal(t, token2.ID, due[0].TokenID, "oldest due first")
@@ -7301,66 +7301,66 @@ func testTokenSpamVerdicts(t *testing.T, store Store) {
 		// Stored checksummed (EIP-55); compare against the persisted token row.
 		assert.Equal(t, token2.ContractAddress, due[0].ContractAddress)
 		assert.Equal(t, "8", due[0].TokenNumber)
-		assert.False(t, due[0].Verdict)
+		assert.Equal(t, schema.ModerationStatusNone, due[0].Verdict)
 		assert.Equal(t, token.ID, due[1].TokenID)
-		assert.True(t, due[1].Verdict)
+		assert.Equal(t, schema.ModerationStatusSpam, due[1].Verdict)
 
 		// Source filter: nothing is due for objkt (its row's next_check_at is in the
 		// future) and feralfile rows (NULL next_check_at) never appear anywhere.
-		objktDue, err := store.GetTokenSpamVerdictsDueForCheck(ctx, schema.SpamSourceObjkt, 10)
+		objktDue, err := store.GetTokenModerationVerdictsDueForCheck(ctx, schema.ModerationSourceObjkt, 10)
 		require.NoError(t, err)
 		assert.Empty(t, objktDue)
-		ffDue, err := store.GetTokenSpamVerdictsDueForCheck(ctx, schema.SpamSourceFeralFile, 10)
+		ffDue, err := store.GetTokenModerationVerdictsDueForCheck(ctx, schema.ModerationSourceFeralFile, 10)
 		require.NoError(t, err)
 		assert.Empty(t, ffDue)
 	})
 
 	t.Run("unknown token id is a no-op", func(t *testing.T) {
-		changed, err := store.UpsertTokenSpamVerdict(ctx, UpsertTokenSpamVerdictInput{
-			TokenID: 999999, Source: schema.SpamSourceOpenSea, Verdict: true, NextCheckAt: &next,
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID: 999999, Source: schema.ModerationSourceOpenSea, Verdict: schema.ModerationStatusSpam, NextCheckAt: &next,
 		})
 		require.NoError(t, err)
 		assert.False(t, changed)
-		assert.Empty(t, getSpamVerdictRowsByToken(t, store, 999999))
+		assert.Empty(t, getModerationVerdictRowsByToken(t, store, 999999))
 	})
 }
 
-// getSpamVerdictRow reads one raw verdict row, bypassing the store interface so tests can
+// getModerationVerdictRow reads one raw verdict row, bypassing the store interface so tests can
 // assert column-level semantics (last_checked_at freshness, failure counters).
-func getSpamVerdictRow(t *testing.T, store Store, tokenID uint64, source schema.SpamSource) schema.TokenSpamVerdict {
+func getModerationVerdictRow(t *testing.T, store Store, tokenID uint64, source schema.ModerationSource) schema.TokenModerationVerdict {
 	t.Helper()
-	rows := getSpamVerdictRowsByToken(t, store, tokenID)
+	rows := getModerationVerdictRowsByToken(t, store, tokenID)
 	for _, row := range rows {
 		if row.Source == source {
 			return row
 		}
 	}
 	t.Fatalf("no verdict row for token %d source %s", tokenID, source)
-	return schema.TokenSpamVerdict{}
+	return schema.TokenModerationVerdict{}
 }
 
-// getSpamVerdictRowsByToken returns all raw verdict rows for a token.
-func getSpamVerdictRowsByToken(t *testing.T, store Store, tokenID uint64) []schema.TokenSpamVerdict {
+// getModerationVerdictRowsByToken returns all raw verdict rows for a token.
+func getModerationVerdictRowsByToken(t *testing.T, store Store, tokenID uint64) []schema.TokenModerationVerdict {
 	t.Helper()
 	pg, ok := store.(*pgStore)
 	require.True(t, ok, "expected pgStore")
 
-	var rows []schema.TokenSpamVerdict
+	var rows []schema.TokenModerationVerdict
 	require.NoError(t, pg.db.
 		Where("token_id = ?", tokenID).
 		Find(&rows).Error)
 	return rows
 }
 
-// getSpamStatusEvents returns spam_status_changed events for a token, oldest first.
-func getSpamStatusEvents(t *testing.T, store Store, tokenID uint64) []schema.TokenEvent {
+// getModerationStatusEvents returns moderation_status_changed events for a token, oldest first.
+func getModerationStatusEvents(t *testing.T, store Store, tokenID uint64) []schema.TokenEvent {
 	t.Helper()
 	pg, ok := store.(*pgStore)
 	require.True(t, ok, "expected pgStore")
 
 	var events []schema.TokenEvent
 	require.NoError(t, pg.db.
-		Where("token_id = ? AND event_type = ?", tokenID, schema.EventTypeSpamStatusChanged).
+		Where("token_id = ? AND event_type = ?", tokenID, schema.EventTypeModerationStatusChanged).
 		Order("id ASC").
 		Find(&events).Error)
 	return events

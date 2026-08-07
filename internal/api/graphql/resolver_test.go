@@ -306,7 +306,7 @@ func TestQueryResolverTokensSlugAloneRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "release_vendor_slug requires release_vendor or release_id")
 }
 
-// --- token(cid, include_spam) ---
+// --- token(cid, include_moderated) ---
 
 // TestQueryResolverTokenDefaultsToExcludingSpam pins the GraphQL half of the
 // detail-lookup wiring. gqlgen applies the schema default (false) when the caller
@@ -322,21 +322,21 @@ func TestQueryResolverTokenDefaultsToExcludingSpam(t *testing.T) {
 	resolver := NewResolver(false, mockExec)
 
 	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
-	includeSpam := false
+	includeModerated := false
 	mockExec.EXPECT().
 		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(), false).
 		Return(&dto.TokenResponse{TokenCID: cid}, nil)
 
-	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, &includeSpam)
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, &includeModerated)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, cid, result.TokenCID)
 }
 
-// TestQueryResolverTokenNilIncludeSpamIsFalse covers the argument being absent
+// TestQueryResolverTokenNilIncludeModeratedIsFalse covers the argument being absent
 // entirely, which reaches the resolver as a nil pointer rather than false.
-func TestQueryResolverTokenNilIncludeSpamIsFalse(t *testing.T) {
+func TestQueryResolverTokenNilIncludeModeratedIsFalse(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
@@ -356,7 +356,7 @@ func TestQueryResolverTokenNilIncludeSpamIsFalse(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestQueryResolverTokenForwardsIncludeSpam(t *testing.T) {
+func TestQueryResolverTokenForwardsIncludeModerated(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
@@ -366,13 +366,13 @@ func TestQueryResolverTokenForwardsIncludeSpam(t *testing.T) {
 	resolver := NewResolver(false, mockExec)
 
 	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
-	includeSpam := true
+	includeModerated := true
 	mockExec.EXPECT().
 		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), gomock.Any(), true).
 		Return(&dto.TokenResponse{TokenCID: cid}, nil)
 
-	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, &includeSpam)
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, &includeModerated)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 }
@@ -400,7 +400,7 @@ func TestQueryResolverTokenFilteredSpamIsNotFound(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-// --- Release.members(include_spam) ---
+// --- Release.members(include_moderated) ---
 
 // TestReleaseResolverMembersDefaultsToExcludingSpam mirrors the REST contract:
 // members is a renderable TokenList, so it is filtered unless the caller opts in.
@@ -416,13 +416,13 @@ func TestReleaseResolverMembersDefaultsToExcludingSpam(t *testing.T) {
 	resolver := NewResolver(false, mockExec)
 
 	releaseID := uint64(42)
-	includeSpamFalse := false
+	includeModeratedFalse := false
 	includeUnviewableTrue := true
 	mockExec.EXPECT().
 		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
-			&includeUnviewableTrue, &includeSpamFalse, gomock.Any(), gomock.Any(), gomock.Any()).
+			&includeUnviewableTrue, &includeModeratedFalse, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
 
 	obj := &dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}
@@ -430,7 +430,7 @@ func TestReleaseResolverMembersDefaultsToExcludingSpam(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestReleaseResolverMembersForwardsIncludeSpam(t *testing.T) {
+func TestReleaseResolverMembersForwardsIncludeModerated(t *testing.T) {
 	t.Parallel()
 
 	ctrl := gomock.NewController(t)
@@ -440,12 +440,12 @@ func TestReleaseResolverMembersForwardsIncludeSpam(t *testing.T) {
 	resolver := NewResolver(false, mockExec)
 
 	releaseID := uint64(42)
-	includeSpamTrue := true
+	includeModeratedTrue := true
 	mockExec.EXPECT().
 		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
 			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
-			gomock.Any(), &includeSpamTrue, gomock.Any(), gomock.Any(), gomock.Any()).
+			gomock.Any(), &includeModeratedTrue, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
 
 	obj := &dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}

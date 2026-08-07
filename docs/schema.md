@@ -18,11 +18,11 @@ The database includes the following main tables:
 - `token_metadata` - NFT metadata (name, description, media, attributes, etc.)
 - `enrichment_sources` - Additional data sources enriching token information
 - `balances` - Current token ownership balances (multi-edition tokens)
-- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability / spam status); ownership rows with `metadata.tx_hash` are unique per `(token_id, owner_address, event_type, tx_hash)` via `token_events_ownership_unique`
+- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability / moderation status); ownership rows with `metadata.tx_hash` are unique per `(token_id, owner_address, event_type, tx_hash)` via `token_events_ownership_unique`
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
-- `token_spam_verdicts` - Per-source spam moderation verdicts (source of truth behind `tokens.is_spam`; see [spam_filtering.md](spam_filtering.md))
+- `token_moderation_verdicts` - Per-source moderation verdicts (source of truth behind `tokens.moderation_status`; see [token_moderation.md](token_moderation.md))
 - `releases` - Cross-vendor release abstraction (Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections, OpenSea collections) with stable internal id and optional human-readable slug (migration 018; `vendor_release_slug` added in 019)
 - `release_members` - Ordered token membership within a release; `mint_number` is authoritative and 1-based (migration 018)
 - `watched_addresses` - Addresses being monitored for indexing
@@ -47,7 +47,7 @@ Primary entity for tracking tokens across all supported blockchains.
 | current_owner | TEXT | Current owner address (NULL for multi-owner tokens) |
 | burned | BOOLEAN | Whether token has been burned |
 | is_viewable | BOOLEAN | Whether token has accessible media URLs (for filtering unviewable tokens) |
-| is_spam | BOOLEAN | Materialized combined spam verdict, recomputed from `token_spam_verdicts` on every verdict write (a `feralfile` row wins outright, otherwise OR of vendor verdicts); read paths exclude flagged tokens unless `include_spam` is set |
+| moderation_status | moderation_status | Materialized combined moderation verdict (`none` \| `spam`), recomputed from `token_moderation_verdicts` on every verdict write (a `feralfile` row wins outright, otherwise the most severe vendor verdict); read paths exclude anything but `none` unless `include_moderated` is set. An enum so new verdict kinds need no schema change |
 | last_provenance_timestamp | TIMESTAMPTZ | Cached timestamp of most recent provenance event (denormalized for query performance) |
 | version | BIGINT | Incremented on user-visible changes (ownership, metadata, enrichment, viewability, burn status); used for scoped state sync |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
@@ -238,15 +238,15 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 
 **Note**: The `media_url_hash` column uses MD5 hashing to enable efficient URL lookups without index size limitations. This is particularly important for long URLs that would otherwise exceed PostgreSQL's B-tree index size limits.
 
-### token_spam_verdicts
+### token_moderation_verdicts
 
-Source of truth for spam moderation: one row per (token, source), where a source is a moderating vendor (`opensea`, `objkt`) or Feral File's own moderation system (`feralfile`, reserved — no writer yet). Rows exist only after a source has actually published a verdict; absence means "no opinion", deliberately distinct from a clean verdict (tri-state). `tokens.is_spam` is the materialized combination, recomputed transactionally on every verdict write. The spam verdict sweeper re-checks vendor rows on the `next_check_at` schedule. See [spam_filtering.md](spam_filtering.md) for the full design.
+Source of truth for token moderation: one row per (token, source), where a source is a moderating vendor (`opensea`, `objkt`) or Feral File's own moderation system (`feralfile`, reserved — no writer yet). Rows exist only after a source has actually published a verdict; absence means "no opinion", deliberately distinct from a `none` verdict (tri-state). `tokens.moderation_status` is the materialized combination, recomputed transactionally on every verdict write. The moderation verdict sweeper re-checks vendor rows on the `next_check_at` schedule. See [token_moderation.md](token_moderation.md) for the full design.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | token_id | BIGINT | Foreign key to tokens.id (composite PK with source) |
-| source | spam_source | Who published this verdict (composite PK with token_id) |
-| verdict | BOOLEAN | The source's spam decision (true = spam) |
+| source | moderation_source | Who published this verdict (composite PK with token_id) |
+| verdict | moderation_status | This source's moderation decision (`none` \| `spam`) |
 | detail | JSONB | Raw moderation fields only (`{"is_disabled":true}` / `{"flag":"banned"}`); full payload lives in enrichment_sources.vendor_json |
 | last_checked_at | TIMESTAMPTZ | Last time the source confirmed the stored verdict; failed checks do not touch it |
 | next_check_at | TIMESTAMPTZ | Sweep due time; NULL = never swept (feralfile rows) |
@@ -256,7 +256,7 @@ Source of truth for spam moderation: one row per (token, source), where a source
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
 **Indexes**:
-- `idx_token_spam_verdicts_due` on (source, next_check_at) WHERE next_check_at IS NOT NULL — the sweeper's per-source work queue (partial: feralfile rows never occupy it)
+- `idx_token_moderation_verdicts_due` on (source, next_check_at) WHERE next_check_at IS NOT NULL — the sweeper's per-source work queue (partial: feralfile rows never occupy it)
 
 **Relationships**:
 - Many-to-one with `tokens` (CASCADE delete)
@@ -264,7 +264,7 @@ Source of truth for spam moderation: one row per (token, source), where a source
 **Purpose**:
 - Lets moderation sources record verdicts independently so they never overwrite each other
 - Reserves the `feralfile` source slot so a future FF moderation system (user reports, operator decisions) slots in as just another writer with no schema change
-- Drives the spam verdict sweeper's re-check scheduling (late vendor takedowns and appealed reversals both converge)
+- Drives the moderation verdict sweeper's re-check scheduling (late vendor takedowns and appealed reversals both converge)
 
 ### provenance_events
 
@@ -623,7 +623,7 @@ Audit log of webhook delivery attempts with status tracking and response details
 - `healthy` - URL is accessible
 - `broken` - URL is not accessible
 
-### spam_source
+### moderation_source
 - `opensea` - OpenSea moderation verdict (NFT API `is_disabled`)
 - `objkt` - objkt moderation verdict (token `flag=banned`)
 - `feralfile` - Feral File's own moderation system (reserved; wins outright over vendor verdicts in both directions)
@@ -712,7 +712,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_webhook_deliveries_updated_at`
 - `update_address_indexing_jobs_updated_at`
 - `update_token_media_health_updated_at`
-- `update_token_spam_verdicts_updated_at` — added in migration 021
+- `update_token_moderation_verdicts_updated_at` — added in migration 021
 - `update_jobs_updated_at`
 - `update_releases_updated_at` — added in migration 018 (`releases` table only; `release_members` has no `updated_at` by design)
 
