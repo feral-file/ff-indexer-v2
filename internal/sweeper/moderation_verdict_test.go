@@ -321,11 +321,10 @@ func TestModerationVerdictSweeper_NoAPIKey_LeavesRowsUntouched(t *testing.T) {
 // TestModerationVerdictSweeper_NoAPIKey_DoesNotHotLoop pins the throttling half of the
 // unconfigured-vendor contract, which the "leaves rows untouched" test above
 // cannot see: because those rows keep their next_check_at, the same batch stays
-// due forever. If the cycle counted them as work it would never sleep, and
-// ErrNoAPIKey is returned before the HTTP request and the rate limiter, so
-// nothing else throttles the respin — the sweeper would saturate the database
-// with due-fetches. Here the store always reports the batch as due, so the only
-// thing that can bound the loop is the cycle sleep.
+// due forever, and ErrNoAPIKey is returned before the HTTP request and the rate
+// limiter, so nothing else throttles a respin. The cycle's unconditional sleep
+// is what bounds it — this test's job is to confirm that sleep actually runs
+// rather than being skipped.
 func TestModerationVerdictSweeper_NoAPIKey_DoesNotHotLoop(t *testing.T) {
 	tm := setupTestModerationSweeper(t)
 	defer tearDownTestModerationSweeper(tm)
@@ -380,11 +379,12 @@ func TestModerationVerdictSweeper_NoAPIKey_DoesNotHotLoop(t *testing.T) {
 }
 
 // TestModerationVerdictSweeper_StoreError_DoesNotHotLoop covers the other way into the
-// same trap as the unconfigured-vendor test above. A failing due-query returns
-// before the idle sleep, and Start only logs the error before re-entering the
-// cycle — so with no HTTP request issued, neither the rate limiter nor the idle
-// sleep bounds the retry. A database blip would otherwise pin a core and flood
-// Sentry for the length of the outage.
+// same trap as the unconfigured-vendor test above. A failing due-query issues no
+// HTTP request, so neither the rate limiter nor the vendor call bounds a retry —
+// only the cycle's own sleep does, and unlike the media health sweeper it mirrors,
+// this sweeper sleeps even on that error path rather than returning immediately.
+// A database blip would otherwise pin a core and flood Sentry for the length of
+// the outage.
 func TestModerationVerdictSweeper_StoreError_DoesNotHotLoop(t *testing.T) {
 	tm := setupTestModerationSweeper(t)
 	defer tearDownTestModerationSweeper(tm)
@@ -420,11 +420,11 @@ func TestModerationVerdictSweeper_StoreError_DoesNotHotLoop(t *testing.T) {
 		"a failing due-query must back off before the cycle retries")
 }
 
-// TestModerationVerdictSweeper_UpsertError_DoesNotHotLoop covers the third way a batch
-// can make no progress: the vendor answers, but persisting the verdict fails, so
-// next_check_at never moves and the same rows stay due. This one does reach the
-// rate-limited vendor call, so a regression burns paid API quota rather than CPU —
-// quieter than the other two, and more expensive.
+// TestModerationVerdictSweeper_UpsertError_DoesNotHotLoop covers a batch where the
+// vendor answers but persisting the verdict fails, so next_check_at never moves
+// and the same row stays due forever. This one does reach the rate-limited
+// vendor call, so a regression burns paid API quota rather than CPU — quieter
+// than a failing due-query, and more expensive.
 func TestModerationVerdictSweeper_UpsertError_DoesNotHotLoop(t *testing.T) {
 	tm := setupTestModerationSweeper(t)
 	defer tearDownTestModerationSweeper(tm)
@@ -477,6 +477,91 @@ func TestModerationVerdictSweeper_UpsertError_DoesNotHotLoop(t *testing.T) {
 
 	assert.Less(t, vendorCalls.Load(), int32(50),
 		"a batch that cannot persist its verdict must back off, not respin the vendor")
+}
+
+// TestModerationVerdictSweeper_MixedBatchWriteFailure_StillSleeps pins a gap the
+// four tests above cannot see: they each drive a batch where the SAME single row
+// fails throughout. Here the batch has two due rows — one whose write always
+// succeeds, one whose write always fails — so on every cycle SOMETHING in the
+// batch does move next_check_at.
+//
+// A version of the sweeper that decided whether to sleep from a single
+// batch-level "did anything progress" flag would see that as progress and skip
+// the sleep, respinning the failing row's vendor call every cycle forever, with
+// no backoff, for as long as the rest of the batch kept finding real work —
+// which at any real scale is most of the time. The fix removed that flag
+// entirely: the cycle now sleeps unconditionally, so this failing row can be
+// retried no faster than SWEEP_CYCLE_INTERVAL regardless of what else is in the
+// batch.
+func TestModerationVerdictSweeper_MixedBatchWriteFailure_StillSleeps(t *testing.T) {
+	tm := setupTestModerationSweeper(t)
+	defer tearDownTestModerationSweeper(tm)
+
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	tm.clock.EXPECT().Now().Return(now).AnyTimes()
+
+	okItem := store.TokenModerationCheckItem{
+		TokenID:         20,
+		TokenCID:        testTokenCID("eip155:1", "erc721", "0xabc", "20"),
+		ContractAddress: "0xabc",
+		TokenNumber:     "20",
+		LastCheckedAt:   now.Add(-25 * time.Hour),
+		NextCheckAt:     now.Add(-1 * time.Hour),
+	}
+	stuckItem := store.TokenModerationCheckItem{
+		TokenID:         21,
+		TokenCID:        testTokenCID("eip155:1", "erc721", "0xdef", "21"),
+		ContractAddress: "0xdef",
+		TokenNumber:     "21",
+		LastCheckedAt:   now.Add(-25 * time.Hour),
+		NextCheckAt:     now.Add(-1 * time.Hour),
+	}
+
+	var fetches atomic.Int32
+	tm.store.EXPECT().
+		GetTokenModerationVerdictsDueForCheck(gomock.Any(), schema.ModerationSourceOpenSea, 10).
+		DoAndReturn(func(_ context.Context, _ schema.ModerationSource, _ int) ([]store.TokenModerationCheckItem, error) {
+			fetches.Add(1)
+			return []store.TokenModerationCheckItem{okItem, stuckItem}, nil
+		}).
+		AnyTimes()
+	tm.store.EXPECT().
+		GetTokenModerationVerdictsDueForCheck(gomock.Any(), schema.ModerationSourceObjkt, 10).
+		Return(nil, nil).
+		AnyTimes()
+	tm.openseaClient.EXPECT().
+		GetNFT(gomock.Any(), "0xabc", "20").
+		Return(&opensea.NFTMetadata{IsDisabled: false}, nil).
+		AnyTimes()
+	tm.openseaClient.EXPECT().
+		GetNFT(gomock.Any(), "0xdef", "21").
+		Return(&opensea.NFTMetadata{IsDisabled: false}, nil).
+		AnyTimes()
+	tm.store.EXPECT().
+		UpsertTokenModerationVerdict(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.UpsertTokenModerationVerdictInput) (bool, error) {
+			if input.TokenID == stuckItem.TokenID {
+				return false, errors.New("deadlock detected")
+			}
+			return false, nil
+		}).
+		AnyTimes()
+	tm.clock.EXPECT().
+		After(sweeper.SWEEP_CYCLE_INTERVAL).
+		DoAndReturn(func(_ time.Duration) <-chan time.Time {
+			ch := make(chan time.Time, 1)
+			go func() {
+				time.Sleep(20 * time.Millisecond)
+				ch <- time.Now()
+			}()
+			return ch
+		}).
+		MinTimes(1)
+
+	runOneSweep(t, tm)
+
+	assert.Less(t, fetches.Load(), int32(50),
+		"one persistently failing write must not stop the cycle from sleeping just because another row in the same batch succeeded")
 }
 
 func TestModerationVerdictSweeper_ObjktBanned(t *testing.T) {
@@ -603,12 +688,13 @@ func TestModerationVerdictSweeper_DoubleStart(t *testing.T) {
 	require.NoError(t, <-errChan)
 }
 
-// TestModerationVerdictSweeper_StaleFailure_DoesNotHotLoop covers the fourth no-progress
-// path: the vendor call fails, but the failure write loses its compare-and-set
-// because a newer enrichment already wrote. The row's next_check_at was moved by
-// that winner, so it is no longer due — but the sweeper must not count the batch
-// as work, or the cycle would skip its sleep and respin the same rows through the
-// rate-limited vendor call.
+// TestModerationVerdictSweeper_StaleFailure_DoesNotHotLoop covers a case where the
+// vendor call fails and the failure write also loses its compare-and-set,
+// because a newer enrichment already wrote. That winner already moved
+// next_check_at, so this row is genuinely no longer due once the write is
+// retried against fresh state — but the mock here is stateless and keeps
+// answering with the same stale row, standing in for "the DB keeps rejecting
+// this specific write." The cycle sleep must still bound the retry rate.
 func TestModerationVerdictSweeper_StaleFailure_DoesNotHotLoop(t *testing.T) {
 	tm := setupTestModerationSweeper(t)
 	defer tearDownTestModerationSweeper(tm)

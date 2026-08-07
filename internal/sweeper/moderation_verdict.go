@@ -156,54 +156,56 @@ func (s *moderationVerdictSweeper) Stop(ctx context.Context) error {
 	}
 }
 
-// runSweepCycle re-checks one due batch per vendor source. Sources are separate
-// queues (separate store queries) so OpenSea's API quota cannot starve objkt's
-// and vice versa. Sleeps when every source is idle, and also before surfacing a
-// store error (see below).
+// runSweepCycle re-checks one due batch per vendor source, then sleeps before
+// running again. Sources are separate queues (separate store queries) so
+// OpenSea's API quota cannot starve objkt's and vice versa.
+//
+// The sleep is unconditional — mirroring the media health sweeper — rather than
+// skipped whenever a batch made progress. An earlier version tracked a single
+// "did anything in this batch move next_check_at" flag and skipped the sleep
+// when it had, to drain a large backlog without idling between batches. That
+// left a gap: a row whose *write* kept failing (its next_check_at never
+// advances) rides along with an otherwise-successful batch, so the flag stays
+// true and the cycle never sleeps — that one row gets re-fetched and re-billed
+// to the vendor on every single cycle, with no backoff at all, for as long as
+// the rest of the batch keeps finding genuine work (which at any real scale is
+// most of the time). Sleeping once per cycle regardless caps every row's retry
+// rate at SWEEP_CYCLE_INTERVAL, matching the guarantee media_health.go already
+// gives its own due rows, at the cost of draining a large backlog more slowly.
+//
+// Unlike the media health sweeper, a failing due-query still sleeps before
+// this returns (see the loop below) rather than returning immediately — Start
+// only logs the error and re-enters this function, and a failed due-query
+// issues no HTTP request, so nothing else would throttle the retry. This was
+// itself a previously-fixed hot loop and must not regress.
 func (s *moderationVerdictSweeper) runSweepCycle(ctx context.Context) error {
-	totalDue := 0
+	var sweepErr error
 	for _, source := range []schema.ModerationSource{schema.ModerationSourceOpenSea, schema.ModerationSourceObjkt} {
-		n, err := s.sweepSource(ctx, source)
-		if err != nil {
-			// Back off before returning: Start only logs the error and re-enters
-			// this function immediately, and a failed due-query issues no HTTP
-			// request, so neither the rate limiter nor the idle sleep below would
-			// throttle the retry. Without this the loop spins at full speed —
-			// saturating the database and Sentry — for the whole outage. Same
-			// reasoning as the unconfigured-vendor path in checkItem.
-			_ = s.sleep(ctx, SWEEP_CYCLE_INTERVAL)
-			return err
+		if err := s.sweepSource(ctx, source); err != nil {
+			sweepErr = err
+			break
 		}
-		totalDue += n
 	}
 
-	if totalDue == 0 {
-		// Nothing due anywhere: wait before polling again. Context-aware sleep
-		// so shutdown is not delayed.
-		if !s.sleep(ctx, SWEEP_CYCLE_INTERVAL) {
-			return ctx.Err()
-		}
+	// Context-aware sleep so shutdown is not delayed.
+	if !s.sleep(ctx, SWEEP_CYCLE_INTERVAL) {
+		return ctx.Err()
 	}
-	return nil
+	return sweepErr
 }
 
-// sweepSource fetches and processes one source's due batch, returning how many
-// rows were due — or 0 when the batch made no progress at all, so the caller
-// treats the source as idle and sleeps.
-//
-// Reason for the no-progress signal: a row only leaves the due set when something
-// moves its next_check_at. Every path that fails to do so (an unconfigured vendor,
-// a failed verdict upsert, a failed failure-record) leaves the identical batch due,
-// so reporting it as work would keep runSweepCycle from ever sleeping and respin
-// the batch continuously — burning either CPU or paid vendor quota, depending on
-// whether the failing path reached the rate-limited HTTP call.
-func (s *moderationVerdictSweeper) sweepSource(ctx context.Context, source schema.ModerationSource) (int, error) {
+// sweepSource fetches one source's due batch and checks each row against the
+// vendor, concurrently via the shared worker pool. A row whose write fails is
+// simply left due — the caller's unconditional per-cycle sleep (see
+// runSweepCycle) is what bounds how often it gets retried, not anything
+// tracked here.
+func (s *moderationVerdictSweeper) sweepSource(ctx context.Context, source schema.ModerationSource) error {
 	items, err := s.store.GetTokenModerationVerdictsDueForCheck(ctx, source, s.config.BatchSize)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get due moderation verdicts for %s: %w", source, err)
+		return fmt.Errorf("failed to get due moderation verdicts for %s: %w", source, err)
 	}
 	if len(items) == 0 {
-		return 0, nil
+		return nil
 	}
 
 	logger.InfoCtx(ctx, "Re-checking moderation verdicts",
@@ -216,39 +218,34 @@ func (s *moderationVerdictSweeper) sweepSource(ctx context.Context, source schem
 		pond.WithQueueSize(s.config.BatchSize),
 		pond.WithContext(ctx),
 	)
-	var progressed atomic.Bool
 	for _, item := range items {
 		s.pool.Submit(func() {
-			s.checkItem(ctx, source, item, &progressed)
+			s.checkItem(ctx, source, item)
 		})
 	}
 	s.pool.StopAndWait()
 
-	if !progressed.Load() {
-		return 0, nil
-	}
-
-	return len(items), nil
+	return nil
 }
 
-// checkItem re-asks the vendor about one token and persists the outcome. It sets
-// progressed when it manages to move the row's next_check_at, by either route —
-// see the no-progress note on sweepSource for why that matters.
-func (s *moderationVerdictSweeper) checkItem(ctx context.Context, source schema.ModerationSource, item store.TokenModerationCheckItem, progressed *atomic.Bool) {
+// checkItem re-asks the vendor about one token and persists the outcome. A row
+// that fails — the vendor call, or the write — is left as-is and re-fetched on
+// the next cycle; see runSweepCycle for why that cycle-level retry cadence is
+// enough on its own.
+func (s *moderationVerdictSweeper) checkItem(ctx context.Context, source schema.ModerationSource, item store.TokenModerationCheckItem) {
 	verdict, detail, err := s.fetchVendorVerdict(ctx, source, item)
 	if err != nil {
 		// ErrNoAPIKey means the whole source is unconfigured, not that this row
 		// failed: writing failure state would walk every row's backoff to the
-		// max for no reason. Leave the rows untouched — they stay due until a key
-		// is configured — and make no progress, so the cycle sleeps instead of
-		// respinning them. ErrNoAPIKey is returned before the request and the
-		// rate limiter, so nothing else would throttle that respin.
+		// max for no reason. Leave the rows untouched — they stay due until a
+		// key is configured, and get re-fetched (harmlessly) at the normal
+		// cycle cadence.
 		if errors.Is(err, opensea.ErrNoAPIKey) {
 			logger.WarnCtx(ctx, "Skipping moderation re-check: vendor has no API key",
 				zap.String("source", source.String()))
 			return
 		}
-		s.recordFailure(ctx, source, item, err, progressed)
+		s.recordFailure(ctx, source, item, err)
 		return
 	}
 
@@ -273,7 +270,6 @@ func (s *moderationVerdictSweeper) checkItem(ctx context.Context, source schema.
 			zap.String("source", source.String()))
 		return
 	}
-	progressed.Store(true)
 	if changed {
 		logger.InfoCtx(ctx, "Token moderation status changed by sweeper re-check",
 			zap.String("token_cid", item.TokenCID),
@@ -326,9 +322,8 @@ func moderationStatusFromVendorSpam(spam bool) schema.ModerationStatus {
 	return schema.ModerationStatusNone
 }
 
-// recordFailure advances the row's failure backoff without touching its verdict,
-// and reports that as progress: the row leaves the due set even though the check
-// itself failed.
+// recordFailure advances the row's failure backoff without touching its
+// verdict: an error is not a verdict (tri-state).
 //
 // The write is conditional on the row the sweeper read, mirroring the success
 // path. A failed request is just as stale as a successful one, and landing it
@@ -337,7 +332,7 @@ func moderationStatusFromVendorSpam(spam bool) schema.ModerationStatus {
 // freshly re-checked token could be pushed out by the 720h maximum on a row that
 // only records one failure. When the guard rejects, the winner already moved
 // next_check_at, so the row is not due and there is nothing to retry.
-func (s *moderationVerdictSweeper) recordFailure(ctx context.Context, source schema.ModerationSource, item store.TokenModerationCheckItem, checkErr error, progressed *atomic.Bool) {
+func (s *moderationVerdictSweeper) recordFailure(ctx context.Context, source schema.ModerationSource, item store.TokenModerationCheckItem, checkErr error) {
 	next := s.clock.Now().Add(s.failureInterval(item))
 	applied, err := s.store.RecordTokenModerationCheckFailure(
 		ctx, item.TokenID, source, checkErr.Error(), next, item.LastCheckedAt)
@@ -353,7 +348,6 @@ func (s *moderationVerdictSweeper) recordFailure(ctx context.Context, source sch
 			zap.String("source", source.String()))
 		return
 	}
-	progressed.Store(true)
 	logger.WarnCtx(ctx, "Moderation re-check failed",
 		zap.String("token_cid", item.TokenCID),
 		zap.String("source", source.String()),
