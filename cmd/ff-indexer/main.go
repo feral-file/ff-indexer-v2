@@ -172,7 +172,7 @@ func run() int {
 	}
 	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue)
 
-	// Spam verdict sweeper: re-checks OpenSea/objkt moderation verdicts on the
+	// Moderation verdict sweeper: re-checks OpenSea/objkt moderation verdicts on the
 	// token_moderation_verdicts schedule. Its vendor clients share rateLimiter with
 	// worker-core's enrichment clients, so the per-provider API budget (opensea,
 	// objkt) is enforced process-wide rather than per subsystem.

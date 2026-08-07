@@ -161,7 +161,7 @@ func validModerationSweeperConfig() ModerationSweeperConfig {
 		MaxRecheckInterval:     720 * time.Hour,
 		FailureBackoffInitial:  time.Hour,
 		MaxConsecutiveFailures: 5,
-		Worker:                 WorkerConfig{WorkerPoolSize: 2, WorkerQueueSize: 100},
+		Worker:                 WorkerConfig{WorkerPoolSize: 2},
 	}
 }
 

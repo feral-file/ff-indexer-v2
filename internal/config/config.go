@@ -676,7 +676,6 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	// vendor API call against OpenSea's ~4 rps shared budget.
 	v.SetDefault("moderation_sweeper.batch_size", 100)
 	v.SetDefault("moderation_sweeper.worker.pool_size", 2)
-	v.SetDefault("moderation_sweeper.worker.queue_size", 100)
 	v.SetDefault("moderation_sweeper.initial_recheck_interval", "24h")
 	v.SetDefault("moderation_sweeper.max_recheck_interval", "720h")
 	v.SetDefault("moderation_sweeper.failure_backoff_initial", "1h")
@@ -821,10 +820,9 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
 		"media_health_sweeper.uri.onchfs_gateways",
-		// Spam Verdict Sweeper config
+		// Moderation Verdict Sweeper config
 		"moderation_sweeper.batch_size",
 		"moderation_sweeper.worker.pool_size",
-		"moderation_sweeper.worker.queue_size",
 		"moderation_sweeper.initial_recheck_interval",
 		"moderation_sweeper.max_recheck_interval",
 		"moderation_sweeper.failure_backoff_initial",
