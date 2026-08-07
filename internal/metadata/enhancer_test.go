@@ -1304,7 +1304,7 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 	description := "A generative artwork"
 	displayURI := "ipfs://QmDisplay123"
 	artifactURI := "ipfs://QmArtifact456"
-	mime := "image/png"
+	mime := "application/x-directory"
 	alias := "Artist Name"
 
 	objktToken := &objkt.Token{
@@ -1356,7 +1356,7 @@ func TestEnhancer_Enhance_Objkt(t *testing.T) {
 	assert.NotNil(t, result.ImageURL)
 	assert.Equal(t, "https://ipfs.io/ipfs/QmDisplay123", *result.ImageURL)
 	assert.NotNil(t, result.AnimationURL)
-	assert.Equal(t, "https://ipfs.io/ipfs/QmArtifact456", *result.AnimationURL)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmArtifact456/index.html", *result.AnimationURL)
 	assert.NotNil(t, result.MimeType)
 	assert.Equal(t, mime, *result.MimeType)
 	assert.Len(t, result.Artists, 1)

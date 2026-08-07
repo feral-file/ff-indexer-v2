@@ -540,6 +540,11 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 	// Set mime type (objkt provides this, so no need to detect)
 	if !types.StringNilOrEmpty(token.Mime) {
 		enhanced.MimeType = token.Mime
+		if *token.Mime == "application/x-directory" && enhanced.AnimationURL != nil {
+			// Objkt directory artifacts serve their playable entry point at index.html.
+			animationURL := strings.TrimRight(*enhanced.AnimationURL, "/") + "/index.html"
+			enhanced.AnimationURL = &animationURL
+		}
 	}
 
 	// Build artist information from creators
