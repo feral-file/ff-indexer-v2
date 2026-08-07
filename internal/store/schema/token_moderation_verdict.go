@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"math"
 	"time"
 )
 
@@ -31,17 +32,35 @@ const (
 // one, and "most severe" is the only rule that cannot end up hiding a token less
 // than some source asked for.
 //
-// A status missing from this map ranks 0 — it loses to any verdict this binary
-// understands rather than silently outranking them. That affects only which
-// verdict is materialized; whether the result hides the token is IsModerated.
+// A status missing from this map is not looked up here — see Severity, which
+// ranks it above every entry below instead of defaulting to 0. Ranking an
+// unknown status at 0 would tie it with ModerationStatusNone and let a real,
+// not-yet-understood verdict silently lose the comparison and unhide a token
+// during a rolling upgrade (an older binary recomputing after a newer one wrote
+// a status it doesn't have a case for).
 var moderationStatusSeverity = map[ModerationStatus]int{
 	ModerationStatusNone: 0,
 	ModerationStatusSpam: 1,
 }
 
+// unknownStatusSeverity is Severity's rank for any non-empty status absent from
+// moderationStatusSeverity. It outranks every known status so an unrecognized
+// verdict always wins the "most severe" combination in computeFinalModerationStatus
+// — fail closed on a status this binary hasn't been taught about yet, rather than
+// defaulting to visible.
+const unknownStatusSeverity = math.MaxInt32
+
 // Severity returns the status's rank for combining sources; see moderationStatusSeverity.
 func (s ModerationStatus) Severity() int {
-	return moderationStatusSeverity[s]
+	if sev, ok := moderationStatusSeverity[s]; ok {
+		return sev
+	}
+	if s == "" {
+		// Unset Go zero value, never a stored row: must not outrank (or tie
+		// hiding-wise with) a real verdict; see IsModerated.
+		return 0
+	}
+	return unknownStatusSeverity
 }
 
 // IsModerated reports whether this status hides the token from default read

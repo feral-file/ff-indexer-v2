@@ -3122,9 +3122,10 @@ func insertModerationStatusEvent(tx *gorm.DB, tokenID uint64, tokenCID string, s
 // only none/spam today the two are equivalent, but once a second non-none status
 // exists the combination has to pick one, and "most severe" is the only choice
 // that cannot make a token less hidden than a source asked for. Statuses this
-// binary does not know rank lowest (schema.ModerationStatus.Severity), so a
-// verdict written by a newer deployment degrades to visible rather than hiding
-// tokens for reasons this code cannot explain.
+// binary does not know rank highest (schema.ModerationStatus.Severity), so a
+// verdict written by a newer deployment during a rolling upgrade wins the
+// recompute and keeps hiding the token instead of degrading to visible for
+// reasons this code cannot explain.
 func computeFinalModerationStatus(rows []schema.TokenModerationVerdict) schema.ModerationStatus {
 	worst := schema.ModerationStatusNone
 	for _, row := range rows {
