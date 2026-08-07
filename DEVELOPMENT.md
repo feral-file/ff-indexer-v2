@@ -367,7 +367,7 @@ fxhash is deliberately not covered. `enhanceFxhash` falls back to `enhanceObjkt`
 
 **⚠️ Ordering: run this AFTER deploying the new application code** — the reverse of the usual rule above, which still applies to `021.sql` itself. This file enqueues work rather than changing schema: a worker running pre-021 code would claim these jobs, run the old enricher, write no verdict row, and mark them succeeded. The jobs leave the active set and the backfill silently does nothing.
 
-Recovery if that happens: re-run `021_reindex.sql` only. `jobs_unique_key_active` guards only *active* jobs, so finished ones do not block re-insertion. Do not re-run `021.sql` — it fails at `ADD COLUMN`.
+Recovery if that happens: re-run `021_reindex.sql` only. `jobs_unique_key_active` guards only *active* jobs, so finished ones do not block re-insertion. Do not re-run `021.sql` — it aborts at `CREATE TYPE moderation_status` (the first statement of step 1), leaving the database untouched because that step runs in a transaction.
 
 **What happens after migration 021_reindex runs:**
 
