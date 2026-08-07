@@ -23,7 +23,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 )
 
-// testModerationSweeperMocks contains all the mocks needed for testing the spam verdict sweeper
+// testModerationSweeperMocks contains all the mocks needed for testing the moderation verdict sweeper
 type testModerationSweeperMocks struct {
 	ctrl          *gomock.Controller
 	store         *mocks.MockStore

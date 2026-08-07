@@ -269,7 +269,7 @@ type MediaHealthSweeperConfig struct {
 	Worker       WorkerConfig  `mapstructure:"worker"`
 }
 
-// ModerationSweeperConfig holds configuration for the spam verdict sweeper
+// ModerationSweeperConfig holds configuration for the moderation verdict sweeper
 type ModerationSweeperConfig struct {
 	BatchSize              int           `mapstructure:"batch_size"`
 	InitialRecheckInterval time.Duration `mapstructure:"initial_recheck_interval"`

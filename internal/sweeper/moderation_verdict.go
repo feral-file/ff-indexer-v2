@@ -19,7 +19,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
-// ModerationVerdictSweeperConfig holds configuration for the spam verdict sweeper
+// ModerationVerdictSweeperConfig holds configuration for the moderation verdict sweeper
 type ModerationVerdictSweeperConfig struct {
 	BatchSize      int // Verdict rows to re-check per source per cycle
 	WorkerPoolSize int // Concurrent workers
@@ -65,7 +65,7 @@ type moderationVerdictSweeper struct {
 	stoppedCh     chan struct{}
 }
 
-// NewModerationVerdictSweeper creates a new spam verdict sweeper
+// NewModerationVerdictSweeper creates a new moderation verdict sweeper
 func NewModerationVerdictSweeper(
 	config *ModerationVerdictSweeperConfig,
 	st store.Store,
@@ -99,7 +99,7 @@ func (s *moderationVerdictSweeper) Start(ctx context.Context) error {
 		close(s.stoppedCh) // Signal that we've stopped
 	}()
 
-	logger.InfoCtx(ctx, "Starting spam verdict sweeper (continuous mode)",
+	logger.InfoCtx(ctx, "Starting moderation verdict sweeper (continuous mode)",
 		zap.Int("batch_size", s.config.BatchSize),
 		zap.Int("worker_pool_size", s.config.WorkerPoolSize),
 		zap.Duration("initial_recheck_interval", s.config.InitialRecheckInterval),
@@ -140,7 +140,7 @@ func (s *moderationVerdictSweeper) Stop(ctx context.Context) error {
 		return nil // Already stopped
 	}
 
-	logger.InfoCtx(ctx, "Stopping spam verdict sweeper")
+	logger.InfoCtx(ctx, "Stopping moderation verdict sweeper")
 
 	// Signal stop to the main loop
 	close(s.stopChan)

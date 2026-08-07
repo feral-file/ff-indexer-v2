@@ -143,7 +143,7 @@ type TokenViewabilityChange struct {
 // DefaultModerationRecheckInterval is the default value of
 // moderation_sweeper.initial_recheck_interval — the first re-check delay for a fresh
 // vendor spam verdict. Both writers (the enricher when it creates a verdict row,
-// the spam sweeper as its clean-token floor) read the configured value at
+// the moderation sweeper as its clean-token floor) read the configured value at
 // runtime; this constant only anchors the config default and serves as the
 // enricher's fallback when no configured value was threaded in. Operators tune
 // the config key, not this constant.
@@ -181,7 +181,7 @@ type UpsertTokenModerationVerdictInput struct {
 	ExpectedLastCheckedAt *time.Time
 }
 
-// TokenModerationCheckItem is one due entry from the spam sweeper's work queue, joined
+// TokenModerationCheckItem is one due entry from the moderation sweeper's work queue, joined
 // with the token identity the vendor clients need to re-query the verdict.
 type TokenModerationCheckItem struct {
 	TokenID             uint64                  `gorm:"column:token_id"`
