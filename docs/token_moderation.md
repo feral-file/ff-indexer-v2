@@ -107,9 +107,12 @@ late flags and reversals converge:
   once `max_consecutive_failures` (5) is reached the row pins at
   `max_recheck_interval` — permanently missing tokens stop burning API quota but
   never leave the queue for good.
-- **OpenSea `ErrNoAPIKey`**: source-wide condition, not a per-row failure — rows are
-  left untouched (they stay due until a key is configured), so writing failure
-  state would walk every row's backoff to the max for no reason.
+- **OpenSea `ErrNoAPIKey`**: source-wide condition, not a per-row failure — rows
+  are left untouched (writing failure state would walk every row's backoff to
+  the max for no reason). API keys are static per process, so the first hit
+  disables that source's re-checks for the process lifetime with a single
+  warning; a restart with the key configured picks every row back up, since
+  their `next_check_at` never moved. Other sources keep sweeping.
 
 Rows whose check or write fails without recording anything (an unconfigured
 vendor as above, or a store write that keeps erroring) simply stay due and are

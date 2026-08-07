@@ -318,14 +318,15 @@ func TestModerationVerdictSweeper_NoAPIKey_LeavesRowsUntouched(t *testing.T) {
 	runOneSweep(t, tm)
 }
 
-// TestModerationVerdictSweeper_NoAPIKey_DoesNotHotLoop pins the throttling half of the
-// unconfigured-vendor contract, which the "leaves rows untouched" test above
-// cannot see: because those rows keep their next_check_at, the same batch stays
-// due forever, and ErrNoAPIKey is returned before the HTTP request and the rate
-// limiter, so nothing else throttles a respin. The cycle's unconditional sleep
-// is what bounds it — this test's job is to confirm that sleep actually runs
-// rather than being skipped.
-func TestModerationVerdictSweeper_NoAPIKey_DoesNotHotLoop(t *testing.T) {
+// TestModerationVerdictSweeper_NoAPIKey_DisablesSourceAfterFirstHit pins the
+// bounded-noise contract for an unconfigured vendor: the first ErrNoAPIKey
+// disables the source for the process lifetime (API keys are static per
+// process), so across many cycles the due-query for that source runs exactly
+// once and the vendor is asked exactly once — instead of one warning per due
+// row per cycle, indefinitely. objkt keeps being polled: one vendor's missing
+// key must not switch off the other's re-checks. Rows keep their next_check_at,
+// so a restart with the key configured resumes them.
+func TestModerationVerdictSweeper_NoAPIKey_DisablesSourceAfterFirstHit(t *testing.T) {
 	tm := setupTestModerationSweeper(t)
 	defer tearDownTestModerationSweeper(tm)
 
@@ -341,23 +342,24 @@ func TestModerationVerdictSweeper_NoAPIKey_DoesNotHotLoop(t *testing.T) {
 		NextCheckAt:     now.Add(-1 * time.Hour),
 	}
 
-	var fetches atomic.Int32
+	// Times(1), not AnyTimes: after the first ErrNoAPIKey the source must be
+	// skipped before the due-query, so a second fetch is a regression.
 	tm.store.EXPECT().
 		GetTokenModerationVerdictsDueForCheck(gomock.Any(), schema.ModerationSourceOpenSea, 10).
-		DoAndReturn(func(_ context.Context, _ schema.ModerationSource, _ int) ([]store.TokenModerationCheckItem, error) {
-			fetches.Add(1)
-			return []store.TokenModerationCheckItem{item}, nil
-		}).
-		AnyTimes()
+		Return([]store.TokenModerationCheckItem{item}, nil).
+		Times(1)
+	var objktPolls atomic.Int32
 	tm.store.EXPECT().
 		GetTokenModerationVerdictsDueForCheck(gomock.Any(), schema.ModerationSourceObjkt, 10).
-		Return(nil, nil).
+		DoAndReturn(func(_ context.Context, _ schema.ModerationSource, _ int) ([]store.TokenModerationCheckItem, error) {
+			objktPolls.Add(1)
+			return nil, nil
+		}).
 		AnyTimes()
 	tm.openseaClient.EXPECT().
 		GetNFT(gomock.Any(), "0xabc", "5").
 		Return(nil, opensea.ErrNoAPIKey).
-		AnyTimes()
-	// The idle sleep must actually be taken; without it the loop respins freely.
+		Times(1)
 	tm.clock.EXPECT().
 		After(sweeper.SWEEP_CYCLE_INTERVAL).
 		DoAndReturn(func(_ time.Duration) <-chan time.Time {
@@ -368,14 +370,12 @@ func TestModerationVerdictSweeper_NoAPIKey_DoesNotHotLoop(t *testing.T) {
 			}()
 			return ch
 		}).
-		MinTimes(1)
+		MinTimes(2) // several cycles must have run for the Times(1) above to mean anything
 
 	runOneSweep(t, tm)
 
-	// ~100ms of running at a 20ms mocked sleep is a handful of cycles. A
-	// regression spins thousands.
-	assert.Less(t, fetches.Load(), int32(50),
-		"unconfigured vendor must not respin the due batch without sleeping")
+	assert.GreaterOrEqual(t, objktPolls.Load(), int32(2),
+		"disabling opensea must not stop objkt's due-queries")
 }
 
 // TestModerationVerdictSweeper_StoreError_DoesNotHotLoop covers the other way into the

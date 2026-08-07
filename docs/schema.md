@@ -625,7 +625,7 @@ Audit log of webhook delivery attempts with status tracking and response details
 
 ### moderation_source
 - `opensea` - OpenSea moderation verdict (NFT API `is_disabled`)
-- `objkt` - objkt moderation verdict (token `flag=banned`)
+- `objkt` - objkt moderation verdict (token `flag` = `banned` or `removed` — both takedown states count as spam; see [token_moderation.md](token_moderation.md))
 - `feralfile` - Feral File's own moderation system (reserved; wins outright over vendor verdicts in both directions)
 
 ### vendor_type

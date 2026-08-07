@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,6 +64,14 @@ type moderationVerdictSweeper struct {
 	running       atomic.Bool
 	stopChan      chan struct{}
 	stoppedCh     chan struct{}
+	// unconfigured marks sources whose vendor client reported ErrNoAPIKey
+	// (key: schema.ModerationSource). API keys are static per process — a
+	// missing key cannot appear without a restart — so the first hit disables
+	// the source for the process lifetime: one warning instead of one per due
+	// row per cycle, and no more due-queries or vendor dispatches for a source
+	// that cannot serve them. Rows keep their next_check_at untouched, so a
+	// restart with the key configured picks them all up again.
+	unconfigured sync.Map
 }
 
 // NewModerationVerdictSweeper creates a new moderation verdict sweeper
@@ -200,6 +209,12 @@ func (s *moderationVerdictSweeper) runSweepCycle(ctx context.Context) error {
 // runSweepCycle) is what bounds how often it gets retried, not anything
 // tracked here.
 func (s *moderationVerdictSweeper) sweepSource(ctx context.Context, source schema.ModerationSource) error {
+	if _, off := s.unconfigured.Load(source); off {
+		// The source's vendor client has no API key (see the unconfigured field
+		// doc): nothing this batch could do would succeed, so skip even the
+		// due-query instead of warning once per row per cycle.
+		return nil
+	}
 	items, err := s.store.GetTokenModerationVerdictsDueForCheck(ctx, source, s.config.BatchSize)
 	if err != nil {
 		return fmt.Errorf("failed to get due moderation verdicts for %s: %w", source, err)
@@ -237,12 +252,15 @@ func (s *moderationVerdictSweeper) checkItem(ctx context.Context, source schema.
 	if err != nil {
 		// ErrNoAPIKey means the whole source is unconfigured, not that this row
 		// failed: writing failure state would walk every row's backoff to the
-		// max for no reason. Leave the rows untouched — they stay due until a
-		// key is configured, and get re-fetched (harmlessly) at the normal
-		// cycle cadence.
+		// max for no reason. Rows stay untouched, and the source is disabled
+		// for the rest of the process (keys are static per process; see the
+		// unconfigured field doc) so this warns once, not once per due row per
+		// cycle forever.
 		if errors.Is(err, opensea.ErrNoAPIKey) {
-			logger.WarnCtx(ctx, "Skipping moderation re-check: vendor has no API key",
-				zap.String("source", source.String()))
+			if _, alreadyOff := s.unconfigured.LoadOrStore(source, struct{}{}); !alreadyOff {
+				logger.WarnCtx(ctx, "Vendor has no API key; disabling its moderation re-checks until restart",
+					zap.String("source", source.String()))
+			}
 			return
 		}
 		s.recordFailure(ctx, source, item, err)

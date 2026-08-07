@@ -76,7 +76,9 @@ type ModerationSource string
 const (
 	// ModerationSourceOpenSea is OpenSea's moderation verdict (NFT API is_disabled).
 	ModerationSourceOpenSea ModerationSource = "opensea"
-	// ModerationSourceObjkt is objkt's moderation verdict (token flag=banned).
+	// ModerationSourceObjkt is objkt's moderation verdict (token flag: the
+	// takedown states "banned" and "removed" both count as spam; see
+	// objkt.Token.IsSpam).
 	ModerationSourceObjkt ModerationSource = "objkt"
 	// ModerationSourceFeralFile is Feral File's own moderation verdict. Reserved: the
 	// recompute rule already gives it absolute precedence over vendor sources
