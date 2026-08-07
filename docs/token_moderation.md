@@ -108,11 +108,17 @@ late flags and reversals converge:
   `max_recheck_interval` — permanently missing tokens stop burning API quota but
   never leave the queue for good.
 - **OpenSea `ErrNoAPIKey`**: source-wide condition, not a per-row failure — rows are
-  left untouched (they stay due until a key is configured) and the source reports
-  itself idle for the cycle. That last part matters: untouched rows stay due, so
-  counting them as work would keep the cycle from sleeping, and `ErrNoAPIKey` is
-  returned before the HTTP request and the rate limiter, leaving nothing to throttle
-  the respin.
+  left untouched (they stay due until a key is configured), so writing failure
+  state would walk every row's backoff to the max for no reason.
+
+Rows whose check or write fails without recording anything (an unconfigured
+vendor as above, or a store write that keeps erroring) simply stay due and are
+re-fetched next cycle. What bounds their retry rate is the sweep loop itself:
+the sweeper sleeps for `SWEEP_CYCLE_INTERVAL` (1m) after **every** cycle,
+unconditionally — mirroring the media health sweeper, and including the cycle
+where the due-query itself fails — so no row can be re-checked, or re-billed
+against a vendor, faster than once per cycle regardless of what else its batch
+contains.
 
 Per-source queues (`GetTokenModerationVerdictsDueForCheck`) with a partial index
 `(source, next_check_at) WHERE next_check_at IS NOT NULL` keep one vendor's API quota
