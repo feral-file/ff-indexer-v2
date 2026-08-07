@@ -110,11 +110,11 @@ func (s *moderationVerdictSweeper) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			logger.InfoCtx(ctx, "Spam verdict sweeper stopping due to context cancellation", zap.Error(ctx.Err()))
+			logger.InfoCtx(ctx, "Moderation verdict sweeper stopping due to context cancellation", zap.Error(ctx.Err()))
 			s.cleanup()
 			return nil
 		case <-s.stopChan:
-			logger.InfoCtx(ctx, "Spam verdict sweeper stop requested")
+			logger.InfoCtx(ctx, "Moderation verdict sweeper stop requested")
 			s.cleanup()
 			return nil
 		default:
@@ -148,10 +148,10 @@ func (s *moderationVerdictSweeper) Stop(ctx context.Context) error {
 	// Wait for main loop to exit, but respect context cancellation
 	select {
 	case <-s.stoppedCh:
-		logger.InfoCtx(ctx, "Spam verdict sweeper stopped gracefully")
+		logger.InfoCtx(ctx, "Moderation verdict sweeper stopped gracefully")
 		return nil
 	case <-ctx.Done():
-		logger.WarnCtx(ctx, "Spam verdict sweeper stop interrupted by context timeout")
+		logger.WarnCtx(ctx, "Moderation verdict sweeper stop interrupted by context timeout")
 		return ctx.Err()
 	}
 }
@@ -200,13 +200,13 @@ func (s *moderationVerdictSweeper) runSweepCycle(ctx context.Context) error {
 func (s *moderationVerdictSweeper) sweepSource(ctx context.Context, source schema.ModerationSource) (int, error) {
 	items, err := s.store.GetTokenModerationVerdictsDueForCheck(ctx, source, s.config.BatchSize)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get due spam verdicts for %s: %w", source, err)
+		return 0, fmt.Errorf("failed to get due moderation verdicts for %s: %w", source, err)
 	}
 	if len(items) == 0 {
 		return 0, nil
 	}
 
-	logger.InfoCtx(ctx, "Re-checking spam verdicts",
+	logger.InfoCtx(ctx, "Re-checking moderation verdicts",
 		zap.String("source", source.String()),
 		zap.Int("count", len(items)))
 
@@ -244,7 +244,7 @@ func (s *moderationVerdictSweeper) checkItem(ctx context.Context, source schema.
 		// respinning them. ErrNoAPIKey is returned before the request and the
 		// rate limiter, so nothing else would throttle that respin.
 		if errors.Is(err, opensea.ErrNoAPIKey) {
-			logger.WarnCtx(ctx, "Skipping spam verdict re-check: vendor has no API key",
+			logger.WarnCtx(ctx, "Skipping moderation re-check: vendor has no API key",
 				zap.String("source", source.String()))
 			return
 		}
@@ -354,7 +354,7 @@ func (s *moderationVerdictSweeper) recordFailure(ctx context.Context, source sch
 		return
 	}
 	progressed.Store(true)
-	logger.WarnCtx(ctx, "Spam verdict re-check failed",
+	logger.WarnCtx(ctx, "Moderation re-check failed",
 		zap.String("token_cid", item.TokenCID),
 		zap.String("source", source.String()),
 		zap.Int("consecutive_failures", item.ConsecutiveFailures+1),

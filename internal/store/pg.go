@@ -3300,7 +3300,7 @@ func (s *pgStore) GetTokenModerationVerdictsDueForCheck(ctx context.Context, sou
 		source, limit,
 	).Scan(&items).Error
 	if err != nil {
-		return nil, fmt.Errorf("failed to get token spam verdicts due for check: %w", err)
+		return nil, fmt.Errorf("failed to get token moderation verdicts due for check: %w", err)
 	}
 	return items, nil
 }

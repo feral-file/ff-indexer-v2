@@ -39,19 +39,20 @@ type FA struct {
 // objkt moderation flag values. The enum has four states, confirmed against the
 // live API (`token(distinct_on: flag)`): none, banned, flagged, removed.
 //
-// Only "banned" feeds the spam verdict. That is not an assumption — sampling the
-// API for phishing-shaped names (claim / reward / airdrop / a domain in the title)
-// returns them almost exclusively under "banned", which is also where the known
-// airdrop scams this feature was built for live. "removed" returned zero such
-// matches and "flagged" only a handful; both are dominated by ordinary artwork,
-// so they read as takedowns for other reasons (copyright, artist request, reports
-// under review) rather than objkt's scam verdict. Treating them as spam would hide
-// real art, which the design explicitly weighs as worse than letting spam through
-// until the next sweep.
+// The takedown states — "banned" and "removed" — feed the spam verdict; "flagged"
+// and "none" do not (see IsSpam). Sampling context: phishing-shaped names (claim /
+// reward / airdrop / a domain in the title) sit almost exclusively under "banned",
+// while "removed" is dominated by ordinary artwork taken down for other reasons
+// (copyright, artist request). "removed" counts as spam anyway, by decision: a
+// takedown is a takedown — if objkt no longer displays the token, neither do we,
+// whatever the stated reason — accepting that some non-scam art is hidden; the
+// verdict is reversible (tag-not-drop) and a feralfile whitelist row pins any
+// mistake visible again. "flagged" is only an unactioned report, so it hides
+// nothing.
 //
-// This mirrors the OpenSea side, where only is_disabled counts and is_suspicious /
-// is_nsfw are excluded for the same reason. Re-sample before changing any of this;
-// objkt documents no semantics for the enum.
+// On the OpenSea side only is_disabled counts; is_suspicious / is_nsfw are
+// excluded (reports and content ratings, not takedowns). Re-sample before
+// changing any of this; objkt documents no semantics for the enum.
 const (
 	// FlagNone is objkt's "no moderation action" state.
 	FlagNone = "none"

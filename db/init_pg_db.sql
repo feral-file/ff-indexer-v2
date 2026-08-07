@@ -166,7 +166,7 @@ CREATE TABLE token_media_health (
     UNIQUE(token_id, media_url_hash, media_source)
 );
 
--- Token Spam Verdicts table - Source of truth for spam moderation (added in migration 021)
+-- Token Moderation Verdicts table - Source of truth for token moderation (added in migration 021)
 -- One row per (token, source); a source is a moderating vendor ('opensea', 'objkt') or
 -- Feral File's own future moderation system ('feralfile'). Rows exist only after a source
 -- has actually published a verdict — absence means "no opinion", deliberately distinct from

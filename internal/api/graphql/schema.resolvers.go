@@ -695,14 +695,14 @@ func (r *releaseResolver) Members(ctx context.Context, obj *dto.ReleaseResponse,
 	// decision about the content, and members is a renderable TokenList — so it is
 	// filtered by default with an explicit opt-in.
 	includeUnviewable := true
-	filterSpam := includeModerated != nil && *includeModerated
+	withModerated := includeModerated != nil && *includeModerated
 
 	if sortOrder == nil {
 		defaultOrder := types.OrderAsc
 		sortOrder = &defaultOrder
 	}
 
-	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &filterSpam, &sortBy, sortOrder, expansions)
+	return r.executor.GetTokens(ctx, nil, nil, nil, nil, nil, nil, &releaseID, nil, nil, nil, ToNativeUint8(limit), ToNativeUint64(offset), &includeUnviewable, &withModerated, &sortBy, sortOrder, expansions)
 }
 
 // Offset is the resolver for the offset field.

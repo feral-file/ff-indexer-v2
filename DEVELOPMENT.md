@@ -400,7 +400,7 @@ FROM token_moderation_verdicts
 GROUP BY source;
 
 -- Tokens the backfill has flagged
-SELECT COUNT(*) FROM tokens WHERE moderation_status = true;
+SELECT COUNT(*) FROM tokens WHERE moderation_status <> 'none';
 
 -- Jobs inserted by migration 021_reindex (all statuses)
 SELECT status, COUNT(*)

@@ -449,7 +449,7 @@ type Store interface {
 	BatchUpdateTokensViewability(ctx context.Context, tokenIDs []uint64) ([]TokenViewabilityChange, error)
 
 	// =============================================================================
-	// Token Spam Operations
+	// Token Moderation Operations
 	// =============================================================================
 
 	// UpsertTokenModerationVerdict records one source's moderation verdict and recomputes the

@@ -44,12 +44,6 @@ func (s ModerationStatus) Severity() int {
 	return moderationStatusSeverity[s]
 }
 
-// Valid reports whether the status is one this binary knows how to write.
-func (s ModerationStatus) Valid() bool {
-	_, ok := moderationStatusSeverity[s]
-	return ok
-}
-
 // IsModerated reports whether this status hides the token from default read
 // paths. Only "none" stays visible — every verdict hides, so a moderation kind
 // added later is filtered by default rather than leaking until someone updates
