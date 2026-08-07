@@ -149,8 +149,10 @@ work rather than changing schema, so a worker still running pre-021 code claims
 those jobs, runs the old enricher, writes no verdict row, and marks them succeeded.
 The jobs then leave the active set and the backfill has silently done nothing — no
 error anywhere. Recovery is to re-run `021_reindex.sql` alone (finished jobs do not
-block re-insertion); do not re-run `021.sql`, which fails at `ADD COLUMN`. See the
-`Migration 021_reindex` section in `DEVELOPMENT.md` for the full runbook.
+block re-insertion); do not re-run `021.sql`, which aborts at `CREATE TYPE
+moderation_status` (the first statement of step 1) with the database left
+untouched, since that step runs in a transaction. See the `Migration
+021_reindex` section in `DEVELOPMENT.md` for the full runbook.
 
 **Volume**: the backfill enqueues work proportional to the existing opensea/objkt
 token count, and every backfilled row lands at `now + initial_recheck_interval`, so

@@ -7153,7 +7153,7 @@ func testTokenModerationVerdicts(t *testing.T, store Store) {
 			"an unchanged verdict is still a fresh confirmation — last_checked_at must advance")
 	})
 
-	t.Run("OR of vendors: a clean objkt verdict does not clear the opensea flag", func(t *testing.T) {
+	t.Run("most severe wins: a clean objkt verdict does not clear the opensea flag", func(t *testing.T) {
 		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
 			TokenID:     token.ID,
 			Source:      schema.ModerationSourceObjkt,

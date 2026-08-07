@@ -41,7 +41,8 @@ BEGIN;
 --
 -- Recovery if that happens: re-run THIS FILE only (jobs_unique_key_active guards only
 -- active jobs, so finished ones do not block re-insertion). Do not re-run 021.sql — it
--- fails at ADD COLUMN.
+-- aborts at CREATE TYPE moderation_status (the first statement of step 1), leaving the
+-- database untouched because that step runs in a transaction.
 --
 -- Volume
 -- ------

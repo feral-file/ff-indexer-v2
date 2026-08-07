@@ -170,8 +170,9 @@ CREATE TABLE token_media_health (
 -- One row per (token, source); a source is a moderating vendor ('opensea', 'objkt') or
 -- Feral File's own future moderation system ('feralfile'). Rows exist only after a source
 -- has actually published a verdict — absence means "no opinion", deliberately distinct from
--- a clean verdict (tri-state). tokens.moderation_status is the materialized combination: a feralfile
--- row wins outright in both directions, otherwise OR of vendor verdicts.
+-- a "none" verdict (tri-state). tokens.moderation_status is the materialized combination: a
+-- feralfile row wins outright in both directions, otherwise the most severe vendor verdict
+-- (moderationStatusSeverity) — an enum so future verdict kinds are new values, not new columns.
 CREATE TABLE token_moderation_verdicts (
     token_id BIGINT NOT NULL REFERENCES tokens (id) ON DELETE CASCADE,
     source moderation_source NOT NULL,

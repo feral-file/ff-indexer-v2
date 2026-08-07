@@ -11,7 +11,7 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion 
 3. The ingestion runner filters each queued event, enqueues a matching **job** on the PostgreSQL-backed queue for that event, and only then advances the durable cursor in PostgreSQL
 4. In-process **job workers** poll the `jobs` table, run registered handlers (token and media workflows), and persist results in PostgreSQL
 
-**Deployment model**: A single OS process (`cmd/ff-indexer`) runs the HTTP API, chain ingestion, two logical **job worker pools** (token queue and, when enabled, media queue), and the media health sweeper concurrently. Durable orchestration state lives in **PostgreSQL** (`jobs` and the rest of the schema). Outbound vendor and TzKT traffic is rate limited in-process.
+**Deployment model**: A single OS process (`cmd/ff-indexer`) runs the HTTP API, chain ingestion, two logical **job worker pools** (token queue and, when enabled, media queue), the media health sweeper, and the moderation verdict sweeper concurrently. Durable orchestration state lives in **PostgreSQL** (`jobs` and the rest of the schema). Outbound vendor and TzKT traffic is rate limited in-process.
 
 ## System Components
 
@@ -25,7 +25,8 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion 
 2. **Worker core** — Polls the `token_index` job queue and runs token- and webhook-related handlers
 3. **Worker media** — Polls the `media_index` job queue and runs media pipeline handlers (CGO / full image when enabled)
 4. **API server** — Provides REST and GraphQL APIs
-5. **Sweeper** — Monitors media URL health and can enqueue jobs (e.g. webhook notify). Media health HTTP checks apply **SSRF controls** by default. The **worker core** (token queue) and **media worker** use the same SSRF-protected HTTP client for outbound metadata/media fetches when `security.ssrf_protection.enabled` is true (media worker requires CGO when enabled; configure under `security.ssrf_protection`; see `docs/constraints.md`).
+5. **Sweeper (media)** — Monitors media URL health and can enqueue jobs (e.g. webhook notify). Media health HTTP checks apply **SSRF controls** by default. The **worker core** (token queue) and **media worker** use the same SSRF-protected HTTP client for outbound metadata/media fetches when `security.ssrf_protection.enabled` is true (media worker requires CGO when enabled; configure under `security.ssrf_protection`; see `docs/constraints.md`).
+6. **Sweeper (moderation)** — Re-asks OpenSea and objkt for a token's moderation verdict on a per-row schedule (`token_moderation_verdicts.next_check_at`), since the enricher only sees a vendor's verdict at indexing time — before moderation has usually happened. Writes go through the same store recompute as the enricher, so a `feralfile` verdict always wins and a `moderation_status_changed` event broadcasts only on a real flip. Shares the same in-process rate limiter as vendor enrichment calls. See `docs/token_moderation.md`.
 
 ## Chain Ingestion
 

@@ -454,8 +454,8 @@ type Store interface {
 
 	// UpsertTokenModerationVerdict records one source's moderation verdict and recomputes the
 	// materialized tokens.moderation_status in a single transaction: a feralfile row wins
-	// outright (in both directions), otherwise OR of vendor verdicts. When the
-	// combined verdict actually changes it also inserts a broadcast
+	// outright (in both directions), otherwise the most severe vendor verdict
+	// (schema.ModerationStatus.Severity). When the combined verdict actually changes it also inserts a broadcast
 	// moderation_status_changed token event (mirroring the viewability pattern) so
 	// collection sync clients drop or restore the token. Serialized per token via
 	// a tokens-row lock so concurrent writers cannot recompute from stale row sets.
