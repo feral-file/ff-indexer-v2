@@ -25,7 +25,7 @@ FF-Indexer v2 indexes NFT data from multiple blockchain networks. The ingestion 
 2. **Worker core** — Polls the `token_index` job queue and runs token- and webhook-related handlers
 3. **Worker media** — Polls the `media_index` job queue and runs media pipeline handlers (CGO / full image when enabled)
 4. **API server** — Provides REST and GraphQL APIs
-5. **Sweeper** — Monitors media URL health and can enqueue jobs (e.g. webhook notify). Media health HTTP checks apply **SSRF controls** by default. The **worker core** (token queue) and **media worker** use the same SSRF-protected HTTP client for outbound metadata/media fetches when `security.ssrf_protection.enabled` is true (media worker requires CGO when enabled; configure under `security.ssrf_protection`; see `docs/constraints.md`).
+5. **Sweeper** — Monitors media URL health and can enqueue jobs (e.g. webhook notify). A verdict costs up to three attempts on the stored URL (HEAD, then GET with `Range`, then plain GET); on failure, IPFS/Arweave/OnChFS URLs fall back to probing the configured gateways for the **same resource reference**, including any query parameters that identify the asset (OnChFS artwork iterations depend on them). Because a player issues a single request, **`healthy` is not a per-request playback guarantee** — see the media health scope constraint in `docs/constraints.md`. Media health HTTP checks apply **SSRF controls** by default. The **worker core** (token queue) and **media worker** use the same SSRF-protected HTTP client for outbound metadata/media fetches when `security.ssrf_protection.enabled` is true (media worker requires CGO when enabled; configure under `security.ssrf_protection`; see `docs/constraints.md`).
 
 ## Chain Ingestion
 

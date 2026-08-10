@@ -19,7 +19,13 @@ import (
 type HealthStatus string
 
 const (
-	// HealthStatusHealthy indicates the URL is accessible
+	// HealthStatusHealthy indicates the URL answered successfully on at least one attempt.
+	//
+	// This is deliberately weaker than "a player will load it": Check spends up to three
+	// attempts and may also probe gateway fallbacks, while a browser issues one request. An
+	// intermittently failing origin therefore reads healthy far more often than playback
+	// succeeds. Do not tighten callers into treating this as a per-request guarantee without
+	// revisiting MediaHealthStatus semantics and viewability — see docs/constraints.md and #76.
 	HealthStatusHealthy HealthStatus = "healthy"
 	// HealthStatusBroken indicates the URL is not accessible
 	HealthStatusBroken HealthStatus = "broken"
