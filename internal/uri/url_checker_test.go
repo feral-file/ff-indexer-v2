@@ -445,7 +445,7 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
 			expectedURL:    nil,
-			expectedError:  types.StringPtr("no working OnChFS gateway found for hash: a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
+			expectedError:  types.StringPtr("no working OnChFS gateway found for ref: a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
 		},
 		{
 			name: "regular HTTPS URL - HEAD fails, GET with Range succeeds with 206",
