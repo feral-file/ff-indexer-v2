@@ -63,6 +63,25 @@ func (w *mediaWorkflows) IndexMultipleMediaWorkflow(ctx context.Context, urls []
 	return nil
 }
 
+// RenderMediaProbe handles one L1 render-probe job for a URL.
+//
+// Reason: registered on the media queue because chromium only exists in the CGO media
+// worker. A nil executor (render probe disabled) makes queued jobs no-ops rather than
+// failures so a config flip does not strand previously enqueued jobs in the failed state.
+func (w *mediaWorkflows) RenderMediaProbe(ctx context.Context, url string) error {
+	if w.renderProbeExecutor == nil {
+		logger.InfoCtx(ctx, "Render probe disabled, skipping job", zap.String("url", url))
+		return nil
+	}
+
+	logger.InfoCtx(ctx, "Starting render probe", zap.String("url", url))
+	if err := w.renderProbeExecutor.ExecuteRenderProbe(ctx, url); err != nil {
+		logger.ErrorCtx(ctx, err, zap.String("url", url))
+		return err
+	}
+	return nil
+}
+
 // IndexMediaWorkflow handles media processing for a single URL.
 //
 // Reason: Media jobs should still fail when processing cannot finish so operators can inspect

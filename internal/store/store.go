@@ -402,6 +402,19 @@ type Store interface {
 	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error
 
 	// =============================================================================
+	// Media Render Probe Operations (L1)
+	// =============================================================================
+
+	// GetURLsDueForRenderProbe returns L0-healthy HTML/animation/image URLs due for an
+	// L1 render probe (never-probed first, then HTML/animation, then oldest capture)
+	GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error)
+	// GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed
+	GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error)
+	// UpsertMediaRenderProbe inserts or replaces the render-probe row for probe.MediaURL;
+	// baseline_phash is never overwritten once set
+	UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error
+
+	// =============================================================================
 	// Token Viewability Operations
 	// =============================================================================
 

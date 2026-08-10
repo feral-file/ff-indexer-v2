@@ -202,6 +202,32 @@ rasterizer:
   timeout_ms: 15000
   browser_fallback_enabled: false
 
+# L1 render probe: loads L0-healthy HTML/animation/image URLs in headless chromium,
+# classifies the painted frame (blank / known-bad fingerprint / rendered ok), and gates
+# token viewability on confirmed failures. The media health sweeper enqueues probe jobs;
+# the CGO media worker executes them (requires media_enabled: true and chromium in the
+# image). Fingerprint matches gate immediately; blank/stalled gate only after
+# failure_gate_threshold consecutive probes.
+render_probe:
+  enabled: false
+  batch_size: 20
+  viewport_width: 1024
+  viewport_height: 1024
+  timeout_ms: 30000
+  settle_ms: 5000
+  blank_variance_threshold: 0.001
+  failure_gate_threshold: 2
+  recheck_interval: 168h
+  retry_interval: 1h
+  broken_recheck_interval: 24h
+  # pHashes of known-bad renders (gateway error pages, directory listings, placeholders).
+  # Capture the offending page once, compute its pHash, and list it here. Keep
+  # max_distance small (4-8): a loose tolerance matches real art and hides it.
+  known_bad_fingerprints: []
+  #  - phash: "0xc3a5969696a5c3e1"
+  #    max_distance: 6
+  #    label: kubo-dir-listing
+
 transform:
   target_image_size: 9437184
   target_image_pixels: 20000000

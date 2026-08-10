@@ -34,6 +34,13 @@ type MediaHealthSweeperConfig struct {
 	BatchSize      int           // URLs to check per batch
 	WorkerPoolSize int           // Concurrent workers
 	RecheckAfter   time.Duration // Only check URLs older than this
+
+	// RenderProbeEnabled turns on enqueueing of L1 render-probe jobs after each sweep
+	// cycle. Must only be true when a media worker serves the media queue — otherwise
+	// jobs pile up unserved (lightweight deployments run no chromium).
+	RenderProbeEnabled bool
+	// RenderProbeBatchSize caps how many due URLs are enqueued per cycle.
+	RenderProbeBatchSize int
 }
 
 // mediaHealthSweeper implements the Sweeper interface for media health checking
@@ -46,12 +53,16 @@ type mediaHealthSweeper struct {
 	clock          adapter.Clock
 	jobQueue       jobs.JobQueue
 	tokenQueue     string
+	mediaQueue     string
 	running        atomic.Bool
 	stopChan       chan struct{}
 	stoppedCh      chan struct{}
 }
 
-// NewMediaHealthSweeper creates a new media health sweeper
+// NewMediaHealthSweeper creates a new media health sweeper.
+// mediaQueue names the queue the CGO media worker serves; it is only used when
+// config.RenderProbeEnabled is true (render-probe jobs are enqueued there because
+// chromium exists only in that worker).
 func NewMediaHealthSweeper(
 	config *MediaHealthSweeperConfig,
 	st store.Store,
@@ -60,6 +71,7 @@ func NewMediaHealthSweeper(
 	clock adapter.Clock,
 	jq jobs.JobQueue,
 	tokenQueue string,
+	mediaQueue string,
 ) Sweeper {
 	return &mediaHealthSweeper{
 		config:         config,
@@ -69,6 +81,7 @@ func NewMediaHealthSweeper(
 		clock:          clock,
 		jobQueue:       jq,
 		tokenQueue:     tokenQueue,
+		mediaQueue:     mediaQueue,
 		stopChan:       make(chan struct{}),
 		stoppedCh:      make(chan struct{}),
 	}
@@ -229,6 +242,11 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 		pond.WithContext(ctx),
 	)
 
+	// After health state settles, enqueue L1 render probes for due URLs. Runs at the end
+	// of the cycle so probes see this cycle's verdicts (a URL just marked broken is no
+	// longer due).
+	s.enqueueRenderProbes(ctx)
+
 	duration := s.clock.Since(startTime)
 	logger.InfoCtx(ctx, "Sweep cycle completed",
 		zap.Duration("duration", duration),
@@ -258,6 +276,50 @@ func (s *mediaHealthSweeper) sleep(ctx context.Context, duration time.Duration) 
 	case <-s.stopChan:
 		return false // Interrupted by stop signal
 	}
+}
+
+// enqueueRenderProbes enqueues L1 render-probe jobs for due URLs onto the media queue.
+//
+// Reason: the sweeper owns probe scheduling (it already owns the health work queue), but
+// chromium only exists in the CGO media worker, so execution is a job, not an inline
+// call. Unique keys make double-enqueueing a no-op while a probe is pending or running.
+// Enqueue failures are logged and skipped — the URL stays due and the next cycle retries.
+func (s *mediaHealthSweeper) enqueueRenderProbes(ctx context.Context) {
+	if !s.config.RenderProbeEnabled {
+		return
+	}
+
+	urls, err := s.store.GetURLsDueForRenderProbe(ctx, s.config.RenderProbeBatchSize)
+	if err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to get URLs due for render probe: %w", err))
+		return
+	}
+	if len(urls) == 0 {
+		return
+	}
+
+	enqueued := 0
+	for _, url := range urls {
+		uk := jobs.RenderProbeUniqueKey(url)
+		if _, _, err := s.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+			Queue:     s.mediaQueue,
+			Kind:      "RenderMediaProbe",
+			Args:      []any{url},
+			UniqueKey: &uk,
+		}); err != nil {
+			logger.WarnCtx(ctx, "Failed to enqueue render probe job",
+				zap.String("url", url),
+				zap.Error(err),
+			)
+			continue
+		}
+		enqueued++
+	}
+
+	logger.InfoCtx(ctx, "Render probe jobs enqueued",
+		zap.Int("due", len(urls)),
+		zap.Int("enqueued", enqueued),
+	)
 }
 
 // checkURL checks a single URL and updates the database

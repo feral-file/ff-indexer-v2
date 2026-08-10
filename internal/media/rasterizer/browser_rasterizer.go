@@ -59,25 +59,14 @@ type chromedpBrowserRasterizer struct {
 	timeoutMs      int
 }
 
-// NewBrowserRasterizer creates a new chromedp-based SVG rasterizer
-func NewBrowserRasterizer(chromedpClient adapter.ChromedpClient, xml adapter.XML, fs adapter.FileSystem, cfg *BrowserRasterizerConfig) BrowserRasterizer {
-	if cfg == nil {
-		cfg = &BrowserRasterizerConfig{
-			Width:     DEFAULT_WIDTH,
-			TimeoutMs: DEFAULT_TIMEOUT,
-		}
-	}
-
-	// Set defaults
-	if cfg.TimeoutMs <= 0 {
-		cfg.TimeoutMs = DEFAULT_TIMEOUT
-	}
-	if cfg.Width <= 0 {
-		cfg.Width = DEFAULT_WIDTH
-	}
-
-	// Create chrome options
-	opts := []chromedp.ExecAllocatorOption{
+// DefaultAllocatorOptions returns the chromium launch flags shared by every headless
+// browser consumer (SVG rasterizer, L1 render probe).
+//
+// Reason: extracted so the render probe's separate allocator launches an identical
+// browser — a flag drift between the two would make their captures incomparable and
+// their failure modes diverge in production containers.
+func DefaultAllocatorOptions() []chromedp.ExecAllocatorOption {
+	return []chromedp.ExecAllocatorOption{
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
 		chromedp.DisableGPU,
@@ -98,9 +87,27 @@ func NewBrowserRasterizer(chromedpClient adapter.ChromedpClient, xml adapter.XML
 		chromedp.Flag("disable-permissions-api", true),       // Disable permissions API
 		chromedp.Flag("single-process", true),                // Run in single process (important for containers)
 	}
+}
+
+// NewBrowserRasterizer creates a new chromedp-based SVG rasterizer
+func NewBrowserRasterizer(chromedpClient adapter.ChromedpClient, xml adapter.XML, fs adapter.FileSystem, cfg *BrowserRasterizerConfig) BrowserRasterizer {
+	if cfg == nil {
+		cfg = &BrowserRasterizerConfig{
+			Width:     DEFAULT_WIDTH,
+			TimeoutMs: DEFAULT_TIMEOUT,
+		}
+	}
+
+	// Set defaults
+	if cfg.TimeoutMs <= 0 {
+		cfg.TimeoutMs = DEFAULT_TIMEOUT
+	}
+	if cfg.Width <= 0 {
+		cfg.Width = DEFAULT_WIDTH
+	}
 
 	// Create allocator context (manages Chrome instance lifecycle)
-	allocCtx, allocCancel := chromedpClient.NewExecAllocator(context.Background(), opts)
+	allocCtx, allocCancel := chromedpClient.NewExecAllocator(context.Background(), DefaultAllocatorOptions())
 
 	return &chromedpBrowserRasterizer{
 		chromedpClient: chromedpClient,

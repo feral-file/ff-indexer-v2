@@ -36,6 +36,12 @@ func keyWebhookNotify(eventID string) string {
 	return "webhook-notify-" + eventID
 }
 
+// RenderProbeUniqueKey builds the unique key for a RenderMediaProbe job so the sweeper
+// cannot double-enqueue a probe for the same URL while one is pending or running.
+func RenderProbeUniqueKey(url string) string {
+	return "render-probe-" + types.MD5Hash(url)
+}
+
 // WebhookNotifyUniqueKey is the active-job key for viewability-driven webhook batch notifications.
 func WebhookNotifyUniqueKey(eventID string) string {
 	return keyWebhookNotify(eventID)

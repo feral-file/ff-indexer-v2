@@ -1,6 +1,6 @@
 # Media Viewability: Content-Validated Health Checks
 
-Status: L0 implemented. L1 (render probe) planned — see "Level 1" below.
+Status: L0 and L1 implemented (L1 disabled by default via `render_probe.enabled`).
 
 Context: feral-file/feral-file#3485 defines four correctness levels for artwork probes.
 This document is the indexer-side contract for Level 0 (byte-level content validation)
@@ -74,13 +74,45 @@ healthy). Healing a render-gated row is exclusively the render probe's job. This
 becomes load-bearing when L1 lands; L0 reserves the namespace now so the contract is
 stable.
 
-## Level 1 (planned)
+## Level 1: render probe
 
-Headless-chromium render of L0-healthy HTML/animation and image URLs, gating viewability:
-known-bad render fingerprint (pHash match against directory listings, error pages,
-placeholders) gates immediately; blank/stalled verdicts gate after 2 consecutive
-failures. Every capture stores `phash` + `engine_version` + viewport; successive-capture
-drift comparison is deliberately out of scope for v1 (capture-only, per #3485).
+Headless-chromium render of L0-healthy URLs, gating viewability. Coverage: HTML
+documents, animation-source URLs, and images — the classes a render can judge; video and
+audio are excluded (the L0 container check is the meaningful probe there). Never-probed
+URLs go first, HTML/animation before images.
+
+Flow: the media health sweeper enqueues `RenderMediaProbe` jobs (unique-keyed per URL)
+onto the media queue at the end of each sweep cycle; the CGO media worker renders at a
+fixed viewport, waits `settle_ms`, screenshots, and classifies:
+
+- **known_bad_fingerprint** — the frame's pHash is within a configured Hamming distance
+  of a known-bad render (directory listing, gateway error page, placeholder). Gates
+  immediately: unambiguous, works on the first observation, no baseline needed.
+- **blank** — near-zero luminance variance. Gates only after
+  `failure_gate_threshold` (default 2) consecutive failures, because slow WebGL under
+  software GL and intentionally dark works produce false blanks.
+- **stalled** — navigation failure or timeout. Debounced like blank.
+- **rendered_ok** — resets the failure counter; if the URL was render-gated, heals it
+  (the probe is the *only* healer of `render_*` rows — see the ownership rule).
+
+Gating writes `token_media_health.failure_reason` (`render_blank` / `render_stalled` /
+`render_known_bad`) through the same `BatchUpdateTokensViewability` + webhook path as
+L0, so consumers see one consistent viewability stream.
+
+Every capture stores `phash` + `engine_version` + `viewport` in `media_render_probes`
+(see `docs/schema.md`); `baseline_phash` keeps the first successful capture and is never
+overwritten. Successive-capture drift comparison is deliberately out of scope
+(capture-only, per #3485) — the stored history makes it a switch-on later, not a
+backfill.
+
+SECURITY: chromium fetches URLs outside the SSRF-protected HTTP client; the probe
+validates each URL against the SSRF policy before Navigate. In-page redirects and
+subresource fetches are not re-validated (residual risk, documented; mitigants: the URL
+already passed L0's SSRF-enforced fetch, background networking disabled).
+
+Fingerprint workflow for operators: capture the offending page once, compute its pHash,
+add it to `render_probe.known_bad_fingerprints` with a small `max_distance` (4-8) and a
+label. A loose tolerance matches real art and hides it — the worst failure mode.
 
 ## Delta measurement
 

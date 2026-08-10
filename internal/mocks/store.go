@@ -447,6 +447,21 @@ func (mr *MockStoreMockRecorder) GetMediaAssetsBySourceURLs(ctx, sourceURLs any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMediaAssetsBySourceURLs", reflect.TypeOf((*MockStore)(nil).GetMediaAssetsBySourceURLs), ctx, sourceURLs)
 }
 
+// GetMediaRenderProbe mocks base method.
+func (m *MockStore) GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMediaRenderProbe", ctx, url)
+	ret0, _ := ret[0].(*schema.MediaRenderProbe)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetMediaRenderProbe indicates an expected call of GetMediaRenderProbe.
+func (mr *MockStoreMockRecorder) GetMediaRenderProbe(ctx, url any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMediaRenderProbe", reflect.TypeOf((*MockStore)(nil).GetMediaRenderProbe), ctx, url)
+}
+
 // GetProvenanceEventByID mocks base method.
 func (m *MockStore) GetProvenanceEventByID(ctx context.Context, id uint64) (*schema.ProvenanceEvent, error) {
 	m.ctrl.T.Helper()
@@ -797,6 +812,21 @@ func (mr *MockStoreMockRecorder) GetTokensViewabilityByIDs(ctx, tokenIDs any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokensViewabilityByIDs", reflect.TypeOf((*MockStore)(nil).GetTokensViewabilityByIDs), ctx, tokenIDs)
 }
 
+// GetURLsDueForRenderProbe mocks base method.
+func (m *MockStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetURLsDueForRenderProbe", ctx, limit)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetURLsDueForRenderProbe indicates an expected call of GetURLsDueForRenderProbe.
+func (mr *MockStoreMockRecorder) GetURLsDueForRenderProbe(ctx, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetURLsDueForRenderProbe", reflect.TypeOf((*MockStore)(nil).GetURLsDueForRenderProbe), ctx, limit)
+}
+
 // GetURLsForChecking mocks base method.
 func (m *MockStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Duration, limit int) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -1139,6 +1169,20 @@ func (m *MockStore) UpsertEnrichmentSource(ctx context.Context, input store.Crea
 func (mr *MockStoreMockRecorder) UpsertEnrichmentSource(ctx, input any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertEnrichmentSource", reflect.TypeOf((*MockStore)(nil).UpsertEnrichmentSource), ctx, input)
+}
+
+// UpsertMediaRenderProbe mocks base method.
+func (m *MockStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertMediaRenderProbe", ctx, probe)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertMediaRenderProbe indicates an expected call of UpsertMediaRenderProbe.
+func (mr *MockStoreMockRecorder) UpsertMediaRenderProbe(ctx, probe any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertMediaRenderProbe", reflect.TypeOf((*MockStore)(nil).UpsertMediaRenderProbe), ctx, probe)
 }
 
 // UpsertRelease mocks base method.

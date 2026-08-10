@@ -12,6 +12,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 	"github.com/feral-file/ff-indexer-v2/internal/sweeper"
@@ -64,6 +65,7 @@ func setupTestSweeper(t *testing.T) *testSweeperMocks {
 		tm.clock,
 		tm.jobQueue,
 		"test-task-queue",
+		"test-media-queue",
 	)
 
 	return tm
@@ -419,6 +421,87 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 	}()
 
 	err := mocks.sweeper.Start(ctx)
+	require.NoError(t, err)
+}
+
+// TestMediaHealthSweeper_EnqueuesRenderProbes asserts that with the render probe enabled
+// the sweeper enqueues one RenderMediaProbe job per due URL onto the media queue with the
+// dedup unique key, and that enqueue failures skip the URL without aborting the batch.
+func TestMediaHealthSweeper_EnqueuesRenderProbes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	tm := &testSweeperMocks{
+		ctrl:           ctrl,
+		store:          mocks.NewMockStore(ctrl),
+		urlChecker:     mocks.NewMockURLChecker(ctrl),
+		dataURIChecker: mocks.NewMockDataURIChecker(ctrl),
+		clock:          mocks.NewMockClock(ctrl),
+		jobQueue:       mocks.NewMockJobQueue(ctrl),
+	}
+	tm.sweeper = sweeper.NewMediaHealthSweeper(
+		&sweeper.MediaHealthSweeperConfig{
+			BatchSize:            10,
+			WorkerPoolSize:       2,
+			RecheckAfter:         24 * time.Hour,
+			RenderProbeEnabled:   true,
+			RenderProbeBatchSize: 5,
+		},
+		tm.store, tm.urlChecker, tm.dataURIChecker, tm.clock, tm.jobQueue,
+		"test-task-queue", "test-media-queue",
+	)
+
+	ctx := context.Background()
+	dueURLs := []string{"https://example.com/a.html", "https://example.com/b.html"}
+
+	// Health-check part of the cycle: nothing to check.
+	tm.store.EXPECT().GetURLsForChecking(ctx, 24*time.Hour, 10).Return([]string{"https://example.com/x.png"}, nil).Times(1)
+	tm.store.EXPECT().GetURLsForChecking(ctx, 24*time.Hour, 10).Return([]string{}, nil).AnyTimes()
+	tm.store.EXPECT().GetTokenIDsByMediaURL(ctx, gomock.Any()).Return([]uint64{1}, nil)
+	tm.urlChecker.EXPECT().Check(ctx, gomock.Any()).Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy})
+	tm.store.EXPECT().UpdateTokenMediaHealthByURL(ctx, gomock.Any(), gomock.Any()).Return(nil)
+	tm.store.EXPECT().BatchUpdateTokensViewability(ctx, gomock.Any()).Return(nil, nil)
+
+	// Render-probe enqueue: first URL fails to enqueue, second succeeds.
+	tm.store.EXPECT().GetURLsDueForRenderProbe(ctx, 5).Return(dueURLs, nil)
+	uk0 := jobs.RenderProbeUniqueKey(dueURLs[0])
+	tm.jobQueue.EXPECT().
+		Enqueue(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.Equal(t, "test-media-queue", opts.Queue)
+			require.Equal(t, "RenderMediaProbe", opts.Kind)
+			require.NotNil(t, opts.UniqueKey)
+			require.Equal(t, uk0, *opts.UniqueKey)
+			return nil, false, assert.AnError // enqueue failure must not abort the batch
+		})
+	tm.jobQueue.EXPECT().
+		Enqueue(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.Equal(t, "RenderMediaProbe", opts.Kind)
+			require.Equal(t, []any{dueURLs[1]}, opts.Args)
+			return &schema.Job{ID: 2}, true, nil
+		})
+	// Subsequent cycles (empty GetURLsForChecking) skip enqueueRenderProbes? No — the
+	// empty path returns before enqueue, so no further GetURLsDueForRenderProbe calls.
+
+	now := time.Now()
+	tm.clock.EXPECT().Now().Return(now).AnyTimes()
+	tm.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	tm.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = tm.sweeper.Stop(ctx)
+	}()
+
+	err := tm.sweeper.Start(ctx)
 	require.NoError(t, err)
 }
 

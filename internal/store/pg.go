@@ -2774,12 +2774,16 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 	cutoffTime := time.Now().Add(-recheckAfter)
 
 	var urls []string
+	// Rows gated by the L1 render probe (failure_reason 'render_%') are excluded: they
+	// would pass the byte-level ranged GET and flap back to healthy, undoing the render
+	// verdict. Healing render-gated rows is exclusively the render probe's job.
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("media_url").
 		Where("last_checked_at < ? OR health_status = ?",
 			cutoffTime,
 			schema.MediaHealthStatusUnknown).
+		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
 		Group("media_url").
 		Order("MIN(last_checked_at) ASC").
 		Limit(limit).
@@ -2951,6 +2955,91 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 
 		return nil
 	})
+}
+
+// GetURLsDueForRenderProbe returns L0-healthy media URLs due for an L1 render probe.
+//
+// Coverage policy (agreed on feral-file#3485 follow-up): only URLs the byte-level probe
+// confirmed healthy, in the classes a browser render can actually judge — HTML documents,
+// animation-source URLs, and images. Video/audio are excluded (the container check is the
+// meaningful probe there; a screenshot of an MP4 proves nothing). Ordering puts
+// never-probed URLs first, then HTML/animation before images (byte checks are weakest for
+// HTML, so render coverage matters most there), then oldest capture first.
+//
+// A LEFT JOIN discovers never-probed URLs; probed URLs re-enter when next_check_at is due
+// (served by idx_media_render_probes_due). The healthy-row scan is the same trade the
+// media health sweeper makes — batch cadence keeps it acceptable.
+func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error) {
+	var urls []string
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT h.media_url
+		FROM token_media_health h
+		LEFT JOIN media_render_probes p ON p.media_url_hash = h.media_url_hash
+		WHERE h.health_status = ?
+		  AND (h.sniffed_content_type = 'text/html'
+		       OR h.media_source IN (?, ?)
+		       OR h.sniffed_content_type LIKE 'image/%')
+		  AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'video/%'
+		  AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'audio/%'
+		  AND (p.media_url_hash IS NULL OR p.next_check_at <= now())
+		GROUP BY h.media_url, p.media_url_hash, p.captured_at
+		ORDER BY (p.media_url_hash IS NULL) DESC,
+		         MIN(CASE WHEN h.sniffed_content_type = 'text/html'
+		                   OR h.media_source IN (?, ?) THEN 0 ELSE 1 END) ASC,
+		         p.captured_at ASC NULLS FIRST
+		LIMIT ?`,
+		schema.MediaHealthStatusHealthy,
+		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
+		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
+		limit,
+	).Scan(&urls).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get URLs due for render probe: %w", err)
+	}
+	return urls, nil
+}
+
+// GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed.
+func (s *pgStore) GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error) {
+	var probe schema.MediaRenderProbe
+	err := s.db.WithContext(ctx).
+		Where("media_url_hash = ?", types.MD5Hash(url)).
+		First(&probe).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get media render probe: %w", err)
+	}
+	return &probe, nil
+}
+
+// UpsertMediaRenderProbe inserts or replaces the render-probe row for probe.MediaURL.
+//
+// Constraints: baseline_phash is monotone — once set it is never overwritten
+// (COALESCE(existing, new)), enforcing the capture-only baseline invariant at the DB
+// level regardless of what the caller passes.
+func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error {
+	probe.MediaURLHash = types.MD5Hash(probe.MediaURL)
+	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "media_url_hash"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"media_url":            probe.MediaURL,
+			"phash":                probe.Phash,
+			"baseline_phash":       gorm.Expr("COALESCE(media_render_probes.baseline_phash, EXCLUDED.baseline_phash)"),
+			"engine_version":       probe.EngineVersion,
+			"viewport":             probe.Viewport,
+			"verdict":              probe.Verdict,
+			"consecutive_failures": probe.ConsecutiveFailures,
+			"last_error":           probe.LastError,
+			"captured_at":          probe.CapturedAt,
+			"next_check_at":        probe.NextCheckAt,
+		}),
+	}).Create(&probe).Error
+	if err != nil {
+		return fmt.Errorf("failed to upsert media render probe: %w", err)
+	}
+	return nil
 }
 
 // BatchUpdateTokensViewability computes and updates is_viewable for multiple tokens

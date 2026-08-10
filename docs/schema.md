@@ -231,6 +231,29 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 **Relationships**:
 - Many-to-one with `tokens`
 
+### media_render_probes
+
+L1 render-probe observations, one row per media URL (keyed like `token_media_health` updates: render outcome is a property of the URL). Records what headless chromium painted and the render verdict. Viewability gating flows through `token_media_health.failure_reason` (`render_%` values); `baseline_phash` is capture-only — successive-capture drift comparison is deferred (feral-file#3485).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| media_url_hash | TEXT | Primary key; MD5 hash of media_url |
+| media_url | TEXT | URL that was rendered |
+| phash | BIGINT | 64-bit DCT perceptual hash bit pattern of the latest capture (int64; NULL when capture failed) |
+| baseline_phash | BIGINT | pHash of the first successful capture, never overwritten |
+| engine_version | TEXT | Browser identity (User-Agent) at capture time |
+| viewport | TEXT | Capture viewport as "WxH" |
+| verdict | render_probe_verdict | rendered_ok, blank, stalled, known_bad_fingerprint |
+| consecutive_failures | INT | Consecutive blank/stalled probes (debounce state; fingerprint gates immediately) |
+| last_error | TEXT | Render failure detail (NULL on rendered_ok) |
+| captured_at | TIMESTAMPTZ | Last successful screenshot time (NULL when never captured) |
+| next_check_at | TIMESTAMPTZ | Sweeper work-queue cursor |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Indexes**:
+- `idx_media_render_probes_due` on (next_check_at)
+
 **Purpose**:
 - Enables API clients to filter out tokens with broken media URLs
 - Tracks health of both metadata and enrichment source URLs

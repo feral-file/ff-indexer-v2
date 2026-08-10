@@ -5806,6 +5806,202 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 // Test: Media Health Operations
 // =============================================================================
 
+// testMediaRenderProbeOperations exercises the L1 render-probe store surface against a
+// real Postgres schema: the upsert's baseline_phash monotonicity (a DB-level COALESCE
+// invariant that mocks cannot verify), the due-query's class filtering and ordering, and
+// the L0 sweep's exclusion of render-gated rows (the anti-flapping contract between the
+// two probe layers).
+func testMediaRenderProbeOperations(t *testing.T, store Store) {
+	ctx := context.Background()
+
+	// mintTokenWithMedia creates a token whose metadata carries the given media URLs and
+	// returns its ID. Health rows are created as 'unknown' by the metadata upsert.
+	seq := 0
+	mintTokenWithMedia := func(t *testing.T, imageURL, animationURL *string) uint64 {
+		seq++
+		tokenNumber := fmt.Sprintf("%d", 7000+seq)
+		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721,
+			"0x0000000000000000000000000000000000100077", tokenNumber, "0xowner77")
+		err := store.CreateTokenMint(ctx, token)
+		require.NoError(t, err)
+		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+		require.NoError(t, err)
+
+		metadataJSON, _ := json.Marshal(map[string]interface{}{"name": "render probe fixture"})
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenData.ID,
+			OriginJSON:      metadataJSON,
+			LatestJSON:      metadataJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        imageURL,
+			AnimationURL:    animationURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+		return tokenData.ID
+	}
+
+	markHealthy := func(t *testing.T, url, sniffed string) {
+		upd := MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}
+		if sniffed != "" {
+			upd.SniffedContentType = &sniffed
+		}
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, url, upd))
+	}
+
+	t.Run("Upsert and Get round-trip; baseline_phash never overwritten", func(t *testing.T) {
+		url := "https://example.com/render/upsert.html"
+		phashA := int64(0x1234567890ABCDEF)
+		phashB := int64(0x0FEDCBA987654321)
+		engine := "HeadlessChrome/123.0"
+		viewport := "1024x1024"
+		now := time.Now().UTC()
+
+		// First capture establishes the baseline.
+		err := store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL:      url,
+			Phash:         &phashA,
+			BaselinePhash: &phashA,
+			EngineVersion: &engine,
+			Viewport:      &viewport,
+			Verdict:       schema.RenderProbeVerdictRenderedOK,
+			CapturedAt:    &now,
+			NextCheckAt:   now.Add(time.Hour),
+		})
+		require.NoError(t, err)
+
+		probe, err := store.GetMediaRenderProbe(ctx, url)
+		require.NoError(t, err)
+		require.NotNil(t, probe)
+		assert.Equal(t, schema.RenderProbeVerdictRenderedOK, probe.Verdict)
+		require.NotNil(t, probe.Phash)
+		assert.Equal(t, phashA, *probe.Phash)
+		require.NotNil(t, probe.BaselinePhash)
+		assert.Equal(t, phashA, *probe.BaselinePhash)
+		require.NotNil(t, probe.EngineVersion)
+		assert.Equal(t, engine, *probe.EngineVersion)
+
+		// Second capture: latest phash moves, baseline must not.
+		err = store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL:      url,
+			Phash:         &phashB,
+			BaselinePhash: &phashB, // caller passes it; DB-level COALESCE must ignore it
+			EngineVersion: &engine,
+			Viewport:      &viewport,
+			Verdict:       schema.RenderProbeVerdictRenderedOK,
+			CapturedAt:    &now,
+			NextCheckAt:   now.Add(time.Hour),
+		})
+		require.NoError(t, err)
+
+		probe, err = store.GetMediaRenderProbe(ctx, url)
+		require.NoError(t, err)
+		require.NotNil(t, probe)
+		assert.Equal(t, phashB, *probe.Phash, "latest phash should update")
+		assert.Equal(t, phashA, *probe.BaselinePhash, "baseline must never be overwritten")
+
+		// Never-probed URL returns nil, not an error.
+		missing, err := store.GetMediaRenderProbe(ctx, "https://example.com/render/never-probed")
+		require.NoError(t, err)
+		assert.Nil(t, missing)
+	})
+
+	t.Run("GetURLsDueForRenderProbe class filter and ordering", func(t *testing.T) {
+		htmlURL := "https://example.com/render/work.html"
+		imageURL := "https://example.com/render/art.png"
+		videoURL := "https://example.com/render/clip.mp4"
+		brokenURL := "https://example.com/render/broken.html"
+		animationURL := "https://example.com/render/generative"
+		probedDueURL := "https://example.com/render/probed-due.html"
+		probedFutureURL := "https://example.com/render/probed-future.html"
+
+		mintTokenWithMedia(t, &htmlURL, nil)
+		mintTokenWithMedia(t, &imageURL, nil)
+		mintTokenWithMedia(t, &videoURL, nil)
+		mintTokenWithMedia(t, &brokenURL, nil)
+		mintTokenWithMedia(t, nil, &animationURL) // animation source, sniffed type left NULL
+		mintTokenWithMedia(t, &probedDueURL, nil)
+		mintTokenWithMedia(t, &probedFutureURL, nil)
+
+		markHealthy(t, htmlURL, "text/html")
+		markHealthy(t, imageURL, "image/png")
+		markHealthy(t, videoURL, "video/mp4")
+		markHealthy(t, animationURL, "")
+		markHealthy(t, probedDueURL, "text/html")
+		markHealthy(t, probedFutureURL, "text/html")
+		errMsg := "HTTP 404"
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, brokenURL, MediaHealthUpdate{
+			Status:    schema.MediaHealthStatusBroken,
+			LastError: &errMsg,
+		}))
+
+		// Existing probe rows: one due, one not.
+		past := time.Now().UTC().Add(-time.Hour)
+		future := time.Now().UTC().Add(time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: probedDueURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			CapturedAt: &past, NextCheckAt: past,
+		}))
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: probedFutureURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			CapturedAt: &past, NextCheckAt: future,
+		}))
+
+		urls, err := store.GetURLsDueForRenderProbe(ctx, 50)
+		require.NoError(t, err)
+
+		assert.Contains(t, urls, htmlURL)
+		assert.Contains(t, urls, imageURL)
+		assert.Contains(t, urls, animationURL, "animation source with NULL sniffed type is included")
+		assert.Contains(t, urls, probedDueURL)
+		assert.NotContains(t, urls, videoURL, "video is excluded")
+		assert.NotContains(t, urls, brokenURL, "broken URLs are excluded")
+		assert.NotContains(t, urls, probedFutureURL, "not-yet-due URLs are excluded")
+
+		// Ordering: every never-probed URL precedes the probed-due one, and within the
+		// never-probed set HTML/animation precede images.
+		idx := func(u string) int {
+			for i, v := range urls {
+				if v == u {
+					return i
+				}
+			}
+			return -1
+		}
+		assert.Less(t, idx(htmlURL), idx(probedDueURL), "never-probed before probed-due")
+		assert.Less(t, idx(animationURL), idx(imageURL), "animation class before image class")
+		assert.Less(t, idx(htmlURL), idx(imageURL), "HTML class before image class")
+	})
+
+	t.Run("GetURLsForChecking excludes render-gated rows", func(t *testing.T) {
+		renderGatedURL := "https://example.com/render/gated.html"
+		normalBrokenURL := "https://example.com/render/plain-broken.png"
+		mintTokenWithMedia(t, &renderGatedURL, nil)
+		mintTokenWithMedia(t, &normalBrokenURL, nil)
+
+		renderReason := schema.RenderFailureBlank
+		errMsg := "blank frame"
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, renderGatedURL, MediaHealthUpdate{
+			Status:        schema.MediaHealthStatusBroken,
+			LastError:     &errMsg,
+			FailureReason: &renderReason,
+		}))
+		httpReason := schema.MediaFailureHTTPStatus.String()
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, normalBrokenURL, MediaHealthUpdate{
+			Status:        schema.MediaHealthStatusBroken,
+			LastError:     &errMsg,
+			FailureReason: &httpReason,
+		}))
+
+		// Negative recheckAfter makes even just-checked rows due, isolating the
+		// failure_reason filter from timing.
+		urls, err := store.GetURLsForChecking(ctx, -time.Minute, 1000)
+		require.NoError(t, err)
+		assert.NotContains(t, urls, renderGatedURL, "render-gated rows belong to the render probe")
+		assert.Contains(t, urls, normalBrokenURL, "ordinary broken rows keep re-checking")
+	})
+}
+
 func testMediaHealthOperations(t *testing.T, store Store) {
 	ctx := context.Background()
 
@@ -7132,6 +7328,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"AddressIndexingJobs", testAddressIndexingJobs},
 		{"GetTokenCountsByAddress", testGetTokenCountsByAddress},
 		{"MediaHealthOperations", testMediaHealthOperations},
+		{"MediaRenderProbeOperations", testMediaRenderProbeOperations},
 		{"JobQueue", testJobQueue},
 	}
 

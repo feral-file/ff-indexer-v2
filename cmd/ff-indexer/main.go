@@ -173,8 +173,12 @@ func run() int {
 		BatchSize:      sweeperCfg.MediaHealthSweeper.BatchSize,
 		WorkerPoolSize: sweeperCfg.MediaHealthSweeper.Worker.WorkerPoolSize,
 		RecheckAfter:   sweeperCfg.MediaHealthSweeper.RecheckAfter,
+		// Render-probe enqueueing requires both the feature flag AND an enabled media
+		// worker: without one, jobs would pile up on a queue nothing serves.
+		RenderProbeEnabled:   sweeperCfg.RenderProbe.Enabled && sweeperCfg.MediaEnabled,
+		RenderProbeBatchSize: sweeperCfg.RenderProbe.BatchSize,
 	}
-	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue)
+	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue, cfg.Jobs.MediaQueue)
 
 	// Worker-media: media task queue (requires CGO build).
 	wMediaCfg := cfg.ToWorkerMediaConfig()
