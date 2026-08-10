@@ -112,10 +112,13 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		return c.checkArweaveGateway(ctx, txID)
 	}
 
-	// Check if it's an OnChFS URL - resolve hash across configured gateways
+	// Check if it's an OnChFS URL - resolve the same resource across configured gateways.
+	// The reference keeps the fxhash query parameters so alternative gateways are asked for the
+	// artwork iteration a player loads, not just the bare content hash (issue #76).
 	if isOnChFS, hash := types.IsOnChFSGatewayURL(url); isOnChFS {
-		logger.InfoCtx(ctx, "HTTP check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("hash", hash))
-		return c.checkOnChFSGateway(ctx, hash)
+		ref := OnChFSGatewayRef(url, hash)
+		logger.InfoCtx(ctx, "HTTP check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("ref", ref))
+		return c.checkOnChFSGateway(ctx, ref)
 	}
 
 	// 5. For other HTTP URLs, return the original result
@@ -148,9 +151,12 @@ func (c *urlChecker) checkArweaveGateway(ctx context.Context, txID string) Healt
 	}
 }
 
-// checkOnChFSGateway resolves an OnChFS content hash across configured gateways and returns the first working URL.
-func (c *urlChecker) checkOnChFSGateway(ctx context.Context, hash string) HealthCheckResult {
-	workingURL, err := FindWorkingOnChFSGateway(ctx, c.httpClient, hash, c.onchfsGateways)
+// checkOnChFSGateway resolves an OnChFS resource reference across configured gateways and
+// returns the first working URL. The ref carries the content hash plus any query parameters
+// identifying the artwork iteration, so a gateway that only serves the bare hash cannot mark
+// unplayable media healthy.
+func (c *urlChecker) checkOnChFSGateway(ctx context.Context, ref string) HealthCheckResult {
+	workingURL, err := FindWorkingOnChFSGateway(ctx, c.httpClient, ref, c.onchfsGateways)
 	if err != nil {
 		return mapOutboundFetchErr(err, false)
 	}

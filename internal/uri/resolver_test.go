@@ -284,7 +284,7 @@ func TestResolver_Resolve(t *testing.T) {
 					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
 					Return(mockResp, nil)
 			},
-			expectedErr: "no working OnChFS gateway found for hash: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedErr: "no working OnChFS gateway found for ref: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
 		},
 		{
 			name: "OnChFS URI - network error",
@@ -298,7 +298,7 @@ func TestResolver_Resolve(t *testing.T) {
 					Head(gomock.Any(), gomock.Any()).
 					Return(nil, assert.AnError)
 			},
-			expectedErr: "no working OnChFS gateway found for hash: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expectedErr: "no working OnChFS gateway found for ref: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
 		},
 	}
 
