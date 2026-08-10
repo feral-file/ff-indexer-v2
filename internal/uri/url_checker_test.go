@@ -14,7 +14,6 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
-	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 )
 
@@ -33,7 +32,50 @@ func (e *mockRetryableError) Timeout() bool {
 	return true // This makes it retryable
 }
 
+// probeRangeHeader is the Range header the content-validating probe sends
+// (uri.DefaultProbeMaxBytes window).
+var probeRangeHeader = map[string]string{"Range": fmt.Sprintf("bytes=0-%d", uri.DefaultProbeMaxBytes-1)}
+
+// httpResp builds a response with a readable body, optional Content-Type and extra headers.
+func httpResp(status int, contentType string, body []byte, extra map[string]string) *http.Response {
+	h := http.Header{}
+	if contentType != "" {
+		h.Set("Content-Type", contentType)
+	}
+	for k, v := range extra {
+		h.Set(k, v)
+	}
+	return &http.Response{
+		StatusCode:    status,
+		Header:        h,
+		Body:          io.NopCloser(bytes.NewReader(body)),
+		ContentLength: int64(len(body)),
+	}
+}
+
+// passthroughIO makes the IO mock actually read bodies, which the content-validating
+// probe requires (the old checker discarded them).
+func passthroughIO(mockIO *mocks.MockIO) {
+	mockIO.EXPECT().
+		ReadAll(gomock.Any()).
+		DoAndReturn(func(r io.Reader) ([]byte, error) { return io.ReadAll(r) }).
+		AnyTimes()
+}
+
+func defaultConfig() *uri.Config {
+	return &uri.Config{
+		IPFSGateways:        []string{"https://ipfs.io"},
+		ArweaveGateways:     []string{"https://arweave.net"},
+		OnChFSGateways:      []string{"https://onchfs.fxhash2.xyz"},
+		KnownBadPageMarkers: []string{"504 gateway time-out"},
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
 func TestURLChecker_Check(t *testing.T) {
+	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+
 	tests := []struct {
 		name           string
 		url            string
@@ -41,1133 +83,225 @@ func TestURLChecker_Check(t *testing.T) {
 		config         *uri.Config
 		expectedStatus uri.HealthStatus
 		expectedURL    *string
-		expectedError  *string
+		expectedReason uri.FailureReason
+		expectSSRF     bool
 	}{
 		{
-			name: "valid HTTPS URL - HEAD succeeds",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				mockResp := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(mockResp, nil)
+			name: "healthy 206 with valid PNG content",
+			url:  "https://example.com/art.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/art.png", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", minimalPNG(64, 64),
+						map[string]string{"Content-Range": "bytes 0-32/33"}), nil) // minimalPNG is 33 bytes
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    nil,
-			expectedError:  nil,
 		},
 		{
-			name: "valid HTTP URL - HEAD succeeds",
-			url:  "http://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				mockResp := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "http://example.com/image.png").
-					Return(mockResp, nil)
+			name: "healthy 200 when server ignores Range",
+			url:  "https://example.com/art.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/art.png", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(64, 64), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    nil,
-			expectedError:  nil,
 		},
 		{
-			name: "IPFS gateway URL - original URL works, no fallback needed",
-			url:  "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// Original URL works via HTTP check
-				mockResp := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp, nil)
+			name: "416 falls back to unranged GET",
+			url:  "https://example.com/art.gif",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/art.gif", probeRangeHeader).
+					Return(httpResp(http.StatusRequestedRangeNotSatisfiable, "", nil, nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/art.gif", nil).
+					Return(httpResp(http.StatusOK, "image/gif", minimalGIF(10, 10), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    nil, // No WorkingURL since original URL works
-			expectedError:  nil,
 		},
 		{
-			name: "IPFS gateway URL - original fails, resolves to working gateway",
-			url:  "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
+			name: "404 is broken with http_status reason",
+			url:  "https://example.com/gone.png",
+			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/gone.png", probeRangeHeader).
+					Return(httpResp(http.StatusNotFound, "", nil, nil), nil)
 			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// Original URL fails via HEAD (first call)
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(nil, assert.AnError).
-					Times(1)
-
-				// GET with Range also fails
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", map[string]string{"Range": "bytes=0-1023"}).
-					Return(nil, assert.AnError)
-
-				// Now fallback to IPFS gateway resolution - first gateway succeeds (second call to same URL)
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil).
-					Times(1)
-
-				// Second gateway may or may not be called (runs in parallel)
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp2, nil).
-					AnyTimes()
-			},
-			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    types.StringPtr("https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"),
-			expectedError:  nil,
-		},
-		{
-			name: "Arweave gateway URL - original URL works, no fallback needed",
-			url:  "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net", "https://ar-io.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// Original URL works via HTTP check
-				mockResp := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(mockResp, nil)
-			},
-			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    nil, // No WorkingURL since original URL works
-			expectedError:  nil,
-		},
-		{
-			name: "Arweave gateway URL - original fails, resolves to working gateway",
-			url:  "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net", "https://ar-io.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// Original URL fails via HEAD (first call)
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(nil, assert.AnError).
-					Times(1)
-
-				// GET with Range also fails
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", map[string]string{"Range": "bytes=0-1023"}).
-					Return(nil, assert.AnError)
-
-				// Now fallback to Arweave gateway resolution - first gateway succeeds (second call to same URL)
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(mockResp1, nil).
-					Times(1)
-
-				// Second gateway may or may not be called (runs in parallel)
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://ar-io.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(mockResp2, nil).
-					AnyTimes()
-			},
-			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    types.StringPtr("https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
-			expectedError:  nil,
-		},
-		{
-			name: "OnChFS URL - original URL works, no fallback needed",
-			url:  "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// Original URL works via HTTP check
-				mockResp := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890").
-					Return(mockResp, nil)
-			},
-			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    nil,
-			expectedError:  nil,
-		},
-		{
-			name: "OnChFS URL - original fails, resolves to working gateway",
-			url:  "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz", "https://gateway.fxhash.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				orig := "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), orig).
-					Return(nil, assert.AnError).
-					Times(1)
-
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), orig, map[string]string{"Range": "bytes=0-1023"}).
-					Return(nil, assert.AnError)
-
-				mockRespOK := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890").
-					Return(mockRespOK, nil).
-					Times(1)
-
-				mockRespNF := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://gateway.fxhash.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890").
-					Return(mockRespNF, nil).
-					AnyTimes()
-			},
-			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    types.StringPtr("https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
-			expectedError:  nil,
-		},
-		{
-			name: "invalid URL - not HTTP/HTTPS",
-			url:  "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks:     func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {},
 			expectedStatus: uri.HealthStatusBroken,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("only HTTP/HTTPS URLs are supported"),
+			expectedReason: uri.FailureHTTPStatus,
+		},
+		{
+			name: "429 is transient",
+			url:  "https://example.com/busy.png",
+			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/busy.png", probeRangeHeader).
+					Return(httpResp(http.StatusTooManyRequests, "", nil, nil), nil)
+			},
+			expectedStatus: uri.HealthStatusTransientError,
+		},
+		{
+			name: "200 HTML error page declared as image is broken (bug #76 class)",
+			url:  "https://example.com/broken.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/broken.png", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png",
+						[]byte("<!DOCTYPE html><html><body>oops</body></html>"), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureTypeMismatch,
+		},
+		{
+			name: "200 known error page marker is broken",
+			url:  "https://example.com/timeout",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/timeout", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html",
+						[]byte("<html><title>504 Gateway Time-out</title></html>"), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureKnownErrorPage,
+		},
+		{
+			name: "retryable transport error is transient",
+			url:  "https://example.com/flaky.png",
+			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/flaky.png", probeRangeHeader).
+					Return(nil, &mockRetryableError{})
+			},
+			expectedStatus: uri.HealthStatusTransientError,
+		},
+		{
+			name: "non-retryable transport error is broken without a reason",
+			url:  "https://example.com/dead.png",
+			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/dead.png", probeRangeHeader).
+					Return(nil, assert.AnError)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: "",
+		},
+		{
+			name: "DNS resolution failure is broken with dns reason, not SSRF-blocked",
+			url:  "https://no-such-host.example/art.png",
+			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://no-such-host.example/art.png", probeRangeHeader).
+					Return(nil, fmt.Errorf("lookup failed: %w", ssrf.ErrResolutionFailed))
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureDNS,
+			expectSSRF:     false,
 		},
 		{
 			name: "invalid URL format",
-			url:  "not-a-url",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks:     func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {},
-			expectedStatus: uri.HealthStatusBroken,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("invalid URL format"),
-		},
-		{
-			name: "IPFS gateway - no working gateway",
-			url:  "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// Original URL fails via HEAD (first call)
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(nil, assert.AnError).
-					Times(1)
-
-				// GET with Range also fails
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", map[string]string{"Range": "bytes=0-1023"}).
-					Return(nil, assert.AnError)
-
-				// Now fallback to IPFS gateway resolution - all gateways fail (parallel calls)
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil).
-					Times(1)
-
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp2, nil)
+			url:  "not a url",
+			setupMocks: func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("no working IPFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"),
 		},
 		{
-			name: "Arweave gateway - no working gateway",
-			url:  "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// Original URL fails via HEAD (first call)
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(nil, assert.AnError).
-					Times(1)
-
-				// GET with Range also fails
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", map[string]string{"Range": "bytes=0-1023"}).
-					Return(nil, assert.AnError)
-
-				// Now fallback to Arweave gateway resolution - gateway fails (second call)
-				mockResp := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-					Return(mockResp, nil).
-					Times(1)
+			name: "non-HTTP scheme is broken",
+			url:  "ftp://example.com/file",
+			setupMocks: func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("no working Arweave gateway found for TX: sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
 		},
 		{
-			name: "OnChFS gateway - no working gateway",
-			url:  "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz", "https://gateway.fxhash.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				orig := "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), orig).
-					Return(nil, assert.AnError).
-					Times(1)
-
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), orig, map[string]string{"Range": "bytes=0-1023"}).
-					Return(nil, assert.AnError)
-
-				mockResp := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890").
-					Return(mockResp, nil).
-					Times(1)
-
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://gateway.fxhash.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890").
-					Return(mockResp, nil).
-					Times(1)
-			},
-			expectedStatus: uri.HealthStatusBroken,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("no working OnChFS gateway found for ref: a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
-		},
-		{
-			name: "regular HTTPS URL - HEAD fails, GET with Range succeeds with 206",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// HEAD request fails
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(nil, assert.AnError)
-
-				// GET with Range succeeds with 206 Partial Content
-				mockResp := &http.Response{
-					StatusCode: http.StatusPartialContent,
-					Body:       io.NopCloser(bytes.NewReader([]byte("partial content"))),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
-					Return(mockResp, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp.Body).
-					Return(nil)
+			name: "IPFS gateway URL healthy directly - no fallback probes",
+			url:  "https://gateway.pinata.cloud/ipfs/" + cid,
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    nil,
-			expectedError:  nil,
 		},
 		{
-			name: "regular HTTPS URL - HEAD fails, GET with Range returns 200 OK",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// HEAD request fails
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(nil, assert.AnError)
-
-				// GET with Range returns 200 (server doesn't support range)
-				mockResp := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader([]byte("full content"))),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
-					Return(mockResp, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp.Body).
-					Return(nil)
+			name: "IPFS gateway URL broken - fallback gateway with valid content wins",
+			url:  "https://gateway.pinata.cloud/ipfs/" + cid,
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusNotFound, "", nil, nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    nil,
-			expectedError:  nil,
+			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid),
 		},
 		{
-			name: "regular HTTPS URL - HEAD fails, GET with Range returns 416, fallback to GET without Range",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// HEAD request fails
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(nil, assert.AnError)
-
-				// GET with Range returns 416 Range Not Satisfiable
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusRequestedRangeNotSatisfiable,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
-					Return(mockResp1, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp1.Body).
-					Return(nil)
-
-				// Fallback to GET without Range succeeds
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader([]byte("full content"))),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", nil).
-					Return(mockResp2, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp2.Body).
-					Return(nil)
-			},
-			expectedStatus: uri.HealthStatusHealthy,
-			expectedURL:    nil,
-			expectedError:  nil,
-		},
-		{
-			name: "regular HTTPS URL - HEAD fails, GET with Range returns 404, fallback to GET without Range",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// HEAD request fails
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(nil, assert.AnError)
-
-				// GET with Range returns 404
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
-					Return(mockResp1, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp1.Body).
-					Return(nil)
-
-				// Fallback to GET without Range also fails
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", nil).
-					Return(mockResp2, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp2.Body).
-					Return(nil)
+			name: "directory CID is not rescued by fallback gateways serving the same listing (feral-file#3482)",
+			url:  "https://gateway.pinata.cloud/ipfs/" + cid,
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
 			},
 			expectedStatus: uri.HealthStatusBroken,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("HTTP 404"),
+			expectedReason: uri.FailureDirectoryListing,
 		},
 		{
-			name: "regular HTTPS URL - transient error from GET with Range",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// HEAD request fails
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(nil, assert.AnError)
-
-				// GET with Range returns retryable error
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
+			name: "IPFS fallback with retryable gateway errors keeps the direct broken result, not transient",
+			url:  "https://gateway.pinata.cloud/ipfs/" + cid,
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusNotFound, "", nil, nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
 					Return(nil, &mockRetryableError{})
 			},
-			expectedStatus: uri.HealthStatusTransientError,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("temporary network error"),
-		},
-		{
-			name: "regular HTTPS URL - non-retryable error from GET with Range",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// HEAD request fails
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(nil, assert.AnError)
-
-				// GET with Range returns non-retryable error
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
-					Return(nil, assert.AnError)
-			},
 			expectedStatus: uri.HealthStatusBroken,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("assert.AnError"),
+			expectedReason: uri.FailureHTTPStatus,
 		},
 		{
-			name: "regular HTTPS URL - GET with Range returns 429, transient error",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
+			name: "Arweave gateway URL broken - fallback resolves",
+			url:  "https://ar-io.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ar-io.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", probeRangeHeader).
 					Return(nil, assert.AnError)
-
-				mockResp := &http.Response{
-					StatusCode: http.StatusTooManyRequests,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
-					Return(mockResp, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp.Body).
-					Return(nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/webp", minimalWebP(), nil), nil)
 			},
-			expectedStatus: uri.HealthStatusTransientError,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("rate limited (429)"),
+			expectedStatus: uri.HealthStatusHealthy,
+			expectedURL:    strPtr("https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"),
 		},
 		{
-			name: "regular HTTPS URL - GET without Range returns 429, transient error",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
+			name: "OnChFS URL broken - fallback resolves",
+			url:  "https://onchfs.example.com/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://onchfs.example.com/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890", probeRangeHeader).
+					Return(httpResp(http.StatusInternalServerError, "", nil, nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(16, 16), nil), nil)
 			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(nil, assert.AnError)
-
-				// GET with Range returns 404, triggers fallback
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
-					Return(mockResp1, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp1.Body).
-					Return(nil)
-
-				// Fallback GET without Range returns 429
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusTooManyRequests,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", nil).
-					Return(mockResp2, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp2.Body).
-					Return(nil)
-			},
-			expectedStatus: uri.HealthStatusTransientError,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("rate limited (429)"),
-		},
-		{
-			name: "regular HTTPS URL - transient error from GET without Range",
-			url:  "https://example.com/image.png",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-				OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, mockIO *mocks.MockIO) {
-				// HEAD request fails
-				mockHTTP.
-					EXPECT().
-					HeadNoRetry(gomock.Any(), "https://example.com/image.png").
-					Return(nil, assert.AnError)
-
-				// GET with Range returns 500
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusInternalServerError,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", map[string]string{"Range": "bytes=0-1023"}).
-					Return(mockResp1, nil)
-
-				mockIO.
-					EXPECT().
-					Discard(mockResp1.Body).
-					Return(nil)
-
-				// Fallback to GET without Range returns retryable error
-				mockHTTP.
-					EXPECT().
-					GetResponseNoRetry(gomock.Any(), "https://example.com/image.png", nil).
-					Return(nil, &mockRetryableError{})
-			},
-			expectedStatus: uri.HealthStatusTransientError,
-			expectedURL:    nil,
-			expectedError:  types.StringPtr("temporary network error"),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-
-			mockHTTP := mocks.NewMockHTTPClient(ctrl)
-			mockIO := mocks.NewMockIO(ctrl)
-			if tt.setupMocks != nil {
-				tt.setupMocks(mockHTTP, mockIO)
-			}
-
-			checker := uri.NewURLChecker(mockHTTP, mockIO, tt.config)
-			result := checker.Check(context.Background(), tt.url)
-
-			assert.Equal(t, tt.expectedStatus, result.Status)
-			if tt.expectedURL != nil {
-				assert.NotNil(t, result.WorkingURL)
-				assert.Equal(t, *tt.expectedURL, *result.WorkingURL)
-			} else {
-				assert.Nil(t, result.WorkingURL)
-			}
-			if tt.expectedError != nil {
-				assert.NotNil(t, result.Error)
-				assert.Contains(t, *result.Error, *tt.expectedError)
-			} else {
-				assert.Nil(t, result.Error)
-			}
-		})
-	}
-}
-
-func TestURLChecker_dnsResolutionFailed_notMarkedAsSSRFBlocked(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	u := "https://example.com/asset.bin"
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), u).
-		Return(nil, assert.AnError)
-
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), u, rangeHdr).
-		Return(nil, fmt.Errorf("resolver: %w", ssrf.ErrResolutionFailed))
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), u)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.False(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-	require.Contains(t, *result.Error, "resolver")
-}
-
-func TestURLChecker_redirectLimit_exhaustion_markedAsSSRFBlocked(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	u := "https://example.com/asset.bin"
-	// Mirrors adapter.ssrfCheckRedirect when max redirects exceeded after wrapping with ssrf.ErrBlocked.
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), u).
-		Return(nil, fmt.Errorf("%w: stopped after 3 redirects", ssrf.ErrBlocked))
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), u)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.True(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-}
-
-func TestURLChecker_SSrfBlocked_shortCircuitsOnChFS(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	hash := "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
-	testURL := "https://onchfs.fxhash2.xyz/" + hash
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), testURL).
-		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), testURL)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.True(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-}
-
-func TestURLChecker_SSrfBlocked_regularHTTPS_onHEAD_skipsGET(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	u := "https://example.com/asset.bin"
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), u).
-		Return(nil, fmt.Errorf("policy: %w", ssrf.ErrBlocked))
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), u)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.True(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-}
-
-func TestURLChecker_SSrfBlocked_regularHTTPS_onGETWithRange(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	u := "https://example.com/asset.bin"
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), u).
-		Return(nil, assert.AnError)
-
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), u, rangeHdr).
-		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), u)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.True(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-}
-
-func TestURLChecker_SSrfBlocked_regularHTTPS_onGETWithoutRange(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	u := "https://example.com/asset.bin"
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), u).
-		Return(nil, assert.AnError)
-
-	mockResp416 := &http.Response{
-		StatusCode: http.StatusRequestedRangeNotSatisfiable,
-		Body:       io.NopCloser(bytes.NewReader(nil)),
-	}
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), u, rangeHdr).
-		Return(mockResp416, nil)
-
-	mockIO.EXPECT().Discard(mockResp416.Body).Return(nil)
-
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), u, nil).
-		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), u)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.True(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-}
-
-func TestURLChecker_HEAD_retryableError_stillAttemptsGETWithRange(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	u := "https://example.com/asset.bin"
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), u).
-		Return(nil, &mockRetryableError{})
-
-	mockResp := &http.Response{
-		StatusCode: http.StatusPartialContent,
-		Body:       io.NopCloser(bytes.NewReader([]byte("x"))),
-	}
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), u, rangeHdr).
-		Return(mockResp, nil)
-
-	mockIO.EXPECT().Discard(mockResp.Body).Return(nil)
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), u)
-
-	require.Equal(t, uri.HealthStatusHealthy, result.Status)
-	require.False(t, result.SSRFBlocked)
-}
-
-func TestURLChecker_IPFS_fallback_retryableGatewayErrors_mapsToBrokenNotTransient(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	cidURL := "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), cidURL).
-		Return(nil, assert.AnError).
-		Times(1)
-
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), cidURL, rangeHdr).
-		Return(nil, assert.AnError)
-
-	retryErr := &mockRetryableError{}
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-		Return(nil, retryErr).
-		MinTimes(1)
-
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-		Return(nil, retryErr).
-		MinTimes(1)
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), cidURL)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.False(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-	require.Contains(t, *result.Error, "no working IPFS gateway found")
-}
-
-func TestURLChecker_IPFS_fallback_SSrfBlocked_onGatewayProbe(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	cidURL := "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), cidURL).
-		Return(nil, assert.AnError)
-
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), cidURL, rangeHdr).
-		Return(nil, assert.AnError)
-
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked)).
-		Times(1)
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), cidURL)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.True(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-}
-
-func TestURLChecker_ssrfBlocked_afterCheckHTTPS_skipsGatewayFallback(t *testing.T) {
-	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-	cidURL := "http://127.0.0.1/ipfs/" + cid
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-	txID := "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"
-	txURL := "http://127.0.0.1/" + txID
-	onchHash := "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
-	onchURL := "https://onchfs.fxhash2.xyz/" + onchHash
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-
-	tests := []struct {
-		name       string
-		url        string
-		setupMocks func(*mocks.MockHTTPClient, *mocks.MockIO)
-	}{
-		{
-			name: "IPFS gateway URL SSRF on GET with range does not probe public gateways",
-			url:  cidURL,
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, _ *mocks.MockIO) {
-				mockHTTP.EXPECT().
-					HeadNoRetry(gomock.Any(), cidURL).
-					Return(nil, assert.AnError)
-				mockHTTP.EXPECT().
-					GetResponseNoRetry(gomock.Any(), cidURL, rangeHdr).
-					Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
-			},
-		},
-		{
-			name: "Arweave gateway URL SSRF on GET with range does not probe public gateways",
-			url:  txURL,
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, _ *mocks.MockIO) {
-				mockHTTP.EXPECT().
-					HeadNoRetry(gomock.Any(), txURL).
-					Return(nil, assert.AnError)
-				mockHTTP.EXPECT().
-					GetResponseNoRetry(gomock.Any(), txURL, rangeHdr).
-					Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
-			},
-		},
-		{
-			name: "OnChFS URL SSRF on GET with range does not probe gateways",
-			url:  onchURL,
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient, _ *mocks.MockIO) {
-				mockHTTP.EXPECT().
-					HeadNoRetry(gomock.Any(), onchURL).
-					Return(nil, assert.AnError)
-				mockHTTP.EXPECT().
-					GetResponseNoRetry(gomock.Any(), onchURL, rangeHdr).
-					Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
-			},
+			expectedStatus: uri.HealthStatusHealthy,
+			expectedURL:    strPtr("https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"),
 		},
 	}
 
@@ -1180,187 +314,134 @@ func TestURLChecker_ssrfBlocked_afterCheckHTTPS_skipsGatewayFallback(t *testing.
 			mockIO := mocks.NewMockIO(ctrl)
 			tt.setupMocks(mockHTTP, mockIO)
 
+			cfg := tt.config
+			if cfg == nil {
+				cfg = defaultConfig()
+			}
 			checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
+			result := checker.Check(context.Background(), tt.url)
+
+			assert.Equal(t, tt.expectedStatus, result.Status)
+			assert.Equal(t, tt.expectSSRF, result.SSRFBlocked)
+			if tt.expectedURL != nil {
+				require.NotNil(t, result.WorkingURL)
+				assert.Equal(t, *tt.expectedURL, *result.WorkingURL)
+			}
+			if tt.expectedReason != "" {
+				assert.Equal(t, tt.expectedReason, result.FailureReason)
+			}
+			if tt.expectedStatus != uri.HealthStatusHealthy {
+				require.NotNil(t, result.Error)
+			}
+		})
+	}
+}
+
+// TestURLChecker_healthyResultCarriesContentTypes ensures observed/sniffed types are
+// populated on healthy verdicts too — they drive render-probe class selection downstream.
+func TestURLChecker_healthyResultCarriesContentTypes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTP := mocks.NewMockHTTPClient(ctrl)
+	mockIO := mocks.NewMockIO(ctrl)
+	passthroughIO(mockIO)
+
+	mockHTTP.EXPECT().
+		GetResponseNoRetry(gomock.Any(), "https://example.com/art.png", probeRangeHeader).
+		Return(httpResp(http.StatusOK, "Image/PNG; charset=binary", minimalPNG(64, 64), nil), nil)
+
+	checker := uri.NewURLChecker(mockHTTP, mockIO, defaultConfig())
+	result := checker.Check(context.Background(), "https://example.com/art.png")
+
+	require.Equal(t, uri.HealthStatusHealthy, result.Status)
+	assert.Equal(t, "image/png", result.ObservedContentType) // normalized
+	assert.Equal(t, "image/png", result.SniffedContentType)
+}
+
+// SSRF policy refusals are final: no gateway fallback may re-probe public gateways and
+// rewrite a blocklisted origin as healthy.
+func TestURLChecker_ssrfBlocked_skipsGatewayFallback(t *testing.T) {
+	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "IPFS gateway URL", url: "http://127.0.0.1/ipfs/" + cid},
+		{name: "Arweave gateway URL", url: "http://127.0.0.1/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"},
+		{name: "OnChFS URL", url: "https://onchfs.fxhash2.xyz/a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockHTTP := mocks.NewMockHTTPClient(ctrl)
+			mockIO := mocks.NewMockIO(ctrl)
+
+			// Exactly one direct probe; no gateway probes may follow.
+			mockHTTP.EXPECT().
+				GetResponseNoRetry(gomock.Any(), tt.url, probeRangeHeader).
+				Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked)).
+				Times(1)
+
+			checker := uri.NewURLChecker(mockHTTP, mockIO, defaultConfig())
 			result := checker.Check(context.Background(), tt.url)
 
 			require.Equal(t, uri.HealthStatusBroken, result.Status)
 			require.True(t, result.SSRFBlocked)
+			assert.Equal(t, uri.FailureSSRF, result.FailureReason)
 			require.Nil(t, result.WorkingURL)
 			require.NotNil(t, result.Error)
 		})
 	}
 }
 
-func TestURLChecker_IPFS_originalUrl_ssrfBlocked_skipsPublicGatewayFallback(t *testing.T) {
+// An SSRF block on a fallback gateway probe surfaces as SSRF-blocked (policy wins over
+// the direct result).
+func TestURLChecker_ssrfBlocked_onGatewayProbe(t *testing.T) {
+	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+	directURL := "https://gateway.pinata.cloud/ipfs/" + cid
+
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockHTTP := mocks.NewMockHTTPClient(ctrl)
 	mockIO := mocks.NewMockIO(ctrl)
-
-	// Loopback IPFS-shaped URL: policy blocks the origin; must not probe configured gateways.
-	cidURL := "http://127.0.0.1/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+	passthroughIO(mockIO)
 
 	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), cidURL).
+		GetResponseNoRetry(gomock.Any(), directURL, probeRangeHeader).
+		Return(httpResp(http.StatusNotFound, "", nil, nil), nil)
+	mockHTTP.EXPECT().
+		GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
 		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
 
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), cidURL)
+	checker := uri.NewURLChecker(mockHTTP, mockIO, defaultConfig())
+	result := checker.Check(context.Background(), directURL)
 
 	require.Equal(t, uri.HealthStatusBroken, result.Status)
 	require.True(t, result.SSRFBlocked)
-	require.Nil(t, result.WorkingURL)
-	require.NotNil(t, result.Error)
 }
 
-func TestURLChecker_Arweave_originalUrl_ssrfBlocked_skipsPublicGatewayFallback(t *testing.T) {
+// Redirect-cap exhaustion from the SSRF HTTP client wraps ssrf.ErrBlocked and must be
+// treated as a policy refusal.
+func TestURLChecker_redirectLimitExhaustion_markedAsSSRFBlocked(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockHTTP := mocks.NewMockHTTPClient(ctrl)
 	mockIO := mocks.NewMockIO(ctrl)
 
-	txID := "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"
-	txURL := "http://127.0.0.1/" + txID
-
 	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), txURL).
-		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked))
+		GetResponseNoRetry(gomock.Any(), "https://example.com/loop", probeRangeHeader).
+		Return(nil, fmt.Errorf("stopped after 5 redirects: %w", ssrf.ErrBlocked))
 
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net", "https://ar-io.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), txURL)
+	checker := uri.NewURLChecker(mockHTTP, mockIO, defaultConfig())
+	result := checker.Check(context.Background(), "https://example.com/loop")
 
 	require.Equal(t, uri.HealthStatusBroken, result.Status)
 	require.True(t, result.SSRFBlocked)
-	require.Nil(t, result.WorkingURL)
-	require.NotNil(t, result.Error)
-}
-
-func TestURLChecker_Arweave_fallback_SSrfBlocked_onGatewayProbe(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	txURL := "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), txURL).
-		Return(nil, assert.AnError)
-
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), txURL, rangeHdr).
-		Return(nil, assert.AnError)
-
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), "https://arweave.net/sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0").
-		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked)).
-		Times(1)
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), txURL)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.True(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-}
-
-func TestURLChecker_OnChFS_fallback_retryableGatewayErrors_mapsToBrokenNotTransient(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	hash := "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
-	onchURL := "https://onchfs.fxhash2.xyz/" + hash
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), onchURL).
-		Return(nil, assert.AnError).
-		Times(1)
-
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), onchURL, rangeHdr).
-		Return(nil, assert.AnError)
-
-	retryErr := &mockRetryableError{}
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), "https://onchfs.fxhash2.xyz/"+hash).
-		Return(nil, retryErr).
-		MinTimes(1)
-
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), "https://gateway.fxhash.xyz/"+hash).
-		Return(nil, retryErr).
-		MinTimes(1)
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz", "https://gateway.fxhash.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), onchURL)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.False(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
-	require.Contains(t, *result.Error, "no working OnChFS gateway found")
-}
-
-func TestURLChecker_OnChFS_fallback_SSrfBlocked_onGatewayProbe(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockHTTP := mocks.NewMockHTTPClient(ctrl)
-	mockIO := mocks.NewMockIO(ctrl)
-
-	hash := "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
-	onchURL := "https://onchfs.fxhash2.xyz/" + hash
-	rangeHdr := map[string]string{"Range": "bytes=0-1023"}
-
-	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), onchURL).
-		Return(nil, assert.AnError)
-
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), onchURL, rangeHdr).
-		Return(nil, assert.AnError)
-
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), "https://onchfs.fxhash2.xyz/"+hash).
-		Return(nil, fmt.Errorf("blocked: %w", ssrf.ErrBlocked)).
-		Times(1)
-
-	cfg := &uri.Config{
-		IPFSGateways:    []string{"https://ipfs.io"},
-		ArweaveGateways: []string{"https://arweave.net"},
-		OnChFSGateways:  []string{"https://onchfs.fxhash2.xyz"},
-	}
-	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
-	result := checker.Check(context.Background(), onchURL)
-
-	require.Equal(t, uri.HealthStatusBroken, result.Status)
-	require.True(t, result.SSRFBlocked)
-	require.NotNil(t, result.Error)
 }

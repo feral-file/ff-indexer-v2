@@ -668,6 +668,10 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 			workingURL   *string // non-nil when an alternative gateway resolved successfully
 			healthStatus schema.MediaHealthStatus
 			lastError    *string
+			// L0 content-validation observations, persisted with every verdict
+			failureReason       *string
+			observedContentType *string
+			sniffedContentType  *string
 		}
 
 		resultsChan := make(chan urlResult, len(mediaURLs))
@@ -679,43 +683,42 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 			go func(u string) {
 				defer wg.Done()
 
-				var status schema.MediaHealthStatus
-				var workingURL *string
-				var errMsg *string
+				res := urlResult{url: u}
 
 				if types.IsDataURI(u) {
 					result := e.dataURIChecker.Check(u)
 					if result.Valid {
-						status = schema.MediaHealthStatusHealthy
+						res.healthStatus = schema.MediaHealthStatusHealthy
 					} else {
-						status = schema.MediaHealthStatusBroken
-						errMsg = result.Error
+						res.healthStatus = schema.MediaHealthStatusBroken
+						res.lastError = result.Error
+						res.failureReason = result.ReasonPtr()
 					}
+					res.observedContentType = result.DeclaredMimeTypePtr()
+					res.sniffedContentType = result.MimeTypePtr()
 				} else {
 					result := e.urlChecker.Check(ctx, u)
 					switch result.Status {
 					case uri.HealthStatusHealthy:
-						status = schema.MediaHealthStatusHealthy
+						res.healthStatus = schema.MediaHealthStatusHealthy
 						// Capture the working URL if the checker resolved an alternative gateway.
 						// This happens when the original IPFS/Arweave/OnChFS gateway URL is dead
 						// but the CID is still reachable via another configured gateway.
 						if result.WorkingURL != nil && *result.WorkingURL != u {
-							workingURL = result.WorkingURL
+							res.workingURL = result.WorkingURL
 						}
 					case uri.HealthStatusBroken:
-						status = schema.MediaHealthStatusBroken
+						res.healthStatus = schema.MediaHealthStatusBroken
 					default:
-						status = schema.MediaHealthStatusUnknown
+						res.healthStatus = schema.MediaHealthStatusUnknown
 					}
-					errMsg = result.Error
+					res.lastError = result.Error
+					res.failureReason = result.FailureReasonPtr()
+					res.observedContentType = result.ObservedContentTypePtr()
+					res.sniffedContentType = result.SniffedContentTypePtr()
 				}
 
-				resultsChan <- urlResult{
-					url:          u,
-					workingURL:   workingURL,
-					healthStatus: status,
-					lastError:    errMsg,
-				}
+				resultsChan <- res
 			}(url)
 		}
 
@@ -749,7 +752,12 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						// BatchUpdateTokensViewability with false data, making viewable=true while
 						// the read path still serves the dead gateway URL — reproducing bug #96.
 						// The sweeper will retry UpdateMediaURLAndPropagate and fix the state.
-						if err2 := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusBroken, nil); err2 != nil {
+						if err2 := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, store.MediaHealthUpdate{
+							Status:              schema.MediaHealthStatusBroken,
+							FailureReason:       result.failureReason,
+							ObservedContentType: result.observedContentType,
+							SniffedContentType:  result.sniffedContentType,
+						}); err2 != nil {
 							logger.ErrorCtx(ctx, err2, zap.String("url", result.url))
 						}
 					} else {
@@ -759,14 +767,24 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 					}
 				} else {
 					// Original URL is directly reachable
-					if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusHealthy, nil); err != nil {
+					if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, store.MediaHealthUpdate{
+						Status:              schema.MediaHealthStatusHealthy,
+						ObservedContentType: result.observedContentType,
+						SniffedContentType:  result.sniffedContentType,
+					}); err != nil {
 						logger.ErrorCtx(ctx, err, zap.String("url", result.url))
 					}
 					healthyURLs = append(healthyURLs, result.url)
 				}
 			} else {
 				// Update media health in database for broken/unknown URLs
-				if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, result.healthStatus, result.lastError); err != nil {
+				if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, store.MediaHealthUpdate{
+					Status:              result.healthStatus,
+					LastError:           result.lastError,
+					FailureReason:       result.failureReason,
+					ObservedContentType: result.observedContentType,
+					SniffedContentType:  result.sniffedContentType,
+				}); err != nil {
 					logger.ErrorCtx(ctx, err, zap.String("url", result.url))
 				}
 			}

@@ -118,16 +118,14 @@ func registerWorkerCore(
 	}
 
 	// Metadata pipeline and workflow executor.
-	uriResolver := uri.NewResolver(httpClient, &uri.Config{
-		IPFSGateways:    cfg.URI.IPFSGateways,
-		ArweaveGateways: cfg.URI.ArweaveGateways,
-		OnChFSGateways:  cfg.URI.OnchfsGateways,
-	})
 	uriConfig := &uri.Config{
-		IPFSGateways:    cfg.URI.IPFSGateways,
-		ArweaveGateways: cfg.URI.ArweaveGateways,
-		OnChFSGateways:  cfg.URI.OnchfsGateways,
+		IPFSGateways:        cfg.URI.IPFSGateways,
+		ArweaveGateways:     cfg.URI.ArweaveGateways,
+		OnChFSGateways:      cfg.URI.OnchfsGateways,
+		ProbeMaxBytes:       cfg.URI.ProbeMaxBytes,
+		KnownBadPageMarkers: cfg.URI.KnownBadPageMarkers,
 	}
+	uriResolver := uri.NewResolver(httpClient, ioAdapter, uriConfig)
 	urlChecker := uri.NewURLChecker(httpClient, ioAdapter, uriConfig)
 	dataURIChecker := uri.NewDataURIChecker()
 

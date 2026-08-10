@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"go.uber.org/zap"
@@ -19,9 +21,9 @@ import (
 type HealthStatus string
 
 const (
-	// HealthStatusHealthy indicates the URL is accessible
+	// HealthStatusHealthy indicates the URL is accessible and its content validates
 	HealthStatusHealthy HealthStatus = "healthy"
-	// HealthStatusBroken indicates the URL is not accessible
+	// HealthStatusBroken indicates the URL is not accessible or serves invalid content
 	HealthStatusBroken HealthStatus = "broken"
 	// HealthStatusTransientError indicates a temporary error that should be retried
 	HealthStatusTransientError HealthStatus = "transient_error"
@@ -33,6 +35,46 @@ type HealthCheckResult struct {
 	WorkingURL  *string // Alternative working URL if found (for IPFS/Arweave/OnChFS)
 	Error       *string // Error message if broken
 	SSRFBlocked bool    // True when ssrf.ErrBlocked refused the fetch (policy); false for DNS (ErrResolutionFailed) or transport errors
+
+	// FailureReason is the machine-readable broken cause ("" when healthy/transient or
+	// when the failure is an unclassified transport error).
+	FailureReason FailureReason
+	// ObservedContentType is the normalized Content-Type header from the probe ("" when
+	// the fetch never returned headers).
+	ObservedContentType string
+	// SniffedContentType is the magic-byte-detected type of the body prefix ("" when no
+	// body was read).
+	SniffedContentType string
+}
+
+// FailureReasonPtr returns the failure reason as a nullable string for persistence
+// (nil when no classified reason).
+func (r HealthCheckResult) FailureReasonPtr() *string {
+	if r.FailureReason == "" {
+		return nil
+	}
+	s := r.FailureReason.String()
+	return &s
+}
+
+// ObservedContentTypePtr returns the observed Content-Type as a nullable string for
+// persistence (nil when the probe never saw headers).
+func (r HealthCheckResult) ObservedContentTypePtr() *string {
+	if r.ObservedContentType == "" {
+		return nil
+	}
+	s := r.ObservedContentType
+	return &s
+}
+
+// SniffedContentTypePtr returns the sniffed content type as a nullable string for
+// persistence (nil when no body was read).
+func (r HealthCheckResult) SniffedContentTypePtr() *string {
+	if r.SniffedContentType == "" {
+		return nil
+	}
+	s := r.SniffedContentType
+	return &s
 }
 
 // URLChecker defines the interface for checking URL health
@@ -44,19 +86,146 @@ type URLChecker interface {
 	Check(ctx context.Context, url string) HealthCheckResult
 }
 
+// contentProbe performs a single validated ranged GET against a URL.
+//
+// Reason: the previous flow (HEAD first, then a 1KB ranged GET whose body was discarded)
+// declared any 2xx healthy without reading a byte — the mechanism behind directory-listing
+// and error-page-with-200 false positives (feral-file#3482, #76, #96). One ranged GET
+// returns status, headers, and the first bytes in a single round trip, which is fewer
+// requests than the old HEAD-then-GET pair. Shared by URLChecker and Resolver so direct
+// checks and gateway-fallback probes apply identical validation.
+type contentProbe struct {
+	httpClient adapter.HTTPClient
+	io         adapter.IO
+	validator  ContentValidator
+	maxBytes   int
+}
+
+// probeResult pairs the health verdict with the raw fetch error (when the failure happened
+// at the transport layer) so gateway aggregation can preserve ssrf.ErrBlocked /
+// ssrf.ErrResolutionFailed sentinel classes that the string-typed HealthCheckResult loses.
+type probeResult struct {
+	hcr      HealthCheckResult
+	fetchErr error // non-nil only for transport-level failures
+}
+
+// probe fetches up to maxBytes of the URL and validates the content.
+func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) probeResult {
+	var headers map[string]string
+	if withRange {
+		headers = map[string]string{"Range": fmt.Sprintf("bytes=0-%d", p.maxBytes-1)}
+	}
+
+	resp, err := p.httpClient.GetResponseNoRetry(ctx, url, headers)
+	if err != nil {
+		return probeResult{hcr: mapOutboundFetchErr(err, true), fetchErr: err}
+	}
+	// Close without draining: the body may be arbitrarily large when a server ignores the
+	// Range header, and fully discarding it would download the whole file per check.
+	// Sacrificing connection reuse is the cheaper trade for a fleet-wide sweeper.
+	defer func() {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	switch {
+	case resp.StatusCode == http.StatusPartialContent || resp.StatusCode == http.StatusOK:
+		body, readErr := p.io.ReadAll(io.LimitReader(resp.Body, int64(p.maxBytes)))
+		if readErr != nil {
+			// The connection died mid-body: a transport condition, retried next sweep.
+			errMsg := readErr.Error()
+			return probeResult{hcr: HealthCheckResult{
+				Status: HealthStatusTransientError,
+				Error:  &errMsg,
+			}}
+		}
+
+		verdict := p.validator.Validate(resp.Header.Get("Content-Type"), body, totalLength(resp))
+		result := HealthCheckResult{
+			Status:              HealthStatusHealthy,
+			ObservedContentType: verdict.Declared,
+			SniffedContentType:  verdict.Sniffed,
+		}
+		if !verdict.OK {
+			result.Status = HealthStatusBroken
+			result.FailureReason = verdict.FailureReason
+			result.Error = &verdict.Detail
+		}
+		return probeResult{hcr: result}
+
+	case resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && withRange:
+		// Server rejects Range outright: retry once without it.
+		logger.InfoCtx(ctx, "Range not satisfiable, retrying without range", zap.String("url", url))
+		return p.probe(ctx, url, false)
+
+	case resp.StatusCode == http.StatusTooManyRequests:
+		errMsg := "rate limited (429)"
+		return probeResult{hcr: HealthCheckResult{
+			Status: HealthStatusTransientError,
+			Error:  &errMsg,
+		}}
+
+	default:
+		errMsg := fmt.Sprintf("HTTP %d", resp.StatusCode)
+		return probeResult{hcr: HealthCheckResult{
+			Status:        HealthStatusBroken,
+			Error:         &errMsg,
+			FailureReason: FailureHTTPStatus,
+		}}
+	}
+}
+
+// gatewayProbe adapts probe for gateway candidate selection: nil means the candidate URL
+// serves validated content. Transport errors keep their sentinel classes for
+// noteGatewayProbeFailure precedence.
+func (p *contentProbe) gatewayProbe(ctx context.Context, url string) error {
+	result := p.probe(ctx, url, true)
+	if result.fetchErr != nil {
+		return result.fetchErr
+	}
+	if result.hcr.Status != HealthStatusHealthy {
+		if result.hcr.Error != nil {
+			return errors.New(*result.hcr.Error)
+		}
+		return fmt.Errorf("gateway probe failed with status %s", result.hcr.Status)
+	}
+	return nil
+}
+
+// totalLength extracts the full resource length: the Content-Range total for 206
+// responses, Content-Length otherwise, -1 when unknown.
+func totalLength(resp *http.Response) int64 {
+	if resp.StatusCode == http.StatusPartialContent {
+		// Content-Range: bytes 0-32767/12345678 (total may be "*" when unknown)
+		cr := resp.Header.Get("Content-Range")
+		if idx := strings.LastIndex(cr, "/"); idx >= 0 {
+			if total, err := strconv.ParseInt(cr[idx+1:], 10, 64); err == nil {
+				return total
+			}
+		}
+		return -1
+	}
+	return resp.ContentLength
+}
+
 type urlChecker struct {
-	httpClient      adapter.HTTPClient
-	io              adapter.IO
+	probe           *contentProbe
 	ipfsGateways    []string
 	arweaveGateways []string
 	onchfsGateways  []string
 }
 
-// NewURLChecker creates a new health checker
+// NewURLChecker creates a new health checker. The content validator is built from the
+// config's probe settings (probe window size and known-bad page markers).
 func NewURLChecker(httpClient adapter.HTTPClient, io adapter.IO, config *Config) URLChecker {
 	return &urlChecker{
-		httpClient:      httpClient,
-		io:              io,
+		probe: &contentProbe{
+			httpClient: httpClient,
+			io:         io,
+			validator:  NewContentValidator(config.probeMaxBytes(), config.KnownBadPageMarkers),
+			maxBytes:   config.probeMaxBytes(),
+		},
 		ipfsGateways:    config.IPFSGateways,
 		arweaveGateways: config.ArweaveGateways,
 		onchfsGateways:  config.OnChFSGateways,
@@ -84,8 +253,8 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		}
 	}
 
-	// 1. Always try the HTTP URL first
-	result := c.checkHTTPS(ctx, url)
+	// 1. Always try the URL directly first (validated ranged GET)
+	result := c.probe.probe(ctx, url, true).hcr
 
 	// 2. SSRF policy refusal is final: do not run IPFS/Arweave/OnChFS fallbacks that could
 	// re-probe public gateways and rewrite a blocklisted origin as "healthy".
@@ -98,67 +267,52 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 		return result
 	}
 
-	// 4. If broken or transient error, try fallback resolution for known gateway types
+	// 4. If broken or transient error, try fallback resolution for known gateway types.
+	// The fallback probes validate content too, so a directory CID does not get
+	// "rescued" by another gateway serving the same listing.
 
 	// Check if it's an IPFS gateway URL - resolve with CID
 	if isIPFS, cid := types.IsIPFSGatewayURL(url); isIPFS {
-		logger.InfoCtx(ctx, "HTTP check failed, trying IPFS gateway resolution", zap.String("url", url), zap.String("cid", cid))
-		return c.checkIPFSGateway(ctx, cid)
+		logger.InfoCtx(ctx, "Direct check failed, trying IPFS gateway resolution", zap.String("url", url), zap.String("cid", cid))
+		return c.checkGatewayFallback(ctx, result, func(ctx context.Context) (string, error) {
+			return FindWorkingIPFSGateway(ctx, c.probe.gatewayProbe, cid, c.ipfsGateways)
+		})
 	}
 
 	// Check if it's an Arweave gateway URL - resolve with tx ID
 	if isArweave, txID := types.IsArweaveGatewayURL(url); isArweave {
-		logger.InfoCtx(ctx, "HTTP check failed, trying Arweave gateway resolution", zap.String("url", url), zap.String("txID", txID))
-		return c.checkArweaveGateway(ctx, txID)
+		logger.InfoCtx(ctx, "Direct check failed, trying Arweave gateway resolution", zap.String("url", url), zap.String("txID", txID))
+		return c.checkGatewayFallback(ctx, result, func(ctx context.Context) (string, error) {
+			return FindWorkingArweaveGateway(ctx, c.probe.gatewayProbe, txID, c.arweaveGateways)
+		})
 	}
 
 	// Check if it's an OnChFS URL - resolve the same resource across configured gateways.
-	// The reference keeps the fxhash query parameters so alternative gateways are asked for the
-	// artwork iteration a player loads, not just the bare content hash (issue #76).
+	// The reference keeps the fxhash query parameters so alternative gateways are asked for
+	// the artwork iteration a player loads, not just the bare content hash (issue #76).
 	if isOnChFS, hash := types.IsOnChFSGatewayURL(url); isOnChFS {
 		ref := OnChFSGatewayRef(url, hash)
-		logger.InfoCtx(ctx, "HTTP check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("ref", ref))
-		return c.checkOnChFSGateway(ctx, ref)
+		logger.InfoCtx(ctx, "Direct check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("ref", ref))
+		return c.checkGatewayFallback(ctx, result, func(ctx context.Context) (string, error) {
+			return FindWorkingOnChFSGateway(ctx, c.probe.gatewayProbe, ref, c.onchfsGateways)
+		})
 	}
 
 	// 5. For other HTTP URLs, return the original result
 	return result
 }
 
-// checkIPFSGateway resolves IPFS CID across multiple gateways and returns the first working one
-func (c *urlChecker) checkIPFSGateway(ctx context.Context, cid string) HealthCheckResult {
-	workingURL, err := FindWorkingIPFSGateway(ctx, c.httpClient, cid, c.ipfsGateways)
+// checkGatewayFallback runs a gateway resolution and maps its outcome to a health result.
+// When every gateway fails, the direct probe's result is returned (not the aggregate
+// resolution error): the direct result carries the more specific failure_reason and
+// content-type observations for the canonical URL.
+func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthCheckResult, find func(ctx context.Context) (string, error)) HealthCheckResult {
+	workingURL, err := find(ctx)
 	if err != nil {
-		return mapOutboundFetchErr(err, false)
-	}
-
-	return HealthCheckResult{
-		Status:     HealthStatusHealthy,
-		WorkingURL: &workingURL,
-	}
-}
-
-// checkArweaveGateway resolves Arweave tx ID across multiple gateways and returns the first working one
-func (c *urlChecker) checkArweaveGateway(ctx context.Context, txID string) HealthCheckResult {
-	workingURL, err := FindWorkingArweaveGateway(ctx, c.httpClient, txID, c.arweaveGateways)
-	if err != nil {
-		return mapOutboundFetchErr(err, false)
-	}
-
-	return HealthCheckResult{
-		Status:     HealthStatusHealthy,
-		WorkingURL: &workingURL,
-	}
-}
-
-// checkOnChFSGateway resolves an OnChFS resource reference across configured gateways and
-// returns the first working URL. The ref carries the content hash plus any query parameters
-// identifying the artwork iteration, so a gateway that only serves the bare hash cannot mark
-// unplayable media healthy.
-func (c *urlChecker) checkOnChFSGateway(ctx context.Context, ref string) HealthCheckResult {
-	workingURL, err := FindWorkingOnChFSGateway(ctx, c.httpClient, ref, c.onchfsGateways)
-	if err != nil {
-		return mapOutboundFetchErr(err, false)
+		if hr, ok := healthResultFromSSRF(err); ok {
+			return hr
+		}
+		return direct
 	}
 
 	return HealthCheckResult{
@@ -172,9 +326,10 @@ func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 	if errors.Is(err, ssrf.ErrBlocked) {
 		msg := err.Error()
 		return HealthCheckResult{
-			Status:      HealthStatusBroken,
-			Error:       &msg,
-			SSRFBlocked: true,
+			Status:        HealthStatusBroken,
+			Error:         &msg,
+			SSRFBlocked:   true,
+			FailureReason: FailureSSRF,
 		}, true
 	}
 	return HealthCheckResult{}, false
@@ -182,11 +337,13 @@ func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 
 // mapOutboundFetchErr maps HTTP client fetch errors to HealthCheckResult.
 //
-// SSRF policy failures (ErrBlocked, including redirect-cap exhaustion from the SSRF HTTP client) yield broken + SSRFBlocked. DNS resolution failures
-// (ErrResolutionFailed) yield broken without SSRFBlocked so bad or unresolvable hosts are not
-// retried every sweep tick (scheduled sweeps can still pick the row up later).
-// When classifyTransient is true, retryable transport errors map to transient_error; when false,
-// they stay broken (used for IPFS/Arweave/OnChFS gateway aggregation).
+// SSRF policy failures (ErrBlocked, including redirect-cap exhaustion from the SSRF HTTP
+// client) yield broken + SSRFBlocked. DNS resolution failures (ErrResolutionFailed) yield
+// broken without SSRFBlocked so bad or unresolvable hosts are not retried every sweep tick
+// (scheduled sweeps can still pick the row up later). When classifyTransient is true,
+// retryable transport errors map to transient_error; when false, they stay broken (used
+// for IPFS/Arweave/OnChFS gateway aggregation). Unclassified transport errors keep an
+// empty FailureReason — the taxonomy only records causes it can actually distinguish.
 func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	if hr, ok := healthResultFromSSRF(err); ok {
 		return hr
@@ -194,8 +351,9 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	if errors.Is(err, ssrf.ErrResolutionFailed) {
 		msg := err.Error()
 		return HealthCheckResult{
-			Status: HealthStatusBroken,
-			Error:  &msg,
+			Status:        HealthStatusBroken,
+			Error:         &msg,
+			FailureReason: FailureDNS,
 		}
 	}
 	if classifyTransient && adapter.IsHTTPRetryableError(err) {
@@ -209,116 +367,5 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	return HealthCheckResult{
 		Status: HealthStatusBroken,
 		Error:  &msg,
-	}
-}
-
-// checkHTTPS checks regular HTTPS URLs
-func (c *urlChecker) checkHTTPS(ctx context.Context, url string) HealthCheckResult {
-	// 1. Try HEAD request first
-	resp, err := c.httpClient.HeadNoRetry(ctx, url)
-	if err != nil {
-		if hr, ok := healthResultFromSSRF(err); ok {
-			return hr
-		}
-	} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return HealthCheckResult{
-			Status: HealthStatusHealthy,
-		}
-	}
-
-	// Close the failed HEAD response
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-
-	logger.InfoCtx(ctx, "HEAD request failed, trying GET with Range", zap.String("url", url), zap.Error(err))
-
-	// 2. Try GET with Range header
-	return c.checkWithRange(ctx, url)
-}
-
-// checkWithRange performs a GET request with Range header to minimize data transfer
-func (c *urlChecker) checkWithRange(ctx context.Context, url string) HealthCheckResult {
-	headers := map[string]string{
-		"Range": "bytes=0-1023", // Request only first 1KB
-	}
-
-	resp, err := c.httpClient.GetResponseNoRetry(ctx, url, headers)
-	if err != nil {
-		return mapOutboundFetchErr(err, true)
-	}
-	defer func() {
-		if resp.Body != nil {
-			// Discard and close body without reading
-			_ = c.io.Discard(resp.Body)
-			_ = resp.Body.Close()
-		}
-	}()
-
-	switch resp.StatusCode {
-	case http.StatusPartialContent: // 206 - Range request accepted
-		return HealthCheckResult{
-			Status: HealthStatusHealthy,
-		}
-
-	case http.StatusOK: // 200 - Server doesn't support range, but file exists
-		return HealthCheckResult{
-			Status: HealthStatusHealthy,
-		}
-
-	case http.StatusRequestedRangeNotSatisfiable: // 416 - Range not satisfiable
-		// Try without range
-		logger.InfoCtx(ctx, "Range not satisfiable, trying HEAD without range", zap.String("url", url))
-		return c.checkWithoutRange(ctx, url)
-
-	case http.StatusTooManyRequests: // 429 - Rate limited
-		errMsg := "rate limited (429)"
-		return HealthCheckResult{
-			Status: HealthStatusTransientError,
-			Error:  &errMsg,
-		}
-
-	default:
-		// Try one more time without range for other status codes
-		logger.InfoCtx(ctx, "GET with Range failed, trying without range", zap.String("url", url), zap.Int("status", resp.StatusCode))
-		return c.checkWithoutRange(ctx, url)
-	}
-}
-
-// checkWithoutRange performs a GET request without Range header as final fallback
-func (c *urlChecker) checkWithoutRange(ctx context.Context, url string) HealthCheckResult {
-	resp, err := c.httpClient.GetResponseNoRetry(ctx, url, nil)
-	if err != nil {
-		return mapOutboundFetchErr(err, true)
-	}
-	defer func() {
-		if resp.Body != nil {
-			// Discard and close body without reading
-			_ = c.io.Discard(resp.Body)
-			_ = resp.Body.Close()
-		}
-	}()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return HealthCheckResult{
-			Status: HealthStatusHealthy,
-		}
-	}
-
-	if resp.StatusCode == http.StatusTooManyRequests { // 429 - Rate limited
-		errMsg := "rate limited (429)"
-		return HealthCheckResult{
-			Status: HealthStatusTransientError,
-			Error:  &errMsg,
-		}
-	}
-
-	errMsg := fmt.Sprintf("HTTP %d", resp.StatusCode)
-	return HealthCheckResult{
-		Status: HealthStatusBroken,
-		Error:  &errMsg,
 	}
 }

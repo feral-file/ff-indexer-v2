@@ -157,9 +157,11 @@ func run() int {
 	ioAdapter := adapter.NewIO()
 	clock := adapter.NewClock()
 	uriResolverConfig := &uri.Config{
-		IPFSGateways:    sweeperCfg.MediaHealthSweeper.URI.IPFSGateways,
-		ArweaveGateways: sweeperCfg.MediaHealthSweeper.URI.ArweaveGateways,
-		OnChFSGateways:  sweeperCfg.MediaHealthSweeper.URI.OnchfsGateways,
+		IPFSGateways:        sweeperCfg.MediaHealthSweeper.URI.IPFSGateways,
+		ArweaveGateways:     sweeperCfg.MediaHealthSweeper.URI.ArweaveGateways,
+		OnChFSGateways:      sweeperCfg.MediaHealthSweeper.URI.OnchfsGateways,
+		ProbeMaxBytes:       sweeperCfg.MediaHealthSweeper.URI.ProbeMaxBytes,
+		KnownBadPageMarkers: sweeperCfg.MediaHealthSweeper.URI.KnownBadPageMarkers,
 	}
 	urlHealthChecker := uri.NewURLChecker(httpClient, ioAdapter, uriResolverConfig)
 	dataURIChecker := uri.NewDataURIChecker()

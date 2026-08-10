@@ -272,7 +272,11 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 		case true:
 			logger.InfoCtx(ctx, "Data URI is valid", zap.String("url", url))
 			healthyCount.Add(1)
-			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusHealthy, nil); err != nil {
+			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, store.MediaHealthUpdate{
+				Status:              schema.MediaHealthStatusHealthy,
+				ObservedContentType: result.DeclaredMimeTypePtr(),
+				SniffedContentType:  result.MimeTypePtr(),
+			}); err != nil {
 				logger.ErrorCtx(ctx, err, zap.String("url", url))
 			}
 		case false:
@@ -281,7 +285,13 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 				zap.Stringp("error", result.Error),
 			)
 			brokenCount.Add(1)
-			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusBroken, result.Error); err != nil {
+			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, store.MediaHealthUpdate{
+				Status:              schema.MediaHealthStatusBroken,
+				LastError:           result.Error,
+				FailureReason:       result.ReasonPtr(),
+				ObservedContentType: result.DeclaredMimeTypePtr(),
+				SniffedContentType:  result.MimeTypePtr(),
+			}); err != nil {
 				logger.ErrorCtx(ctx, err, zap.String("url", url))
 			}
 		}
@@ -310,7 +320,11 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 				}
 			} else {
 				// Original URL works
-				if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusHealthy, nil); err != nil {
+				if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, store.MediaHealthUpdate{
+					Status:              schema.MediaHealthStatusHealthy,
+					ObservedContentType: result.ObservedContentTypePtr(),
+					SniffedContentType:  result.SniffedContentTypePtr(),
+				}); err != nil {
 					logger.ErrorCtx(ctx, err,
 						zap.String("url", url),
 					)
@@ -325,7 +339,13 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 				zap.Bool("ssrf_blocked", result.SSRFBlocked),
 			)
 
-			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, schema.MediaHealthStatusBroken, result.Error); err != nil {
+			if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, store.MediaHealthUpdate{
+				Status:              schema.MediaHealthStatusBroken,
+				LastError:           result.Error,
+				FailureReason:       result.FailureReasonPtr(),
+				ObservedContentType: result.ObservedContentTypePtr(),
+				SniffedContentType:  result.SniffedContentTypePtr(),
+			}); err != nil {
 				logger.ErrorCtx(ctx, err,
 					zap.String("url", url),
 				)

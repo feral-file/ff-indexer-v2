@@ -27,6 +27,13 @@ type URIConfig struct {
 	IPFSGateways    []string `mapstructure:"ipfs_gateways"`
 	ArweaveGateways []string `mapstructure:"arweave_gateways"`
 	OnchfsGateways  []string `mapstructure:"onchfs_gateways"`
+	// ProbeMaxBytes caps how many body bytes a health probe reads for content validation
+	// (0 = uri.DefaultProbeMaxBytes)
+	ProbeMaxBytes int `mapstructure:"probe_max_bytes"`
+	// KnownBadPageMarkers are case-insensitive substrings identifying gateway error pages
+	// served with HTTP 200 (matched against HTML bodies only; operator-editable so a new
+	// gateway quirk needs no deploy)
+	KnownBadPageMarkers []string `mapstructure:"known_bad_page_markers"`
 }
 
 // DatabaseConfig holds database configuration
@@ -552,6 +559,8 @@ func applyAppConfigDefaults(v *viper.Viper) {
 
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
+	v.SetDefault("uri.probe_max_bytes", 32*1024)
+	v.SetDefault("uri.known_bad_page_markers", []string{})
 	v.SetDefault("rasterizer.width", 2048)
 	v.SetDefault("rasterizer.timeout_ms", 15000)
 	v.SetDefault("rasterizer.browser_fallback_enabled", false)
@@ -713,6 +722,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"uri.ipfs_gateways",
 		"uri.arweave_gateways",
 		"uri.onchfs_gateways",
+		"uri.probe_max_bytes",
+		"uri.known_bad_page_markers",
 		// Cloudflare
 		"cloudflare.account_id",
 		"cloudflare.api_token",
@@ -742,6 +753,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
 		"media_health_sweeper.uri.onchfs_gateways",
+		"media_health_sweeper.uri.probe_max_bytes",
+		"media_health_sweeper.uri.known_bad_page_markers",
 		"security.ssrf_protection.enabled",
 		"security.ssrf_protection.max_redirects",
 		"security.ssrf_protection.block_multicast",

@@ -4461,7 +4461,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleHealthyURL(t *te
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4515,7 +4515,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleBrokenURL(t *tes
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusBroken, &errorMsg).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4570,7 +4570,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_AlreadyViewableNoChang
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4634,11 +4634,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_MultipleURLs(t *testin
 
 	// Mock database updates for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, animationURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, animationURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4690,7 +4690,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Healthy(t *tes
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, dataURI, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4744,7 +4744,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Invalid(t *tes
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusBroken, &errorMsg).
+		UpdateTokenMediaHealthByURL(ctx, dataURI, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4808,11 +4808,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_MixedURLsAndDataURI(t 
 
 	// Mock database updates
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, dataURI, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4865,7 +4865,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testi
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusUnknown, &errorMsg).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusUnknown, LastError: &errorMsg}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -5061,7 +5061,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_BatchUpdateViewabilityError(t 
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -5105,7 +5105,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_UpdateMediaHealthError_NonFata
 
 	// Mock database update for media health - fails but should be non-fatal
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(dbError)
 
 	// Mock token retrieval - should still proceed
@@ -5159,7 +5159,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_GetViewabilityError(t *testing
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -5207,7 +5207,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_ViewabilityInfoNotFound(t *tes
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -5316,7 +5316,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_Fall
 
 	// Fallback: mark original URL BROKEN (not healthy) — it failed the direct probe
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, originalURL, schema.MediaHealthStatusBroken, nil).
+		UpdateTokenMediaHealthByURL(ctx, originalURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken}).
 		Return(nil)
 
 	token := &schema.Token{ID: 2, TokenCID: tokenCID}
@@ -5362,7 +5362,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURLSameAsOriginal_NoPro
 
 	// No UpdateMediaURLAndPropagate call expected – only the normal health update
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	token := &schema.Token{ID: 3, TokenCID: tokenCID}

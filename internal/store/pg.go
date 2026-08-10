@@ -2852,24 +2852,35 @@ func (s *pgStore) GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []
 	return result, nil
 }
 
-// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
-func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error {
+// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL.
+//
+// Matching is by media_url_hash only (no token_id / media_source filter) because health is
+// a property of the URL: one probe outcome applies to every token and source sharing it.
+// All nullable fields are written unconditionally (nil → NULL) so a healthy verdict clears
+// the error/failure fields left by a previous broken one.
+func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, update MediaHealthUpdate) error {
 	urlHash := types.MD5Hash(url)
 	updates := map[string]interface{}{
-		"health_status":   status,
-		"last_checked_at": time.Now(),
-	}
-
-	if lastError != nil {
-		updates["last_error"] = *lastError
-	} else {
-		updates["last_error"] = nil
+		"health_status":         update.Status,
+		"last_checked_at":       time.Now(),
+		"last_error":            nullableString(update.LastError),
+		"failure_reason":        nullableString(update.FailureReason),
+		"observed_content_type": nullableString(update.ObservedContentType),
+		"sniffed_content_type":  nullableString(update.SniffedContentType),
 	}
 
 	return s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Where("media_url_hash = ?", urlHash).
 		Updates(updates).Error
+}
+
+// nullableString maps a *string to a value GORM writes as the string or SQL NULL.
+func nullableString(s *string) interface{} {
+	if s != nil {
+		return *s
+	}
+	return nil
 }
 
 // UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction

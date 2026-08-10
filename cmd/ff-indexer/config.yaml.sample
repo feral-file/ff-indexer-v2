@@ -130,6 +130,13 @@ uri:
     - https://arweave.net
   onchfs_gateways:
     - https://onchfs.fxhash2.xyz
+  # Health probes read the first probe_max_bytes of each URL and validate the content
+  # (declared vs sniffed type, container headers, directory-listing/error-page markers).
+  probe_max_bytes: 32768
+  # Case-insensitive substrings identifying gateway error pages served with HTTP 200.
+  # Matched against HTML bodies only — never against declared-HTML artworks' own markup
+  # unless these markers appear in them, so keep markers specific (e.g. exact error titles).
+  known_bad_page_markers: []
 
 rate_limiter:
   max_workers: 10
@@ -170,6 +177,8 @@ media_health_sweeper:
       - https://arweave.net
     onchfs_gateways:
       - https://onchfs.fxhash2.xyz
+    probe_max_bytes: 32768
+    known_bad_page_markers: []
 
 # Outbound SSRF protection for media URL fetches (health sweeper + media worker when CGO enabled).
 # When enabled, loopback, RFC-private/link-local space, cloud metadata endpoints, and unsafe redirects are blocked.
