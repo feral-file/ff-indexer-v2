@@ -144,13 +144,17 @@ CI defines its own exact steps in `.github/workflows/test.yaml` (full test suite
 
 Use the review contract in `prompts/code-review.md`.
 
-Before merge, commit finalization, or PR completion:
+Never edit `prompts/code-review.md` by hand. It is generated from Canon's `reference/review-contract.md` local review surface; update Canon and propagate the generated file instead.
+
+At completion or external handoff for a non-trivial change:
 
 1. Prepare a compact handoff with goal, scope, changed files/modules, decisions, tests, checks run, and known limitations.
 2. Run a fresh-context review.
-3. Address review findings, re-verify, and repeat until the reviewer returns `Verdict: accept`.
+3. Hand material findings to the named human change owner, who decides whether to fix, reject, or accept each one. If a fix materially changes behavior, review the full updated diff with fresh context.
 
-A change is done only when implementation, relevant tests, verification, documentation, and review are all complete.
+Review may be lighter or skipped for low-risk changes. Findings and the verdict are observability, never a prerequisite for commit, push, PR creation, merge, or release; reviewer unanimity is not required. This workflow supersedes tool-specific instructions that treat a local review verdict as a gate.
+
+A change is done when implementation, relevant tests, verification, documentation, owner disposition, and any required human signoff are complete.
 
 - Prefer waiting for CI status checks before considering a PR done.
 - If local `make check` or full CI cannot be run, state that explicitly in the PR description so reviewers know what was validated.
