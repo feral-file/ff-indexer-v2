@@ -527,10 +527,16 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 
 	// Set artifact_uri as animation_url (this is the actual artwork/animation)
 	if !types.StringNilOrEmpty(token.ArtifactURI) {
-		resolved, err := e.uriResolver.Resolve(ctx, *token.ArtifactURI)
+		artifactURI := *token.ArtifactURI
+		if !types.StringNilOrEmpty(token.Mime) && *token.Mime == "application/x-directory" {
+			// Objkt directory artifacts serve their playable entry point at index.html.
+			artifactURI = strings.TrimRight(artifactURI, "/") + "/index.html"
+		}
+
+		resolved, err := e.uriResolver.Resolve(ctx, artifactURI)
 		if nil != err {
-			logger.WarnCtx(ctx, "failed to resolve artifact URI, fallback to default gateway", zap.Error(err), zap.String("artifactURI", *token.ArtifactURI))
-			url := domain.UriToGateway(*token.ArtifactURI)
+			logger.WarnCtx(ctx, "failed to resolve artifact URI, fallback to default gateway", zap.Error(err), zap.String("artifactURI", artifactURI))
+			url := domain.UriToGateway(artifactURI)
 			enhanced.AnimationURL = &url
 		} else {
 			enhanced.AnimationURL = &resolved
@@ -540,11 +546,6 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 	// Set mime type (objkt provides this, so no need to detect)
 	if !types.StringNilOrEmpty(token.Mime) {
 		enhanced.MimeType = token.Mime
-		if *token.Mime == "application/x-directory" && enhanced.AnimationURL != nil {
-			// Objkt directory artifacts serve their playable entry point at index.html.
-			animationURL := strings.TrimRight(*enhanced.AnimationURL, "/") + "/index.html"
-			enhanced.AnimationURL = &animationURL
-		}
 	}
 
 	// Build artist information from creators
