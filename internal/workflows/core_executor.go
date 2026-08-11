@@ -738,6 +738,10 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 			failureReason       *string
 			observedContentType *string
 			sniffedContentType  *string
+			// workingURLObserved/Sniffed are the fallback gateway's own validated
+			// observations, persisted on the promoted row.
+			workingURLObserved *string
+			workingURLSniffed  *string
 		}
 
 		resultsChan := make(chan urlResult, len(mediaURLs))
@@ -772,6 +776,8 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						// but the CID is still reachable via another configured gateway.
 						if result.WorkingURL != nil && *result.WorkingURL != u {
 							res.workingURL = result.WorkingURL
+							res.workingURLObserved = result.WorkingURLObservedPtr()
+							res.workingURLSniffed = result.WorkingURLSniffedPtr()
 						}
 					case uri.HealthStatusBroken:
 						res.healthStatus = schema.MediaHealthStatusBroken
@@ -809,7 +815,8 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						zap.String("original_url", result.url),
 						zap.String("working_url", *result.workingURL),
 					)
-					if err := e.store.UpdateMediaURLAndPropagate(ctx, result.url, *result.workingURL); err != nil {
+					if err := e.store.UpdateMediaURLAndPropagate(ctx, result.url, *result.workingURL,
+						result.workingURLObserved, result.workingURLSniffed); err != nil {
 						logger.ErrorCtx(ctx, err,
 							zap.String("url", result.url),
 							zap.String("working_url", *result.workingURL),

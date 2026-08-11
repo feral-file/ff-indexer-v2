@@ -671,6 +671,12 @@ func TestGatewayFallbackPreservesDirectDiagnostics(t *testing.T) {
 	assert.Equal(t, "text/html", result.ObservedContentType)
 	assert.Equal(t, "text/html", result.SniffedContentType)
 	assert.Nil(t, result.Error, "a healthy result must not carry an error message")
+	// The winning gateway's own validated observations travel separately: they belong
+	// to the promoted row, not the failed direct URL.
+	assert.Equal(t, "image/png", result.WorkingURLObserved,
+		"the promoted URL's observed type comes from the fallback probe")
+	assert.Equal(t, "image/png", result.WorkingURLSniffed,
+		"the promoted URL's sniffed type comes from the fallback probe")
 }
 
 // TestProbeWindowClampedToClassifiableFloor pins the config floor: a probe_max_bytes

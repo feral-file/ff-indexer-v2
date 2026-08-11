@@ -2906,17 +2906,20 @@ func nullableString(s *string) interface{} {
 	return nil
 }
 
-// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
-func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error {
+// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction.
+//
+// Reason: the promoted row carries the fallback probe's OWN observations
+// (observedContentType/sniffedContentType, nil → NULL), not the replaced URL's — the
+// winning gateway's bytes were just content-validated, and leaving the columns NULL
+// would falsify their documented "not yet probed" meaning and starve render-probe class
+// selection until a much later sweep. The replaced URL's failure diagnostics are always
+// cleared: they describe a different URL's probe.
+func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string, observedContentType, sniffedContentType *string) error {
 	oldHash := types.MD5Hash(oldURL)
 	newHash := types.MD5Hash(newURL)
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Update token_media_health. The L0 observation columns are cleared along with
-		// last_error: they describe the *replaced* URL's probe, and carrying them onto the
-		// promoted fallback would corrupt per-reason reporting and render-probe class
-		// selection. NULL means "not yet content-probed" — the next sweep repopulates them
-		// from the new URL's own bytes.
+		// 1. Update token_media_health.
 		if err := tx.Model(&schema.TokenMediaHealth{}).
 			Where("media_url_hash = ?", oldHash).
 			Updates(map[string]interface{}{
@@ -2926,8 +2929,8 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 				"last_checked_at":       time.Now(),
 				"last_error":            nil,
 				"failure_reason":        nil,
-				"observed_content_type": nil,
-				"sniffed_content_type":  nil,
+				"observed_content_type": nullableString(observedContentType),
+				"sniffed_content_type":  nullableString(sniffedContentType),
 			}).Error; err != nil {
 			return fmt.Errorf("failed to update token_media_health: %w", err)
 		}

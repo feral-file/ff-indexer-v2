@@ -5433,13 +5433,16 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_Propagates(t *testi
 	mocks.urlChecker.EXPECT().
 		Check(ctx, deadURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: &workingURL,
+			Status:             uri.HealthStatusHealthy,
+			WorkingURL:         &workingURL,
+			WorkingURLObserved: "image/png",
+			WorkingURLSniffed:  "image/png",
 		})
 
 	// Expect propagation (not a simple health update on the dead URL)
+	obs := "image/png"
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, deadURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, deadURL, workingURL, &obs, &obs).
 		Return(nil)
 
 	token := &schema.Token{ID: 1, TokenCID: tokenCID}
@@ -5485,7 +5488,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_Fall
 
 	// Propagation fails
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, gomock.Nil(), gomock.Nil()).
 		Return(fmt.Errorf("db error"))
 
 	// Fallback: mark original URL BROKEN (not healthy) — it failed the direct probe

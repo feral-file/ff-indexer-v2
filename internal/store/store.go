@@ -459,8 +459,12 @@ type Store interface {
 	GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64][]schema.TokenMediaHealth, error)
 	// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
 	UpdateTokenMediaHealthByURL(ctx context.Context, url string, update MediaHealthUpdate) error
-	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
-	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error
+	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source
+	// tables (metadata/enrichment) in a transaction. observedContentType and
+	// sniffedContentType are the promoted URL's own validated observations from the
+	// fallback probe (nil writes NULL); the replaced URL's diagnostics are always
+	// cleared.
+	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string, observedContentType, sniffedContentType *string) error
 
 	// =============================================================================
 	// Token Viewability Operations

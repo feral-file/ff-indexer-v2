@@ -242,7 +242,7 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURLPropagationFailure(t *testing
 		})
 
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, gomock.Nil(), gomock.Nil()).
 		Return(assert.AnError)
 
 	// The original URL is marked broken — not left as-is, not marked healthy — and it
@@ -313,13 +313,17 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 	mocks.urlChecker.EXPECT().
 		Check(ctx, originalURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: &workingURL,
+			Status:             uri.HealthStatusHealthy,
+			WorkingURL:         &workingURL,
+			WorkingURLObserved: "image/png",
+			WorkingURLSniffed:  "image/png",
 		})
 
-	// Mock Update and propagate URL
+	// Mock Update and propagate URL: the promoted row must carry the fallback
+	// gateway's own validated observations, not NULLs.
+	obs := "image/png"
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, &obs, &obs).
 		Return(nil)
 
 	// Mock Batch update viewability (returns changed tokens only)

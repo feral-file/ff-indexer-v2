@@ -307,7 +307,8 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 					zap.String("working_url", *result.WorkingURL),
 				)
 
-				if err := s.store.UpdateMediaURLAndPropagate(ctx, url, *result.WorkingURL); err != nil {
+				if err := s.store.UpdateMediaURLAndPropagate(ctx, url, *result.WorkingURL,
+					result.WorkingURLObservedPtr(), result.WorkingURLSniffedPtr()); err != nil {
 					logger.ErrorCtx(ctx, err,
 						zap.String("url", url),
 					)

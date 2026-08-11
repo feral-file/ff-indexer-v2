@@ -6007,11 +6007,16 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		})
 		require.NoError(t, err)
 
-		// Update URL and propagate (this also propagates health status)
-		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL)
+		// Update URL and propagate (this also propagates health status). The promoted
+		// row carries the fallback probe's own validated observations — the winning
+		// gateway's bytes were just content-validated, and NULL would falsify the
+		// documented "not yet probed" meaning.
+		pngType := "image/png"
+		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL, &pngType, &pngType)
 		require.NoError(t, err)
 
-		// Promotion marks the row healthy and clears every L0 field from the replaced URL.
+		// Promotion marks the row healthy, clears the replaced URL's failure fields, and
+		// records the fallback's observations.
 		promotedRows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{token1Data.ID})
 		require.NoError(t, err)
 		require.Len(t, promotedRows[token1Data.ID], 1)
@@ -6019,8 +6024,10 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		assert.Equal(t, schema.MediaHealthStatusHealthy, promoted.HealthStatus)
 		assert.Nil(t, promoted.LastError)
 		assert.Nil(t, promoted.FailureReason, "stale failure_reason must not survive promotion")
-		assert.Nil(t, promoted.ObservedContentType, "stale observed_content_type must not survive promotion")
-		assert.Nil(t, promoted.SniffedContentType, "stale sniffed_content_type must not survive promotion")
+		require.NotNil(t, promoted.ObservedContentType, "the fallback's observed type must be recorded")
+		assert.Equal(t, pngType, *promoted.ObservedContentType)
+		require.NotNil(t, promoted.SniffedContentType, "the fallback's sniffed type must be recorded")
+		assert.Equal(t, pngType, *promoted.SniffedContentType)
 
 		// Mark new URL as healthy (after propagation)
 		err = store.UpdateTokenMediaHealthByURL(ctx, newURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})

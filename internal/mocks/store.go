@@ -1088,17 +1088,17 @@ func (mr *MockStoreMockRecorder) UpdateIndexingBlockRangeForAddress(ctx, address
 }
 
 // UpdateMediaURLAndPropagate mocks base method.
-func (m *MockStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL, newURL string) error {
+func (m *MockStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL, newURL string, observedContentType, sniffedContentType *string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateMediaURLAndPropagate", ctx, oldURL, newURL)
+	ret := m.ctrl.Call(m, "UpdateMediaURLAndPropagate", ctx, oldURL, newURL, observedContentType, sniffedContentType)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateMediaURLAndPropagate indicates an expected call of UpdateMediaURLAndPropagate.
-func (mr *MockStoreMockRecorder) UpdateMediaURLAndPropagate(ctx, oldURL, newURL any) *gomock.Call {
+func (mr *MockStoreMockRecorder) UpdateMediaURLAndPropagate(ctx, oldURL, newURL, observedContentType, sniffedContentType any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateMediaURLAndPropagate", reflect.TypeOf((*MockStore)(nil).UpdateMediaURLAndPropagate), ctx, oldURL, newURL)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateMediaURLAndPropagate", reflect.TypeOf((*MockStore)(nil).UpdateMediaURLAndPropagate), ctx, oldURL, newURL, observedContentType, sniffedContentType)
 }
 
 // UpdateTokenBurn mocks base method.

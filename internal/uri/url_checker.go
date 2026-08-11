@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -45,6 +46,34 @@ type HealthCheckResult struct {
 	// SniffedContentType is the magic-byte-detected type of the body prefix ("" when no
 	// body was read).
 	SniffedContentType string
+
+	// WorkingURLObserved / WorkingURLSniffed are the winning fallback gateway's own
+	// validated content observations, set only when WorkingURL is. They are distinct
+	// from the fields above (which describe the failed DIRECT probe, kept for
+	// propagation-failure diagnostics): callers persist these on the promoted row,
+	// whose bytes the fallback probe just content-validated.
+	WorkingURLObserved string
+	WorkingURLSniffed  string
+}
+
+// WorkingURLObservedPtr returns the promoted URL's observed Content-Type as a nullable
+// string for persistence (nil when unknown).
+func (r HealthCheckResult) WorkingURLObservedPtr() *string {
+	if r.WorkingURLObserved == "" {
+		return nil
+	}
+	s := r.WorkingURLObserved
+	return &s
+}
+
+// WorkingURLSniffedPtr returns the promoted URL's sniffed content type as a nullable
+// string for persistence (nil when unknown).
+func (r HealthCheckResult) WorkingURLSniffedPtr() *string {
+	if r.WorkingURLSniffed == "" {
+		return nil
+	}
+	s := r.WorkingURLSniffed
+	return &s
 }
 
 // FailureReasonPtr returns the failure reason as a nullable string for persistence
@@ -205,21 +234,28 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 	}
 }
 
-// gatewayProbe adapts probe for gateway candidate selection: nil means the candidate URL
-// serves validated content. Transport errors keep their sentinel classes for
-// noteGatewayProbeFailure precedence.
-func (p *contentProbe) gatewayProbe(ctx context.Context, url string) error {
+// gatewayProbeResult probes a gateway candidate and returns the validated result on
+// success. A non-nil error means the candidate is unusable; transport errors keep their
+// sentinel classes for noteGatewayProbeFailure precedence.
+func (p *contentProbe) gatewayProbeResult(ctx context.Context, url string) (HealthCheckResult, error) {
 	result := p.probe(ctx, url, true)
 	if result.fetchErr != nil {
-		return result.fetchErr
+		return HealthCheckResult{}, result.fetchErr
 	}
 	if result.hcr.Status != HealthStatusHealthy {
 		if result.hcr.Error != nil {
-			return errors.New(*result.hcr.Error)
+			return HealthCheckResult{}, errors.New(*result.hcr.Error)
 		}
-		return fmt.Errorf("gateway probe failed with status %s", result.hcr.Status)
+		return HealthCheckResult{}, fmt.Errorf("gateway probe failed with status %s", result.hcr.Status)
 	}
-	return nil
+	return result.hcr, nil
+}
+
+// gatewayProbe adapts gatewayProbeResult for callers that only select a candidate
+// (the resolver): nil means the candidate URL serves validated content.
+func (p *contentProbe) gatewayProbe(ctx context.Context, url string) error {
+	_, err := p.gatewayProbeResult(ctx, url)
+	return err
 }
 
 // readAndValidate reads up to maxBytes of the body and runs content validation.
@@ -372,16 +408,16 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	// Check if it's an IPFS gateway URL - resolve with CID
 	if isIPFS, cid := types.IsIPFSGatewayURL(url); isIPFS {
 		logger.InfoCtx(ctx, "Direct check failed, trying IPFS gateway resolution", zap.String("url", url), zap.String("cid", cid))
-		return c.checkGatewayFallback(ctx, result, func(ctx context.Context) (string, error) {
-			return FindWorkingIPFSGateway(ctx, c.probe.gatewayProbe, cid, c.ipfsGateways)
+		return c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
+			return FindWorkingIPFSGateway(ctx, probe, cid, c.ipfsGateways)
 		})
 	}
 
 	// Check if it's an Arweave gateway URL - resolve with tx ID
 	if isArweave, txID := types.IsArweaveGatewayURL(url); isArweave {
 		logger.InfoCtx(ctx, "Direct check failed, trying Arweave gateway resolution", zap.String("url", url), zap.String("txID", txID))
-		return c.checkGatewayFallback(ctx, result, func(ctx context.Context) (string, error) {
-			return FindWorkingArweaveGateway(ctx, c.probe.gatewayProbe, txID, c.arweaveGateways)
+		return c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
+			return FindWorkingArweaveGateway(ctx, probe, txID, c.arweaveGateways)
 		})
 	}
 
@@ -391,8 +427,8 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	if isOnChFS, hash := types.IsOnChFSGatewayURL(url); isOnChFS {
 		ref := OnChFSGatewayRef(url, hash)
 		logger.InfoCtx(ctx, "Direct check failed, trying OnChFS gateway resolution", zap.String("url", url), zap.String("ref", ref))
-		return c.checkGatewayFallback(ctx, result, func(ctx context.Context) (string, error) {
-			return FindWorkingOnChFSGateway(ctx, c.probe.gatewayProbe, ref, c.onchfsGateways)
+		return c.checkGatewayFallback(ctx, result, func(ctx context.Context, probe GatewayProbe) (string, error) {
+			return FindWorkingOnChFSGateway(ctx, probe, ref, c.onchfsGateways)
 		})
 	}
 
@@ -404,8 +440,24 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 // When every gateway fails, the direct probe's result is returned (not the aggregate
 // resolution error): the direct result carries the more specific failure_reason and
 // content-type observations for the canonical URL.
-func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthCheckResult, find func(ctx context.Context) (string, error)) HealthCheckResult {
-	workingURL, err := find(ctx)
+func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthCheckResult, find func(ctx context.Context, probe GatewayProbe) (string, error)) HealthCheckResult {
+	// Record each successful candidate's validated observations so the winner's can be
+	// returned. The candidates are probed concurrently, hence the mutex; keyed by URL
+	// because findWorkingGateway reports only the winning URL, not which probe won.
+	var mu sync.Mutex
+	observations := make(map[string]HealthCheckResult)
+	recordingProbe := func(ctx context.Context, url string) error {
+		hcr, err := c.probe.gatewayProbeResult(ctx, url)
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		observations[url] = hcr
+		mu.Unlock()
+		return nil
+	}
+
+	workingURL, err := find(ctx, recordingProbe)
 	if err != nil {
 		if hr, ok := healthResultFromSSRF(err); ok {
 			return hr
@@ -420,12 +472,22 @@ func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthChec
 	// per-reason breakdown exactly on propagation failures. Error is deliberately not
 	// carried: a healthy result with a non-nil Error would be ambiguous to consumers,
 	// and healthy persistence clears diagnostics anyway.
+	//
+	// The winning gateway's own validated observations travel separately: they belong
+	// to the PROMOTED row, whose bytes were just content-validated — leaving them NULL
+	// would falsify the documented "not yet probed" meaning and starve render-probe
+	// class selection until a much later sweep.
+	mu.Lock()
+	winner := observations[workingURL]
+	mu.Unlock()
 	return HealthCheckResult{
 		Status:              HealthStatusHealthy,
 		WorkingURL:          &workingURL,
 		FailureReason:       direct.FailureReason,
 		ObservedContentType: direct.ObservedContentType,
 		SniffedContentType:  direct.SniffedContentType,
+		WorkingURLObserved:  winner.ObservedContentType,
+		WorkingURLSniffed:   winner.SniffedContentType,
 	}
 }
 
