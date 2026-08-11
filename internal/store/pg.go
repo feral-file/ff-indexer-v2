@@ -2879,7 +2879,16 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, u
 		// The render probe owns render_% rows and never observed the bytes, so it
 		// leaves L0's content-type classification intact (the render-due query depends
 		// on it surviving a gate).
-		return q.Updates(updates).Error
+		//
+		// L1 may only write rows it already owns or that L0 currently considers fine:
+		// a probe job enqueued while a URL was healthy can land after L0 has marked it
+		// broken for an unrelated reason (404, wrong content type). Without this guard
+		// the render verdict would overwrite that reason with render_%, misclassifying
+		// an ordinary transport failure and — because L0 skips render_% rows — taking
+		// away its normal recovery path until the much longer broken-recheck interval.
+		return q.
+			Where("health_status = ? OR failure_reason LIKE 'render_%'", schema.MediaHealthStatusHealthy).
+			Updates(updates).Error
 	}
 
 	updates["observed_content_type"] = nullableString(update.ObservedContentType)

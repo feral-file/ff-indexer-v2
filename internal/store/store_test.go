@@ -6049,6 +6049,40 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.NotContains(t, due, staleURL, "an L0-broken URL must not keep consuming render capacity")
 	})
 
+	t.Run("L1 cannot overwrite an unrelated L0 failure", func(t *testing.T) {
+		// A probe job enqueued while the URL was healthy can land after L0 marked it
+		// broken for an ordinary reason. The render verdict must not steal that row:
+		// doing so would misclassify a transport failure as a render failure and disable
+		// its L0 recovery path (L0 skips render_% rows).
+		racedURL := "https://example.com/render/raced.png"
+		mintTokenWithMedia(t, &racedURL, nil)
+		markHealthy(t, racedURL, "image/png")
+
+		errMsg := "HTTP 404"
+		httpReason := schema.MediaFailureHTTPStatus.String()
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, racedURL, MediaHealthUpdate{
+			Status:        schema.MediaHealthStatusBroken,
+			LastError:     &errMsg,
+			FailureReason: &httpReason,
+		}))
+
+		// L1 tries to gate the same URL (its job predates the L0 verdict).
+		renderReason := schema.RenderFailureStalled
+		renderErr := "render timed out"
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, racedURL, MediaHealthUpdate{
+			Status:           schema.MediaHealthStatusBroken,
+			LastError:        &renderErr,
+			FailureReason:    &renderReason,
+			RenderProbeWrite: true,
+		}))
+
+		// The L0 reason survives, so the row keeps its ordinary L0 recovery path.
+		stillL0Owned, err := store.GetURLsForChecking(ctx, -time.Minute, 1000)
+		require.NoError(t, err)
+		assert.Contains(t, stillL0Owned, racedURL,
+			"an L0-owned failure must not be reclassified as a render failure")
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)

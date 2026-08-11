@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -206,5 +208,96 @@ func TestChromiumSmoke(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, before, atomic.LoadInt32(&popupHits),
 			"block-new-web-contents must stop the popup opening; otherwise its requests bypass interception")
+	})
+}
+
+// hitRefusingValidator allows the fixture page itself but refuses every /hit/ request, so
+// a server-side hit proves the request never passed through interception.
+type hitRefusingValidator struct{ allowHost string }
+
+func (v hitRefusingValidator) ValidateHTTPURL(_ context.Context, rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(u.Path, "/hit/") {
+		return fmt.Errorf("refused: %s", u.Path)
+	}
+	if u.Host == v.allowHost {
+		return nil
+	}
+	return fmt.Errorf("refused host: %s", u.Host)
+}
+
+const egressVectorTmpl = `<html><body style="margin:0;background:#fff">
+<div style="width:100vw;height:100vh;background:#093"></div><script>%s</script></body></html>`
+
+// TestEgressVectors enumerates the browser egress paths an untrusted artwork can reach
+// for, and asserts each is either validated by the interceptor or prevented outright.
+//
+// Every vector targets the local test server on a /hit/ path the validator refuses, so a
+// server-side hit proves the request bypassed interception entirely — zero hits is the
+// contract. Measured behaviour: main frame, iframes, dedicated and nested workers and
+// sendBeacon are intercepted; popups, shared workers and WebSocket/WebRTC are prevented
+// from existing, because CDP Fetch cannot police them.
+func TestEgressVectors(t *testing.T) {
+	vectors := map[string]string{
+		"nested-worker": `try{const inner="fetch('HIT/nested').catch(()=>{})";` +
+			`const outer="const b=new Blob(["+JSON.stringify(inner)+"],{type:'application/javascript'});new Worker(URL.createObjectURL(b));";` +
+			`const ob=new Blob([outer],{type:'application/javascript'});new Worker(URL.createObjectURL(ob));}catch(e){}`,
+		"shared-worker": `try{new SharedWorker(URL.createObjectURL(new Blob(["fetch('HIT/shared').catch(()=>{})"],{type:'application/javascript'})));}catch(e){}`,
+		"anchor-blank":  `try{const a=document.createElement('a');a.href='HIT/anchor';a.target='_blank';document.body.appendChild(a);a.click();}catch(e){}`,
+		"form-target":   `try{const f=document.createElement('form');f.action='HIT/form';f.target='_blank';f.method='GET';document.body.appendChild(f);f.submit();}catch(e){}`,
+		"beacon":        `try{navigator.sendBeacon('HIT/beacon','x');}catch(e){}`,
+		"websocket":     `try{new WebSocket('WS/ws');}catch(e){}`,
+		"eventsource":   `try{new EventSource('HIT/sse');}catch(e){}`,
+	}
+
+	var hits sync.Map
+	mux := http.NewServeMux()
+	mux.HandleFunc("/hit/", func(w http.ResponseWriter, r *http.Request) {
+		v, _ := hits.LoadOrStore(r.URL.Path, new(int32))
+		atomic.AddInt32(v.(*int32), 1)
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	hitBase := srv.URL + "/hit"
+	wsBase := strings.Replace(srv.URL, "http://", "ws://", 1) + "/hit"
+	for name, js := range vectors {
+		js = strings.ReplaceAll(js, "HIT", hitBase)
+		js = strings.ReplaceAll(js, "WS", wsBase)
+		body := fmt.Sprintf(egressVectorTmpl, js)
+		mux.HandleFunc("/"+name, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(body))
+		})
+	}
+
+	srvURL, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+
+	renderer := probe.NewRenderer(adapter.NewChromedpClient(), &probe.RendererConfig{
+		ViewportWidth: 512, ViewportHeight: 512, TimeoutMs: 30000, SettleMs: 2500,
+		AllocatorOptions: probe.AllocatorOptions(),
+		SSRFValidator:    hitRefusingValidator{allowHost: srvURL.Host},
+	})
+	defer func() { _ = renderer.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	for name := range vectors {
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/"+name)
+		require.NoError(t, err)
+		t.Logf("vector=%-14s blocked=%d", name, capture.BlockedRequests)
+	}
+
+	hits.Range(func(k, v any) bool {
+		assert.Failf(t, "browser egress escaped interception",
+			"path=%s count=%d — this request never passed through the SSRF interceptor",
+			k, atomic.LoadInt32(v.(*int32)))
+		return true
 	})
 }

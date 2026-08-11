@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/chromedp/chromedp"
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
@@ -25,6 +26,17 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
+
+// probeAllocatorOptions picks sandboxed or unsandboxed chromium flags for the render
+// probe, warning loudly when the sandbox is off since that is a real loss of isolation
+// for untrusted artwork.
+func probeAllocatorOptions(noSandbox bool) []chromedp.ExecAllocatorOption {
+	if noSandbox {
+		logger.Warn("Render probe chromium sandbox is DISABLED (render_probe.no_sandbox=true); untrusted artwork runs with reduced isolation")
+		return probe.AllocatorOptionsNoSandbox()
+	}
+	return probe.AllocatorOptions()
+}
 
 // ssrfValidatorOrNil converts a possibly-nil *ssrf.Validator into an interface value
 // that is untyped-nil when protection is disabled, so downstream `!= nil` checks behave
@@ -142,7 +154,7 @@ func registerWorkerMedia(
 			// The probe runs untrusted remote pages, so it uses its own launch flags
 			// (no disable-web-security) rather than the SVG rasterizer's, and validates
 			// every browser-initiated request against the SSRF policy.
-			AllocatorOptions: probe.AllocatorOptions(),
+			AllocatorOptions: probeAllocatorOptions(wcfg.RenderProbe.NoSandbox),
 			SSRFValidator:    ssrfValidatorOrNil(ssrfValidator),
 		})
 

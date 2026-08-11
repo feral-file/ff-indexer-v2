@@ -44,6 +44,20 @@ func (m *MockChromedpClient) EXPECT() *MockChromedpClientMockRecorder {
 	return m.recorder
 }
 
+// AddScriptToEvaluateOnNewDocument mocks base method.
+func (m *MockChromedpClient) AddScriptToEvaluateOnNewDocument(source string) chromedp.Action {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddScriptToEvaluateOnNewDocument", source)
+	ret0, _ := ret[0].(chromedp.Action)
+	return ret0
+}
+
+// AddScriptToEvaluateOnNewDocument indicates an expected call of AddScriptToEvaluateOnNewDocument.
+func (mr *MockChromedpClientMockRecorder) AddScriptToEvaluateOnNewDocument(source any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddScriptToEvaluateOnNewDocument", reflect.TypeOf((*MockChromedpClient)(nil).AddScriptToEvaluateOnNewDocument), source)
+}
+
 // CaptureScreenshot mocks base method.
 func (m *MockChromedpClient) CaptureScreenshot(result *[]byte) chromedp.Action {
 	m.ctrl.T.Helper()

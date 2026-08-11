@@ -7,6 +7,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -29,6 +30,10 @@ type ChromedpClient interface {
 
 	// --- request interception (SSRF enforcement for browser-initiated traffic) ---
 
+	// AddScriptToEvaluateOnNewDocument returns an action installing source so it runs in
+	// every new document before any page script — used to neutralize egress APIs the CDP
+	// Fetch domain cannot intercept (WebSocket, WebRTC, EventSource).
+	AddScriptToEvaluateOnNewDocument(source string) chromedp.Action
 	// FetchEnable returns an action enabling the Fetch domain so that every request the
 	// browser is about to make (navigations, redirects, subresources) is paused for a
 	// policy decision.
@@ -85,6 +90,13 @@ func (c *RealChromedpClient) CaptureScreenshot(result *[]byte) chromedp.Action {
 
 func (c *RealChromedpClient) Evaluate(expr string, result interface{}, options ...chromedp.EvaluateOption) chromedp.EvaluateAction {
 	return chromedp.Evaluate(expr, result, options...)
+}
+
+func (c *RealChromedpClient) AddScriptToEvaluateOnNewDocument(source string) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		_, err := page.AddScriptToEvaluateOnNewDocument(source).Do(ctx)
+		return err
+	})
 }
 
 func (c *RealChromedpClient) FetchEnable() chromedp.Action {

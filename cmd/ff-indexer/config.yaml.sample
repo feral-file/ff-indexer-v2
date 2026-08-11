@@ -216,6 +216,10 @@ render_probe:
   timeout_ms: 30000
   settle_ms: 5000
   blank_variance_threshold: 0.001
+  # Chromium runs sandboxed by default. Only set true where the runtime cannot support
+  # the sandbox (no unprivileged user namespaces / restrictive seccomp) — an unsandboxed
+  # renderer exploit gains the media worker's process and DB access.
+  no_sandbox: false
   failure_gate_threshold: 2
   recheck_interval: 168h
   retry_interval: 1h

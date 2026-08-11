@@ -135,11 +135,45 @@ The probe launches chromium with its own flags (`probe.AllocatorOptions`), delib
 we fetched and validated ourselves. Running untrusted remote pages with web security
 disabled would let a hostile page read cross-origin (including private) responses.
 
-Interception is installed on the page target. Measured against real chromium (see the
-smoke test below), that covers the main frame, iframes, and dedicated workers; a popup
-would get its own, uncovered target, so new web contents and service/shared workers are
-forbidden at launch (`--block-new-web-contents`, `--disable-features=ServiceWorker,SharedWorker`).
-Rendering one artwork frame never legitimately needs them.
+Interception is installed on the page target. What it does and does not reach was
+**measured against real chromium**, not assumed (`TestEgressVectors` in the smoke suite):
+
+| Vector | Covered by interception |
+|---|---|
+| main frame, redirects, subresources, iframes | yes |
+| dedicated workers, incl. nested | yes |
+| `navigator.sendBeacon` | yes |
+| popup (`window.open`, `target=_blank`) | **no** — own target |
+| shared workers | **no** — own session |
+| WebSocket, WebRTC | **no** — CDP Fetch cannot police them |
+
+Rendering one artwork frame needs none of the uncovered kinds, so they are forbidden
+rather than policed: `--block-new-web-contents`, `--disable-shared-workers`,
+`--disable-features=ServiceWorker`, and a document-start script that removes
+`WebSocket`/`RTCPeerConnection`/`EventSource` before any page script runs. The smoke test
+asserts zero escapes by counting server-side hits on a path the validator refuses, so a
+regression shows up as a real request rather than a silent zero.
+
+**This is defense in depth, not a complete boundary.** Two limits remain, both inherent
+rather than fixable in this code:
+
+- `ValidateHTTPURL` resolves a hostname at validation time; chromium dials later, so DNS
+  rebinding between the two is possible. This is the same documented TOCTOU limitation the
+  Go HTTP client's SSRF RoundTripper carries (`internal/adapter/http.go`), not something
+  the probe introduces.
+- Only connect-time policy can cover every future browser egress path.
+
+The definitive control is therefore **network-level egress restriction for the media
+worker** — it should not be able to route to loopback, private, link-local, or
+cloud-metadata ranges at all. Treat that as a prerequisite for enabling the probe against
+untrusted media in a shared network, and the in-browser controls above as the layer that
+makes ordinary cases fail closed.
+
+Chromium runs **sandboxed** for the probe: unlike the SVG rasterizer, the probe omits
+`--single-process` (which disables the renderer sandbox by design) and does not pass
+`--no-sandbox`. Runtimes that cannot support the sandbox can set
+`render_probe.no_sandbox: true`, which logs a warning at startup — but an unsandboxed
+renderer exploit gains the media worker's process access, so prefer fixing the runtime.
 
 Captures are viewport-bounded (`CaptureScreenshot`, not `FullScreenshot`): an untrusted
 page can make its document arbitrarily tall, which would make both the work and the pHash

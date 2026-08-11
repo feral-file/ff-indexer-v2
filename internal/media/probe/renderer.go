@@ -50,6 +50,29 @@ const (
 // ErrRequestBlocked reports that the SSRF policy refused a browser-initiated request.
 var ErrRequestBlocked = errors.New("browser request blocked by SSRF policy")
 
+// egressGuardScript neutralizes browser egress APIs the CDP Fetch domain cannot
+// intercept, before any page script runs.
+//
+// Reason: measured against real chromium (TestEgressVectors), Fetch interception covers
+// navigations, redirects, subresources, iframes, dedicated workers — including nested
+// ones — and sendBeacon. It does NOT cover the WebSocket handshake, which CDP exposes for
+// observation only; WebRTC and EventSource can likewise open connections the interceptor
+// never sees. Rendering one artwork frame needs none of them, so they are removed rather
+// than policed. Defense in depth, not a substitute for network-level egress restriction
+// (see docs/media_viewability.md).
+const egressGuardScript = `
+(() => {
+  const block = (name) => {
+    try {
+      Object.defineProperty(window, name, {
+        configurable: false,
+        get() { throw new Error(name + " is disabled in the render probe"); },
+      });
+    } catch (e) { /* already locked down */ }
+  };
+  ["WebSocket", "RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel", "EventSource"].forEach(block);
+})();`
+
 // Capture is one render observation of a URL.
 type Capture struct {
 	// Image is the decoded screenshot frame.
@@ -108,11 +131,24 @@ type RendererConfig struct {
 // would let a hostile page read cross-origin (including private) responses and exfiltrate
 // them. Everything else matches the rasterizer so container behavior stays predictable.
 func AllocatorOptions() []chromedp.ExecAllocatorOption {
-	return []chromedp.ExecAllocatorOption{
+	return allocatorOptions(false)
+}
+
+// AllocatorOptionsNoSandbox is AllocatorOptions with chromium's sandbox disabled.
+//
+// Only for runtimes whose kernel/container policy cannot support the sandbox (no
+// unprivileged user namespaces, restrictive seccomp). Running untrusted artwork in an
+// unsandboxed renderer means a renderer exploit gains the media worker's process access —
+// its configuration and database credentials — so prefer fixing the runtime.
+func AllocatorOptionsNoSandbox() []chromedp.ExecAllocatorOption {
+	return allocatorOptions(true)
+}
+
+func allocatorOptions(noSandbox bool) []chromedp.ExecAllocatorOption {
+	opts := []chromedp.ExecAllocatorOption{
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
 		chromedp.DisableGPU,
-		chromedp.NoSandbox,
 		chromedp.Headless,
 		// NOTE: no disable-web-security here, by design (see doc comment).
 		//
@@ -124,7 +160,8 @@ func AllocatorOptions() []chromedp.ExecAllocatorOption {
 		// probe forbids them: rendering one artwork frame never legitimately requires a
 		// popup or a service worker.
 		chromedp.Flag("block-new-web-contents", true),
-		chromedp.Flag("disable-features", "ServiceWorker,SharedWorker"),
+		chromedp.Flag("disable-shared-workers", true),
+		chromedp.Flag("disable-features", "ServiceWorker"),
 		chromedp.Flag("disable-popup-blocking", false),
 		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.Flag("disable-software-rasterizer", true),
@@ -138,8 +175,14 @@ func AllocatorOptions() []chromedp.ExecAllocatorOption {
 		chromedp.Flag("no-default-browser-check", true),
 		chromedp.Flag("disable-logging", true),
 		chromedp.Flag("disable-permissions-api", true),
-		chromedp.Flag("single-process", true),
+		// NOTE: no single-process here, unlike the SVG rasterizer. --single-process runs
+		// the renderer inside the browser process, disabling the renderer sandbox
+		// outright — unacceptable for untrusted remote pages.
 	}
+	if noSandbox {
+		opts = append(opts, chromedp.NoSandbox)
+	}
+	return opts
 }
 
 type chromedpRenderer struct {
@@ -224,8 +267,12 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string) (*Captur
 		r.chromedpClient.CaptureScreenshot(&screenshot),
 	}
 	if r.ssrfValidator != nil {
-		// Enable interception before anything navigates.
-		actions = append([]chromedp.Action{r.chromedpClient.FetchEnable()}, actions...)
+		// Install both before anything navigates: the egress guard neutralizes the APIs
+		// interception cannot see, then Fetch pauses everything it can.
+		actions = append([]chromedp.Action{
+			r.chromedpClient.AddScriptToEvaluateOnNewDocument(egressGuardScript),
+			r.chromedpClient.FetchEnable(),
+		}, actions...)
 	}
 
 	if err := r.chromedpClient.Run(browserCtx, actions...); err != nil {

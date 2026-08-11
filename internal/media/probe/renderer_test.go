@@ -61,6 +61,7 @@ func newMockedRenderer(t *testing.T, validator *mocks.MockSSRFValidator) *render
 	if validator != nil {
 		cfg.SSRFValidator = validator
 		h.chromedp.EXPECT().FetchEnable().Return(nil).AnyTimes()
+		h.chromedp.EXPECT().AddScriptToEvaluateOnNewDocument(gomock.Any()).Return(nil).AnyTimes()
 		h.chromedp.EXPECT().
 			ListenTarget(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, fn func(ev any)) { h.listener = fn }).
@@ -305,7 +306,7 @@ func TestRenderProbe_interceptsBrowserRequests(t *testing.T) {
 		CaptureScreenshot(gomock.Any()).
 		DoAndReturn(func(res *[]byte) chromedp.Action { *res = pngBytes; return nil })
 	h.chromedp.EXPECT().
-		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	capture, err := h.renderer.RenderProbe(context.Background(), url)

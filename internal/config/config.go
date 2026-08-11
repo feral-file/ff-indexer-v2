@@ -256,6 +256,11 @@ type RenderProbeConfig struct {
 	BrokenRecheckInterval time.Duration `mapstructure:"broken_recheck_interval"`
 	// KnownBadFingerprints are pHashes of known-bad renders; matches gate immediately
 	KnownBadFingerprints []RenderProbeFingerprintConfig `mapstructure:"known_bad_fingerprints"`
+	// NoSandbox disables chromium's sandbox. Only for runtimes that cannot support it
+	// (no unprivileged user namespaces, restrictive seccomp). The probe renders
+	// untrusted remote pages, so an unsandboxed renderer exploit would gain the media
+	// worker's process access — prefer fixing the runtime over setting this.
+	NoSandbox bool `mapstructure:"no_sandbox"`
 }
 
 // TransformConfig holds configuration for image transformation
@@ -712,6 +717,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("render_probe.recheck_interval", "168h")
 	v.SetDefault("render_probe.retry_interval", "1h")
 	v.SetDefault("render_probe.broken_recheck_interval", "24h")
+	v.SetDefault("render_probe.no_sandbox", false)
 	v.SetDefault("max_image_size", 10*1024*1024)
 	v.SetDefault("max_video_size", 300*1024*1024)
 	v.SetDefault("transform.target_image_size", int64(float64(10*1024*1024)*0.9))
@@ -903,6 +909,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"render_probe.recheck_interval",
 		"render_probe.retry_interval",
 		"render_probe.broken_recheck_interval",
+		"render_probe.no_sandbox",
 		// Media Health Sweeper config
 		"media_health_sweeper.http_timeout",
 		"media_health_sweeper.batch_size",
