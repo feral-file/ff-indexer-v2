@@ -65,7 +65,7 @@ func contentFrame() *probe.Capture {
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
 	for y := range 64 {
 		for x := range 64 {
-			img.Set(x, y, color.RGBA{uint8(x * 4), uint8(y * 4), 128, 255})
+			img.Set(x, y, color.RGBA{uint8((x * 4) & 0xFF), uint8((y * 4) & 0xFF), 128, 255})
 		}
 	}
 	return &probe.Capture{Image: img, EngineVersion: "HeadlessChrome/123.0", Viewport: "1024x1024"}

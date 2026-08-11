@@ -29,8 +29,8 @@ func gradientFrame() image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 128, 128))
 	for y := range 128 {
 		for x := range 128 {
-			v := uint8(x * 255 / 127)
-			img.Set(x, y, color.RGBA{v, uint8(y * 255 / 127), v, 255})
+			v := uint8((x * 255 / 127) & 0xFF)
+			img.Set(x, y, color.RGBA{v, uint8((y * 255 / 127) & 0xFF), v, 255})
 		}
 	}
 	return img
