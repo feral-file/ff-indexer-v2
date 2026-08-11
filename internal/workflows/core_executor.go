@@ -828,8 +828,12 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						// BatchUpdateTokensViewability with false data, making viewable=true while
 						// the read path still serves the dead gateway URL — reproducing bug #96.
 						// The sweeper will retry UpdateMediaURLAndPropagate and fix the state.
+						// last_error carries the same context the sweeper persists: which
+						// validated alternative existed and why it was not promoted.
+						errMsg := fmt.Sprintf("direct probe failed; propagation of working alternative %s failed: %v", *result.workingURL, err)
 						if err2 := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, store.MediaHealthUpdate{
 							Status:              schema.MediaHealthStatusBroken,
+							LastError:           &errMsg,
 							FailureReason:       result.failureReason,
 							ObservedContentType: result.observedContentType,
 							SniffedContentType:  result.sniffedContentType,

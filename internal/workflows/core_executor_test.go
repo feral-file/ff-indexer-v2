@@ -5491,10 +5491,19 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_Fall
 		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, gomock.Nil(), gomock.Nil()).
 		Return(fmt.Errorf("db error"))
 
-	// Fallback: mark original URL BROKEN (not healthy) — it failed the direct probe
+	// Fallback: mark original URL BROKEN (not healthy) — it failed the direct probe —
+	// with the same contextual last_error the sweeper persists (which validated
+	// alternative existed and why it was not promoted).
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, originalURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken}).
-		Return(nil)
+		UpdateTokenMediaHealthByURL(ctx, originalURL, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
+			require.Equal(t, schema.MediaHealthStatusBroken, upd.Status)
+			require.NotNil(t, upd.LastError, "propagation failure must persist its context")
+			assert.Contains(t, *upd.LastError, "propagation of working alternative")
+			assert.Contains(t, *upd.LastError, workingURL)
+			assert.Contains(t, *upd.LastError, "db error")
+			return nil
+		})
 
 	token := &schema.Token{ID: 2, TokenCID: tokenCID}
 	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID).Return(token, nil)
