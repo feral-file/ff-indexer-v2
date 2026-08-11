@@ -466,3 +466,37 @@ func TestMediaHealthSweeperConfig_EffectiveURI(t *testing.T) {
 		assert.Equal(t, root.KnownBadPageMarkers, got.KnownBadPageMarkers)
 	})
 }
+
+// TestValidateRenderProbeConfig_RequiresEgressRestriction pins the enablement gate: the
+// probe's in-browser request validation is hostname-based and therefore open to DNS
+// rebinding at dial time, which only network-level egress policy can close. Enabling the
+// probe without attesting that control must fail at startup rather than silently ship an
+// SSRF path.
+func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
+	base := RenderProbeConfig{
+		Enabled:               true,
+		BatchSize:             20,
+		FailureGateThreshold:  2,
+		RecheckInterval:       168 * time.Hour,
+		RetryInterval:         time.Hour,
+		BrokenRecheckInterval: 24 * time.Hour,
+	}
+
+	t.Run("enabled without egress restriction is rejected", func(t *testing.T) {
+		cfg := base
+		err := validateRenderProbeConfig(&cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "egress_restricted")
+	})
+
+	t.Run("enabled with egress restriction is accepted", func(t *testing.T) {
+		cfg := base
+		cfg.EgressRestricted = true
+		assert.NoError(t, validateRenderProbeConfig(&cfg))
+	})
+
+	t.Run("disabled probe is inert", func(t *testing.T) {
+		cfg := RenderProbeConfig{Enabled: false}
+		assert.NoError(t, validateRenderProbeConfig(&cfg), "a disabled probe's settings are not validated")
+	})
+}

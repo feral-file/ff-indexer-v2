@@ -2752,14 +2752,37 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 
 	// URL added or changed - insert new record
 	if newURLStr != "" {
+		newURLHash := types.MD5Hash(newURLStr)
 		health := &schema.TokenMediaHealth{
 			TokenID:       tokenID,
 			MediaURL:      newURLStr,
-			MediaURLHash:  types.MD5Hash(newURLStr),
+			MediaURLHash:  newURLHash,
 			MediaSource:   source,
 			HealthStatus:  schema.MediaHealthStatusUnknown,
 			LastCheckedAt: time.Now(),
 		}
+
+		// Inherit an active URL-level render gate. A render verdict is a property of the
+		// URL, not of one token: without this, a token that newly references a gated URL
+		// enters the sweep as `unknown` with a NULL failure_reason — which the L0 write
+		// guard does not protect — so the next byte-level sweep marks it healthy and the
+		// new token is served viewable despite a browser-confirmed failure, until the
+		// existing probe row's next_check_at comes due. Only the render probe clears
+		// these rows, so the gate is copied verbatim rather than re-derived.
+		var gate schema.TokenMediaHealth
+		err := tx.Where("media_url_hash = ? AND failure_reason LIKE 'render_%'", newURLHash).
+			First(&gate).Error
+		switch {
+		case err == nil:
+			health.HealthStatus = gate.HealthStatus
+			health.FailureReason = gate.FailureReason
+			health.LastError = gate.LastError
+			health.ObservedContentType = gate.ObservedContentType
+			health.SniffedContentType = gate.SniffedContentType
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return fmt.Errorf("failed to check for an existing render gate: %w", err)
+		}
+
 		if err := tx.Create(health).Error; err != nil {
 			return fmt.Errorf("failed to create health record: %w", err)
 		}

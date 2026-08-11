@@ -165,9 +165,14 @@ rather than fixable in this code:
 
 The definitive control is therefore **network-level egress restriction for the media
 worker** — it should not be able to route to loopback, private, link-local, or
-cloud-metadata ranges at all. Treat that as a prerequisite for enabling the probe against
-untrusted media in a shared network, and the in-browser controls above as the layer that
-makes ordinary cases fail closed.
+cloud-metadata ranges at all. The in-browser controls above are the layer that makes
+ordinary cases fail closed; they are not a substitute.
+
+This is enforced at startup rather than left to documentation: enabling the probe
+requires `render_probe.egress_restricted: true`, and the process refuses to start
+otherwise. The flag does not implement the control — it attests that the deployment has
+it, so shipping the probe without egress restriction is a deliberate decision rather than
+an oversight.
 
 Chromium runs **sandboxed** for the probe: unlike the SVG rasterizer, the probe omits
 `--single-process` (which disables the renderer sandbox by design) and does not pass

@@ -6083,6 +6083,54 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			"an L0-owned failure must not be reclassified as a render failure")
 	})
 
+	t.Run("a token indexed after a gate inherits it and is not viewable", func(t *testing.T) {
+		// The gate is a property of the URL. A token that starts referencing an
+		// already-gated URL must not enter the sweep as unknown — L0 would mark it
+		// healthy and serve it viewable despite a browser-confirmed render failure.
+		sharedURL := "https://example.com/render/shared-gated.html"
+		firstTokenID := mintTokenWithMedia(t, &sharedURL, nil)
+		markHealthy(t, sharedURL, "text/html")
+
+		// L1 gates the URL for the token that already referenced it.
+		reason := schema.RenderFailureKnownBad
+		gateErr := `render matched known-bad fingerprint "kubo-dir-listing"`
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, sharedURL, MediaHealthUpdate{
+			Status:           schema.MediaHealthStatusBroken,
+			LastError:        &gateErr,
+			FailureReason:    &reason,
+			RenderProbeWrite: true,
+		}))
+		_, err := store.BatchUpdateTokensViewability(ctx, []uint64{firstTokenID})
+		require.NoError(t, err)
+
+		// A second token is indexed with the same URL, after the gate exists.
+		secondTokenID := mintTokenWithMedia(t, &sharedURL, nil)
+
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{secondTokenID})
+		require.NoError(t, err)
+		require.Len(t, rows[secondTokenID], 1)
+		inherited := rows[secondTokenID][0]
+		assert.Equal(t, schema.MediaHealthStatusBroken, inherited.HealthStatus,
+			"a new row for a gated URL must not start as unknown")
+		require.NotNil(t, inherited.FailureReason)
+		assert.Equal(t, schema.RenderFailureKnownBad, *inherited.FailureReason)
+
+		// The L0 sweep must not pick it up (that is what would flip it healthy).
+		due, err := store.GetURLsForChecking(ctx, -time.Minute, 1000)
+		require.NoError(t, err)
+		assert.NotContains(t, due, sharedURL,
+			"an inherited gate keeps the URL out of the byte-level sweep")
+
+		// And the new token is not viewable.
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{secondTokenID})
+		require.NoError(t, err)
+		viewability, err := store.GetTokensViewabilityByIDs(ctx, []uint64{secondTokenID})
+		require.NoError(t, err)
+		require.Len(t, viewability, 1)
+		assert.False(t, viewability[0].IsViewable,
+			"a token sharing a render-gated URL must not be served viewable")
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)

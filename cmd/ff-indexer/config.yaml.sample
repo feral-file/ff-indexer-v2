@@ -220,6 +220,12 @@ render_probe:
   # the sandbox (no unprivileged user namespaces / restrictive seccomp) — an unsandboxed
   # renderer exploit gains the media worker's process and DB access.
   no_sandbox: false
+  # Required to enable the probe. Attests that the media worker cannot route to
+  # loopback/private/link-local/cloud-metadata ranges. In-browser request validation is
+  # hostname-based, so DNS rebinding between validation and chromium's dial can only be
+  # closed by network-level egress policy — this flag does not implement it, it makes
+  # enabling the probe without it a deliberate choice. See docs/media_viewability.md.
+  egress_restricted: false
   failure_gate_threshold: 2
   recheck_interval: 168h
   retry_interval: 1h

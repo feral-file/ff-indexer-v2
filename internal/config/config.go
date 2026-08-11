@@ -261,6 +261,16 @@ type RenderProbeConfig struct {
 	// untrusted remote pages, so an unsandboxed renderer exploit would gain the media
 	// worker's process access — prefer fixing the runtime over setting this.
 	NoSandbox bool `mapstructure:"no_sandbox"`
+	// EgressRestricted attests that the media worker's network egress is restricted so
+	// it cannot route to loopback, private, link-local, or cloud-metadata ranges.
+	//
+	// Required to enable the probe. In-browser request validation is hostname-based, and
+	// the hostname is resolved again by chromium when it dials — the DNS-rebinding TOCTOU
+	// the SSRF validator documents repo-wide. Only connect-time/peer-IP policy closes it,
+	// which lives in the network, not this process. This flag does not implement that
+	// control; it makes enabling the probe without it a deliberate choice rather than an
+	// oversight.
+	EgressRestricted bool `mapstructure:"egress_restricted"`
 }
 
 // TransformConfig holds configuration for image transformation
@@ -538,6 +548,13 @@ func validateRenderProbeConfig(c *RenderProbeConfig) error {
 	}
 
 	invalid := make([]string, 0)
+	if !c.EgressRestricted {
+		invalid = append(invalid, "render_probe.egress_restricted must be true to enable the probe: "+
+			"the render probe navigates untrusted pages in a browser whose request validation is "+
+			"hostname-based and therefore open to DNS rebinding at dial time. Restrict the media "+
+			"worker's network egress from loopback/private/link-local/metadata ranges, then set this "+
+			"flag (see docs/media_viewability.md)")
+	}
 	if c.BatchSize < 1 {
 		invalid = append(invalid, "render_probe.batch_size must be at least 1")
 	}
@@ -718,6 +735,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("render_probe.retry_interval", "1h")
 	v.SetDefault("render_probe.broken_recheck_interval", "24h")
 	v.SetDefault("render_probe.no_sandbox", false)
+	v.SetDefault("render_probe.egress_restricted", false)
 	v.SetDefault("max_image_size", 10*1024*1024)
 	v.SetDefault("max_video_size", 300*1024*1024)
 	v.SetDefault("transform.target_image_size", int64(float64(10*1024*1024)*0.9))
@@ -910,6 +928,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"render_probe.retry_interval",
 		"render_probe.broken_recheck_interval",
 		"render_probe.no_sandbox",
+		"render_probe.egress_restricted",
 		// Media Health Sweeper config
 		"media_health_sweeper.http_timeout",
 		"media_health_sweeper.batch_size",
