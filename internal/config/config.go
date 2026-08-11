@@ -271,6 +271,38 @@ type MediaHealthSweeperConfig struct {
 	Worker       WorkerConfig  `mapstructure:"worker"`
 }
 
+// EffectiveURI returns the sweeper's URI settings with unset fields inherited from the
+// root uri section.
+//
+// Reason: the documented operator remediation for a newly identified 200 error page is
+// "add a marker to uri.known_bad_page_markers" — without inheritance that setting reaches
+// worker-core but silently never the scheduled sweeper, which does the bulk of health
+// checking, so the bad page keeps being marked healthy. Trade-offs: inheritance is
+// per-field and only for unset values, so a deployment that deliberately configures the
+// nested media_health_sweeper.uri section keeps full override power. Constraints: empty
+// slice and zero are the "unset" sentinels — there is no way to nest an explicit
+// "no markers" override, which is acceptable because an empty marker list only ever
+// means "nothing configured".
+func (c *MediaHealthSweeperConfig) EffectiveURI(root URIConfig) URIConfig {
+	effective := c.URI
+	if len(effective.IPFSGateways) == 0 {
+		effective.IPFSGateways = root.IPFSGateways
+	}
+	if len(effective.ArweaveGateways) == 0 {
+		effective.ArweaveGateways = root.ArweaveGateways
+	}
+	if len(effective.OnchfsGateways) == 0 {
+		effective.OnchfsGateways = root.OnchfsGateways
+	}
+	if effective.ProbeMaxBytes <= 0 {
+		effective.ProbeMaxBytes = root.ProbeMaxBytes
+	}
+	if len(effective.KnownBadPageMarkers) == 0 {
+		effective.KnownBadPageMarkers = root.KnownBadPageMarkers
+	}
+	return effective
+}
+
 // SweeperConfig holds configuration for the sweeper program
 type SweeperConfig struct {
 	BaseConfig         `mapstructure:",squash"`

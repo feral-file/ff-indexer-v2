@@ -110,6 +110,29 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedStatus: uri.HealthStatusHealthy,
 		},
 		{
+			name: "203 from a transforming proxy with valid content is healthy (2xx contract)",
+			url:  "https://example.com/proxied.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/proxied.png", probeRangeHeader).
+					Return(httpResp(http.StatusNonAuthoritativeInfo, "image/png", minimalPNG(64, 64), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+		},
+		{
+			name: "204 empty response is broken as zero_length, not http_status",
+			url:  "https://example.com/nothing.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/nothing.png", probeRangeHeader).
+					Return(httpResp(http.StatusNoContent, "image/png", nil, nil), nil)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureZeroLength,
+		},
+		{
 			name: "416 falls back to unranged GET",
 			url:  "https://example.com/art.gif",
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {

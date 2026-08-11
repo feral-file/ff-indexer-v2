@@ -111,8 +111,10 @@ agreed on #3485: previously-reported healthy, validated healthy, actually render
 ## Operational notes
 
 - A new gateway error page: add a marker to `uri.known_bad_page_markers` (config
-  reload/deploy, no code change). Keep markers specific — exact error titles, not
-  generic words — they are matched against HTML artwork bodies too.
+  reload/deploy, no code change). The scheduled sweeper inherits root `uri` probe
+  settings unless the nested `media_health_sweeper.uri` section overrides them, so the
+  root key is the single place to set markers. Keep markers specific — exact error
+  titles, not generic words — they are matched against HTML artwork bodies too.
 - Bandwidth: bounded by sweeper batch size × `probe_max_bytes` per cycle; the probe
   closes without draining bodies larger than the window.
 - Rollout: enforcement is immediate by design (user decision on #3485 follow-up). If a

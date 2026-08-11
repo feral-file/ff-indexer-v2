@@ -5993,9 +5993,34 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 			require.NoError(t, err)
 		}
 
+		// Record a full L0 broken outcome on the old URL first: fallback promotion must
+		// not carry the failed URL's observations onto the healthy replacement.
+		errMsg := "HTTP 404"
+		reason := schema.MediaFailureHTTPStatus.String()
+		htmlType := "text/html"
+		err = store.UpdateTokenMediaHealthByURL(ctx, oldURL, MediaHealthUpdate{
+			Status:              schema.MediaHealthStatusBroken,
+			LastError:           &errMsg,
+			FailureReason:       &reason,
+			ObservedContentType: &htmlType,
+			SniffedContentType:  &htmlType,
+		})
+		require.NoError(t, err)
+
 		// Update URL and propagate (this also propagates health status)
 		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL)
 		require.NoError(t, err)
+
+		// Promotion marks the row healthy and clears every L0 field from the replaced URL.
+		promotedRows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{token1Data.ID})
+		require.NoError(t, err)
+		require.Len(t, promotedRows[token1Data.ID], 1)
+		promoted := promotedRows[token1Data.ID][0]
+		assert.Equal(t, schema.MediaHealthStatusHealthy, promoted.HealthStatus)
+		assert.Nil(t, promoted.LastError)
+		assert.Nil(t, promoted.FailureReason, "stale failure_reason must not survive promotion")
+		assert.Nil(t, promoted.ObservedContentType, "stale observed_content_type must not survive promotion")
+		assert.Nil(t, promoted.SniffedContentType, "stale sniffed_content_type must not survive promotion")
 
 		// Mark new URL as healthy (after propagation)
 		err = store.UpdateTokenMediaHealthByURL(ctx, newURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})

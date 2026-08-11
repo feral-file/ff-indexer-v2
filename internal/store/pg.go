@@ -2889,15 +2889,22 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 	newHash := types.MD5Hash(newURL)
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Update token_media_health
+		// 1. Update token_media_health. The L0 observation columns are cleared along with
+		// last_error: they describe the *replaced* URL's probe, and carrying them onto the
+		// promoted fallback would corrupt per-reason reporting and render-probe class
+		// selection. NULL means "not yet content-probed" — the next sweep repopulates them
+		// from the new URL's own bytes.
 		if err := tx.Model(&schema.TokenMediaHealth{}).
 			Where("media_url_hash = ?", oldHash).
 			Updates(map[string]interface{}{
-				"media_url":       newURL,
-				"media_url_hash":  newHash,
-				"health_status":   schema.MediaHealthStatusHealthy,
-				"last_checked_at": time.Now(),
-				"last_error":      nil,
+				"media_url":             newURL,
+				"media_url_hash":        newHash,
+				"health_status":         schema.MediaHealthStatusHealthy,
+				"last_checked_at":       time.Now(),
+				"last_error":            nil,
+				"failure_reason":        nil,
+				"observed_content_type": nil,
+				"sniffed_content_type":  nil,
 			}).Error; err != nil {
 			return fmt.Errorf("failed to update token_media_health: %w", err)
 		}

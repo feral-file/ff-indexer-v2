@@ -438,3 +438,31 @@ func TestToWorkerMediaConfig_includesSecurityForSSRF(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, v)
 }
+
+func TestMediaHealthSweeperConfig_EffectiveURI(t *testing.T) {
+	root := URIConfig{
+		IPFSGateways:        []string{"https://ipfs.io"},
+		ArweaveGateways:     []string{"https://arweave.net"},
+		OnchfsGateways:      []string{"https://onchfs.fxhash2.xyz"},
+		ProbeMaxBytes:       32768,
+		KnownBadPageMarkers: []string{"504 gateway time-out"},
+	}
+
+	t.Run("unset nested fields inherit the root uri section", func(t *testing.T) {
+		c := MediaHealthSweeperConfig{} // nothing nested configured
+		got := c.EffectiveURI(root)
+		assert.Equal(t, root, got, "the documented uri.known_bad_page_markers remediation must reach the sweeper")
+	})
+
+	t.Run("configured nested fields override the root, unset ones still inherit", func(t *testing.T) {
+		c := MediaHealthSweeperConfig{URI: URIConfig{
+			IPFSGateways:  []string{"https://sweeper-only-gateway.example"},
+			ProbeMaxBytes: 1024,
+		}}
+		got := c.EffectiveURI(root)
+		assert.Equal(t, []string{"https://sweeper-only-gateway.example"}, got.IPFSGateways)
+		assert.Equal(t, 1024, got.ProbeMaxBytes)
+		assert.Equal(t, root.ArweaveGateways, got.ArweaveGateways)
+		assert.Equal(t, root.KnownBadPageMarkers, got.KnownBadPageMarkers)
+	})
+}

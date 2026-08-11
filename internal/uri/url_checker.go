@@ -130,7 +130,11 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 	}()
 
 	switch {
-	case resp.StatusCode == http.StatusPartialContent || resp.StatusCode == http.StatusOK:
+	// The whole 2xx range is a fetch success (matching the documented L0 contract and the
+	// pre-content-validation checker): 203 arrives via transforming proxies with valid
+	// media, and 204's empty body is a content verdict (zero_length), not an HTTP one.
+	// 416/429 sit outside 2xx, so the explicit cases below are unaffected.
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		body, readErr := p.io.ReadAll(io.LimitReader(resp.Body, int64(p.maxBytes)))
 		if readErr != nil {
 			// The connection died mid-body: a transport condition, retried next sweep.
