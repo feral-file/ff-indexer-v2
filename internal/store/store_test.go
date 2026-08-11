@@ -6208,6 +6208,33 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			"the gate must be inherited from media_render_probes, not a sibling health row")
 	})
 
+	t.Run("an inherited gate keeps the sibling's reason when the verdict has moved on", func(t *testing.T) {
+		// After a failed release the probe's verdict can be rendered_ok while the gate is
+		// still held. Deriving the reason from that verdict would relabel the gate, so a
+		// surviving sibling row's reason wins.
+		pendingURL := "https://example.com/render/release-pending.html"
+		mintTokenWithMedia(t, &pendingURL, nil)
+		markHealthy(t, pendingURL, "text/html")
+
+		reason := schema.RenderFailureStalled
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, pendingURL, MediaHealthUpdate{
+			Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true,
+		}))
+		past := time.Now().UTC().Add(-time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: pendingURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			HealthGated: true, CapturedAt: &past, NextCheckAt: past,
+		}))
+
+		newID := mintTokenWithMedia(t, &pendingURL, nil)
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{newID})
+		require.NoError(t, err)
+		require.Len(t, rows[newID], 1)
+		require.NotNil(t, rows[newID][0].FailureReason)
+		assert.Equal(t, schema.RenderFailureStalled, *rows[newID][0].FailureReason,
+			"the gate's existing reason must not be relabeled from a stale verdict")
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)

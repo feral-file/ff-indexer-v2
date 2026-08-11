@@ -2779,8 +2779,23 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 		switch {
 		case err == nil:
 			health.HealthStatus = schema.MediaHealthStatusBroken
-			health.FailureReason = renderFailureReasonFor(probeRow.Verdict)
 			health.LastError = probeRow.LastError
+			// Prefer the reason a sibling row already carries: after a failed release the
+			// probe's verdict can be rendered_ok while the gate is still held, so
+			// deriving from the verdict alone would relabel the gate. Fall back to
+			// derivation when no sibling row survives (the reuse-after-removal case,
+			// which is why the probe row is the authority for *whether* it is gated).
+			var sibling schema.TokenMediaHealth
+			sibErr := tx.Where("media_url_hash = ? AND failure_reason LIKE 'render_%'", newURLHash).
+				First(&sibling).Error
+			switch {
+			case sibErr == nil:
+				health.FailureReason = sibling.FailureReason
+			case errors.Is(sibErr, gorm.ErrRecordNotFound):
+				health.FailureReason = renderFailureReasonFor(probeRow.Verdict)
+			default:
+				return fmt.Errorf("failed to read an existing render gate reason: %w", sibErr)
+			}
 		case !errors.Is(err, gorm.ErrRecordNotFound):
 			return fmt.Errorf("failed to check for an existing render gate: %w", err)
 		}
