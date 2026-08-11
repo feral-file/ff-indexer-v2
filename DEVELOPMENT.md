@@ -355,6 +355,60 @@ WHERE kind = 'IndexTokenMetadata'
 GROUP BY status;
 ```
 
+### Migration 021_reindex: give pre-existing tokens a first moderation verdict
+
+Migration `021.sql` creates `token_moderation_verdicts` but leaves it empty, and neither writer discovers tokens on its own — the enricher writes a verdict only while indexing a token, and the moderation sweeper's queue query reads `FROM token_moderation_verdicts` (an inner join, no discovery pass). On a database that already holds tokens the feature would therefore cover nothing until each token happened to be re-indexed for an unrelated reason, leaving already-moderated spam rendering indefinitely.
+
+`021_reindex.sql` inserts one `IndexTokenMetadata` job per token with `vendor IN ('opensea', 'objkt')` in `enrichment_sources`. Those are the only moderating vendors, matching `schema.ModerationSourceForVendor` — other vendors get no verdict at indexing time either, so re-enriching them would spend vendor quota to write nothing.
+
+fxhash is deliberately not covered. `enhanceFxhash` falls back to `enhanceObjkt` when the fxhash API has no gentk for a token, and those rows are stored as `vendor='objkt'`, so that subset is picked up; tokens fxhash does index are stored as `vendor='fxhash'` and are skipped. This matches the enricher's behavior and is the intended coverage gap for curated surfaces — see the accepted-gaps list in `docs/token_moderation.md`.
+
+**Why reindex rather than derive from stored vendor JSON:** `enrichment_sources.vendor_json` often does contain objkt's `flag` and OpenSea's `is_disabled` today, but it is a snapshot of whatever fields the enricher kept at the time it ran — accumulated across every version of that code — not a guarantee that any given field exists on every historical row. Migration `018_reindex` hit exactly this and documents four fields missing from older rows.
+
+**⚠️ Ordering: run this AFTER deploying the new application code** — the reverse of the usual rule above, which still applies to `021.sql` itself. This file enqueues work rather than changing schema: a worker running pre-021 code would claim these jobs, run the old enricher, write no verdict row, and mark them succeeded. The jobs leave the active set and the backfill silently does nothing.
+
+Recovery if that happens: re-run `021_reindex.sql` only. `jobs_unique_key_active` guards only *active* jobs, so finished ones do not block re-insertion. Do not re-run `021.sql` — it aborts at `CREATE TYPE moderation_status` (the first statement of step 1), leaving the database untouched because that step runs in a transaction.
+
+**What happens after migration 021_reindex runs:**
+
+1. Jobs are inserted into the `token_index` queue with `status=pending`.
+2. The token worker picks them up and calls `EnhanceTokenMetadata` for each token.
+3. The enhancer reads the vendor's moderation field (objkt `flag`, OpenSea `is_disabled`) and writes a `token_moderation_verdicts` row, which recomputes `tokens.moderation_status`.
+4. Each new row lands at `now + initial_recheck_interval`, after which the moderation sweeper keeps it fresh.
+
+**Volume:** one job per already-enriched opensea/objkt token, and step 4 means the sweeper's first pass after the queue drains is a burst against the same vendor rate limiter the enricher uses (OpenSea ~4 rps, objkt ~2 rps, shared process-wide). Size it before running:
+
+```sql
+SELECT vendor, COUNT(*)
+FROM enrichment_sources
+WHERE vendor IN ('opensea', 'objkt')
+GROUP BY vendor;
+```
+
+See `docs/token_moderation.md` for mitigations (longer `initial_recheck_interval`, or pacing the INSERT in batches) if the count is large.
+
+**Idempotency:** Uses `ON CONFLICT ... DO NOTHING` on the partial unique index `jobs_unique_key_active`. Safe to re-run.
+
+**Fresh installs:** Produces no rows. `db/init_pg_db.sql` does not need updating.
+
+**Verify progress after deployment:**
+
+```sql
+-- Verdict rows written so far (expected to grow toward the sizing count above)
+SELECT source, COUNT(*)
+FROM token_moderation_verdicts
+GROUP BY source;
+
+-- Tokens the backfill has flagged
+SELECT COUNT(*) FROM tokens WHERE moderation_status <> 'none';
+
+-- Jobs inserted by migration 021_reindex (all statuses)
+SELECT status, COUNT(*)
+FROM jobs
+WHERE kind = 'IndexTokenMetadata'
+GROUP BY status;
+```
+
 ### Reset Database
 
 To reset the database (WARNING: deletes all data):

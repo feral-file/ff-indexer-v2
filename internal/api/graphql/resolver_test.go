@@ -200,7 +200,7 @@ func TestQueryResolverTokensRejectsInvalidReleaseVendor(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		&vendor, nil,
-		nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Invalid release_vendor")
@@ -222,7 +222,7 @@ func TestQueryResolverTokensMintNumberRequiresReleaseContext(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		nil, nil,
-		nil, nil, nil, nil, &sortBy, nil,
+		nil, nil, nil, nil, nil, &sortBy, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sort_by=mint_number requires release_id")
@@ -247,7 +247,7 @@ func TestQueryResolverTokensVendorAloneRejectsForMintNumber(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		&vendor, nil,
-		nil, nil, nil, nil, &sortBy, nil,
+		nil, nil, nil, nil, nil, &sortBy, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sort_by=mint_number requires release_id")
@@ -271,7 +271,7 @@ func TestQueryResolverTokensMintNumbersWithVendorSlug(t *testing.T) {
 			gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any(), gomock.Any(), // release vendor + slug
 			gomock.Any(), // mint_numbers
-			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(&dto.TokenListResponse{}, nil)
 
 	resolver := NewResolver(false, mockExec)
@@ -279,7 +279,7 @@ func TestQueryResolverTokensMintNumbersWithVendorSlug(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		&vendor, &slug,
-		mintNums, nil, nil, nil, nil, nil,
+		mintNums, nil, nil, nil, nil, nil, nil,
 	)
 	require.NoError(t, err)
 }
@@ -300,8 +300,156 @@ func TestQueryResolverTokensSlugAloneRejected(t *testing.T) {
 		context.Background(),
 		nil, nil, nil, nil, nil, nil, nil,
 		nil, &slug,
-		nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "release_vendor_slug requires release_vendor or release_id")
+}
+
+// --- token(cid, include_moderated) ---
+
+// TestQueryResolverTokenDefaultsToExcludingSpam pins the GraphQL half of the
+// detail-lookup wiring. gqlgen applies the schema default (false) when the caller
+// omits the argument, but the resolver still has to forward it; if it does not,
+// the endpoint renders flagged tokens regardless of what the executor decides.
+func TestQueryResolverTokenDefaultsToExcludingSpam(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	includeModerated := false
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), false).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, &includeModerated)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, cid, result.TokenCID)
+}
+
+// TestQueryResolverTokenNilIncludeModeratedIsFalse covers the argument being absent
+// entirely, which reaches the resolver as a nil pointer rather than false.
+func TestQueryResolverTokenNilIncludeModeratedIsFalse(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), false).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+}
+
+func TestQueryResolverTokenForwardsIncludeModerated(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	includeModerated := true
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), true).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, &includeModerated)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+}
+
+// TestQueryResolverTokenFilteredSpamIsNotFound pins that a token the executor
+// suppresses surfaces as a not-found error rather than a nil token with no error,
+// so clients get a consistent shape whether the CID is unknown or flagged.
+func TestQueryResolverTokenFilteredSpamIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), false).
+		Return(nil, nil)
+
+	result, err := resolver.Query().Token(context.Background(), cid, nil, nil, nil, nil, nil, nil)
+	require.Error(t, err)
+	assert.Nil(t, result)
+}
+
+// --- Release.members(include_moderated) ---
+
+// TestReleaseResolverMembersDefaultsToExcludingSpam mirrors the REST contract:
+// members is a renderable TokenList, so it is filtered unless the caller opts in.
+// include_unviewable stays true — that one is a transient pipeline state, not a
+// content decision.
+func TestReleaseResolverMembersDefaultsToExcludingSpam(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	releaseID := uint64(42)
+	includeModeratedFalse := false
+	includeUnviewableTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			&includeUnviewableTrue, &includeModeratedFalse, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
+
+	obj := &dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}
+	_, err := resolver.Release().Members(context.Background(), obj, nil, nil, nil, nil)
+	require.NoError(t, err)
+}
+
+func TestReleaseResolverMembersForwardsIncludeModerated(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	resolver := NewResolver(false, mockExec)
+
+	releaseID := uint64(42)
+	includeModeratedTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			gomock.Any(), &includeModeratedTrue, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
+
+	obj := &dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}
+	optIn := true
+	_, err := resolver.Release().Members(context.Background(), obj, nil, nil, nil, &optIn)
+	require.NoError(t, err)
 }

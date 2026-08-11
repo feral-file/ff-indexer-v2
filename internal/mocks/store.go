@@ -642,6 +642,21 @@ func (mr *MockStoreMockRecorder) GetTokenMetadataByTokenIDs(ctx, tokenIDs any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenMetadataByTokenIDs", reflect.TypeOf((*MockStore)(nil).GetTokenMetadataByTokenIDs), ctx, tokenIDs)
 }
 
+// GetTokenModerationVerdictsDueForCheck mocks base method.
+func (m *MockStore) GetTokenModerationVerdictsDueForCheck(ctx context.Context, source schema.ModerationSource, limit int) ([]store.TokenModerationCheckItem, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTokenModerationVerdictsDueForCheck", ctx, source, limit)
+	ret0, _ := ret[0].([]store.TokenModerationCheckItem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTokenModerationVerdictsDueForCheck indicates an expected call of GetTokenModerationVerdictsDueForCheck.
+func (mr *MockStoreMockRecorder) GetTokenModerationVerdictsDueForCheck(ctx, source, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTokenModerationVerdictsDueForCheck", reflect.TypeOf((*MockStore)(nil).GetTokenModerationVerdictsDueForCheck), ctx, source, limit)
+}
+
 // GetTokenOwnerProvenancesBulk mocks base method.
 func (m *MockStore) GetTokenOwnerProvenancesBulk(ctx context.Context, tokenIDs []uint64, ownerAddresses []string, maxPerToken int) (map[uint64][]schema.TokenOwnershipProvenance, map[uint64]uint64, error) {
 	m.ctrl.T.Helper()
@@ -928,6 +943,21 @@ func (mr *MockStoreMockRecorder) MarkJobSucceeded(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkJobSucceeded", reflect.TypeOf((*MockStore)(nil).MarkJobSucceeded), ctx, id)
 }
 
+// RecordTokenModerationCheckFailure mocks base method.
+func (m *MockStore) RecordTokenModerationCheckFailure(ctx context.Context, tokenID uint64, source schema.ModerationSource, checkErr string, nextCheckAt, expectedLastCheckedAt time.Time) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordTokenModerationCheckFailure", ctx, tokenID, source, checkErr, nextCheckAt, expectedLastCheckedAt)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RecordTokenModerationCheckFailure indicates an expected call of RecordTokenModerationCheckFailure.
+func (mr *MockStoreMockRecorder) RecordTokenModerationCheckFailure(ctx, tokenID, source, checkErr, nextCheckAt, expectedLastCheckedAt any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordTokenModerationCheckFailure", reflect.TypeOf((*MockStore)(nil).RecordTokenModerationCheckFailure), ctx, tokenID, source, checkErr, nextCheckAt, expectedLastCheckedAt)
+}
+
 // RequestJobCancel mocks base method.
 func (m *MockStore) RequestJobCancel(ctx context.Context, id int64) error {
 	m.ctrl.T.Helper()
@@ -1196,4 +1226,19 @@ func (m *MockStore) UpsertTokenMetadata(ctx context.Context, input store.CreateT
 func (mr *MockStoreMockRecorder) UpsertTokenMetadata(ctx, input any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenMetadata", reflect.TypeOf((*MockStore)(nil).UpsertTokenMetadata), ctx, input)
+}
+
+// UpsertTokenModerationVerdict mocks base method.
+func (m *MockStore) UpsertTokenModerationVerdict(ctx context.Context, input store.UpsertTokenModerationVerdictInput) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertTokenModerationVerdict", ctx, input)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpsertTokenModerationVerdict indicates an expected call of UpsertTokenModerationVerdict.
+func (mr *MockStoreMockRecorder) UpsertTokenModerationVerdict(ctx, input any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertTokenModerationVerdict", reflect.TypeOf((*MockStore)(nil).UpsertTokenModerationVerdict), ctx, input)
 }

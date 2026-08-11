@@ -2,6 +2,7 @@ package opensea_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -724,4 +725,35 @@ func TestExtractMintNumber(t *testing.T) {
 			assert.Equal(t, tt.expectedNumber, got)
 		})
 	}
+}
+
+// TestNFTMetadataParsesIsDisabled verifies the moderation flag survives unmarshaling —
+// this is the spam signal; before it was declared on the struct it was silently dropped.
+func TestNFTMetadataParsesIsDisabled(t *testing.T) {
+	raw := []byte(`{
+		"nft": {
+			"identifier": "0",
+			"collection": "visit-ether-pool-net-to-claim-rewards-37",
+			"contract": "0x29539a0109fec46b916a6125f352c629d9304c73",
+			"name": "Visit ether-pool.net to claim rewards",
+			"is_disabled": true,
+			"is_suspicious": false
+		}
+	}`)
+
+	var resp opensea.NFTResponse
+	require.NoError(t, json.Unmarshal(raw, &resp))
+
+	assert.True(t, resp.NFT.IsDisabled, "is_disabled must be captured from the API response")
+}
+
+// TestNFTMetadataIsDisabledDefaultsFalse ensures the flag defaults to false (fail-open)
+// when the API omits it.
+func TestNFTMetadataIsDisabledDefaultsFalse(t *testing.T) {
+	raw := []byte(`{"nft": {"identifier": "1", "collection": "c", "contract": "0xabc"}}`)
+
+	var resp opensea.NFTResponse
+	require.NoError(t, json.Unmarshal(raw, &resp))
+
+	assert.False(t, resp.NFT.IsDisabled)
 }
