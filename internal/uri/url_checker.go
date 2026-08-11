@@ -136,16 +136,24 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 	// 416/429 sit outside 2xx, so the explicit cases below are unaffected.
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		body, readErr := p.io.ReadAll(io.LimitReader(resp.Body, int64(p.maxBytes)))
-		if readErr != nil {
-			// The connection died mid-body: a transport condition, retried next sweep.
+		total := totalLength(resp)
+		if readErr != nil && !isConclusiveTruncation(len(body), total, p.maxBytes) {
+			// The connection died mid-body with no length evidence: a transport
+			// condition, retried next sweep.
 			errMsg := readErr.Error()
 			return probeResult{hcr: HealthCheckResult{
 				Status: HealthStatusTransientError,
 				Error:  &errMsg,
 			}}
 		}
+		// readErr with conclusive length evidence falls through: the server advertised
+		// more bytes than it delivered, which is truncation, not weather. The partial
+		// body goes through the validator so the verdict is the same broken/truncated a
+		// cleanly-short body gets — otherwise consistently truncated media stays
+		// transient forever, and the sweeper never persists transient results, leaving a
+		// stale healthy row to keep the token viewable.
 
-		verdict := p.validator.Validate(resp.Header.Get("Content-Type"), body, totalLength(resp))
+		verdict := p.validator.Validate(resp.Header.Get("Content-Type"), body, total)
 		result := HealthCheckResult{
 			Status:              HealthStatusHealthy,
 			ObservedContentType: verdict.Declared,
@@ -195,6 +203,14 @@ func (p *contentProbe) gatewayProbe(ctx context.Context, url string) error {
 		return fmt.Errorf("gateway probe failed with status %s", result.hcr.Status)
 	}
 	return nil
+}
+
+// isConclusiveTruncation reports whether a mid-body read failure is evidence of a
+// truncated resource rather than transient network weather: the response declared a
+// total length, fewer bytes than that arrived, and the read stopped short of the probe
+// cap (so the shortfall is the server's, not the cap's).
+func isConclusiveTruncation(got int, total int64, maxBytes int) bool {
+	return total > 0 && int64(got) < total && got < maxBytes
 }
 
 // totalLength extracts the full resource length: the Content-Range total for 206

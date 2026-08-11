@@ -133,6 +133,45 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedReason: uri.FailureZeroLength,
 		},
 		{
+			name: "mid-body read failure with declared length is broken as truncated, not transient",
+			url:  "https://example.com/cut-short.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				// The server declares 500KB but the connection dies after a partial read:
+				// conclusive truncation evidence, so the partial bytes must reach the
+				// validator instead of being discarded as a transient error (a
+				// consistently truncating server would otherwise stay healthy forever —
+				// the sweeper never persists transient results).
+				resp := httpResp(http.StatusOK, "image/png", minimalPNG(64, 64), nil)
+				resp.ContentLength = 500_000
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/cut-short.png", probeRangeHeader).
+					Return(resp, nil)
+				mio.EXPECT().
+					ReadAll(gomock.Any()).
+					DoAndReturn(func(r io.Reader) ([]byte, error) {
+						partial, _ := io.ReadAll(r)
+						return partial, io.ErrUnexpectedEOF
+					})
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureTruncated,
+		},
+		{
+			name: "mid-body read failure without length evidence stays transient",
+			url:  "https://example.com/flaky-read.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				resp := httpResp(http.StatusOK, "image/png", minimalPNG(64, 64), nil)
+				resp.ContentLength = -1 // chunked/unknown: the shortfall could be weather
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/flaky-read.png", probeRangeHeader).
+					Return(resp, nil)
+				mio.EXPECT().
+					ReadAll(gomock.Any()).
+					Return([]byte{0x89, 'P'}, io.ErrUnexpectedEOF)
+			},
+			expectedStatus: uri.HealthStatusTransientError,
+		},
+		{
 			name: "416 falls back to unranged GET",
 			url:  "https://example.com/art.gif",
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
