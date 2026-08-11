@@ -121,6 +121,24 @@ func TestChromiumSmoke(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		})
 	}
+	mux.HandleFunc("/module-worker.mjs", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		_, _ = w.Write([]byte(`export const ok = true; postMessage("painted");`))
+	})
+	mux.HandleFunc("/module-worker", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body style="margin:0;background:#000">
+			<div id="c" style="width:100vw;height:100vh"></div>
+			<script>
+			try {
+			  const wk = new Worker('/module-worker.mjs', {type:'module'});
+			  wk.onmessage = () => {
+			    document.getElementById('c').style.background =
+			      'linear-gradient(135deg,#0af,#f0a)';
+			  };
+			} catch (e) {}
+			</script></body></html>`))
+	})
 	mux.HandleFunc("/popup-escaped", func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&popupHits, 1)
 		w.WriteHeader(http.StatusOK)
@@ -200,6 +218,17 @@ func TestChromiumSmoke(t *testing.T) {
 		require.NoError(t, err)
 		assert.Positive(t, capture.BlockedRequests,
 			"an iframe's request must pass through the page target's interceptor")
+	})
+
+	// The egress guard replaces Worker; a module worker must still run, or art that
+	// paints from one would be captured blank and gated despite rendering correctly.
+	t.Run("module workers still run under the egress guard", func(t *testing.T) {
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/module-worker")
+		require.NoError(t, err)
+		cls, err := probe.Classify(capture.Image, nil, 0.001)
+		require.NoError(t, err)
+		assert.Equal(t, schema.RenderProbeVerdictRenderedOK, cls.Verdict,
+			"the page only paints when the module worker's message arrives")
 	})
 
 	t.Run("prevents a popup from opening a new uncovered target", func(t *testing.T) {

@@ -149,24 +149,20 @@ func TestExecuteRenderProbe_secondBlankGatesViewability(t *testing.T) {
 	}, nil)
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(blankFrame(), nil)
 
+	// Gating is one atomic call: marker and health rows together, returning the tokens
+	// to recompute. Separate writes would let a token indexed in between land ungated.
 	m.store.EXPECT().
-		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe, upd store.MediaHealthUpdate) ([]uint64, error) {
 			assert.Equal(t, 2, row.ConsecutiveFailures)
+			assert.True(t, row.HealthGated)
 			assert.Equal(t, m.now.Add(renderProbeTestConfig.BrokenRecheckInterval), row.NextCheckAt)
-			return nil
-		})
-
-	m.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
 			assert.Equal(t, schema.MediaHealthStatusBroken, upd.Status)
 			require.NotNil(t, upd.FailureReason)
 			assert.Equal(t, schema.RenderFailureBlank, *upd.FailureReason)
-			return nil
+			return []uint64{7}, nil
 		})
 	cid := "eip155:1:erc721:0xabc:7"
-	m.store.EXPECT().GetTokenIDsByMediaURL(gomock.Any(), url).Return([]uint64{7}, nil)
 	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{7}).Return([]store.TokenViewabilityChange{
 		{TokenID: 7, TokenCID: cid, OldViewable: true, NewViewable: false},
 	}, nil)
@@ -194,22 +190,15 @@ func TestExecuteRenderProbe_stalledRenderCountsTowardGate(t *testing.T) {
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(nil, errors.New("context deadline exceeded"))
 
 	m.store.EXPECT().
-		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe, upd store.MediaHealthUpdate) ([]uint64, error) {
 			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
 			assert.Equal(t, 2, row.ConsecutiveFailures)
 			assert.Nil(t, row.Phash, "no frame, no phash")
-			return nil
-		})
-
-	m.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
 			require.NotNil(t, upd.FailureReason)
 			assert.Equal(t, schema.RenderFailureStalled, *upd.FailureReason)
-			return nil
+			return []uint64{9}, nil
 		})
-	m.store.EXPECT().GetTokenIDsByMediaURL(gomock.Any(), url).Return([]uint64{9}, nil)
 	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{9}).Return(nil, nil)
 
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
@@ -230,24 +219,17 @@ func TestExecuteRenderProbe_fingerprintGatesImmediately(t *testing.T) {
 	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil) // FIRST observation
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(frame, nil)
 
+	// Gates on first observation — no debounce for unambiguous matches — in one atomic call.
 	m.store.EXPECT().
-		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe, upd store.MediaHealthUpdate) ([]uint64, error) {
 			assert.Equal(t, schema.RenderProbeVerdictKnownBadFingerprint, row.Verdict)
 			require.NotNil(t, row.LastError)
 			assert.Contains(t, *row.LastError, "kubo-dir-listing")
-			return nil
-		})
-
-	// Gates on first observation — no debounce for unambiguous matches.
-	m.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
 			require.NotNil(t, upd.FailureReason)
 			assert.Equal(t, schema.RenderFailureKnownBad, *upd.FailureReason)
-			return nil
+			return []uint64{3}, nil
 		})
-	m.store.EXPECT().GetTokenIDsByMediaURL(gomock.Any(), url).Return([]uint64{3}, nil)
 	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{3}).Return(nil, nil)
 
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
@@ -382,15 +364,12 @@ func TestExecuteRenderProbe_healthWritesAreRenderProbeWrites(t *testing.T) {
 	}, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(blankFrame(), nil)
-	m.store.EXPECT().UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).Return(nil)
-
 	m.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
+		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ schema.MediaRenderProbe, upd store.MediaHealthUpdate) ([]uint64, error) {
 			assert.True(t, upd.RenderProbeWrite, "L1 health writes must be marked as render-probe writes")
-			return nil
+			return []uint64{1}, nil
 		})
-	m.store.EXPECT().GetTokenIDsByMediaURL(gomock.Any(), url).Return([]uint64{1}, nil)
 	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{1}).Return(nil, nil)
 
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
@@ -420,16 +399,14 @@ func TestExecuteRenderProbe_gateSurvivesVerdictChange(t *testing.T) {
 	// The stall lands at count 2, below the threshold of 3 — but the URL is already
 	// gated, so the marker must persist and the row stay on the broken cadence.
 	m.store.EXPECT().
-		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe, _ store.MediaHealthUpdate) ([]uint64, error) {
 			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
 			assert.Equal(t, 2, row.ConsecutiveFailures)
 			assert.True(t, row.HealthGated, "an existing gate must survive a verdict change below threshold")
 			assert.Equal(t, m.now.Add(cfg.BrokenRecheckInterval), row.NextCheckAt)
-			return nil
+			return []uint64{1}, nil
 		})
-	m.store.EXPECT().UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).Return(nil)
-	m.store.EXPECT().GetTokenIDsByMediaURL(gomock.Any(), url).Return([]uint64{1}, nil)
 	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{1}).Return(nil, nil)
 
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))

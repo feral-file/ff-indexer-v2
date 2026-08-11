@@ -61,6 +61,21 @@ func (mr *MockStoreMockRecorder) AcquireJobQueueLock(ctx, queue any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquireJobQueueLock", reflect.TypeOf((*MockStore)(nil).AcquireJobQueueLock), ctx, queue)
 }
 
+// AcquireRenderGate mocks base method.
+func (m *MockStore) AcquireRenderGate(ctx context.Context, probe schema.MediaRenderProbe, update store.MediaHealthUpdate) ([]uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AcquireRenderGate", ctx, probe, update)
+	ret0, _ := ret[0].([]uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AcquireRenderGate indicates an expected call of AcquireRenderGate.
+func (mr *MockStoreMockRecorder) AcquireRenderGate(ctx, probe, update any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquireRenderGate", reflect.TypeOf((*MockStore)(nil).AcquireRenderGate), ctx, probe, update)
+}
+
 // BatchUpdateTokensViewability mocks base method.
 func (m *MockStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []uint64) ([]store.TokenViewabilityChange, error) {
 	m.ctrl.T.Helper()

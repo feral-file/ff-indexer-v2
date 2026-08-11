@@ -2773,6 +2773,9 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 		// has since moved away, their rows are deleted while the probe row — and its
 		// verdict — remain. media_render_probes.health_gated is the URL-level record of
 		// "L1 currently holds a gate here", and only the render probe clears it.
+		if err := lockURLGate(tx, newURLHash); err != nil {
+			return err
+		}
 		gate, err := activeRenderGate(tx, newURLHash)
 		if err != nil {
 			return err
@@ -2937,6 +2940,22 @@ type renderGate struct {
 	LastError *string
 }
 
+// lockURLGate takes a transaction-scoped advisory lock keyed by a URL hash, serializing
+// every gate transition and health-row creation for that URL.
+//
+// Reason: row locks are not enough because the contended state may not exist yet. A token
+// being indexed reads "no probe row, so no gate" and inserts an `unknown` health row;
+// concurrently the probe creates the probe row and gates the URL, but its health update
+// cannot see the not-yet-committed insert. The result is an ungated row for a URL L1 has
+// confirmed bad, which the next L0 sweep promotes to healthy. An advisory lock has no
+// such existence requirement, so both sides serialize whether or not any row is there.
+func lockURLGate(tx *gorm.DB, urlHash string) error {
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", urlHash).Error; err != nil {
+		return fmt.Errorf("failed to lock URL gate: %w", err)
+	}
+	return nil
+}
+
 // activeRenderGate reports the render gate currently held on a URL, or nil when none is.
 //
 // media_render_probes.health_gated is the authority for *whether* a gate is held: token
@@ -3025,6 +3044,9 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 			"failure_reason":        nil,
 			"observed_content_type": nil,
 			"sniffed_content_type":  nil,
+		}
+		if err := lockURLGate(tx, newHash); err != nil {
+			return err
 		}
 		gate, err := activeRenderGate(tx, newHash)
 		if err != nil {
@@ -3161,6 +3183,55 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 	return urls, nil
 }
 
+// AcquireRenderGate sets a URL's render gate atomically: the probe row's marker and the
+// gated health rows are written in one locked transaction. It returns the token IDs whose
+// viewability the caller must recompute.
+//
+// Reason: as separate writes, a token indexed between them lands as an ungated `unknown`
+// row that the gate's health update never sees, and the next L0 sweep promotes it to
+// healthy — exposing a browser-confirmed bad render as viewable. The advisory lock covers
+// the case where no probe row exists yet, which a row lock cannot.
+//
+// The health write reaches healthy and unknown rows, plus rows L1 already owns, but never
+// rows L0 currently owns as broken for another reason.
+func (s *pgStore) AcquireRenderGate(ctx context.Context, probe schema.MediaRenderProbe, update MediaHealthUpdate) ([]uint64, error) {
+	urlHash := types.MD5Hash(probe.MediaURL)
+	probe.MediaURLHash = urlHash
+	probe.HealthGated = true
+
+	var tokenIDs []uint64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockURLGate(tx, urlHash); err != nil {
+			return err
+		}
+		if err := upsertMediaRenderProbeTx(tx, probe); err != nil {
+			return err
+		}
+
+		if err := tx.Model(&schema.TokenMediaHealth{}).
+			Where("media_url_hash = ?", urlHash).
+			Where("health_status IN ? OR failure_reason LIKE 'render_%'",
+				[]schema.MediaHealthStatus{schema.MediaHealthStatusHealthy, schema.MediaHealthStatusUnknown}).
+			Updates(map[string]interface{}{
+				"health_status":   update.Status,
+				"last_checked_at": time.Now(),
+				"last_error":      nullableString(update.LastError),
+				"failure_reason":  nullableString(update.FailureReason),
+			}).Error; err != nil {
+			return fmt.Errorf("failed to apply render gate to health rows: %w", err)
+		}
+
+		return tx.Model(&schema.TokenMediaHealth{}).
+			Distinct("token_id").
+			Where("media_url_hash = ?", urlHash).
+			Pluck("token_id", &tokenIDs).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tokenIDs, nil
+}
+
 // ReleaseRenderGate clears a URL's render gate atomically: the gated health rows return
 // to `unknown` and the probe row's marker is cleared in one transaction. It returns the
 // token IDs whose viewability the caller must recompute.
@@ -3182,11 +3253,8 @@ func (s *pgStore) ReleaseRenderGate(ctx context.Context, probe schema.MediaRende
 
 	var tokenIDs []uint64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing schema.MediaRenderProbe
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("media_url_hash = ?", urlHash).First(&existing).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("failed to lock render probe row: %w", err)
+		if err := lockURLGate(tx, urlHash); err != nil {
+			return err
 		}
 
 		if err := tx.Model(&schema.TokenMediaHealth{}).

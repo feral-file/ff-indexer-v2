@@ -233,17 +233,20 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		row.LastError = &errMsg
 		row.ConsecutiveFailures++
 		row.NextCheckAt = now.Add(e.cfg.BrokenRecheckInterval)
-		row.HealthGated = true
-		if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
-			return fmt.Errorf("failed to upsert render probe: %w", err)
-		}
-		// Unambiguous: gate immediately regardless of debounce state.
-		return e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
+		// Unambiguous: gate immediately regardless of debounce state. The marker and the
+		// health rows are written in one locked transaction so a token indexed in between
+		// cannot land ungated.
+		tokenIDs, err := e.store.AcquireRenderGate(ctx, row, store.MediaHealthUpdate{
 			Status:           schema.MediaHealthStatusBroken,
 			LastError:        &errMsg,
 			FailureReason:    strPtr(schema.RenderFailureKnownBad),
 			RenderProbeWrite: true,
 		})
+		if err != nil {
+			return fmt.Errorf("failed to acquire render gate: %w", err)
+		}
+		e.propagateViewability(ctx, tokenIDs)
+		return nil
 
 	default: // blank
 		errMsg := fmt.Sprintf("blank frame (variance %.6f below threshold %.6f)",
@@ -269,11 +272,10 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 		row.NextCheckAt = now.Add(e.cfg.RetryInterval)
 	}
 
-	if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
-		return fmt.Errorf("failed to upsert render probe: %w", err)
-	}
-
 	if !gate {
+		if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
+			return fmt.Errorf("failed to upsert render probe: %w", err)
+		}
 		logger.InfoCtx(ctx, "Render probe failure recorded below gate threshold",
 			zap.String("url", url),
 			zap.String("verdict", row.Verdict.String()),
@@ -288,27 +290,16 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 		reason = schema.RenderFailureStalled
 	}
 	// Idempotent for an already-gated row: it refreshes the reason to match the newest
-	// verdict without changing whether the URL is gated.
-	return e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
+	// verdict without changing whether the URL is gated. Marker and health rows go in one
+	// locked transaction so concurrent indexing cannot slip an ungated row in between.
+	tokenIDs, err := e.store.AcquireRenderGate(ctx, row, store.MediaHealthUpdate{
 		Status:           schema.MediaHealthStatusBroken,
 		LastError:        row.LastError,
 		FailureReason:    &reason,
 		RenderProbeWrite: true,
 	})
-}
-
-// setHealthAndPropagate writes the URL-wide health verdict, recomputes viewability for
-// every affected token, and enqueues viewability webhooks for tokens that changed —
-// mirroring the media health sweeper's flushViewabilityUpdates/triggerWebhook flow so
-// downstream consumers cannot tell which probe layer produced the change.
-func (e *renderProbeExecutor) setHealthAndPropagate(ctx context.Context, url string, update store.MediaHealthUpdate) error {
-	if err := e.store.UpdateTokenMediaHealthByURL(ctx, url, update); err != nil {
-		return fmt.Errorf("failed to update media health: %w", err)
-	}
-
-	tokenIDs, err := e.store.GetTokenIDsByMediaURL(ctx, url)
 	if err != nil {
-		return fmt.Errorf("failed to get token IDs for URL: %w", err)
+		return fmt.Errorf("failed to acquire render gate: %w", err)
 	}
 	e.propagateViewability(ctx, tokenIDs)
 	return nil

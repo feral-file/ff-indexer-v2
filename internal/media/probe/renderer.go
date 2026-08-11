@@ -91,8 +91,20 @@ const egressGuardScript = `
     const GuardedWorker = function (script, options) {
       let wrapped;
       try {
-        const src = prologue + "importScripts(" + JSON.stringify(String(script)) + ");";
-        wrapped = URL.createObjectURL(new Blob([src], { type: "application/javascript" }));
+        // Resolve against the creating scope so the loader below gets an absolute URL;
+        // fall back to the raw value if it will not parse.
+        let target = String(script);
+        try { target = new URL(target, self.location.href).href; } catch (e) { /* keep raw */ }
+
+        // Module workers have no importScripts — forwarding {type:"module"} while
+        // injecting one would break every legitimate module worker, and art that paints
+        // from a worker would then be captured blank and gated. Load modules with a
+        // dynamic import instead, which module scope does provide.
+        const isModule = !!(options && options.type === "module");
+        const load = isModule
+          ? "import(" + JSON.stringify(target) + ");"
+          : "importScripts(" + JSON.stringify(target) + ");";
+        wrapped = URL.createObjectURL(new Blob([prologue + load], { type: "application/javascript" }));
       } catch (e) {
         throw new Error("Worker creation blocked in the render probe");
       }

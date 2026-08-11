@@ -6321,6 +6321,53 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.Nil(t, newRows[newID][0].FailureReason)
 	})
 
+	t.Run("acquiring a gate covers rows created before it and blocks concurrent inheritance", func(t *testing.T) {
+		// AcquireRenderGate writes the marker and the health rows in one locked
+		// transaction. An unknown row that already exists must be swept into the gate,
+		// and the URL-level lock is what stops a concurrent insert landing ungated.
+		gatedURL := "https://example.com/render/atomic-gate.html"
+		firstID := mintTokenWithMedia(t, &gatedURL, nil)
+		markHealthy(t, gatedURL, "text/html")
+		secondID := mintTokenWithMedia(t, &gatedURL, nil) // still unknown, never probed
+
+		now := time.Now().UTC()
+		reason := schema.RenderFailureKnownBad
+		gateErr := "render matched known-bad fingerprint"
+		tokenIDs, err := store.AcquireRenderGate(ctx,
+			schema.MediaRenderProbe{
+				MediaURL: gatedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
+				ConsecutiveFailures: 1, CapturedAt: &now, NextCheckAt: now.Add(time.Hour),
+			},
+			MediaHealthUpdate{
+				Status: schema.MediaHealthStatusBroken, LastError: &gateErr,
+				FailureReason: &reason, RenderProbeWrite: true,
+			})
+		require.NoError(t, err)
+		assert.Subset(t, tokenIDs, []uint64{firstID, secondID})
+
+		// Both the healthy row and the unknown one are now gated.
+		for _, id := range []uint64{firstID, secondID} {
+			rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{id})
+			require.NoError(t, err)
+			require.Len(t, rows[id], 1)
+			assert.Equal(t, schema.MediaHealthStatusBroken, rows[id][0].HealthStatus)
+			require.NotNil(t, rows[id][0].FailureReason)
+			assert.Equal(t, schema.RenderFailureKnownBad, *rows[id][0].FailureReason)
+		}
+
+		// The marker is set in the same transaction, so a later token inherits it.
+		probeRow, err := store.GetMediaRenderProbe(ctx, gatedURL)
+		require.NoError(t, err)
+		require.NotNil(t, probeRow)
+		assert.True(t, probeRow.HealthGated)
+
+		thirdID := mintTokenWithMedia(t, &gatedURL, nil)
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{thirdID})
+		require.NoError(t, err)
+		require.Len(t, rows[thirdID], 1)
+		assert.Equal(t, schema.MediaHealthStatusBroken, rows[thirdID][0].HealthStatus)
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)

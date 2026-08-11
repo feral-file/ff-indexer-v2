@@ -426,6 +426,11 @@ type Store interface {
 	// UpsertMediaRenderProbe inserts or replaces the render-probe row for probe.MediaURL;
 	// baseline_phash is never overwritten once set
 	UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error
+	// AcquireRenderGate sets a URL's render gate atomically — probe marker and health
+	// rows in one locked transaction — and returns the token IDs whose viewability must
+	// be recomputed. Splitting these writes would let a token indexed in between land as
+	// an ungated row the next L0 sweep promotes to healthy.
+	AcquireRenderGate(ctx context.Context, probe schema.MediaRenderProbe, update MediaHealthUpdate) ([]uint64, error)
 	// ReleaseRenderGate clears a URL's render gate atomically — gated health rows return
 	// to unknown and the probe marker is cleared in one transaction — and returns the
 	// token IDs whose viewability must be recomputed. Splitting these writes would let a
