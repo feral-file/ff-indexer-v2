@@ -3000,11 +3000,27 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'video/%'
 		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'audio/%')
 		        OR
-		        -- Already probed: eligibility is the probe's own schedule. Selecting on
-		        -- next_check_at alone is what lets a render-gated row (health broken with
-		        -- a render_% reason, which L0 never re-checks) come back for the
-		        -- successful render that is its only healing path.
-		        (p.media_url_hash IS NOT NULL AND p.next_check_at <= now())
+		        -- Already probed and currently render-gated: health is broken with a
+		        -- render_% reason, which L0 never re-checks, so these must stay eligible
+		        -- on the probe's own schedule — the successful render is their only
+		        -- healing path. Class predicates are deliberately not applied: a gate
+		        -- must not become unrecoverable because the L0 classification changed.
+		        (p.media_url_hash IS NOT NULL
+		         AND p.next_check_at <= now()
+		         AND h.health_status = ?
+		         AND h.failure_reason LIKE 'render_%')
+		        OR
+		        -- Already probed and not gated: a routine re-check still requires the URL
+		        -- to be L0-healthy and renderable today. Without this, a URL that later
+		        -- failed L0 would keep consuming render capacity.
+		        (p.media_url_hash IS NOT NULL
+		         AND p.next_check_at <= now()
+		         AND h.health_status = ?
+		         AND (h.sniffed_content_type = 'text/html'
+		              OR h.media_source IN (?, ?)
+		              OR h.sniffed_content_type LIKE 'image/%')
+		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'video/%'
+		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'audio/%')
 		      )
 		  -- Data URIs carry their bytes inline and are validated by L0; chromium
 		  -- navigation for them is refused by the SSRF policy, so they would loop as
@@ -3016,6 +3032,9 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		                   OR h.media_source IN (?, ?) THEN 0 ELSE 1 END) ASC,
 		         p.captured_at ASC NULLS FIRST
 		LIMIT ?`,
+		schema.MediaHealthStatusHealthy,
+		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
+		schema.MediaHealthStatusBroken,
 		schema.MediaHealthStatusHealthy,
 		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
 		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,

@@ -277,12 +277,16 @@ func TestExecuteRenderProbe_renderedOKAfterGateHeals(t *testing.T) {
 			return nil
 		})
 
-	// Heal: the render probe is the only healer of render-gated rows.
+	// Heal: the render probe is the only writer that may release a render gate, and it
+	// releases to unknown — a screenshot does not certify the bytes, so L0 must
+	// re-validate before the token becomes viewable again.
 	m.store.EXPECT().
 		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
-			assert.Equal(t, schema.MediaHealthStatusHealthy, upd.Status)
+			assert.Equal(t, schema.MediaHealthStatusUnknown, upd.Status,
+				"releasing a gate must not assert L0 health on a screenshot alone")
 			assert.Nil(t, upd.FailureReason)
+			assert.True(t, upd.RenderProbeWrite)
 			return nil
 		})
 	cid := "eip155:1:erc721:0xabc:5"

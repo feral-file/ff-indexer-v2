@@ -211,11 +211,15 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			return fmt.Errorf("failed to upsert render probe: %w", err)
 		}
 		if wasGated {
-			// The URL renders again: heal the health row we gated. The next L0 sweep
-			// re-populates observed/sniffed content types (the row's failure_reason is
-			// cleared, so it re-enters the byte-level sweep).
+			// The URL renders again: release the gate. Deliberately released to
+			// "unknown", not "healthy" — a successful screenshot says the page painted,
+			// it says nothing about the bytes L0 validates (content type, container
+			// integrity). Clearing the render_% reason hands the row back to the L0
+			// sweep, which marks it healthy on its next pass and only then makes the
+			// token viewable again. Costs one sweep cycle of recovery latency in
+			// exchange for never restoring viewability on a screenshot alone.
 			return e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
-				Status:           schema.MediaHealthStatusHealthy,
+				Status:           schema.MediaHealthStatusUnknown,
 				RenderProbeWrite: true,
 			})
 		}

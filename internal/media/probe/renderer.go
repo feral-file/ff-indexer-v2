@@ -115,6 +115,17 @@ func AllocatorOptions() []chromedp.ExecAllocatorOption {
 		chromedp.NoSandbox,
 		chromedp.Headless,
 		// NOTE: no disable-web-security here, by design (see doc comment).
+		//
+		// Child-target containment. Fetch interception is installed on the page target;
+		// measured against real chromium, that covers the main frame, iframes, and
+		// dedicated workers, but NOT a popup opened via window.open — a new web contents
+		// gets its own target and would issue unintercepted requests. Rather than
+		// auto-attaching to arbitrary child targets (a larger surface to get right), the
+		// probe forbids them: rendering one artwork frame never legitimately requires a
+		// popup or a service worker.
+		chromedp.Flag("block-new-web-contents", true),
+		chromedp.Flag("disable-features", "ServiceWorker,SharedWorker"),
+		chromedp.Flag("disable-popup-blocking", false),
 		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.Flag("disable-software-rasterizer", true),
 		chromedp.Flag("disable-extensions", true),

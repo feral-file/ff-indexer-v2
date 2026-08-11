@@ -111,7 +111,8 @@ including cycles with no L0 work, because L1 has its own cadence and render-gate
 excluded from the L0 query by design. The render-due query selects never-probed URLs by L0
 health and class, and already-probed URLs by `next_check_at` alone — which is what lets a
 render-gated row (health `broken`) come back for the successful render that is its only
-healing path.
+healing path. Routine (non-gated) re-probes still require current L0 health and a
+renderable class, so a URL that has since failed L0 stops consuming render capacity.
 
 Job cancellation and worker shutdown are bridged into the browser context and leave all
 probe state untouched: a cancelled probe is not evidence about the artwork.
@@ -133,6 +134,12 @@ The probe launches chromium with its own flags (`probe.AllocatorOptions`), delib
 **without** `--disable-web-security` — unlike the SVG rasterizer, which only renders bytes
 we fetched and validated ourselves. Running untrusted remote pages with web security
 disabled would let a hostile page read cross-origin (including private) responses.
+
+Interception is installed on the page target. Measured against real chromium (see the
+smoke test below), that covers the main frame, iframes, and dedicated workers; a popup
+would get its own, uncovered target, so new web contents and service/shared workers are
+forbidden at launch (`--block-new-web-contents`, `--disable-features=ServiceWorker,SharedWorker`).
+Rendering one artwork frame never legitimately needs them.
 
 Captures are viewport-bounded (`CaptureScreenshot`, not `FullScreenshot`): an untrusted
 page can make its document arbitrarily tall, which would make both the work and the pHash

@@ -6007,14 +6007,46 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.NotContains(t, stillGated, gatedURL, "row must still be render-gated after an L0 healthy write")
 
-		// Only a render-probe write heals it.
+		// Only a render-probe write releases it, and it releases to unknown so L0 must
+		// re-validate the bytes before the token can be viewable again.
 		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, gatedURL, MediaHealthUpdate{
-			Status:           schema.MediaHealthStatusHealthy,
+			Status:           schema.MediaHealthStatusUnknown,
 			RenderProbeWrite: true,
 		}))
 		healed, err := store.GetURLsForChecking(ctx, -time.Minute, 1000)
 		require.NoError(t, err)
-		assert.Contains(t, healed, gatedURL, "after L1 heals it, the row rejoins the L0 sweep")
+		assert.Contains(t, healed, gatedURL, "after L1 releases the gate, the row rejoins the L0 sweep")
+	})
+
+	t.Run("routine re-probes require current L0 health and a renderable class", func(t *testing.T) {
+		// A URL that rendered fine before but has since failed L0 must stop consuming
+		// render capacity — unlike a render-gated row, which stays eligible for healing.
+		staleURL := "https://example.com/render/was-ok-now-broken.png"
+		mintTokenWithMedia(t, &staleURL, nil)
+		markHealthy(t, staleURL, "image/png")
+
+		past := time.Now().UTC().Add(-time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: staleURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			CapturedAt: &past, NextCheckAt: past,
+		}))
+
+		due, err := store.GetURLsDueForRenderProbe(ctx, 50)
+		require.NoError(t, err)
+		assert.Contains(t, due, staleURL, "an L0-healthy probed URL is due on its own schedule")
+
+		// L0 now finds it broken for an ordinary (non-render) reason.
+		errMsg := "HTTP 404"
+		httpReason := schema.MediaFailureHTTPStatus.String()
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, staleURL, MediaHealthUpdate{
+			Status:        schema.MediaHealthStatusBroken,
+			LastError:     &errMsg,
+			FailureReason: &httpReason,
+		}))
+
+		due, err = store.GetURLsDueForRenderProbe(ctx, 50)
+		require.NoError(t, err)
+		assert.NotContains(t, due, staleURL, "an L0-broken URL must not keep consuming render capacity")
 	})
 
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
