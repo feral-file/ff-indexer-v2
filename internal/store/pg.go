@@ -3134,6 +3134,13 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 // A LEFT JOIN discovers never-probed URLs; probed URLs re-enter when next_check_at is due
 // (served by idx_media_render_probes_due). The healthy-row scan is the same trade the
 // media health sweeper makes — batch cadence keeps it acceptable.
+//
+// Constraint: a URL holding an active gate must always be re-selectable, because a
+// successful render is the only thing that can release it while L0 is locked out of
+// healing it. Eligibility therefore accepts either gate signal — the durable
+// media_render_probes.health_gated marker or a render_% health reason. Requiring the
+// health reason alone would strand a gate acquired over an L0-owned broken row (the
+// health row keeps L0's reason, so nothing in it looks render-gated) with no legal healer.
 func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error) {
 	var urls []string
 	err := s.db.WithContext(ctx).Raw(`
@@ -3151,15 +3158,19 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'video/%'
 		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'audio/%')
 		        OR
-		        -- Already probed and currently render-gated: health is broken with a
-		        -- render_% reason, which L0 never re-checks, so these must stay eligible
-		        -- on the probe's own schedule — the successful render is their only
-		        -- healing path. Class predicates are deliberately not applied: a gate
-		        -- must not become unrecoverable because the L0 classification changed.
+		        -- Already probed and currently render-gated. Either signal makes the URL
+		        -- due, because either one on its own is enough to lock L0 out of healing
+		        -- it: the durable marker blocks every non-L1 healthy write, and a
+		        -- render_% reason is excluded from the L0 sweep entirely. In particular a
+		        -- gate acquired while L0 owned the row (say failure_reason=http_status)
+		        -- leaves that row untouched, so a render_% test alone would never match
+		        -- it and the URL would have no legal healer at all. Class predicates are
+		        -- deliberately not applied: a gate must not become unrecoverable because
+		        -- the L0 classification changed.
 		        (p.media_url_hash IS NOT NULL
 		         AND p.next_check_at <= now()
-		         AND h.health_status = ?
-		         AND h.failure_reason LIKE 'render_%')
+		         AND (p.health_gated = true
+		              OR (h.health_status = ? AND h.failure_reason LIKE 'render_%')))
 		        OR
 		        -- Already probed and not gated: a routine re-check still requires the URL
 		        -- to be L0-healthy and renderable today. Without this, a URL that later

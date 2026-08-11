@@ -6091,16 +6091,26 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		firstTokenID := mintTokenWithMedia(t, &sharedURL, nil)
 		markHealthy(t, sharedURL, "text/html")
 
-		// L1 gates the URL for the token that already referenced it.
+		// L1 gates the URL for the token that already referenced it. This must go through
+		// AcquireRenderGate, not a bare health write: inheritance reads the durable
+		// media_render_probes marker, and a render_% health row without that marker is a
+		// state production cannot produce (the gate writes both in one transaction).
 		reason := schema.RenderFailureKnownBad
 		gateErr := `render matched known-bad fingerprint "kubo-dir-listing"`
-		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, sharedURL, MediaHealthUpdate{
-			Status:           schema.MediaHealthStatusBroken,
-			LastError:        &gateErr,
-			FailureReason:    &reason,
-			RenderProbeWrite: true,
-		}))
-		_, err := store.BatchUpdateTokensViewability(ctx, []uint64{firstTokenID})
+		gateNow := time.Now().UTC()
+		_, err := store.AcquireRenderGate(ctx,
+			schema.MediaRenderProbe{
+				MediaURL: sharedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
+				ConsecutiveFailures: 1, CapturedAt: &gateNow, NextCheckAt: gateNow.Add(time.Hour),
+			},
+			MediaHealthUpdate{
+				Status:           schema.MediaHealthStatusBroken,
+				LastError:        &gateErr,
+				FailureReason:    &reason,
+				RenderProbeWrite: true,
+			})
+		require.NoError(t, err)
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{firstTokenID})
 		require.NoError(t, err)
 
 		// A second token is indexed with the same URL, after the gate exists.
@@ -6391,12 +6401,23 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		_, err := store.AcquireRenderGate(ctx,
 			schema.MediaRenderProbe{
 				MediaURL: racedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
-				ConsecutiveFailures: 1, CapturedAt: &now, NextCheckAt: now.Add(time.Hour),
+				// Due already, so the healing-eligibility assertion below tests the
+				// selection predicate rather than the recheck interval.
+				ConsecutiveFailures: 1, CapturedAt: &now, NextCheckAt: now.Add(-time.Minute),
 			},
 			MediaHealthUpdate{
 				Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true,
 			})
 		require.NoError(t, err)
+
+		// The gate is held over a row L0 owns (failure_reason=http_status), so nothing in
+		// the health row says "render-gated". The URL must still be due for its healing
+		// probe: L0 cannot heal it while the marker is set, so a render is its only way
+		// out, and keying eligibility off the health row would strand it permanently.
+		due, err := store.GetURLsDueForRenderProbe(ctx, 200)
+		require.NoError(t, err)
+		assert.Contains(t, due, racedURL,
+			"a gate held over an L0-owned broken row must stay eligible for its healing probe")
 
 		// L0 now succeeds. It must not heal the row while the gate is held.
 		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, racedURL, MediaHealthUpdate{
@@ -6439,6 +6460,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		// health_gated can never be computed viewable, whatever its health row says.
 		gatedAnimURL := "https://example.com/render/gate-vs-viewability.html"
 		tokenID := mintTokenWithMedia(t, &gatedAnimURL, nil)
+		markHealthy(t, gatedAnimURL, "text/html")
 
 		now := time.Now().UTC()
 		reason := schema.RenderFailureKnownBad
@@ -6454,9 +6476,17 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 
 		// Simulate the racing L0 write landing after the gate committed: force the health
 		// row healthy behind the guard, exactly the state the guard cannot rule out.
-		require.NoError(t, testDB.WithContext(ctx).Exec(
+		// Written through the store's own handle: these tests run inside an uncommitted
+		// transaction, so a write on the raw pool would target a connection that cannot
+		// see any of the rows above.
+		pg, ok := store.(*pgStore)
+		require.True(t, ok, "raced-write simulation needs the concrete store")
+		raced := pg.db.WithContext(ctx).Exec(
 			`UPDATE token_media_health SET health_status = 'healthy', failure_reason = NULL
-			 WHERE media_url_hash = ?`, types.MD5Hash(gatedAnimURL)).Error)
+			 WHERE media_url_hash = ?`, types.MD5Hash(gatedAnimURL))
+		require.NoError(t, raced.Error)
+		require.Positive(t, raced.RowsAffected,
+			"the raced write must actually land, or the assertion below proves nothing")
 
 		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenID})
 		require.NoError(t, err)

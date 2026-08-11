@@ -122,6 +122,15 @@ momentarily says. Reconciliation errors after a gate or release commits fail the
 rather than being logged: the health state is durable at that point but `tokens.is_viewable`
 is not, and no sweep revisits a gated URL to fix it.
 
+**A gated URL is always eligible for its healing probe.** Because the marker locks L0 out
+of healing the row, the render probe is the only way back — so render-due eligibility
+accepts *either* gate signal: the durable `health_gated` marker, or a `render_%` health
+reason. Requiring the health reason alone strands the case where the gate was acquired
+over a row L0 already owned (say `failure_reason=http_status`): L1 correctly declines to
+overwrite that row, so nothing in it looks render-gated, while the marker still blocks L0
+from healing it. That URL would then never be scheduled again and its tokens would stay
+non-viewable until manual intervention.
+
 **Scheduling is independent of L0.** Render probes are enqueued on every sweep cycle,
 including cycles with no L0 work, because L1 has its own cadence and render-gated rows are
 excluded from the L0 query by design. The render-due query selects never-probed URLs by L0
