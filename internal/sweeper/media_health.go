@@ -300,7 +300,6 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 		result := s.urlChecker.Check(ctx, url)
 		switch result.Status {
 		case uri.HealthStatusHealthy:
-			healthyCount.Add(1)
 			if result.WorkingURL != nil && *result.WorkingURL != url {
 				// Found alternative working URL - update everything
 				logger.InfoCtx(ctx, "Found working alternative URL",
@@ -312,13 +311,29 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 					logger.ErrorCtx(ctx, err,
 						zap.String("url", url),
 					)
+					// Propagation failed: mark the original URL broken (it is broken —
+					// the direct probe failed and only an alternate gateway succeeded).
+					// Leaving the row as-is would let the viewability recompute keep the
+					// token viewable while the stored public URL stays dead (#96 class).
+					// The indexing path handles this failure identically; the next sweep
+					// retries UpdateMediaURLAndPropagate and heals the state.
+					brokenCount.Add(1)
+					errMsg := fmt.Sprintf("direct probe failed; propagation of working alternative %s failed: %v", *result.WorkingURL, err)
+					if err2 := s.store.UpdateTokenMediaHealthByURL(ctx, url, store.MediaHealthUpdate{
+						Status:    schema.MediaHealthStatusBroken,
+						LastError: &errMsg,
+					}); err2 != nil {
+						logger.ErrorCtx(ctx, err2, zap.String("url", url))
+					}
 				} else {
+					healthyCount.Add(1)
 					logger.InfoCtx(ctx, "Successfully updated URL across all tables",
 						zap.String("old_url", url),
 						zap.String("new_url", *result.WorkingURL),
 					)
 				}
 			} else {
+				healthyCount.Add(1)
 				// Original URL works
 				if err := s.store.UpdateTokenMediaHealthByURL(ctx, url, store.MediaHealthUpdate{
 					Status:              schema.MediaHealthStatusHealthy,

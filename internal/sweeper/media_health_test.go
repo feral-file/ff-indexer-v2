@@ -211,6 +211,79 @@ func TestMediaHealthSweeper_CheckURL_SSrfBroken(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestMediaHealthSweeper_CheckURL_AlternativeURLPropagationFailure pins the failure
+// branch of fallback promotion: when a working alternative gateway is found but
+// UpdateMediaURLAndPropagate fails, the original URL must be persisted broken before
+// viewability recomputes. Leaving the row untouched would keep the token viewable while
+// its stored public URL stays dead (#96 class); the indexing path handles this failure
+// identically.
+func TestMediaHealthSweeper_CheckURL_AlternativeURLPropagationFailure(t *testing.T) {
+	mocks := setupTestSweeper(t)
+	defer tearDownTestSweeper(mocks)
+
+	ctx := context.Background()
+	originalURL := "ipfs://QmTest123"
+	workingURL := "https://ipfs.io/ipfs/QmTest123"
+
+	mocks.store.EXPECT().
+		GetTokenIDsByMediaURL(ctx, originalURL).
+		Return([]uint64{1}, nil)
+
+	mocks.urlChecker.EXPECT().
+		Check(ctx, originalURL).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: &workingURL,
+		})
+
+	mocks.store.EXPECT().
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		Return(assert.AnError)
+
+	// The original URL is marked broken — not left as-is, not marked healthy.
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, originalURL, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
+			require.Equal(t, schema.MediaHealthStatusBroken, upd.Status)
+			require.NotNil(t, upd.LastError)
+			require.Contains(t, *upd.LastError, "propagation of working alternative")
+			return nil
+		})
+
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{1}).
+		Return(nil, nil)
+
+	now := time.Now()
+	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
+	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	mocks.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+
+	mocks.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{originalURL}, nil).
+		Times(1)
+	mocks.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{}, nil).
+		AnyTimes()
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = mocks.sweeper.Stop(ctx)
+	}()
+
+	err := mocks.sweeper.Start(ctx)
+	require.NoError(t, err)
+}
+
 func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 	mocks := setupTestSweeper(t)
 	defer tearDownTestSweeper(mocks)
