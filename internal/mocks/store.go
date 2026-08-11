@@ -958,6 +958,21 @@ func (mr *MockStoreMockRecorder) MarkJobSucceeded(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkJobSucceeded", reflect.TypeOf((*MockStore)(nil).MarkJobSucceeded), ctx, id)
 }
 
+// ReleaseRenderGate mocks base method.
+func (m *MockStore) ReleaseRenderGate(ctx context.Context, probe schema.MediaRenderProbe) ([]uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseRenderGate", ctx, probe)
+	ret0, _ := ret[0].([]uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ReleaseRenderGate indicates an expected call of ReleaseRenderGate.
+func (mr *MockStoreMockRecorder) ReleaseRenderGate(ctx, probe any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseRenderGate", reflect.TypeOf((*MockStore)(nil).ReleaseRenderGate), ctx, probe)
+}
+
 // RequestJobCancel mocks base method.
 func (m *MockStore) RequestJobCancel(ctx context.Context, id int64) error {
 	m.ctrl.T.Helper()

@@ -212,21 +212,16 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			// token viewable again. Costs one sweep cycle of recovery latency in
 			// exchange for never restoring viewability on a screenshot alone.
 			//
-			// Ordering matters: release health first and only persist the cleared marker
-			// afterwards. Writing rendered_ok first would clear the marker even when the
-			// release fails, stranding a broken health row that L0 never re-checks.
-			if err := e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
-				Status:           schema.MediaHealthStatusUnknown,
-				RenderProbeWrite: true,
-			}); err != nil {
-				// Keep the marker set so the next probe retries the release.
-				row.HealthGated = true
-				if upsertErr := e.store.UpsertMediaRenderProbe(ctx, row); upsertErr != nil {
-					logger.ErrorCtx(ctx, upsertErr, zap.String("url", url))
-				}
-				return err
+			// The health rows and the probe marker are cleared in one transaction: as
+			// two writes, a token indexed in between would inherit a gate the release
+			// then skips, leaving it broken with no probe that recognizes it as gated.
+			// A failure leaves the marker set, so the next probe retries the release.
+			tokenIDs, err := e.store.ReleaseRenderGate(ctx, row)
+			if err != nil {
+				return fmt.Errorf("failed to release render gate: %w", err)
 			}
-			row.HealthGated = false
+			e.propagateViewability(ctx, tokenIDs)
+			return nil
 		}
 		if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
 			return fmt.Errorf("failed to upsert render probe: %w", err)
@@ -315,13 +310,26 @@ func (e *renderProbeExecutor) setHealthAndPropagate(ctx context.Context, url str
 	if err != nil {
 		return fmt.Errorf("failed to get token IDs for URL: %w", err)
 	}
+	e.propagateViewability(ctx, tokenIDs)
+	return nil
+}
+
+// propagateViewability recomputes viewability for the given tokens and emits a webhook
+// for each one whose visibility actually changed, matching the sweeper's behavior.
+//
+// Failures are logged rather than returned: the health state is already durable, and the
+// next sweep recomputes viewability anyway, so failing the probe job here would re-render
+// the URL for no benefit.
+func (e *renderProbeExecutor) propagateViewability(ctx context.Context, tokenIDs []uint64) {
 	if len(tokenIDs) == 0 {
-		return nil
+		return
 	}
 
 	changes, err := e.store.BatchUpdateTokensViewability(ctx, tokenIDs)
 	if err != nil {
-		return fmt.Errorf("failed to update tokens viewability: %w", err)
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to update tokens viewability: %w", err),
+			zap.Uint64s("token_ids", tokenIDs))
+		return
 	}
 
 	for _, change := range changes {
@@ -332,7 +340,6 @@ func (e *renderProbeExecutor) setHealthAndPropagate(ctx context.Context, url str
 		)
 		e.enqueueViewabilityWebhook(ctx, change.TokenCID, change.NewViewable)
 	}
-	return nil
 }
 
 // enqueueViewabilityWebhook mirrors the sweeper's triggerWebhook: same event shape, same

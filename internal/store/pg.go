@@ -2950,7 +2950,12 @@ type renderGate struct {
 // healthy rows for a URL L1 has confirmed bad.
 func activeRenderGate(tx *gorm.DB, urlHash string) (*renderGate, error) {
 	var probeRow schema.MediaRenderProbe
-	err := tx.Where("media_url_hash = ? AND health_gated = true", urlHash).First(&probeRow).Error
+	// FOR UPDATE serializes against ReleaseRenderGate, which clears the marker and the
+	// gated health rows in one transaction. Without the lock a row inserted between
+	// those two writes would inherit a gate that the release has already passed over,
+	// leaving it broken with no probe that recognizes it as gated.
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("media_url_hash = ? AND health_gated = true", urlHash).First(&probeRow).Error
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		return nil, nil
@@ -3156,6 +3161,60 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 	return urls, nil
 }
 
+// ReleaseRenderGate clears a URL's render gate atomically: the gated health rows return
+// to `unknown` and the probe row's marker is cleared in one transaction. It returns the
+// token IDs whose viewability the caller must recompute.
+//
+// Reason: doing these as two statements leaves a window in which a newly indexed token
+// reads health_gated=true, inherits a render_% row, and is then skipped by the release —
+// stranding it broken forever, since L0 never re-checks render_% rows and later probes
+// see no active gate. The probe row is locked FOR UPDATE so concurrent inheritance
+// (activeRenderGate) serializes: either it inherits and is then cleared by this
+// transaction, or it observes the cleared marker and never gates at all.
+//
+// Health rows are released to `unknown` rather than `healthy` deliberately: a successful
+// render says the page painted, not that the bytes pass content validation, so L0
+// re-validates before the token becomes viewable again.
+func (s *pgStore) ReleaseRenderGate(ctx context.Context, probe schema.MediaRenderProbe) ([]uint64, error) {
+	urlHash := types.MD5Hash(probe.MediaURL)
+	probe.MediaURLHash = urlHash
+	probe.HealthGated = false
+
+	var tokenIDs []uint64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing schema.MediaRenderProbe
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("media_url_hash = ?", urlHash).First(&existing).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to lock render probe row: %w", err)
+		}
+
+		if err := tx.Model(&schema.TokenMediaHealth{}).
+			Where("media_url_hash = ? AND failure_reason LIKE 'render_%'", urlHash).
+			Updates(map[string]interface{}{
+				"health_status":   schema.MediaHealthStatusUnknown,
+				"last_checked_at": time.Now(),
+				"last_error":      nil,
+				"failure_reason":  nil,
+			}).Error; err != nil {
+			return fmt.Errorf("failed to clear render-gated health rows: %w", err)
+		}
+
+		if err := upsertMediaRenderProbeTx(tx, probe); err != nil {
+			return err
+		}
+
+		return tx.Model(&schema.TokenMediaHealth{}).
+			Distinct("token_id").
+			Where("media_url_hash = ?", urlHash).
+			Pluck("token_id", &tokenIDs).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tokenIDs, nil
+}
+
 // GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed.
 func (s *pgStore) GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error) {
 	var probe schema.MediaRenderProbe
@@ -3177,8 +3236,14 @@ func (s *pgStore) GetMediaRenderProbe(ctx context.Context, url string) (*schema.
 // (COALESCE(existing, new)), enforcing the capture-only baseline invariant at the DB
 // level regardless of what the caller passes.
 func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error {
+	return upsertMediaRenderProbeTx(s.db.WithContext(ctx), probe)
+}
+
+// upsertMediaRenderProbeTx is the upsert body, shared so ReleaseRenderGate can run it
+// inside the same transaction that clears the gated health rows.
+func upsertMediaRenderProbeTx(tx *gorm.DB, probe schema.MediaRenderProbe) error {
 	probe.MediaURLHash = types.MD5Hash(probe.MediaURL)
-	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+	err := tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "media_url_hash"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
 			"media_url":            probe.MediaURL,

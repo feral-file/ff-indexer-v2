@@ -268,32 +268,22 @@ func TestExecuteRenderProbe_renderedOKAfterGateHeals(t *testing.T) {
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
 
+	// One atomic release: health rows and the probe marker clear together, and the
+	// affected tokens come back for the viewability recompute. A separate
+	// UpsertMediaRenderProbe here would reintroduce the window a token can be indexed in.
 	m.store.EXPECT().
-		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+		ReleaseRenderGate(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) ([]uint64, error) {
 			assert.Equal(t, schema.RenderProbeVerdictRenderedOK, row.Verdict)
 			assert.Equal(t, 0, row.ConsecutiveFailures, "recovery resets the counter")
 			require.NotNil(t, row.BaselinePhash)
 			assert.Equal(t, baseline, *row.BaselinePhash, "existing baseline carried through")
-			return nil
+			return []uint64{5}, nil
 		})
 
-	// Heal: the render probe is the only writer that may release a render gate, and it
-	// releases to unknown — a screenshot does not certify the bytes, so L0 must
-	// re-validate before the token becomes viewable again.
-	m.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
-			assert.Equal(t, schema.MediaHealthStatusUnknown, upd.Status,
-				"releasing a gate must not assert L0 health on a screenshot alone")
-			assert.Nil(t, upd.FailureReason)
-			assert.True(t, upd.RenderProbeWrite)
-			return nil
-		})
-	cid := "eip155:1:erc721:0xabc:5"
-	m.store.EXPECT().GetTokenIDsByMediaURL(gomock.Any(), url).Return([]uint64{5}, nil)
+	healedCID := "eip155:1:erc721:0xabc:5"
 	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{5}).Return([]store.TokenViewabilityChange{
-		{TokenID: 5, TokenCID: cid, OldViewable: false, NewViewable: true},
+		{TokenID: 5, TokenCID: healedCID, OldViewable: false, NewViewable: true},
 	}, nil)
 	m.jobQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return(&schema.Job{ID: 2}, true, nil)
 
@@ -445,10 +435,10 @@ func TestExecuteRenderProbe_gateSurvivesVerdictChange(t *testing.T) {
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
 }
 
-// TestExecuteRenderProbe_failedReleaseRetainsGate pins the release ordering: if the
-// health release fails, the probe row must keep HealthGated so the next run retries.
-// Recording rendered_ok with the marker cleared would strand a broken health row that
-// L0 never re-checks.
+// TestExecuteRenderProbe_failedReleaseRetainsGate pins recovery durability: when the
+// atomic release fails nothing is cleared — neither the health rows nor the marker — so
+// the next probe still sees the gate and retries. Recording rendered_ok separately would
+// strand a broken health row that L0 never re-checks.
 func TestExecuteRenderProbe_failedReleaseRetainsGate(t *testing.T) {
 	m, exec := setupRenderProbe(t, renderProbeTestConfig)
 	url := "https://example.com/release-fails.html"
@@ -462,19 +452,12 @@ func TestExecuteRenderProbe_failedReleaseRetainsGate(t *testing.T) {
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
 
-	// The health release fails.
 	m.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
-		Return(assert.AnError)
+		ReleaseRenderGate(gomock.Any(), gomock.Any()).
+		Return(nil, assert.AnError)
 
-	// The row is still persisted, with the marker intact for a retry.
-	m.store.EXPECT().
-		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
-			assert.True(t, row.HealthGated, "a failed release must not clear the gate marker")
-			return nil
-		})
-
+	// Strict mock: no UpsertMediaRenderProbe and no viewability recompute may follow a
+	// failed release — the gate must be left exactly as it was.
 	err := exec.ExecuteRenderProbe(context.Background(), url)
 	require.Error(t, err, "the job fails so the queue retries the release")
 }

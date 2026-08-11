@@ -6271,6 +6271,56 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.False(t, viewability[0].IsViewable)
 	})
 
+	t.Run("releasing a gate clears health rows and the marker together", func(t *testing.T) {
+		// The release must be atomic: as two writes, a token indexed between them would
+		// inherit a gate the release has already passed over and stay broken forever.
+		releasedURL := "https://example.com/render/released.html"
+		tokenID := mintTokenWithMedia(t, &releasedURL, nil)
+		markHealthy(t, releasedURL, "text/html")
+
+		reason := schema.RenderFailureBlank
+		blankErr := "blank frame"
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, releasedURL, MediaHealthUpdate{
+			Status: schema.MediaHealthStatusBroken, LastError: &blankErr,
+			FailureReason: &reason, RenderProbeWrite: true,
+		}))
+		past := time.Now().UTC().Add(-time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: releasedURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
+		}))
+
+		now := time.Now().UTC()
+		tokenIDs, err := store.ReleaseRenderGate(ctx, schema.MediaRenderProbe{
+			MediaURL: releasedURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			CapturedAt: &now, NextCheckAt: now.Add(time.Hour),
+		})
+		require.NoError(t, err)
+		assert.Contains(t, tokenIDs, tokenID, "affected tokens come back for the viewability recompute")
+
+		// Health rows are released to unknown, not healthy: L0 must re-validate the bytes.
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		require.Len(t, rows[tokenID], 1)
+		assert.Equal(t, schema.MediaHealthStatusUnknown, rows[tokenID][0].HealthStatus)
+		assert.Nil(t, rows[tokenID][0].FailureReason)
+
+		// The marker is cleared in the same transaction, so a token indexed now inherits
+		// nothing.
+		probeRow, err := store.GetMediaRenderProbe(ctx, releasedURL)
+		require.NoError(t, err)
+		require.NotNil(t, probeRow)
+		assert.False(t, probeRow.HealthGated, "marker and health rows clear together")
+
+		newID := mintTokenWithMedia(t, &releasedURL, nil)
+		newRows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{newID})
+		require.NoError(t, err)
+		require.Len(t, newRows[newID], 1)
+		assert.Equal(t, schema.MediaHealthStatusUnknown, newRows[newID][0].HealthStatus,
+			"a token indexed after release must not inherit a stale gate")
+		assert.Nil(t, newRows[newID][0].FailureReason)
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)
