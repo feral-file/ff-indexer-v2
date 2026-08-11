@@ -369,6 +369,18 @@ func TestContentValidator_Validate(t *testing.T) {
 			totalLength: -1,
 			wantOK:      true,
 		},
+		{
+			// The spec mandates IHDR length exactly 13; every decoder rejects other
+			// values, so a wrong length is conclusive even with plausible dimensions.
+			name:     "PNG with invalid IHDR chunk length",
+			declared: "image/png",
+			body: append(append([]byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A},
+				0x00, 0x00, 0x00, 0x00), // IHDR length 0 (must be 13)
+				[]byte("IHDR\x00\x00\x00\x64\x00\x00\x00\x64\x08\x02\x00\x00\x00")...), // 100x100
+			totalLength: -1,
+			wantOK:      false,
+			wantReason:  uri.FailureContainerInvalid,
+		},
 	}
 
 	for _, tt := range tests {

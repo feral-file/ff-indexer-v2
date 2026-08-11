@@ -282,14 +282,20 @@ func validateContainer(sniffed string, body []byte) (FailureReason, string) {
 	return FailureContainerInvalid, detail
 }
 
-// validPNGHeader checks the PNG signature is followed by a well-formed IHDR chunk with
-// non-zero dimensions (signature 8B + length 4B + "IHDR" 4B + width 4B + height 4B = 24B).
+// validPNGHeader checks the PNG signature is followed by a well-formed IHDR chunk:
+// spec-mandated chunk length 13, "IHDR" type, non-zero dimensions (signature 8B +
+// length 4B + "IHDR" 4B + width 4B + height 4B = 24B). The length check is conclusive:
+// the PNG spec fixes IHDR data at exactly 13 bytes and every decoder rejects other
+// values, so plausible dimensions after a wrong length are still an invalid container.
 func validPNGHeader(body []byte) (bool, string) {
 	if len(body) < 24 {
 		return true, "" // not enough bytes to judge
 	}
 	if !bytes.Equal(body[12:16], []byte("IHDR")) {
 		return false, "PNG signature without IHDR chunk"
+	}
+	if l := binary.BigEndian.Uint32(body[8:12]); l != 13 {
+		return false, fmt.Sprintf("PNG IHDR chunk with invalid length %d", l)
 	}
 	width := binary.BigEndian.Uint32(body[16:20])
 	height := binary.BigEndian.Uint32(body[20:24])
