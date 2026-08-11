@@ -172,6 +172,40 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedStatus: uri.HealthStatusTransientError,
 		},
 		{
+			name: "206 with mid-file Content-Range retries unranged and validates the true prefix",
+			url:  "https://example.com/mid-range.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// Misbehaving gateway answers with bytes from the middle of the file —
+				// not the prefix the validator's checks are defined over.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/mid-range.png", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", []byte("mid-file garbage"),
+						map[string]string{"Content-Range": "bytes 1000-33767/500000"}), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/mid-range.png", nil).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(64, 64), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+		},
+		{
+			name: "206 without Content-Range cannot bypass directory-listing detection",
+			url:  "https://example.com/gateway/dir-listing",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// Malformed 206 (no Content-Range) carrying innocuous bytes: they are
+				// not trusted as the prefix; the unranged retry reveals the listing.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/gateway/dir-listing", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", minimalPNG(64, 64), nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/gateway/dir-listing", nil).
+					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureDirectoryListing,
+		},
+		{
 			name: "416 falls back to unranged GET",
 			url:  "https://example.com/art.gif",
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {

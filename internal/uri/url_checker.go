@@ -130,6 +130,27 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 	}()
 
 	switch {
+	// A 206 whose Content-Range is absent, malformed, or does not start at byte 0 is not
+	// serving the requested resource prefix — validating those bytes would let a
+	// misbehaving gateway bypass the prefix-based checks (magic bytes, directory-listing
+	// and error-page markers). Retry without Range: the unranged read is still capped at
+	// maxBytes and yields the true prefix.
+	case resp.StatusCode == http.StatusPartialContent && !partialRangeStartsAtZero(resp):
+		if withRange {
+			logger.InfoCtx(ctx, "206 without a valid from-zero Content-Range, retrying without range",
+				zap.String("url", url),
+				zap.String("content_range", resp.Header.Get("Content-Range")),
+			)
+			return p.probe(ctx, url, false)
+		}
+		// A 206 answer to a range-less request is itself protocol-broken.
+		errMsg := fmt.Sprintf("206 with invalid Content-Range %q to an unranged request", resp.Header.Get("Content-Range"))
+		return probeResult{hcr: HealthCheckResult{
+			Status:        HealthStatusBroken,
+			Error:         &errMsg,
+			FailureReason: FailureHTTPStatus,
+		}}
+
 	// The whole 2xx range is a fetch success (matching the documented L0 contract and the
 	// pre-content-validation checker): 203 arrives via transforming proxies with valid
 	// media, and 204's empty body is a content verdict (zero_length), not an HTTP one.
@@ -203,6 +224,18 @@ func (p *contentProbe) gatewayProbe(ctx context.Context, url string) error {
 		return fmt.Errorf("gateway probe failed with status %s", result.hcr.Status)
 	}
 	return nil
+}
+
+// partialRangeStartsAtZero reports whether a 206's Content-Range declares a satisfied
+// range beginning at byte 0 ("bytes 0-<end>/<total or *>"). Only from-zero ranges carry
+// the resource prefix the content validator's checks are defined over.
+func partialRangeStartsAtZero(resp *http.Response) bool {
+	after, ok := strings.CutPrefix(strings.TrimSpace(resp.Header.Get("Content-Range")), "bytes ")
+	if !ok {
+		return false
+	}
+	start, _, ok := strings.Cut(after, "-")
+	return ok && strings.TrimSpace(start) == "0"
 }
 
 // isConclusiveTruncation reports whether a mid-body read failure is evidence of a
