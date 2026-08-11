@@ -484,7 +484,7 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 
 	t.Run("enabled without egress restriction is rejected", func(t *testing.T) {
 		cfg := base
-		err := validateRenderProbeConfig(&cfg)
+		err := validateRenderProbeConfig(&cfg, true, "media_index")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "egress_restricted")
 	})
@@ -492,11 +492,29 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 	t.Run("enabled with egress restriction is accepted", func(t *testing.T) {
 		cfg := base
 		cfg.EgressRestricted = true
-		assert.NoError(t, validateRenderProbeConfig(&cfg))
+		assert.NoError(t, validateRenderProbeConfig(&cfg, true, "media_index"))
+	})
+
+	// An enabled probe with no media worker renders nothing and gates nothing; failing
+	// at startup beats a deployment that looks enabled but is a no-op.
+	t.Run("enabled without the media worker is rejected", func(t *testing.T) {
+		cfg := base
+		cfg.EgressRestricted = true
+		err := validateRenderProbeConfig(&cfg, false, "media_index")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "media_enabled")
+	})
+
+	t.Run("enabled without a media queue is rejected", func(t *testing.T) {
+		cfg := base
+		cfg.EgressRestricted = true
+		err := validateRenderProbeConfig(&cfg, true, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "media_queue")
 	})
 
 	t.Run("disabled probe is inert", func(t *testing.T) {
 		cfg := RenderProbeConfig{Enabled: false}
-		assert.NoError(t, validateRenderProbeConfig(&cfg), "a disabled probe's settings are not validated")
+		assert.NoError(t, validateRenderProbeConfig(&cfg, false, ""), "a disabled probe's settings are not validated")
 	})
 }

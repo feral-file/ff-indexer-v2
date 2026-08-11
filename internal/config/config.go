@@ -530,7 +530,7 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 		return fmt.Errorf("missing required config values: %s", strings.Join(missingFields, ", "))
 	}
 
-	return validateRenderProbeConfig(&cfg.RenderProbe)
+	return validateRenderProbeConfig(&cfg.RenderProbe, cfg.MediaEnabled, cfg.Jobs.MediaQueue)
 }
 
 // validateRenderProbeConfig rejects render-probe settings whose failure mode is silent
@@ -542,12 +542,23 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 // and a Hamming tolerance above 64 or below 0 is meaningless for a 64-bit hash — worse,
 // large tolerances match real art and hide it. Constraints: validated only when enabled;
 // a disabled probe's settings are inert.
-func validateRenderProbeConfig(c *RenderProbeConfig) error {
+func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQueue string) error {
 	if !c.Enabled {
 		return nil
 	}
 
 	invalid := make([]string, 0)
+	// The probe only runs in the CGO media worker, and the sweeper only enqueues when
+	// media is enabled. Accepting render_probe.enabled without it would start a
+	// deployment that looks like L1 is on while nothing renders and no viewability gate
+	// is ever produced — a silent no-op is worse than a startup error.
+	if !mediaEnabled {
+		invalid = append(invalid, "render_probe.enabled requires media_enabled=true: "+
+			"render probes execute in the media worker and are enqueued only when it is running")
+	}
+	if mediaQueue == "" {
+		invalid = append(invalid, "render_probe.enabled requires jobs.media_queue to be set")
+	}
 	if !c.EgressRestricted {
 		invalid = append(invalid, "render_probe.egress_restricted must be true to enable the probe: "+
 			"the render probe navigates untrusted pages in a browser whose request validation is "+

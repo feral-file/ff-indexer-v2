@@ -2764,21 +2764,23 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 
 		// Inherit an active URL-level render gate. A render verdict is a property of the
 		// URL, not of one token: without this, a token that newly references a gated URL
-		// enters the sweep as `unknown` with a NULL failure_reason — which the L0 write
-		// guard does not protect — so the next byte-level sweep marks it healthy and the
-		// new token is served viewable despite a browser-confirmed failure, until the
-		// existing probe row's next_check_at comes due. Only the render probe clears
-		// these rows, so the gate is copied verbatim rather than re-derived.
-		var gate schema.TokenMediaHealth
-		err := tx.Where("media_url_hash = ? AND failure_reason LIKE 'render_%'", newURLHash).
-			First(&gate).Error
+		// enters the sweep as `unknown` with a NULL failure_reason, so the next
+		// byte-level sweep marks it healthy and serves the new token viewable despite a
+		// browser-confirmed failure.
+		//
+		// The gate is read from media_render_probes rather than from a sibling health
+		// row, because sibling rows are transient: if every token that referenced the URL
+		// has since moved away, their rows are deleted while the probe row — and its
+		// verdict — remain. media_render_probes.health_gated is the URL-level record of
+		// "L1 currently holds a gate here", and only the render probe clears it.
+		var probeRow schema.MediaRenderProbe
+		err := tx.Where("media_url_hash = ? AND health_gated = true", newURLHash).
+			First(&probeRow).Error
 		switch {
 		case err == nil:
-			health.HealthStatus = gate.HealthStatus
-			health.FailureReason = gate.FailureReason
-			health.LastError = gate.LastError
-			health.ObservedContentType = gate.ObservedContentType
-			health.SniffedContentType = gate.SniffedContentType
+			health.HealthStatus = schema.MediaHealthStatusBroken
+			health.FailureReason = renderFailureReasonFor(probeRow.Verdict)
+			health.LastError = probeRow.LastError
 		case !errors.Is(err, gorm.ErrRecordNotFound):
 			return fmt.Errorf("failed to check for an existing render gate: %w", err)
 		}
@@ -2903,14 +2905,20 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, u
 		// leaves L0's content-type classification intact (the render-due query depends
 		// on it surviving a gate).
 		//
-		// L1 may only write rows it already owns or that L0 currently considers fine:
+		// L1 may only write rows it already owns or that L0 has not judged adversely:
 		// a probe job enqueued while a URL was healthy can land after L0 has marked it
 		// broken for an unrelated reason (404, wrong content type). Without this guard
 		// the render verdict would overwrite that reason with render_%, misclassifying
 		// an ordinary transport failure and — because L0 skips render_% rows — taking
 		// away its normal recovery path until the much longer broken-recheck interval.
+		//
+		// `unknown` rows are included: a token indexed between the probe job being
+		// scheduled and its gate write creates one, and leaving it out would let the
+		// next L0 sweep mark that row healthy and serve the new token viewable despite a
+		// browser-confirmed failure.
 		return q.
-			Where("health_status = ? OR failure_reason LIKE 'render_%'", schema.MediaHealthStatusHealthy).
+			Where("health_status IN ? OR failure_reason LIKE 'render_%'",
+				[]schema.MediaHealthStatus{schema.MediaHealthStatusHealthy, schema.MediaHealthStatusUnknown}).
 			Updates(updates).Error
 	}
 
@@ -2923,6 +2931,19 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, u
 	return q.
 		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
 		Updates(updates).Error
+}
+
+// renderFailureReasonFor maps a render verdict to the failure reason its gate carries,
+// so an inherited gate is labeled the same way the probe would have labeled it.
+func renderFailureReasonFor(verdict schema.RenderProbeVerdict) *string {
+	reason := schema.RenderFailureBlank
+	switch verdict {
+	case schema.RenderProbeVerdictKnownBadFingerprint:
+		reason = schema.RenderFailureKnownBad
+	case schema.RenderProbeVerdictStalled:
+		reason = schema.RenderFailureStalled
+	}
+	return &reason
 }
 
 // nullableString maps a *string to a value GORM writes as the string or SQL NULL.

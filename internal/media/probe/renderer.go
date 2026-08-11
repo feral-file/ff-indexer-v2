@@ -61,27 +61,33 @@ var ErrRequestBlocked = errors.New("browser request blocked by SSRF policy")
 // than policed. Defense in depth, not a substitute for network-level egress restriction
 // (see docs/media_viewability.md).
 const egressGuardScript = `
-(() => {
+(function applyEgressGuard() {
   const NAMES = ["WebSocket", "RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel", "EventSource"];
 
-  const block = (name) => {
+  // ` + "`self`" + ` is the window in a document and the WorkerGlobalScope in a worker, so
+  // one guard body serves both.
+  for (const name of NAMES) {
     try {
-      Object.defineProperty(window, name, {
+      Object.defineProperty(self, name, {
         configurable: false,
         get() { throw new Error(name + " is disabled in the render probe"); },
       });
-    } catch (e) { /* already locked down */ }
-  };
-  NAMES.forEach(block);
+    } catch (e) {
+      try { self[name] = undefined; } catch (e2) { /* already locked down */ }
+    }
+  }
 
-  // Dedicated workers run in WorkerGlobalScope, which the block above does not reach —
-  // measured: a worker could open a WebSocket even with the page guard installed. Wrap
-  // Worker so each one starts by deleting the same APIs in its own scope, then imports
-  // the original script (that import is an ordinary fetch, so interception still vets
-  // it). Workers we cannot wrap are refused rather than run unguarded.
-  const RealWorker = window.Worker;
+  // Workers get a fresh global scope that the block above never reaches — measured: a
+  // worker could open a WebSocket with the page guarded, and a worker-created worker
+  // could do the same with only the page's Worker wrapped. So the guard re-installs
+  // itself in every worker it creates, recursively: the named function expression
+  // serializes its own source as each worker's prologue, which on execution wraps that
+  // scope's Worker in turn. The original script is then pulled in with importScripts,
+  // an ordinary fetch that request interception still vets. Workers that cannot be
+  // wrapped are refused rather than run unguarded.
+  const RealWorker = self.Worker;
   if (typeof RealWorker === "function") {
-    const prologue = NAMES.map((n) => "try{self." + n + "=undefined;}catch(e){}").join("");
+    const prologue = "(" + applyEgressGuard.toString() + ")();";
     const GuardedWorker = function (script, options) {
       let wrapped;
       try {
@@ -94,7 +100,7 @@ const egressGuardScript = `
     };
     GuardedWorker.prototype = RealWorker.prototype;
     try {
-      Object.defineProperty(window, "Worker", { configurable: false, value: GuardedWorker });
+      Object.defineProperty(self, "Worker", { configurable: false, value: GuardedWorker });
     } catch (e) { /* already locked down */ }
   }
 })();`

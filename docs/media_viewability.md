@@ -99,6 +99,13 @@ Gating writes `token_media_health.failure_reason` (`render_blank` / `render_stal
 `render_known_bad`) through the same `BatchUpdateTokensViewability` + webhook path as
 L0, so consumers see one consistent viewability stream.
 
+**The gate is URL-level state, held on `media_render_probes.health_gated`.** Token health
+rows are transient — they are deleted when a token stops referencing a URL — so the gate
+cannot live only in them. New health rows inherit an active gate from the probe row, and
+L1 gate writes also reach `unknown` rows, which is what a token indexed between a probe
+being scheduled and its gate write produces. Without both, a newly indexed token sharing
+a known-bad URL would be served viewable until the next render recheck.
+
 **Ownership is enforced in the store, not by convention.** `MediaHealthUpdate.RenderProbeWrite`
 marks L1's writes; every other writer is filtered against `failure_reason NOT LIKE 'render_%'`,
 so a byte-level healthy verdict — from a metadata reindex, or from a URL re-entering the
@@ -150,7 +157,15 @@ Interception is installed on the page target. What it does and does not reach wa
 Rendering one artwork frame needs none of the uncovered kinds, so they are forbidden
 rather than policed: `--block-new-web-contents`, `--disable-shared-workers`,
 `--disable-features=ServiceWorker`, and a document-start script that removes
-`WebSocket`/`RTCPeerConnection`/`EventSource` before any page script runs. The smoke test
+`WebSocket`/`RTCPeerConnection`/`EventSource` before any page script runs.
+
+That script also **re-installs itself in every worker**. A worker's global scope is not
+the document's, so a page guard alone leaves `WebSocket` intact there — and wrapping only
+the page's `Worker` leaves a worker-created worker unguarded. Both were measured
+escaping. The guard now serializes its own source as each worker's prologue, so the
+protection propagates to arbitrary depth; the original worker script is then pulled in
+with `importScripts`, an ordinary fetch that interception still vets, and workers that
+cannot be wrapped are refused rather than run unguarded. The smoke test
 asserts zero escapes by counting server-side hits on a path the validator refuses, so a
 regression shows up as a real request rather than a silent zero.
 

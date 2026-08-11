@@ -6131,6 +6131,83 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			"a token sharing a render-gated URL must not be served viewable")
 	})
 
+	t.Run("a gate reaches an unknown row created between scheduling and the gate write", func(t *testing.T) {
+		// A probe job is enqueued while the URL is healthy; a token is indexed before the
+		// gate write lands, creating an unknown row. The gate must reach it, or the next
+		// L0 sweep marks it healthy and serves that token viewable.
+		racyURL := "https://example.com/render/racy-unknown.html"
+		firstID := mintTokenWithMedia(t, &racyURL, nil)
+		markHealthy(t, racyURL, "text/html")
+
+		// Second token indexed now: its row is unknown, with no gate yet to inherit.
+		secondID := mintTokenWithMedia(t, &racyURL, nil)
+
+		// The gate write lands afterwards.
+		reason := schema.RenderFailureBlank
+		gateErr := "blank frame"
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, racyURL, MediaHealthUpdate{
+			Status:           schema.MediaHealthStatusBroken,
+			LastError:        &gateErr,
+			FailureReason:    &reason,
+			RenderProbeWrite: true,
+		}))
+
+		for _, id := range []uint64{firstID, secondID} {
+			rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{id})
+			require.NoError(t, err)
+			require.Len(t, rows[id], 1)
+			assert.Equal(t, schema.MediaHealthStatusBroken, rows[id][0].HealthStatus)
+			require.NotNil(t, rows[id][0].FailureReason)
+			assert.Equal(t, schema.RenderFailureBlank, *rows[id][0].FailureReason,
+				"an unknown row created mid-race must still receive the gate")
+		}
+
+		due, err := store.GetURLsForChecking(ctx, -time.Minute, 1000)
+		require.NoError(t, err)
+		assert.NotContains(t, due, racyURL)
+	})
+
+	t.Run("a gate survives all prior health rows being removed", func(t *testing.T) {
+		// Health rows are transient: when every token moves away from a URL they are
+		// deleted, while the probe row keeps the verdict. A later token referencing that
+		// URL must still inherit the gate from the probe row.
+		reusedURL := "https://example.com/render/reused-after-removal.html"
+		otherURL := "https://example.com/render/replacement.png"
+		tokenID := mintTokenWithMedia(t, &reusedURL, nil)
+		markHealthy(t, reusedURL, "text/html")
+
+		past := time.Now().UTC().Add(-time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: reusedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
+			ConsecutiveFailures: 1, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
+		}))
+		reason := schema.RenderFailureKnownBad
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, reusedURL, MediaHealthUpdate{
+			Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true,
+		}))
+
+		// The only token referencing the URL moves away, deleting its health row.
+		metadataJSON, _ := json.Marshal(map[string]interface{}{"image": otherURL})
+		require.NoError(t, store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID: tokenID, OriginJSON: metadataJSON, LatestJSON: metadataJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor, ImageURL: &otherURL,
+			LastRefreshedAt: time.Now().UTC(),
+		}))
+		gone, err := store.GetTokenIDsByMediaURL(ctx, reusedURL)
+		require.NoError(t, err)
+		require.Empty(t, gone, "no health row should remain for the abandoned URL")
+
+		// A new token picks up the same URL: the gate comes from the probe row.
+		newID := mintTokenWithMedia(t, &reusedURL, nil)
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{newID})
+		require.NoError(t, err)
+		require.Len(t, rows[newID], 1)
+		assert.Equal(t, schema.MediaHealthStatusBroken, rows[newID][0].HealthStatus)
+		require.NotNil(t, rows[newID][0].FailureReason)
+		assert.Equal(t, schema.RenderFailureKnownBad, *rows[newID][0].FailureReason,
+			"the gate must be inherited from media_render_probes, not a sibling health row")
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)

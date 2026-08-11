@@ -254,6 +254,11 @@ func TestEgressVectors(t *testing.T) {
 		// does not reach — measured escaping before the Worker wrapper was added.
 		"worker-websocket": `try{const b=new Blob(["try{new WebSocket('WS/wsworker');}catch(e){}"],` +
 			`{type:'application/javascript'});new Worker(URL.createObjectURL(b));}catch(e){}`,
+		// A worker creating a worker: only the page's Worker is wrapped directly, so the
+		// guard must re-install itself in each worker for the grandchild to be covered.
+		"nested-worker-websocket": `try{const inner="try{new WebSocket('WS/nestedws');}catch(e){}";` +
+			`const outer="try{const b=new Blob(["+JSON.stringify(inner)+"],{type:'application/javascript'});new Worker(URL.createObjectURL(b));}catch(e){}";` +
+			`const ob=new Blob([outer],{type:'application/javascript'});new Worker(URL.createObjectURL(ob));}catch(e){}`,
 		"eventsource": `try{new EventSource('HIT/sse');}catch(e){}`,
 	}
 
