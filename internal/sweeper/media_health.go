@@ -319,9 +319,16 @@ func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCo
 					// retries UpdateMediaURLAndPropagate and heals the state.
 					brokenCount.Add(1)
 					errMsg := fmt.Sprintf("direct probe failed; propagation of working alternative %s failed: %v", *result.WorkingURL, err)
+					// The checker preserves the direct probe's diagnostics on fallback
+					// success precisely for this path: without them this broken row
+					// would carry no failure reason or content types, degrading the
+					// per-reason breakdown exactly on propagation failures.
 					if err2 := s.store.UpdateTokenMediaHealthByURL(ctx, url, store.MediaHealthUpdate{
-						Status:    schema.MediaHealthStatusBroken,
-						LastError: &errMsg,
+						Status:              schema.MediaHealthStatusBroken,
+						LastError:           &errMsg,
+						FailureReason:       result.FailureReasonPtr(),
+						ObservedContentType: result.ObservedContentTypePtr(),
+						SniffedContentType:  result.SniffedContentTypePtr(),
 					}); err2 != nil {
 						logger.ErrorCtx(ctx, err2, zap.String("url", url))
 					}

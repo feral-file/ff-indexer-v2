@@ -413,9 +413,19 @@ func (c *urlChecker) checkGatewayFallback(ctx context.Context, direct HealthChec
 		return direct
 	}
 
+	// The direct probe's diagnostics ride along on the healthy result. Reason: callers
+	// promote WorkingURL via UpdateMediaURLAndPropagate, and when that promotion fails
+	// they persist the ORIGINAL URL as broken — without these fields that row would
+	// carry no failure reason or content-type observations, silently degrading the
+	// per-reason breakdown exactly on propagation failures. Error is deliberately not
+	// carried: a healthy result with a non-nil Error would be ambiguous to consumers,
+	// and healthy persistence clears diagnostics anyway.
 	return HealthCheckResult{
-		Status:     HealthStatusHealthy,
-		WorkingURL: &workingURL,
+		Status:              HealthStatusHealthy,
+		WorkingURL:          &workingURL,
+		FailureReason:       direct.FailureReason,
+		ObservedContentType: direct.ObservedContentType,
+		SniffedContentType:  direct.SniffedContentType,
 	}
 }
 
