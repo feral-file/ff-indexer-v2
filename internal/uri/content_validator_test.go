@@ -3,6 +3,7 @@ package uri_test
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -247,6 +248,73 @@ func TestContentValidator_Validate(t *testing.T) {
 			name:        "unknown binary type is not judged",
 			declared:    "application/octet-stream",
 			body:        bytes.Repeat([]byte{0x42}, 64),
+			totalLength: -1,
+			wantOK:      true,
+		},
+
+		// --- JSON error bodies are the same 200-with-error class as HTML ones ---
+		{
+			name:        "declared image but JSON error body",
+			declared:    "image/png",
+			body:        []byte(`{"error":"upstream fetch failed","status":200,"detail":"cid not found"}`),
+			totalLength: -1,
+			wantOK:      false,
+			wantReason:  uri.FailureTypeMismatch,
+		},
+		{
+			name:        "declared video but JSON error body",
+			declared:    "video/mp4",
+			body:        []byte(`{"error":"gateway timeout"}`),
+			totalLength: -1,
+			wantOK:      false,
+			wantReason:  uri.FailureTypeMismatch,
+		},
+		{
+			name:        "declared JSON with JSON body is never flagged",
+			declared:    "application/json",
+			body:        []byte(`{"name":"token #1"}`),
+			totalLength: -1,
+			wantOK:      true,
+		},
+
+		// --- text-based media subtypes are exempt from the text-body mismatch ---
+		// These verdicts must hold under ANY sniff outcome: the sniffer inspects only
+		// its own internal window (3072 bytes in the pinned mimetype version), so a
+		// text format whose distinguishing token sits past that window sniffs as
+		// text/plain, and a version bump can shift classifications. Assert verdicts,
+		// never sniffed types.
+		{
+			name:        "SVG with large preamble before the root element",
+			declared:    "image/svg+xml",
+			body:        append([]byte("<!--"+strings.Repeat("license ", 512)+"-->\n"), []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>`)...),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "SVG with XML declaration and large preamble",
+			declared:    "image/svg+xml",
+			body:        append([]byte(`<?xml version="1.0" encoding="UTF-8"?><!--`+strings.Repeat("c", 4000)+"-->"), []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`)...),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "ASCII PNM is a text image format",
+			declared:    "image/x-portable-anymap",
+			body:        []byte("P3\n2 2\n255\n255 0 0  0 255 0\n0 0 255  255 255 255\n"),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "XBM is C source text",
+			declared:    "image/x-xbitmap",
+			body:        []byte("#define img_width 8\n#define img_height 8\nstatic unsigned char img_bits[] = { 0xFF };"),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "HLS playlist is a text audio format",
+			declared:    "audio/x-mpegurl",
+			body:        []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n"),
 			totalLength: -1,
 			wantOK:      true,
 		},

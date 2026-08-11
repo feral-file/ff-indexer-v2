@@ -26,8 +26,13 @@ A URL is healthy only when all of the following hold:
    - not an IPFS gateway directory listing (`directory_listing`, built-in Kubo markers)
    - not a configured known-bad gateway error page (`known_error_page`,
      `uri.known_bad_page_markers`)
-   - a declared `image/*`, `video/*`, or `audio/*` type must not sniff as HTML or plain
-     text (`type_mismatch`)
+   - a declared `image/*`, `video/*`, or `audio/*` type must not sniff as HTML, plain
+     text, or JSON (`type_mismatch`; JSON covers gateway error bodies served with 200).
+     Text-based media subtypes — `+xml`/`+json` suffixes (SVG), playlists, ASCII
+     bitmaps — are exempt: for them a text body is expected, and the sniffer inspects
+     only a bounded window (3072 bytes at the pinned `mimetype` version), so e.g. an
+     SVG with a large preamble before its root element legitimately sniffs as plain
+     text
    - recognized image containers must parse: PNG IHDR, GIF screen descriptor, WebP RIFF
      fourcc, JPEG segment structure (`container_invalid`). MP4 is left to magic-byte
      sniffing — `moov` may legitimately sit at the end of the file, beyond the probe
@@ -37,6 +42,14 @@ A URL is healthy only when all of the following hold:
 types, insufficient bytes, cross-image-format mislabeling, and declared-HTML/JSON/text
 bodies are never flagged. A false broken hides a real artwork from FF1, which is worse
 than letting a broken one through until the render probe catches it.
+
+**Sniffer version sensitivity:** L0 verdicts depend on the pinned
+`github.com/gabriel-vasile/mimetype` version — matcher behavior changes between releases
+(v1.4.9 detects SVG by scanning for `<svg` in its 3072-byte window; later versions use a
+structural matcher that classifies some inputs differently). Bumping the dependency is a
+behavior change for the whole corpus: re-run the validator suite deliberately and expect
+verdict shifts. Regression tests assert verdicts, never sniffed types, so they hold across
+bumps.
 
 The same validated probe drives gateway selection (`FindWorking*Gateway`, used by both
 the health checker's fallback and the URI resolver): a gateway "works" only if its
@@ -54,7 +67,7 @@ SSRF policy refusals are final and never trigger gateway fallback. DNS failures 
 | `http_status` | non-2xx response | probe |
 | `dns` | host resolution failed | probe |
 | `ssrf` | SSRF policy refused the fetch | probe |
-| `type_mismatch` | declared media type, text body | validator |
+| `type_mismatch` | declared binary media type, text/JSON body | validator |
 | `container_invalid` | recognized container, corrupt header | validator |
 | `directory_listing` | IPFS gateway directory listing | validator |
 | `known_error_page` | configured error-page marker matched | validator |

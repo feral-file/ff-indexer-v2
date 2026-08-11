@@ -165,6 +165,15 @@ func mimeTypesMatch(declared, detected string) bool {
 		return true
 	}
 
+	// Text-based media subtypes (SVG, playlists, ASCII bitmaps) legitimately detect as
+	// text/*: the sniffer inspects a bounded window, so e.g. an SVG whose root element
+	// sits past it detects as text/plain. Same exemption as the URL checker's rule 6
+	// (isTextBasedMediaType) — a text detection for a declared text format is not a
+	// mismatch.
+	if isTextBasedMediaType(declaredBase) && strings.HasPrefix(detectedBase, "text/") {
+		return true
+	}
+
 	// For text-based formats, be more lenient as detection is unreliable
 	// If declared is text/html, text/plain, or application/json, accept if detected is any text/* type
 	if (declaredBase == "text/html" || declaredBase == "text/plain" || declaredBase == "application/json") &&

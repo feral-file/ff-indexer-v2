@@ -127,6 +127,12 @@ func (v *contentValidator) Validate(declaredContentType string, body []byte, tot
 		}
 	}
 
+	// Sniffing is version-sensitive: mimetype inspects only its own internal window
+	// (3072 bytes at the pinned version) and matcher behavior changes between releases
+	// (v1.4.9 detects SVG by scanning for "<svg" inside that window; later versions use
+	// a structural matcher). A dependency bump can therefore shift sniffed types across
+	// the corpus. Every rule below must stay conclusive under any sniff outcome, and
+	// regression tests assert verdicts, never sniffed types.
 	sniffed := normalizeContentType(mimetype.Detect(body).String())
 	verdict := ContentVerdict{OK: true, Declared: declared, Sniffed: sniffed}
 
@@ -148,10 +154,16 @@ func (v *contentValidator) Validate(declaredContentType string, body []byte, tot
 		}
 	}
 
-	// 6. Declared media but text body: an HTML/plain-text payload cannot be the image,
-	// video, or audio the metadata promised (the classic 200-with-error-page case).
-	// Declared HTML/JSON/text is never flagged — HTML artworks are legitimate.
-	if isMediaClass(declared) && (sniffed == "text/html" || sniffed == "text/plain") {
+	// 6. Declared media but text body: an HTML, plain-text, or JSON payload cannot be
+	// the image, video, or audio the metadata promised. HTML/plain is the classic
+	// 200-with-error-page case; JSON covers gateway and pinning-service error bodies
+	// served with 200. Text-based media subtypes (SVG, playlists, ASCII bitmaps) are
+	// exempt — for them a text body is expected, so the signal carries no information;
+	// without the exemption an SVG whose root element sits past the sniff window is
+	// false-broken as text/plain. Declared HTML/JSON/text is never flagged — HTML
+	// artworks are legitimate.
+	if isMediaClass(declared) && !isTextBasedMediaType(declared) &&
+		(sniffed == "text/html" || sniffed == "text/plain" || sniffed == "application/json") {
 		verdict.OK = false
 		verdict.FailureReason = FailureTypeMismatch
 		verdict.Detail = fmt.Sprintf("declared %s but body is %s", declared, sniffed)
@@ -183,6 +195,32 @@ func isMediaClass(declared string) bool {
 	return strings.HasPrefix(declared, "image/") ||
 		strings.HasPrefix(declared, "video/") ||
 		strings.HasPrefix(declared, "audio/")
+}
+
+// isTextBasedMediaType reports whether a declared media type is a text format, for which
+// a text-sniffed body is expected rather than evidence of an error page.
+//
+// Reason: rule 6's "media declared, text body" signal is only conclusive for binary
+// formats. RFC 6839 +xml/+json structured-syntax suffixes cover image/svg+xml and any
+// future structured-text subtype; the explicit list covers text formats without a suffix:
+// the legacy SVG alias, HLS playlists (detected by strict "#EXTM3U" prefix, so a
+// spec-violating BOM sniffs text/plain), ASCII PNM, and XBM (C source text). Trade-off:
+// an unmarked error page served for one of these URLs errs healthy, which is the L0
+// contract; the render probe judges those. Expects a normalized (lowercase, parameterless)
+// type.
+func isTextBasedMediaType(declared string) bool {
+	if strings.HasSuffix(declared, "+xml") || strings.HasSuffix(declared, "+json") {
+		return true
+	}
+	switch declared {
+	case "image/svg",
+		"audio/x-mpegurl", "audio/mpegurl",
+		"image/x-xbitmap",
+		"image/x-portable-anymap", "image/x-portable-bitmap",
+		"image/x-portable-graymap", "image/x-portable-pixmap":
+		return true
+	}
+	return false
 }
 
 // firstMarker returns the first marker contained in lowerBody, or "".
