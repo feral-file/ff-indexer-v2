@@ -220,8 +220,7 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			if err != nil {
 				return fmt.Errorf("failed to release render gate: %w", err)
 			}
-			e.propagateViewability(ctx, tokenIDs)
-			return nil
+			return e.propagateViewability(ctx, tokenIDs)
 		}
 		if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
 			return fmt.Errorf("failed to upsert render probe: %w", err)
@@ -245,8 +244,7 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		if err != nil {
 			return fmt.Errorf("failed to acquire render gate: %w", err)
 		}
-		e.propagateViewability(ctx, tokenIDs)
-		return nil
+		return e.propagateViewability(ctx, tokenIDs)
 
 	default: // blank
 		errMsg := fmt.Sprintf("blank frame (variance %.6f below threshold %.6f)",
@@ -301,26 +299,26 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 	if err != nil {
 		return fmt.Errorf("failed to acquire render gate: %w", err)
 	}
-	e.propagateViewability(ctx, tokenIDs)
-	return nil
+	return e.propagateViewability(ctx, tokenIDs)
 }
 
 // propagateViewability recomputes viewability for the given tokens and emits a webhook
 // for each one whose visibility actually changed, matching the sweeper's behavior.
 //
-// Failures are logged rather than returned: the health state is already durable, and the
-// next sweep recomputes viewability anyway, so failing the probe job here would re-render
-// the URL for no benefit.
-func (e *renderProbeExecutor) propagateViewability(ctx context.Context, tokenIDs []uint64) {
+// Failures are returned so the job fails and the queue retries. An earlier version logged
+// and continued on the theory that the next sweep would reconcile — that reasoning was
+// wrong for exactly the case that matters: once a URL is gated, GetURLsForChecking
+// excludes its render_% rows, so no sweep revisits them. A swallowed error would leave
+// tokens.is_viewable=true after chromium confirmed the media is bad, until an unrelated
+// update or the next render probe. Re-rendering on retry is the cheaper mistake.
+func (e *renderProbeExecutor) propagateViewability(ctx context.Context, tokenIDs []uint64) error {
 	if len(tokenIDs) == 0 {
-		return
+		return nil
 	}
 
 	changes, err := e.store.BatchUpdateTokensViewability(ctx, tokenIDs)
 	if err != nil {
-		logger.ErrorCtx(ctx, fmt.Errorf("failed to update tokens viewability: %w", err),
-			zap.Uint64s("token_ids", tokenIDs))
-		return
+		return fmt.Errorf("failed to update tokens viewability: %w", err)
 	}
 
 	for _, change := range changes {
@@ -331,6 +329,7 @@ func (e *renderProbeExecutor) propagateViewability(ctx context.Context, tokenIDs
 		)
 		e.enqueueViewabilityWebhook(ctx, change.TokenCID, change.NewViewable)
 	}
+	return nil
 }
 
 // enqueueViewabilityWebhook mirrors the sweeper's triggerWebhook: same event shape, same

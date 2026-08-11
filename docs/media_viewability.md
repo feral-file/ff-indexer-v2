@@ -113,6 +113,15 @@ sweep because another token added a row for it — cannot clear a browser-confir
 L1 writes also leave the L0 content-type classification intact, since the render-due query
 and the API depend on it surviving a gate.
 
+That filter is a check on the health row, and it evaluates under read-committed semantics:
+an L0 write whose subquery ran before the gate committed can still land after it. So the
+gate is enforced a second time where it actually matters — `BatchUpdateTokensViewability`
+excludes URLs holding `health_gated`, in both the animation and the image branch. A URL
+chromium has confirmed bad cannot be computed viewable regardless of what its health row
+momentarily says. Reconciliation errors after a gate or release commits fail the probe job
+rather than being logged: the health state is durable at that point but `tokens.is_viewable`
+is not, and no sweep revisits a gated URL to fix it.
+
 **Scheduling is independent of L0.** Render probes are enqueued on every sweep cycle,
 including cycles with no L0 work, because L1 has its own cadence and render-gated rows are
 excluded from the L0 query by design. The render-due query selects never-probed URLs by L0

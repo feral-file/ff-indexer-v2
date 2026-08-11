@@ -6430,6 +6430,58 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			"after release, L0 heals the row normally")
 	})
 
+	t.Run("viewability computation excludes render-gated URLs even when the health row is healthy", func(t *testing.T) {
+		// Defense in depth for the L0/L1 ownership race. UpdateTokenMediaHealthByURL
+		// already refuses to heal a gated row, but that guard evaluates its subquery under
+		// read-committed semantics: an L0 write that started before AcquireRenderGate
+		// committed can still land afterwards. Viewability is the value that actually
+		// reaches clients, so the gate is enforced there too — a URL whose probe row says
+		// health_gated can never be computed viewable, whatever its health row says.
+		gatedAnimURL := "https://example.com/render/gate-vs-viewability.html"
+		tokenID := mintTokenWithMedia(t, &gatedAnimURL, nil)
+
+		now := time.Now().UTC()
+		reason := schema.RenderFailureKnownBad
+		_, err := store.AcquireRenderGate(ctx,
+			schema.MediaRenderProbe{
+				MediaURL: gatedAnimURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
+				ConsecutiveFailures: 1, CapturedAt: &now, NextCheckAt: now.Add(time.Hour),
+			},
+			MediaHealthUpdate{
+				Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true,
+			})
+		require.NoError(t, err)
+
+		// Simulate the racing L0 write landing after the gate committed: force the health
+		// row healthy behind the guard, exactly the state the guard cannot rule out.
+		require.NoError(t, testDB.WithContext(ctx).Exec(
+			`UPDATE token_media_health SET health_status = 'healthy', failure_reason = NULL
+			 WHERE media_url_hash = ?`, types.MD5Hash(gatedAnimURL)).Error)
+
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		viewability, err := store.GetTokensViewabilityByIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		require.Len(t, viewability, 1)
+		assert.False(t, viewability[0].IsViewable,
+			"a healthy health row must not make a render-gated URL viewable")
+
+		// Releasing the gate restores normal computation. Release leaves the health row
+		// `unknown` on purpose (L0 re-validates the bytes), so L0 has to pass first.
+		_, err = store.ReleaseRenderGate(ctx, schema.MediaRenderProbe{
+			MediaURL: gatedAnimURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			CapturedAt: &now, NextCheckAt: now.Add(time.Hour),
+		})
+		require.NoError(t, err)
+		markHealthy(t, gatedAnimURL, "image/png")
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		viewability, err = store.GetTokensViewabilityByIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		require.Len(t, viewability, 1)
+		assert.True(t, viewability[0].IsViewable, "after release the URL computes viewable again")
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)

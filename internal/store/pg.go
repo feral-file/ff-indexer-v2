@@ -3381,12 +3381,20 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 				SELECT 
 					t.id,
 					CASE 
-						-- Has at least one healthy animation URL
+						-- Has at least one healthy animation URL that is not render-gated.
+						-- The gate is checked here, not only on the health rows, so a URL
+						-- L1 confirmed bad can never be computed viewable even if a
+						-- concurrent L0 write momentarily left its row healthy.
 						WHEN EXISTS (
 							SELECT 1 FROM token_media_health tmh
 							WHERE tmh.token_id = t.id
 								AND tmh.health_status = $2
 								AND tmh.media_source IN ($3, $4)
+								AND NOT EXISTS (
+									SELECT 1 FROM media_render_probes p
+									WHERE p.media_url_hash = tmh.media_url_hash
+										AND p.health_gated = true
+								)
 						) THEN true
 						-- OR no animation URLs exist AND has at least one healthy image URL
 						WHEN NOT EXISTS (
@@ -3397,6 +3405,11 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 						AND EXISTS (
 							SELECT 1 FROM token_media_health tmh
 							WHERE tmh.token_id = t.id
+								AND NOT EXISTS (
+									SELECT 1 FROM media_render_probes p
+									WHERE p.media_url_hash = tmh.media_url_hash
+										AND p.health_gated = true
+								)
 								AND tmh.health_status = $2
 								AND tmh.media_source IN ($5, $6)
 						) THEN true

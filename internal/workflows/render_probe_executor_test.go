@@ -438,3 +438,55 @@ func TestExecuteRenderProbe_failedReleaseRetainsGate(t *testing.T) {
 	err := exec.ExecuteRenderProbe(context.Background(), url)
 	require.Error(t, err, "the job fails so the queue retries the release")
 }
+
+// TestExecuteRenderProbe_reconciliationFailureFailsJob pins the durability of the step
+// after the gate commits. Health state is already broken at that point, but until
+// BatchUpdateTokensViewability runs the tokens still read is_viewable=true — and no sweep
+// will fix that, because GetURLsForChecking excludes render_% rows. So a reconciliation
+// error must fail the job and put it on the retry path rather than be logged and dropped.
+func TestExecuteRenderProbe_reconciliationFailureFailsJob(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/reconcile-fails.html"
+
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:            url,
+		Verdict:             schema.RenderProbeVerdictBlank,
+		ConsecutiveFailures: 1,
+	}, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(blankFrame(), nil)
+	m.store.EXPECT().
+		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]uint64{1}, nil)
+	m.store.EXPECT().
+		BatchUpdateTokensViewability(gomock.Any(), []uint64{1}).
+		Return(nil, assert.AnError)
+
+	// Strict mock: no webhook may be enqueued for a recompute that did not happen.
+	err := exec.ExecuteRenderProbe(context.Background(), url)
+	require.Error(t, err, "the job fails so the queue retries the viewability recompute")
+}
+
+// TestExecuteRenderProbe_reconciliationFailureFailsRecovery is the same contract on the
+// healing path: the gate is already released, so tokens are still hidden until the
+// recompute lands. Nothing else revisits them.
+func TestExecuteRenderProbe_reconciliationFailureFailsRecovery(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/reconcile-fails-recovery.html"
+
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:            url,
+		Verdict:             schema.RenderProbeVerdictBlank,
+		ConsecutiveFailures: 2,
+		HealthGated:         true,
+	}, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
+	m.store.EXPECT().ReleaseRenderGate(gomock.Any(), gomock.Any()).Return([]uint64{4}, nil)
+	m.store.EXPECT().
+		BatchUpdateTokensViewability(gomock.Any(), []uint64{4}).
+		Return(nil, assert.AnError)
+
+	err := exec.ExecuteRenderProbe(context.Background(), url)
+	require.Error(t, err, "the job fails so the queue retries the viewability recompute")
+}
