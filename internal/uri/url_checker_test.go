@@ -206,6 +206,72 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedReason: uri.FailureDirectoryListing,
 		},
 		{
+			name: "206 with malformed range end retries unranged (full grammar required)",
+			url:  "https://example.com/bad-end.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// Prefix-plausible but malformed: "bytes 0-" alone must not buy trust.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/bad-end.png", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", []byte("untrusted bytes"),
+						map[string]string{"Content-Range": "bytes 0-not-a-range/500000"}), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/bad-end.png", nil).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(64, 64), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+		},
+		{
+			name: "206 on the unranged retry is protocol-broken even with a plausible from-zero range",
+			url:  "https://example.com/liar.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				// First 206 has a mid-file range → retry unranged; the gateway answers
+				// 206 again with a valid-looking from-zero range. A 206 to a request
+				// without Range is never trusted.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/liar.png", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", []byte("mid-file"),
+						map[string]string{"Content-Range": "bytes 1000-33767/500000"}), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/liar.png", nil).
+					Return(httpResp(http.StatusPartialContent, "image/png", minimalPNG(64, 64),
+						map[string]string{"Content-Range": "bytes 0-32/500000"}), nil)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureHTTPStatus,
+		},
+		{
+			name: "206 satisfying a shorter from-zero range than requested is healthy (promised length, not total)",
+			url:  "https://example.com/short-range.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// The gateway legitimately satisfies 0-9999 of a 500KB object and
+				// delivers exactly those 10000 bytes. Judging truncation against the
+				// 500000 total would false-broken valid media.
+				body := append(minimalPNG(64, 64), make([]byte, 10_000-33)...)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/short-range.png", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", body,
+						map[string]string{"Content-Range": "bytes 0-9999/500000"}), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+		},
+		{
+			name: "206 delivering fewer bytes than its own range promised is truncated",
+			url:  "https://example.com/undelivered.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// Promised 10000 bytes (0-9999), delivered 33: short of the response's
+				// own promise and of the probe cap → truncated.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/undelivered.png", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", minimalPNG(64, 64),
+						map[string]string{"Content-Range": "bytes 0-9999/500000"}), nil)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureTruncated,
+		},
+		{
 			name: "416 falls back to unranged GET",
 			url:  "https://example.com/art.gif",
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {

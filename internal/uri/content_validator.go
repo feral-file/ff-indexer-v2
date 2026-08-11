@@ -69,8 +69,10 @@ type ContentVerdict struct {
 //go:generate mockgen -source=content_validator.go -destination=../mocks/content_validator.go -package=mocks -mock_names=ContentValidator=MockContentValidator
 type ContentValidator interface {
 	// Validate inspects body (the first bytes of the response, capped at probeMaxBytes)
-	// against the declared Content-Type header. totalLength is the full resource length
-	// when known (Content-Range total or Content-Length) and -1 when unknown.
+	// against the declared Content-Type header. totalLength is the byte count the
+	// response undertook to deliver (the satisfied range's length for a 206 — NOT the
+	// Content-Range total, which would false-broken legitimately short ranges —
+	// Content-Length otherwise) and -1 when unknown.
 	Validate(declaredContentType string, body []byte, totalLength int64) ContentVerdict
 }
 

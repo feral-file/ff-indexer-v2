@@ -130,62 +130,43 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 	}()
 
 	switch {
-	// A 206 whose Content-Range is absent, malformed, or does not start at byte 0 is not
-	// serving the requested resource prefix — validating those bytes would let a
-	// misbehaving gateway bypass the prefix-based checks (magic bytes, directory-listing
-	// and error-page markers). Retry without Range: the unranged read is still capped at
-	// maxBytes and yields the true prefix.
-	case resp.StatusCode == http.StatusPartialContent && !partialRangeStartsAtZero(resp):
-		if withRange {
-			logger.InfoCtx(ctx, "206 without a valid from-zero Content-Range, retrying without range",
-				zap.String("url", url),
-				zap.String("content_range", resp.Header.Get("Content-Range")),
-			)
-			return p.probe(ctx, url, false)
-		}
-		// A 206 answer to a range-less request is itself protocol-broken.
-		errMsg := fmt.Sprintf("206 with invalid Content-Range %q to an unranged request", resp.Header.Get("Content-Range"))
+	// A 206 answer to a range-less request is protocol-broken regardless of how
+	// plausible its Content-Range looks — trusting it would let a gateway serve
+	// different bytes on the retry path than on a normal fetch.
+	case resp.StatusCode == http.StatusPartialContent && !withRange:
+		errMsg := fmt.Sprintf("206 with Content-Range %q to an unranged request", resp.Header.Get("Content-Range"))
 		return probeResult{hcr: HealthCheckResult{
 			Status:        HealthStatusBroken,
 			Error:         &errMsg,
 			FailureReason: FailureHTTPStatus,
 		}}
 
+	// A ranged 206 is trusted only when its Content-Range parses under the full
+	// single-range grammar AND starts at byte 0 — anything else is not serving the
+	// resource prefix the validator's checks (magic bytes, directory-listing and
+	// error-page markers) are defined over. Retry without Range: the unranged read is
+	// still capped at maxBytes and yields the true prefix.
+	case resp.StatusCode == http.StatusPartialContent:
+		start, end, ok := parseContentRange(resp.Header.Get("Content-Range"))
+		if !ok || start != 0 {
+			logger.InfoCtx(ctx, "206 without a valid from-zero Content-Range, retrying without range",
+				zap.String("url", url),
+				zap.String("content_range", resp.Header.Get("Content-Range")),
+			)
+			return p.probe(ctx, url, false)
+		}
+		// This response promises exactly end+1 bytes — NOT the full object length. A
+		// server may legitimately satisfy a from-zero range shorter than requested, so
+		// truncation is judged against what this response promised, never against the
+		// Content-Range total (which would false-broken valid media).
+		return p.readAndValidate(resp, end+1)
+
 	// The whole 2xx range is a fetch success (matching the documented L0 contract and the
 	// pre-content-validation checker): 203 arrives via transforming proxies with valid
 	// media, and 204's empty body is a content verdict (zero_length), not an HTTP one.
 	// 416/429 sit outside 2xx, so the explicit cases below are unaffected.
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		body, readErr := p.io.ReadAll(io.LimitReader(resp.Body, int64(p.maxBytes)))
-		total := totalLength(resp)
-		if readErr != nil && !isConclusiveTruncation(len(body), total, p.maxBytes) {
-			// The connection died mid-body with no length evidence: a transport
-			// condition, retried next sweep.
-			errMsg := readErr.Error()
-			return probeResult{hcr: HealthCheckResult{
-				Status: HealthStatusTransientError,
-				Error:  &errMsg,
-			}}
-		}
-		// readErr with conclusive length evidence falls through: the server advertised
-		// more bytes than it delivered, which is truncation, not weather. The partial
-		// body goes through the validator so the verdict is the same broken/truncated a
-		// cleanly-short body gets — otherwise consistently truncated media stays
-		// transient forever, and the sweeper never persists transient results, leaving a
-		// stale healthy row to keep the token viewable.
-
-		verdict := p.validator.Validate(resp.Header.Get("Content-Type"), body, total)
-		result := HealthCheckResult{
-			Status:              HealthStatusHealthy,
-			ObservedContentType: verdict.Declared,
-			SniffedContentType:  verdict.Sniffed,
-		}
-		if !verdict.OK {
-			result.Status = HealthStatusBroken
-			result.FailureReason = verdict.FailureReason
-			result.Error = &verdict.Detail
-		}
-		return probeResult{hcr: result}
+		return p.readAndValidate(resp, resp.ContentLength)
 
 	case resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && withRange:
 		// Server rejects Range outright: retry once without it.
@@ -226,40 +207,79 @@ func (p *contentProbe) gatewayProbe(ctx context.Context, url string) error {
 	return nil
 }
 
-// partialRangeStartsAtZero reports whether a 206's Content-Range declares a satisfied
-// range beginning at byte 0 ("bytes 0-<end>/<total or *>"). Only from-zero ranges carry
-// the resource prefix the content validator's checks are defined over.
-func partialRangeStartsAtZero(resp *http.Response) bool {
-	after, ok := strings.CutPrefix(strings.TrimSpace(resp.Header.Get("Content-Range")), "bytes ")
-	if !ok {
-		return false
+// readAndValidate reads up to maxBytes of the body and runs content validation.
+// promisedLength is how many bytes THIS response undertook to deliver (end-start+1 for a
+// 206, Content-Length otherwise, -1 unknown); truncation is judged against it.
+func (p *contentProbe) readAndValidate(resp *http.Response, promisedLength int64) probeResult {
+	body, readErr := p.io.ReadAll(io.LimitReader(resp.Body, int64(p.maxBytes)))
+	if readErr != nil && !isConclusiveTruncation(len(body), promisedLength, p.maxBytes) {
+		// The connection died mid-body with no length evidence: a transport condition,
+		// retried next sweep.
+		errMsg := readErr.Error()
+		return probeResult{hcr: HealthCheckResult{
+			Status: HealthStatusTransientError,
+			Error:  &errMsg,
+		}}
 	}
-	start, _, ok := strings.Cut(after, "-")
-	return ok && strings.TrimSpace(start) == "0"
+	// readErr with conclusive length evidence falls through: the server delivered fewer
+	// bytes than this response promised, which is truncation, not weather. The partial
+	// body goes through the validator so the verdict is the same broken/truncated a
+	// cleanly-short body gets — otherwise consistently truncated media stays transient
+	// forever, and the sweeper never persists transient results, leaving a stale healthy
+	// row to keep the token viewable.
+
+	verdict := p.validator.Validate(resp.Header.Get("Content-Type"), body, promisedLength)
+	result := HealthCheckResult{
+		Status:              HealthStatusHealthy,
+		ObservedContentType: verdict.Declared,
+		SniffedContentType:  verdict.Sniffed,
+	}
+	if !verdict.OK {
+		result.Status = HealthStatusBroken
+		result.FailureReason = verdict.FailureReason
+		result.Error = &verdict.Detail
+	}
+	return probeResult{hcr: result}
+}
+
+// parseContentRange parses a Content-Range header under the full satisfied single-range
+// grammar: "bytes <start>-<end>/<total|*>" with digit-only positions, start <= end, and
+// (when numeric) total > end. Anything else — including the prefix-plausible
+// "bytes 0-not-a-range/500000" — is rejected so a misbehaving gateway cannot get
+// arbitrary bytes trusted as the resource prefix.
+func parseContentRange(header string) (start, end int64, ok bool) {
+	after, found := strings.CutPrefix(strings.TrimSpace(header), "bytes ")
+	if !found {
+		return 0, 0, false
+	}
+	rangePart, totalPart, found := strings.Cut(after, "/")
+	if !found {
+		return 0, 0, false
+	}
+	startStr, endStr, found := strings.Cut(rangePart, "-")
+	if !found {
+		return 0, 0, false
+	}
+	start, errStart := strconv.ParseInt(strings.TrimSpace(startStr), 10, 64)
+	end, errEnd := strconv.ParseInt(strings.TrimSpace(endStr), 10, 64)
+	if errStart != nil || errEnd != nil || start < 0 || end < start {
+		return 0, 0, false
+	}
+	if totalPart = strings.TrimSpace(totalPart); totalPart != "*" {
+		total, errTotal := strconv.ParseInt(totalPart, 10, 64)
+		if errTotal != nil || total <= end {
+			return 0, 0, false
+		}
+	}
+	return start, end, true
 }
 
 // isConclusiveTruncation reports whether a mid-body read failure is evidence of a
-// truncated resource rather than transient network weather: the response declared a
-// total length, fewer bytes than that arrived, and the read stopped short of the probe
-// cap (so the shortfall is the server's, not the cap's).
-func isConclusiveTruncation(got int, total int64, maxBytes int) bool {
-	return total > 0 && int64(got) < total && got < maxBytes
-}
-
-// totalLength extracts the full resource length: the Content-Range total for 206
-// responses, Content-Length otherwise, -1 when unknown.
-func totalLength(resp *http.Response) int64 {
-	if resp.StatusCode == http.StatusPartialContent {
-		// Content-Range: bytes 0-32767/12345678 (total may be "*" when unknown)
-		cr := resp.Header.Get("Content-Range")
-		if idx := strings.LastIndex(cr, "/"); idx >= 0 {
-			if total, err := strconv.ParseInt(cr[idx+1:], 10, 64); err == nil {
-				return total
-			}
-		}
-		return -1
-	}
-	return resp.ContentLength
+// truncated resource rather than transient network weather: the response promised a
+// length, fewer bytes than that arrived, and the read stopped short of the probe cap
+// (so the shortfall is the server's, not the cap's).
+func isConclusiveTruncation(got int, promisedLength int64, maxBytes int) bool {
+	return promisedLength > 0 && int64(got) < promisedLength && got < maxBytes
 }
 
 type urlChecker struct {
