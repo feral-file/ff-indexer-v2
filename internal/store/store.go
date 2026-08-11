@@ -160,6 +160,19 @@ type MediaHealthUpdate struct {
 	ObservedContentType *string
 	// SniffedContentType is the magic-byte-detected type of the body; nil clears it.
 	SniffedContentType *string
+
+	// RenderProbeWrite marks this update as coming from the L1 render probe, which owns
+	// render_% rows. It has two effects:
+	//
+	//  1. Bypasses the render-gate guard. Every other (L0) writer skips rows currently
+	//     carrying a render_% failure_reason, so a byte-level healthy verdict — from a
+	//     metadata reindex, or from a URL re-entering the sweep because another token
+	//     added an unknown row for it — cannot clear a browser-confirmed gate and make
+	//     the token viewable without a successful render.
+	//  2. Leaves observed/sniffed content types untouched. A render verdict says nothing
+	//     about the bytes L0 observed, and the render-due query and API depend on that
+	//     classification surviving a gate.
+	RenderProbeWrite bool
 }
 
 // UpdateTokenTransferInput represents the input for updating a token transfer (assumes token exists)

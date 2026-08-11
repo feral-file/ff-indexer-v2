@@ -118,27 +118,45 @@ func (e *renderProbeExecutor) gated(prev *schema.MediaRenderProbe) bool {
 func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string) error {
 	now := e.clock.Now()
 
-	// Chromium bypasses the SSRF-protected HTTP client entirely; refuse policy-blocked
-	// URLs before Navigate. Recorded as stalled without counting toward the gate: the
-	// block is policy, not evidence about what the artwork renders.
-	if e.ssrfValidator != nil {
-		if err := e.ssrfValidator.ValidateHTTPURL(ctx, url); err != nil {
-			errMsg := fmt.Sprintf("ssrf policy refused render: %v", err)
-			logger.WarnCtx(ctx, "Render probe refused by SSRF policy", zap.String("url", url), zap.Error(err))
-			return e.store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
-				MediaURL:    url,
-				Verdict:     schema.RenderProbeVerdictStalled,
-				LastError:   &errMsg,
-				NextCheckAt: now.Add(e.cfg.BrokenRecheckInterval),
-			})
-		}
-	}
-
+	// Load prior state first: every path below (including a policy refusal) must
+	// preserve the verdict and failure counter that `gated` reads, or a URL whose gate
+	// state is erased can never be recognized as needing healing later.
 	prev, err := e.store.GetMediaRenderProbe(ctx, url)
 	if err != nil {
 		return fmt.Errorf("failed to load previous render probe: %w", err)
 	}
 	wasGated := e.gated(prev)
+
+	// Chromium performs its own network I/O outside the SSRF-protected HTTP client. The
+	// renderer validates every browser request, but refusing an obviously blocked URL
+	// here avoids launching a browser context at all.
+	if e.ssrfValidator != nil {
+		if err := e.ssrfValidator.ValidateHTTPURL(ctx, url); err != nil {
+			errMsg := fmt.Sprintf("ssrf policy refused render: %v", err)
+			logger.WarnCtx(ctx, "Render probe refused by SSRF policy", zap.String("url", url), zap.Error(err))
+			// Record the refusal without disturbing the render verdict: a policy block
+			// is not evidence about what the artwork renders, and overwriting a prior
+			// gate's verdict/counter here would strand a gated URL as permanently
+			// broken (a later successful render would not recognize it as gated and so
+			// would never heal the health row).
+			refusal := schema.MediaRenderProbe{
+				MediaURL:    url,
+				Verdict:     schema.RenderProbeVerdictStalled,
+				LastError:   &errMsg,
+				NextCheckAt: now.Add(e.cfg.BrokenRecheckInterval),
+			}
+			if prev != nil {
+				refusal.Verdict = prev.Verdict
+				refusal.ConsecutiveFailures = prev.ConsecutiveFailures
+				refusal.Phash = prev.Phash
+				refusal.BaselinePhash = prev.BaselinePhash
+				refusal.EngineVersion = prev.EngineVersion
+				refusal.Viewport = prev.Viewport
+				refusal.CapturedAt = prev.CapturedAt
+			}
+			return e.store.UpsertMediaRenderProbe(ctx, refusal)
+		}
+	}
 
 	row := schema.MediaRenderProbe{
 		MediaURL: url,
@@ -151,6 +169,16 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 
 	capture, renderErr := e.renderer.RenderProbe(ctx, url)
 	if renderErr != nil {
+		// Job cancellation / worker shutdown says nothing about the artwork: leave all
+		// probe state untouched so the URL stays due and the next run judges it. The job
+		// error surfaces to the queue for normal retry handling.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			logger.InfoCtx(ctx, "Render probe canceled, leaving probe state unchanged",
+				zap.String("url", url),
+				zap.Error(ctxErr),
+			)
+			return ctxErr
+		}
 		// Load/timeout failure: the "stalled" verdict.
 		errMsg := renderErr.Error()
 		row.Verdict = schema.RenderProbeVerdictStalled
@@ -187,7 +215,8 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			// re-populates observed/sniffed content types (the row's failure_reason is
 			// cleared, so it re-enters the byte-level sweep).
 			return e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
-				Status: schema.MediaHealthStatusHealthy,
+				Status:           schema.MediaHealthStatusHealthy,
+				RenderProbeWrite: true,
 			})
 		}
 		return nil
@@ -202,9 +231,10 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		}
 		// Unambiguous: gate immediately regardless of debounce state.
 		return e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
-			Status:        schema.MediaHealthStatusBroken,
-			LastError:     &errMsg,
-			FailureReason: strPtr(schema.RenderFailureKnownBad),
+			Status:           schema.MediaHealthStatusBroken,
+			LastError:        &errMsg,
+			FailureReason:    strPtr(schema.RenderFailureKnownBad),
+			RenderProbeWrite: true,
 		})
 
 	default: // blank
@@ -247,9 +277,10 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 	}
 	_ = wasGated // the health update below is idempotent for already-gated rows
 	return e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
-		Status:        schema.MediaHealthStatusBroken,
-		LastError:     row.LastError,
-		FailureReason: &reason,
+		Status:           schema.MediaHealthStatusBroken,
+		LastError:        row.LastError,
+		FailureReason:    &reason,
+		RenderProbeWrite: true,
 	})
 }
 

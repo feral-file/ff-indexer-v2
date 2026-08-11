@@ -5973,6 +5973,60 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.Less(t, idx(htmlURL), idx(imageURL), "HTML class before image class")
 	})
 
+	t.Run("render-gated rows stay eligible for the render probe and only L1 can clear them", func(t *testing.T) {
+		gatedURL := "https://example.com/render/gated-recovery.html"
+		mintTokenWithMedia(t, &gatedURL, nil)
+		markHealthy(t, gatedURL, "text/html")
+
+		// L1 gates the URL: health broken with a render_% reason, probe row due.
+		past := time.Now().UTC().Add(-time.Hour)
+		reason := schema.RenderFailureBlank
+		blankErr := "blank frame"
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, gatedURL, MediaHealthUpdate{
+			Status:           schema.MediaHealthStatusBroken,
+			LastError:        &blankErr,
+			FailureReason:    &reason,
+			RenderProbeWrite: true,
+		}))
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: gatedURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2, CapturedAt: &past, NextCheckAt: past,
+		}))
+
+		// The render probe is the sole healer, so a gated row must still be selectable
+		// by the render-due query even though its health is broken.
+		due, err := store.GetURLsDueForRenderProbe(ctx, 50)
+		require.NoError(t, err)
+		assert.Contains(t, due, gatedURL, "a render-gated URL must remain due for its healing probe")
+
+		// An L0 healthy verdict must NOT clear the render gate.
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, gatedURL, MediaHealthUpdate{
+			Status: schema.MediaHealthStatusHealthy,
+		}))
+		stillGated, err := store.GetURLsForChecking(ctx, -time.Minute, 1000)
+		require.NoError(t, err)
+		assert.NotContains(t, stillGated, gatedURL, "row must still be render-gated after an L0 healthy write")
+
+		// Only a render-probe write heals it.
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, gatedURL, MediaHealthUpdate{
+			Status:           schema.MediaHealthStatusHealthy,
+			RenderProbeWrite: true,
+		}))
+		healed, err := store.GetURLsForChecking(ctx, -time.Minute, 1000)
+		require.NoError(t, err)
+		assert.Contains(t, healed, gatedURL, "after L1 heals it, the row rejoins the L0 sweep")
+	})
+
+	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
+		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
+		mintTokenWithMedia(t, &dataURI, nil)
+		markHealthy(t, dataURI, "text/html")
+
+		due, err := store.GetURLsDueForRenderProbe(ctx, 50)
+		require.NoError(t, err)
+		assert.NotContains(t, due, dataURI, "chromium navigation for data URIs is SSRF-refused; they would loop as stalled")
+	})
+
 	t.Run("GetURLsForChecking excludes render-gated rows", func(t *testing.T) {
 		renderGatedURL := "https://example.com/render/gated.html"
 		normalBrokenURL := "https://example.com/render/plain-broken.png"

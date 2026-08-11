@@ -293,9 +293,10 @@ func TestExecuteRenderProbe_ssrfRefusalRecordsWithoutCounting(t *testing.T) {
 	m, exec := setupRenderProbe(t, renderProbeTestConfig)
 	url := "http://127.0.0.1/internal"
 
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(errors.New("blocked: private address"))
 
-	// Records a stalled row without loading previous state, rendering, or gating.
+	// Records a stalled row without rendering or gating.
 	m.store.EXPECT().
 		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
@@ -305,6 +306,91 @@ func TestExecuteRenderProbe_ssrfRefusalRecordsWithoutCounting(t *testing.T) {
 			assert.Contains(t, *row.LastError, "ssrf policy refused")
 			return nil
 		})
+
+	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_ssrfRefusalPreservesExistingGate pins the recovery path: a
+// temporary policy refusal must not erase the verdict/counter that identify a URL as
+// gated. Losing them would make a later successful render fail to recognize the gate,
+// leaving the health row broken forever (L0 never re-checks render_% rows).
+func TestExecuteRenderProbe_ssrfRefusalPreservesExistingGate(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/temporarily-blocked.html"
+
+	baseline := int64(4242)
+	captured := m.now.Add(-24 * time.Hour)
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:            url,
+		Verdict:             schema.RenderProbeVerdictBlank,
+		ConsecutiveFailures: 2, // gated
+		BaselinePhash:       &baseline,
+		CapturedAt:          &captured,
+	}, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(errors.New("blocked: resolves to private address"))
+
+	m.store.EXPECT().
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+			assert.Equal(t, schema.RenderProbeVerdictBlank, row.Verdict, "prior verdict retained")
+			assert.Equal(t, 2, row.ConsecutiveFailures, "gate counter retained")
+			require.NotNil(t, row.BaselinePhash)
+			assert.Equal(t, baseline, *row.BaselinePhash)
+			require.NotNil(t, row.LastError)
+			assert.Contains(t, *row.LastError, "ssrf policy refused")
+			return nil
+		})
+
+	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_cancellationLeavesStateUntouched: worker shutdown or job
+// cancellation says nothing about the artwork, so no probe row is written and no gate
+// counter advances — the URL stays due for the next run.
+func TestExecuteRenderProbe_cancellationLeavesStateUntouched(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/canceled.html"
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.renderer.EXPECT().
+		RenderProbe(gomock.Any(), url).
+		DoAndReturn(func(context.Context, string) (*probe.Capture, error) {
+			cancel()
+			return nil, context.Canceled
+		})
+
+	// No UpsertMediaRenderProbe, no health write: strict mock enforces it.
+	err := exec.ExecuteRenderProbe(ctx, url)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestExecuteRenderProbe_healthWritesAreRenderProbeWrites pins the ownership flag: L1's
+// health writes must be marked so the store lets them set/clear render_% rows while
+// every L0 writer is blocked from clearing them.
+func TestExecuteRenderProbe_healthWritesAreRenderProbeWrites(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/gates.html"
+
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:            url,
+		Verdict:             schema.RenderProbeVerdictBlank,
+		ConsecutiveFailures: 1,
+	}, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(blankFrame(), nil)
+	m.store.EXPECT().UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).Return(nil)
+
+	m.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
+			assert.True(t, upd.RenderProbeWrite, "L1 health writes must be marked as render-probe writes")
+			return nil
+		})
+	m.store.EXPECT().GetTokenIDsByMediaURL(gomock.Any(), url).Return([]uint64{1}, nil)
+	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{1}).Return(nil, nil)
 
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
 }

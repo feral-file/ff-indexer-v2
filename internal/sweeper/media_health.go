@@ -179,6 +179,13 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 
 	if len(urls) == 0 {
 		logger.InfoCtx(ctx, "No URLs need checking, waiting for new URLs...")
+		// L1 scheduling still runs: the render probe's cadence is its own
+		// (retry_interval / broken_recheck_interval), and render-gated rows are
+		// deliberately excluded from the L0 query above. Returning here without
+		// enqueueing would make every L1 retry — including the healing pass for a gated
+		// URL — wait for unrelated L0 work to come due.
+		s.enqueueRenderProbes(ctx)
+
 		// Sleep briefly to avoid tight loop when no URLs need checking
 		// Use context-aware sleep so we can be interrupted
 		if !s.sleep(ctx, SWEEP_CYCLE_INTERVAL) {

@@ -37,14 +37,25 @@ func Distance(a, b uint64) int {
 	return bits.OnesCount64(a ^ b)
 }
 
-// Variance returns the population variance of the image's luminance, normalized to the
-// [0,1] luma range (0 = perfectly uniform frame).
+// Variance returns the image's largest per-channel population variance, normalized to
+// the [0,1] channel range (0 = perfectly uniform frame).
 //
 // Reason: blank-frame detection must not depend on a baseline or a fingerprint table — a
 // uniform black, white, or solid-color capture has near-zero variance on first
 // observation. The threshold is configuration (render_probe.blank_variance_threshold);
-// this function only measures. Sampling every 4th pixel in each dimension keeps a
-// 1024x1024 frame under ~66k samples with no meaningful loss for a uniformity test.
+// this function only measures.
+//
+// Trade-offs: the maximum across R, G and B rather than luminance. Luma-only detection
+// mistakes vivid art for a blank frame whenever the palette varies in hue but not
+// brightness — a full-viewport #0af→#f0a gradient has a luma spread of 0.13 (variance
+// ~0.0014, at the default threshold) despite being obviously non-blank, and false blanks
+// hide real artwork, the worst outcome in this design. A frame is only blank when every
+// channel is flat, so taking the max is both stricter and cheaper to reason about than
+// summing channel variances. Caught by the live-chromium smoke test, which the mocked
+// unit tests could not surface.
+//
+// Constraints: samples every 4th pixel in each dimension, keeping a 1024x1024 frame under
+// ~66k samples with no meaningful loss for a uniformity test.
 func Variance(img image.Image) float64 {
 	bounds := img.Bounds()
 	if bounds.Empty() {
@@ -52,21 +63,30 @@ func Variance(img image.Image) float64 {
 	}
 
 	const stride = 4
-	var sum, sumSq float64
+	var sum, sumSq [3]float64
 	var n int
 	for y := bounds.Min.Y; y < bounds.Max.Y; y += stride {
 		for x := bounds.Min.X; x < bounds.Max.X; x += stride {
 			r, g, b, _ := img.At(x, y).RGBA()
-			// Rec. 601 luma on 16-bit channels, normalized to [0,1].
-			luma := (0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)) / 65535.0
-			sum += luma
-			sumSq += luma * luma
+			// 16-bit channels normalized to [0,1].
+			channels := [3]float64{float64(r) / 65535.0, float64(g) / 65535.0, float64(b) / 65535.0}
+			for i, v := range channels {
+				sum[i] += v
+				sumSq[i] += v * v
+			}
 			n++
 		}
 	}
 	if n == 0 {
 		return 0
 	}
-	mean := sum / float64(n)
-	return sumSq/float64(n) - mean*mean
+
+	var maxVar float64
+	for i := range sum {
+		mean := sum[i] / float64(n)
+		if v := sumSq[i]/float64(n) - mean*mean; v > maxVar {
+			maxVar = v
+		}
+	}
+	return maxVar
 }

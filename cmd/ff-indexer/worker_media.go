@@ -135,11 +135,15 @@ func registerWorkerMedia(
 		}
 
 		probeRenderer = probe.NewRenderer(chromedpClient, &probe.RendererConfig{
-			ViewportWidth:    wcfg.RenderProbe.ViewportWidth,
-			ViewportHeight:   wcfg.RenderProbe.ViewportHeight,
-			TimeoutMs:        wcfg.RenderProbe.TimeoutMs,
-			SettleMs:         wcfg.RenderProbe.SettleMs,
-			AllocatorOptions: rasterizer.DefaultAllocatorOptions(),
+			ViewportWidth:  wcfg.RenderProbe.ViewportWidth,
+			ViewportHeight: wcfg.RenderProbe.ViewportHeight,
+			TimeoutMs:      wcfg.RenderProbe.TimeoutMs,
+			SettleMs:       wcfg.RenderProbe.SettleMs,
+			// The probe runs untrusted remote pages, so it uses its own launch flags
+			// (no disable-web-security) rather than the SVG rasterizer's, and validates
+			// every browser-initiated request against the SSRF policy.
+			AllocatorOptions: probe.AllocatorOptions(),
+			SSRFValidator:    ssrfValidatorOrNil(ssrfValidator),
 		})
 
 		// ssrfValidator is nil when SSRF protection is disabled — the executor treats

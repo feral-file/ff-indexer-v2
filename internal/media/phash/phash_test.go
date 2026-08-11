@@ -91,7 +91,8 @@ func TestDistance(t *testing.T) {
 }
 
 func TestVariance_blankFrames(t *testing.T) {
-	// Uniform frames of any color are near-zero variance — the blank-detection signal.
+	// Uniform frames of any color are near-zero variance in every channel — the
+	// blank-detection signal.
 	assert.InDelta(t, 0, phash.Variance(solidImage(256, 256, color.Black)), 1e-9)
 	assert.InDelta(t, 0, phash.Variance(solidImage(256, 256, color.White)), 1e-9)
 	assert.InDelta(t, 0, phash.Variance(solidImage(256, 256, color.RGBA{40, 0, 60, 255})), 1e-9)
@@ -101,6 +102,28 @@ func TestVariance_contentFrames(t *testing.T) {
 	// Real content sits orders of magnitude above any sane blank threshold.
 	assert.Greater(t, phash.Variance(gradientImage(256, 256)), 0.01)
 	assert.Greater(t, phash.Variance(checkerImage(256, 256, 32)), 0.1)
+}
+
+// TestVariance_isoLuminantContentIsNotBlank pins the regression the live-chromium smoke
+// test found: a vivid hue gradient whose endpoints share nearly the same luma
+// (#0af -> #f0a, luma 0.505 vs 0.375) is obviously non-blank, but luminance-only variance
+// put it at the default 0.001 threshold — classifying real artwork as blank and hiding it.
+func TestVariance_isoLuminantContentIsNotBlank(t *testing.T) {
+	const size = 256
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	for y := range size {
+		for x := range size {
+			t := float64(x) / float64(size-1)
+			img.Set(x, y, color.RGBA{
+				R: uint8(0 + t*255),   // #0af -> #f0a
+				G: uint8(170 - t*170), // #nosec G115 -- bounded by construction
+				B: uint8(255 - t*85),
+			})
+		}
+	}
+
+	assert.Greater(t, phash.Variance(img), 0.01,
+		"hue-varying content must not read as blank just because luma is flat")
 }
 
 func TestVariance_emptyImage(t *testing.T) {

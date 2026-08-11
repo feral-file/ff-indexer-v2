@@ -2865,17 +2865,31 @@ func (s *pgStore) GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []
 func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, update MediaHealthUpdate) error {
 	urlHash := types.MD5Hash(url)
 	updates := map[string]interface{}{
-		"health_status":         update.Status,
-		"last_checked_at":       time.Now(),
-		"last_error":            nullableString(update.LastError),
-		"failure_reason":        nullableString(update.FailureReason),
-		"observed_content_type": nullableString(update.ObservedContentType),
-		"sniffed_content_type":  nullableString(update.SniffedContentType),
+		"health_status":   update.Status,
+		"last_checked_at": time.Now(),
+		"last_error":      nullableString(update.LastError),
+		"failure_reason":  nullableString(update.FailureReason),
 	}
 
-	return s.db.WithContext(ctx).
+	q := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
-		Where("media_url_hash = ?", urlHash).
+		Where("media_url_hash = ?", urlHash)
+
+	if update.RenderProbeWrite {
+		// The render probe owns render_% rows and never observed the bytes, so it
+		// leaves L0's content-type classification intact (the render-due query depends
+		// on it surviving a gate).
+		return q.Updates(updates).Error
+	}
+
+	updates["observed_content_type"] = nullableString(update.ObservedContentType)
+	updates["sniffed_content_type"] = nullableString(update.SniffedContentType)
+
+	// L1 owns render_% rows: only a successful render probe may clear a render gate.
+	// Enforced here rather than at each call site so every present and future L0 writer
+	// — sweeper, metadata reindex, shared-URL re-checks — inherits the rule.
+	return q.
+		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
 		Updates(updates).Error
 }
 
@@ -2975,13 +2989,27 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		SELECT h.media_url
 		FROM token_media_health h
 		LEFT JOIN media_render_probes p ON p.media_url_hash = h.media_url_hash
-		WHERE h.health_status = ?
-		  AND (h.sniffed_content_type = 'text/html'
-		       OR h.media_source IN (?, ?)
-		       OR h.sniffed_content_type LIKE 'image/%')
-		  AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'video/%'
-		  AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'audio/%'
-		  AND (p.media_url_hash IS NULL OR p.next_check_at <= now())
+		WHERE (
+		        -- Never probed: L0 must have confirmed the bytes, and the class must be
+		        -- one a browser render can judge.
+		        (p.media_url_hash IS NULL
+		         AND h.health_status = ?
+		         AND (h.sniffed_content_type = 'text/html'
+		              OR h.media_source IN (?, ?)
+		              OR h.sniffed_content_type LIKE 'image/%')
+		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'video/%'
+		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'audio/%')
+		        OR
+		        -- Already probed: eligibility is the probe's own schedule. Selecting on
+		        -- next_check_at alone is what lets a render-gated row (health broken with
+		        -- a render_% reason, which L0 never re-checks) come back for the
+		        -- successful render that is its only healing path.
+		        (p.media_url_hash IS NOT NULL AND p.next_check_at <= now())
+		      )
+		  -- Data URIs carry their bytes inline and are validated by L0; chromium
+		  -- navigation for them is refused by the SSRF policy, so they would loop as
+		  -- stalled forever. Explicitly out of L1 coverage (see docs/media_viewability.md).
+		  AND h.media_url NOT LIKE 'data:%'
 		GROUP BY h.media_url, p.media_url_hash, p.captured_at
 		ORDER BY (p.media_url_hash IS NULL) DESC,
 		         MIN(CASE WHEN h.sniffed_content_type = 'text/html'

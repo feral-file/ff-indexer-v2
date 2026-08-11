@@ -10,11 +10,14 @@ package probe
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
 	"time"
 
+	"github.com/chromedp/cdproto/fetch"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"go.uber.org/zap"
 
@@ -33,7 +36,19 @@ const (
 	// enough for generative works to paint their first frame, matching the rasterizer's
 	// settle behavior.
 	DefaultSettleMs = 5000
+
+	// maxScreenshotBytes caps the encoded PNG accepted from the browser. A viewport
+	// capture of the default 1024x1024 is far below this; the cap exists so a hostile
+	// page cannot drive unbounded allocation through an oversized capture.
+	maxScreenshotBytes = 16 << 20
+	// maxDecodedPixels caps the decoded frame. Sized well above any sane viewport
+	// (4096x4096) so legitimate high-DPI captures pass while a decompression bomb does
+	// not reach the hashing stage.
+	maxDecodedPixels = 16 << 20
 )
+
+// ErrRequestBlocked reports that the SSRF policy refused a browser-initiated request.
+var ErrRequestBlocked = errors.New("browser request blocked by SSRF policy")
 
 // Capture is one render observation of a URL.
 type Capture struct {
@@ -45,20 +60,26 @@ type Capture struct {
 	EngineVersion string
 	// Viewport is the capture viewport as "WxH".
 	Viewport string
+	// BlockedRequests counts requests the SSRF policy refused during this render. A
+	// non-zero count means the page tried to reach a disallowed destination; the frame
+	// is still classified (a blocked subresource usually just fails to paint).
+	BlockedRequests int
 }
 
 // Renderer drives headless chromium to capture what a URL paints.
 //
 //go:generate mockgen -source=renderer.go -destination=../../mocks/render_probe_renderer.go -package=mocks -mock_names=Renderer=MockRenderProbeRenderer
 type Renderer interface {
-	// RenderProbe loads the URL, waits for it to settle, and screenshots a frame.
-	// Errors (navigation failure, timeout) are the caller's "stalled" signal.
+	// RenderProbe loads the URL, waits for it to settle, and screenshots the viewport.
+	// Errors (navigation failure, timeout, cancellation) are the caller's "stalled"
+	// signal.
 	//
-	// SECURITY: chromium fetches the URL itself, bypassing the Go HTTP client and its
-	// SSRF RoundTripper entirely — the caller MUST validate the URL against the SSRF
-	// policy before invoking this. In-page redirects and subresource fetches are not
-	// re-validated (documented residual risk; mitigants: the URL already passed the
-	// L0 probe's SSRF-enforced fetch, and background networking is disabled).
+	// SECURITY: chromium fetches URLs itself, outside the Go HTTP client and its SSRF
+	// RoundTripper. Every browser-initiated request — the navigation, each redirect hop,
+	// and every subresource — is paused via the CDP Fetch domain and validated against
+	// the SSRF policy before it is allowed to proceed; refused requests are failed with
+	// AccessDenied. Callers should still validate the URL up front so an obviously
+	// blocked target never launches a browser context at all.
 	RenderProbe(ctx context.Context, url string) (*Capture, error)
 
 	// Close releases the browser allocator. Call during shutdown.
@@ -71,14 +92,48 @@ type RendererConfig struct {
 	ViewportHeight int
 	TimeoutMs      int
 	SettleMs       int
-	// AllocatorOptions are the chromium launch flags; nil callers must pass
-	// rasterizer.DefaultAllocatorOptions() (kept as a parameter so this package does not
-	// import the rasterizer, and tests can pass none).
+	// AllocatorOptions are the chromium launch flags; callers should pass
+	// AllocatorOptions() unless they have a reason to diverge.
 	AllocatorOptions []chromedp.ExecAllocatorOption
+	// SSRFValidator vets every browser-initiated request. When nil, interception is not
+	// installed (SSRF protection disabled by configuration).
+	SSRFValidator adapter.SSRFValidator
+}
+
+// AllocatorOptions returns the chromium launch flags for the render probe.
+//
+// Reason: deliberately NOT the SVG rasterizer's flag set. The rasterizer renders bytes
+// we fetched and validated ourselves from a data URI or temp file; the probe navigates
+// untrusted remote pages, so it must not run them with web security disabled — that flag
+// would let a hostile page read cross-origin (including private) responses and exfiltrate
+// them. Everything else matches the rasterizer so container behavior stays predictable.
+func AllocatorOptions() []chromedp.ExecAllocatorOption {
+	return []chromedp.ExecAllocatorOption{
+		chromedp.NoFirstRun,
+		chromedp.NoDefaultBrowserCheck,
+		chromedp.DisableGPU,
+		chromedp.NoSandbox,
+		chromedp.Headless,
+		// NOTE: no disable-web-security here, by design (see doc comment).
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("disable-software-rasterizer", true),
+		chromedp.Flag("disable-extensions", true),
+		chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-sync", true),
+		chromedp.Flag("disable-translate", true),
+		chromedp.Flag("hide-scrollbars", true),
+		chromedp.Flag("mute-audio", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("no-default-browser-check", true),
+		chromedp.Flag("disable-logging", true),
+		chromedp.Flag("disable-permissions-api", true),
+		chromedp.Flag("single-process", true),
+	}
 }
 
 type chromedpRenderer struct {
 	chromedpClient adapter.ChromedpClient
+	ssrfValidator  adapter.SSRFValidator
 	allocCtx       context.Context
 	allocCancel    context.CancelFunc
 	viewportWidth  int
@@ -90,9 +145,8 @@ type chromedpRenderer struct {
 // NewRenderer creates a render-probe renderer with its own browser allocator.
 //
 // Reason: a separate allocator (rather than sharing the SVG rasterizer's) keeps the two
-// consumers' lifecycles and timeouts independent — a hung render probe cannot starve SVG
-// rasterization jobs and vice versa. Both launch with identical flags via
-// rasterizer.DefaultAllocatorOptions().
+// consumers' lifecycles, timeouts, and — importantly — their launch flags independent;
+// the probe runs untrusted pages and the rasterizer does not.
 func NewRenderer(chromedpClient adapter.ChromedpClient, cfg *RendererConfig) Renderer {
 	if cfg == nil {
 		cfg = &RendererConfig{}
@@ -109,11 +163,15 @@ func NewRenderer(chromedpClient adapter.ChromedpClient, cfg *RendererConfig) Ren
 	if cfg.SettleMs <= 0 {
 		cfg.SettleMs = DefaultSettleMs
 	}
+	if cfg.AllocatorOptions == nil {
+		cfg.AllocatorOptions = AllocatorOptions()
+	}
 
 	allocCtx, allocCancel := chromedpClient.NewExecAllocator(context.Background(), cfg.AllocatorOptions)
 
 	return &chromedpRenderer{
 		chromedpClient: chromedpClient,
+		ssrfValidator:  cfg.SSRFValidator,
 		allocCtx:       allocCtx,
 		allocCancel:    allocCancel,
 		viewportWidth:  cfg.ViewportWidth,
@@ -127,43 +185,146 @@ func NewRenderer(chromedpClient adapter.ChromedpClient, cfg *RendererConfig) Ren
 func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string) (*Capture, error) {
 	start := time.Now()
 
-	// Per-probe timeout derives from the allocator context (browser lifecycle), but is
-	// also bounded by the caller's ctx via the select below chromedp does internally.
+	// The browser context hangs off the allocator (which owns the chromium process
+	// lifetime), but caller cancellation must still interrupt an in-flight render:
+	// AfterFunc bridges job cancellation and worker shutdown into the browser context
+	// without making the allocator a child of a per-job context.
 	timeoutCtx, cancel := context.WithTimeout(r.allocCtx, time.Duration(r.timeoutMs)*time.Millisecond)
 	defer cancel()
+	stopBridge := context.AfterFunc(ctx, cancel)
+	defer stopBridge()
+
 	browserCtx, browserCancel := r.chromedpClient.NewContext(timeoutCtx)
 	defer browserCancel()
 
+	blocked := r.interceptRequests(browserCtx)
+
 	var screenshot []byte
 	var userAgent string
-	err := r.chromedpClient.Run(browserCtx,
+	actions := []chromedp.Action{
 		r.chromedpClient.EmulateViewport(int64(r.viewportWidth), int64(r.viewportHeight)),
 		r.chromedpClient.Navigate(url),
 		r.chromedpClient.WaitReady("body"),
 		r.chromedpClient.Evaluate("navigator.userAgent", &userAgent),
-		r.chromedpClient.Sleep(time.Duration(r.settleMs)*time.Millisecond),
-		r.chromedpClient.FullScreenshot(&screenshot, 100),
-	)
-	if err != nil {
+		r.chromedpClient.Sleep(time.Duration(r.settleMs) * time.Millisecond),
+		// Viewport-bounded capture: FullScreenshot would capture the whole scrollable
+		// document, which an untrusted page can make arbitrarily tall — unbounded work,
+		// and a pHash that no longer corresponds to the recorded viewport.
+		r.chromedpClient.CaptureScreenshot(&screenshot),
+	}
+	if r.ssrfValidator != nil {
+		// Enable interception before anything navigates.
+		actions = append([]chromedp.Action{r.chromedpClient.FetchEnable()}, actions...)
+	}
+
+	if err := r.chromedpClient.Run(browserCtx, actions...); err != nil {
+		// Surface caller cancellation as itself so the executor does not record a
+		// shutdown as evidence about the artwork.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("render probe canceled for %s: %w", url, ctxErr)
+		}
 		return nil, fmt.Errorf("render probe failed for %s: %w", url, err)
 	}
 
-	img, err := png.Decode(bytes.NewReader(screenshot))
+	img, err := decodeScreenshot(screenshot)
 	if err != nil {
 		return nil, fmt.Errorf("decoding screenshot for %s: %w", url, err)
 	}
 
+	blockedCount := blocked.count()
 	logger.InfoCtx(ctx, "Render probe captured frame",
 		zap.String("url", url),
 		zap.String("engine", userAgent),
+		zap.Int("blocked_requests", blockedCount),
 		zap.Duration("duration", time.Since(start)),
 	)
 
 	return &Capture{
-		Image:         img,
-		EngineVersion: userAgent,
-		Viewport:      fmt.Sprintf("%dx%d", r.viewportWidth, r.viewportHeight),
+		Image:           img,
+		EngineVersion:   userAgent,
+		Viewport:        fmt.Sprintf("%dx%d", r.viewportWidth, r.viewportHeight),
+		BlockedRequests: blockedCount,
 	}, nil
+}
+
+// decodeScreenshot enforces encoded and decoded size bounds before returning the frame.
+func decodeScreenshot(screenshot []byte) (image.Image, error) {
+	if len(screenshot) == 0 {
+		return nil, errors.New("empty screenshot")
+	}
+	if len(screenshot) > maxScreenshotBytes {
+		return nil, fmt.Errorf("screenshot of %d bytes exceeds the %d-byte cap", len(screenshot), maxScreenshotBytes)
+	}
+	// Read the header first so a decompression bomb is rejected on its declared
+	// dimensions rather than after allocating the full pixel buffer.
+	cfg, err := png.DecodeConfig(bytes.NewReader(screenshot))
+	if err != nil {
+		return nil, fmt.Errorf("reading screenshot header: %w", err)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > maxDecodedPixels {
+		return nil, fmt.Errorf("screenshot of %dx%d exceeds the %d-pixel cap", cfg.Width, cfg.Height, maxDecodedPixels)
+	}
+	return png.Decode(bytes.NewReader(screenshot))
+}
+
+// blockedCounter tallies refused requests without a mutex-heavy API surface.
+type blockedCounter struct {
+	ch chan int
+	n  int
+}
+
+func (b *blockedCounter) count() int {
+	if b == nil {
+		return 0
+	}
+	// Drain everything reported so far. The handler goroutines are done issuing
+	// decisions by the time Run returns.
+	for {
+		select {
+		case <-b.ch:
+			b.n++
+		default:
+			return b.n
+		}
+	}
+}
+
+// interceptRequests installs a CDP Fetch handler validating every paused request against
+// the SSRF policy. Returns a counter of refusals, or nil when no validator is configured.
+//
+// Reason: chromium performs its own network I/O, so the Go HTTP client's SSRF
+// RoundTripper never sees navigations, redirect hops, or subresource loads. Without this,
+// an L0-healthy public page could redirect or script-fetch its way to loopback, private,
+// link-local, or cloud-metadata addresses from inside the media worker.
+func (r *chromedpRenderer) interceptRequests(browserCtx context.Context) *blockedCounter {
+	if r.ssrfValidator == nil {
+		return nil
+	}
+
+	counter := &blockedCounter{ch: make(chan int, 256)}
+	r.chromedpClient.ListenTarget(browserCtx, func(ev any) {
+		paused, ok := ev.(*fetch.EventRequestPaused)
+		if !ok {
+			return
+		}
+		// CDP decisions must not be issued from the event goroutine.
+		go func() {
+			if err := r.ssrfValidator.ValidateHTTPURL(browserCtx, paused.Request.URL); err != nil {
+				logger.WarnCtx(browserCtx, "Blocked browser request by SSRF policy",
+					zap.String("request_url", paused.Request.URL),
+					zap.Error(err),
+				)
+				select {
+				case counter.ch <- 1:
+				default: // counter saturated; the log above is the durable signal
+				}
+				_ = r.chromedpClient.FailRequest(browserCtx, paused.RequestID, network.ErrorReasonAccessDenied)
+				return
+			}
+			_ = r.chromedpClient.ContinueRequest(browserCtx, paused.RequestID)
+		}()
+	})
+	return counter
 }
 
 // Close implements Renderer.

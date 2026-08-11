@@ -99,20 +99,66 @@ Gating writes `token_media_health.failure_reason` (`render_blank` / `render_stal
 `render_known_bad`) through the same `BatchUpdateTokensViewability` + webhook path as
 L0, so consumers see one consistent viewability stream.
 
+**Ownership is enforced in the store, not by convention.** `MediaHealthUpdate.RenderProbeWrite`
+marks L1's writes; every other writer is filtered against `failure_reason NOT LIKE 'render_%'`,
+so a byte-level healthy verdict — from a metadata reindex, or from a URL re-entering the
+sweep because another token added a row for it — cannot clear a browser-confirmed gate.
+L1 writes also leave the L0 content-type classification intact, since the render-due query
+and the API depend on it surviving a gate.
+
+**Scheduling is independent of L0.** Render probes are enqueued on every sweep cycle,
+including cycles with no L0 work, because L1 has its own cadence and render-gated rows are
+excluded from the L0 query by design. The render-due query selects never-probed URLs by L0
+health and class, and already-probed URLs by `next_check_at` alone — which is what lets a
+render-gated row (health `broken`) come back for the successful render that is its only
+healing path.
+
+Job cancellation and worker shutdown are bridged into the browser context and leave all
+probe state untouched: a cancelled probe is not evidence about the artwork.
+
 Every capture stores `phash` + `engine_version` + `viewport` in `media_render_probes`
 (see `docs/schema.md`); `baseline_phash` keeps the first successful capture and is never
 overwritten. Successive-capture drift comparison is deliberately out of scope
 (capture-only, per #3485) — the stored history makes it a switch-on later, not a
 backfill.
 
-SECURITY: chromium fetches URLs outside the SSRF-protected HTTP client; the probe
-validates each URL against the SSRF policy before Navigate. In-page redirects and
-subresource fetches are not re-validated (residual risk, documented; mitigants: the URL
-already passed L0's SSRF-enforced fetch, background networking disabled).
+SECURITY: chromium performs its own network I/O, outside the Go HTTP client and its
+SSRF RoundTripper. Every browser-initiated request — the navigation, each redirect hop,
+and every subresource — is paused via the CDP Fetch domain and validated against the SSRF
+policy before it proceeds; refused requests are failed with `AccessDenied` and counted on
+the capture. The probe additionally validates the URL up front so an obviously blocked
+target never launches a browser context.
+
+The probe launches chromium with its own flags (`probe.AllocatorOptions`), deliberately
+**without** `--disable-web-security` — unlike the SVG rasterizer, which only renders bytes
+we fetched and validated ourselves. Running untrusted remote pages with web security
+disabled would let a hostile page read cross-origin (including private) responses.
+
+Captures are viewport-bounded (`CaptureScreenshot`, not `FullScreenshot`): an untrusted
+page can make its document arbitrarily tall, which would make both the work and the pHash
+unbounded and unrelated to the recorded viewport. Screenshots are additionally rejected
+above 16MB encoded or 16M decoded pixels, checked from the PNG header before the pixel
+buffer is allocated.
+
+Data URIs are **out of L1 scope**: their bytes are inline and already validated by L0, and
+chromium navigation for them is refused by the SSRF policy. They are excluded in the
+render-due query rather than looping as stalled.
 
 Fingerprint workflow for operators: capture the offending page once, compute its pHash,
 add it to `render_probe.known_bad_fingerprints` with a small `max_distance` (4-8) and a
 label. A loose tolerance matches real art and hides it — the worst failure mode.
+
+### Pre-enablement smoke (requires a real browser)
+
+Unit tests mock chromedp, so browser behavior is unverified by CI. Before enabling the
+probe in an environment, run the build-tagged smoke against the real chromium in the CGO
+image — it covers navigation, viewport capture, pHash stability, and SSRF request refusal:
+
+```
+go test -tags="cgo chromium" ./internal/media/probe/ -run TestChromiumSmoke -v
+```
+
+It is skipped without the `chromium` tag so ordinary `make check` runs stay hermetic.
 
 ## Delta measurement
 

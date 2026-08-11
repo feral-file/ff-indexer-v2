@@ -4,6 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/fetch"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -19,7 +22,23 @@ type ChromedpClient interface {
 	Sleep(duration time.Duration) chromedp.Action
 	EmulateViewport(width, height int64) chromedp.EmulateAction
 	FullScreenshot(result *[]byte, quality int) chromedp.Action
+	// CaptureScreenshot captures only the current viewport, unlike FullScreenshot which
+	// captures the whole scrollable document (unbounded for attacker-controlled pages).
+	CaptureScreenshot(result *[]byte) chromedp.Action
 	Evaluate(expr string, result interface{}, options ...chromedp.EvaluateOption) chromedp.EvaluateAction
+
+	// --- request interception (SSRF enforcement for browser-initiated traffic) ---
+
+	// FetchEnable returns an action enabling the Fetch domain so that every request the
+	// browser is about to make (navigations, redirects, subresources) is paused for a
+	// policy decision.
+	FetchEnable() chromedp.Action
+	// ListenTarget registers fn for target events on ctx; fn receives paused requests.
+	ListenTarget(ctx context.Context, fn func(ev any))
+	// ContinueRequest allows a paused request to proceed.
+	ContinueRequest(ctx context.Context, id fetch.RequestID) error
+	// FailRequest aborts a paused request with the given reason.
+	FailRequest(ctx context.Context, id fetch.RequestID, reason network.ErrorReason) error
 }
 
 type RealChromedpClient struct{}
@@ -60,6 +79,28 @@ func (c *RealChromedpClient) FullScreenshot(result *[]byte, quality int) chromed
 	return chromedp.FullScreenshot(result, quality)
 }
 
+func (c *RealChromedpClient) CaptureScreenshot(result *[]byte) chromedp.Action {
+	return chromedp.CaptureScreenshot(result)
+}
+
 func (c *RealChromedpClient) Evaluate(expr string, result interface{}, options ...chromedp.EvaluateOption) chromedp.EvaluateAction {
 	return chromedp.Evaluate(expr, result, options...)
+}
+
+func (c *RealChromedpClient) FetchEnable() chromedp.Action {
+	return fetch.Enable()
+}
+
+func (c *RealChromedpClient) ListenTarget(ctx context.Context, fn func(ev any)) {
+	chromedp.ListenTarget(ctx, func(ev interface{}) { fn(ev) })
+}
+
+// ContinueRequest and FailRequest run on the browser context's target executor, which is
+// how CDP commands must be issued from inside an event handler.
+func (c *RealChromedpClient) ContinueRequest(ctx context.Context, id fetch.RequestID) error {
+	return fetch.ContinueRequest(id).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
+}
+
+func (c *RealChromedpClient) FailRequest(ctx context.Context, id fetch.RequestID, reason network.ErrorReason) error {
+	return fetch.FailRequest(id, reason).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
 }
