@@ -668,6 +668,11 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 			workingURL   *string // non-nil when an alternative gateway resolved successfully
 			healthStatus schema.MediaHealthStatus
 			lastError    *string
+			// transient marks a retryable probe failure (429, retryable transport/read
+			// errors). Transient outcomes are never persisted — same contract as the
+			// sweeper — so a temporary gateway failure during indexing cannot overwrite
+			// an existing healthy row and hide a viewable token until the next sweep.
+			transient bool
 			// L0 content-validation observations, persisted with every verdict
 			failureReason       *string
 			observedContentType *string
@@ -709,6 +714,9 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						}
 					case uri.HealthStatusBroken:
 						res.healthStatus = schema.MediaHealthStatusBroken
+					case uri.HealthStatusTransientError:
+						res.healthStatus = schema.MediaHealthStatusUnknown
+						res.transient = true
 					default:
 						res.healthStatus = schema.MediaHealthStatusUnknown
 					}
@@ -776,6 +784,16 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 					}
 					healthyURLs = append(healthyURLs, result.url)
 				}
+			} else if result.transient {
+				// Transient probe failure: retain the existing health row (same
+				// never-persist contract as the sweeper). Overwriting a healthy row
+				// with unknown here would make the viewability recompute below hide a
+				// previously viewable token over a passing 429 or network blip; the
+				// sweeper retries the URL on its own schedule.
+				logger.InfoCtx(ctx, "Transient media probe failure during indexing, retaining previous health state",
+					zap.String("url", result.url),
+					zap.Stringp("error", result.lastError),
+				)
 			} else {
 				// Update media health in database for broken/unknown URLs
 				if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, store.MediaHealthUpdate{

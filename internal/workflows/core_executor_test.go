@@ -4845,7 +4845,13 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_MixedURLsAndDataURI(t 
 	assert.Equal(t, 2, len(result.HealthyURLs)) // Both URLs are healthy (image + dataURI)
 }
 
-func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testing.T) {
+// TestCheckMediaURLsHealthAndUpdateViewability_TransientNotPersisted pins the L0
+// contract on the indexing-time path: transient probe outcomes (429, retryable
+// transport/read failures) are never written to token_media_health — the strict mock has
+// no UpdateTokenMediaHealthByURL expectation, so any write fails the test. Persisting
+// unknown here would overwrite an existing healthy row and the viewability recompute
+// below would hide a previously viewable token over a passing network blip.
+func TestCheckMediaURLsHealthAndUpdateViewability_TransientNotPersisted(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
@@ -4855,7 +4861,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testi
 	mediaURLs := []string{imageURL}
 	errorMsg := "temporary network error"
 
-	// Mock URL health check - transient error (unknown)
+	// Mock URL health check - transient error
 	mocks.urlChecker.EXPECT().
 		Check(ctx, imageURL).
 		Return(uri.HealthCheckResult{
@@ -4863,10 +4869,8 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testi
 			Error:  &errorMsg,
 		})
 
-	// Mock database update for media health
-	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusUnknown, LastError: &errorMsg}).
-		Return(nil)
+	// Deliberately NO UpdateTokenMediaHealthByURL expectation: the existing health row
+	// must be retained; the sweeper retries the URL on its own schedule.
 
 	// Mock token retrieval
 	token := &schema.Token{
