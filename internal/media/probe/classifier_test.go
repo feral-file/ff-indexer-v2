@@ -25,12 +25,18 @@ func solidFrame(c color.Color) image.Image {
 	return img
 }
 
+// gradientByte converts a gradient step to a colour byte. The single conversion lives
+// here so one suppression covers every fixture call site.
+func gradientByte(v int) uint8 {
+	return uint8(v) // #nosec G115 -- callers pass values bounded to 0-255 by construction
+}
+
 func gradientFrame() image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, 128, 128))
 	for y := range 128 {
 		for x := range 128 {
-			v := uint8((x * 255 / 127) & 0xFF)
-			img.Set(x, y, color.RGBA{v, uint8((y * 255 / 127) & 0xFF), v, 255})
+			v := gradientByte(x * 255 / 127)
+			img.Set(x, y, color.RGBA{v, gradientByte(y * 255 / 127), v, 255})
 		}
 	}
 	return img

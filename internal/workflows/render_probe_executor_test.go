@@ -60,12 +60,18 @@ func setupRenderProbe(t *testing.T, cfg workflows.RenderProbeExecutorConfig) (re
 	return m, exec
 }
 
+// gradientByte converts a gradient step to a colour byte. The single conversion lives
+// here so one suppression covers every fixture call site.
+func gradientByte(v int) uint8 {
+	return uint8(v) // #nosec G115 -- callers pass values bounded to 0-255 by construction
+}
+
 // contentFrame renders with variance far above the blank threshold.
 func contentFrame() *probe.Capture {
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
 	for y := range 64 {
 		for x := range 64 {
-			img.Set(x, y, color.RGBA{uint8((x * 4) & 0xFF), uint8((y * 4) & 0xFF), 128, 255})
+			img.Set(x, y, color.RGBA{gradientByte(x * 4), gradientByte(y * 4), 128, 255})
 		}
 	}
 	return &probe.Capture{Image: img, EngineVersion: "HeadlessChrome/123.0", Viewport: "1024x1024"}
