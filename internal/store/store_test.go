@@ -6449,6 +6449,17 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 		assert.Equal(t, schema.MediaHealthStatusHealthy, rows[tokenID][0].HealthStatus,
 			"after release, L0 heals the row normally")
+
+		// End to end: the token that the race made non-viewable is served again. Without
+		// the due-selection fix the probe that produces this release is never scheduled,
+		// so this is the state the whole sequence exists to reach.
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		viewability, err = store.GetTokensViewabilityByIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		require.Len(t, viewability, 1)
+		assert.True(t, viewability[0].IsViewable,
+			"once the gate is released and L0 passes, the token recovers")
 	})
 
 	t.Run("viewability computation excludes render-gated URLs even when the health row is healthy", func(t *testing.T) {
