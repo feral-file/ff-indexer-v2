@@ -60,7 +60,7 @@ func setupRenderProbe(t *testing.T, cfg workflows.RenderProbeExecutorConfig) (re
 	return m, exec
 }
 
-// gradientByte converts a gradient step to a colour byte. The single conversion lives
+// gradientByte converts a gradient step to a color byte. The single conversion lives
 // here so one suppression covers every fixture call site.
 func gradientByte(v int) uint8 {
 	return uint8(v) // #nosec G115 -- callers pass values bounded to 0-255 by construction
