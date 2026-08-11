@@ -94,14 +94,39 @@ func NewContentValidator(probeMaxBytes int, knownBadMarkers []string) ContentVal
 	return &contentValidator{probeMaxBytes: probeMaxBytes, knownBadMarkers: lowered}
 }
 
-// builtinDirectoryMarkers identify IPFS/Kubo gateway directory listings. These pages are
-// well-formed HTML with a 200 status — declared and sniffed types agree, so only body
-// markers can catch them. Markers come from Kubo's dir-index-html template and are matched
-// case-insensitively.
-var builtinDirectoryMarkers = []string{
-	"index of /ipfs",
-	"index of /ipns",
-	"ipfs-hash", // CSS class on every row of Kubo's dir-index-html listing
+// kuboDirectoryListingSignature reports how a body matches Kubo's dir-index-html
+// directory listing, or "" when it does not. These pages are well-formed HTML with a 200
+// status — declared and sniffed types agree, so only body structure can catch them.
+//
+// Reason: detection requires a conjunction of two independent template signals, never a
+// lone substring — a single generic marker ("ipfs-hash" is an ordinary CSS class name)
+// false-brokens legitimate HTML artworks that merely contain it, violating the
+// err-healthy contract. The signals are generation-specific, measured against listings
+// served by ipfs.io and dweb.link (captured 2026-08-11): modern Kubo (0.13+) puts the
+// gateway meta description at ~byte 70 and the requested path as the document title at
+// ~byte 1.8K — both inside the probe window even for multi-MB listings — while every
+// "Index of" heading and class="ipfs-hash" cell sits past the window (first occurrence
+// ~244KB in a 1.8MB listing), so the legacy markers alone never fire on modern listings.
+// Legacy dir-index templates render a contiguous "Index of /ipfs/..." heading plus
+// ipfs-hash cells. Trade-offs: a Kubo fork that rewrites its template is missed and errs
+// healthy, which the contract prefers over guessing.
+func kuboDirectoryListingSignature(lowerBody string) string {
+	// Modern Kubo: the gateway's own meta description plus the path-as-title, both in
+	// the document head.
+	const kuboMetaDescription = `<meta name="description" content="a directory of content-addressed files hosted on ipfs.">`
+	pathTitle := strings.Contains(lowerBody, "<title>/ipfs/") || strings.Contains(lowerBody, "<title>/ipns/")
+	if pathTitle && strings.Contains(lowerBody, kuboMetaDescription) {
+		return "kubo meta description + path title"
+	}
+
+	// Legacy Kubo: contiguous "Index of /ipfs..." heading plus the hash-cell class as a
+	// quoted attribute (not a bare substring, which also appears in artwork scripts).
+	legacyHeading := strings.Contains(lowerBody, "index of /ipfs") || strings.Contains(lowerBody, "index of /ipns")
+	if legacyHeading && strings.Contains(lowerBody, `class="ipfs-hash"`) {
+		return `"index of" heading + ipfs-hash cells`
+	}
+
+	return ""
 }
 
 // Validate applies the rule ladder; the first failing rule wins, anything inconclusive is OK.
@@ -140,10 +165,10 @@ func (v *contentValidator) Validate(declaredContentType string, body []byte, tot
 	// or a gateway error page.
 	if sniffed == "text/html" {
 		lowerBody := strings.ToLower(string(body))
-		if marker := firstMarker(lowerBody, builtinDirectoryMarkers); marker != "" {
+		if signature := kuboDirectoryListingSignature(lowerBody); signature != "" {
 			verdict.OK = false
 			verdict.FailureReason = FailureDirectoryListing
-			verdict.Detail = fmt.Sprintf("IPFS gateway directory listing (marker %q)", marker)
+			verdict.Detail = fmt.Sprintf("IPFS gateway directory listing (%s)", signature)
 			return verdict
 		}
 		if marker := firstMarker(lowerBody, v.knownBadMarkers); marker != "" {

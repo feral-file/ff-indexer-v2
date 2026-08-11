@@ -60,6 +60,26 @@ func kuboDirectoryListing() []byte {
 <table><tr><td class="ipfs-hash">QmBar</td></tr></table></body></html>`)
 }
 
+// modernKuboListingWindow is a faithful reduction of the first probe window of a Kubo
+// 0.13+ dir-index-html listing as served by ipfs.io and dweb.link (captured 2026-08-11):
+// the meta description sits at ~byte 70 and the path-as-title after the inlined favicon,
+// while the file table — every "Index of" heading and class="ipfs-hash" cell — sits
+// hundreds of KB later, past the 32KB probe window. Detection must succeed on this head
+// alone.
+func modernKuboListingWindow() []byte {
+	return []byte(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="description" content="A directory of content-addressed files hosted on IPFS.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="shortcut icon" href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAACAAAAABACAAAAAAAAAEAAA=">
+  <title>/ipfs/QmdmQXB2mzChmMeKY47C43LxUdg1NDJ5MWcKMKxDu7RgQm/</title>
+  <style>.flex{display:flex}.flex-wrap{flex-flow:wrap}.nowrap{white-space:nowrap}</style>
+</head>
+<body><main><header class="flex flex-wrap"><div><strong>`)
+}
+
 func TestContentValidator_Validate(t *testing.T) {
 	v := uri.NewContentValidator(testProbeMaxBytes, []string{"gateway time-out", "504 Gateway Time-out"})
 
@@ -315,6 +335,37 @@ func TestContentValidator_Validate(t *testing.T) {
 			name:        "HLS playlist is a text audio format",
 			declared:    "audio/x-mpegurl",
 			body:        []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n"),
+			totalLength: -1,
+			wantOK:      true,
+		},
+
+		// --- directory-listing detection: structural conjunction, not lone substrings ---
+		{
+			name:        "modern Kubo listing detected from the probe window alone",
+			declared:    "text/html",
+			body:        modernKuboListingWindow(),
+			totalLength: -1,
+			wantOK:      false,
+			wantReason:  uri.FailureDirectoryListing,
+		},
+		{
+			name:        "HTML artwork using an ipfs-hash class is not a listing",
+			declared:    "text/html",
+			body:        []byte(`<!DOCTYPE html><html><head><title>chain study #4</title></head><body><div class="ipfs-hash">QmSeed42</div><script>render()</script></body></html>`),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "HTML artwork mentioning index of /ipfs is not a listing",
+			declared:    "text/html",
+			body:        []byte(`<!DOCTYPE html><html><head><title>archive piece</title></head><body><p>sourced from an index of /ipfs snapshots</p></body></html>`),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "path-as-title alone is not a listing",
+			declared:    "text/html",
+			body:        []byte(`<!DOCTYPE html><html><head><title>/ipfs/QmFoo/</title></head><body><canvas></canvas></body></html>`),
 			totalLength: -1,
 			wantOK:      true,
 		},

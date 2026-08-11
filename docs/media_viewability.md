@@ -23,7 +23,12 @@ A URL is healthy only when all of the following hold:
 2. The body's first bytes (up to `uri.probe_max_bytes`, default 32KB, fetched with a
    single ranged GET) pass content validation:
    - not empty, not shorter than the declared length (`zero_length`, `truncated`)
-   - not an IPFS gateway directory listing (`directory_listing`, built-in Kubo markers)
+   - not an IPFS gateway directory listing (`directory_listing`). Detection requires a
+     conjunction of two independent Kubo template signals, never a lone substring:
+     modern Kubo (0.13+) by its gateway meta description plus the path-as-title (both
+     inside the probe window even for multi-MB listings, unlike the file table, which
+     sits far past it); legacy Kubo by a contiguous "Index of /ipfs..." heading plus
+     quoted `class="ipfs-hash"` cells
    - not a configured known-bad gateway error page (`known_error_page`,
      `uri.known_bad_page_markers`)
    - a declared `image/*`, `video/*`, or `audio/*` type must not sniff as HTML, plain
