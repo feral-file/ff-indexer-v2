@@ -2923,6 +2923,20 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, u
 			Updates(updates).Error
 	}
 
+	// L0 recovery must not outrun an active gate. A render job queued while the URL was
+	// healthy can complete after L0 marked the row broken for an ordinary reason; L1 then
+	// records health_gated=true but correctly declines to overwrite a row L0 owns. A later
+	// successful L0 check would otherwise mark that row healthy on the failure_reason test
+	// alone — making a browser-confirmed bad render viewable. The NOT EXISTS keeps the
+	// write from applying while a gate is held; once the probe releases the gate, ordinary
+	// L0 recovery resumes. Expressed in the same statement so no window opens between
+	// checking and writing.
+	if update.Status == schema.MediaHealthStatusHealthy {
+		q = q.Where(
+			"NOT EXISTS (SELECT 1 FROM media_render_probes p WHERE p.media_url_hash = ? AND p.health_gated = true)",
+			urlHash)
+	}
+
 	updates["observed_content_type"] = nullableString(update.ObservedContentType)
 	updates["sniffed_content_type"] = nullableString(update.SniffedContentType)
 
@@ -3286,7 +3300,13 @@ func (s *pgStore) ReleaseRenderGate(ctx context.Context, probe schema.MediaRende
 // GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed.
 func (s *pgStore) GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error) {
 	var probe schema.MediaRenderProbe
+	// Read from the primary: this row drives a state transition, not a display query.
+	// The executor decides from HealthGated whether a successful render must release the
+	// gate; a stale replica read returns the pre-gate value, so the probe would write
+	// health_gated=false to the primary and skip the release, leaving the health rows
+	// render_% broken with no marker to bring them back — L0 excludes them permanently.
 	err := s.db.WithContext(ctx).
+		Clauses(dbresolver.Write).
 		Where("media_url_hash = ?", types.MD5Hash(url)).
 		First(&probe).Error
 	if err != nil {

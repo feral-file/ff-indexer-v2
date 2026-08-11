@@ -121,6 +121,13 @@ func TestChromiumSmoke(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		})
 	}
+	mux.HandleFunc("/art.svg", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">
+			<defs><linearGradient id="g"><stop offset="0" stop-color="#0af"/>` +
+			`<stop offset="1" stop-color="#f0a"/></linearGradient></defs>
+			<rect width="512" height="512" fill="url(#g)"/></svg>`))
+	})
 	mux.HandleFunc("/module-worker.mjs", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
 		_, _ = w.Write([]byte(`export const ok = true; postMessage("painted");`))
@@ -218,6 +225,20 @@ func TestChromiumSmoke(t *testing.T) {
 		require.NoError(t, err)
 		assert.Positive(t, capture.BlockedRequests,
 			"an iframe's request must pass through the page target's interceptor")
+	})
+
+	// The render-due query includes image/%, which covers image/svg+xml. A directly
+	// navigated SVG is an SVG document rooted at <svg> with no <body>, so waiting on
+	// "body" would burn the whole probe timeout and gate healthy art as stalled.
+	t.Run("captures a directly navigated SVG document", func(t *testing.T) {
+		start := time.Now()
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/art.svg")
+		require.NoError(t, err, "an SVG document must reach readiness, not hit the timeout")
+		assert.Less(t, time.Since(start), 20*time.Second, "readiness must not wait out the probe timeout")
+
+		cls, err := probe.Classify(capture.Image, nil, 0.001)
+		require.NoError(t, err)
+		assert.Equal(t, schema.RenderProbeVerdictRenderedOK, cls.Verdict)
 	})
 
 	// The egress guard replaces Worker; a module worker must still run, or art that

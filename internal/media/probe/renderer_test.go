@@ -84,7 +84,7 @@ func (h *rendererHarness) expectRenderActions(t *testing.T, url string, pngBytes
 		})
 	h.chromedp.EXPECT().EmulateViewport(int64(640), int64(480)).Return(nil)
 	h.chromedp.EXPECT().Navigate(url).Return(nil)
-	h.chromedp.EXPECT().WaitReady("body").Return(nil)
+	h.chromedp.EXPECT().WaitReady(":root").Return(nil)
 	h.chromedp.EXPECT().
 		Evaluate("navigator.userAgent", gomock.Any()).
 		DoAndReturn(func(_ string, res any, _ ...chromedp.EvaluateOption) chromedp.EvaluateAction {
@@ -146,7 +146,7 @@ func TestRenderProbe_runErrorIsStalledSignal(t *testing.T) {
 		})
 	h.chromedp.EXPECT().EmulateViewport(gomock.Any(), gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().Navigate(url).Return(nil)
-	h.chromedp.EXPECT().WaitReady("body").Return(nil)
+	h.chromedp.EXPECT().WaitReady(":root").Return(nil)
 	h.chromedp.EXPECT().Evaluate(gomock.Any(), gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().Sleep(gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().CaptureScreenshot(gomock.Any()).Return(nil)
@@ -181,7 +181,7 @@ func TestRenderProbe_callerCancellationSurfaces(t *testing.T) {
 		})
 	h.chromedp.EXPECT().EmulateViewport(gomock.Any(), gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().Navigate(url).Return(nil)
-	h.chromedp.EXPECT().WaitReady("body").Return(nil)
+	h.chromedp.EXPECT().WaitReady(":root").Return(nil)
 	h.chromedp.EXPECT().Evaluate(gomock.Any(), gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().Sleep(gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().CaptureScreenshot(gomock.Any()).Return(nil)
@@ -278,7 +278,7 @@ func TestRenderProbe_interceptsBrowserRequests(t *testing.T) {
 		})
 	h.chromedp.EXPECT().EmulateViewport(gomock.Any(), gomock.Any()).Return(nil)
 	h.chromedp.EXPECT().Navigate(url).Return(nil)
-	h.chromedp.EXPECT().WaitReady("body").Return(nil)
+	h.chromedp.EXPECT().WaitReady(":root").Return(nil)
 	h.chromedp.EXPECT().
 		Evaluate("navigator.userAgent", gomock.Any()).
 		DoAndReturn(func(_ string, res any, _ ...chromedp.EvaluateOption) chromedp.EvaluateAction {

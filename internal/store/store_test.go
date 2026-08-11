@@ -6368,6 +6368,68 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.Equal(t, schema.MediaHealthStatusBroken, rows[thirdID][0].HealthStatus)
 	})
 
+	t.Run("L0 recovery cannot heal a row while a render gate is held", func(t *testing.T) {
+		// A render job queued while the URL was healthy completes after L0 marked the row
+		// broken for an ordinary reason. L1 records the gate but declines to overwrite a
+		// row L0 owns. A later successful L0 check must not then mark it healthy — that
+		// would serve a browser-confirmed bad render.
+		racedURL := "https://example.com/render/l0-recovery-race.html"
+		tokenID := mintTokenWithMedia(t, &racedURL, nil)
+		markHealthy(t, racedURL, "text/html")
+
+		// L0 marks it broken for an ordinary reason.
+		httpErr := "HTTP 503"
+		httpReason := schema.MediaFailureHTTPStatus.String()
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, racedURL, MediaHealthUpdate{
+			Status: schema.MediaHealthStatusBroken, LastError: &httpErr, FailureReason: &httpReason,
+		}))
+
+		// The queued L1 job completes: the marker is recorded, but the L0-owned row is
+		// correctly left alone.
+		now := time.Now().UTC()
+		reason := schema.RenderFailureKnownBad
+		_, err := store.AcquireRenderGate(ctx,
+			schema.MediaRenderProbe{
+				MediaURL: racedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
+				ConsecutiveFailures: 1, CapturedAt: &now, NextCheckAt: now.Add(time.Hour),
+			},
+			MediaHealthUpdate{
+				Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true,
+			})
+		require.NoError(t, err)
+
+		// L0 now succeeds. It must not heal the row while the gate is held.
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, racedURL, MediaHealthUpdate{
+			Status: schema.MediaHealthStatusHealthy,
+		}))
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		require.Len(t, rows[tokenID], 1)
+		assert.Equal(t, schema.MediaHealthStatusBroken, rows[tokenID][0].HealthStatus,
+			"an active render gate must block L0 recovery")
+
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		viewability, err := store.GetTokensViewabilityByIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		require.Len(t, viewability, 1)
+		assert.False(t, viewability[0].IsViewable)
+
+		// Once the probe releases the gate, ordinary L0 recovery resumes.
+		_, err = store.ReleaseRenderGate(ctx, schema.MediaRenderProbe{
+			MediaURL: racedURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			CapturedAt: &now, NextCheckAt: now.Add(time.Hour),
+		})
+		require.NoError(t, err)
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, racedURL, MediaHealthUpdate{
+			Status: schema.MediaHealthStatusHealthy,
+		}))
+		rows, err = store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		assert.Equal(t, schema.MediaHealthStatusHealthy, rows[tokenID][0].HealthStatus,
+			"after release, L0 heals the row normally")
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)

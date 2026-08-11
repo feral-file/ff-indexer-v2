@@ -302,7 +302,10 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string) (*Captur
 	actions := []chromedp.Action{
 		r.chromedpClient.EmulateViewport(int64(r.viewportWidth), int64(r.viewportHeight)),
 		r.chromedpClient.Navigate(url),
-		r.chromedpClient.WaitReady("body"),
+		// ":root" matches the document element in both HTML and SVG documents. "body"
+		// never matches a directly-navigated SVG — measured, that burns the whole probe
+		// timeout and records a stalled verdict, gating healthy SVG artworks.
+		r.chromedpClient.WaitReady(":root"),
 		r.chromedpClient.Evaluate("navigator.userAgent", &userAgent),
 		r.chromedpClient.Sleep(time.Duration(r.settleMs) * time.Millisecond),
 		// Viewport-bounded capture: FullScreenshot would capture the whole scrollable
