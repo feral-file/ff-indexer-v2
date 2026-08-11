@@ -184,6 +184,7 @@ CREATE TABLE media_render_probes (
     viewport TEXT,                    -- capture viewport as "WxH"
     verdict render_probe_verdict NOT NULL,
     consecutive_failures INT NOT NULL DEFAULT 0,  -- blank/stalled debounce counter (fingerprint gates immediately)
+    health_gated BOOLEAN NOT NULL DEFAULT false,  -- durable marker that this probe gated token_media_health (added in migration 023)
     last_error TEXT,                  -- render failure detail (NULL on rendered_ok)
     captured_at TIMESTAMPTZ,          -- last successful screenshot time (NULL when never captured)
     next_check_at TIMESTAMPTZ NOT NULL DEFAULT now(),

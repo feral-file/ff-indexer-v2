@@ -3110,6 +3110,7 @@ func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.Media
 			"viewport":             probe.Viewport,
 			"verdict":              probe.Verdict,
 			"consecutive_failures": probe.ConsecutiveFailures,
+			"health_gated":         probe.HealthGated,
 			"last_error":           probe.LastError,
 			"captured_at":          probe.CapturedAt,
 			"next_check_at":        probe.NextCheckAt,

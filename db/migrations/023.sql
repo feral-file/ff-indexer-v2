@@ -40,6 +40,7 @@ CREATE TABLE media_render_probes (
     viewport TEXT,                    -- capture viewport as "WxH"
     verdict render_probe_verdict NOT NULL,
     consecutive_failures INT NOT NULL DEFAULT 0,  -- blank/stalled debounce counter
+    health_gated BOOLEAN NOT NULL DEFAULT false,  -- durable marker: this probe gated token_media_health
     last_error TEXT,                  -- render failure detail (NULL on rendered_ok)
     captured_at TIMESTAMPTZ,          -- last successful screenshot time (NULL when never captured)
     next_check_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -65,6 +66,14 @@ COMMENT ON COLUMN media_render_probes.phash IS
 COMMENT ON COLUMN media_render_probes.baseline_phash IS
     'pHash of the first successful capture; never overwritten so future drift detection '
     'has a stable reference.';
+COMMENT ON COLUMN media_render_probes.health_gated IS
+    'True while this URL''s token_media_health rows carry a render_% gate written by the '
+    'probe. Durable on purpose: verdict and consecutive_failures are mutable, so deriving '
+    '"is it gated" from them loses the marker when a later verdict overwrites the one that '
+    'gated (e.g. fingerprint then stalled below the threshold), stranding the health row as '
+    'broken forever since L0 never re-checks render_% rows. Cleared only after a successful '
+    'release, so a failed release is retried rather than forgotten.';
+
 COMMENT ON COLUMN media_render_probes.consecutive_failures IS
     'Consecutive blank/stalled probes; viewability gates at the configured threshold '
     '(known_bad_fingerprint gates immediately and does not use this counter).';

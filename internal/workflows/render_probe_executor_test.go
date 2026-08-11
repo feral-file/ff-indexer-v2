@@ -258,13 +258,14 @@ func TestExecuteRenderProbe_renderedOKAfterGateHeals(t *testing.T) {
 	url := "https://example.com/recovered.html"
 
 	baseline := int64(42)
-	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
 		MediaURL:            url,
 		Verdict:             schema.RenderProbeVerdictBlank,
-		ConsecutiveFailures: 2, // >= threshold: this row had gated
+		ConsecutiveFailures: 2,
+		HealthGated:         true, // durable marker, not re-derived from the counter
 		BaselinePhash:       &baseline,
 	}, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
 
 	m.store.EXPECT().
@@ -403,4 +404,77 @@ func TestExecuteRenderProbe_healthWritesAreRenderProbeWrites(t *testing.T) {
 	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{1}).Return(nil, nil)
 
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_gateSurvivesVerdictChange pins the durable marker against the
+// sequence that loses it when "is it gated" is re-derived from the verdict and counter:
+// a fingerprint gate (count 1) followed by a stall that lands below a threshold of 3.
+// The health row is gated from the first probe, so a later success must still heal it —
+// otherwise L0, which never re-checks render_% rows, leaves it broken forever.
+func TestExecuteRenderProbe_gateSurvivesVerdictChange(t *testing.T) {
+	cfg := renderProbeTestConfig
+	cfg.FailureGateThreshold = 3
+	m, exec := setupRenderProbe(t, cfg)
+	url := "https://example.com/fingerprint-then-stall.html"
+
+	// Prior state: fingerprint gate recorded one failure and gated health.
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:            url,
+		Verdict:             schema.RenderProbeVerdictKnownBadFingerprint,
+		ConsecutiveFailures: 1,
+		HealthGated:         true,
+	}, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(nil, errors.New("context deadline exceeded"))
+
+	// The stall lands at count 2, below the threshold of 3 — but the URL is already
+	// gated, so the marker must persist and the row stay on the broken cadence.
+	m.store.EXPECT().
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
+			assert.Equal(t, 2, row.ConsecutiveFailures)
+			assert.True(t, row.HealthGated, "an existing gate must survive a verdict change below threshold")
+			assert.Equal(t, m.now.Add(cfg.BrokenRecheckInterval), row.NextCheckAt)
+			return nil
+		})
+	m.store.EXPECT().UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).Return(nil)
+	m.store.EXPECT().GetTokenIDsByMediaURL(gomock.Any(), url).Return([]uint64{1}, nil)
+	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{1}).Return(nil, nil)
+
+	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_failedReleaseRetainsGate pins the release ordering: if the
+// health release fails, the probe row must keep HealthGated so the next run retries.
+// Recording rendered_ok with the marker cleared would strand a broken health row that
+// L0 never re-checks.
+func TestExecuteRenderProbe_failedReleaseRetainsGate(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/release-fails.html"
+
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:            url,
+		Verdict:             schema.RenderProbeVerdictBlank,
+		ConsecutiveFailures: 2,
+		HealthGated:         true,
+	}, nil)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
+
+	// The health release fails.
+	m.store.EXPECT().
+		UpdateTokenMediaHealthByURL(gomock.Any(), url, gomock.Any()).
+		Return(assert.AnError)
+
+	// The row is still persisted, with the marker intact for a retry.
+	m.store.EXPECT().
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+			assert.True(t, row.HealthGated, "a failed release must not clear the gate marker")
+			return nil
+		})
+
+	err := exec.ExecuteRenderProbe(context.Background(), url)
+	require.Error(t, err, "the job fails so the queue retries the release")
 }

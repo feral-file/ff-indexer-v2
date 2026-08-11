@@ -72,6 +72,17 @@ type MediaRenderProbe struct {
 	// known_bad_fingerprint gates immediately and does not use this counter)
 	ConsecutiveFailures int `gorm:"column:consecutive_failures;not null;default:0"`
 
+	// HealthGated records whether this probe currently holds a render_% gate on the
+	// URL's token_media_health rows.
+	//
+	// Reason: Verdict and ConsecutiveFailures are mutable, so deriving "is it gated" from
+	// them loses the marker as soon as a later verdict overwrites the one that gated —
+	// a fingerprint gate followed by a stall below the debounce threshold, for instance.
+	// The health row would then stay broken forever, because L0 never re-checks render_%
+	// rows and the probe no longer recognizes it as gated. Cleared only after a
+	// successful release, so a failed release is retried rather than forgotten.
+	HealthGated bool `gorm:"column:health_gated;not null;default:false"`
+
 	// LastError is the render failure detail (nil on rendered_ok)
 	LastError *string `gorm:"column:last_error;type:text"`
 

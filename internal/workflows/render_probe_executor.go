@@ -88,21 +88,14 @@ func NewRenderProbeExecutor(
 	}
 }
 
-// gated reports whether a previous probe row had already gated viewability: fingerprint
-// verdicts gate on sight, blank/stalled gate at the debounce threshold. Derived from the
-// probe row itself so no extra health-row lookup is needed.
+// gated reports whether a previous probe already gated viewability for this URL.
+//
+// Reads the durable HealthGated marker rather than re-deriving from the verdict and
+// failure counter: those are overwritten by every probe, so a fingerprint gate followed
+// by a stall below the debounce threshold would look ungated while the health row is
+// still broken — and since L0 never re-checks render_% rows, nothing would ever heal it.
 func (e *renderProbeExecutor) gated(prev *schema.MediaRenderProbe) bool {
-	if prev == nil {
-		return false
-	}
-	switch prev.Verdict {
-	case schema.RenderProbeVerdictKnownBadFingerprint:
-		return true
-	case schema.RenderProbeVerdictBlank, schema.RenderProbeVerdictStalled:
-		return prev.ConsecutiveFailures >= e.cfg.FailureGateThreshold
-	default:
-		return false
-	}
+	return prev != nil && prev.HealthGated
 }
 
 // ExecuteRenderProbe implements RenderProbeExecutor.
@@ -148,6 +141,7 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			if prev != nil {
 				refusal.Verdict = prev.Verdict
 				refusal.ConsecutiveFailures = prev.ConsecutiveFailures
+				refusal.HealthGated = prev.HealthGated
 				refusal.Phash = prev.Phash
 				refusal.BaselinePhash = prev.BaselinePhash
 				refusal.EngineVersion = prev.EngineVersion
@@ -165,6 +159,8 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		row.ConsecutiveFailures = prev.ConsecutiveFailures
 		row.BaselinePhash = prev.BaselinePhash
 		row.CapturedAt = prev.CapturedAt
+		// Carry the gate marker forward; only a successful release clears it.
+		row.HealthGated = prev.HealthGated
 	}
 
 	capture, renderErr := e.renderer.RenderProbe(ctx, url)
@@ -207,9 +203,6 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 	case schema.RenderProbeVerdictRenderedOK:
 		row.ConsecutiveFailures = 0
 		row.NextCheckAt = now.Add(e.cfg.RecheckInterval)
-		if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
-			return fmt.Errorf("failed to upsert render probe: %w", err)
-		}
 		if wasGated {
 			// The URL renders again: release the gate. Deliberately released to
 			// "unknown", not "healthy" — a successful screenshot says the page painted,
@@ -218,10 +211,25 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 			// sweep, which marks it healthy on its next pass and only then makes the
 			// token viewable again. Costs one sweep cycle of recovery latency in
 			// exchange for never restoring viewability on a screenshot alone.
-			return e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
+			//
+			// Ordering matters: release health first and only persist the cleared marker
+			// afterwards. Writing rendered_ok first would clear the marker even when the
+			// release fails, stranding a broken health row that L0 never re-checks.
+			if err := e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
 				Status:           schema.MediaHealthStatusUnknown,
 				RenderProbeWrite: true,
-			})
+			}); err != nil {
+				// Keep the marker set so the next probe retries the release.
+				row.HealthGated = true
+				if upsertErr := e.store.UpsertMediaRenderProbe(ctx, row); upsertErr != nil {
+					logger.ErrorCtx(ctx, upsertErr, zap.String("url", url))
+				}
+				return err
+			}
+			row.HealthGated = false
+		}
+		if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
+			return fmt.Errorf("failed to upsert render probe: %w", err)
 		}
 		return nil
 
@@ -230,6 +238,7 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		row.LastError = &errMsg
 		row.ConsecutiveFailures++
 		row.NextCheckAt = now.Add(e.cfg.BrokenRecheckInterval)
+		row.HealthGated = true
 		if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
 			return fmt.Errorf("failed to upsert render probe: %w", err)
 		}
@@ -254,9 +263,13 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 // threshold, gate at it. wasGated keeps an already-gated row gated (and re-broadcasts
 // nothing — the health row is already broken, so the update is idempotent).
 func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row schema.MediaRenderProbe, wasGated bool, now time.Time) error {
-	gate := row.ConsecutiveFailures >= e.cfg.FailureGateThreshold
+	// An already-gated URL stays gated: a further failure never releases it, and the
+	// marker must survive verdict changes (a fingerprint gate followed by a stall below
+	// the threshold) or the health row could never be healed.
+	gate := wasGated || row.ConsecutiveFailures >= e.cfg.FailureGateThreshold
 	if gate {
 		row.NextCheckAt = now.Add(e.cfg.BrokenRecheckInterval)
+		row.HealthGated = true
 	} else {
 		row.NextCheckAt = now.Add(e.cfg.RetryInterval)
 	}
@@ -279,7 +292,8 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 	if row.Verdict == schema.RenderProbeVerdictStalled {
 		reason = schema.RenderFailureStalled
 	}
-	_ = wasGated // the health update below is idempotent for already-gated rows
+	// Idempotent for an already-gated row: it refreshes the reason to match the newest
+	// verdict without changing whether the URL is gated.
 	return e.setHealthAndPropagate(ctx, url, store.MediaHealthUpdate{
 		Status:           schema.MediaHealthStatusBroken,
 		LastError:        row.LastError,

@@ -62,6 +62,8 @@ var ErrRequestBlocked = errors.New("browser request blocked by SSRF policy")
 // (see docs/media_viewability.md).
 const egressGuardScript = `
 (() => {
+  const NAMES = ["WebSocket", "RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel", "EventSource"];
+
   const block = (name) => {
     try {
       Object.defineProperty(window, name, {
@@ -70,7 +72,31 @@ const egressGuardScript = `
       });
     } catch (e) { /* already locked down */ }
   };
-  ["WebSocket", "RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel", "EventSource"].forEach(block);
+  NAMES.forEach(block);
+
+  // Dedicated workers run in WorkerGlobalScope, which the block above does not reach —
+  // measured: a worker could open a WebSocket even with the page guard installed. Wrap
+  // Worker so each one starts by deleting the same APIs in its own scope, then imports
+  // the original script (that import is an ordinary fetch, so interception still vets
+  // it). Workers we cannot wrap are refused rather than run unguarded.
+  const RealWorker = window.Worker;
+  if (typeof RealWorker === "function") {
+    const prologue = NAMES.map((n) => "try{self." + n + "=undefined;}catch(e){}").join("");
+    const GuardedWorker = function (script, options) {
+      let wrapped;
+      try {
+        const src = prologue + "importScripts(" + JSON.stringify(String(script)) + ");";
+        wrapped = URL.createObjectURL(new Blob([src], { type: "application/javascript" }));
+      } catch (e) {
+        throw new Error("Worker creation blocked in the render probe");
+      }
+      return new RealWorker(wrapped, options);
+    };
+    GuardedWorker.prototype = RealWorker.prototype;
+    try {
+      Object.defineProperty(window, "Worker", { configurable: false, value: GuardedWorker });
+    } catch (e) { /* already locked down */ }
+  }
 })();`
 
 // Capture is one render observation of a URL.

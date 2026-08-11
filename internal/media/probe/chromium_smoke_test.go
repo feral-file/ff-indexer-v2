@@ -250,7 +250,11 @@ func TestEgressVectors(t *testing.T) {
 		"form-target":   `try{const f=document.createElement('form');f.action='HIT/form';f.target='_blank';f.method='GET';document.body.appendChild(f);f.submit();}catch(e){}`,
 		"beacon":        `try{navigator.sendBeacon('HIT/beacon','x');}catch(e){}`,
 		"websocket":     `try{new WebSocket('WS/ws');}catch(e){}`,
-		"eventsource":   `try{new EventSource('HIT/sse');}catch(e){}`,
+		// Worker scope is WorkerGlobalScope, which a document-start guard on `window`
+		// does not reach — measured escaping before the Worker wrapper was added.
+		"worker-websocket": `try{const b=new Blob(["try{new WebSocket('WS/wsworker');}catch(e){}"],` +
+			`{type:'application/javascript'});new Worker(URL.createObjectURL(b));}catch(e){}`,
+		"eventsource": `try{new EventSource('HIT/sse');}catch(e){}`,
 	}
 
 	var hits sync.Map
