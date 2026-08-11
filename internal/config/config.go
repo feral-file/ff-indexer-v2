@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/media/phash"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 )
 
@@ -572,8 +573,14 @@ func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQue
 	if c.FailureGateThreshold < 1 {
 		invalid = append(invalid, "render_probe.failure_gate_threshold must be at least 1")
 	}
-	if c.BlankVarianceThreshold < 0 {
-		invalid = append(invalid, "render_probe.blank_variance_threshold must not be negative")
+	// A threshold at or above phash.MaxVariance calls every frame blank, so a mistyped
+	// value like 1 would gate the whole corpus after the debounce threshold — exactly the
+	// hide-real-art failure the probe exists to avoid. Reject it at startup instead.
+	if c.BlankVarianceThreshold < 0 || c.BlankVarianceThreshold >= phash.MaxVariance {
+		invalid = append(invalid, fmt.Sprintf(
+			"render_probe.blank_variance_threshold must be within [0, %v): variance is a normalized "+
+				"population variance, so a threshold at or above that classifies every frame as blank",
+			phash.MaxVariance))
 	}
 	if c.RecheckInterval <= 0 {
 		invalid = append(invalid, "render_probe.recheck_interval must be positive")

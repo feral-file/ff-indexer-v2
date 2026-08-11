@@ -37,6 +37,14 @@ func Distance(a, b uint64) int {
 	return bits.OnesCount64(a ^ b)
 }
 
+// MaxVariance is the upper bound of what Variance can return.
+//
+// Variance is a population variance over channel values normalized to [0,1], and such a
+// variance is maximized at 0.25 by the extreme distribution (half the samples at 0, half
+// at 1). Any blank threshold at or above this classifies every frame as blank, so callers
+// validating operator input should reject thresholds outside [0, MaxVariance).
+const MaxVariance = 0.25
+
 // Variance returns the image's largest per-channel population variance, normalized to
 // the [0,1] channel range (0 = perfectly uniform frame).
 //

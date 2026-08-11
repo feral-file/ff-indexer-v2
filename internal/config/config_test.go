@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/feral-file/ff-indexer-v2/internal/media/phash"
 )
 
 func TestDatabaseConfig_DSN(t *testing.T) {
@@ -511,6 +513,37 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 		err := validateRenderProbeConfig(&cfg, true, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "media_queue")
+	})
+
+	// A threshold at or above the metric's maximum calls every frame blank, gating the
+	// whole corpus after debounce — the hide-real-art failure mode this feature exists
+	// to prevent.
+	t.Run("blank variance threshold must sit inside the variance domain", func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			threshold float64
+			valid     bool
+		}{
+			{"negative", -0.1, false},
+			{"zero", 0, true},
+			{"typical", 0.001, true},
+			{"just below max", phash.MaxVariance - 0.0001, true},
+			{"at max", phash.MaxVariance, false},
+			{"mistyped as one", 1, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base
+				cfg.EgressRestricted = true
+				cfg.BlankVarianceThreshold = tc.threshold
+				err := validateRenderProbeConfig(&cfg, true, "media_index")
+				if tc.valid {
+					assert.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "blank_variance_threshold")
+			})
+		}
 	})
 
 	t.Run("disabled probe is inert", func(t *testing.T) {

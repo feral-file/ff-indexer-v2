@@ -2773,31 +2773,14 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 		// has since moved away, their rows are deleted while the probe row — and its
 		// verdict — remain. media_render_probes.health_gated is the URL-level record of
 		// "L1 currently holds a gate here", and only the render probe clears it.
-		var probeRow schema.MediaRenderProbe
-		err := tx.Where("media_url_hash = ? AND health_gated = true", newURLHash).
-			First(&probeRow).Error
-		switch {
-		case err == nil:
+		gate, err := activeRenderGate(tx, newURLHash)
+		if err != nil {
+			return err
+		}
+		if gate != nil {
 			health.HealthStatus = schema.MediaHealthStatusBroken
-			health.LastError = probeRow.LastError
-			// Prefer the reason a sibling row already carries: after a failed release the
-			// probe's verdict can be rendered_ok while the gate is still held, so
-			// deriving from the verdict alone would relabel the gate. Fall back to
-			// derivation when no sibling row survives (the reuse-after-removal case,
-			// which is why the probe row is the authority for *whether* it is gated).
-			var sibling schema.TokenMediaHealth
-			sibErr := tx.Where("media_url_hash = ? AND failure_reason LIKE 'render_%'", newURLHash).
-				First(&sibling).Error
-			switch {
-			case sibErr == nil:
-				health.FailureReason = sibling.FailureReason
-			case errors.Is(sibErr, gorm.ErrRecordNotFound):
-				health.FailureReason = renderFailureReasonFor(probeRow.Verdict)
-			default:
-				return fmt.Errorf("failed to read an existing render gate reason: %w", sibErr)
-			}
-		case !errors.Is(err, gorm.ErrRecordNotFound):
-			return fmt.Errorf("failed to check for an existing render gate: %w", err)
+			health.FailureReason = gate.Reason
+			health.LastError = gate.LastError
 		}
 
 		if err := tx.Create(health).Error; err != nil {
@@ -2948,6 +2931,49 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, u
 		Updates(updates).Error
 }
 
+// renderGate describes an active URL-level render gate.
+type renderGate struct {
+	Reason    *string
+	LastError *string
+}
+
+// activeRenderGate reports the render gate currently held on a URL, or nil when none is.
+//
+// media_render_probes.health_gated is the authority for *whether* a gate is held: token
+// health rows are transient and are deleted when the last token stops referencing a URL,
+// while the probe row survives. The reason is taken from a sibling health row when one
+// exists — after a failed release the probe's verdict can be rendered_ok while the gate
+// is still held, so deriving from the verdict alone would relabel the gate — and derived
+// from the verdict otherwise.
+//
+// Every writer that creates or moves health rows must consult this, or it will manufacture
+// healthy rows for a URL L1 has confirmed bad.
+func activeRenderGate(tx *gorm.DB, urlHash string) (*renderGate, error) {
+	var probeRow schema.MediaRenderProbe
+	err := tx.Where("media_url_hash = ? AND health_gated = true", urlHash).First(&probeRow).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("failed to check for an existing render gate: %w", err)
+	}
+
+	gate := &renderGate{LastError: probeRow.LastError}
+
+	var sibling schema.TokenMediaHealth
+	sibErr := tx.Where("media_url_hash = ? AND failure_reason LIKE 'render_%'", urlHash).
+		First(&sibling).Error
+	switch {
+	case sibErr == nil:
+		gate.Reason = sibling.FailureReason
+	case errors.Is(sibErr, gorm.ErrRecordNotFound):
+		gate.Reason = renderFailureReasonFor(probeRow.Verdict)
+	default:
+		return nil, fmt.Errorf("failed to read an existing render gate reason: %w", sibErr)
+	}
+	return gate, nil
+}
+
 // renderFailureReasonFor maps a render verdict to the failure reason its gate carries,
 // so an inherited gate is labeled the same way the probe would have labeled it.
 func renderFailureReasonFor(verdict schema.RenderProbeVerdict) *string {
@@ -2980,18 +3006,34 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 		// promoted fallback would corrupt per-reason reporting and render-probe class
 		// selection. NULL means "not yet content-probed" — the next sweep repopulates them
 		// from the new URL's own bytes.
+		//
+		// Unless the promotion target is itself render-gated. The fallback gateway is
+		// only known to serve bytes; L1 may already have confirmed it renders a
+		// directory listing or a blank frame. Promoting onto it as healthy would make
+		// the token viewable for a browser-confirmed bad render until the next probe.
+		health := map[string]interface{}{
+			"media_url":             newURL,
+			"media_url_hash":        newHash,
+			"health_status":         schema.MediaHealthStatusHealthy,
+			"last_checked_at":       time.Now(),
+			"last_error":            nil,
+			"failure_reason":        nil,
+			"observed_content_type": nil,
+			"sniffed_content_type":  nil,
+		}
+		gate, err := activeRenderGate(tx, newHash)
+		if err != nil {
+			return err
+		}
+		if gate != nil {
+			health["health_status"] = schema.MediaHealthStatusBroken
+			health["failure_reason"] = nullableString(gate.Reason)
+			health["last_error"] = nullableString(gate.LastError)
+		}
+
 		if err := tx.Model(&schema.TokenMediaHealth{}).
 			Where("media_url_hash = ?", oldHash).
-			Updates(map[string]interface{}{
-				"media_url":             newURL,
-				"media_url_hash":        newHash,
-				"health_status":         schema.MediaHealthStatusHealthy,
-				"last_checked_at":       time.Now(),
-				"last_error":            nil,
-				"failure_reason":        nil,
-				"observed_content_type": nil,
-				"sniffed_content_type":  nil,
-			}).Error; err != nil {
+			Updates(health).Error; err != nil {
 			return fmt.Errorf("failed to update token_media_health: %w", err)
 		}
 

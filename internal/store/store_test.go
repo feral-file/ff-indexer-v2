@@ -6235,6 +6235,42 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			"the gate's existing reason must not be relabeled from a stale verdict")
 	})
 
+	t.Run("fallback promotion onto a render-gated URL does not create healthy rows", func(t *testing.T) {
+		// UpdateMediaURLAndPropagate moves rows to a working alternate gateway and marks
+		// them healthy. If L1 has already confirmed that gateway renders badly, promoting
+		// onto it as healthy would make the token viewable for a known-bad render.
+		deadURL := "https://dead.example.com/ipfs/QmGatedTarget"
+		gatedFallback := "https://gated.example.com/ipfs/QmGatedTarget"
+		tokenID := mintTokenWithMedia(t, &deadURL, nil)
+
+		// The fallback target is render-gated, and its own health rows no longer exist —
+		// so the gate must come from the probe row.
+		past := time.Now().UTC().Add(-time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: gatedFallback, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
+			ConsecutiveFailures: 1, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
+		}))
+
+		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, deadURL, gatedFallback))
+
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		require.Len(t, rows[tokenID], 1)
+		promoted := rows[tokenID][0]
+		assert.Equal(t, gatedFallback, promoted.MediaURL)
+		assert.Equal(t, schema.MediaHealthStatusBroken, promoted.HealthStatus,
+			"promotion must not mark a render-gated target healthy")
+		require.NotNil(t, promoted.FailureReason)
+		assert.Equal(t, schema.RenderFailureKnownBad, *promoted.FailureReason)
+
+		_, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		viewability, err := store.GetTokensViewabilityByIDs(ctx, []uint64{tokenID})
+		require.NoError(t, err)
+		require.Len(t, viewability, 1)
+		assert.False(t, viewability[0].IsViewable)
+	})
+
 	t.Run("data URIs are excluded from render-probe scheduling", func(t *testing.T) {
 		dataURI := "data:text/html;base64,PGh0bWw+PC9odG1sPg=="
 		mintTokenWithMedia(t, &dataURI, nil)
