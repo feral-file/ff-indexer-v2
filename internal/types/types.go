@@ -21,6 +21,11 @@ func StringPtr(s string) *string {
 	return &s
 }
 
+// BoolPtr converts a bool to a pointer to a bool
+func BoolPtr(b bool) *bool {
+	return &b
+}
+
 // StringNilOrEmpty checks if a pointer to a string is nil or empty
 func StringNilOrEmpty(s *string) bool {
 	return s == nil || *s == ""

@@ -26,6 +26,13 @@ type GetTokenQueryParams struct {
 	ProvenanceEventLimit  uint8       `form:"provenance_events.limit,default=10"`
 	ProvenanceEventOffset uint64      `form:"provenance_events.offset,default=0"`
 	ProvenanceEventOrder  types.Order `form:"provenance_events.order,default=desc"`
+
+	// IncludeModerated returns the token even when it is moderated
+	// (moderation_status <> 'none'). Default false, matching the list endpoint: a
+	// detail lookup is still a render path — display surfaces resolve a token by CID
+	// before showing it — so letting it through by default would leave the moderated
+	// token fully renderable and defeat the filter.
+	IncludeModerated bool `form:"include_moderated,default=false"`
 }
 
 // Validate validates the query parameters for GET /tokens/:cid
@@ -72,6 +79,9 @@ type ListTokensQueryParams struct {
 	// Clients use this to poll for exactly the mints they triggered via IndexRelease.
 	MintNumbers       []int64 `form:"mint_number"`
 	IncludeUnviewable bool    `form:"include_unviewable,default=false"` // Include tokens with is_viewable=false
+	// IncludeModerated includes moderated tokens (moderation_status <> 'none'). Default
+	// false so every consumer inherits the filter unless it explicitly opts in.
+	IncludeModerated bool `form:"include_moderated,default=false"`
 
 	// Pagination
 	Limit  uint8  `form:"limit,default=20"`
@@ -259,6 +269,11 @@ type GetReleaseQueryParams struct {
 	Offset     uint64            `form:"offset,default=0"`
 	SortOrder  types.Order       `form:"sort_order,default=asc"`
 	Expansions []types.Expansion `form:"expand"`
+	// IncludeModerated includes moderated tokens among the members.
+	// Default false, the same as every other token-returning read path —
+	// `members` is a full TokenList that a client can render directly, so an
+	// exception here would be one more way for a moderated token to reach a wall.
+	IncludeModerated bool `form:"include_moderated,default=false"`
 }
 
 // Validate validates the query parameters for GET /releases/:id

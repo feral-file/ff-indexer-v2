@@ -140,6 +140,7 @@ func (h *handler) GetToken(c *gin.Context) {
 		provenanceEventsLimit,
 		provenanceEventsOffset,
 		provenanceEventsOrder,
+		queryParams.IncludeModerated,
 	)
 
 	if err != nil {
@@ -177,6 +178,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 	offset := &queryParams.Offset
 	expansions := queryParams.Expansions
 	includeUnviewable := &queryParams.IncludeUnviewable
+	includeModerated := &queryParams.IncludeModerated
 	sortBy := &queryParams.SortBy
 	sortOrder := &queryParams.SortOrder
 
@@ -201,6 +203,7 @@ func (h *handler) ListTokens(c *gin.Context) {
 		limit,
 		offset,
 		includeUnviewable,
+		includeModerated,
 		sortBy,
 		sortOrder,
 		expansions,
@@ -287,6 +290,12 @@ func (h *handler) GetRelease(c *gin.Context) {
 	// GET /api/v1/tokens?release_id=... with include_unviewable omitted (default false).
 	sortBy := types.TokenSortByMintNumber
 	includeUnviewable := true
+	// The spam verdict does NOT get that exception. Unviewability is a transient
+	// pipeline state, but a moderation verdict is a decision about the content,
+	// and `members` is a full TokenList a client can render straight from — so it
+	// is filtered by default like every other token-returning path, with
+	// include_moderated=true to opt back in.
+	includeModerated := queryParams.IncludeModerated
 	members, err := h.executor.GetTokens(
 		c.Request.Context(),
 		nil,
@@ -302,6 +311,7 @@ func (h *handler) GetRelease(c *gin.Context) {
 		limit,
 		offset,
 		&includeUnviewable,
+		&includeModerated,
 		&sortBy,
 		sortOrder,
 		queryParams.Expansions,

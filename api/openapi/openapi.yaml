@@ -188,6 +188,18 @@ paths:
             type: string
             enum: [asc, desc]
             default: desc
+        - name: include_moderated
+          in: query
+          description: |
+            Return the token even when it is moderated (OpenSea `is_disabled` /
+            objkt takedown). Defaults to `false`, matching
+            `GET /api/v1/tokens`: a detail lookup is still a render path, so a
+            flagged token responds `404` unless the caller explicitly opts in.
+            The `404` is deliberate — it does not distinguish "unknown CID" from
+            "flagged", so the endpoint cannot be used to enumerate flagged tokens.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Token found and returned successfully
@@ -386,7 +398,10 @@ paths:
             Explicit 1-based mint positions to include (repeatable; max 50 values, no duplicates).
             Requires release_id, or both release_vendor and release_vendor_slug (vendor alone is
             insufficient because mint numbers repeat across releases from the same vendor).
-            Use this to poll for exactly the mints you triggered via POST /api/v1/releases/index.
+            Use this to poll for exactly the mints you triggered via POST /api/v1/releases/index —
+            pass include_unviewable=true and include_moderated=true when polling, otherwise a mint that
+            is still processing media or was flagged by vendor moderation never appears and the
+            poll never terminates.
             Each value must be >= 1.
           schema:
             type: array
@@ -401,6 +416,13 @@ paths:
         - name: include_unviewable
           in: query
           description: Include tokens with unviewable media (no accessible media URLs). Default is false - only tokens with accessible media are returned.
+          schema:
+            type: boolean
+            default: false
+          example: false
+        - name: include_moderated
+          in: query
+          description: Include moderated tokens (OpenSea is_disabled / objkt takedown). Default is false - moderated tokens are excluded for every consumer.
           schema:
             type: boolean
             default: false
@@ -490,6 +512,7 @@ paths:
            - **metadata_updated**: Token metadata changed (broadcast to all current owners)
            - **enrichment_updated**: Token enrichment changed (broadcast to all current owners)
            - **viewability_changed**: Token viewability changed (broadcast to all current owners)
+           - **moderation_status_changed**: Token moderation status changed (broadcast to all current owners)
         3. If `next_checkpoint` is returned, use it for pagination (more events available)
         4. If `next_checkpoint` is null and `has_more` is false, client has caught up
         
@@ -696,6 +719,22 @@ paths:
               enum: [metadata, owners, owner_provenances, provenance_events, enrichment_source, display, media_asset]
           style: form
           explode: false
+        - name: include_moderated
+          in: query
+          description: |
+            Include moderated members (OpenSea `is_disabled` / objkt takedown).
+            Defaults to `false`, the same as every other
+            token-returning path — `members` is a full token list a client can
+            render directly, so it is filtered unless the caller opts in.
+
+            Note this differs from viewability: members are returned regardless
+            of `is_viewable`, because that is a transient media-processing state,
+            whereas a moderation verdict is a decision about the content. A gap
+            between `total_mints` and the member count can therefore mean either
+            "indexing incomplete" or "some members filtered".
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Release with mint-ordered member tokens
@@ -735,8 +774,10 @@ paths:
         **Phase 2** (per-token indexing) runs independently as IndexTokens child jobs on the same queue.
 
         Poll `GET /api/v1/jobs/{job_id}` for Phase 1 status, then
-        `GET /api/v1/tokens?release_vendor=...&release_vendor_slug=...&mint_number=N&mint_number=M` with
-        the same `mint_numbers` to track exactly which mints have been indexed.
+        `GET /api/v1/tokens?release_vendor=...&release_vendor_slug=...&mint_number=N&mint_number=M&include_unviewable=true&include_moderated=true` with
+        the same `mint_numbers` to track exactly which mints have been indexed. Both flags matter:
+        without them, mints still processing media or flagged by vendor moderation (objkt publishes
+        both releases and ban verdicts) never appear and the poll never terminates.
         `release_vendor` is required when polling by slug.
 
         **Vendor strategies:**
@@ -1568,6 +1609,7 @@ components:
         - token_number
         - burned
         - viewable
+        - moderation_status
         - version
         - created_at
         - updated_at
@@ -1605,6 +1647,11 @@ components:
           type: boolean
           description: Whether the token has accessible media URLs
           example: true
+        moderation_status:
+          type: string
+          enum: [none, spam]
+          description: Combined moderation verdict across sources. A string enum rather than a boolean so new verdict kinds do not change the field's type; only `none` and `spam` exist today. Anything but `none` is excluded from queries unless include_moderated=true.
+          example: none
         last_provenance_timestamp:
           type: [string, "null"]
           format: date-time
@@ -2373,7 +2420,7 @@ components:
           example: 987
         event_type:
           type: string
-          enum: [acquired, released, metadata_updated, enrichment_updated, viewability_changed]
+          enum: [acquired, released, metadata_updated, enrichment_updated, viewability_changed, moderation_status_changed]
           description: |
             Type of event:
             - `acquired`: Token added to owner's collection
@@ -2381,12 +2428,13 @@ components:
             - `metadata_updated`: Token metadata changed (broadcast to all current owners)
             - `enrichment_updated`: Token enrichment changed (broadcast to all current owners)
             - `viewability_changed`: Token viewability changed (broadcast to all current owners)
+            - `moderation_status_changed`: Token moderation status changed (broadcast to all current owners); metadata carries `moderation_status` and `token_cid`
           example: "acquired"
         owner_address:
           type: string
           description: |
             Owner address for ownership events (acquired/released).
-            NULL for attribute events (metadata_updated, enrichment_updated, viewability_changed) that broadcast to all current owners.
+            NULL for attribute events (metadata_updated, enrichment_updated, viewability_changed, moderation_status_changed) that broadcast to all current owners.
           example: "0x1234567890123456789012345678901234567890"
         occurred_at:
           type: string
@@ -2403,6 +2451,7 @@ components:
             - metadata_updated: {"changed_fields": ["name", "image_url"]}
             - enrichment_updated: {"vendor": "artblocks", "changed_fields": ["animation_url"]}
             - viewability_changed: {"is_viewable": true}
+            - moderation_status_changed: {"moderation_status": "spam", "token_cid": "eip155:1:erc721:0x...:1"}
           example: {"tx_hash": "0xabc123...", "quantity": "1"}
 
     AddressIndexingJobInfo:

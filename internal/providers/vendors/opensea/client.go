@@ -41,6 +41,12 @@ type NFTMetadata struct {
 	DisplayAnimationURL *string `json:"display_animation_url"`
 	MetadataURL         *string `json:"metadata_url"`
 	Traits              []Trait `json:"traits"`
+	// IsDisabled reports OpenSea's active moderation verdict: true when OpenSea took the
+	// item down (opensea.io 404s the item page while the API keeps serving the record).
+	// This is the spam signal for airdropped scam tokens — deliberately distinct from
+	// is_suspicious (stolen-item reports, an ownership dispute) and is_nsfw (content
+	// rating), which are NOT spam and must not feed the spam verdict.
+	IsDisabled bool `json:"is_disabled"`
 }
 
 // Trait represents a trait/attribute of an NFT

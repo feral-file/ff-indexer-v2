@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -47,6 +48,30 @@ type EnhancedMetadata struct {
 	Artists      []Artist
 	MimeType     *string
 	Release      *ReleaseInfo
+	// ModerationStatus is the enriching vendor's moderation verdict, normalized
+	// from that vendor's own signal (OpenSea is_disabled, objkt flag).
+	//
+	// nil means the enriching vendor publishes no moderation signal at all (ArtBlocks,
+	// Feral File, fxhash), which is NOT the same as a "none" verdict and must not be
+	// persisted as one. A gentk that fxhash does not yet index falls through to objkt
+	// and can be flagged there; once fxhash catches up, that branch enriches the same
+	// token, and writing a zero value would silently clear a real moderation decision
+	// because vendor routing changed rather than because the verdict did.
+	ModerationStatus *schema.ModerationStatus
+	// ModerationDetail carries the raw moderation fields behind ModerationStatus, and
+	// only those ({"is_disabled":true} / {"flag":"banned"}) — the full payload already
+	// lives in enrichment_sources.vendor_json. nil exactly when ModerationStatus is nil.
+	ModerationDetail []byte
+}
+
+// moderationStatusFromVendorSpam normalizes a vendor's own boolean moderation
+// signal into the indexer's verdict enum. Vendor clients stay free of storage
+// types (see objkt.Token.IsSpam), so the mapping lives here at the boundary.
+func moderationStatusFromVendorSpam(spam bool) schema.ModerationStatus {
+	if spam {
+		return schema.ModerationStatusSpam
+	}
+	return schema.ModerationStatusNone
 }
 
 // Enhancer defines the interface for enhancing metadata from vendors
@@ -497,10 +522,24 @@ func (e *enhancer) enhanceObjkt(ctx context.Context, contractAddress, tokenNumbe
 		return nil, fmt.Errorf("failed to marshal objkt token: %w", err)
 	}
 
-	// Build enhanced metadata
+	// Build enhanced metadata.
+	//
+	// objkt's four-state flag collapses to a verdict via Token.IsSpam (takedowns
+	// are spam, everything else is clean); the raw flag rides along in the detail
+	// so operators can still tell the takedown states apart.
+	objktStatus := moderationStatusFromVendorSpam(token.IsSpam())
+	// stdlib json, not e.json: the vendor adapter is for canonicalizing whole
+	// payloads (hashing); this two-field detail cannot fail to marshal and must
+	// not disturb the adapter's mock expectations in tests.
+	moderationDetail, err := json.Marshal(map[string]any{"flag": token.Flag})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal objkt moderation detail: %w", err)
+	}
 	enhanced := &EnhancedMetadata{
-		Vendor:     schema.VendorObjkt,
-		VendorJSON: vendorJSON,
+		Vendor:           schema.VendorObjkt,
+		VendorJSON:       vendorJSON,
+		ModerationStatus: &objktStatus,
+		ModerationDetail: moderationDetail,
 	}
 
 	// Set the token name
@@ -633,9 +672,21 @@ func (e *enhancer) enhanceOpenSea(ctx context.Context, contractAddress, tokenNum
 	}
 
 	// Build enhanced metadata
+	openSeaStatus := moderationStatusFromVendorSpam(nft.IsDisabled)
+	// stdlib json for the same reason as the objkt branch: tiny fixed detail,
+	// no canonicalization or mock-adapter involvement needed.
+	moderationDetail, err := json.Marshal(map[string]any{"is_disabled": nft.IsDisabled})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal OpenSea moderation detail: %w", err)
+	}
 	enhanced := &EnhancedMetadata{
 		Vendor:     schema.VendorOpenSea,
 		VendorJSON: vendorJSON,
+		// OpenSea's moderation verdict: disabled items (delisted from opensea.io) are
+		// spam on the display surface. is_suspicious (stolen-item reports) and is_nsfw
+		// (content rating) are deliberately NOT part of this verdict.
+		ModerationStatus: &openSeaStatus,
+		ModerationDetail: moderationDetail,
 	}
 
 	// Populate release info from the single-NFT response.

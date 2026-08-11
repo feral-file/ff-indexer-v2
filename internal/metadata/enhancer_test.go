@@ -2419,3 +2419,120 @@ func TestEnhancer_Enhance_OpenSea_GetCollectionErrNoAPIKeyBestEffort(t *testing.
 	assert.Nil(t, result.Release.Name, "name must be nil when API key is absent")
 	assert.Nil(t, result.Release.TotalMints, "total_mints must be nil when API key is absent")
 }
+
+// TestEnhancer_Enhance_ModerationVerdict covers the vendor→verdict mapping end to end
+// through Enhance, which is the seam the rest of the moderation feature hangs off.
+// Asserting on the clients and on the persistence layer separately leaves this mapping
+// untested: deleting the ModerationStatus assignments in enhanceObjkt/enhanceOpenSea
+// keeps every other test green.
+//
+// It also pins the tri-state contract at the vendor-routing level: vendors that publish
+// no moderation signal at all must leave ModerationStatus nil rather than report "none",
+// so a routing change cannot clear a real verdict.
+func TestEnhancer_Enhance_ModerationVerdict(t *testing.T) {
+	cases := []struct {
+		name string
+		flag *string
+		want schema.ModerationStatus
+		why  string
+	}{
+		{"banned is spam", types.StringPtr(objkt.FlagBanned), schema.ModerationStatusSpam,
+			"objkt's scam takedown is the primary spam signal for Tezos"},
+		{"removed is spam", types.StringPtr(objkt.FlagRemoved), schema.ModerationStatusSpam,
+			"a takedown is a takedown: if objkt stopped displaying it, so do we"},
+		{"none is clean", types.StringPtr(objkt.FlagNone), schema.ModerationStatusNone,
+			"an explicit clean verdict must be recorded so verdicts stay reversible"},
+		{"flagged is clean", types.StringPtr(objkt.FlagFlagged), schema.ModerationStatusNone,
+			"a report alone is not a takedown, so it must not hide the token"},
+		{"missing flag is clean", nil, schema.ModerationStatusNone,
+			"fail-open: absence of a flag must never hide a real asset"},
+	}
+	for _, tc := range cases {
+		t.Run("objkt "+tc.name, func(t *testing.T) {
+			result := enhanceObjktForModeration(t, tc.flag)
+			require.NotNil(t, result.ModerationStatus, "objkt publishes a moderation signal")
+			assert.Equal(t, tc.want, *result.ModerationStatus, tc.why)
+		})
+	}
+
+	t.Run("objkt keeps the raw flag observable in the detail", func(t *testing.T) {
+		result := enhanceObjktForModeration(t, types.StringPtr(objkt.FlagFlagged))
+		assert.JSONEq(t, `{"flag":"flagged"}`, string(result.ModerationDetail),
+			"the verdict collapses four states to two, so the raw flag must survive for operators")
+	})
+
+	t.Run("opensea disabled is spam", func(t *testing.T) {
+		result := enhanceOpenSeaForModeration(t, true)
+		require.NotNil(t, result.ModerationStatus, "opensea publishes a moderation signal")
+		assert.Equal(t, schema.ModerationStatusSpam, *result.ModerationStatus)
+	})
+
+	t.Run("opensea enabled is clean", func(t *testing.T) {
+		result := enhanceOpenSeaForModeration(t, false)
+		require.NotNil(t, result.ModerationStatus)
+		assert.Equal(t, schema.ModerationStatusNone, *result.ModerationStatus)
+	})
+}
+
+// enhanceObjktForModeration routes a Tezos token through the default → objkt branch with the
+// given moderation flag and returns the enhanced metadata.
+func enhanceObjktForModeration(t *testing.T, flag *string) *metadata.EnhancedMetadata {
+	t.Helper()
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "1")
+	publisherName := registry.PublisherName("some_tezos_publisher")
+	normalizedMeta := &metadata.NormalizedMetadata{
+		Raw:       map[string]interface{}{"name": "t"},
+		Publisher: &metadata.Publisher{Name: &publisherName},
+	}
+
+	name := "Visit example.net to claim rewards"
+	mime := "image/png"
+	objktToken := &objkt.Token{Name: &name, Mime: &mime, Flag: flag}
+
+	mocks.objktClient.EXPECT().
+		GetToken(gomock.Any(), "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "1").
+		Return(objktToken, nil)
+	mocks.json.EXPECT().Marshal(objktToken).Return([]byte(`{}`), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, schema.VendorObjkt, result.Vendor)
+	return result
+}
+
+// enhanceOpenSeaForModeration routes an Ethereum token through the default → OpenSea branch
+// with the given is_disabled value and returns the enhanced metadata.
+func enhanceOpenSeaForModeration(t *testing.T, isDisabled bool) *metadata.EnhancedMetadata {
+	t.Helper()
+	mocks := setupTestEnhancer(t)
+	defer tearDownTestEnhancer(mocks)
+
+	contract := "0x29539a0109fec46b916a6125f352c629d9304c73"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contract, "0")
+	normalizedMeta := &metadata.NormalizedMetadata{Raw: map[string]interface{}{"name": "t"}}
+
+	name := "Visit example.net to claim rewards"
+	nft := &opensea.NFTMetadata{
+		Identifier: "0",
+		Contract:   contract,
+		Name:       &name,
+		IsDisabled: isDisabled,
+	}
+
+	// The contract arrives checksum-cased from the parsed CID; this test is about the
+	// verdict mapping, not address casing.
+	mocks.openseaClient.EXPECT().
+		GetNFT(gomock.Any(), gomock.Any(), "0").
+		Return(nft, nil)
+	mocks.json.EXPECT().Marshal(nft).Return([]byte(`{}`), nil)
+
+	result, err := mocks.enhancer.Enhance(context.Background(), tokenCID, normalizedMeta)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, schema.VendorOpenSea, result.Vendor)
+	return result
+}

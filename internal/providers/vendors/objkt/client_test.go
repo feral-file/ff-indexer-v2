@@ -394,3 +394,66 @@ func TestGetToken_UsesVariablesNotInterpolation(t *testing.T) {
 	assert.Contains(t, string(capturedBody), `"faContract"`)
 	assert.Contains(t, string(capturedBody), `"tokenId"`)
 }
+
+// TestTokenIsSpam pins the two-state mapping from objkt's four-state flag enum
+// onto a spam verdict: takedowns (banned/removed) are spam, everything else —
+// including a missing flag or an enum value objkt adds later — is clean
+// (fail-open).
+func TestTokenIsSpam(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+
+	tests := []struct {
+		name string
+		flag *string
+		want bool
+	}{
+		{name: "nil flag is clean", flag: nil, want: false},
+		{name: "none is clean", flag: ptr(objkt.FlagNone), want: false},
+		{name: "flagged is clean: a report alone is not a takedown", flag: ptr(objkt.FlagFlagged), want: false},
+		{name: "unknown future value is clean", flag: ptr("some_new_state"), want: false},
+		{name: "banned is spam", flag: ptr(objkt.FlagBanned), want: true},
+		{name: "removed is spam: a takedown is a takedown", flag: ptr(objkt.FlagRemoved), want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, (&objkt.Token{Flag: tt.flag}).IsSpam())
+		})
+	}
+}
+
+// TestGetTokenQueryRequestsFlag ensures the GraphQL query selects the moderation flag —
+// the spam signal would silently disappear if the field were dropped from the query.
+func TestGetTokenQueryRequestsFlag(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTPClient := mocks.NewMockHTTPClient(ctrl)
+	mockLimiter := mocks.NewMockLimiter(ctrl)
+	client := objkt.NewClient(mockHTTPClient, mockLimiter, OBJKT_API_URL, "", adapter.NewJSON())
+	ctx := context.Background()
+
+	mockLimiter.EXPECT().
+		Do(gomock.Any(), objkt.PROVIDER_NAME, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, providerName string, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+			return fn(ctx)
+		})
+
+	var capturedBody []byte
+	mockHTTPClient.
+		EXPECT().
+		PostBytes(gomock.Any(), OBJKT_API_URL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, _ map[string]string, body io.Reader) ([]byte, error) {
+			var err error
+			capturedBody, err = io.ReadAll(body)
+			require.NoError(t, err)
+			return []byte(`{"data":{"token":[{"name":"t","flag":"banned","creators":[]}]}}`), nil
+		})
+
+	token, err := client.GetToken(ctx, "KT1abc", "1")
+	require.NoError(t, err)
+
+	assert.Contains(t, string(capturedBody), "flag", "GetToken query must select the flag field")
+	require.NotNil(t, token.Flag)
+	assert.True(t, token.IsSpam())
+}
