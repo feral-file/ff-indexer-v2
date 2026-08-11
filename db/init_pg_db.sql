@@ -159,9 +159,16 @@ CREATE TABLE token_media_health (
     health_status media_health_status NOT NULL DEFAULT 'unknown',
     last_checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_error TEXT,
+    -- L0 content-validation observability (added in migration 022). failure_reason values:
+    -- http_status | dns | ssrf | type_mismatch | container_invalid | directory_listing |
+    -- known_error_page | zero_length | truncated; the render_% prefix is reserved for the
+    -- L1 render probe. All three are NULL when healthy/unknown or not yet content-probed.
+    failure_reason TEXT,
+    observed_content_type TEXT,  -- Content-Type header from the last probe
+    sniffed_content_type TEXT,   -- magic-byte-detected type from the first bytes of the body
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    
+
     -- One health record per token per URL hash per source (using hash for efficiency)
     UNIQUE(token_id, media_url_hash, media_source)
 );

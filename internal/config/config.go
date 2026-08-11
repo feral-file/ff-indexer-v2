@@ -27,6 +27,13 @@ type URIConfig struct {
 	IPFSGateways    []string `mapstructure:"ipfs_gateways"`
 	ArweaveGateways []string `mapstructure:"arweave_gateways"`
 	OnchfsGateways  []string `mapstructure:"onchfs_gateways"`
+	// ProbeMaxBytes caps how many body bytes a health probe reads for content validation
+	// (0 = uri.DefaultProbeMaxBytes)
+	ProbeMaxBytes int `mapstructure:"probe_max_bytes"`
+	// KnownBadPageMarkers are case-insensitive substrings identifying gateway error pages
+	// served with HTTP 200 (matched against HTML bodies only; operator-editable so a new
+	// gateway quirk needs no deploy)
+	KnownBadPageMarkers []string `mapstructure:"known_bad_page_markers"`
 }
 
 // DatabaseConfig holds database configuration
@@ -267,6 +274,38 @@ type MediaHealthSweeperConfig struct {
 	BatchSize    int           `mapstructure:"batch_size"`
 	RecheckAfter time.Duration `mapstructure:"recheck_after"`
 	Worker       WorkerConfig  `mapstructure:"worker"`
+}
+
+// EffectiveURI returns the sweeper's URI settings with unset fields inherited from the
+// root uri section.
+//
+// Reason: the documented operator remediation for a newly identified 200 error page is
+// "add a marker to uri.known_bad_page_markers" — without inheritance that setting reaches
+// worker-core but silently never the scheduled sweeper, which does the bulk of health
+// checking, so the bad page keeps being marked healthy. Trade-offs: inheritance is
+// per-field and only for unset values, so a deployment that deliberately configures the
+// nested media_health_sweeper.uri section keeps full override power. Constraints: empty
+// slice and zero are the "unset" sentinels — there is no way to nest an explicit
+// "no markers" override, which is acceptable because an empty marker list only ever
+// means "nothing configured".
+func (c *MediaHealthSweeperConfig) EffectiveURI(root URIConfig) URIConfig {
+	effective := c.URI
+	if len(effective.IPFSGateways) == 0 {
+		effective.IPFSGateways = root.IPFSGateways
+	}
+	if len(effective.ArweaveGateways) == 0 {
+		effective.ArweaveGateways = root.ArweaveGateways
+	}
+	if len(effective.OnchfsGateways) == 0 {
+		effective.OnchfsGateways = root.OnchfsGateways
+	}
+	if effective.ProbeMaxBytes <= 0 {
+		effective.ProbeMaxBytes = root.ProbeMaxBytes
+	}
+	if len(effective.KnownBadPageMarkers) == 0 {
+		effective.KnownBadPageMarkers = root.KnownBadPageMarkers
+	}
+	return effective
 }
 
 // ModerationSweeperConfig holds configuration for the moderation verdict sweeper
@@ -618,6 +657,8 @@ func applyAppConfigDefaults(v *viper.Viper) {
 
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
+	v.SetDefault("uri.probe_max_bytes", 32*1024)
+	v.SetDefault("uri.known_bad_page_markers", []string{})
 	v.SetDefault("rasterizer.width", 2048)
 	v.SetDefault("rasterizer.timeout_ms", 15000)
 	v.SetDefault("rasterizer.browser_fallback_enabled", false)
@@ -791,6 +832,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"uri.ipfs_gateways",
 		"uri.arweave_gateways",
 		"uri.onchfs_gateways",
+		"uri.probe_max_bytes",
+		"uri.known_bad_page_markers",
 		// Cloudflare
 		"cloudflare.account_id",
 		"cloudflare.api_token",
@@ -820,6 +863,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
 		"media_health_sweeper.uri.onchfs_gateways",
+		"media_health_sweeper.uri.probe_max_bytes",
+		"media_health_sweeper.uri.known_bad_page_markers",
 		// Moderation Verdict Sweeper config
 		"moderation_sweeper.batch_size",
 		"moderation_sweeper.worker.pool_size",

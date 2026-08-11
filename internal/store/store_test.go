@@ -2466,7 +2466,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, animURL1, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL1, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Token 2: Has healthy image URL only (viewable)
@@ -2485,7 +2485,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL2, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL2, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Token 3: Has broken animation URL (not viewable)
@@ -2505,7 +2505,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		})
 		require.NoError(t, err)
 		errorMsg := "404 Not Found"
-		err = store.UpdateTokenMediaHealthByURL(ctx, animURL3, schema.MediaHealthStatusBroken, &errorMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL3, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg})
 		require.NoError(t, err)
 
 		// Token 4: Has broken image URL only (not viewable)
@@ -2524,7 +2524,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL4, schema.MediaHealthStatusBroken, &errorMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL4, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg})
 		require.NoError(t, err)
 
 		// Token 5: Has no media health records (considered broken - no media URLs)
@@ -2560,9 +2560,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, animURL6, schema.MediaHealthStatusBroken, &errorMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL6, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL6, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL6, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Batch update viewability for all tokens after setting media health
@@ -5543,7 +5543,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			require.NoError(t, err)
 
 			// Mark media as healthy
-			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 			require.NoError(t, err)
 		}
 
@@ -5584,7 +5584,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			require.NoError(t, err)
 
 			// Mark media as healthy
-			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 			require.NoError(t, err)
 		}
 
@@ -5636,7 +5636,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Mark media as healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Update viewability
@@ -5682,7 +5682,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			require.NoError(t, err)
 
 			// Mark media as healthy
-			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 			require.NoError(t, err)
 		}
 
@@ -5733,7 +5733,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 				require.NoError(t, err)
 
 				// Mark media as healthy
-				err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+				err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 				require.NoError(t, err)
 
 				tokenIDWithMedia = token.ID
@@ -5788,7 +5788,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Mark media as healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Update viewability
@@ -5838,7 +5838,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		assert.Contains(t, urls, imageURL)
 
 		// Update health status to healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// URL should no longer be in list (recently checked)
@@ -5871,7 +5871,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Update to healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Batch update viewability and verify token became viewable
@@ -5884,7 +5884,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 
 		// Update to broken with error
 		errorMsg := "404 Not Found"
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusBroken, &errorMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg})
 		require.NoError(t, err)
 
 		// Batch update viewability and verify token became not viewable
@@ -5899,6 +5899,67 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		changes, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenData.ID})
 		require.NoError(t, err)
 		assert.Empty(t, changes, "should have no changes when viewability doesn't change")
+	})
+
+	t.Run("UpdateTokenMediaHealthByURL round-trips content-validation fields and healthy clears them", func(t *testing.T) {
+		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100007", "7", "0xowner7")
+		err := store.CreateTokenMint(ctx, token)
+		require.NoError(t, err)
+		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+		require.NoError(t, err)
+
+		imageURL := "https://example.com/content-validated.png"
+		metadata := map[string]interface{}{"image": imageURL}
+		metadataJSON, _ := json.Marshal(metadata)
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenData.ID,
+			OriginJSON:      metadataJSON,
+			LatestJSON:      metadataJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imageURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		// Broken with the full L0 outcome persists all fields
+		errorMsg := "declared image/png but body is text/html"
+		reason := schema.MediaFailureTypeMismatch.String()
+		observed := "image/png"
+		sniffed := "text/html"
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{
+			Status:              schema.MediaHealthStatusBroken,
+			LastError:           &errorMsg,
+			FailureReason:       &reason,
+			ObservedContentType: &observed,
+			SniffedContentType:  &sniffed,
+		})
+		require.NoError(t, err)
+
+		healthRows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenData.ID})
+		require.NoError(t, err)
+		require.Len(t, healthRows[tokenData.ID], 1)
+		row := healthRows[tokenData.ID][0]
+		assert.Equal(t, schema.MediaHealthStatusBroken, row.HealthStatus)
+		require.NotNil(t, row.FailureReason)
+		assert.Equal(t, reason, *row.FailureReason)
+		require.NotNil(t, row.ObservedContentType)
+		assert.Equal(t, observed, *row.ObservedContentType)
+		require.NotNil(t, row.SniffedContentType)
+		assert.Equal(t, sniffed, *row.SniffedContentType)
+
+		// A healthy verdict clears every failure field from the previous broken one
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
+		require.NoError(t, err)
+
+		healthRows, err = store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenData.ID})
+		require.NoError(t, err)
+		require.Len(t, healthRows[tokenData.ID], 1)
+		row = healthRows[tokenData.ID][0]
+		assert.Equal(t, schema.MediaHealthStatusHealthy, row.HealthStatus)
+		assert.Nil(t, row.LastError)
+		assert.Nil(t, row.FailureReason)
+		assert.Nil(t, row.ObservedContentType)
+		assert.Nil(t, row.SniffedContentType)
 	})
 
 	t.Run("UpdateMediaURLAndPropagate updates URL health status and metadata URLs", func(t *testing.T) {
@@ -5932,12 +5993,44 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 			require.NoError(t, err)
 		}
 
-		// Update URL and propagate (this also propagates health status)
-		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL)
+		// Record a full L0 broken outcome on the old URL first: fallback promotion must
+		// not carry the failed URL's observations onto the healthy replacement.
+		errMsg := "HTTP 404"
+		reason := schema.MediaFailureHTTPStatus.String()
+		htmlType := "text/html"
+		err = store.UpdateTokenMediaHealthByURL(ctx, oldURL, MediaHealthUpdate{
+			Status:              schema.MediaHealthStatusBroken,
+			LastError:           &errMsg,
+			FailureReason:       &reason,
+			ObservedContentType: &htmlType,
+			SniffedContentType:  &htmlType,
+		})
 		require.NoError(t, err)
 
+		// Update URL and propagate (this also propagates health status). The promoted
+		// row carries the fallback probe's own validated observations — the winning
+		// gateway's bytes were just content-validated, and NULL would falsify the
+		// documented "not yet probed" meaning.
+		pngType := "image/png"
+		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL, &pngType, &pngType)
+		require.NoError(t, err)
+
+		// Promotion marks the row healthy, clears the replaced URL's failure fields, and
+		// records the fallback's observations.
+		promotedRows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{token1Data.ID})
+		require.NoError(t, err)
+		require.Len(t, promotedRows[token1Data.ID], 1)
+		promoted := promotedRows[token1Data.ID][0]
+		assert.Equal(t, schema.MediaHealthStatusHealthy, promoted.HealthStatus)
+		assert.Nil(t, promoted.LastError)
+		assert.Nil(t, promoted.FailureReason, "stale failure_reason must not survive promotion")
+		require.NotNil(t, promoted.ObservedContentType, "the fallback's observed type must be recorded")
+		assert.Equal(t, pngType, *promoted.ObservedContentType)
+		require.NotNil(t, promoted.SniffedContentType, "the fallback's sniffed type must be recorded")
+		assert.Equal(t, pngType, *promoted.SniffedContentType)
+
 		// Mark new URL as healthy (after propagation)
-		err = store.UpdateTokenMediaHealthByURL(ctx, newURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, newURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Update viewability
@@ -6011,11 +6104,11 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Mark image as healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, sharedImageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, sharedImageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Mark animation as broken
-		err = store.UpdateTokenMediaHealthByURL(ctx, animationURL, schema.MediaHealthStatusBroken, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animationURL, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken})
 		require.NoError(t, err)
 
 		// Batch update both tokens
@@ -6080,9 +6173,9 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		errMsg := "404 Not Found"
-		err = store.UpdateTokenMediaHealthByURL(ctx, animURL, schema.MediaHealthStatusBroken, &errMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errMsg})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		result, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenData.ID})
@@ -6119,7 +6212,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Query with a different (non-existent) token ID

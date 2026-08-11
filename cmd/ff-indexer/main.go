@@ -158,10 +158,16 @@ func run() int {
 	}
 	ioAdapter := adapter.NewIO()
 	clock := adapter.NewClock()
+	// Nested media_health_sweeper.uri overrides win; unset fields inherit the root uri
+	// section so the documented "add a marker to uri.known_bad_page_markers" remediation
+	// reaches the sweeper too.
+	sweeperURI := sweeperCfg.MediaHealthSweeper.EffectiveURI(cfg.URI)
 	uriResolverConfig := &uri.Config{
-		IPFSGateways:    sweeperCfg.MediaHealthSweeper.URI.IPFSGateways,
-		ArweaveGateways: sweeperCfg.MediaHealthSweeper.URI.ArweaveGateways,
-		OnChFSGateways:  sweeperCfg.MediaHealthSweeper.URI.OnchfsGateways,
+		IPFSGateways:        sweeperURI.IPFSGateways,
+		ArweaveGateways:     sweeperURI.ArweaveGateways,
+		OnChFSGateways:      sweeperURI.OnchfsGateways,
+		ProbeMaxBytes:       sweeperURI.ProbeMaxBytes,
+		KnownBadPageMarkers: sweeperURI.KnownBadPageMarkers,
 	}
 	urlHealthChecker := uri.NewURLChecker(httpClient, ioAdapter, uriResolverConfig)
 	dataURIChecker := uri.NewDataURIChecker()

@@ -1,9 +1,7 @@
 package uri_test
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"testing"
 
@@ -29,8 +27,10 @@ import (
 // sampling of 121 production tokens, with no URL failing consistently), so no live URL is a
 // stable oracle and a network-backed assertion would flap.
 //
-// Constraints: the checker exhausts HEAD, GET+Range and plain GET on the original URL before
-// falling back, so every one of those must fail for the OnChFS branch to run at all.
+// Constraints: under the content-validating checker the direct probe is a single ranged GET;
+// the gateway fallback rebuilds candidate URLs from the full reference, so for the URL's own
+// gateway the candidate is the player URL again. The strict mock makes any request for the
+// bare-hash URL a test failure — the trap this test exists to catch.
 func TestURLChecker_OnChFSFallbackPreservesQueryParams(t *testing.T) {
 	t.Parallel()
 
@@ -41,48 +41,21 @@ func TestURLChecker_OnChFSFallbackPreservesQueryParams(t *testing.T) {
 		playerURL = gateway + "/" + hash +
 			"/?fxhash=ooN5RUSuuSUEAxBcAAyHT6BrmT4tR5hFuhc5wmZw7TLeFuUaxWV" +
 			"&fxiteration=131&fxminter=tz1cbJ2fHK4Tv7yES7Tq9dc9k8gXArnk7DyE"
-		// The query-less URL a naive fallback probes instead.
-		bareHashURL = gateway + "/" + hash
 	)
 
 	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 	mockHTTP := mocks.NewMockHTTPClient(ctrl)
 	mockIO := mocks.NewMockIO(ctrl)
 
-	// The player's URL is broken on this gateway for every method the checker tries.
-	serverError := func() *http.Response {
-		return &http.Response{
-			StatusCode: http.StatusInternalServerError,
-			Body:       io.NopCloser(bytes.NewReader(nil)),
-		}
-	}
+	// The player's URL is broken on this gateway: the direct probe 500s, and the gateway
+	// fallback — which must carry the full reference — asks for the same player URL and
+	// sees the same 500. No expectation exists for the bare-hash URL, so a query-dropping
+	// probe fails the strict mock instead of finding the trap 200.
 	mockHTTP.EXPECT().
-		HeadNoRetry(gomock.Any(), playerURL).
-		Return(serverError(), nil)
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), playerURL, map[string]string{"Range": "bytes=0-1023"}).
-		Return(serverError(), nil)
-	mockHTTP.EXPECT().
-		GetResponseNoRetry(gomock.Any(), playerURL, nil).
-		Return(serverError(), nil)
-	mockIO.EXPECT().Discard(gomock.Any()).Return(nil).AnyTimes()
-
-	// The bare content hash is served fine — the trap that makes a query-less probe pass.
-	// AnyTimes so this test states the requirement (never report healthy) without pinning
-	// the fix to one particular probe strategy.
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), bareHashURL).
-		Return(&http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(bytes.NewReader(nil)),
-		}, nil).
-		AnyTimes()
-
-	// A fix that re-probes with the parameters intact sees the same 500 the player sees.
-	mockHTTP.EXPECT().
-		Head(gomock.Any(), playerURL).
-		Return(serverError(), nil).
-		AnyTimes()
+		GetResponseNoRetry(gomock.Any(), playerURL, probeRangeHeader).
+		Return(httpResp(http.StatusInternalServerError, "", nil, nil), nil).
+		Times(2) // direct check + gateway-fallback probe of the same canonical URL
 
 	checker := uri.NewURLChecker(mockHTTP, mockIO, &uri.Config{
 		OnChFSGateways: []string{gateway},

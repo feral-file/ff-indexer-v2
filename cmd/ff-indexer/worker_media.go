@@ -62,11 +62,13 @@ func registerWorkerMedia(
 	mediaDownloaderHTTPClient := adapter.NewHTTPClientWithSSRF(15*time.Minute, ssrfValidator, wcfg.Security.SSRFProtection.MaxRedirects)
 
 	uriResolverConfig := &uri.Config{
-		IPFSGateways:    wcfg.URI.IPFSGateways,
-		ArweaveGateways: wcfg.URI.ArweaveGateways,
-		OnChFSGateways:  wcfg.URI.OnchfsGateways,
+		IPFSGateways:        wcfg.URI.IPFSGateways,
+		ArweaveGateways:     wcfg.URI.ArweaveGateways,
+		OnChFSGateways:      wcfg.URI.OnchfsGateways,
+		ProbeMaxBytes:       wcfg.URI.ProbeMaxBytes,
+		KnownBadPageMarkers: wcfg.URI.KnownBadPageMarkers,
 	}
-	uriResolver := uri.NewResolver(httpClient, uriResolverConfig)
+	uriResolver := uri.NewResolver(httpClient, ioAdapter, uriResolverConfig)
 
 	// Cloudflare media + download path; rasterizer and image transform pipeline.
 	cfClient, err := adapter.NewCloudflareClient(wcfg.Cloudflare.APIToken)

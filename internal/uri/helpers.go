@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 
 	"go.uber.org/zap"
 
-	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 )
@@ -50,7 +48,18 @@ func OnChFSGatewayRef(rawURL, hash string) string {
 	return ref
 }
 
-// noteGatewayProbeFailure records SSRF policy blocks vs DNS resolution failures from parallel gateway HEAD probes.
+// GatewayProbe validates that a candidate gateway URL serves usable content, returning nil
+// on success.
+//
+// Reason: gateway selection previously accepted the first candidate answering 200 to a bare
+// HEAD — which is exactly how a directory CID's listing page became the stored "working"
+// URL (feral-file#3482). Probes now perform the same validated ranged GET as direct health
+// checks, so a gateway only wins if its bytes look like media. Constraints: transport
+// errors must preserve ssrf.ErrBlocked / ssrf.ErrResolutionFailed sentinel classes (via
+// errors.Is) for noteGatewayProbeFailure precedence.
+type GatewayProbe func(ctx context.Context, url string) error
+
+// noteGatewayProbeFailure records SSRF policy blocks vs DNS resolution failures from parallel gateway probes.
 // ErrBlocked takes precedence when surfacing an error to callers.
 func noteGatewayProbeFailure(err error, blocked *error, resolution *error) {
 	if err == nil {
@@ -64,46 +73,40 @@ func noteGatewayProbeFailure(err error, blocked *error, resolution *error) {
 	}
 }
 
-// FindWorkingIPFSGateway finds a working IPFS gateway for the given CID
-// It tries all gateways in parallel and returns the first working one
-func FindWorkingIPFSGateway(ctx context.Context, httpClient adapter.HTTPClient, cid string, gateways []string) (string, error) {
-	if len(gateways) == 0 {
-		return "", fmt.Errorf("no IPFS gateways configured")
+// findWorkingGateway probes all candidate URLs in parallel and returns the first that
+// validates. label names the gateway family for logs and the not-found error.
+//
+// The three exported wrappers existed as near-identical copies before being collapsed
+// here; only the candidate URL format differs per family.
+func findWorkingGateway(ctx context.Context, probe GatewayProbe, candidateURLs []string, label, id string) (string, error) {
+	if len(candidateURLs) == 0 {
+		return "", fmt.Errorf("no %s gateways configured", label)
 	}
 
-	logger.InfoCtx(ctx, "Finding working IPFS gateway", zap.String("cid", cid), zap.Int("gateways", len(gateways)))
+	logger.InfoCtx(ctx, "Finding working gateway",
+		zap.String("family", label),
+		zap.String("id", id),
+		zap.Int("gateways", len(candidateURLs)),
+	)
 
-	// Try all gateways in parallel
 	type result struct {
 		url string
 		err error
 	}
 
-	resultCh := make(chan result, len(gateways))
+	resultCh := make(chan result, len(candidateURLs))
 	var wg sync.WaitGroup
 
-	// Test each gateway with HEAD request
-	for _, gateway := range gateways {
+	for _, url := range candidateURLs {
 		wg.Add(1)
-		go func(gw string) {
+		go func(u string) {
 			defer wg.Done()
-
-			url := fmt.Sprintf("%s/ipfs/%s", gw, cid)
-			resp, err := httpClient.Head(ctx, url)
-			if err != nil {
+			if err := probe(ctx, u); err != nil {
 				resultCh <- result{err: err}
 				return
 			}
-			if err := resp.Body.Close(); err != nil {
-				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", url))
-			}
-
-			if resp.StatusCode == http.StatusOK {
-				resultCh <- result{url: url}
-			} else {
-				resultCh <- result{err: fmt.Errorf("gateway returned status %d", resp.StatusCode)}
-			}
-		}(gateway)
+			resultCh <- result{url: u}
+		}(url)
 	}
 
 	// Wait for all goroutines in a separate goroutine
@@ -116,7 +119,7 @@ func FindWorkingIPFSGateway(ctx context.Context, httpClient adapter.HTTPClient, 
 	var blockedErr, resolutionErr error
 	for res := range resultCh {
 		if res.err == nil {
-			logger.InfoCtx(ctx, "Found working IPFS gateway", zap.String("url", res.url))
+			logger.InfoCtx(ctx, "Found working gateway", zap.String("family", label), zap.String("url", res.url))
 			return res.url, nil
 		}
 		noteGatewayProbeFailure(res.err, &blockedErr, &resolutionErr)
@@ -129,79 +132,31 @@ func FindWorkingIPFSGateway(ctx context.Context, httpClient adapter.HTTPClient, 
 		return "", resolutionErr
 	}
 
-	return "", fmt.Errorf("no working IPFS gateway found for CID: %s", cid)
+	return "", fmt.Errorf("no working %s gateway found for %s", label, id)
 }
 
-// FindWorkingArweaveGateway finds a working Arweave gateway for the given transaction ID
-// It tries all gateways in parallel and returns the first working one
-func FindWorkingArweaveGateway(ctx context.Context, httpClient adapter.HTTPClient, txID string, gateways []string) (string, error) {
-	if len(gateways) == 0 {
-		return "", fmt.Errorf("no Arweave gateways configured")
+// FindWorkingIPFSGateway finds a working IPFS gateway for the given CID.
+// It probes all gateways in parallel and returns the first whose content validates.
+func FindWorkingIPFSGateway(ctx context.Context, probe GatewayProbe, cid string, gateways []string) (string, error) {
+	urls := make([]string, len(gateways))
+	for i, gw := range gateways {
+		urls[i] = fmt.Sprintf("%s/ipfs/%s", gw, cid)
 	}
+	return findWorkingGateway(ctx, probe, urls, "IPFS", cid)
+}
 
-	logger.InfoCtx(ctx, "Finding working Arweave gateway", zap.String("txID", txID), zap.Int("gateways", len(gateways)))
-
-	// Try all gateways in parallel
-	type result struct {
-		url string
-		err error
+// FindWorkingArweaveGateway finds a working Arweave gateway for the given transaction ID.
+// It probes all gateways in parallel and returns the first whose content validates.
+func FindWorkingArweaveGateway(ctx context.Context, probe GatewayProbe, txID string, gateways []string) (string, error) {
+	urls := make([]string, len(gateways))
+	for i, gw := range gateways {
+		urls[i] = fmt.Sprintf("%s/%s", gw, txID)
 	}
-
-	resultCh := make(chan result, len(gateways))
-	var wg sync.WaitGroup
-
-	// Test each gateway with HEAD request
-	for _, gateway := range gateways {
-		wg.Add(1)
-		go func(gw string) {
-			defer wg.Done()
-
-			url := fmt.Sprintf("%s/%s", gw, txID)
-			resp, err := httpClient.Head(ctx, url)
-			if err != nil {
-				resultCh <- result{err: err}
-				return
-			}
-			if err := resp.Body.Close(); err != nil {
-				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", url))
-			}
-
-			if resp.StatusCode == http.StatusOK {
-				resultCh <- result{url: url}
-			} else {
-				resultCh <- result{err: fmt.Errorf("gateway returned status %d", resp.StatusCode)}
-			}
-		}(gateway)
-	}
-
-	// Wait for all goroutines in a separate goroutine
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	// Return the first successful result
-	var blockedErr, resolutionErr error
-	for res := range resultCh {
-		if res.err == nil {
-			logger.InfoCtx(ctx, "Found working Arweave gateway", zap.String("url", res.url))
-			return res.url, nil
-		}
-		noteGatewayProbeFailure(res.err, &blockedErr, &resolutionErr)
-	}
-
-	if blockedErr != nil {
-		return "", blockedErr
-	}
-	if resolutionErr != nil {
-		return "", resolutionErr
-	}
-
-	return "", fmt.Errorf("no working Arweave gateway found for TX: %s", txID)
+	return findWorkingGateway(ctx, probe, urls, "Arweave", txID)
 }
 
 // FindWorkingOnChFSGateway finds a working OnChFS gateway for the given resource reference.
-// It tries all gateways in parallel and returns the first working one.
+// It probes all gateways in parallel and returns the first whose content validates.
 //
 // The ref parameter is a gateway-relative reference: a Keccak-256 hash (64 hex characters)
 // optionally followed by a path suffix, query string and fragment.
@@ -214,68 +169,10 @@ func FindWorkingArweaveGateway(ctx context.Context, httpClient adapter.HTTPClien
 // Constraints: ref must be passed through verbatim. Callers that hold a full gateway URL should
 // derive it with OnChFSGatewayRef rather than reducing the URL to its hash. Any fragment is
 // carried for the returned URL only; net/http never puts a fragment on the wire.
-func FindWorkingOnChFSGateway(ctx context.Context, httpClient adapter.HTTPClient, ref string, gateways []string) (string, error) {
-	if len(gateways) == 0 {
-		return "", fmt.Errorf("no OnChFS gateways configured")
+func FindWorkingOnChFSGateway(ctx context.Context, probe GatewayProbe, ref string, gateways []string) (string, error) {
+	urls := make([]string, len(gateways))
+	for i, gw := range gateways {
+		urls[i] = fmt.Sprintf("%s/%s", gw, ref)
 	}
-
-	logger.InfoCtx(ctx, "Finding working OnChFS gateway", zap.String("ref", ref), zap.Int("gateways", len(gateways)))
-
-	// Try all gateways in parallel
-	type result struct {
-		url string
-		err error
-	}
-
-	resultCh := make(chan result, len(gateways))
-	var wg sync.WaitGroup
-
-	// Test each gateway with HEAD request
-	for _, gateway := range gateways {
-		wg.Add(1)
-		go func(gw string) {
-			defer wg.Done()
-
-			url := fmt.Sprintf("%s/%s", gw, ref)
-			resp, err := httpClient.Head(ctx, url)
-			if err != nil {
-				resultCh <- result{err: err}
-				return
-			}
-			if err := resp.Body.Close(); err != nil {
-				logger.WarnCtx(ctx, "failed to close response body", zap.Error(err), zap.String("url", url))
-			}
-
-			if resp.StatusCode == http.StatusOK {
-				resultCh <- result{url: url}
-			} else {
-				resultCh <- result{err: fmt.Errorf("gateway returned status %d", resp.StatusCode)}
-			}
-		}(gateway)
-	}
-
-	// Wait for all goroutines in a separate goroutine
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	// Return the first successful result
-	var blockedErr, resolutionErr error
-	for res := range resultCh {
-		if res.err == nil {
-			logger.InfoCtx(ctx, "Found working OnChFS gateway", zap.String("url", res.url))
-			return res.url, nil
-		}
-		noteGatewayProbeFailure(res.err, &blockedErr, &resolutionErr)
-	}
-
-	if blockedErr != nil {
-		return "", blockedErr
-	}
-	if resolutionErr != nil {
-		return "", resolutionErr
-	}
-
-	return "", fmt.Errorf("no working OnChFS gateway found for ref: %s", ref)
+	return findWorkingGateway(ctx, probe, urls, "OnChFS", ref)
 }

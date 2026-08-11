@@ -2875,18 +2875,21 @@ func (s *pgStore) GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []
 	return result, nil
 }
 
-// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
-func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error {
+// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL.
+//
+// Matching is by media_url_hash only (no token_id / media_source filter) because health is
+// a property of the URL: one probe outcome applies to every token and source sharing it.
+// All nullable fields are written unconditionally (nil → NULL) so a healthy verdict clears
+// the error/failure fields left by a previous broken one.
+func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, update MediaHealthUpdate) error {
 	urlHash := types.MD5Hash(url)
 	updates := map[string]interface{}{
-		"health_status":   status,
-		"last_checked_at": time.Now(),
-	}
-
-	if lastError != nil {
-		updates["last_error"] = *lastError
-	} else {
-		updates["last_error"] = nil
+		"health_status":         update.Status,
+		"last_checked_at":       time.Now(),
+		"last_error":            nullableString(update.LastError),
+		"failure_reason":        nullableString(update.FailureReason),
+		"observed_content_type": nullableString(update.ObservedContentType),
+		"sniffed_content_type":  nullableString(update.SniffedContentType),
 	}
 
 	return s.db.WithContext(ctx).
@@ -2895,21 +2898,39 @@ func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, s
 		Updates(updates).Error
 }
 
-// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
-func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error {
+// nullableString maps a *string to a value GORM writes as the string or SQL NULL.
+func nullableString(s *string) interface{} {
+	if s != nil {
+		return *s
+	}
+	return nil
+}
+
+// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction.
+//
+// Reason: the promoted row carries the fallback probe's OWN observations
+// (observedContentType/sniffedContentType, nil → NULL), not the replaced URL's — the
+// winning gateway's bytes were just content-validated, and leaving the columns NULL
+// would falsify their documented "not yet probed" meaning and starve render-probe class
+// selection until a much later sweep. The replaced URL's failure diagnostics are always
+// cleared: they describe a different URL's probe.
+func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string, observedContentType, sniffedContentType *string) error {
 	oldHash := types.MD5Hash(oldURL)
 	newHash := types.MD5Hash(newURL)
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Update token_media_health
+		// 1. Update token_media_health.
 		if err := tx.Model(&schema.TokenMediaHealth{}).
 			Where("media_url_hash = ?", oldHash).
 			Updates(map[string]interface{}{
-				"media_url":       newURL,
-				"media_url_hash":  newHash,
-				"health_status":   schema.MediaHealthStatusHealthy,
-				"last_checked_at": time.Now(),
-				"last_error":      nil,
+				"media_url":             newURL,
+				"media_url_hash":        newHash,
+				"health_status":         schema.MediaHealthStatusHealthy,
+				"last_checked_at":       time.Now(),
+				"last_error":            nil,
+				"failure_reason":        nil,
+				"observed_content_type": nullableString(observedContentType),
+				"sniffed_content_type":  nullableString(sniffedContentType),
 			}).Error; err != nil {
 			return fmt.Errorf("failed to update token_media_health: %w", err)
 		}

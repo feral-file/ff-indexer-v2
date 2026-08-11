@@ -140,6 +140,28 @@ type TokenViewabilityChange struct {
 	NewViewable bool   `gorm:"column:new_viewable"`
 }
 
+// MediaHealthUpdate carries the full outcome of a media health probe into
+// UpdateTokenMediaHealthByURL.
+//
+// Reason: a struct argument instead of positional parameters — the L0 content-validating
+// probe produces five fields, and threading five positional pointers through every writer
+// (sweeper, core executor) is unreadable and error-prone. All pointer fields follow the
+// same contract as last_error historically did: nil writes NULL, so a healthy verdict
+// clears the failure fields of the previous broken one.
+type MediaHealthUpdate struct {
+	// Status is the new health status (required).
+	Status schema.MediaHealthStatus
+	// LastError is the human-facing message from the last failed check; nil clears it.
+	LastError *string
+	// FailureReason is the machine-readable broken cause (schema.MediaFailureReason
+	// values; the render_ prefix is reserved for the L1 render probe); nil clears it.
+	FailureReason *string
+	// ObservedContentType is the Content-Type header seen on the probe; nil clears it.
+	ObservedContentType *string
+	// SniffedContentType is the magic-byte-detected type of the body; nil clears it.
+	SniffedContentType *string
+}
+
 // DefaultModerationRecheckInterval is the default value of
 // moderation_sweeper.initial_recheck_interval — the first re-check delay for a fresh
 // vendor spam verdict. Both writers (the enricher when it creates a verdict row,
@@ -436,9 +458,13 @@ type Store interface {
 	// Used by the API display layer to serve health-aware URLs instead of raw metadata URLs.
 	GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []uint64) (map[uint64][]schema.TokenMediaHealth, error)
 	// UpdateTokenMediaHealthByURL updates health status for all records with a specific URL
-	UpdateTokenMediaHealthByURL(ctx context.Context, url string, status schema.MediaHealthStatus, lastError *string) error
-	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source tables (metadata/enrichment) in a transaction
-	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string) error
+	UpdateTokenMediaHealthByURL(ctx context.Context, url string, update MediaHealthUpdate) error
+	// UpdateMediaURLAndPropagate updates a URL across token_media_health and source
+	// tables (metadata/enrichment) in a transaction. observedContentType and
+	// sniffedContentType are the promoted URL's own validated observations from the
+	// fallback probe (nil writes NULL); the replaced URL's diagnostics are always
+	// cleared.
+	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string, observedContentType, sniffedContentType *string) error
 
 	// =============================================================================
 	// Token Viewability Operations

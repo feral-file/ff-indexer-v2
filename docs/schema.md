@@ -215,6 +215,9 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 | health_status | media_health_status | Health status (unknown, healthy, broken, checking) |
 | last_checked_at | TIMESTAMPTZ | Last health check timestamp |
 | last_error | TEXT | Error message from last failed check (NULL if healthy) |
+| failure_reason | TEXT | Machine-readable broken cause: http_status, dns, ssrf, type_mismatch, container_invalid, directory_listing, known_error_page, zero_length, truncated; render_% prefix reserved for the L1 render probe. NULL when healthy/unknown |
+| observed_content_type | TEXT | Content-Type header observed on the last probe (NULL until content-probed) |
+| sniffed_content_type | TEXT | Magic-byte-detected type from the first bytes of the body (NULL until content-probed); drives render-probe class selection |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 

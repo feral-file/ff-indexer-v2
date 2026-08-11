@@ -1,9 +1,7 @@
 package uri_test
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"os"
 	"testing"
@@ -29,276 +27,138 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// Gateway probing is parallel and returns on first success, so the losing gateway's
+// request may never happen — all gateway expectations use AnyTimes() (the strict-mock
+// race fixed in PR #103 for the old HEAD-based resolver applies identically here).
 func TestResolver_Resolve(t *testing.T) {
+	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+	txID := "sKqjvP7jFwM5HLZmyJQC_9l5hN7TVIYhT6MvSHDqwo0"
+	onchHash := "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
+
 	tests := []struct {
 		name        string
 		uri         string
-		setupMocks  func(*mocks.MockHTTPClient)
+		setupMocks  func(*mocks.MockHTTPClient, *mocks.MockIO)
 		config      *uri.Config
 		expected    string
-		expectedErr string // Error message to assert, empty means no error expected
+		expectedErr string // Error message substring to assert, empty means no error expected
 	}{
 		{
-			name: "regular HTTP URL",
-			uri:  "http://example.com/metadata.json",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-			},
-			expected:    "http://example.com/metadata.json",
-			expectedErr: "",
+			name:     "regular HTTP URL passes through without probing",
+			uri:      "http://example.com/metadata.json",
+			config:   defaultConfig(),
+			expected: "http://example.com/metadata.json",
 		},
 		{
-			name: "regular HTTPS URL",
-			uri:  "https://example.com/path/to/resource",
-			config: &uri.Config{
-				IPFSGateways:    []string{"https://ipfs.io"},
-				ArweaveGateways: []string{"https://arweave.net"},
-			},
-			expected:    "https://example.com/path/to/resource",
-			expectedErr: "",
+			name:     "regular HTTPS URL passes through without probing",
+			uri:      "https://example.com/path/to/resource",
+			config:   defaultConfig(),
+			expected: "https://example.com/path/to/resource",
 		},
 		{
-			name: "IPFS URI",
-			uri:  "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			name: "IPFS URI resolves to gateway serving valid content",
+			uri:  "ipfs://" + cid,
 			config: &uri.Config{
 				IPFSGateways: []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
 			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				// First gateway fails to ensure deterministic behavior
-				// (only second gateway succeeds, so it will always be returned)
-				// Use AnyTimes() since the resolver may return early when the
-				// winning gateway responds before this goroutine runs
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil).
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// First gateway 404s so only the second can win (deterministic outcome).
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusNotFound, "", nil, nil), nil).
 					AnyTimes()
-
-				// Second gateway succeeds
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp2, nil)
-			},
-			expected:    "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			expectedErr: "",
-		},
-		{
-			name: "IPFS gateway URL",
-			uri:  "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			config: &uri.Config{
-				IPFSGateways: []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-			},
-			expected:    "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			expectedErr: "",
-		},
-		{
-			name: "Arweave URI",
-			uri:  "ar://abc123",
-			config: &uri.Config{
-				ArweaveGateways: []string{"https://arweave.net", "https://ar-io.net"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				// Mock both gateways since resolver tries them in parallel
-				// First gateway succeeds - this ensures deterministic behavior
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://arweave.net/abc123").
-					Return(mockResp1, nil)
-
-				// Second gateway fails to ensure deterministic behavior
-				// (only first gateway succeeds, so it will always be returned)
-				// Use AnyTimes() since the resolver may return early when first gateway succeeds
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://ar-io.net/abc123").
-					Return(mockResp2, nil).
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil).
 					AnyTimes()
 			},
-			expected:    "https://arweave.net/abc123",
-			expectedErr: "",
+			expected: "https://gateway.pinata.cloud/ipfs/" + cid,
 		},
 		{
-			name: "IPFS URI - no gateways configured",
-			uri:  "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			config: &uri.Config{
-				IPFSGateways: []string{},
-			},
-			expectedErr: "no IPFS gateways configured",
-		},
-		{
-			name: "IPFS URI - no working gateway",
-			uri:  "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			name: "IPFS URI: gateway serving a directory listing is not selected (feral-file#3482)",
+			uri:  "ipfs://" + cid,
 			config: &uri.Config{
 				IPFSGateways: []string{"https://ipfs.io", "https://gateway.pinata.cloud"},
 			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				// All gateways fail
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil)
-
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://gateway.pinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp2, nil)
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// First gateway 200s a directory listing — previously this won on bare HEAD.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil).
+					AnyTimes()
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil).
+					AnyTimes()
 			},
-			expectedErr: "no working IPFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expected: "https://gateway.pinata.cloud/ipfs/" + cid,
 		},
 		{
-			name: "IPFS URI - network error",
-			uri:  "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			name: "IPFS URI: no gateway serves valid content",
+			uri:  "ipfs://" + cid,
 			config: &uri.Config{
 				IPFSGateways: []string{"https://ipfs.io"},
 			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), gomock.Any()).
-					Return(nil, assert.AnError)
-			},
-			expectedErr: "no working IPFS gateway found for CID: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-		},
-		{
-			name: "Arweave URI - no gateways configured",
-			uri:  "ar://abc123",
-			config: &uri.Config{
-				ArweaveGateways: []string{},
-			},
-			expectedErr: "no Arweave gateways configured",
-		},
-		{
-			name: "Arweave URI - no working gateway",
-			uri:  "ar://abc123",
-			config: &uri.Config{
-				ArweaveGateways: []string{"https://arweave.net"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				mockResp := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://arweave.net/abc123").
-					Return(mockResp, nil)
-			},
-			expectedErr: "no working Arweave gateway found for TX: abc123",
-		},
-		{
-			name: "Arweave URI - network error",
-			uri:  "ar://abc123",
-			config: &uri.Config{
-				ArweaveGateways: []string{"https://arweave.net"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), gomock.Any()).
-					Return(nil, assert.AnError)
-			},
-			expectedErr: "no working Arweave gateway found for TX: abc123",
-		},
-		{
-			name: "OnChFS URI",
-			uri:  "onchfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			config: &uri.Config{
-				OnChFSGateways: []string{"https://onchfs.fxhash2.xyz", "https://onchfs-backup.example.com"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				// Mock both gateways since resolver tries them in parallel
-				// First gateway succeeds - this ensures deterministic behavior
-				mockResp1 := &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp1, nil)
-
-				// Second gateway fails to ensure deterministic behavior
-				// Use AnyTimes() since the resolver may return early when first gateway succeeds
-				mockResp2 := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://onchfs-backup.example.com/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp2, nil).
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil).
 					AnyTimes()
 			},
-			expected:    "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			expectedErr: "",
+			expectedErr: "no working IPFS gateway found",
 		},
 		{
-			name: "OnChFS URI - no gateways configured",
-			uri:  "onchfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			name: "Arweave URI resolves",
+			uri:  "ar://" + txID,
 			config: &uri.Config{
-				OnChFSGateways: []string{},
+				ArweaveGateways: []string{"https://arweave.net"},
 			},
-			expectedErr: "no OnChFS gateways configured",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://arweave.net/"+txID, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/webp", minimalWebP(), nil), nil).
+					AnyTimes()
+			},
+			expected: "https://arweave.net/" + txID,
 		},
 		{
-			name: "OnChFS URI - no working gateway",
-			uri:  "onchfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			name: "Arweave URI: no working gateway",
+			uri:  "ar://" + txID,
+			config: &uri.Config{
+				ArweaveGateways: []string{"https://arweave.net"},
+			},
+			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://arweave.net/"+txID, probeRangeHeader).
+					Return(httpResp(http.StatusNotFound, "", nil, nil), nil).
+					AnyTimes()
+			},
+			expectedErr: "no working Arweave gateway found",
+		},
+		{
+			name: "OnChFS URI resolves",
+			uri:  "onchfs://" + onchHash,
 			config: &uri.Config{
 				OnChFSGateways: []string{"https://onchfs.fxhash2.xyz"},
 			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				mockResp := &http.Response{
-					StatusCode: http.StatusNotFound,
-					Body:       io.NopCloser(bytes.NewReader(nil)),
-				}
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), "https://onchfs.fxhash2.xyz/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").
-					Return(mockResp, nil)
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://onchfs.fxhash2.xyz/"+onchHash, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(16, 16), nil), nil).
+					AnyTimes()
 			},
-			expectedErr: "no working OnChFS gateway found for ref: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			expected: "https://onchfs.fxhash2.xyz/" + onchHash,
 		},
 		{
-			name: "OnChFS URI - network error",
-			uri:  "onchfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-			config: &uri.Config{
-				OnChFSGateways: []string{"https://onchfs.fxhash2.xyz"},
-			},
-			setupMocks: func(mockHTTP *mocks.MockHTTPClient) {
-				mockHTTP.
-					EXPECT().
-					Head(gomock.Any(), gomock.Any()).
-					Return(nil, assert.AnError)
-			},
-			expectedErr: "no working OnChFS gateway found for ref: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			name:        "IPFS URI with no gateways configured",
+			uri:         "ipfs://" + cid,
+			config:      &uri.Config{},
+			expectedErr: "no IPFS gateways configured",
 		},
 	}
 
@@ -308,21 +168,20 @@ func TestResolver_Resolve(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockHTTP := mocks.NewMockHTTPClient(ctrl)
+			mockIO := mocks.NewMockIO(ctrl)
 			if tt.setupMocks != nil {
-				tt.setupMocks(mockHTTP)
+				tt.setupMocks(mockHTTP, mockIO)
 			}
 
-			resolver := uri.NewResolver(mockHTTP, tt.config)
+			resolver := uri.NewResolver(mockHTTP, mockIO, tt.config)
 			result, err := resolver.Resolve(context.Background(), tt.uri)
 
 			if tt.expectedErr != "" {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedErr)
-				assert.Empty(t, result)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.expected, result)
+				assert.ErrorContains(t, err, tt.expectedErr)
+				return
 			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
