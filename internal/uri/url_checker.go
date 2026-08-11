@@ -147,7 +147,7 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 	// error-page markers) are defined over. Retry without Range: the unranged read is
 	// still capped at maxBytes and yields the true prefix.
 	case resp.StatusCode == http.StatusPartialContent:
-		start, end, ok := parseContentRange(resp.Header.Get("Content-Range"))
+		start, end, total, ok := parseContentRange(resp.Header.Get("Content-Range"))
 		if !ok || start != 0 {
 			logger.InfoCtx(ctx, "206 without a valid from-zero Content-Range, retrying without range",
 				zap.String("url", url),
@@ -159,7 +159,22 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 		// server may legitimately satisfy a from-zero range shorter than requested, so
 		// truncation is judged against what this response promised, never against the
 		// Content-Range total (which would false-broken valid media).
-		return p.readAndValidate(resp, end+1)
+		promised := end + 1
+		// A valid prefix shorter than the sniff window that is also shorter than the
+		// resource itself is not the evidence the validator's rules are defined over:
+		// a few leading bytes of binary media sniff as text/plain, and the mismatch
+		// rule would false-broken real media (err-healthy contract). Retry without
+		// Range for the true prefix. A prefix that IS the whole resource
+		// (promised == total) is complete evidence and is validated as-is, whatever
+		// its size.
+		if promised < minClassifiableBytes && (total < 0 || promised < total) {
+			logger.InfoCtx(ctx, "206 prefix too short to classify, retrying without range",
+				zap.String("url", url),
+				zap.Int64("promised_bytes", promised),
+			)
+			return p.probe(ctx, url, false)
+		}
+		return p.readAndValidate(resp, promised)
 
 	// The whole 2xx range is a fetch success (matching the documented L0 contract and the
 	// pre-content-validation checker): 203 arrives via transforming proxies with valid
@@ -242,36 +257,46 @@ func (p *contentProbe) readAndValidate(resp *http.Response, promisedLength int64
 	return probeResult{hcr: result}
 }
 
+// minClassifiableBytes is the smallest valid 206 prefix worth handing to content
+// validation when the resource is larger than it. 512 bytes is the standard content
+// sniffing window (net/http DetectContentType); every container magic signature and the
+// text-vs-binary judgment fit comfortably within it, while a shorter prefix of binary
+// media can sniff as text and false-broken real artworks.
+const minClassifiableBytes = 512
+
 // parseContentRange parses a Content-Range header under the full satisfied single-range
 // grammar: "bytes <start>-<end>/<total|*>" with digit-only positions, start <= end, and
 // (when numeric) total > end. Anything else — including the prefix-plausible
 // "bytes 0-not-a-range/500000" — is rejected so a misbehaving gateway cannot get
-// arbitrary bytes trusted as the resource prefix.
-func parseContentRange(header string) (start, end int64, ok bool) {
+// arbitrary bytes trusted as the resource prefix. total is -1 for the unknown-length
+// form ("*").
+func parseContentRange(header string) (start, end, total int64, ok bool) {
 	after, found := strings.CutPrefix(strings.TrimSpace(header), "bytes ")
 	if !found {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	rangePart, totalPart, found := strings.Cut(after, "/")
 	if !found {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	startStr, endStr, found := strings.Cut(rangePart, "-")
 	if !found {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	start, errStart := strconv.ParseInt(strings.TrimSpace(startStr), 10, 64)
 	end, errEnd := strconv.ParseInt(strings.TrimSpace(endStr), 10, 64)
 	if errStart != nil || errEnd != nil || start < 0 || end < start {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
+	total = -1
 	if totalPart = strings.TrimSpace(totalPart); totalPart != "*" {
-		total, errTotal := strconv.ParseInt(totalPart, 10, 64)
+		var errTotal error
+		total, errTotal = strconv.ParseInt(totalPart, 10, 64)
 		if errTotal != nil || total <= end {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 	}
-	return start, end, true
+	return start, end, total, true
 }
 
 // isConclusiveTruncation reports whether a mid-body read failure is evidence of a

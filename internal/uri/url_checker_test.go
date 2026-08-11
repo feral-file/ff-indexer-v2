@@ -257,6 +257,39 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedStatus: uri.HealthStatusHealthy,
 		},
 		{
+			name: "valid 206 too short to classify retries unranged (err-healthy)",
+			url:  "https://example.com/one-byte-range.gif",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// A valid from-zero 206 promising a single byte of a 5MB GIF: "G"
+				// sniffs as text/plain, so validating this prefix would false-broken
+				// real media as type_mismatch. The probe must fetch the true prefix.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/one-byte-range.gif", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/gif", []byte("G"),
+						map[string]string{"Content-Range": "bytes 0-0/5000000"}), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/one-byte-range.gif", nil).
+					Return(httpResp(http.StatusOK, "image/gif", minimalGIF(10, 10), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+		},
+		{
+			name: "tiny 206 that is the complete resource is conclusive, no retry",
+			url:  "https://example.com/tiny-error.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// bytes 0-9/10: the prefix IS the whole resource, so a text body for a
+				// declared image is the complete evidence, not an undersized window.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/tiny-error.png", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", []byte("not found\n"),
+						map[string]string{"Content-Range": "bytes 0-9/10"}), nil)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureTypeMismatch,
+		},
+		{
 			name: "206 delivering fewer bytes than its own range promised is truncated",
 			url:  "https://example.com/undelivered.png",
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
