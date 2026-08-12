@@ -6004,13 +6004,15 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			}))
 		}
 		past := time.Now().UTC().Add(-time.Hour)
-		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+		gateReason := schema.RenderFailureKnownBad
+		_, err := store.AcquireRenderGate(ctx, schema.MediaRenderProbe{
 			MediaURL: l0OwnedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
-			ConsecutiveFailures: 1, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
-		}))
-
-		due, err := store.GetURLsForChecking(ctx, 0, 500)
+			ConsecutiveFailures: 1, CapturedAt: &past, NextCheckAt: past,
+		}, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, FailureReason: &gateReason, RenderProbeWrite: true})
 		require.NoError(t, err)
+
+		due, err2 := store.GetURLsForChecking(ctx, 0, 500)
+		require.NoError(t, err2)
 		assert.NotContains(t, due, l0OwnedURL, "L1 owns a gated URL outright; L0 must pause")
 		assert.Contains(t, due, plainBrokenURL, "an ungated broken URL keeps its L0 recheck")
 
@@ -6030,6 +6032,48 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.Contains(t, due, l0OwnedURL, "released URL rejoins the L0 sweep")
 	})
 
+	t.Run("observation upserts can neither set nor clear a gate", func(t *testing.T) {
+		// The shadow-mode race this pins: an executor loads a gated row, renders for
+		// many seconds, and writes its observation after the sweeper has released the
+		// gate. If the upsert wrote the marker the executor loaded, it would restore a
+		// released gate without health rows or viewability reconciliation. Gate state
+		// moves only through Acquire/Release; plain upserts preserve whatever the
+		// marker currently is, whatever the passed row says.
+		obsURL := "https://example.com/render/observation-only.html"
+		mintTokenWithMedia(t, &obsURL, nil)
+		markHealthy(t, obsURL, "text/html")
+		past := time.Now().UTC().Add(-time.Hour)
+
+		// Setting via upsert must be a no-op on the marker.
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
+		}))
+		row, err := store.GetMediaRenderProbe(ctx, obsURL)
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.False(t, row.HealthGated, "an observation write must not create a gate")
+
+		// Acquire the gate for real, then write an observation claiming ungated: the
+		// stale-loaded-marker shape, in the direction that would clear a live gate.
+		reason := schema.RenderFailureBlank
+		_, err = store.AcquireRenderGate(ctx, schema.MediaRenderProbe{
+			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2, CapturedAt: &past, NextCheckAt: past,
+		}, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true})
+		require.NoError(t, err)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictStalled,
+			ConsecutiveFailures: 3, HealthGated: false, CapturedAt: &past, NextCheckAt: past,
+		}))
+		row, err = store.GetMediaRenderProbe(ctx, obsURL)
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.True(t, row.HealthGated, "an observation write must not clear a live gate")
+		assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict, "observation fields still update")
+		assert.Equal(t, 3, row.ConsecutiveFailures)
+	})
+
 	t.Run("GetHealthGatedRenderProbes lists only held gates and release drains it", func(t *testing.T) {
 		// The rollback path: with the probe disabled, the sweeper lists held gates and
 		// releases them, because nothing else may heal a render-gated row.
@@ -6043,14 +6087,14 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		past := time.Now().UTC().Add(-time.Hour)
 		blankErr := "blank frame"
 		reason := schema.RenderFailureBlank
-		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, heldURL, MediaHealthUpdate{
+		_, err := store.AcquireRenderGate(ctx, schema.MediaRenderProbe{
+			MediaURL: heldURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2, CapturedAt: &past, NextCheckAt: past,
+		}, MediaHealthUpdate{
 			Status: schema.MediaHealthStatusBroken, LastError: &blankErr,
 			FailureReason: &reason, RenderProbeWrite: true,
-		}))
-		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
-			MediaURL: heldURL, Verdict: schema.RenderProbeVerdictBlank,
-			ConsecutiveFailures: 2, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
-		}))
+		})
+		require.NoError(t, err)
 		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
 			MediaURL: freeURL, Verdict: schema.RenderProbeVerdictRenderedOK,
 			CapturedAt: &past, NextCheckAt: past,
@@ -6361,14 +6405,12 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		markHealthy(t, reusedURL, "text/html")
 
 		past := time.Now().UTC().Add(-time.Hour)
-		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
-			MediaURL: reusedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
-			ConsecutiveFailures: 1, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
-		}))
 		reason := schema.RenderFailureKnownBad
-		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, reusedURL, MediaHealthUpdate{
-			Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true,
-		}))
+		_, err := store.AcquireRenderGate(ctx, schema.MediaRenderProbe{
+			MediaURL: reusedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
+			ConsecutiveFailures: 1, CapturedAt: &past, NextCheckAt: past,
+		}, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true})
+		require.NoError(t, err)
 
 		// The only token referencing the URL moves away, deleting its health row.
 		metadataJSON, _ := json.Marshal(map[string]interface{}{"image": otherURL})
@@ -6401,14 +6443,14 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		markHealthy(t, pendingURL, "text/html")
 
 		reason := schema.RenderFailureStalled
-		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, pendingURL, MediaHealthUpdate{
-			Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true,
-		}))
 		past := time.Now().UTC().Add(-time.Hour)
-		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+		// The failed-release shape: the gate write ran with a stalled reason, then a later
+		// probe recorded rendered_ok, but the release never succeeded — marker still held.
+		_, err := store.AcquireRenderGate(ctx, schema.MediaRenderProbe{
 			MediaURL: pendingURL, Verdict: schema.RenderProbeVerdictRenderedOK,
-			HealthGated: true, CapturedAt: &past, NextCheckAt: past,
-		}))
+			CapturedAt: &past, NextCheckAt: past,
+		}, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, FailureReason: &reason, RenderProbeWrite: true})
+		require.NoError(t, err)
 
 		newID := mintTokenWithMedia(t, &pendingURL, nil)
 		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{newID})
@@ -6430,10 +6472,12 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		// The fallback target is render-gated, and its own health rows no longer exist —
 		// so the gate must come from the probe row.
 		past := time.Now().UTC().Add(-time.Hour)
-		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+		gateReason := schema.RenderFailureKnownBad
+		_, err := store.AcquireRenderGate(ctx, schema.MediaRenderProbe{
 			MediaURL: gatedFallback, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
-			ConsecutiveFailures: 1, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
-		}))
+			ConsecutiveFailures: 1, CapturedAt: &past, NextCheckAt: past,
+		}, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, FailureReason: &gateReason, RenderProbeWrite: true})
+		require.NoError(t, err)
 
 		observed, sniffed := "text/html", "text/html"
 		require.NoError(t, store.UpdateMediaURLAndPropagate(ctx, deadURL, gatedFallback, &observed, &sniffed))
@@ -6472,15 +6516,15 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 
 		reason := schema.RenderFailureBlank
 		blankErr := "blank frame"
-		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, releasedURL, MediaHealthUpdate{
+		past := time.Now().UTC().Add(-time.Hour)
+		_, err := store.AcquireRenderGate(ctx, schema.MediaRenderProbe{
+			MediaURL: releasedURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2, CapturedAt: &past, NextCheckAt: past,
+		}, MediaHealthUpdate{
 			Status: schema.MediaHealthStatusBroken, LastError: &blankErr,
 			FailureReason: &reason, RenderProbeWrite: true,
-		}))
-		past := time.Now().UTC().Add(-time.Hour)
-		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
-			MediaURL: releasedURL, Verdict: schema.RenderProbeVerdictBlank,
-			ConsecutiveFailures: 2, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
-		}))
+		})
+		require.NoError(t, err)
 
 		now := time.Now().UTC()
 		tokenIDs, err := store.ReleaseRenderGate(ctx, schema.MediaRenderProbe{

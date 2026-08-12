@@ -3536,8 +3536,37 @@ func (s *pgStore) GetMediaRenderProbe(ctx context.Context, url string) (*schema.
 // Constraints: baseline_phash is monotone — once set it is never overwritten
 // (COALESCE(existing, new)), enforcing the capture-only baseline invariant at the DB
 // level regardless of what the caller passes.
+// UpsertMediaRenderProbe records a probe observation. It can NEVER change gate state:
+// the write locks the URL gate and preserves whatever health_gated currently is,
+// ignoring the marker on the passed row. Gate transitions happen exclusively through
+// AcquireRenderGate/ReleaseRenderGate.
+//
+// Reason: the executor loads the prior row, renders for many seconds, then writes — and
+// in shadow mode the sweeper releases gates concurrently. An upsert that wrote the
+// marker the executor loaded would restore a just-released gate without its health rows
+// or viewability reconciliation, leaving L0 locked out (its healthy write checks the
+// marker) and the media hidden until a later release cycle — violating shadow's "L1
+// hides nothing" guarantee. Reading the marker fresh under the same advisory lock the
+// release path takes closes the race in both directions, and gives every plain upsert
+// site (below-threshold failures, shadow observations, SSRF refusals) the same simple
+// contract: observations never move gates.
 func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error {
-	return upsertMediaRenderProbeTx(s.db.WithContext(ctx), probe)
+	urlHash := types.MD5Hash(probe.MediaURL)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockURLGate(tx, urlHash); err != nil {
+			return err
+		}
+		var current struct{ HealthGated bool }
+		err := tx.Model(&schema.MediaRenderProbe{}).
+			Select("health_gated").
+			Where("media_url_hash = ?", urlHash).
+			First(&current).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to read current gate marker: %w", err)
+		}
+		probe.HealthGated = current.HealthGated // false when no row exists
+		return upsertMediaRenderProbeTx(tx, probe)
+	})
 }
 
 // upsertMediaRenderProbeTx is the upsert body, shared so ReleaseRenderGate can run it

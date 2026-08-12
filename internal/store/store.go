@@ -500,8 +500,12 @@ type Store interface {
 	// render gate — the sweeper's work queue for releasing gates orphaned by a disabled
 	// render probe (a gate's only healer is a successful render)
 	GetHealthGatedRenderProbes(ctx context.Context, limit int) ([]schema.MediaRenderProbe, error)
-	// UpsertMediaRenderProbe inserts or replaces the render-probe row for probe.MediaURL;
-	// baseline_phash is never overwritten once set
+	// UpsertMediaRenderProbe records a probe observation for probe.MediaURL;
+	// baseline_phash is never overwritten once set, and gate state is NEVER changed —
+	// the current health_gated marker is preserved under the URL gate lock, ignoring
+	// the marker on the passed row. Gate transitions happen exclusively through
+	// AcquireRenderGate/ReleaseRenderGate, so a concurrent release cannot be undone by
+	// an in-flight observation write
 	UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error
 	// AcquireRenderGate sets a URL's render gate atomically — probe marker and health
 	// rows in one locked transaction — and returns the token IDs whose viewability must
