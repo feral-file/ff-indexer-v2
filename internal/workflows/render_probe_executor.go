@@ -48,6 +48,14 @@ type RenderProbeExecutorConfig struct {
 	// BrokenRecheckInterval schedules the next probe after gating; the probe is the only
 	// healer of render-gated rows (L0 skips them), so this also bounds heal latency.
 	BrokenRecheckInterval time.Duration
+	// Enforce turns render verdicts into viewability gates. False is shadow mode: the
+	// probe renders, classifies, debounces, and records everything exactly as
+	// enforcement would — verdicts, counters, pHashes — but never writes a gate, so
+	// nothing is ever hidden. The rollout contract: watch media_render_probes for a
+	// while, hand-verify a sample of would-be-gated URLs, and only then flip this on.
+	// The counters being identical in both modes is what makes the shadow data an
+	// honest preview of enforcement rather than an approximation.
+	Enforce bool
 	// ImageSettleMs shortens the render settle for URLs whose every health-row signal
 	// says static raster image (IsStaticImageRenderClass). Static images paint on
 	// decode, so holding a browser slot through the full generative-work settle for the
@@ -259,6 +267,20 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		// observation.
 		row.ConsecutiveFailures = 0
 		row.NextCheckAt = now.Add(e.cfg.BrokenRecheckInterval)
+		// Shadow mode: record the verdict on the enforcement cadence and log what would
+		// have happened, but never gate. Any stale marker is preserved untouched on the
+		// row — clearing health rows is the release transaction's job, and the sweeper
+		// runs releases while enforcement is off.
+		if !e.cfg.Enforce {
+			logger.InfoCtx(ctx, "Shadow mode: fingerprint match would gate viewability",
+				zap.String("url", url),
+				zap.String("fingerprint", classification.MatchedLabel),
+			)
+			if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
+				return fmt.Errorf("failed to upsert render probe: %w", err)
+			}
+			return nil
+		}
 		// Unambiguous: gate immediately regardless of debounce state. The marker and the
 		// health rows are written in one locked transaction so a token indexed in between
 		// cannot land ungated.
@@ -292,6 +314,21 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 	gate := wasGated || row.ConsecutiveFailures >= e.cfg.FailureGateThreshold
 	if gate {
 		row.NextCheckAt = now.Add(e.cfg.BrokenRecheckInterval)
+		// Shadow mode: the row records that the threshold was reached (counter, verdict,
+		// enforcement cadence) but the gate is not taken and the marker is not set —
+		// carrying a stale marker forward unchanged is fine, setting a new one here
+		// would be hiding. The log line is the operator's watch signal.
+		if !e.cfg.Enforce {
+			logger.InfoCtx(ctx, "Shadow mode: failure threshold reached, would gate viewability",
+				zap.String("url", url),
+				zap.String("verdict", row.Verdict.String()),
+				zap.Int("consecutive_failures", row.ConsecutiveFailures),
+			)
+			if err := e.store.UpsertMediaRenderProbe(ctx, row); err != nil {
+				return fmt.Errorf("failed to upsert render probe: %w", err)
+			}
+			return nil
+		}
 		row.HealthGated = true
 	} else {
 		row.NextCheckAt = now.Add(e.cfg.RetryInterval)

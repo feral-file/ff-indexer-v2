@@ -31,6 +31,7 @@ var renderProbeTestConfig = workflows.RenderProbeExecutorConfig{
 	RecheckInterval:        168 * time.Hour,
 	RetryInterval:          time.Hour,
 	BrokenRecheckInterval:  24 * time.Hour,
+	Enforce:                true, // most tests assert enforcement; shadow has its own suite
 }
 
 type renderProbeMocks struct {
@@ -608,4 +609,110 @@ func TestExecuteRenderProbe_classLookupFailureFailsJob(t *testing.T) {
 	err := exec.ExecuteRenderProbe(context.Background(), url)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "render class")
+}
+
+// TestExecuteRenderProbe_shadowMode pins the shadow contract: with Enforce false the
+// probe records everything enforcement would — verdict, counter, enforcement cadence —
+// but never touches health rows or viewability. Strict mocks prove no
+// AcquireRenderGate, no BatchUpdateTokensViewability, and no webhook on any would-gate
+// path.
+func TestExecuteRenderProbe_shadowMode(t *testing.T) {
+	shadow := renderProbeTestConfig
+	shadow.Enforce = false
+
+	t.Run("blank at threshold records but does not gate", func(t *testing.T) {
+		m, exec := setupRenderProbe(t, shadow)
+		url := "https://example.com/shadow/dead.html"
+
+		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+			MediaURL:            url,
+			Verdict:             schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 1,
+		}, nil)
+		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blankFrame(), nil)
+
+		m.store.EXPECT().
+			UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+				assert.Equal(t, 2, row.ConsecutiveFailures, "counter identical to enforcement")
+				assert.False(t, row.HealthGated, "shadow never sets the marker")
+				assert.Equal(t, m.now.Add(renderProbeTestConfig.BrokenRecheckInterval), row.NextCheckAt,
+					"would-gated rows keep the enforcement cadence so shadow data stays fresh")
+				return nil
+			})
+
+		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+	})
+
+	t.Run("fingerprint match records but does not gate", func(t *testing.T) {
+		frame := contentFrame()
+		cls, err := probe.Classify(frame.Image, nil, 0.001)
+		require.NoError(t, err)
+		cfg := shadow
+		cfg.Fingerprints = []probe.Fingerprint{{Hash: cls.Phash, MaxDistance: 4, Label: "kubo-dir-listing"}}
+		m, exec := setupRenderProbe(t, cfg)
+		url := "https://example.com/shadow/dir-cid"
+
+		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
+		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(frame, nil)
+
+		m.store.EXPECT().
+			UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+				assert.Equal(t, schema.RenderProbeVerdictKnownBadFingerprint, row.Verdict)
+				assert.False(t, row.HealthGated)
+				require.NotNil(t, row.LastError)
+				assert.Contains(t, *row.LastError, "kubo-dir-listing")
+				return nil
+			})
+
+		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+	})
+
+	t.Run("a stale gate is not re-acquired by a shadow failure", func(t *testing.T) {
+		// A gate left over from an enforcing deployment: the sweeper releases it, and
+		// meanwhile a shadow failure must carry the marker forward untouched rather
+		// than re-acquire the gate.
+		m, exec := setupRenderProbe(t, shadow)
+		url := "https://example.com/shadow/stale-gate.html"
+
+		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+			MediaURL:            url,
+			Verdict:             schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2,
+			HealthGated:         true,
+		}, nil)
+		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blankFrame(), nil)
+
+		m.store.EXPECT().
+			UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+				assert.True(t, row.HealthGated, "the marker survives for the sweeper's release; only release may clear it")
+				return nil
+			})
+
+		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+	})
+
+	t.Run("a stale gate is still released by a successful shadow render", func(t *testing.T) {
+		// Releasing is un-hiding — allowed and wanted in shadow.
+		m, exec := setupRenderProbe(t, shadow)
+		url := "https://example.com/shadow/heals.html"
+
+		m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+		m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+			MediaURL:            url,
+			Verdict:             schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2,
+			HealthGated:         true,
+		}, nil)
+		m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(contentFrame(), nil)
+		m.store.EXPECT().ReleaseRenderGate(gomock.Any(), gomock.Any()).Return([]uint64{9}, nil)
+		m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{9}).Return(nil, nil)
+
+		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+	})
 }

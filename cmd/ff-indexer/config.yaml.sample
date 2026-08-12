@@ -187,6 +187,11 @@ media_health_sweeper:
 security:
   ssrf_protection:
     enabled: true
+  # SHADOW MODE by default: the probe renders, classifies, and records verdicts,
+  # counters, and pHashes in media_render_probes — but never hides a token, and any
+  # existing gates are released. Watch the shadow data after deploying (sample the
+  # would-be-gated URLs by hand), then set enforce: true as a deliberate second step.
+  enforce: false
     # Redirect hops allowed after the initial request (each Location URL validated).
     max_redirects: 3
     block_multicast: false

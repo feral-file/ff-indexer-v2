@@ -179,6 +179,7 @@ func run() int {
 		// worker: without one, jobs would pile up on a queue nothing serves.
 		RenderProbeEnabled:   sweeperCfg.RenderProbe.Enabled && sweeperCfg.MediaEnabled,
 		RenderProbeBatchSize: sweeperCfg.RenderProbe.BatchSize,
+		RenderProbeEnforce:   sweeperCfg.RenderProbe.Enforce,
 	}
 	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue, cfg.Jobs.MediaQueue)
 

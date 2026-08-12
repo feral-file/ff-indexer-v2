@@ -247,6 +247,11 @@ type RenderProbeConfig struct {
 	ViewportHeight int `mapstructure:"viewport_height"`
 	// TimeoutMs bounds the whole probe (navigate + settle + screenshot)
 	TimeoutMs int `mapstructure:"timeout_ms"`
+	// Enforce turns render verdicts into viewability gates; false is shadow mode
+	// (verdicts, counters, and pHashes are recorded but nothing is ever hidden, and any
+	// existing gates are released). The production rollout watches shadow data first
+	// and flips this deliberately.
+	Enforce bool `mapstructure:"enforce"`
 	// SettleMs is how long the page runs after load before capture
 	SettleMs int `mapstructure:"settle_ms"`
 	// ImageSettleMs is the shortened settle for URLs classified as static raster images
@@ -841,6 +846,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("rasterizer.timeout_ms", 15000)
 	v.SetDefault("rasterizer.browser_fallback_enabled", false)
 	v.SetDefault("render_probe.enabled", true)
+	v.SetDefault("render_probe.enforce", false)
 	v.SetDefault("render_probe.batch_size", 20)
 	v.SetDefault("render_probe.viewport_width", 1024)
 	v.SetDefault("render_probe.viewport_height", 1024)
@@ -1051,6 +1057,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"render_probe.viewport_width",
 		"render_probe.viewport_height",
 		"render_probe.timeout_ms",
+		"render_probe.enforce",
 		"render_probe.settle_ms",
 		"render_probe.image_settle_ms",
 		"render_probe.blank_variance_threshold",

@@ -47,6 +47,11 @@ type MediaHealthSweeperConfig struct {
 	RenderProbeEnabled bool
 	// RenderProbeBatchSize caps how many due URLs are enqueued per cycle.
 	RenderProbeBatchSize int
+	// RenderProbeEnforce mirrors render_probe.enforce. While false (shadow mode) the
+	// sweeper keeps enqueueing probes — shadow still observes — but also releases any
+	// existing gates each cycle: shadow's contract is that L1 hides nothing, including
+	// leftovers from an earlier enforcing deployment.
+	RenderProbeEnforce bool
 }
 
 // mediaHealthSweeper implements the Sweeper interface for media health checking
@@ -302,6 +307,11 @@ func (s *mediaHealthSweeper) enqueueRenderProbes(ctx context.Context) {
 		s.releaseOrphanedRenderGates(ctx)
 		return
 	}
+	// Shadow mode observes but never hides: probes keep running below, and any gates —
+	// leftovers from an enforcing deployment — are released.
+	if !s.config.RenderProbeEnforce {
+		s.releaseOrphanedRenderGates(ctx)
+	}
 
 	urls, err := s.store.GetURLsDueForRenderProbe(ctx, s.config.RenderProbeBatchSize)
 	if err != nil {
@@ -337,7 +347,7 @@ func (s *mediaHealthSweeper) enqueueRenderProbes(ctx context.Context) {
 }
 
 // releaseOrphanedRenderGates releases active render gates when the render probe is
-// disabled.
+// disabled or not enforcing.
 //
 // Reason: a render gate's only healer is a successful render — L0 is locked out of
 // render_% rows and the health_gated marker by design. With the probe disabled
@@ -346,6 +356,8 @@ func (s *mediaHealthSweeper) enqueueRenderProbes(ctx context.Context) {
 // non-viewable forever, false positives included. Turning the probe off withdraws the
 // browser evidence behind the gates, so the gates are withdrawn with it: health rows
 // return to unknown and the next L0 sweep re-verifies the bytes and heals what passes.
+// Shadow mode (enforce=false) gets the same treatment for the same reason: its contract
+// is that L1 hides nothing, and a gate left over from an enforcing deployment is hiding.
 // Trade-offs: released tokens become viewable again on byte evidence alone until the
 // probe is re-enabled — that is the pre-L1 status quo, and hiding art on evidence the
 // operator has switched off would be worse. Constraints: release failures are logged and

@@ -117,6 +117,28 @@ render capacity (~356k eligible URLs at rollout) and whatever ranks last waits w
    capacity and stall the seeding tail indefinitely. A stale re-confirmation of a good
    render is the cheapest thing to postpone.
 
+**Shadow mode first.** `render_probe.enforce` defaults to false: the probe renders,
+classifies, debounces, and records everything exactly as enforcement would — verdicts,
+counters, pHashes — but never writes a gate, and the sweeper releases any existing gates
+each cycle, so shadow guarantees L1 hides nothing. Every would-be gate is logged
+("Shadow mode: ... would gate viewability"). The rollout contract: deploy in shadow,
+watch `media_render_probes`, hand-verify a random sample of would-be-gated URLs
+
+```sql
+SELECT media_url, verdict, consecutive_failures, last_error
+FROM media_render_probes
+WHERE verdict = 'known_bad_fingerprint'
+   OR (verdict IN ('blank','stalled') AND consecutive_failures >= 2)
+ORDER BY random() LIMIT 50;
+```
+
+— every one should be genuinely broken — and only then set `enforce: true`. The flip is
+gradual by construction: would-be-gated URLs gate as they next come due on their own
+cadence, not in one burst. Counters being identical in both modes is what makes the
+shadow data an honest preview rather than an approximation. Security is NOT relaxed in
+shadow: untrusted pages render either way, so `egress_restricted`, the startup
+self-check, and the metadata check all still apply.
+
 Flow: the media health sweeper enqueues `RenderMediaProbe` jobs (unique-keyed per URL)
 onto the media queue at the end of each sweep cycle; the CGO media worker renders at a
 fixed viewport, waits for the page to settle, screenshots, and classifies:

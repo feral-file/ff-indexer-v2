@@ -107,6 +107,10 @@ tezos:
 	require.NotNil(t, cfg)
 	assert.Equal(t, "localhost", cfg.Database.Host)
 	assert.Equal(t, "db", cfg.Database.DBName)
+	// The render probe ships observing, not blocking: a default deployment must never
+	// hide a token until an operator deliberately flips enforce.
+	assert.True(t, cfg.RenderProbe.Enabled, "probe observes by default")
+	assert.False(t, cfg.RenderProbe.Enforce, "shadow mode by default — enforcement is an explicit decision")
 }
 
 // TestModerationSweeperDefaultMatchesStoreConstant anchors the config default to

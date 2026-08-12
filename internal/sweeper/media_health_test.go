@@ -467,6 +467,7 @@ func TestMediaHealthSweeper_EnqueuesRenderProbes(t *testing.T) {
 			WorkerPoolSize:       2,
 			RecheckAfter:         24 * time.Hour,
 			RenderProbeEnabled:   true,
+			RenderProbeEnforce:   true,
 			RenderProbeBatchSize: 5,
 		},
 		tm.store, tm.urlChecker, tm.dataURIChecker, tm.clock, tm.jobQueue,
@@ -552,6 +553,7 @@ func TestMediaHealthSweeper_EnqueuesRenderProbesWhenNoL0Work(t *testing.T) {
 			WorkerPoolSize:       2,
 			RecheckAfter:         24 * time.Hour,
 			RenderProbeEnabled:   true,
+			RenderProbeEnforce:   true,
 			RenderProbeBatchSize: 5,
 		},
 		tm.store, tm.urlChecker, tm.dataURIChecker, tm.clock, tm.jobQueue,
@@ -1381,6 +1383,87 @@ func TestMediaHealthSweeper_ReleasesOrphanedGatesWhenProbeDisabled(t *testing.T)
 
 	go func() {
 		<-released
+		time.Sleep(20 * time.Millisecond)
+		_ = tm.sweeper.Stop(ctx)
+	}()
+
+	require.NoError(t, tm.sweeper.Start(ctx))
+}
+
+// TestMediaHealthSweeper_ShadowModeReleasesGatesAndStillEnqueues pins the shadow
+// contract at the scheduling layer: with the probe enabled but not enforcing, probes
+// keep flowing (shadow observes) while any existing gates — leftovers from an enforcing
+// deployment — are released each cycle, because shadow's promise is that L1 hides
+// nothing.
+func TestMediaHealthSweeper_ShadowModeReleasesGatesAndStillEnqueues(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	tm := &testSweeperMocks{
+		ctrl:           ctrl,
+		store:          mocks.NewMockStore(ctrl),
+		urlChecker:     mocks.NewMockURLChecker(ctrl),
+		dataURIChecker: mocks.NewMockDataURIChecker(ctrl),
+		clock:          mocks.NewMockClock(ctrl),
+		jobQueue:       mocks.NewMockJobQueue(ctrl),
+	}
+	tm.sweeper = sweeper.NewMediaHealthSweeper(
+		&sweeper.MediaHealthSweeperConfig{
+			BatchSize:            10,
+			WorkerPoolSize:       2,
+			RecheckAfter:         24 * time.Hour,
+			RenderProbeEnabled:   true,
+			RenderProbeEnforce:   false, // shadow
+			RenderProbeBatchSize: 5,
+		},
+		tm.store, tm.urlChecker, tm.dataURIChecker, tm.clock, tm.jobQueue,
+		"test-task-queue", "test-media-queue",
+	)
+
+	ctx := context.Background()
+	staleGate := schema.MediaRenderProbe{MediaURL: "https://example.com/stale.html", HealthGated: true}
+	dueURL := "https://example.com/shadow-due.html"
+
+	tm.store.EXPECT().GetURLsForChecking(ctx, 24*time.Hour, 10).Return([]string{}, nil).MinTimes(1)
+
+	// Release of the stale gate AND probe enqueueing both happen in shadow.
+	gomock.InOrder(
+		tm.store.EXPECT().GetHealthGatedRenderProbes(ctx, gomock.Any()).Return([]schema.MediaRenderProbe{staleGate}, nil).Times(1),
+		tm.store.EXPECT().GetHealthGatedRenderProbes(ctx, gomock.Any()).Return(nil, nil).AnyTimes(),
+	)
+	tm.store.EXPECT().ReleaseRenderGate(ctx, staleGate).Return([]uint64{7}, nil)
+	tm.store.EXPECT().BatchUpdateTokensViewability(ctx, []uint64{7}).Return(nil, nil)
+
+	enqueued := make(chan struct{}, 1)
+	gomock.InOrder(
+		tm.store.EXPECT().GetURLsDueForRenderProbe(ctx, 5).Return([]string{dueURL}, nil).Times(1),
+		tm.store.EXPECT().GetURLsDueForRenderProbe(ctx, 5).Return(nil, nil).AnyTimes(),
+	)
+	tm.jobQueue.EXPECT().
+		Enqueue(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts jobs.EnqueueOptions) (*schema.Job, bool, error) {
+			require.Equal(t, "RenderMediaProbe", opts.Kind)
+			select {
+			case enqueued <- struct{}{}:
+			default:
+			}
+			return &schema.Job{ID: 1}, true, nil
+		})
+
+	now := time.Now()
+	tm.clock.EXPECT().Now().Return(now).AnyTimes()
+	tm.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	tm.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+
+	go func() {
+		<-enqueued
 		time.Sleep(20 * time.Millisecond)
 		_ = tm.sweeper.Stop(ctx)
 	}()
