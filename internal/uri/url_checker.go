@@ -25,10 +25,12 @@ const (
 	// HealthStatusHealthy indicates the URL is accessible and its content validates.
 	//
 	// This is a point-in-time sample, not a per-request playback guarantee: an origin that
-	// fails intermittently can pass a sweep and still fail a viewer's next request. It may
-	// also describe a promoted fallback gateway rather than the originally stored URL. Do
-	// not tighten callers into treating it as a playback SLA without revisiting
-	// MediaHealthStatus semantics and viewability — see docs/constraints.md and #76.
+	// fails intermittently can pass a check and still fail a viewer's next request. Both the
+	// sweeper and the token-indexing path persist verdicts from this checker, so a stored
+	// healthy row is not necessarily a sweep result. It may also describe a promoted fallback
+	// gateway rather than the originally stored URL. Do not tighten callers into treating it
+	// as a playback SLA without revisiting MediaHealthStatus semantics and viewability — see
+	// docs/constraints.md and #76.
 	HealthStatusHealthy HealthStatus = "healthy"
 	// HealthStatusBroken indicates the URL is not accessible or serves invalid content
 	HealthStatusBroken HealthStatus = "broken"
