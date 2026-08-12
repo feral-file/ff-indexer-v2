@@ -309,6 +309,36 @@ Fingerprint workflow for operators: capture the offending page once, compute its
 add it to `render_probe.known_bad_fingerprints` with a small `max_distance` (4-8) and a
 label. A loose tolerance matches real art and hides it — the worst failure mode.
 
+### Measured starter fingerprints
+
+The sample config ships a starter set measured against the live public gateways
+(2026-08-12) with this probe's own renderer and classifier — each verified end to end
+(shadow would-gate and enforce gate against the live page):
+
+| label | phash | source page |
+|---|---|---|
+| `kubo-error-page-500` | `0x9f1f2f616060687d` | Kubo invalid-CID/error template (bit-identical on ipfs.io and dweb.link) |
+| `kubo-error-page-504` | `0x9f1f3f7170706070` | Kubo gateway-timeout template |
+| `arweave-404` | `0xcfcf6630303899d9` | arweave.net "404 - Page not found." |
+| `onchfs-not-found` | `0x9c1e1e1e1e1e1e1e` | onchfs.fxhash2.xyz resource-not-found |
+| `onchfs-bad-uri` | `0x8f0f0f0f0f078787` | onchfs.fxhash2.xyz invalid-URI |
+| `ipfs-dir-listing` | `0xe76f18183d697868` | Kubo directory listing (bit-identical on ipfs.io and dweb.link) |
+
+Why these are safe at `max_distance: 6`: the minimum Hamming distance from any of these
+pages to real artwork captures (Art Blocks generators and stills) measured 22 bits, so a
+6-bit tolerance leaves 16 bits of headroom. Fingerprints are one per *template*, not per
+gateway — Kubo renders identically everywhere it runs. None of these pages classify as
+blank (variance well above the default threshold), so the fingerprint net is the only L1
+mechanism that can catch them.
+
+Role: as surveyed, every one of these pages currently ships with a non-2xx status or
+hangs, so L0 catches them first and the fingerprints gate nothing today. They are the
+insurance for the day a gateway or CDN serves the same body with HTTP 200 — the exact
+mechanism behind feral-file#3482 — and in shadow mode they cost nothing but a log line.
+
+Re-measure after a major gateway template change or a chromium upgrade (pHashes are
+engine-sensitive; `engine_version` is recorded with every capture for exactly this).
+
 ### Pre-deployment gate (requires the target runtime)
 
 Browser behavior is verified at three layers, each catching what the previous one

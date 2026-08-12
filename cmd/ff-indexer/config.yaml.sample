@@ -255,10 +255,21 @@ render_probe:
   # pHashes of known-bad renders (gateway error pages, directory listings, placeholders).
   # Capture the offending page once, compute its pHash, and list it here. Keep
   # max_distance small (4-8): a loose tolerance matches real art and hides it.
-  known_bad_fingerprints: []
-  #  - phash: "0xc3a5969696a5c3e1"
-  #    max_distance: 6
-  #    label: kubo-dir-listing
+  #
+  # The starter set below was measured against the live public gateways (2026-08-12)
+  # with this probe's own pipeline; methodology and Hamming margins are documented in
+  # docs/media_viewability.md. Kubo's pages render bit-identically across ipfs.io and
+  # dweb.link, so one entry covers every Kubo gateway. Today these pages ship with
+  # non-2xx statuses (the byte-level probe catches them first); the fingerprints are the
+  # insurance for the day a gateway or CDN serves the same body with HTTP 200 — the
+  # exact mechanism behind feral-file#3482.
+  known_bad_fingerprints:
+    - {phash: "0x9f1f2f616060687d", max_distance: 6, label: kubo-error-page-500}
+    - {phash: "0x9f1f3f7170706070", max_distance: 6, label: kubo-error-page-504}
+    - {phash: "0xcfcf6630303899d9", max_distance: 6, label: arweave-404}
+    - {phash: "0x9c1e1e1e1e1e1e1e", max_distance: 6, label: onchfs-not-found}
+    - {phash: "0x8f0f0f0f0f078787", max_distance: 6, label: onchfs-bad-uri}
+    - {phash: "0xe76f18183d697868", max_distance: 6, label: ipfs-dir-listing}
 
 transform:
   target_image_size: 9437184
