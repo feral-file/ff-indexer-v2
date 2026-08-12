@@ -495,6 +495,10 @@ type Store interface {
 	IsStaticImageRenderClass(ctx context.Context, url string) (bool, error)
 	// GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed
 	GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error)
+	// GetHealthGatedRenderProbes returns up to limit probe rows currently holding a
+	// render gate — the sweeper's work queue for releasing gates orphaned by a disabled
+	// render probe (a gate's only healer is a successful render)
+	GetHealthGatedRenderProbes(ctx context.Context, limit int) ([]schema.MediaRenderProbe, error)
 	// UpsertMediaRenderProbe inserts or replaces the render-probe row for probe.MediaURL;
 	// baseline_phash is never overwritten once set
 	UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error

@@ -3405,6 +3405,27 @@ func (s *pgStore) ReleaseRenderGate(ctx context.Context, probe schema.MediaRende
 	return tokenIDs, nil
 }
 
+// GetHealthGatedRenderProbes returns up to limit probe rows currently holding a render
+// gate.
+//
+// Reason: this is the sweeper's work queue for releasing gates orphaned by a disabled
+// render probe. A gate's only healer is a successful render, so turning the probe off
+// (rollback, misconfigured fingerprints, decommission) would otherwise leave every gated
+// token permanently non-viewable — L0 is locked out of render_% rows by design. Read from
+// the primary: the rows drive release transactions, not display.
+func (s *pgStore) GetHealthGatedRenderProbes(ctx context.Context, limit int) ([]schema.MediaRenderProbe, error) {
+	var probes []schema.MediaRenderProbe
+	err := s.db.WithContext(ctx).Clauses(dbresolver.Write).
+		Where("health_gated = true").
+		Order("media_url_hash ASC").
+		Limit(limit).
+		Find(&probes).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get health-gated render probes: %w", err)
+	}
+	return probes, nil
+}
+
 // GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed.
 func (s *pgStore) GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error) {
 	var probe schema.MediaRenderProbe

@@ -5985,6 +5985,62 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.Less(t, idx(htmlURL), idx(imageURL), "HTML class before image class")
 	})
 
+	t.Run("GetHealthGatedRenderProbes lists only held gates and release drains it", func(t *testing.T) {
+		// The rollback path: with the probe disabled, the sweeper lists held gates and
+		// releases them, because nothing else may heal a render-gated row.
+		heldURL := "https://example.com/orphan/held.html"
+		freeURL := "https://example.com/orphan/free.html"
+		heldTokenID := mintTokenWithMedia(t, &heldURL, nil)
+		mintTokenWithMedia(t, &freeURL, nil)
+		markHealthy(t, heldURL, "text/html")
+		markHealthy(t, freeURL, "text/html")
+
+		past := time.Now().UTC().Add(-time.Hour)
+		blankErr := "blank frame"
+		reason := schema.RenderFailureBlank
+		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, heldURL, MediaHealthUpdate{
+			Status: schema.MediaHealthStatusBroken, LastError: &blankErr,
+			FailureReason: &reason, RenderProbeWrite: true,
+		}))
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: heldURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 2, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
+		}))
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: freeURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			CapturedAt: &past, NextCheckAt: past,
+		}))
+
+		gated, err := store.GetHealthGatedRenderProbes(ctx, 50)
+		require.NoError(t, err)
+		urls := make([]string, 0, len(gated))
+		for _, p := range gated {
+			urls = append(urls, p.MediaURL)
+		}
+		assert.Contains(t, urls, heldURL)
+		assert.NotContains(t, urls, freeURL, "an ungated probe row is not release work")
+
+		// Releasing the listed gate drains the queue and hands the row back to L0.
+		for _, p := range gated {
+			if p.MediaURL != heldURL {
+				continue
+			}
+			_, err := store.ReleaseRenderGate(ctx, p)
+			require.NoError(t, err)
+		}
+		gated, err = store.GetHealthGatedRenderProbes(ctx, 50)
+		require.NoError(t, err)
+		for _, p := range gated {
+			assert.NotEqual(t, heldURL, p.MediaURL, "released gate must leave the work queue")
+		}
+		rows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{heldTokenID})
+		require.NoError(t, err)
+		require.NotEmpty(t, rows[heldTokenID])
+		assert.Equal(t, schema.MediaHealthStatusUnknown, rows[heldTokenID][0].HealthStatus,
+			"released row returns to unknown for the next L0 sweep")
+		assert.Nil(t, rows[heldTokenID][0].FailureReason)
+	})
+
 	t.Run("IsStaticImageRenderClass is conservative in every ambiguous direction", func(t *testing.T) {
 		// Only an unambiguous static raster image may shorten the render settle; a wrong
 		// true manufactures a blank verdict on a generative work.

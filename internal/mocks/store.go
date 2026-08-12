@@ -370,6 +370,21 @@ func (mr *MockStoreMockRecorder) GetEnrichmentSourcesByTokenIDs(ctx, tokenIDs an
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEnrichmentSourcesByTokenIDs", reflect.TypeOf((*MockStore)(nil).GetEnrichmentSourcesByTokenIDs), ctx, tokenIDs)
 }
 
+// GetHealthGatedRenderProbes mocks base method.
+func (m *MockStore) GetHealthGatedRenderProbes(ctx context.Context, limit int) ([]schema.MediaRenderProbe, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetHealthGatedRenderProbes", ctx, limit)
+	ret0, _ := ret[0].([]schema.MediaRenderProbe)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetHealthGatedRenderProbes indicates an expected call of GetHealthGatedRenderProbes.
+func (mr *MockStoreMockRecorder) GetHealthGatedRenderProbes(ctx, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetHealthGatedRenderProbes", reflect.TypeOf((*MockStore)(nil).GetHealthGatedRenderProbes), ctx, limit)
+}
+
 // GetIndexingBlockRangeForAddress mocks base method.
 func (m *MockStore) GetIndexingBlockRangeForAddress(ctx context.Context, address string, chainID domain.Chain) (uint64, uint64, error) {
 	m.ctrl.T.Helper()

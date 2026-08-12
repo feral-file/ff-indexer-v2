@@ -176,6 +176,16 @@ overwrite that row, so nothing in it looks render-gated, while the marker still 
 from healing it. That URL would then never be scheduled again and its tokens would stay
 non-viewable until manual intervention.
 
+**Disabling the probe releases its gates.** A gate's only healer is a successful render,
+so turning the probe off (rollback, misconfigured fingerprints, decommission) would
+otherwise strand every gated token as permanently non-viewable — false positives
+included. When `render_probe` is disabled, the sweeper releases active gates in batches
+instead of enqueueing probes: health rows return to `unknown` and the next L0 sweep
+re-verifies the bytes. Turning the probe off withdraws the browser evidence behind the
+gates, so the gates are withdrawn with it — released tokens are judged on byte evidence
+alone, the pre-L1 status quo. Already-queued `RenderMediaProbe` jobs no-op against a nil
+executor rather than failing.
+
 **Scheduling is independent of L0.** Render probes are enqueued on every sweep cycle,
 including cycles with no L0 work, because L1 has its own cadence and render-gated rows are
 excluded from the L0 query by design. The render-due query selects never-probed URLs by L0
@@ -280,6 +290,11 @@ unverifiable in this repo's pipeline — the verification belongs to the deploym
 the items below were done for the environment being deployed, and the process refuses to
 run the probe until someone sets it. Setting it without doing them is a false
 attestation.
+
+`scripts/render-probe-preflight.sh` is the executable form of this gate: run it inside
+the target image, in the deployment's network position, and keep the output — a passing
+run is the evidence the attestation refers to. It covers steps 1 and 3 below; step 2 is
+a manual scenario check.
 
 Before setting `render_probe.egress_restricted: true` in an environment:
 

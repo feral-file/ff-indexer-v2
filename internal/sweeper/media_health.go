@@ -27,6 +27,12 @@ import (
 
 const (
 	SWEEP_CYCLE_INTERVAL = 1 * time.Minute // Time to sleep between sweep cycles
+
+	// orphanedGateReleaseBatch caps how many orphaned render gates are released per
+	// sweep cycle when the render probe is disabled. Small enough to bound the
+	// per-cycle transaction and webhook work, large enough that any realistic gated
+	// set drains within minutes at sweep cadence.
+	orphanedGateReleaseBatch = 100
 )
 
 // MediaHealthSweeperConfig holds configuration for the media health sweeper
@@ -293,6 +299,7 @@ func (s *mediaHealthSweeper) sleep(ctx context.Context, duration time.Duration) 
 // Enqueue failures are logged and skipped — the URL stays due and the next cycle retries.
 func (s *mediaHealthSweeper) enqueueRenderProbes(ctx context.Context) {
 	if !s.config.RenderProbeEnabled {
+		s.releaseOrphanedRenderGates(ctx)
 		return
 	}
 
@@ -327,6 +334,60 @@ func (s *mediaHealthSweeper) enqueueRenderProbes(ctx context.Context) {
 		zap.Int("due", len(urls)),
 		zap.Int("enqueued", enqueued),
 	)
+}
+
+// releaseOrphanedRenderGates releases active render gates when the render probe is
+// disabled.
+//
+// Reason: a render gate's only healer is a successful render — L0 is locked out of
+// render_% rows and the health_gated marker by design. With the probe disabled
+// (rollback, misconfigured fingerprints, decommission) nothing enqueues probes and the
+// RenderMediaProbe handler is a no-op, so without this every gated token would stay
+// non-viewable forever, false positives included. Turning the probe off withdraws the
+// browser evidence behind the gates, so the gates are withdrawn with it: health rows
+// return to unknown and the next L0 sweep re-verifies the bytes and heals what passes.
+// Trade-offs: released tokens become viewable again on byte evidence alone until the
+// probe is re-enabled — that is the pre-L1 status quo, and hiding art on evidence the
+// operator has switched off would be worse. Constraints: release failures are logged and
+// retried next cycle (the marker survives until a release succeeds); the batch cap
+// bounds per-cycle work.
+func (s *mediaHealthSweeper) releaseOrphanedRenderGates(ctx context.Context) {
+	probes, err := s.store.GetHealthGatedRenderProbes(ctx, orphanedGateReleaseBatch)
+	if err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to get orphaned render gates: %w", err))
+		return
+	}
+	if len(probes) == 0 {
+		return
+	}
+
+	var tokenIDs []uint64
+	released := 0
+	for _, probe := range probes {
+		ids, err := s.store.ReleaseRenderGate(ctx, probe)
+		if err != nil {
+			logger.WarnCtx(ctx, "Failed to release orphaned render gate",
+				zap.String("url", probe.MediaURL),
+				zap.Error(err),
+			)
+			continue
+		}
+		released++
+		tokenIDs = append(tokenIDs, ids...)
+	}
+
+	logger.InfoCtx(ctx, "Released render gates orphaned by disabled render probe",
+		zap.Int("gated", len(probes)),
+		zap.Int("released", released),
+	)
+
+	// Released rows are unknown, not healthy, so this rarely changes viewability by
+	// itself — the heal lands on the next L0 sweep. Still flushed for the edge where a
+	// release changes the computed result immediately, and to mirror every other gate
+	// transition (one consistent webhook stream).
+	if err := s.flushViewabilityUpdatesWithRetry(ctx, tokenIDs); err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to flush viewability after orphaned gate release: %w", err))
+	}
 }
 
 // checkURL checks a single URL and updates the database

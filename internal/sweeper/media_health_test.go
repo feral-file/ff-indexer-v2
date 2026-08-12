@@ -1297,3 +1297,87 @@ func TestMediaHealthSweeper_SameTokenMultipleURLs(t *testing.T) {
 	err := mocks.sweeper.Start(ctx)
 	require.NoError(t, err)
 }
+
+// TestMediaHealthSweeper_ReleasesOrphanedGatesWhenProbeDisabled pins the rollback
+// contract: a render gate's only healer is a successful render, so disabling the probe
+// (rollback, misconfigured fingerprints, decommission) would otherwise leave every gated
+// token permanently non-viewable — L0 is locked out of render_% rows by design. With the
+// probe disabled the sweeper must release active gates instead of enqueueing probes;
+// released rows return to unknown and the next L0 sweep re-verifies the bytes.
+func TestMediaHealthSweeper_ReleasesOrphanedGatesWhenProbeDisabled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	tm := &testSweeperMocks{
+		ctrl:           ctrl,
+		store:          mocks.NewMockStore(ctrl),
+		urlChecker:     mocks.NewMockURLChecker(ctrl),
+		dataURIChecker: mocks.NewMockDataURIChecker(ctrl),
+		clock:          mocks.NewMockClock(ctrl),
+		jobQueue:       mocks.NewMockJobQueue(ctrl),
+	}
+	tm.sweeper = sweeper.NewMediaHealthSweeper(
+		&sweeper.MediaHealthSweeperConfig{
+			BatchSize:          10,
+			WorkerPoolSize:     2,
+			RecheckAfter:       24 * time.Hour,
+			RenderProbeEnabled: false, // rollback: probe turned off with gates still held
+		},
+		tm.store, tm.urlChecker, tm.dataURIChecker, tm.clock, tm.jobQueue,
+		"test-task-queue", "test-media-queue",
+	)
+
+	ctx := context.Background()
+	gatedA := schema.MediaRenderProbe{MediaURL: "https://example.com/gated-a.html", HealthGated: true}
+	gatedB := schema.MediaRenderProbe{MediaURL: "https://example.com/gated-b.html", HealthGated: true}
+
+	tm.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{}, nil).
+		MinTimes(1)
+	// Strict mock: GetURLsDueForRenderProbe and Enqueue must never be called while the
+	// probe is disabled.
+
+	released := make(chan struct{}, 1)
+	gomock.InOrder(
+		tm.store.EXPECT().GetHealthGatedRenderProbes(ctx, gomock.Any()).Return([]schema.MediaRenderProbe{gatedA, gatedB}, nil).Times(1),
+		tm.store.EXPECT().GetHealthGatedRenderProbes(ctx, gomock.Any()).Return(nil, nil).AnyTimes(),
+	)
+	// First release fails: it must not abort the batch, and the marker survives for the
+	// next cycle's retry.
+	tm.store.EXPECT().ReleaseRenderGate(ctx, gatedA).Return(nil, assert.AnError)
+	tm.store.EXPECT().
+		ReleaseRenderGate(ctx, gatedB).
+		DoAndReturn(func(context.Context, schema.MediaRenderProbe) ([]uint64, error) {
+			return []uint64{42}, nil
+		})
+	tm.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{42}).
+		DoAndReturn(func(context.Context, []uint64) ([]store.TokenViewabilityChange, error) {
+			select {
+			case released <- struct{}{}:
+			default:
+			}
+			return nil, nil
+		})
+
+	now := time.Now()
+	tm.clock.EXPECT().Now().Return(now).AnyTimes()
+	tm.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	tm.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+
+	go func() {
+		<-released
+		time.Sleep(20 * time.Millisecond)
+		_ = tm.sweeper.Stop(ctx)
+	}()
+
+	require.NoError(t, tm.sweeper.Start(ctx))
+}
