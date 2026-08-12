@@ -18,10 +18,11 @@ The database includes the following main tables:
 - `token_metadata` - NFT metadata (name, description, media, attributes, etc.)
 - `enrichment_sources` - Additional data sources enriching token information
 - `balances` - Current token ownership balances (multi-edition tokens)
-- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability); ownership rows with `metadata.tx_hash` are unique per `(token_id, owner_address, event_type, tx_hash)` via `token_events_ownership_unique`
+- `token_events` - Unified log for collection sync (`acquired` / `released` / metadata / viewability / moderation status); ownership rows with `metadata.tx_hash` are unique per `(token_id, owner_address, event_type, tx_hash)` via `token_events_ownership_unique`
 - `provenance_events` - Historical provenance events (mint, transfer, burn, etc.)
 - `media_assets` - Media files associated with tokens (images, videos, etc.)
 - `token_media_health` - Health status of token media URLs
+- `token_moderation_verdicts` - Per-source moderation verdicts (source of truth behind `tokens.moderation_status`; see [token_moderation.md](token_moderation.md))
 - `releases` - Cross-vendor release abstraction (Feral File series, Art Blocks projects, fxhash generative tokens, objkt custom collections, OpenSea collections) with stable internal id and optional human-readable slug (migration 018; `vendor_release_slug` added in 019)
 - `release_members` - Ordered token membership within a release; `mint_number` is authoritative and 1-based (migration 018)
 - `watched_addresses` - Addresses being monitored for indexing
@@ -46,6 +47,7 @@ Primary entity for tracking tokens across all supported blockchains.
 | current_owner | TEXT | Current owner address (NULL for multi-owner tokens) |
 | burned | BOOLEAN | Whether token has been burned |
 | is_viewable | BOOLEAN | Whether token has accessible media URLs (for filtering unviewable tokens) |
+| moderation_status | moderation_status | Materialized combined moderation verdict (`none` \| `spam`), recomputed from `token_moderation_verdicts` on every verdict write (a `feralfile` row wins outright, otherwise the most severe vendor verdict); read paths exclude anything but `none` unless `include_moderated` is set. An enum so new verdict kinds need no schema change |
 | last_provenance_timestamp | TIMESTAMPTZ | Cached timestamp of most recent provenance event (denormalized for query performance) |
 | version | BIGINT | Incremented on user-visible changes (ownership, metadata, enrichment, viewability, burn status); used for scoped state sync |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
@@ -213,6 +215,9 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 | health_status | media_health_status | Health status (unknown, healthy, broken, checking) |
 | last_checked_at | TIMESTAMPTZ | Last health check timestamp |
 | last_error | TEXT | Error message from last failed check (NULL if healthy) |
+| failure_reason | TEXT | Machine-readable broken cause: http_status, dns, ssrf, type_mismatch, container_invalid, directory_listing, known_error_page, zero_length, truncated; render_% prefix reserved for the L1 render probe. NULL when healthy/unknown |
+| observed_content_type | TEXT | Content-Type header observed on the last probe (NULL until content-probed) |
+| sniffed_content_type | TEXT | Magic-byte-detected type from the first bytes of the body (NULL until content-probed); drives render-probe class selection |
 | created_at | TIMESTAMPTZ | Record creation timestamp |
 | updated_at | TIMESTAMPTZ | Last update timestamp |
 
@@ -235,6 +240,34 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 - Animation URLs have precedence over image URLs for filtering
 
 **Note**: The `media_url_hash` column uses MD5 hashing to enable efficient URL lookups without index size limitations. This is particularly important for long URLs that would otherwise exceed PostgreSQL's B-tree index size limits.
+
+### token_moderation_verdicts
+
+Source of truth for token moderation: one row per (token, source), where a source is a moderating vendor (`opensea`, `objkt`) or Feral File's own moderation system (`feralfile`, reserved — no writer yet). Rows exist only after a source has actually published a verdict; absence means "no opinion", deliberately distinct from a `none` verdict (tri-state). `tokens.moderation_status` is the materialized combination, recomputed transactionally on every verdict write. The moderation verdict sweeper re-checks vendor rows on the `next_check_at` schedule. See [token_moderation.md](token_moderation.md) for the full design.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| token_id | BIGINT | Foreign key to tokens.id (composite PK with source) |
+| source | moderation_source | Who published this verdict (composite PK with token_id) |
+| verdict | moderation_status | This source's moderation decision (`none` \| `spam`) |
+| detail | JSONB | Raw moderation fields only (`{"is_disabled":true}` / `{"flag":"banned"}`); full payload lives in enrichment_sources.vendor_json |
+| last_checked_at | TIMESTAMPTZ | Last time the source confirmed the stored verdict; failed checks do not touch it |
+| next_check_at | TIMESTAMPTZ | Sweep due time; NULL = never swept (feralfile rows) |
+| consecutive_failures | INT | Failed sweeper checks since last success (drives error backoff); reset on success |
+| last_error | TEXT | Error message from the last failed check (NULL after a successful one) |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Indexes**:
+- `idx_token_moderation_verdicts_due` on (source, next_check_at) WHERE next_check_at IS NOT NULL — the sweeper's per-source work queue (partial: feralfile rows never occupy it)
+
+**Relationships**:
+- Many-to-one with `tokens` (CASCADE delete)
+
+**Purpose**:
+- Lets moderation sources record verdicts independently so they never overwrite each other
+- Reserves the `feralfile` source slot so a future FF moderation system (user reports, operator decisions) slots in as just another writer with no schema change
+- Drives the moderation verdict sweeper's re-check scheduling (late vendor takedowns and appealed reversals both converge)
 
 ### provenance_events
 
@@ -593,6 +626,11 @@ Audit log of webhook delivery attempts with status tracking and response details
 - `healthy` - URL is accessible
 - `broken` - URL is not accessible
 
+### moderation_source
+- `opensea` - OpenSea moderation verdict (NFT API `is_disabled`)
+- `objkt` - objkt moderation verdict (token `flag` = `banned` or `removed` — both takedown states count as spam; see [token_moderation.md](token_moderation.md))
+- `feralfile` - Feral File's own moderation system (reserved; wins outright over vendor verdicts in both directions)
+
 ### vendor_type
 - `artblocks` - Art Blocks
 - `fxhash` - fxhash
@@ -677,6 +715,7 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_webhook_deliveries_updated_at`
 - `update_address_indexing_jobs_updated_at`
 - `update_token_media_health_updated_at`
+- `update_token_moderation_verdicts_updated_at` — added in migration 021
 - `update_jobs_updated_at`
 - `update_releases_updated_at` — added in migration 018 (`releases` table only; `release_members` has no `updated_at` by design)
 

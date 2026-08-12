@@ -18,6 +18,7 @@ type TokenResponse struct {
 	CurrentOwner            *string              `json:"current_owner"`
 	Burned                  bool                 `json:"burned"`
 	Viewable                bool                 `json:"viewable"`
+	ModerationStatus        string               `json:"moderation_status"`
 	LastProvenanceTimestamp *time.Time           `json:"last_provenance_timestamp"`
 	ReleaseID               *uint64              `json:"release_id,omitempty"`
 	MintNumber              *int64               `json:"mint_number,omitempty"`
@@ -89,6 +90,7 @@ func MapTokenToDTO(token *schema.Token) *TokenResponse {
 		CurrentOwner:            token.CurrentOwner,
 		Burned:                  token.Burned,
 		Viewable:                token.IsViewable,
+		ModerationStatus:        token.ModerationStatus.String(),
 		LastProvenanceTimestamp: token.LastProvenanceTimestamp,
 		CreatedAt:               token.CreatedAt,
 		UpdatedAt:               token.UpdatedAt,

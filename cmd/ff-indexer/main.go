@@ -23,6 +23,8 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/objkt"
+	"github.com/feral-file/ff-indexer-v2/internal/providers/vendors/opensea"
 	"github.com/feral-file/ff-indexer-v2/internal/ratelimit"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
@@ -156,10 +158,16 @@ func run() int {
 	}
 	ioAdapter := adapter.NewIO()
 	clock := adapter.NewClock()
+	// Nested media_health_sweeper.uri overrides win; unset fields inherit the root uri
+	// section so the documented "add a marker to uri.known_bad_page_markers" remediation
+	// reaches the sweeper too.
+	sweeperURI := sweeperCfg.MediaHealthSweeper.EffectiveURI(cfg.URI)
 	uriResolverConfig := &uri.Config{
-		IPFSGateways:    sweeperCfg.MediaHealthSweeper.URI.IPFSGateways,
-		ArweaveGateways: sweeperCfg.MediaHealthSweeper.URI.ArweaveGateways,
-		OnChFSGateways:  sweeperCfg.MediaHealthSweeper.URI.OnchfsGateways,
+		IPFSGateways:        sweeperURI.IPFSGateways,
+		ArweaveGateways:     sweeperURI.ArweaveGateways,
+		OnChFSGateways:      sweeperURI.OnchfsGateways,
+		ProbeMaxBytes:       sweeperURI.ProbeMaxBytes,
+		KnownBadPageMarkers: sweeperURI.KnownBadPageMarkers,
 	}
 	urlHealthChecker := uri.NewURLChecker(httpClient, ioAdapter, uriResolverConfig)
 	dataURIChecker := uri.NewDataURIChecker()
@@ -169,6 +177,22 @@ func run() int {
 		RecheckAfter:   sweeperCfg.MediaHealthSweeper.RecheckAfter,
 	}
 	mediaSweeper := sweeper.NewMediaHealthSweeper(mediaSweeperConfig, dataStore, urlHealthChecker, dataURIChecker, clock, jobQueue, cfg.Jobs.TokenQueue)
+
+	// Moderation verdict sweeper: re-checks OpenSea/objkt moderation verdicts on the
+	// token_moderation_verdicts schedule. Its vendor clients share rateLimiter with
+	// worker-core's enrichment clients, so the per-provider API budget (opensea,
+	// objkt) is enforced process-wide rather than per subsystem.
+	moderationSweeperConfig := &sweeper.ModerationVerdictSweeperConfig{
+		BatchSize:              sweeperCfg.ModerationSweeper.BatchSize,
+		WorkerPoolSize:         sweeperCfg.ModerationSweeper.Worker.WorkerPoolSize,
+		InitialRecheckInterval: sweeperCfg.ModerationSweeper.InitialRecheckInterval,
+		MaxRecheckInterval:     sweeperCfg.ModerationSweeper.MaxRecheckInterval,
+		FailureBackoffInitial:  sweeperCfg.ModerationSweeper.FailureBackoffInitial,
+		MaxConsecutiveFailures: sweeperCfg.ModerationSweeper.MaxConsecutiveFailures,
+	}
+	moderationObjktClient := objkt.NewClient(httpClient, rateLimiter, cfg.Vendors.ObjktURL, cfg.Vendors.ObjktAPIKey, jsonAdapter)
+	moderationOpenSeaClient := opensea.NewClient(httpClient, rateLimiter, cfg.Vendors.OpenSeaURL, cfg.Vendors.OpenSeaAPIKey, jsonAdapter)
+	moderationSweeper := sweeper.NewModerationVerdictSweeper(moderationSweeperConfig, dataStore, moderationOpenSeaClient, moderationObjktClient, clock)
 
 	// Worker-media: media task queue (requires CGO build).
 	wMediaCfg := cfg.ToWorkerMediaConfig()
@@ -208,6 +232,11 @@ func run() int {
 	g.Go(func() error {
 		componentCtx := logger.WithComponent(ctx, logger.ComponentSweeper)
 		return runSweeper(componentCtx, mediaSweeper)
+	})
+
+	g.Go(func() error {
+		componentCtx := logger.WithComponent(ctx, logger.ComponentSweeper)
+		return runSweeper(componentCtx, moderationSweeper)
 	})
 
 	if err := waitForSubsystems(rootCtx, g, cleanupWorkerMedia, cleanupWorkerCore); err != nil {
@@ -292,10 +321,10 @@ func runHTTPServer(ctx context.Context, srv *server.Server) error {
 	}
 }
 
-func runSweeper(ctx context.Context, mediaSweeper sweeper.Sweeper) error {
+func runSweeper(ctx context.Context, s sweeper.Sweeper) error {
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- mediaSweeper.Start(ctx)
+		errCh <- s.Start(ctx)
 	}()
 	select {
 	case err := <-errCh:
@@ -303,7 +332,7 @@ func runSweeper(ctx context.Context, mediaSweeper sweeper.Sweeper) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = mediaSweeper.Stop(shutdownCtx)
+		_ = s.Stop(shutdownCtx)
 		return ctx.Err()
 	}
 }

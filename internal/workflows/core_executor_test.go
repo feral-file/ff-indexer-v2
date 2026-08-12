@@ -31,6 +31,13 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
+// testModerationRecheckInterval is the spam re-check interval injected into every test
+// executor. Deliberately different from store.DefaultModerationRecheckInterval (24h):
+// assertions against it prove the configured value flows through to the verdict
+// writer, where an assertion against the default could pass even if the executor
+// ignored its configuration and used the constant.
+const testModerationRecheckInterval = 36 * time.Hour
+
 // testExecutorMocks contains all the mocks needed for testing the executor
 type testExecutorMocks struct {
 	ctrl             *gomock.Controller
@@ -124,6 +131,7 @@ func setupTestExecutor(t *testing.T, opts ...executorTestOption) *testExecutorMo
 		tm.blacklist,
 		tm.urlChecker,
 		tm.dataURIChecker,
+		testModerationRecheckInterval,
 	)
 
 	return tm
@@ -1658,6 +1666,10 @@ func TestEnhanceTokenMetadata_Success(t *testing.T) {
 			return nil
 		})
 
+	// No UpsertTokenModerationVerdict expectation: ArtBlocks publishes no moderation signal, so
+	// EnhancedMetadata.ModerationStatus stays nil and the verdicts must be left untouched. gomock
+	// fails the test if the executor writes one anyway.
+
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
 
 	assert.NoError(t, err)
@@ -1709,6 +1721,164 @@ func TestEnhanceTokenMetadata_PersistsReleaseMembership(t *testing.T) {
 		Return(&schema.Release{ID: 99}, nil)
 	mocks.store.EXPECT().
 		UpsertReleaseMember(ctx, uint64(99), token.ID, int64(5)).
+		Return(nil)
+
+	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
+
+	assert.NoError(t, err)
+	assert.Equal(t, enhancedMetadata, result)
+}
+
+// TestEnhanceTokenMetadata_PersistsModerationVerdict verifies the vendor moderation verdict
+// (OpenSea is_disabled / objkt banned) is written to the token when the vendor flags it.
+func TestEnhanceTokenMetadata_PersistsModerationVerdict(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x29539a0109fec46b916a6125f352c629d9304c73", "0")
+
+	normalizedMetadata := &metadata.NormalizedMetadata{
+		Name: "Visit ether-pool.net to claim rewards",
+	}
+
+	token := &schema.Token{
+		ID:       7,
+		TokenCID: tokenCID.String(),
+	}
+
+	enhancedMetadata := &metadata.EnhancedMetadata{
+		Vendor:           schema.VendorOpenSea,
+		VendorJSON:       []byte(`{"is_disabled":true}`),
+		Name:             types.StringPtr("Visit ether-pool.net to claim rewards"),
+		ModerationStatus: moderationStatusPtr(schema.ModerationStatusSpam),
+		ModerationDetail: []byte(`{"is_disabled":true}`),
+	}
+
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(token, nil)
+	mocks.metadataEnhancer.EXPECT().
+		Enhance(ctx, tokenCID, normalizedMetadata).
+		Return(enhancedMetadata, nil)
+	mocks.metadataEnhancer.EXPECT().
+		VendorJsonHash(enhancedMetadata).
+		Return([]byte("vendorhash123"), nil)
+	mocks.store.EXPECT().
+		UpsertEnrichmentSource(ctx, gomock.Any()).
+		Return(nil)
+	mocks.clock.EXPECT().Now().Return(now)
+	mocks.store.EXPECT().
+		UpsertTokenModerationVerdict(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.UpsertTokenModerationVerdictInput) (bool, error) {
+			assert.Equal(t, token.ID, input.TokenID)
+			assert.Equal(t, schema.ModerationSourceOpenSea, input.Source, "vendor must map to its moderation source")
+			assert.Equal(t, schema.ModerationStatusSpam, input.Verdict)
+			assert.JSONEq(t, `{"is_disabled":true}`, string(input.Detail))
+			// A fresh vendor signal always schedules the first sweeper re-check;
+			// this is what puts the token into the sweep queue. Asserted against
+			// the interval the test injected — deliberately NOT the package
+			// default — to pin that the configured value reaches the writer.
+			// The deploy runbook tells operators to raise this knob to soften
+			// the post-backfill sweep; a hardcoded default here made that
+			// guidance silently ineffective.
+			require.NotNil(t, input.NextCheckAt)
+			assert.Equal(t, now.Add(testModerationRecheckInterval), *input.NextCheckAt)
+			return true, nil
+		})
+
+	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
+
+	assert.NoError(t, err)
+	assert.Equal(t, enhancedMetadata, result)
+}
+
+// TestEnhanceTokenMetadata_PersistsCleanVerdict pins the reversal direction: a vendor
+// that previously flagged a token and now reports it clean must write verdict=false —
+// the un-flag path that lets an appealed takedown restore visibility. Only the store
+// recompute decides whether the combined moderation_status actually flips (a feralfile pin could
+// hold it); the executor's job is just to pass the vendor's word through unmodified.
+func TestEnhanceTokenMetadata_PersistsCleanVerdict(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x29539a0109fec46b916a6125f352c629d9304c73", "0")
+
+	normalizedMetadata := &metadata.NormalizedMetadata{Name: "Rehabilitated artwork"}
+	token := &schema.Token{ID: 7, TokenCID: tokenCID.String()}
+
+	enhancedMetadata := &metadata.EnhancedMetadata{
+		Vendor:           schema.VendorOpenSea,
+		VendorJSON:       []byte(`{"is_disabled":false}`),
+		Name:             types.StringPtr("Rehabilitated artwork"),
+		ModerationStatus: moderationStatusPtr(schema.ModerationStatusNone),
+		ModerationDetail: []byte(`{"is_disabled":false}`),
+	}
+
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(token, nil)
+	mocks.metadataEnhancer.EXPECT().
+		Enhance(ctx, tokenCID, normalizedMetadata).
+		Return(enhancedMetadata, nil)
+	mocks.metadataEnhancer.EXPECT().
+		VendorJsonHash(enhancedMetadata).
+		Return([]byte("vendorhash123"), nil)
+	mocks.store.EXPECT().
+		UpsertEnrichmentSource(ctx, gomock.Any()).
+		Return(nil)
+	mocks.clock.EXPECT().Now().Return(time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC))
+	mocks.store.EXPECT().
+		UpsertTokenModerationVerdict(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input store.UpsertTokenModerationVerdictInput) (bool, error) {
+			assert.Equal(t, schema.ModerationStatusNone, input.Verdict, "a clean vendor verdict must be written, not dropped")
+			return true, nil
+		})
+
+	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
+
+	assert.NoError(t, err)
+	assert.Equal(t, enhancedMetadata, result)
+}
+
+// TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched pins the tri-state
+// contract at the layer where getting it wrong is silent. A vendor that publishes no
+// moderation signal leaves ModerationStatus nil; writing a zero value instead would clear a real
+// flag whenever routing changes — e.g. a gentk flagged via the objkt fallback gets
+// un-flagged the moment fxhash starts indexing it. gomock fails on any unexpected
+// UpsertTokenModerationVerdict call, which is the assertion here.
+func TestEnhanceTokenMetadata_NoSignalVendorLeavesVerdictUntouched(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1EfsNuqwLAWDd3o4pvfUx1CAh5GMdTrRvr", "1")
+
+	normalizedMetadata := &metadata.NormalizedMetadata{Name: "Gentk"}
+	token := &schema.Token{ID: 11, TokenCID: tokenCID.String()}
+
+	// fxhash enriches this token and reports no moderation verdict.
+	enhancedMetadata := &metadata.EnhancedMetadata{
+		Vendor:           schema.VendorFXHash,
+		VendorJSON:       []byte(`{}`),
+		Name:             types.StringPtr("Gentk"),
+		ModerationStatus: nil,
+	}
+
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(token, nil)
+	mocks.metadataEnhancer.EXPECT().
+		Enhance(ctx, tokenCID, normalizedMetadata).
+		Return(enhancedMetadata, nil)
+	mocks.metadataEnhancer.EXPECT().
+		VendorJsonHash(enhancedMetadata).
+		Return([]byte("hash"), nil)
+	mocks.store.EXPECT().
+		UpsertEnrichmentSource(ctx, gomock.Any()).
 		Return(nil)
 
 	result, err := mocks.executor.EnhanceTokenMetadata(ctx, tokenCID, normalizedMetadata)
@@ -4461,7 +4631,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleHealthyURL(t *te
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4515,7 +4685,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_SingleBrokenURL(t *tes
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusBroken, &errorMsg).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4570,7 +4740,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_AlreadyViewableNoChang
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4634,11 +4804,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_MultipleURLs(t *testin
 
 	// Mock database updates for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, animationURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, animationURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4690,7 +4860,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Healthy(t *tes
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, dataURI, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4744,7 +4914,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_DataURI_Invalid(t *tes
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusBroken, &errorMsg).
+		UpdateTokenMediaHealthByURL(ctx, dataURI, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4808,11 +4978,11 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_MixedURLsAndDataURI(t 
 
 	// Mock database updates
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, dataURI, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, dataURI, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -4845,7 +5015,13 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_MixedURLsAndDataURI(t 
 	assert.Equal(t, 2, len(result.HealthyURLs)) // Both URLs are healthy (image + dataURI)
 }
 
-func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testing.T) {
+// TestCheckMediaURLsHealthAndUpdateViewability_TransientNotPersisted pins the L0
+// contract on the indexing-time path: transient probe outcomes (429, retryable
+// transport/read failures) are never written to token_media_health — the strict mock has
+// no UpdateTokenMediaHealthByURL expectation, so any write fails the test. Persisting
+// unknown here would overwrite an existing healthy row and the viewability recompute
+// below would hide a previously viewable token over a passing network blip.
+func TestCheckMediaURLsHealthAndUpdateViewability_TransientNotPersisted(t *testing.T) {
 	mocks := setupTestExecutor(t)
 	defer tearDownTestExecutor(mocks)
 
@@ -4855,7 +5031,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testi
 	mediaURLs := []string{imageURL}
 	errorMsg := "temporary network error"
 
-	// Mock URL health check - transient error (unknown)
+	// Mock URL health check - transient error
 	mocks.urlChecker.EXPECT().
 		Check(ctx, imageURL).
 		Return(uri.HealthCheckResult{
@@ -4863,10 +5039,8 @@ func TestCheckMediaURLsHealthAndUpdateViewability_Success_UnknownStatus(t *testi
 			Error:  &errorMsg,
 		})
 
-	// Mock database update for media health
-	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusUnknown, &errorMsg).
-		Return(nil)
+	// Deliberately NO UpdateTokenMediaHealthByURL expectation: the existing health row
+	// must be retained; the sweeper retries the URL on its own schedule.
 
 	// Mock token retrieval
 	token := &schema.Token{
@@ -5061,7 +5235,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_BatchUpdateViewabilityError(t 
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -5105,7 +5279,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_UpdateMediaHealthError_NonFata
 
 	// Mock database update for media health - fails but should be non-fatal
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(dbError)
 
 	// Mock token retrieval - should still proceed
@@ -5159,7 +5333,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_GetViewabilityError(t *testing
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -5207,7 +5381,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_ViewabilityInfoNotFound(t *tes
 
 	// Mock database update for media health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, (*string)(nil)).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock token retrieval
@@ -5259,13 +5433,16 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_Propagates(t *testi
 	mocks.urlChecker.EXPECT().
 		Check(ctx, deadURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: &workingURL,
+			Status:             uri.HealthStatusHealthy,
+			WorkingURL:         &workingURL,
+			WorkingURLObserved: "image/png",
+			WorkingURLSniffed:  "image/png",
 		})
 
 	// Expect propagation (not a simple health update on the dead URL)
+	obs := "image/png"
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, deadURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, deadURL, workingURL, &obs, &obs).
 		Return(nil)
 
 	token := &schema.Token{ID: 1, TokenCID: tokenCID}
@@ -5311,13 +5488,22 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURL_PropagateError_Fall
 
 	// Propagation fails
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, gomock.Nil(), gomock.Nil()).
 		Return(fmt.Errorf("db error"))
 
-	// Fallback: mark original URL BROKEN (not healthy) — it failed the direct probe
+	// Fallback: mark original URL BROKEN (not healthy) — it failed the direct probe —
+	// with the same contextual last_error the sweeper persists (which validated
+	// alternative existed and why it was not promoted).
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, originalURL, schema.MediaHealthStatusBroken, nil).
-		Return(nil)
+		UpdateTokenMediaHealthByURL(ctx, originalURL, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
+			require.Equal(t, schema.MediaHealthStatusBroken, upd.Status)
+			require.NotNil(t, upd.LastError, "propagation failure must persist its context")
+			assert.Contains(t, *upd.LastError, "propagation of working alternative")
+			assert.Contains(t, *upd.LastError, workingURL)
+			assert.Contains(t, *upd.LastError, "db error")
+			return nil
+		})
 
 	token := &schema.Token{ID: 2, TokenCID: tokenCID}
 	mocks.store.EXPECT().GetTokenByTokenCID(ctx, tokenCID).Return(token, nil)
@@ -5362,7 +5548,7 @@ func TestCheckMediaURLsHealthAndUpdateViewability_WorkingURLSameAsOriginal_NoPro
 
 	// No UpdateMediaURLAndPropagate call expected – only the normal health update
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	token := &schema.Token{ID: 3, TokenCID: tokenCID}
@@ -5454,3 +5640,7 @@ func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerAdapterAuthority(t *
 	err := mocks.executor.IndexTokenWithFullProvenancesByTokenCID(ctx, tokenCID)
 	require.NoError(t, err)
 }
+
+// moderationStatusPtr returns a pointer to a moderation status, for building
+// EnhancedMetadata fixtures where nil means "vendor publishes no signal".
+func moderationStatusPtr(s schema.ModerationStatus) *schema.ModerationStatus { return &s }

@@ -182,11 +182,18 @@ type coreExecutor struct {
 	blacklist        registry.BlacklistRegistry
 	urlChecker       uri.URLChecker
 	dataURIChecker   uri.DataURIChecker
+	// moderationRecheckInterval schedules a fresh vendor spam verdict's first sweeper
+	// re-check (moderation_sweeper.initial_recheck_interval). Threaded from config
+	// rather than read from store.DefaultModerationRecheckInterval so the operator
+	// knob actually reaches the writer — the deploy runbook tells operators to
+	// raise it to soften the first sweep after the 021_reindex backfill, which
+	// only works if the enricher honors it.
+	moderationRecheckInterval time.Duration
 }
 
 // NewCoreExecutor creates a new core executor instance.
 func NewCoreExecutor(
-	store store.Store,
+	st store.Store,
 	metadataResolver metadata.Resolver,
 	metadataEnhancer metadata.Enhancer,
 	ethClient ethereum.EthereumClient,
@@ -198,21 +205,28 @@ func NewCoreExecutor(
 	blacklist registry.BlacklistRegistry,
 	urlChecker uri.URLChecker,
 	dataURIChecker uri.DataURIChecker,
-
+	moderationRecheckInterval time.Duration,
 ) CoreExecutor {
+	// Non-positive means the caller did not thread a configured value (zero-value
+	// struct in tests, or a future call site that predates the knob). Fall back to
+	// the package default rather than scheduling re-checks in the past.
+	if moderationRecheckInterval <= 0 {
+		moderationRecheckInterval = store.DefaultModerationRecheckInterval
+	}
 	return &coreExecutor{
-		store:            store,
-		metadataResolver: metadataResolver,
-		metadataEnhancer: metadataEnhancer,
-		ethClient:        ethClient,
-		tzktClient:       tzktClient,
-		json:             jsonAdapter,
-		clock:            clock,
-		httpClient:       httpClient,
-		io:               io,
-		blacklist:        blacklist,
-		urlChecker:       urlChecker,
-		dataURIChecker:   dataURIChecker,
+		store:                     st,
+		metadataResolver:          metadataResolver,
+		metadataEnhancer:          metadataEnhancer,
+		ethClient:                 ethClient,
+		tzktClient:                tzktClient,
+		json:                      jsonAdapter,
+		clock:                     clock,
+		httpClient:                httpClient,
+		io:                        io,
+		blacklist:                 blacklist,
+		urlChecker:                urlChecker,
+		dataURIChecker:            dataURIChecker,
+		moderationRecheckInterval: moderationRecheckInterval,
 	}
 }
 
@@ -566,7 +580,15 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 		return nil, fmt.Errorf("failed to enhance metadata: %w", err)
 	}
 
-	// If no enhancement is available, skip
+	// If no enhancement is available, skip.
+	//
+	// Note this leaves any existing spam verdict untouched: a vendor that stops answering
+	// (missing API key, item dropped from its index) yields no signal, not an "all clear",
+	// so the last real moderation decision stands rather than being silently cleared by an
+	// outage. Tokens in this state that already have a verdict row keep getting re-checked
+	// by the moderation sweeper; tokens without one stay outside the sweep queue entirely — a
+	// verdict row is only ever created by a first successful vendor signal (coverage gap
+	// accepted and documented in docs/token_moderation.md).
 	if enhanced == nil {
 		logger.InfoCtx(ctx, "No enhancement available for token", zap.String("tokenCID", tokenCID.String()))
 		return nil, nil
@@ -604,6 +626,45 @@ func (e *coreExecutor) EnhanceTokenMetadata(ctx context.Context, tokenCID domain
 
 	if err := e.store.UpsertEnrichmentSource(ctx, enrichmentInput); err != nil {
 		return nil, fmt.Errorf("failed to upsert enrichment source: %w", err)
+	}
+
+	// Persist the vendor moderation verdict (OpenSea is_disabled / objkt flag) whenever
+	// the enriching vendor actually publishes one. Vendors without a moderation signal
+	// leave ModerationStatus nil and must not touch the stored verdicts — writing a zero
+	// value would clear a real verdict whenever vendor routing changes (see
+	// EnhancedMetadata.ModerationStatus).
+	//
+	// The verdict is recorded per source; the store recomputes the materialized
+	// tokens.moderation_status from all sources (a feralfile row would win outright) and
+	// broadcasts moderation_status_changed only when the combined value flips. Scheduling
+	// the first sweeper re-check at now+moderationRecheckInterval (the configured
+	// moderation_sweeper.initial_recheck_interval) is what puts the token into the sweep
+	// queue — a fresh enrichment always resets that schedule (fresh signal, fresh
+	// schedule).
+	if enhanced.ModerationStatus != nil {
+		source, ok := schema.ModerationSourceForVendor(enhanced.Vendor)
+		if !ok {
+			// Defensive: a status set by a vendor with no mapped moderation source
+			// would mean an enhancer branch and the source mapping went out of sync.
+			return nil, fmt.Errorf("vendor %s published a moderation verdict but has no moderation source", enhanced.Vendor)
+		}
+		nextCheck := e.clock.Now().Add(e.moderationRecheckInterval)
+		moderationChanged, err := e.store.UpsertTokenModerationVerdict(ctx, store.UpsertTokenModerationVerdictInput{
+			TokenID:     token.ID,
+			Source:      source,
+			Verdict:     *enhanced.ModerationStatus,
+			Detail:      enhanced.ModerationDetail,
+			NextCheckAt: &nextCheck,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to upsert token moderation verdict: %w", err)
+		}
+		if moderationChanged {
+			logger.InfoCtx(ctx, "Token moderation status changed",
+				zap.String("tokenCID", tokenCID.String()),
+				zap.String("moderation_status", enhanced.ModerationStatus.String()),
+				zap.String("vendor", string(enhanced.Vendor)))
+		}
 	}
 
 	if enhanced.Release != nil {
@@ -668,6 +729,19 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 			workingURL   *string // non-nil when an alternative gateway resolved successfully
 			healthStatus schema.MediaHealthStatus
 			lastError    *string
+			// transient marks a retryable probe failure (429, retryable transport/read
+			// errors). Transient outcomes are never persisted — same contract as the
+			// sweeper — so a temporary gateway failure during indexing cannot overwrite
+			// an existing healthy row and hide a viewable token until the next sweep.
+			transient bool
+			// L0 content-validation observations, persisted with every verdict
+			failureReason       *string
+			observedContentType *string
+			sniffedContentType  *string
+			// workingURLObserved/Sniffed are the fallback gateway's own validated
+			// observations, persisted on the promoted row.
+			workingURLObserved *string
+			workingURLSniffed  *string
 		}
 
 		resultsChan := make(chan urlResult, len(mediaURLs))
@@ -679,43 +753,47 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 			go func(u string) {
 				defer wg.Done()
 
-				var status schema.MediaHealthStatus
-				var workingURL *string
-				var errMsg *string
+				res := urlResult{url: u}
 
 				if types.IsDataURI(u) {
 					result := e.dataURIChecker.Check(u)
 					if result.Valid {
-						status = schema.MediaHealthStatusHealthy
+						res.healthStatus = schema.MediaHealthStatusHealthy
 					} else {
-						status = schema.MediaHealthStatusBroken
-						errMsg = result.Error
+						res.healthStatus = schema.MediaHealthStatusBroken
+						res.lastError = result.Error
+						res.failureReason = result.ReasonPtr()
 					}
+					res.observedContentType = result.DeclaredMimeTypePtr()
+					res.sniffedContentType = result.MimeTypePtr()
 				} else {
 					result := e.urlChecker.Check(ctx, u)
 					switch result.Status {
 					case uri.HealthStatusHealthy:
-						status = schema.MediaHealthStatusHealthy
+						res.healthStatus = schema.MediaHealthStatusHealthy
 						// Capture the working URL if the checker resolved an alternative gateway.
 						// This happens when the original IPFS/Arweave/OnChFS gateway URL is dead
 						// but the CID is still reachable via another configured gateway.
 						if result.WorkingURL != nil && *result.WorkingURL != u {
-							workingURL = result.WorkingURL
+							res.workingURL = result.WorkingURL
+							res.workingURLObserved = result.WorkingURLObservedPtr()
+							res.workingURLSniffed = result.WorkingURLSniffedPtr()
 						}
 					case uri.HealthStatusBroken:
-						status = schema.MediaHealthStatusBroken
+						res.healthStatus = schema.MediaHealthStatusBroken
+					case uri.HealthStatusTransientError:
+						res.healthStatus = schema.MediaHealthStatusUnknown
+						res.transient = true
 					default:
-						status = schema.MediaHealthStatusUnknown
+						res.healthStatus = schema.MediaHealthStatusUnknown
 					}
-					errMsg = result.Error
+					res.lastError = result.Error
+					res.failureReason = result.FailureReasonPtr()
+					res.observedContentType = result.ObservedContentTypePtr()
+					res.sniffedContentType = result.SniffedContentTypePtr()
 				}
 
-				resultsChan <- urlResult{
-					url:          u,
-					workingURL:   workingURL,
-					healthStatus: status,
-					lastError:    errMsg,
-				}
+				resultsChan <- res
 			}(url)
 		}
 
@@ -737,7 +815,8 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						zap.String("original_url", result.url),
 						zap.String("working_url", *result.workingURL),
 					)
-					if err := e.store.UpdateMediaURLAndPropagate(ctx, result.url, *result.workingURL); err != nil {
+					if err := e.store.UpdateMediaURLAndPropagate(ctx, result.url, *result.workingURL,
+						result.workingURLObserved, result.workingURLSniffed); err != nil {
 						logger.ErrorCtx(ctx, err,
 							zap.String("url", result.url),
 							zap.String("working_url", *result.workingURL),
@@ -749,7 +828,16 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 						// BatchUpdateTokensViewability with false data, making viewable=true while
 						// the read path still serves the dead gateway URL — reproducing bug #96.
 						// The sweeper will retry UpdateMediaURLAndPropagate and fix the state.
-						if err2 := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusBroken, nil); err2 != nil {
+						// last_error carries the same context the sweeper persists: which
+						// validated alternative existed and why it was not promoted.
+						errMsg := fmt.Sprintf("direct probe failed; propagation of working alternative %s failed: %v", *result.workingURL, err)
+						if err2 := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, store.MediaHealthUpdate{
+							Status:              schema.MediaHealthStatusBroken,
+							LastError:           &errMsg,
+							FailureReason:       result.failureReason,
+							ObservedContentType: result.observedContentType,
+							SniffedContentType:  result.sniffedContentType,
+						}); err2 != nil {
 							logger.ErrorCtx(ctx, err2, zap.String("url", result.url))
 						}
 					} else {
@@ -759,14 +847,34 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 					}
 				} else {
 					// Original URL is directly reachable
-					if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, schema.MediaHealthStatusHealthy, nil); err != nil {
+					if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, store.MediaHealthUpdate{
+						Status:              schema.MediaHealthStatusHealthy,
+						ObservedContentType: result.observedContentType,
+						SniffedContentType:  result.sniffedContentType,
+					}); err != nil {
 						logger.ErrorCtx(ctx, err, zap.String("url", result.url))
 					}
 					healthyURLs = append(healthyURLs, result.url)
 				}
+			} else if result.transient {
+				// Transient probe failure: retain the existing health row (same
+				// never-persist contract as the sweeper). Overwriting a healthy row
+				// with unknown here would make the viewability recompute below hide a
+				// previously viewable token over a passing 429 or network blip; the
+				// sweeper retries the URL on its own schedule.
+				logger.InfoCtx(ctx, "Transient media probe failure during indexing, retaining previous health state",
+					zap.String("url", result.url),
+					zap.Stringp("error", result.lastError),
+				)
 			} else {
 				// Update media health in database for broken/unknown URLs
-				if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, result.healthStatus, result.lastError); err != nil {
+				if err := e.store.UpdateTokenMediaHealthByURL(ctx, result.url, store.MediaHealthUpdate{
+					Status:              result.healthStatus,
+					LastError:           result.lastError,
+					FailureReason:       result.failureReason,
+					ObservedContentType: result.observedContentType,
+					SniffedContentType:  result.sniffedContentType,
+				}); err != nil {
 					logger.ErrorCtx(ctx, err, zap.String("url", result.url))
 				}
 			}

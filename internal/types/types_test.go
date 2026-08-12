@@ -44,6 +44,34 @@ func TestStringPtr(t *testing.T) {
 	}
 }
 
+func TestBoolPtr(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    bool
+		expected *bool
+	}{
+		{
+			name:     "true value",
+			input:    true,
+			expected: BoolPtr(true),
+		},
+		{
+			name:     "false value",
+			input:    false,
+			expected: BoolPtr(false),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := BoolPtr(tt.input)
+			assert.NotNil(t, result)
+			assert.Equal(t, *tt.expected, *result)
+			assert.Equal(t, tt.input, *result)
+		})
+	}
+}
+
 func TestStringNilOrEmpty(t *testing.T) {
 	tests := []struct {
 		name     string

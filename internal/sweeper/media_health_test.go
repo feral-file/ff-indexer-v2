@@ -102,7 +102,7 @@ func TestMediaHealthSweeper_CheckURL_Healthy(t *testing.T) {
 
 	// Mock Update health status to healthy
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock Batch update viewability (returns changed tokens only)
@@ -172,7 +172,7 @@ func TestMediaHealthSweeper_CheckURL_SSrfBroken(t *testing.T) {
 		})
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, schema.MediaHealthStatusBroken, &errMsg).
+		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errMsg}).
 		Return(nil)
 
 	mocks.store.EXPECT().
@@ -211,6 +211,91 @@ func TestMediaHealthSweeper_CheckURL_SSrfBroken(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestMediaHealthSweeper_CheckURL_AlternativeURLPropagationFailure pins the failure
+// branch of fallback promotion: when a working alternative gateway is found but
+// UpdateMediaURLAndPropagate fails, the original URL must be persisted broken before
+// viewability recomputes. Leaving the row untouched would keep the token viewable while
+// its stored public URL stays dead (#96 class); the indexing path handles this failure
+// identically.
+func TestMediaHealthSweeper_CheckURL_AlternativeURLPropagationFailure(t *testing.T) {
+	mocks := setupTestSweeper(t)
+	defer tearDownTestSweeper(mocks)
+
+	ctx := context.Background()
+	originalURL := "ipfs://QmTest123"
+	workingURL := "https://ipfs.io/ipfs/QmTest123"
+
+	mocks.store.EXPECT().
+		GetTokenIDsByMediaURL(ctx, originalURL).
+		Return([]uint64{1}, nil)
+
+	mocks.urlChecker.EXPECT().
+		Check(ctx, originalURL).
+		Return(uri.HealthCheckResult{
+			Status:     uri.HealthStatusHealthy,
+			WorkingURL: &workingURL,
+			// The checker preserves the direct probe's diagnostics on a fallback
+			// success precisely for this path.
+			FailureReason:       uri.FailureDirectoryListing,
+			ObservedContentType: "text/html",
+			SniffedContentType:  "text/html",
+		})
+
+	mocks.store.EXPECT().
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, gomock.Nil(), gomock.Nil()).
+		Return(assert.AnError)
+
+	// The original URL is marked broken — not left as-is, not marked healthy — and it
+	// keeps the direct probe's diagnosis so the per-reason breakdown stays truthful.
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, originalURL, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
+			require.Equal(t, schema.MediaHealthStatusBroken, upd.Status)
+			require.NotNil(t, upd.LastError)
+			require.Contains(t, *upd.LastError, "propagation of working alternative")
+			require.NotNil(t, upd.FailureReason)
+			require.Equal(t, uri.FailureDirectoryListing.String(), *upd.FailureReason)
+			require.NotNil(t, upd.ObservedContentType)
+			require.Equal(t, "text/html", *upd.ObservedContentType)
+			require.NotNil(t, upd.SniffedContentType)
+			require.Equal(t, "text/html", *upd.SniffedContentType)
+			return nil
+		})
+
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{1}).
+		Return(nil, nil)
+
+	now := time.Now()
+	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
+	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	mocks.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+
+	mocks.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{originalURL}, nil).
+		Times(1)
+	mocks.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{}, nil).
+		AnyTimes()
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = mocks.sweeper.Stop(ctx)
+	}()
+
+	err := mocks.sweeper.Start(ctx)
+	require.NoError(t, err)
+}
+
 func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 	mocks := setupTestSweeper(t)
 	defer tearDownTestSweeper(mocks)
@@ -228,13 +313,17 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 	mocks.urlChecker.EXPECT().
 		Check(ctx, originalURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: &workingURL,
+			Status:             uri.HealthStatusHealthy,
+			WorkingURL:         &workingURL,
+			WorkingURLObserved: "image/png",
+			WorkingURLSniffed:  "image/png",
 		})
 
-	// Mock Update and propagate URL
+	// Mock Update and propagate URL: the promoted row must carry the fallback
+	// gateway's own validated observations, not NULLs.
+	obs := "image/png"
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, &obs, &obs).
 		Return(nil)
 
 	// Mock Batch update viewability (returns changed tokens only)
@@ -303,7 +392,7 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 
 	// Mock Update health status to broken
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, testURL, schema.MediaHealthStatusBroken, &errorMsg).
+		UpdateTokenMediaHealthByURL(ctx, testURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg}).
 		Return(nil)
 
 	// Mock Batch update viewability (returns changed tokens only)
@@ -321,6 +410,77 @@ func TestMediaHealthSweeper_CheckURL_Broken(t *testing.T) {
 	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
 	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
 	// Make After return a channel that closes after a brief delay
+	mocks.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+
+	mocks.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{testURL}, nil).
+		Times(1)
+
+	mocks.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{}, nil).
+		AnyTimes()
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = mocks.sweeper.Stop(ctx)
+	}()
+
+	err := mocks.sweeper.Start(ctx)
+	require.NoError(t, err)
+}
+
+// TestMediaHealthSweeper_CheckURL_ContentValidationFailure asserts the sweeper persists
+// the full L0 outcome — failure_reason and both content types — not just the error string.
+func TestMediaHealthSweeper_CheckURL_ContentValidationFailure(t *testing.T) {
+	mocks := setupTestSweeper(t)
+	defer tearDownTestSweeper(mocks)
+
+	ctx := context.Background()
+	testURL := "https://gateway.example.com/ipfs/QmDirCID"
+	errorMsg := `IPFS gateway directory listing (marker "index of /ipfs")`
+	reason := uri.FailureDirectoryListing.String()
+	htmlType := "text/html"
+
+	mocks.store.EXPECT().
+		GetTokenIDsByMediaURL(ctx, testURL).
+		Return([]uint64{1}, nil)
+
+	mocks.urlChecker.EXPECT().
+		Check(ctx, testURL).
+		Return(uri.HealthCheckResult{
+			Status:              uri.HealthStatusBroken,
+			Error:               &errorMsg,
+			FailureReason:       uri.FailureDirectoryListing,
+			ObservedContentType: htmlType,
+			SniffedContentType:  htmlType,
+		})
+
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, testURL, store.MediaHealthUpdate{
+			Status:              schema.MediaHealthStatusBroken,
+			LastError:           &errorMsg,
+			FailureReason:       &reason,
+			ObservedContentType: &htmlType,
+			SniffedContentType:  &htmlType,
+		}).
+		Return(nil)
+
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{1}).
+		Return(nil, nil)
+
+	now := time.Now()
+	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
+	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
 	mocks.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
 		ch := make(chan time.Time, 1)
 		go func() {
@@ -370,7 +530,7 @@ func TestMediaHealthSweeper_CheckURL_NoViewabilityChange(t *testing.T) {
 
 	// Mock Update health status
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, testURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, testURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock Batch update returns empty (no viewability change)
@@ -498,7 +658,7 @@ func TestMediaHealthSweeper_StoreError_UpdateHealth(t *testing.T) {
 
 	// Mock Store error when updating health
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(errors.New("update failed"))
 
 	// Even after update error, the sweeper still attempts batch update
@@ -560,7 +720,7 @@ func TestMediaHealthSweeper_MultipleURLs(t *testing.T) {
 		Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy})
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, url1, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, url1, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock Get token IDs for url2
@@ -574,7 +734,7 @@ func TestMediaHealthSweeper_MultipleURLs(t *testing.T) {
 		Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy})
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, url2, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, url2, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock Batch update for both tokens (returns both as changed)
@@ -714,7 +874,7 @@ func TestMediaHealthSweeper_GetURLsError_HandledGracefully(t *testing.T) {
 		Return(uri.HealthCheckResult{Status: uri.HealthStatusHealthy})
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(gomock.Any(), testURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock Batch update returns changes
@@ -773,7 +933,7 @@ func TestMediaHealthSweeper_CheckDataURI_Valid(t *testing.T) {
 
 	// Mock Update health status to healthy
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, testDataURI, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, testDataURI, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Mock Batch update returns changes
@@ -844,7 +1004,7 @@ func TestMediaHealthSweeper_CheckDataURI_Invalid(t *testing.T) {
 
 	// Mock Update health status to broken
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, testDataURI, schema.MediaHealthStatusBroken, &errorMsg).
+		UpdateTokenMediaHealthByURL(ctx, testDataURI, store.MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg}).
 		Return(nil)
 
 	// Mock Batch update returns changes
@@ -923,11 +1083,11 @@ func TestMediaHealthSweeper_SameTokenMultipleURLs(t *testing.T) {
 
 	// Update health for both URLs
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, imageURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	mocks.store.EXPECT().
-		UpdateTokenMediaHealthByURL(ctx, animationURL, schema.MediaHealthStatusHealthy, nil).
+		UpdateTokenMediaHealthByURL(ctx, animationURL, store.MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy}).
 		Return(nil)
 
 	// Critical: Batch update should receive token ID only once (deduplicated)

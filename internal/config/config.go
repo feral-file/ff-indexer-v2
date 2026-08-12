@@ -27,6 +27,13 @@ type URIConfig struct {
 	IPFSGateways    []string `mapstructure:"ipfs_gateways"`
 	ArweaveGateways []string `mapstructure:"arweave_gateways"`
 	OnchfsGateways  []string `mapstructure:"onchfs_gateways"`
+	// ProbeMaxBytes caps how many body bytes a health probe reads for content validation
+	// (0 = uri.DefaultProbeMaxBytes)
+	ProbeMaxBytes int `mapstructure:"probe_max_bytes"`
+	// KnownBadPageMarkers are case-insensitive substrings identifying gateway error pages
+	// served with HTTP 200 (matched against HTML bodies only; operator-editable so a new
+	// gateway quirk needs no deploy)
+	KnownBadPageMarkers []string `mapstructure:"known_bad_page_markers"`
 }
 
 // DatabaseConfig holds database configuration
@@ -129,12 +136,17 @@ type WorkerCoreConfig struct {
 	URI         URIConfig         `mapstructure:"uri"`
 	RateLimiter RateLimiterConfig `mapstructure:"rate_limiter"`
 	// Security mirrors AppConfig.security for token-worker outbound HTTP (metadata / URI resolution).
-	Security                     SecurityConfig `mapstructure:"security"`
-	MediaEnabled                 bool           `mapstructure:"media_enabled"`
-	EthereumTokenSweepStartBlock uint64         `mapstructure:"ethereum_token_sweep_start_block"`
-	TezosTokenSweepStartBlock    uint64         `mapstructure:"tezos_token_sweep_start_block"`
-	PublisherRegistryPath        string         `mapstructure:"publisher_registry_path"`
-	BlacklistPath                string         `mapstructure:"blacklist_path"`
+	Security SecurityConfig `mapstructure:"security"`
+	// ModerationSweeper is mirrored here because the enricher schedules a fresh moderation
+	// verdict's first sweeper re-check from moderation_sweeper.initial_recheck_interval —
+	// the writer and the sweeper must share one knob or the operator guidance to
+	// raise it (see the 021_reindex runbook) silently does nothing.
+	ModerationSweeper            ModerationSweeperConfig `mapstructure:"moderation_sweeper"`
+	MediaEnabled                 bool                    `mapstructure:"media_enabled"`
+	EthereumTokenSweepStartBlock uint64                  `mapstructure:"ethereum_token_sweep_start_block"`
+	TezosTokenSweepStartBlock    uint64                  `mapstructure:"tezos_token_sweep_start_block"`
+	PublisherRegistryPath        string                  `mapstructure:"publisher_registry_path"`
+	BlacklistPath                string                  `mapstructure:"blacklist_path"`
 
 	// Budgeted Indexing Mode Configuration
 	BudgetedIndexingEnabled           bool `mapstructure:"budgeted_indexing_enabled"`
@@ -264,12 +276,55 @@ type MediaHealthSweeperConfig struct {
 	Worker       WorkerConfig  `mapstructure:"worker"`
 }
 
+// EffectiveURI returns the sweeper's URI settings with unset fields inherited from the
+// root uri section.
+//
+// Reason: the documented operator remediation for a newly identified 200 error page is
+// "add a marker to uri.known_bad_page_markers" — without inheritance that setting reaches
+// worker-core but silently never the scheduled sweeper, which does the bulk of health
+// checking, so the bad page keeps being marked healthy. Trade-offs: inheritance is
+// per-field and only for unset values, so a deployment that deliberately configures the
+// nested media_health_sweeper.uri section keeps full override power. Constraints: empty
+// slice and zero are the "unset" sentinels — there is no way to nest an explicit
+// "no markers" override, which is acceptable because an empty marker list only ever
+// means "nothing configured".
+func (c *MediaHealthSweeperConfig) EffectiveURI(root URIConfig) URIConfig {
+	effective := c.URI
+	if len(effective.IPFSGateways) == 0 {
+		effective.IPFSGateways = root.IPFSGateways
+	}
+	if len(effective.ArweaveGateways) == 0 {
+		effective.ArweaveGateways = root.ArweaveGateways
+	}
+	if len(effective.OnchfsGateways) == 0 {
+		effective.OnchfsGateways = root.OnchfsGateways
+	}
+	if effective.ProbeMaxBytes <= 0 {
+		effective.ProbeMaxBytes = root.ProbeMaxBytes
+	}
+	if len(effective.KnownBadPageMarkers) == 0 {
+		effective.KnownBadPageMarkers = root.KnownBadPageMarkers
+	}
+	return effective
+}
+
+// ModerationSweeperConfig holds configuration for the moderation verdict sweeper
+type ModerationSweeperConfig struct {
+	BatchSize              int           `mapstructure:"batch_size"`
+	InitialRecheckInterval time.Duration `mapstructure:"initial_recheck_interval"`
+	MaxRecheckInterval     time.Duration `mapstructure:"max_recheck_interval"`
+	FailureBackoffInitial  time.Duration `mapstructure:"failure_backoff_initial"`
+	MaxConsecutiveFailures int           `mapstructure:"max_consecutive_failures"`
+	Worker                 WorkerConfig  `mapstructure:"worker"`
+}
+
 // SweeperConfig holds configuration for the sweeper program
 type SweeperConfig struct {
 	BaseConfig         `mapstructure:",squash"`
 	Database           DatabaseConfig           `mapstructure:"database"`
 	Jobs               JobsConfig               `mapstructure:"jobs"`
 	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
+	ModerationSweeper  ModerationSweeperConfig  `mapstructure:"moderation_sweeper"`
 }
 
 // SecurityConfig holds process-wide security controls (optional sections keyed under `security:`).
@@ -309,6 +364,7 @@ type AppConfig struct {
 	Rasterizer             RasterizerConfig         `mapstructure:"rasterizer"`
 	Transform              TransformConfig          `mapstructure:"transform"`
 	MediaHealthSweeper     MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
+	ModerationSweeper      ModerationSweeperConfig  `mapstructure:"moderation_sweeper"`
 
 	EthereumTokenSweepStartBlock uint64 `mapstructure:"ethereum_token_sweep_start_block"`
 	TezosTokenSweepStartBlock    uint64 `mapstructure:"tezos_token_sweep_start_block"`
@@ -425,6 +481,53 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 		return fmt.Errorf("missing required config values: %s", strings.Join(missingFields, ", "))
 	}
 
+	return validateModerationSweeperConfig(&cfg.ModerationSweeper)
+}
+
+// validateModerationSweeperConfig rejects moderation sweeper settings whose failure mode is a
+// vendor-quota burn loop rather than a visible startup error.
+//
+// Reason: the sweeper's scheduling math assumes positive intervals — a zero or
+// negative max_recheck_interval schedules every successful flagged check as
+// immediately due again, and a non-positive failure_backoff_initial does the same
+// after transient vendor errors. Those loops run at the vendor rate limit, so they
+// silently spend the shared OpenSea/objkt budget instead of crashing. The same
+// class of bug was fixed three separate times in the sweeper's own loop logic;
+// this closes the configuration route into it. Constraints: only moderation_sweeper.*
+// is validated here — the media health sweeper's settings predate this branch and
+// keep their existing (unvalidated) behavior.
+func validateModerationSweeperConfig(c *ModerationSweeperConfig) error {
+	invalid := make([]string, 0)
+
+	if c.BatchSize < 1 {
+		invalid = append(invalid, "moderation_sweeper.batch_size must be at least 1")
+	}
+	if c.Worker.WorkerPoolSize < 1 {
+		invalid = append(invalid, "moderation_sweeper.worker.pool_size must be at least 1")
+	}
+	if c.InitialRecheckInterval <= 0 {
+		invalid = append(invalid, "moderation_sweeper.initial_recheck_interval must be positive")
+	}
+	if c.MaxRecheckInterval <= 0 {
+		invalid = append(invalid, "moderation_sweeper.max_recheck_interval must be positive")
+	}
+	if c.FailureBackoffInitial <= 0 {
+		invalid = append(invalid, "moderation_sweeper.failure_backoff_initial must be positive")
+	}
+	if c.MaxConsecutiveFailures < 1 {
+		invalid = append(invalid, "moderation_sweeper.max_consecutive_failures must be at least 1")
+	}
+	// Relationship checks only make sense once both sides are individually valid.
+	if c.InitialRecheckInterval > 0 && c.MaxRecheckInterval > 0 && c.InitialRecheckInterval > c.MaxRecheckInterval {
+		invalid = append(invalid, "moderation_sweeper.initial_recheck_interval must not exceed moderation_sweeper.max_recheck_interval")
+	}
+	if c.FailureBackoffInitial > 0 && c.MaxRecheckInterval > 0 && c.FailureBackoffInitial > c.MaxRecheckInterval {
+		invalid = append(invalid, "moderation_sweeper.failure_backoff_initial must not exceed moderation_sweeper.max_recheck_interval")
+	}
+
+	if len(invalid) > 0 {
+		return fmt.Errorf("invalid config values: %s", strings.Join(invalid, "; "))
+	}
 	return nil
 }
 
@@ -454,6 +557,7 @@ func (a *AppConfig) ToWorkerCoreConfig() *WorkerCoreConfig {
 		URI:                                a.URI,
 		RateLimiter:                        a.RateLimiter,
 		Security:                           a.Security,
+		ModerationSweeper:                  a.ModerationSweeper,
 		MediaEnabled:                       a.MediaEnabled,
 		EthereumTokenSweepStartBlock:       a.EthereumTokenSweepStartBlock,
 		TezosTokenSweepStartBlock:          a.TezosTokenSweepStartBlock,
@@ -486,13 +590,14 @@ func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
 	}
 }
 
-// ToSweeperConfig maps AppConfig for the media health sweeper.
+// ToSweeperConfig maps AppConfig for the sweepers (media health + spam verdict).
 func (a *AppConfig) ToSweeperConfig() *SweeperConfig {
 	return &SweeperConfig{
 		BaseConfig:         a.BaseConfig,
 		Database:           a.Database,
 		Jobs:               a.Jobs,
 		MediaHealthSweeper: a.MediaHealthSweeper,
+		ModerationSweeper:  a.ModerationSweeper,
 	}
 }
 
@@ -552,6 +657,8 @@ func applyAppConfigDefaults(v *viper.Viper) {
 
 	v.SetDefault("uri.ipfs_gateways", []string{"https://ipfs.io", "https://cloudflare-ipfs.com"})
 	v.SetDefault("uri.arweave_gateways", []string{"https://arweave.net"})
+	v.SetDefault("uri.probe_max_bytes", 32*1024)
+	v.SetDefault("uri.known_bad_page_markers", []string{})
 	v.SetDefault("rasterizer.width", 2048)
 	v.SetDefault("rasterizer.timeout_ms", 15000)
 	v.SetDefault("rasterizer.browser_fallback_enabled", false)
@@ -602,6 +709,18 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("media_health_sweeper.worker.pool_size", 5)
 	v.SetDefault("media_health_sweeper.worker.queue_size", 100)
 	v.SetDefault("media_health_sweeper.recheck_after", "24h")
+
+	// Spam verdict sweeper. initial_recheck_interval is the single knob for a
+	// fresh verdict's first re-check — the enricher and the sweeper both read it
+	// at runtime; its default is anchored to store.DefaultModerationRecheckInterval
+	// (enforced by a config test). Conservative batch size: each row costs one
+	// vendor API call against OpenSea's ~4 rps shared budget.
+	v.SetDefault("moderation_sweeper.batch_size", 100)
+	v.SetDefault("moderation_sweeper.worker.pool_size", 2)
+	v.SetDefault("moderation_sweeper.initial_recheck_interval", "24h")
+	v.SetDefault("moderation_sweeper.max_recheck_interval", "720h")
+	v.SetDefault("moderation_sweeper.failure_backoff_initial", "1h")
+	v.SetDefault("moderation_sweeper.max_consecutive_failures", 5)
 
 	// SSRF protection for media health HTTP client (recommended enabled in production).
 	v.SetDefault("security.ssrf_protection.enabled", true)
@@ -713,6 +832,8 @@ func bindAllEnvVars(v *viper.Viper) {
 		"uri.ipfs_gateways",
 		"uri.arweave_gateways",
 		"uri.onchfs_gateways",
+		"uri.probe_max_bytes",
+		"uri.known_bad_page_markers",
 		// Cloudflare
 		"cloudflare.account_id",
 		"cloudflare.api_token",
@@ -742,6 +863,15 @@ func bindAllEnvVars(v *viper.Viper) {
 		"media_health_sweeper.uri.ipfs_gateways",
 		"media_health_sweeper.uri.arweave_gateways",
 		"media_health_sweeper.uri.onchfs_gateways",
+		"media_health_sweeper.uri.probe_max_bytes",
+		"media_health_sweeper.uri.known_bad_page_markers",
+		// Moderation Verdict Sweeper config
+		"moderation_sweeper.batch_size",
+		"moderation_sweeper.worker.pool_size",
+		"moderation_sweeper.initial_recheck_interval",
+		"moderation_sweeper.max_recheck_interval",
+		"moderation_sweeper.failure_backoff_initial",
+		"moderation_sweeper.max_consecutive_failures",
 		"security.ssrf_protection.enabled",
 		"security.ssrf_protection.max_redirects",
 		"security.ssrf_protection.block_multicast",

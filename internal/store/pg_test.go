@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/store/schema"
 )
 
@@ -251,4 +252,421 @@ func TestConcurrentUpsertRelease(t *testing.T) {
 	for i, id := range ids {
 		assert.Equal(t, first, id, "goroutine %d returned a different release id", i)
 	}
+}
+
+// TestModerationVerdictSurvivesConcurrentOwnershipWrite pins that an ownership write
+// cannot silently revert a spam verdict that commits while it is in flight.
+//
+// UpdateTokenTransfer reads the token row, sets current_owner, and writes back.
+// When that write-back was a full-row Save(), a verdict committing between the
+// read and the write was overwritten with the stale value: token_moderation_verdicts
+// still said spam, tokens.moderation_status was back to false, and nothing re-flipped it
+// until the sweeper came round (24h at the earliest, 720h once the row had
+// backed off).
+//
+// A sequential test cannot catch this — the read would already see the fresh
+// verdict — so this races the two writers and asserts the invariant that
+// actually matters: whenever a verdict row says spam, the materialized flag
+// agrees. Like TestConcurrentUpsertRelease it uses the pool-backed testDB, since
+// the transaction-wrapped store from initPGTestDB shares one connection and
+// cannot be driven from concurrent goroutines.
+func TestModerationVerdictSurvivesConcurrentOwnershipWrite(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
+	}
+
+	store := NewPGStore(testDB)
+	ctx := context.Background()
+	const contract = "0x000000000000000000000000000000000000dddd"
+
+	t.Cleanup(func() {
+		testDB.Exec(`DELETE FROM token_moderation_verdicts WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM provenance_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM token_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM balances WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM tokens WHERE contract_address = ?`, contract)
+	})
+
+	const rounds = 12
+	for round := range rounds {
+		owner1 := fmt.Sprintf("0xowner_race_a_%02d", round)
+		owner2 := fmt.Sprintf("0xowner_race_b_%02d", round)
+
+		mintInput := buildTestTokenMint(
+			domain.ChainEthereumMainnet,
+			domain.StandardERC721,
+			contract,
+			fmt.Sprintf("%d", 9000+round),
+			owner1,
+		)
+		require.NoError(t, store.CreateTokenMint(ctx, mintInput))
+
+		token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, token)
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		errs := make(chan error, 2)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, uErr := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+				TokenID: token.ID,
+				Source:  schema.ModerationSourceOpenSea,
+				Verdict: schema.ModerationStatusSpam,
+				Detail:  []byte(`{"is_disabled":true}`),
+			})
+			errs <- uErr
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- store.UpdateTokenTransfer(ctx, UpdateTokenTransferInput{
+				TokenCID:     mintInput.Token.TokenCID,
+				CurrentOwner: &owner2,
+				SenderBalanceUpdate: &UpdateBalanceInput{
+					OwnerAddress: owner1,
+					Delta:        "1",
+				},
+				ReceiverBalanceUpdate: &UpdateBalanceInput{
+					OwnerAddress: owner2,
+					Delta:        "1",
+				},
+				ProvenanceEvent: buildTestProvenanceEvent(
+					domain.ChainEthereumMainnet,
+					schema.ProvenanceEventTypeTransfer,
+					&owner1,
+					&owner2,
+					"1",
+					fmt.Sprintf("0xrace%02d", round),
+					uint64(2000+round),
+				),
+			})
+		}()
+
+		close(start)
+		wg.Wait()
+		close(errs)
+		for e := range errs {
+			require.NoError(t, e)
+		}
+
+		var verdict schema.TokenModerationVerdict
+		require.NoError(t, testDB.Where("token_id = ? AND source = ?",
+			token.ID, schema.ModerationSourceOpenSea).First(&verdict).Error)
+		require.Equal(t, schema.ModerationStatusSpam, verdict.Verdict, "round %d: verdict row must record spam", round)
+
+		after, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+		require.NoError(t, err)
+		require.NotNil(t, after)
+		assert.Equal(t, schema.ModerationStatusSpam, after.ModerationStatus,
+			"round %d: verdict row says spam but tokens.moderation_status was reverted by the concurrent transfer", round)
+		require.NotNil(t, after.CurrentOwner, "round %d: transfer must still have applied", round)
+		assert.Equal(t, owner2, *after.CurrentOwner, "round %d: transfer must still have applied", round)
+	}
+}
+
+// TestStaleSweeperVerdictDoesNotOverwriteNewer pins the compare-and-set on
+// UpsertTokenModerationVerdictInput.ExpectedLastCheckedAt.
+//
+// The sweeper reads a due row, then waits on a rate-limited vendor request before
+// writing. If the enricher persists a fresher verdict for the same (token, source)
+// during that window, the sweeper's older response must not land on top of it. The
+// tokens-row lock serializes the two writes but cannot order the responses, so
+// without the guard the last writer wins regardless of which response is newer —
+// and the stale verdict would stand until the next sweep, 24h at the earliest.
+//
+// Simulated deterministically rather than by racing goroutines: capture what the
+// sweeper would have read, let the enricher write, then attempt the sweeper's
+// write with the now-stale expectation.
+func TestStaleSweeperVerdictDoesNotOverwriteNewer(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
+	}
+
+	store := NewPGStore(testDB)
+	ctx := context.Background()
+	const contract = "0x000000000000000000000000000000000000cccc"
+
+	t.Cleanup(func() {
+		testDB.Exec(`DELETE FROM token_moderation_verdicts WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM token_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM balances WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM tokens WHERE contract_address = ?`, contract)
+	})
+
+	mintInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		contract,
+		"1",
+		"0xowner_stale_race",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, mintInput))
+	token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	// Seed the row the sweeper would later find due: vendor said clean.
+	seedNext := time.Now().Add(-time.Hour)
+	_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+		TokenID:     token.ID,
+		Source:      ModerationSourceForTest(),
+		Verdict:     schema.ModerationStatusNone,
+		Detail:      []byte(`{"is_disabled":false}`),
+		NextCheckAt: &seedNext,
+	})
+	require.NoError(t, err)
+
+	// The sweeper picks it up and holds this snapshot while it calls the vendor.
+	due, err := store.GetTokenModerationVerdictsDueForCheck(ctx, ModerationSourceForTest(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	sweeperSnapshot := due[0]
+
+	// Mid-flight, the enricher persists a fresher verdict: the vendor has since
+	// flagged the token.
+	enricherNext := time.Now().Add(24 * time.Hour)
+	changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+		TokenID:     token.ID,
+		Source:      ModerationSourceForTest(),
+		Verdict:     schema.ModerationStatusSpam,
+		Detail:      []byte(`{"is_disabled":true}`),
+		NextCheckAt: &enricherNext,
+	})
+	require.NoError(t, err)
+	require.True(t, changed, "the enricher's write should have flipped the combined verdict")
+
+	// Now the sweeper's older response arrives and tries to write "clean".
+	sweeperNext := time.Now().Add(48 * time.Hour)
+	changed, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+		TokenID:               token.ID,
+		Source:                ModerationSourceForTest(),
+		Verdict:               schema.ModerationStatusNone,
+		Detail:                []byte(`{"is_disabled":false}`),
+		NextCheckAt:           &sweeperNext,
+		ExpectedLastCheckedAt: &sweeperSnapshot.LastCheckedAt,
+	})
+	require.NoError(t, err, "losing the race is a no-op, not an error")
+	assert.False(t, changed, "a dropped write must not report a verdict change")
+
+	var row schema.TokenModerationVerdict
+	require.NoError(t, testDB.Where("token_id = ? AND source = ?",
+		token.ID, ModerationSourceForTest()).First(&row).Error)
+	assert.Equal(t, schema.ModerationStatusSpam, row.Verdict, "the newer enricher verdict must survive the stale sweeper write")
+
+	after, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	assert.Equal(t, schema.ModerationStatusSpam, after.ModerationStatus, "materialized flag must still reflect the newer verdict")
+
+}
+
+// TestCurrentSweeperVerdictStillApplies is the other half of the compare-and-set
+// contract, and the more dangerous one to get wrong: the guard must reject only
+// stale responses. If the timestamp did not survive the round trip through
+// Postgres timestamptz and back into TokenModerationCheckItem, every sweeper write
+// would be rejected and the sweeper would silently stop persisting anything —
+// worse than the overwrite bug the guard exists to prevent, and invisible.
+//
+// So the expectation here is deliberately taken from GetTokenModerationVerdictsDueForCheck,
+// the query the sweeper actually reads from, rather than from a direct row read.
+// Seeding next_check_at in the past is what makes that query return the row.
+func TestCurrentSweeperVerdictStillApplies(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
+	}
+
+	store := NewPGStore(testDB)
+	ctx := context.Background()
+	const contract = "0x000000000000000000000000000000000000bbbb"
+
+	t.Cleanup(func() {
+		testDB.Exec(`DELETE FROM token_moderation_verdicts WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM token_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM balances WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM tokens WHERE contract_address = ?`, contract)
+	})
+
+	mintInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		contract,
+		"1",
+		"0xowner_cas_positive",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, mintInput))
+	token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	overdue := time.Now().Add(-time.Hour)
+	_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+		TokenID:     token.ID,
+		Source:      ModerationSourceForTest(),
+		Verdict:     schema.ModerationStatusNone,
+		Detail:      []byte(`{"is_disabled":false}`),
+		NextCheckAt: &overdue,
+	})
+	require.NoError(t, err)
+
+	due, err := store.GetTokenModerationVerdictsDueForCheck(ctx, ModerationSourceForTest(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1, "the seeded row must be due, otherwise this test proves nothing")
+
+	next := time.Now().Add(24 * time.Hour)
+	changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+		TokenID:               token.ID,
+		Source:                ModerationSourceForTest(),
+		Verdict:               schema.ModerationStatusSpam,
+		Detail:                []byte(`{"is_disabled":true}`),
+		NextCheckAt:           &next,
+		ExpectedLastCheckedAt: &due[0].LastCheckedAt,
+	})
+	require.NoError(t, err)
+	assert.True(t, changed,
+		"a write whose expectation came straight from the due query must apply; "+
+			"if this fails the guard rejects every sweeper write and the sweeper is a no-op")
+
+	after, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	assert.Equal(t, schema.ModerationStatusSpam, after.ModerationStatus, "the applied verdict must be materialized")
+}
+
+// ModerationSourceForTest keeps the source choice in one place for the race tests.
+func ModerationSourceForTest() schema.ModerationSource { return schema.ModerationSourceOpenSea }
+
+// TestStaleSweeperFailureDoesNotDeferFreshRow is the failure-path counterpart to
+// TestStaleSweeperVerdictDoesNotOverwriteNewer.
+//
+// A failed vendor request is exactly as stale as a successful one, and landing it
+// after a newer enrichment does more damage: the backoff is computed by the
+// sweeper from the consecutive_failures it read, while the SQL increments whatever
+// is stored now. A row the enricher just reset to zero failures would take a
+// long-backoff next_check_at while recording a single failure — at the sweeper's
+// max, a token that was just confirmed clean gets deferred 30 days.
+func TestStaleSweeperFailureDoesNotDeferFreshRow(t *testing.T) {
+	if testDB == nil {
+		t.Skip("Test database not initialized")
+	}
+
+	store := NewPGStore(testDB)
+	ctx := context.Background()
+	const contract = "0x000000000000000000000000000000000000aaab"
+
+	t.Cleanup(func() {
+		testDB.Exec(`DELETE FROM token_moderation_verdicts WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM token_events WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM balances WHERE token_id IN
+			(SELECT id FROM tokens WHERE contract_address = ?)`, contract)
+		testDB.Exec(`DELETE FROM tokens WHERE contract_address = ?`, contract)
+	})
+
+	mintInput := buildTestTokenMint(
+		domain.ChainEthereumMainnet,
+		domain.StandardERC721,
+		contract,
+		"1",
+		"0xowner_stale_failure",
+	)
+	require.NoError(t, store.CreateTokenMint(ctx, mintInput))
+	token, err := store.GetTokenByTokenCID(ctx, mintInput.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+
+	overdue := time.Now().Add(-time.Hour)
+	_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+		TokenID:     token.ID,
+		Source:      ModerationSourceForTest(),
+		Verdict:     schema.ModerationStatusNone,
+		Detail:      []byte(`{"is_disabled":false}`),
+		NextCheckAt: &overdue,
+	})
+	require.NoError(t, err)
+
+	// The sweeper picks it up and holds this snapshot while its vendor call runs.
+	due, err := store.GetTokenModerationVerdictsDueForCheck(ctx, ModerationSourceForTest(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	sweeperSnapshot := due[0]
+
+	// Mid-flight the enricher succeeds and puts the row on a fresh 24h schedule.
+	enricherNext := time.Now().Add(24 * time.Hour)
+	_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+		TokenID:     token.ID,
+		Source:      ModerationSourceForTest(),
+		Verdict:     schema.ModerationStatusNone,
+		Detail:      []byte(`{"is_disabled":false}`),
+		NextCheckAt: &enricherNext,
+	})
+	require.NoError(t, err)
+
+	fresh := getVerdictRowForTest(t, token.ID)
+	require.Equal(t, 0, fresh.ConsecutiveFailures, "a successful write clears the failure state")
+
+	// Now the sweeper's failed request lands, carrying the max backoff it computed
+	// from the stale snapshot.
+	staleBackoff := time.Now().Add(720 * time.Hour)
+	applied, err := store.RecordTokenModerationCheckFailure(
+		ctx, token.ID, ModerationSourceForTest(), "opensea: 502 bad gateway",
+		staleBackoff, sweeperSnapshot.LastCheckedAt)
+	require.NoError(t, err, "losing the race is a no-op, not an error")
+	assert.False(t, applied, "a stale failure must not report as applied")
+
+	after := getVerdictRowForTest(t, token.ID)
+	assert.Equal(t, 0, after.ConsecutiveFailures,
+		"the stale failure must not increment a counter the enricher just cleared")
+	assert.Nil(t, after.LastError, "the stale failure must not stamp an error on a healthy row")
+	require.NotNil(t, after.NextCheckAt)
+	assert.WithinDuration(t, enricherNext, *after.NextCheckAt, time.Second,
+		"the enricher's fresh schedule must survive; a 720h deferral here would hide the token for 30 days")
+
+	// A failure whose expectation is current still applies, so the guard rejects
+	// only stale responses rather than disabling failure tracking entirely. The
+	// expectation deliberately comes from GetTokenModerationVerdictsDueForCheck — the
+	// query the sweeper actually reads — because that is the round trip that
+	// would silently reject every failure write if it ever stopped comparing
+	// equal. Rewind next_check_at so the row is due again and the query returns it.
+	require.NoError(t, testDB.Exec(
+		`UPDATE token_moderation_verdicts SET next_check_at = ? WHERE token_id = ? AND source = ?`,
+		time.Now().Add(-time.Hour), token.ID, ModerationSourceForTest()).Error)
+	redue, err := store.GetTokenModerationVerdictsDueForCheck(ctx, ModerationSourceForTest(), 10)
+	require.NoError(t, err)
+	require.Len(t, redue, 1, "the rewound row must be due, otherwise this proves nothing")
+
+	currentBackoff := time.Now().Add(time.Hour)
+	applied, err = store.RecordTokenModerationCheckFailure(
+		ctx, token.ID, ModerationSourceForTest(), "opensea: 502 bad gateway",
+		currentBackoff, redue[0].LastCheckedAt)
+	require.NoError(t, err)
+	assert.True(t, applied, "a failure with a current expectation must apply")
+
+	final := getVerdictRowForTest(t, token.ID)
+	assert.Equal(t, 1, final.ConsecutiveFailures)
+}
+
+// getVerdictRowForTest reads the verdict row straight from the DB for assertions
+// on columns the store API does not surface.
+func getVerdictRowForTest(t *testing.T, tokenID uint64) schema.TokenModerationVerdict {
+	t.Helper()
+	var row schema.TokenModerationVerdict
+	require.NoError(t, testDB.Where("token_id = ? AND source = ?",
+		tokenID, ModerationSourceForTest()).First(&row).Error)
+	return row
 }

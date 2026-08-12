@@ -15,6 +15,37 @@ type DataURICheckResult struct {
 	Error            *string
 	MimeType         string // Detected mime type from content
 	DeclaredMimeType string // Declared mime type in URI
+	// Reason is the machine-readable failure classification ("" when valid or when the
+	// failure has no taxonomy entry, e.g. an unparseable URI)
+	Reason FailureReason
+}
+
+// ReasonPtr returns the failure reason as a nullable string for persistence (nil when
+// valid or unclassified).
+func (r DataURICheckResult) ReasonPtr() *string {
+	if r.Reason == "" {
+		return nil
+	}
+	s := r.Reason.String()
+	return &s
+}
+
+// DeclaredMimeTypePtr returns the declared mime type as a nullable string for persistence.
+func (r DataURICheckResult) DeclaredMimeTypePtr() *string {
+	if r.DeclaredMimeType == "" {
+		return nil
+	}
+	s := r.DeclaredMimeType
+	return &s
+}
+
+// MimeTypePtr returns the detected mime type as a nullable string for persistence.
+func (r DataURICheckResult) MimeTypePtr() *string {
+	if r.MimeType == "" {
+		return nil
+	}
+	s := r.MimeType
+	return &s
 }
 
 // DataURIChecker defines the interface for checking data URI validity
@@ -65,6 +96,7 @@ func (c *dataURIChecker) Check(dataURI string) DataURICheckResult {
 			Valid:            false,
 			Error:            &errMsg,
 			DeclaredMimeType: parsed.MimeType,
+			Reason:           FailureZeroLength,
 		}
 	}
 
@@ -80,6 +112,7 @@ func (c *dataURIChecker) Check(dataURI string) DataURICheckResult {
 			Error:            &errMsg,
 			DeclaredMimeType: parsed.MimeType,
 			MimeType:         detectedMimeType,
+			Reason:           FailureTypeMismatch,
 		}
 	}
 
@@ -129,6 +162,15 @@ func mimeTypesMatch(declared, detected string) bool {
 
 	// Check base types match
 	if declaredBase == detectedBase {
+		return true
+	}
+
+	// Text-based media subtypes (SVG, playlists, ASCII bitmaps) legitimately detect as
+	// text/*: the sniffer inspects a bounded window, so e.g. an SVG whose root element
+	// sits past it detects as text/plain. Same exemption as the URL checker's rule 6
+	// (isTextBasedMediaType) — a text detection for a declared text format is not a
+	// mismatch.
+	if isTextBasedMediaType(declaredBase) && strings.HasPrefix(detectedBase, "text/") {
 		return true
 	}
 

@@ -2466,7 +2466,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, animURL1, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL1, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Token 2: Has healthy image URL only (viewable)
@@ -2485,7 +2485,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL2, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL2, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Token 3: Has broken animation URL (not viewable)
@@ -2505,7 +2505,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 		})
 		require.NoError(t, err)
 		errorMsg := "404 Not Found"
-		err = store.UpdateTokenMediaHealthByURL(ctx, animURL3, schema.MediaHealthStatusBroken, &errorMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL3, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg})
 		require.NoError(t, err)
 
 		// Token 4: Has broken image URL only (not viewable)
@@ -2524,7 +2524,7 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL4, schema.MediaHealthStatusBroken, &errorMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL4, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg})
 		require.NoError(t, err)
 
 		// Token 5: Has no media health records (considered broken - no media URLs)
@@ -2560,9 +2560,9 @@ func testGetTokensByFilter(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, animURL6, schema.MediaHealthStatusBroken, &errorMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL6, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL6, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL6, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Batch update viewability for all tokens after setting media health
@@ -5543,7 +5543,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			require.NoError(t, err)
 
 			// Mark media as healthy
-			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 			require.NoError(t, err)
 		}
 
@@ -5584,7 +5584,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			require.NoError(t, err)
 
 			// Mark media as healthy
-			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 			require.NoError(t, err)
 		}
 
@@ -5636,7 +5636,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Mark media as healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Update viewability
@@ -5682,7 +5682,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 			require.NoError(t, err)
 
 			// Mark media as healthy
-			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+			err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 			require.NoError(t, err)
 		}
 
@@ -5733,7 +5733,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 				require.NoError(t, err)
 
 				// Mark media as healthy
-				err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+				err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 				require.NoError(t, err)
 
 				tokenIDWithMedia = token.ID
@@ -5788,7 +5788,7 @@ func testGetTokenCountsByAddress(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Mark media as healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Update viewability
@@ -5838,7 +5838,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		assert.Contains(t, urls, imageURL)
 
 		// Update health status to healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// URL should no longer be in list (recently checked)
@@ -5871,7 +5871,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Update to healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Batch update viewability and verify token became viewable
@@ -5884,7 +5884,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 
 		// Update to broken with error
 		errorMsg := "404 Not Found"
-		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, schema.MediaHealthStatusBroken, &errorMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errorMsg})
 		require.NoError(t, err)
 
 		// Batch update viewability and verify token became not viewable
@@ -5899,6 +5899,67 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		changes, err = store.BatchUpdateTokensViewability(ctx, []uint64{tokenData.ID})
 		require.NoError(t, err)
 		assert.Empty(t, changes, "should have no changes when viewability doesn't change")
+	})
+
+	t.Run("UpdateTokenMediaHealthByURL round-trips content-validation fields and healthy clears them", func(t *testing.T) {
+		token := buildTestTokenMint(domain.ChainEthereumMainnet, domain.StandardERC721, "0x0000000000000000000000000000000000100007", "7", "0xowner7")
+		err := store.CreateTokenMint(ctx, token)
+		require.NoError(t, err)
+		tokenData, err := store.GetTokenByTokenCID(ctx, token.Token.TokenCID)
+		require.NoError(t, err)
+
+		imageURL := "https://example.com/content-validated.png"
+		metadata := map[string]interface{}{"image": imageURL}
+		metadataJSON, _ := json.Marshal(metadata)
+		err = store.UpsertTokenMetadata(ctx, CreateTokenMetadataInput{
+			TokenID:         tokenData.ID,
+			OriginJSON:      metadataJSON,
+			LatestJSON:      metadataJSON,
+			EnrichmentLevel: schema.EnrichmentLevelVendor,
+			ImageURL:        &imageURL,
+			LastRefreshedAt: time.Now().UTC(),
+		})
+		require.NoError(t, err)
+
+		// Broken with the full L0 outcome persists all fields
+		errorMsg := "declared image/png but body is text/html"
+		reason := schema.MediaFailureTypeMismatch.String()
+		observed := "image/png"
+		sniffed := "text/html"
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{
+			Status:              schema.MediaHealthStatusBroken,
+			LastError:           &errorMsg,
+			FailureReason:       &reason,
+			ObservedContentType: &observed,
+			SniffedContentType:  &sniffed,
+		})
+		require.NoError(t, err)
+
+		healthRows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenData.ID})
+		require.NoError(t, err)
+		require.Len(t, healthRows[tokenData.ID], 1)
+		row := healthRows[tokenData.ID][0]
+		assert.Equal(t, schema.MediaHealthStatusBroken, row.HealthStatus)
+		require.NotNil(t, row.FailureReason)
+		assert.Equal(t, reason, *row.FailureReason)
+		require.NotNil(t, row.ObservedContentType)
+		assert.Equal(t, observed, *row.ObservedContentType)
+		require.NotNil(t, row.SniffedContentType)
+		assert.Equal(t, sniffed, *row.SniffedContentType)
+
+		// A healthy verdict clears every failure field from the previous broken one
+		err = store.UpdateTokenMediaHealthByURL(ctx, imageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
+		require.NoError(t, err)
+
+		healthRows, err = store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenData.ID})
+		require.NoError(t, err)
+		require.Len(t, healthRows[tokenData.ID], 1)
+		row = healthRows[tokenData.ID][0]
+		assert.Equal(t, schema.MediaHealthStatusHealthy, row.HealthStatus)
+		assert.Nil(t, row.LastError)
+		assert.Nil(t, row.FailureReason)
+		assert.Nil(t, row.ObservedContentType)
+		assert.Nil(t, row.SniffedContentType)
 	})
 
 	t.Run("UpdateMediaURLAndPropagate updates URL health status and metadata URLs", func(t *testing.T) {
@@ -5932,12 +5993,44 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 			require.NoError(t, err)
 		}
 
-		// Update URL and propagate (this also propagates health status)
-		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL)
+		// Record a full L0 broken outcome on the old URL first: fallback promotion must
+		// not carry the failed URL's observations onto the healthy replacement.
+		errMsg := "HTTP 404"
+		reason := schema.MediaFailureHTTPStatus.String()
+		htmlType := "text/html"
+		err = store.UpdateTokenMediaHealthByURL(ctx, oldURL, MediaHealthUpdate{
+			Status:              schema.MediaHealthStatusBroken,
+			LastError:           &errMsg,
+			FailureReason:       &reason,
+			ObservedContentType: &htmlType,
+			SniffedContentType:  &htmlType,
+		})
 		require.NoError(t, err)
 
+		// Update URL and propagate (this also propagates health status). The promoted
+		// row carries the fallback probe's own validated observations — the winning
+		// gateway's bytes were just content-validated, and NULL would falsify the
+		// documented "not yet probed" meaning.
+		pngType := "image/png"
+		err = store.UpdateMediaURLAndPropagate(ctx, oldURL, newURL, &pngType, &pngType)
+		require.NoError(t, err)
+
+		// Promotion marks the row healthy, clears the replaced URL's failure fields, and
+		// records the fallback's observations.
+		promotedRows, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{token1Data.ID})
+		require.NoError(t, err)
+		require.Len(t, promotedRows[token1Data.ID], 1)
+		promoted := promotedRows[token1Data.ID][0]
+		assert.Equal(t, schema.MediaHealthStatusHealthy, promoted.HealthStatus)
+		assert.Nil(t, promoted.LastError)
+		assert.Nil(t, promoted.FailureReason, "stale failure_reason must not survive promotion")
+		require.NotNil(t, promoted.ObservedContentType, "the fallback's observed type must be recorded")
+		assert.Equal(t, pngType, *promoted.ObservedContentType)
+		require.NotNil(t, promoted.SniffedContentType, "the fallback's sniffed type must be recorded")
+		assert.Equal(t, pngType, *promoted.SniffedContentType)
+
 		// Mark new URL as healthy (after propagation)
-		err = store.UpdateTokenMediaHealthByURL(ctx, newURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, newURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Update viewability
@@ -6011,11 +6104,11 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		// Mark image as healthy
-		err = store.UpdateTokenMediaHealthByURL(ctx, sharedImageURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, sharedImageURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Mark animation as broken
-		err = store.UpdateTokenMediaHealthByURL(ctx, animationURL, schema.MediaHealthStatusBroken, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animationURL, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken})
 		require.NoError(t, err)
 
 		// Batch update both tokens
@@ -6080,9 +6173,9 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 		require.NoError(t, err)
 
 		errMsg := "404 Not Found"
-		err = store.UpdateTokenMediaHealthByURL(ctx, animURL, schema.MediaHealthStatusBroken, &errMsg)
+		err = store.UpdateTokenMediaHealthByURL(ctx, animURL, MediaHealthUpdate{Status: schema.MediaHealthStatusBroken, LastError: &errMsg})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		result, err := store.GetTokenMediaHealthByTokenIDs(ctx, []uint64{tokenData.ID})
@@ -6119,7 +6212,7 @@ func testMediaHealthOperations(t *testing.T, store Store) {
 			LastRefreshedAt: time.Now().UTC(),
 		})
 		require.NoError(t, err)
-		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, schema.MediaHealthStatusHealthy, nil)
+		err = store.UpdateTokenMediaHealthByURL(ctx, imgURL, MediaHealthUpdate{Status: schema.MediaHealthStatusHealthy})
 		require.NoError(t, err)
 
 		// Query with a different (non-existent) token ID
@@ -7021,6 +7114,7 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 		{"GetTokensByCIDs", testGetTokensByCIDs},
 		{"GetTokensByIDs", testGetTokensByIDs},
 		{"GetTokensByFilter", testGetTokensByFilter},
+		{"TokenModerationVerdicts", testTokenModerationVerdicts},
 		{"ReleaseOperations", testReleaseOperations},
 		{"ListReleases", testListReleases},
 		{"UpsertReleaseMetadata", testUpsertReleaseMetadata},
@@ -7056,4 +7150,311 @@ func RunStoreTests(t *testing.T, initDB func(t *testing.T) Store, cleanupDB func
 			tt.fn(t, store)
 		})
 	}
+}
+
+// testTokenModerationVerdicts exercises the per-source verdict table and the recompute of the
+// materialized tokens.moderation_status against a real Postgres schema. Real-database testing is
+// the point twice over: the event insert is guarded by the token_events.event_type CHECK
+// constraint, and the verdict upsert exercises the moderation_source enum plus the composite-PK
+// ON CONFLICT clause — none of which a mock can regress on.
+func testTokenModerationVerdicts(t *testing.T, store Store) {
+	ctx := context.Background()
+	contract := "0x29539a0109fec46b916a6125f352c629d9304c73"
+	owner := "0x1234567890123456789012345678901234567890"
+
+	input := CreateTokenMintInput{
+		Token:   buildTestToken(domain.ChainEthereumMainnet, domain.StandardERC1155, contract, "7"),
+		Balance: buildTestBalance(owner, "1"),
+		ProvenanceEvent: buildTestProvenanceEvent(
+			domain.ChainEthereumMainnet, schema.ProvenanceEventTypeMint,
+			nil, &owner, "1", "0xspamverdicttx", 100,
+		),
+	}
+	require.NoError(t, store.CreateTokenMint(ctx, input))
+
+	token, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	require.Equal(t, schema.ModerationStatusNone, token.ModerationStatus, "tokens must default to not-spam (fail-open)")
+
+	next := time.Now().Add(24 * time.Hour)
+
+	t.Run("first vendor verdict flags the token and emits a broadcast event", func(t *testing.T) {
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID:     token.ID,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusSpam,
+			Detail:      []byte(`{"is_disabled":true}`),
+			NextCheckAt: &next,
+		})
+		require.NoError(t, err)
+		assert.True(t, changed)
+
+		updated, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.ModerationStatusSpam, updated.ModerationStatus)
+
+		events := getModerationStatusEvents(t, store, token.ID)
+		require.Len(t, events, 1)
+		assert.Nil(t, events[0].OwnerAddress, "spam events broadcast to all owners")
+		var meta schema.ModerationStatusChangeMetadata
+		require.NoError(t, json.Unmarshal(events[0].Metadata, &meta))
+		assert.Equal(t, schema.ModerationStatusSpam, meta.Status)
+		assert.Equal(t, input.Token.TokenCID, meta.TokenCID)
+
+		row := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
+		assert.Equal(t, schema.ModerationStatusSpam, row.Verdict)
+		assert.JSONEq(t, `{"is_disabled":true}`, string(row.Detail))
+		require.NotNil(t, row.NextCheckAt)
+		assert.WithinDuration(t, next, *row.NextCheckAt, time.Second)
+
+		// Read path: hidden by default, IncludeModerated opts back in.
+		hidden, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			TokenCIDs:         []string{input.Token.TokenCID},
+			IncludeUnviewable: true,
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, hidden, "flagged token must be excluded by default")
+		shown, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			TokenCIDs:         []string{input.Token.TokenCID},
+			IncludeUnviewable: true,
+			IncludeModerated:  true,
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		require.Len(t, shown, 1, "IncludeModerated must opt back in")
+		assert.Equal(t, schema.ModerationStatusSpam, shown[0].ModerationStatus)
+	})
+
+	t.Run("repeat identical verdict refreshes freshness without a duplicate event", func(t *testing.T) {
+		before := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
+
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID:     token.ID,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusSpam,
+			Detail:      []byte(`{"is_disabled":true}`),
+			NextCheckAt: &next,
+		})
+		require.NoError(t, err)
+		assert.False(t, changed, "unchanged combined verdict must not report a change")
+		assert.Len(t, getModerationStatusEvents(t, store, token.ID), 1, "no duplicate event")
+
+		after := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
+		assert.True(t, after.LastCheckedAt.After(before.LastCheckedAt),
+			"an unchanged verdict is still a fresh confirmation — last_checked_at must advance")
+	})
+
+	t.Run("most severe wins: a clean objkt verdict does not clear the opensea flag", func(t *testing.T) {
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID:     token.ID,
+			Source:      schema.ModerationSourceObjkt,
+			Verdict:     schema.ModerationStatusNone,
+			Detail:      []byte(`{"flag":"none"}`),
+			NextCheckAt: &next,
+		})
+		require.NoError(t, err)
+		assert.False(t, changed, "combined verdict stays spam while any vendor still flags")
+
+		updated, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.ModerationStatusSpam, updated.ModerationStatus)
+	})
+
+	t.Run("flagging vendor reversing its verdict clears the combined flag", func(t *testing.T) {
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID:     token.ID,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusNone,
+			Detail:      []byte(`{"is_disabled":false}`),
+			NextCheckAt: &next,
+		})
+		require.NoError(t, err)
+		assert.True(t, changed)
+
+		events := getModerationStatusEvents(t, store, token.ID)
+		require.Len(t, events, 2)
+		var meta schema.ModerationStatusChangeMetadata
+		require.NoError(t, json.Unmarshal(events[1].Metadata, &meta))
+		assert.Equal(t, schema.ModerationStatusNone, meta.Status)
+
+		visible, err := store.GetTokensByFilter(ctx, TokenQueryFilter{
+			TokenCIDs:         []string{input.Token.TokenCID},
+			IncludeUnviewable: true,
+			Limit:             10,
+		})
+		require.NoError(t, err)
+		assert.Len(t, visible, 1, "cleared token is visible again (tag-not-drop is reversible)")
+	})
+
+	t.Run("feralfile verdict wins over vendors in both directions", func(t *testing.T) {
+		// Pin spam while both vendors say clean.
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID: token.ID,
+			Source:  schema.ModerationSourceFeralFile,
+			Verdict: schema.ModerationStatusSpam,
+			// NextCheckAt nil: feralfile rows are never swept
+		})
+		require.NoError(t, err)
+		assert.True(t, changed, "feralfile pin flags the token despite clean vendors")
+		row := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceFeralFile)
+		assert.Nil(t, row.NextCheckAt, "feralfile rows must stay out of the sweep queue")
+
+		// A vendor re-flagging while feralfile whitelists must not resurface the flag.
+		changed, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID: token.ID,
+			Source:  schema.ModerationSourceFeralFile,
+			Verdict: schema.ModerationStatusNone,
+		})
+		require.NoError(t, err)
+		assert.True(t, changed, "feralfile whitelist clears the token")
+
+		changed, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID:     token.ID,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusSpam,
+			Detail:      []byte(`{"is_disabled":true}`),
+			NextCheckAt: &next,
+		})
+		require.NoError(t, err)
+		assert.False(t, changed, "vendor flag must not override a feralfile whitelist")
+
+		updated, err := store.GetTokenByTokenCID(ctx, input.Token.TokenCID)
+		require.NoError(t, err)
+		assert.Equal(t, schema.ModerationStatusNone, updated.ModerationStatus)
+	})
+
+	t.Run("check failure advances scheduling without touching the verdict", func(t *testing.T) {
+		before := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
+		failNext := time.Now().Add(time.Hour)
+
+		applied, err := store.RecordTokenModerationCheckFailure(
+			ctx, token.ID, schema.ModerationSourceOpenSea, "opensea: 502 bad gateway", failNext,
+			before.LastCheckedAt)
+		require.NoError(t, err)
+		require.True(t, applied, "the expectation matches the stored row, so it must apply")
+
+		after := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
+		assert.Equal(t, before.Verdict, after.Verdict, "an error is not a verdict")
+		assert.Equal(t, before.LastCheckedAt.UTC(), after.LastCheckedAt.UTC(),
+			"last_checked_at means 'last confirmed', failures must not touch it")
+		assert.Equal(t, 1, after.ConsecutiveFailures)
+		require.NotNil(t, after.LastError)
+		assert.Equal(t, "opensea: 502 bad gateway", *after.LastError)
+		require.NotNil(t, after.NextCheckAt)
+		assert.WithinDuration(t, failNext, *after.NextCheckAt, time.Second)
+
+		// A later successful check resets the failure state.
+		_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID:     token.ID,
+			Source:      schema.ModerationSourceOpenSea,
+			Verdict:     schema.ModerationStatusSpam,
+			Detail:      []byte(`{"is_disabled":true}`),
+			NextCheckAt: &next,
+		})
+		require.NoError(t, err)
+		reset := getModerationVerdictRow(t, store, token.ID, schema.ModerationSourceOpenSea)
+		assert.Zero(t, reset.ConsecutiveFailures)
+		assert.Nil(t, reset.LastError)
+	})
+
+	t.Run("due fetch returns oldest first per source with token identity", func(t *testing.T) {
+		// Second token, due earlier than the first.
+		input2 := CreateTokenMintInput{
+			Token:   buildTestToken(domain.ChainEthereumMainnet, domain.StandardERC1155, contract, "8"),
+			Balance: buildTestBalance(owner, "1"),
+			ProvenanceEvent: buildTestProvenanceEvent(
+				domain.ChainEthereumMainnet, schema.ProvenanceEventTypeMint,
+				nil, &owner, "1", "0xspamverdicttx2", 101,
+			),
+		}
+		require.NoError(t, store.CreateTokenMint(ctx, input2))
+		token2, err := store.GetTokenByTokenCID(ctx, input2.Token.TokenCID)
+		require.NoError(t, err)
+
+		overdueOld := time.Now().Add(-2 * time.Hour)
+		overdueNew := time.Now().Add(-1 * time.Hour)
+		_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID: token2.ID, Source: schema.ModerationSourceOpenSea, Verdict: schema.ModerationStatusNone, NextCheckAt: &overdueOld,
+		})
+		require.NoError(t, err)
+		_, err = store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID: token.ID, Source: schema.ModerationSourceOpenSea, Verdict: schema.ModerationStatusSpam,
+			Detail: []byte(`{"is_disabled":true}`), NextCheckAt: &overdueNew,
+		})
+		require.NoError(t, err)
+
+		due, err := store.GetTokenModerationVerdictsDueForCheck(ctx, schema.ModerationSourceOpenSea, 10)
+		require.NoError(t, err)
+		require.Len(t, due, 2)
+		assert.Equal(t, token2.ID, due[0].TokenID, "oldest due first")
+		assert.Equal(t, input2.Token.TokenCID, due[0].TokenCID)
+		assert.Equal(t, domain.ChainEthereumMainnet, due[0].Chain)
+		// Stored checksummed (EIP-55); compare against the persisted token row.
+		assert.Equal(t, token2.ContractAddress, due[0].ContractAddress)
+		assert.Equal(t, "8", due[0].TokenNumber)
+		assert.Equal(t, schema.ModerationStatusNone, due[0].Verdict)
+		assert.Equal(t, token.ID, due[1].TokenID)
+		assert.Equal(t, schema.ModerationStatusSpam, due[1].Verdict)
+
+		// Source filter: nothing is due for objkt (its row's next_check_at is in the
+		// future) and feralfile rows (NULL next_check_at) never appear anywhere.
+		objktDue, err := store.GetTokenModerationVerdictsDueForCheck(ctx, schema.ModerationSourceObjkt, 10)
+		require.NoError(t, err)
+		assert.Empty(t, objktDue)
+		ffDue, err := store.GetTokenModerationVerdictsDueForCheck(ctx, schema.ModerationSourceFeralFile, 10)
+		require.NoError(t, err)
+		assert.Empty(t, ffDue)
+	})
+
+	t.Run("unknown token id is a no-op", func(t *testing.T) {
+		changed, err := store.UpsertTokenModerationVerdict(ctx, UpsertTokenModerationVerdictInput{
+			TokenID: 999999, Source: schema.ModerationSourceOpenSea, Verdict: schema.ModerationStatusSpam, NextCheckAt: &next,
+		})
+		require.NoError(t, err)
+		assert.False(t, changed)
+		assert.Empty(t, getModerationVerdictRowsByToken(t, store, 999999))
+	})
+}
+
+// getModerationVerdictRow reads one raw verdict row, bypassing the store interface so tests can
+// assert column-level semantics (last_checked_at freshness, failure counters).
+func getModerationVerdictRow(t *testing.T, store Store, tokenID uint64, source schema.ModerationSource) schema.TokenModerationVerdict {
+	t.Helper()
+	rows := getModerationVerdictRowsByToken(t, store, tokenID)
+	for _, row := range rows {
+		if row.Source == source {
+			return row
+		}
+	}
+	t.Fatalf("no verdict row for token %d source %s", tokenID, source)
+	return schema.TokenModerationVerdict{}
+}
+
+// getModerationVerdictRowsByToken returns all raw verdict rows for a token.
+func getModerationVerdictRowsByToken(t *testing.T, store Store, tokenID uint64) []schema.TokenModerationVerdict {
+	t.Helper()
+	pg, ok := store.(*pgStore)
+	require.True(t, ok, "expected pgStore")
+
+	var rows []schema.TokenModerationVerdict
+	require.NoError(t, pg.db.
+		Where("token_id = ?", tokenID).
+		Find(&rows).Error)
+	return rows
+}
+
+// getModerationStatusEvents returns moderation_status_changed events for a token, oldest first.
+func getModerationStatusEvents(t *testing.T, store Store, tokenID uint64) []schema.TokenEvent {
+	t.Helper()
+	pg, ok := store.(*pgStore)
+	require.True(t, ok, "expected pgStore")
+
+	var events []schema.TokenEvent
+	require.NoError(t, pg.db.
+		Where("token_id = ? AND event_type = ?", tokenID, schema.EventTypeModerationStatusChanged).
+		Order("id ASC").
+		Find(&events).Error)
+	return events
 }
