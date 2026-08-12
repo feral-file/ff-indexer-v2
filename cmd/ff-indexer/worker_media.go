@@ -161,16 +161,19 @@ func registerWorkerMedia(
 		// Startup self-verification: the probe may not activate on an unproven runtime.
 		// egress_restricted is an operator attestation; the metadata endpoint is the one
 		// destination whose reachability falsifies it outright, so it is cross-checked
-		// here (skipped when SSRF protection is disabled entirely — no policy is being
-		// attested then). The render self-check then proves the deployed image's capture
-		// path, software WebGL backend, and blank detection against built-in
-		// known-good/known-bad fixtures. Either failing fails worker startup: a runtime
-		// that misjudges the fixtures would not error in production — it would silently
-		// misclassify artworks and gate healthy media after the debounce.
-		if wcfg.Security.SSRFProtection.Enabled {
-			if err := probe.VerifyNoMetadataEgress(ctx); err != nil {
-				return nil, nil, err
-			}
+		// here UNCONDITIONALLY — the attestation is required to enable the probe
+		// regardless of application-level SSRF settings, and with ssrf_protection
+		// disabled the renderer runs with a nil validator (no request interception at
+		// all), which makes the network-level restriction the ONLY control and this
+		// check more critical, not less. An earlier revision skipped it in that case;
+		// that had the logic exactly backwards. The render self-check then proves the
+		// deployed image's capture path, software WebGL backend, and blank detection
+		// against built-in known-good/known-bad fixtures. Either failing fails worker
+		// startup: a runtime that misjudges the fixtures would not error in production —
+		// it would silently misclassify artworks and gate healthy media after the
+		// debounce.
+		if err := probe.VerifyNoMetadataEgress(ctx); err != nil {
+			return nil, nil, err
 		}
 		selfCheckCtx, cancelSelfCheck := context.WithTimeout(ctx, 2*time.Minute)
 		err := probe.SelfCheck(selfCheckCtx, probeRenderer, wcfg.RenderProbe.BlankVarianceThreshold)

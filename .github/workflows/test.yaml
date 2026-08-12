@@ -150,5 +150,12 @@ jobs:
       - name: Setup libvips
         uses: ./.github/actions/setup-libvips
 
+      # Ubuntu 24.04 runners restrict unprivileged user namespaces via AppArmor, which
+      # kills chromium's sandbox ("No usable sandbox!"). Lift the restriction rather
+      # than pass --no-sandbox: production runs the probe SANDBOXED, so the suite must
+      # verify the sandboxed configuration, not a weaker one.
+      - name: Allow unprivileged user namespaces (chromium sandbox)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Run chromium smoke and egress vector suites
         run: go test -tags="cgo chromium" -count=1 -timeout 10m -v ./internal/media/probe/
