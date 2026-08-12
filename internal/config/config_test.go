@@ -598,6 +598,39 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 		}
 	})
 
+	// A viewport that passes config but collides with the renderer's capture caps
+	// records stalled on every probe and gates healthy media after the debounce — a
+	// typo must be a startup error, not a corpus-wide false gate.
+	t.Run("viewport bounds are validated against the capture caps", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			w, h    int
+			valid   bool
+			wantErr string
+		}{
+			{"default square", 1024, 1024, true, ""},
+			{"zero means renderer default", 0, 0, true, ""},
+			{"typo: 5000x5000 exceeds the pixel budget", 5000, 5000, false, "must not exceed"},
+			{"oversized single edge", 8192, 100, false, "must be within"},
+			{"sub-minimum edge", 32, 1024, false, "must be within"},
+			{"widescreen inside the budget", 2048, 1024, true, ""},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base
+				cfg.EgressRestricted = true
+				cfg.ViewportWidth, cfg.ViewportHeight = tc.w, tc.h
+				err := validateRenderProbeConfig(&cfg, true, "media_index")
+				if tc.valid {
+					assert.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+			})
+		}
+	})
+
 	t.Run("disabled probe is inert", func(t *testing.T) {
 		cfg := RenderProbeConfig{Enabled: false}
 		assert.NoError(t, validateRenderProbeConfig(&cfg, false, ""), "a disabled probe's settings are not validated")

@@ -44,6 +44,18 @@ const (
 	// capacity, not artworks.
 	DefaultSettleMs = 15000
 
+	// MinViewportDim/MaxViewportDim bound each configured viewport edge, and
+	// MaxViewportPixels bounds their product. Startup validation enforces these so a
+	// configured viewport can never collide with the capture caps below: a viewport
+	// whose captures are rejected post-hoc records stalled on every probe and would
+	// render-gate perfectly healthy media after the debounce — a config typo silently
+	// hiding artworks. MaxViewportPixels (~3.1M pixels, e.g. 2048x1536) keeps even a
+	// worst-case incompressible RGBA PNG (4 bytes/pixel plus filter/deflate overhead)
+	// inside maxScreenshotBytes with margin, and sits far under maxDecodedPixels.
+	MinViewportDim    = 64
+	MaxViewportDim    = 4096
+	MaxViewportPixels = 3 << 20
+
 	// maxScreenshotBytes caps the encoded PNG accepted from the browser. A viewport
 	// capture of the default 1024x1024 is far below this; the cap exists so a hostile
 	// page cannot drive unbounded allocation through an oversized capture.

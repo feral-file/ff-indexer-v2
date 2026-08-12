@@ -15,6 +15,7 @@ import (
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
 	"github.com/feral-file/ff-indexer-v2/internal/media/phash"
+	"github.com/feral-file/ff-indexer-v2/internal/media/probe"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 )
 
@@ -597,6 +598,27 @@ func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQue
 	// (<= 0 is valid: it disables the shortcut.)
 	if c.ImageSettleMs > 0 && c.SettleMs > 0 && c.ImageSettleMs > c.SettleMs {
 		invalid = append(invalid, "render_probe.image_settle_ms must not exceed render_probe.settle_ms")
+	}
+	// Viewport bounds are validated against the renderer's capture caps at startup
+	// because the failure mode of an oversized viewport is silent and severe: chromium
+	// allocates and captures the frame, the renderer rejects it post-hoc (encoded or
+	// decoded size cap), every probe records stalled — and after the debounce the gate
+	// hides perfectly healthy media. A config typo must be a startup error, not a
+	// corpus-wide false gate. <= 0 stays valid: the renderer substitutes its defaults.
+	for _, dim := range []struct {
+		name  string
+		value int
+	}{{"render_probe.viewport_width", c.ViewportWidth}, {"render_probe.viewport_height", c.ViewportHeight}} {
+		if dim.value > 0 && (dim.value < probe.MinViewportDim || dim.value > probe.MaxViewportDim) {
+			invalid = append(invalid, fmt.Sprintf("%s must be within [%d, %d]",
+				dim.name, probe.MinViewportDim, probe.MaxViewportDim))
+		}
+	}
+	if c.ViewportWidth > 0 && c.ViewportHeight > 0 && c.ViewportWidth*c.ViewportHeight > probe.MaxViewportPixels {
+		invalid = append(invalid, fmt.Sprintf(
+			"render_probe.viewport_width x viewport_height must not exceed %d pixels: larger captures can "+
+				"collide with the renderer screenshot caps, recording stalled on every probe and render-gating "+
+				"healthy media", probe.MaxViewportPixels))
 	}
 	if c.FailureGateThreshold < 1 {
 		invalid = append(invalid, "render_probe.failure_gate_threshold must be at least 1")
