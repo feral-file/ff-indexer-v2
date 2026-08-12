@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -317,3 +319,97 @@ func TestRenderProbe_interceptsBrowserRequests(t *testing.T) {
 
 // solidGray keeps the oversized-image helper honest about memory in CI.
 var _ = color.Gray{}
+
+// TestRenderProbe_boundsConcurrentRequestDecisions is the stress case for the request
+// decision pool: the page controls how many requests fire, and validation can hit DNS,
+// so per-event goroutines (the previous shape) let one hostile page fan out thousands of
+// resolver-backed goroutines. The pool must cap concurrent validations at the worker
+// count, accept at most queue+workers requests, and silently drop the flood's excess —
+// dropped requests stay paused, which is the attacker's own stall, not our spend. With
+// per-event spawning this test fails immediately: all 2000 validations run at once.
+func TestRenderProbe_boundsConcurrentRequestDecisions(t *testing.T) {
+	const flood = 2000
+	const maxAccepted = 256 + 8 // requestDecisionQueue + requestDecisionWorkers
+
+	ctrl := gomock.NewController(t)
+	validator := mocks.NewMockSSRFValidator(ctrl)
+	h := newMockedRenderer(t, validator)
+	url := "https://example.com/flood.html"
+
+	gate := make(chan struct{})
+	var inflight, maxInflight, validated, decided atomic.Int64
+	validator.EXPECT().
+		ValidateHTTPURL(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, string) error {
+			cur := inflight.Add(1)
+			for {
+				prev := maxInflight.Load()
+				if cur <= prev || maxInflight.CompareAndSwap(prev, cur) {
+					break
+				}
+			}
+			<-gate
+			inflight.Add(-1)
+			validated.Add(1)
+			return nil
+		}).
+		AnyTimes()
+	h.chromedp.EXPECT().
+		ContinueRequest(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, fetch.RequestID) error { decided.Add(1); return nil }).
+		AnyTimes()
+
+	h.chromedp.EXPECT().
+		NewContext(gomock.Any()).
+		DoAndReturn(func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return context.WithCancel(ctx)
+		})
+	h.chromedp.EXPECT().EmulateViewport(gomock.Any(), gomock.Any()).Return(nil)
+	h.chromedp.EXPECT().Navigate(url).Return(nil)
+	h.chromedp.EXPECT().WaitReady(":root").Return(nil)
+	h.chromedp.EXPECT().
+		Evaluate("navigator.userAgent", gomock.Any()).
+		DoAndReturn(func(_ string, res any, _ ...chromedp.EvaluateOption) chromedp.EvaluateAction {
+			*(res.(*string)) = "HeadlessChrome/123.0"
+			return nil
+		})
+	h.chromedp.EXPECT().
+		Sleep(gomock.Any()).
+		DoAndReturn(func(time.Duration) chromedp.Action {
+			require.NotNil(t, h.listener)
+			for i := range flood {
+				h.listener(&fetch.EventRequestPaused{
+					RequestID: fetch.RequestID(fmt.Sprintf("req-%d", i)),
+					Request:   &network.Request{URL: fmt.Sprintf("https://cdn.example.com/a%d.js", i)},
+				})
+			}
+			// All workers should be wedged in validation now; nothing beyond the worker
+			// count may validate concurrently no matter how many events fired.
+			require.Eventually(t, func() bool { return inflight.Load() == 8 },
+				2*time.Second, time.Millisecond, "all workers blocked in validation")
+			close(gate)
+			// Drain: every accepted request gets a decision; the flood's excess got none.
+			require.Eventually(t, func() bool { return decided.Load() >= 256 },
+				5*time.Second, time.Millisecond)
+			time.Sleep(150 * time.Millisecond) // settle: no further decisions may trickle in
+			return nil
+		})
+	pngBytes := encodePNG(t)
+	h.chromedp.EXPECT().
+		CaptureScreenshot(gomock.Any()).
+		DoAndReturn(func(res *[]byte) chromedp.Action { *res = pngBytes; return nil })
+	h.chromedp.EXPECT().
+		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
+	require.NoError(t, err)
+	require.NotNil(t, capture)
+
+	assert.LessOrEqual(t, maxInflight.Load(), int64(8),
+		"concurrent validations must never exceed the worker pool")
+	assert.GreaterOrEqual(t, decided.Load(), int64(256), "everything accepted is decided")
+	assert.LessOrEqual(t, decided.Load(), int64(maxAccepted),
+		"the flood's excess must be dropped, not queued or decided")
+	assert.Equal(t, validated.Load(), decided.Load(), "every decision came through validation")
+}

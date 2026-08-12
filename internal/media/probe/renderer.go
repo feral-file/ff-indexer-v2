@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/cdproto/fetch"
@@ -419,6 +420,24 @@ func (b *blockedCounter) count() int {
 	}
 }
 
+const (
+	// requestDecisionWorkers bounds concurrent SSRF validations per render. Validation
+	// can hit DNS, so an unbounded per-event goroutine (the previous shape) let one
+	// hostile page fan out thousands of resolver-backed goroutines during the settle
+	// window. Eight workers keep a legitimate asset-heavy page fast — its validations
+	// are host-cached after the first few — while capping what a hostile one can spend.
+	requestDecisionWorkers = 8
+	// requestDecisionQueue bounds pending paused requests awaiting a decision. Sized
+	// well above what legitimate artwork pages issue in a settle window.
+	requestDecisionQueue = 256
+)
+
+// pausedRequest is one browser request awaiting an SSRF decision.
+type pausedRequest struct {
+	id  fetch.RequestID
+	url string
+}
+
 // interceptRequests installs a CDP Fetch handler validating every paused request against
 // the SSRF policy. Returns a counter of refusals, or nil when no validator is configured.
 //
@@ -426,35 +445,73 @@ func (b *blockedCounter) count() int {
 // RoundTripper never sees navigations, redirect hops, or subresource loads. Without this,
 // an L0-healthy public page could redirect or script-fetch its way to loopback, private,
 // link-local, or cloud-metadata addresses from inside the media worker.
+//
+// Decisions run on a fixed worker pool over a bounded queue, never per-event goroutines:
+// validation can perform DNS lookups, and the page controls how many requests fire, so
+// per-event spawning handed a hostile page an amplifier for media-worker memory, CPU,
+// and resolver load. When the queue is full the event is DROPPED — the request stays
+// paused and the page waits on it. Deliberate, not an oversight: promptly failing excess
+// requests would cost a CDP command per event, a number the attacker chooses, while
+// dropping bounds our spend at zero and turns the flood into the attacker's own stall
+// (an unfinished page classifies stalled; legitimate pages never reach the cap).
+// Undecided requests die with the browser context at probe end.
 func (r *chromedpRenderer) interceptRequests(browserCtx context.Context) *blockedCounter {
 	if r.ssrfValidator == nil {
 		return nil
 	}
 
 	counter := &blockedCounter{ch: make(chan int, 256)}
+	queue := make(chan pausedRequest, requestDecisionQueue)
+	var dropped atomic.Int64
+
+	for range requestDecisionWorkers {
+		go func() {
+			for {
+				select {
+				case <-browserCtx.Done():
+					return
+				case req := <-queue:
+					r.decidePausedRequest(browserCtx, req, counter)
+				}
+			}
+		}()
+	}
+
 	r.chromedpClient.ListenTarget(browserCtx, func(ev any) {
 		paused, ok := ev.(*fetch.EventRequestPaused)
 		if !ok {
 			return
 		}
-		// CDP decisions must not be issued from the event goroutine.
-		go func() {
-			if err := r.ssrfValidator.ValidateHTTPURL(browserCtx, paused.Request.URL); err != nil {
-				logger.WarnCtx(browserCtx, "Blocked browser request by SSRF policy",
-					zap.String("request_url", paused.Request.URL),
-					zap.Error(err),
+		// The event goroutine must neither issue CDP decisions nor block.
+		select {
+		case queue <- pausedRequest{id: paused.RequestID, url: paused.Request.URL}:
+		default:
+			if dropped.Add(1) == 1 {
+				logger.WarnCtx(browserCtx, "Request decision queue saturated; excess browser requests left paused",
+					zap.String("first_dropped_url", paused.Request.URL),
+					zap.Int("queue_capacity", requestDecisionQueue),
 				)
-				select {
-				case counter.ch <- 1:
-				default: // counter saturated; the log above is the durable signal
-				}
-				_ = r.chromedpClient.FailRequest(browserCtx, paused.RequestID, network.ErrorReasonAccessDenied)
-				return
 			}
-			_ = r.chromedpClient.ContinueRequest(browserCtx, paused.RequestID)
-		}()
+		}
 	})
 	return counter
+}
+
+// decidePausedRequest validates one paused request and issues the CDP decision.
+func (r *chromedpRenderer) decidePausedRequest(browserCtx context.Context, req pausedRequest, counter *blockedCounter) {
+	if err := r.ssrfValidator.ValidateHTTPURL(browserCtx, req.url); err != nil {
+		logger.WarnCtx(browserCtx, "Blocked browser request by SSRF policy",
+			zap.String("request_url", req.url),
+			zap.Error(err),
+		)
+		select {
+		case counter.ch <- 1:
+		default: // counter saturated; the log above is the durable signal
+		}
+		_ = r.chromedpClient.FailRequest(browserCtx, req.id, network.ErrorReasonAccessDenied)
+		return
+	}
+	_ = r.chromedpClient.ContinueRequest(browserCtx, req.id)
 }
 
 // Close implements Renderer.
