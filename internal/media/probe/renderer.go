@@ -43,6 +43,16 @@ const (
 	// second probe no matter how many chances it gets. Err-healthy says spend render
 	// capacity, not artworks.
 	DefaultSettleMs = 15000
+	// MinRenderHeadroomMs is the minimum budget the probe timeout must reserve beyond
+	// the settle window for navigation, readiness, and the screenshot. A timeout that
+	// leaves less is not a tuning choice but a structural guarantee of failure: every
+	// probe burns its whole budget in the settle sleep and records stalled, and after
+	// the debounce that gates healthy media at corpus scale. Startup validation
+	// enforces timeout >= settle + this, on EFFECTIVE values (defaults resolved) — the
+	// startup self-check cannot catch it because self-check renders use a short fixture
+	// settle. 5s is the floor for the fixed costs, not a recommendation; the default
+	// pairing reserves 30s because slow IPFS navigations are normal.
+	MinRenderHeadroomMs = 5000
 
 	// MinViewportDim/MaxViewportDim bound each configured viewport edge, and
 	// MaxViewportPixels bounds their product. Startup validation enforces these so a

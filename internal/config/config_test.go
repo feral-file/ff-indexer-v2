@@ -635,6 +635,39 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 		}
 	})
 
+	// A timeout that cannot contain the settle window plus fixed render costs makes
+	// every probe stall and gate healthy media at corpus scale; the self-check cannot
+	// catch it (fixtures settle short), so this must be a startup error. Validated on
+	// effective values: either knob unset resolves to the renderer default.
+	t.Run("timeout must reserve headroom beyond the effective settle", func(t *testing.T) {
+		cases := []struct {
+			name                string
+			timeoutMs, settleMs int
+			valid               bool
+		}{
+			{"defaults are consistent", 0, 0, true},
+			{"explicit production pairing", 45000, 15000, true},
+			{"timeout below the DEFAULT settle (the reported shape)", 10000, 0, false},
+			{"timeout below an explicit settle", 10000, 15000, false},
+			{"headroom squeezed under the floor", 18000, 15000, false},
+			{"exactly at the floor", 20000, 15000, true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base
+				cfg.EgressRestricted = true
+				cfg.TimeoutMs, cfg.SettleMs = tc.timeoutMs, tc.settleMs
+				err := validateRenderProbeConfig(&cfg, true, "media_index")
+				if tc.valid {
+					assert.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "timeout_ms")
+			})
+		}
+	})
+
 	t.Run("disabled probe is inert", func(t *testing.T) {
 		cfg := RenderProbeConfig{Enabled: false}
 		assert.NoError(t, validateRenderProbeConfig(&cfg, false, ""), "a disabled probe's settings are not validated")

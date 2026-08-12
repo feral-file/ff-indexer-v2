@@ -224,6 +224,8 @@ render_probe:
   batch_size: 20
   viewport_width: 1024
   viewport_height: 1024
+  # Must exceed settle_ms by at least 5s (validated at startup): the timeout covers
+  # navigate + settle + screenshot, and less headroom guarantees stalled verdicts.
   timeout_ms: 45000
   # How long the page keeps running after load before the capture. Generous on purpose:
   # the blank debounce only protects against transient blanks — a work that

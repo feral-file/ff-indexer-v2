@@ -604,6 +604,28 @@ func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQue
 	if c.ImageSettleMs > 0 && c.SettleMs > 0 && c.ImageSettleMs > c.SettleMs {
 		invalid = append(invalid, "render_probe.image_settle_ms must not exceed render_probe.settle_ms")
 	}
+	// The timeout bounds navigate + settle + screenshot together, so it must reserve
+	// headroom beyond the settle window — checked on EFFECTIVE values because either
+	// knob may be unset (<= 0 means the renderer's default): timeout_ms: 10000 with
+	// settle_ms unset resolves to 10s against a 15s settle, and every probe would burn
+	// its budget inside the settle sleep, record stalled, and gate healthy media after
+	// the debounce. The startup self-check cannot catch this (fixtures settle short);
+	// only this validation can.
+	effTimeout := c.TimeoutMs
+	if effTimeout <= 0 {
+		effTimeout = probe.DefaultTimeoutMs
+	}
+	effSettle := c.SettleMs
+	if effSettle <= 0 {
+		effSettle = probe.DefaultSettleMs
+	}
+	if effTimeout < effSettle+probe.MinRenderHeadroomMs {
+		invalid = append(invalid, fmt.Sprintf(
+			"render_probe.timeout_ms (effective %dms) must exceed settle_ms (effective %dms) by at least %dms: "+
+				"the timeout covers navigate + settle + screenshot, and anything less guarantees every probe "+
+				"stalls in the settle sleep and gates healthy media after the debounce",
+			effTimeout, effSettle, probe.MinRenderHeadroomMs))
+	}
 	// Viewport bounds are validated against the renderer's capture caps at startup
 	// because the failure mode of an oversized viewport is silent and severe: chromium
 	// allocates and captures the frame, the renderer rejects it post-hoc (encoded or
