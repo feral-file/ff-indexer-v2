@@ -439,12 +439,14 @@ func TestExecuteRenderProbe_failedReleaseRetainsGate(t *testing.T) {
 	require.Error(t, err, "the job fails so the queue retries the release")
 }
 
-// TestExecuteRenderProbe_reconciliationFailureFailsJob pins the durability of the step
-// after the gate commits. Health state is already broken at that point, but until
-// BatchUpdateTokensViewability runs the tokens still read is_viewable=true — and no sweep
-// will fix that, because GetURLsForChecking excludes render_% rows. So a reconciliation
-// error must fail the job and put it on the retry path rather than be logged and dropped.
-func TestExecuteRenderProbe_reconciliationFailureFailsJob(t *testing.T) {
+// TestExecuteRenderProbe_reconciliationFailureReschedulesJob pins the durability of the
+// step after the gate commits. Health state is already broken at that point, but until
+// BatchUpdateTokensViewability runs the tokens still read is_viewable=true — and nothing
+// else fixes that: no sweep revisits render_% rows, a plain error is MarkJobFailed with
+// no queue retry, and the probe row's next_check_at is already a full interval out. The
+// error must therefore be a jobs.RescheduleError with a short delay, so the worker moves
+// the job back to pending instead of permanently failing it.
+func TestExecuteRenderProbe_reconciliationFailureReschedulesJob(t *testing.T) {
 	m, exec := setupRenderProbe(t, renderProbeTestConfig)
 	url := "https://example.com/reconcile-fails.html"
 
@@ -464,12 +466,15 @@ func TestExecuteRenderProbe_reconciliationFailureFailsJob(t *testing.T) {
 
 	// Strict mock: no webhook may be enqueued for a recompute that did not happen.
 	err := exec.ExecuteRenderProbe(context.Background(), url)
-	require.Error(t, err, "the job fails so the queue retries the viewability recompute")
+	require.Error(t, err)
+	var re *jobs.RescheduleError
+	require.ErrorAs(t, err, &re, "reconciliation failure must reschedule, not permanently fail")
+	assert.Equal(t, m.now.Add(time.Minute).UTC(), re.At, "short retry delay: is_viewable disagrees with durable health state until it lands")
 }
 
 // TestExecuteRenderProbe_reconciliationFailureFailsRecovery is the same contract on the
-// healing path: the gate is already released, so tokens are still hidden until the
-// recompute lands. Nothing else revisits them.
+// healing path: the gate is already released (next_check_at a full RecheckInterval out),
+// so tokens are still hidden until the recompute lands. Nothing else revisits them.
 func TestExecuteRenderProbe_reconciliationFailureFailsRecovery(t *testing.T) {
 	m, exec := setupRenderProbe(t, renderProbeTestConfig)
 	url := "https://example.com/reconcile-fails-recovery.html"
@@ -488,7 +493,9 @@ func TestExecuteRenderProbe_reconciliationFailureFailsRecovery(t *testing.T) {
 		Return(nil, assert.AnError)
 
 	err := exec.ExecuteRenderProbe(context.Background(), url)
-	require.Error(t, err, "the job fails so the queue retries the viewability recompute")
+	require.Error(t, err)
+	var re *jobs.RescheduleError
+	require.ErrorAs(t, err, &re, "recovery reconciliation failure must reschedule, not permanently fail")
 }
 
 // TestExecuteRenderProbe_imageSettleShortcut pins the per-class settle contract: the

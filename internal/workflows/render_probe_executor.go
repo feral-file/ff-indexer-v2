@@ -323,15 +323,27 @@ func (e *renderProbeExecutor) finishFailure(ctx context.Context, url string, row
 	return e.propagateViewability(ctx, tokenIDs)
 }
 
+// reconcileRetryDelay is how long a probe job waits before retrying after a
+// post-gate/release viewability reconciliation failure. Short on purpose: until the
+// retry lands, tokens.is_viewable disagrees with a durable gate or release, and nothing
+// else corrects it (see propagateViewability). The cost of a retry is one re-render.
+const reconcileRetryDelay = time.Minute
+
 // propagateViewability recomputes viewability for the given tokens and emits a webhook
 // for each one whose visibility actually changed, matching the sweeper's behavior.
 //
-// Failures are returned so the job fails and the queue retries. An earlier version logged
-// and continued on the theory that the next sweep would reconcile — that reasoning was
-// wrong for exactly the case that matters: once a URL is gated, GetURLsForChecking
-// excludes its render_% rows, so no sweep revisits them. A swallowed error would leave
-// tokens.is_viewable=true after chromium confirmed the media is bad, until an unrelated
-// update or the next render probe. Re-rendering on retry is the cheaper mistake.
+// Failures return jobs.ErrReschedule rather than a plain error, because by the time this
+// runs the gate or release is already durable and the probe's own cadence will not save
+// us: a plain error is MarkJobFailed — permanent, no queue retry — and the probe row's
+// next_check_at is already pushed a full interval out (24h gated, 168h released), so
+// tokens.is_viewable would disagree with browser-confirmed health state for that entire
+// window, served through default API results. An earlier version logged and continued on
+// the theory that the next sweep would reconcile — wrong for exactly the case that
+// matters: once a URL is gated, GetURLsForChecking excludes its render_% rows, so no
+// sweep revisits them. The reschedule re-runs the whole probe (render included); the
+// gate/release re-applies idempotently and reconciliation is retried. Re-rendering is
+// the cheaper mistake, and a persistent store failure here means the queue itself is
+// struggling — one render per reconcileRetryDelay per stuck URL is bounded load.
 func (e *renderProbeExecutor) propagateViewability(ctx context.Context, tokenIDs []uint64) error {
 	if len(tokenIDs) == 0 {
 		return nil
@@ -339,7 +351,9 @@ func (e *renderProbeExecutor) propagateViewability(ctx context.Context, tokenIDs
 
 	changes, err := e.store.BatchUpdateTokensViewability(ctx, tokenIDs)
 	if err != nil {
-		return fmt.Errorf("failed to update tokens viewability: %w", err)
+		logger.ErrorCtx(ctx, err, zap.Uint64s("token_ids", tokenIDs))
+		return fmt.Errorf("viewability reconciliation failed after durable gate state (%v): %w",
+			err, jobs.ErrReschedule(e.clock.Now().Add(reconcileRetryDelay)))
 	}
 
 	for _, change := range changes {

@@ -272,17 +272,42 @@ Fingerprint workflow for operators: capture the offending page once, compute its
 add it to `render_probe.known_bad_fingerprints` with a small `max_distance` (4-8) and a
 label. A loose tolerance matches real art and hides it — the worst failure mode.
 
-### Pre-enablement smoke (requires a real browser)
+### Pre-deployment gate (requires the target runtime)
 
-Unit tests mock chromedp, so browser behavior is unverified by CI. Before enabling the
-probe in an environment, run the build-tagged smoke against the real chromium in the CGO
-image — it covers navigation, viewport capture, pHash stability, and SSRF request refusal:
+Unit tests mock chromedp and CI has no chromium, so browser behavior is structurally
+unverifiable in this repo's pipeline — the verification belongs to the deployment. The
+`egress_restricted` startup requirement is the enforcement hook: the flag attests that
+the items below were done for the environment being deployed, and the process refuses to
+run the probe until someone sets it. Setting it without doing them is a false
+attestation.
 
-```
-go test -tags="cgo chromium" ./internal/media/probe/ -run TestChromiumSmoke -v
-```
+Before setting `render_probe.egress_restricted: true` in an environment:
 
-It is skipped without the `chromium` tag so ordinary `make check` runs stay hermetic.
+1. **Run the smoke suite inside the target CGO image** (not a developer laptop — the
+   chromium build, sandbox support, and fontconfig differ). It covers navigation,
+   viewport capture, pHash stability, SSRF request refusal, and measures every egress
+   vector the interception claims to cover:
+
+   ```
+   go test -tags="cgo chromium" ./internal/media/probe/ -run TestChromiumSmoke -v
+   go test -tags="cgo chromium" ./internal/media/probe/ -run TestEgressVectors -v
+   ```
+
+2. **Probe known-good and known-bad URLs** through a worker running in the environment:
+   a real HTML artwork must record `rendered_ok` with a stored pHash; a gateway error
+   page probed twice must gate its token (`viewable=false` via the API). This is the
+   scenario check that catches runtime-specific rendering differences no unit test can.
+
+3. **Verify the network egress control itself** — from inside the media worker's network
+   position, connections to loopback, RFC1918, link-local, and the cloud metadata range
+   must fail at the network layer, not merely at the in-browser validator. If that
+   control cannot be built for the topology (e.g. chromium shares a container and
+   network with services it must reach), leaving the flag unset — and therefore the
+   probe off — is the correct state; enabling anyway is a documented risk acceptance,
+   not an oversight.
+
+The smoke suite is skipped without the `chromium` tag so ordinary `make check` runs stay
+hermetic.
 
 ## Delta measurement
 
