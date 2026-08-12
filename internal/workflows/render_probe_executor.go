@@ -172,6 +172,15 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 	if prev != nil {
 		row.ConsecutiveFailures = prev.ConsecutiveFailures
 		row.BaselinePhash = prev.BaselinePhash
+		// The last successful capture is carried forward whole: pHash, engine, viewport,
+		// and timestamp describe one observation and must survive or vanish together. A
+		// failure path that kept the timestamp but nulled the rest (an earlier revision
+		// did) claims a capture happened while deleting its comparability data — the
+		// capture-only record #3485 exists to accumulate. A successful classification
+		// below overwrites all four with the fresh capture.
+		row.Phash = prev.Phash
+		row.EngineVersion = prev.EngineVersion
+		row.Viewport = prev.Viewport
 		row.CapturedAt = prev.CapturedAt
 		// Carry the gate marker forward; only a successful release clears it.
 		row.HealthGated = prev.HealthGated

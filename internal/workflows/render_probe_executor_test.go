@@ -716,3 +716,47 @@ func TestExecuteRenderProbe_shadowMode(t *testing.T) {
 		require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
 	})
 }
+
+// TestExecuteRenderProbe_stallAfterCapturePreservesCaptureMetadata pins the capture-only
+// record's integrity across failures: a stall after a successful capture must carry the
+// whole prior observation forward — pHash, engine, viewport, timestamp — not just the
+// timestamp. Keeping CapturedAt while nulling the rest (an earlier revision did) claims
+// a capture happened while deleting its comparability data.
+func TestExecuteRenderProbe_stallAfterCapturePreservesCaptureMetadata(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/stall-after-capture.html"
+
+	prevPhash := int64(0x1234567890ABCDEF)
+	prevEngine := "HeadlessChrome/122.0"
+	prevViewport := "1024x1024"
+	prevCaptured := m.now.Add(-24 * time.Hour)
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:      url,
+		Verdict:       schema.RenderProbeVerdictRenderedOK,
+		Phash:         &prevPhash,
+		BaselinePhash: &prevPhash,
+		EngineVersion: &prevEngine,
+		Viewport:      &prevViewport,
+		CapturedAt:    &prevCaptured,
+	}, nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
+
+	m.store.EXPECT().
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+			assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict)
+			assert.Equal(t, 1, row.ConsecutiveFailures)
+			require.NotNil(t, row.Phash, "the last capture's pHash survives a stall")
+			assert.Equal(t, prevPhash, *row.Phash)
+			require.NotNil(t, row.EngineVersion)
+			assert.Equal(t, prevEngine, *row.EngineVersion)
+			require.NotNil(t, row.Viewport)
+			assert.Equal(t, prevViewport, *row.Viewport)
+			require.NotNil(t, row.CapturedAt)
+			assert.Equal(t, prevCaptured, *row.CapturedAt)
+			return nil
+		})
+
+	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
