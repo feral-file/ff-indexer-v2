@@ -171,7 +171,7 @@ func TestChromiumSmoke(t *testing.T) {
 	defer cancel()
 
 	t.Run("renders a real page and records engine and viewport", func(t *testing.T) {
-		capture, err := renderer.RenderProbe(ctx, srv.URL+"/content")
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/content", 0)
 		require.NoError(t, err, "chromium must be present and able to navigate")
 		require.NotNil(t, capture.Image)
 
@@ -186,7 +186,7 @@ func TestChromiumSmoke(t *testing.T) {
 
 		// The same page must hash identically across runs on one engine — the property
 		// the whole fingerprint/drift design rests on.
-		second, err := renderer.RenderProbe(ctx, srv.URL+"/content")
+		second, err := renderer.RenderProbe(ctx, srv.URL+"/content", 0)
 		require.NoError(t, err)
 		secondCls, err := probe.Classify(second.Image, nil, 0.001)
 		require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestChromiumSmoke(t *testing.T) {
 	})
 
 	t.Run("viewport capture classifies a below-the-fold page as blank", func(t *testing.T) {
-		capture, err := renderer.RenderProbe(ctx, srv.URL+"/below-fold")
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/below-fold", 0)
 		require.NoError(t, err)
 		cls, err := probe.Classify(capture.Image, nil, 0.001)
 		require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestChromiumSmoke(t *testing.T) {
 	})
 
 	t.Run("blocks a page-initiated request to the metadata endpoint", func(t *testing.T) {
-		capture, err := renderer.RenderProbe(ctx, srv.URL+"/metadata-fetch")
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/metadata-fetch", 0)
 		require.NoError(t, err)
 		assert.Positive(t, capture.BlockedRequests,
 			"the page's request to 169.254.169.254 must be refused by the interceptor")
@@ -214,14 +214,14 @@ func TestChromiumSmoke(t *testing.T) {
 	// iframes must still be covered by it, and a popup — which would get its own,
 	// uncovered target — must be prevented from opening at all.
 	t.Run("blocks a worker request to a private address", func(t *testing.T) {
-		capture, err := renderer.RenderProbe(ctx, srv.URL+"/child-worker")
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/child-worker", 0)
 		require.NoError(t, err)
 		assert.Positive(t, capture.BlockedRequests,
 			"a dedicated worker's request must pass through the page target's interceptor")
 	})
 
 	t.Run("blocks an iframe request to a private address", func(t *testing.T) {
-		capture, err := renderer.RenderProbe(ctx, srv.URL+"/child-iframe")
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/child-iframe", 0)
 		require.NoError(t, err)
 		assert.Positive(t, capture.BlockedRequests,
 			"an iframe's request must pass through the page target's interceptor")
@@ -232,7 +232,7 @@ func TestChromiumSmoke(t *testing.T) {
 	// "body" would burn the whole probe timeout and gate healthy art as stalled.
 	t.Run("captures a directly navigated SVG document", func(t *testing.T) {
 		start := time.Now()
-		capture, err := renderer.RenderProbe(ctx, srv.URL+"/art.svg")
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/art.svg", 0)
 		require.NoError(t, err, "an SVG document must reach readiness, not hit the timeout")
 		assert.Less(t, time.Since(start), 20*time.Second, "readiness must not wait out the probe timeout")
 
@@ -244,7 +244,7 @@ func TestChromiumSmoke(t *testing.T) {
 	// The egress guard replaces Worker; a module worker must still run, or art that
 	// paints from one would be captured blank and gated despite rendering correctly.
 	t.Run("module workers still run under the egress guard", func(t *testing.T) {
-		capture, err := renderer.RenderProbe(ctx, srv.URL+"/module-worker")
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/module-worker", 0)
 		require.NoError(t, err)
 		cls, err := probe.Classify(capture.Image, nil, 0.001)
 		require.NoError(t, err)
@@ -254,7 +254,7 @@ func TestChromiumSmoke(t *testing.T) {
 
 	t.Run("prevents a popup from opening a new uncovered target", func(t *testing.T) {
 		before := atomic.LoadInt32(&popupHits)
-		_, err := renderer.RenderProbe(ctx, srv.URL+"/child-popup")
+		_, err := renderer.RenderProbe(ctx, srv.URL+"/child-popup", 0)
 		require.NoError(t, err)
 		assert.Equal(t, before, atomic.LoadInt32(&popupHits),
 			"block-new-web-contents must stop the popup opening; otherwise its requests bypass interception")
@@ -348,7 +348,7 @@ func TestEgressVectors(t *testing.T) {
 	defer cancel()
 
 	for name := range vectors {
-		capture, err := renderer.RenderProbe(ctx, srv.URL+"/"+name)
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/"+name, 0)
 		require.NoError(t, err)
 		t.Logf("vector=%-14s blocked=%d", name, capture.BlockedRequests)
 	}

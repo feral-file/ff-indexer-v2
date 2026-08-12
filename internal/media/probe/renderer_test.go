@@ -110,7 +110,7 @@ func TestRenderProbe_capturesViewportFrameAndEngine(t *testing.T) {
 		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
-	capture, err := h.renderer.RenderProbe(context.Background(), url)
+	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
 	require.NoError(t, err)
 	require.NotNil(t, capture)
 	assert.Equal(t, "HeadlessChrome/123.0", capture.EngineVersion)
@@ -131,7 +131,7 @@ func TestRenderProbe_usesViewportCaptureNotFullPage(t *testing.T) {
 		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
-	_, err := h.renderer.RenderProbe(context.Background(), url)
+	_, err := h.renderer.RenderProbe(context.Background(), url, 0)
 	require.NoError(t, err)
 }
 
@@ -154,7 +154,7 @@ func TestRenderProbe_runErrorIsStalledSignal(t *testing.T) {
 		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(context.DeadlineExceeded)
 
-	capture, err := h.renderer.RenderProbe(context.Background(), url)
+	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
 	require.Error(t, err)
 	assert.Nil(t, capture)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
@@ -190,7 +190,7 @@ func TestRenderProbe_callerCancellationSurfaces(t *testing.T) {
 		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("chromedp: context canceled"))
 
-	capture, err := h.renderer.RenderProbe(ctx, url)
+	capture, err := h.renderer.RenderProbe(ctx, url, 0)
 	require.Error(t, err)
 	assert.Nil(t, capture)
 	assert.ErrorIs(t, err, context.Canceled, "cancellation must surface as cancellation, not a render verdict")
@@ -210,7 +210,7 @@ func TestRenderProbe_undecodableScreenshotErrors(t *testing.T) {
 		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
-	capture, err := h.renderer.RenderProbe(context.Background(), url)
+	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
 	require.Error(t, err)
 	assert.Nil(t, capture)
 	assert.Contains(t, err.Error(), "screenshot")
@@ -234,7 +234,7 @@ func TestRenderProbe_rejectsOversizedScreenshot(t *testing.T) {
 		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
-	capture, err := h.renderer.RenderProbe(context.Background(), url)
+	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
 	require.Error(t, err)
 	assert.Nil(t, capture)
 	assert.Contains(t, err.Error(), "pixel cap")
@@ -309,7 +309,7 @@ func TestRenderProbe_interceptsBrowserRequests(t *testing.T) {
 		Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
-	capture, err := h.renderer.RenderProbe(context.Background(), url)
+	capture, err := h.renderer.RenderProbe(context.Background(), url, 0)
 	require.NoError(t, err)
 	require.NotNil(t, capture)
 	assert.Equal(t, 1, capture.BlockedRequests, "the refused request is counted on the capture")

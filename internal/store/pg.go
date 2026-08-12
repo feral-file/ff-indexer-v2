@@ -3162,9 +3162,20 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 // Coverage policy (agreed on feral-file#3485 follow-up): only URLs the byte-level probe
 // confirmed healthy, in the classes a browser render can actually judge — HTML documents,
 // animation-source URLs, and images. Video/audio are excluded (the container check is the
-// meaningful probe there; a screenshot of an MP4 proves nothing). Ordering puts
-// never-probed URLs first, then HTML/animation before images (byte checks are weakest for
-// HTML, so render coverage matters most there), then oldest capture first.
+// meaningful probe there; a screenshot of an MP4 proves nothing).
+//
+// Ordering is three priority tiers — urgent re-probes (active gates and pending
+// blank/stalled debounces), then never-probed coverage, then routine rechecks — and the
+// tier split is load-bearing, not cosmetic. The render corpus is far larger than render
+// capacity (~356k eligible URLs at rollout against a handful of probes per minute), so
+// whatever ranks last waits weeks. Ranking re-probes last starves heals (a gated URL's
+// only healer) and debounce second looks (accumulating first-failures that then gate in
+// one indistinguishable burst when seeding drains); ranking ALL re-probes first inverts
+// it — seeded URLs coming due at RecheckInterval would monopolize capacity and stall the
+// seeding tail forever. Postponing only rendered_ok re-confirmations is the cheapest
+// resolution of that tension. Within a tier: HTML/animation before images (byte checks
+// are weakest for HTML, so render coverage matters most there), then oldest capture
+// first.
 //
 // A LEFT JOIN discovers never-probed URLs; probed URLs re-enter when next_check_at is due
 // (served by idx_media_render_probes_due). The healthy-row scan is the same trade the
@@ -3223,8 +3234,26 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		  -- navigation for them is refused by the SSRF policy, so they would loop as
 		  -- stalled forever. Explicitly out of L1 coverage (see docs/media_viewability.md).
 		  AND h.media_url NOT LIKE 'data:%'
-		GROUP BY h.media_url, p.media_url_hash, p.captured_at
-		ORDER BY (p.media_url_hash IS NULL) DESC,
+		GROUP BY h.media_url, p.media_url_hash, p.captured_at, p.health_gated, p.verdict
+		-- Three priority tiers, guarding against two starvation modes at once (both bite
+		-- when the never-probed backlog is weeks long, as it is at initial rollout):
+		--   0. Urgent re-probes: active gates (the probe is a gated URL's ONLY healer, so
+		--      queueing heals behind a 350k-URL seeding pass hides recovered tokens for
+		--      weeks) and pending blank/stalled debounces (starving the second look makes
+		--      every accumulated first-failure gate in one burst when seeding drains,
+		--      instead of spread out at the designed retry cadence).
+		--   1. Never-probed coverage.
+		--   2. Routine rechecks of rendered_ok URLs. Ranked LAST deliberately: as seeded
+		--      URLs come due again (RecheckInterval), putting any re-probe above coverage
+		--      would let the seeded prefix monopolize capacity and stall the seeding tail
+		--      indefinitely. A stale re-confirmation of a good render is the cheapest
+		--      thing on this list to postpone.
+		ORDER BY CASE
+		           WHEN p.media_url_hash IS NOT NULL
+		                AND (p.health_gated = true OR p.verdict IN ('blank', 'stalled')) THEN 0
+		           WHEN p.media_url_hash IS NULL THEN 1
+		           ELSE 2
+		         END ASC,
 		         MIN(CASE WHEN h.sniffed_content_type = 'text/html'
 		                   OR h.media_source IN (?, ?) THEN 0 ELSE 1 END) ASC,
 		         p.captured_at ASC NULLS FIRST
@@ -3241,6 +3270,39 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 		return nil, fmt.Errorf("failed to get URLs due for render probe: %w", err)
 	}
 	return urls, nil
+}
+
+// IsStaticImageRenderClass reports whether every render-eligible signal for the URL
+// classifies it as a static raster image.
+//
+// Reason: the render settle window exists for works that keep painting after load —
+// generative HTML, WebGL, scripted SVG. A static raster image paints on decode, so
+// holding a browser slot through the full settle for ~60% of the corpus is pure waste;
+// the caller shortens the settle when this returns true. The check is deliberately
+// conservative in every ambiguous direction: SVG is excluded (image/* by sniff, but SMIL/
+// CSS/script animation needs the full window), an animation media_source on ANY row
+// excludes the URL even if its bytes sniff as an image, and no rows or NULL sniffs return
+// false — an unknown class must degrade to the longer settle, never the shorter one. The
+// worst case of a wrong true is a false blank verdict on real art; a wrong false only
+// costs seconds.
+func (s *pgStore) IsStaticImageRenderClass(ctx context.Context, url string) (bool, error) {
+	urlHash := types.MD5Hash(url)
+	var staticImage bool
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(
+		         bool_and(h.sniffed_content_type LIKE 'image/%'
+		                  AND h.sniffed_content_type NOT LIKE 'image/svg%'
+		                  AND h.media_source NOT IN (?, ?)),
+		         false)
+		FROM token_media_health h
+		WHERE h.media_url_hash = ?`,
+		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
+		urlHash,
+	).Scan(&staticImage).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to classify render class: %w", err)
+	}
+	return staticImage, nil
 }
 
 // AcquireRenderGate sets a URL's render gate atomically: the probe row's marker and the

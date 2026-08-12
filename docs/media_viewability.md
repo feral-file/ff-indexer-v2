@@ -96,12 +96,26 @@ stable.
 
 Headless-chromium render of L0-healthy URLs, gating viewability. Coverage: HTML
 documents, animation-source URLs, and images — the classes a render can judge; video and
-audio are excluded (the L0 container check is the meaningful probe there). Never-probed
-URLs go first, HTML/animation before images.
+audio are excluded (the L0 container check is the meaningful probe there; note the
+exclusion keys on what the bytes *are*, so a video URL served an HTML error page enters
+as HTML). Scheduling runs in three priority tiers, because the corpus is far larger than
+render capacity (~356k eligible URLs at rollout) and whatever ranks last waits weeks:
+
+1. **Urgent re-probes** — URLs holding an active gate (the probe is their only healer;
+   queueing a heal behind the seeding pass hides a recovered token for weeks) and
+   pending blank/stalled debounces (starving the second look makes every accumulated
+   first-failure gate in one burst when seeding drains, instead of spread out at the
+   designed retry cadence).
+2. **Never-probed coverage** — HTML/animation before images (byte checks are weakest for
+   HTML, so render coverage matters most there).
+3. **Routine rechecks** of rendered_ok URLs. Last deliberately: as seeded URLs come due
+   again, ranking any re-probe above coverage would let the seeded prefix monopolize
+   capacity and stall the seeding tail indefinitely. A stale re-confirmation of a good
+   render is the cheapest thing to postpone.
 
 Flow: the media health sweeper enqueues `RenderMediaProbe` jobs (unique-keyed per URL)
 onto the media queue at the end of each sweep cycle; the CGO media worker renders at a
-fixed viewport, waits `settle_ms`, screenshots, and classifies:
+fixed viewport, waits for the page to settle, screenshots, and classifies:
 
 - **known_bad_fingerprint** — the frame's pHash is within a configured Hamming distance
   of a known-bad render (directory listing, gateway error page, placeholder). Gates
@@ -112,6 +126,19 @@ fixed viewport, waits `settle_ms`, screenshots, and classifies:
 - **stalled** — navigation failure or timeout. Debounced like blank.
 - **rendered_ok** — resets the failure counter; if the URL was render-gated, heals it
   (the probe is the *only* healer of `render_*` rows — see the ownership rule).
+
+The settle window is per-class. `settle_ms` (default 15s) is sized for generative works
+that keep painting after load — the blank debounce only protects against *transient*
+blanks, so a work that deterministically needs longer than the window would gate on its
+second probe no matter how many chances it gets. A static raster image paints on decode,
+and images are the majority of the corpus, so holding a browser slot through the full
+window for them roughly halves total render throughput for nothing: URLs whose every
+health-row signal says static raster image (`IsStaticImageRenderClass`) use
+`image_settle_ms` (default 2s) instead. The check is conservative in every ambiguous
+direction — SVG is excluded (image by sniff, but SMIL/CSS/script animation needs the
+full window), an animation media_source on any row excludes the URL, and unknown or
+mixed signals keep the full settle. A wrong shortcut manufactures a blank verdict on
+real art; a wrong full settle only costs seconds.
 
 Gating writes `token_media_health.failure_reason` (`render_blank` / `render_stalled` /
 `render_known_bad`) through the same `BatchUpdateTokensViewability` + webhook path as

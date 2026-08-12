@@ -5914,6 +5914,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		animationURL := "https://example.com/render/generative"
 		probedDueURL := "https://example.com/render/probed-due.html"
 		probedFutureURL := "https://example.com/render/probed-future.html"
+		retryDueURL := "https://example.com/render/retry-due.html"
 
 		mintTokenWithMedia(t, &htmlURL, nil)
 		mintTokenWithMedia(t, &imageURL, nil)
@@ -5922,6 +5923,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		mintTokenWithMedia(t, nil, &animationURL) // animation source, sniffed type left NULL
 		mintTokenWithMedia(t, &probedDueURL, nil)
 		mintTokenWithMedia(t, &probedFutureURL, nil)
+		mintTokenWithMedia(t, &retryDueURL, nil)
 
 		markHealthy(t, htmlURL, "text/html")
 		markHealthy(t, imageURL, "image/png")
@@ -5929,6 +5931,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		markHealthy(t, animationURL, "")
 		markHealthy(t, probedDueURL, "text/html")
 		markHealthy(t, probedFutureURL, "text/html")
+		markHealthy(t, retryDueURL, "text/html")
 		errMsg := "HTTP 404"
 		require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, brokenURL, MediaHealthUpdate{
 			Status:    schema.MediaHealthStatusBroken,
@@ -5946,6 +5949,11 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			MediaURL: probedFutureURL, Verdict: schema.RenderProbeVerdictRenderedOK,
 			CapturedAt: &past, NextCheckAt: future,
 		}))
+		// A pending blank debounce: due for its second look, not yet gated.
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: retryDueURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 1, CapturedAt: &past, NextCheckAt: past,
+		}))
 
 		urls, err := store.GetURLsDueForRenderProbe(ctx, 50)
 		require.NoError(t, err)
@@ -5958,8 +5966,11 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.NotContains(t, urls, brokenURL, "broken URLs are excluded")
 		assert.NotContains(t, urls, probedFutureURL, "not-yet-due URLs are excluded")
 
-		// Ordering: every never-probed URL precedes the probed-due one, and within the
-		// never-probed set HTML/animation precede images.
+		// Ordering tiers: urgent re-probes (pending debounces, gates) before never-probed
+		// coverage, never-probed before routine rendered_ok rechecks — the corpus is far
+		// larger than render capacity, so the last tier waits weeks and ranking a heal or
+		// a debounce second-look there would starve it (see GetURLsDueForRenderProbe).
+		// Within a tier HTML/animation precede images.
 		idx := func(u string) int {
 			for i, v := range urls {
 				if v == u {
@@ -5968,9 +5979,50 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			}
 			return -1
 		}
-		assert.Less(t, idx(htmlURL), idx(probedDueURL), "never-probed before probed-due")
+		assert.Less(t, idx(retryDueURL), idx(htmlURL), "pending debounce retry before never-probed coverage")
+		assert.Less(t, idx(htmlURL), idx(probedDueURL), "never-probed before routine rendered_ok recheck")
 		assert.Less(t, idx(animationURL), idx(imageURL), "animation class before image class")
 		assert.Less(t, idx(htmlURL), idx(imageURL), "HTML class before image class")
+	})
+
+	t.Run("IsStaticImageRenderClass is conservative in every ambiguous direction", func(t *testing.T) {
+		// Only an unambiguous static raster image may shorten the render settle; a wrong
+		// true manufactures a blank verdict on a generative work.
+		pngURL := "https://example.com/class/plain.png"
+		svgURL := "https://example.com/class/vector.svg"
+		htmlURL := "https://example.com/class/page.html"
+		animImageURL := "https://example.com/class/anim-sourced.png"
+
+		mintTokenWithMedia(t, &pngURL, nil)
+		mintTokenWithMedia(t, &svgURL, nil)
+		mintTokenWithMedia(t, &htmlURL, nil)
+		// The same URL is also referenced as an animation source by another token: the
+		// animation signal must win even though its bytes sniff as an image.
+		mintTokenWithMedia(t, &animImageURL, &animImageURL)
+
+		markHealthy(t, pngURL, "image/png")
+		markHealthy(t, svgURL, "image/svg+xml")
+		markHealthy(t, htmlURL, "text/html")
+		markHealthy(t, animImageURL, "image/png")
+
+		cases := []struct {
+			name string
+			url  string
+			want bool
+		}{
+			{"plain raster image", pngURL, true},
+			{"svg is image-sniffed but can animate", svgURL, false},
+			{"html page", htmlURL, false},
+			{"image bytes but animation source on any row", animImageURL, false},
+			{"no health rows at all", "https://example.com/class/unknown.bin", false},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got, err := store.IsStaticImageRenderClass(ctx, tc.url)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, got)
+			})
+		}
 	})
 
 	t.Run("render-gated rows stay eligible for the render probe and only L1 can clear them", func(t *testing.T) {

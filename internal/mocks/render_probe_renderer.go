@@ -13,9 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	probe "github.com/feral-file/ff-indexer-v2/internal/media/probe"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockRenderProbeRenderer is a mock of Renderer interface.
@@ -57,16 +56,16 @@ func (mr *MockRenderProbeRendererMockRecorder) Close() *gomock.Call {
 }
 
 // RenderProbe mocks base method.
-func (m *MockRenderProbeRenderer) RenderProbe(ctx context.Context, url string) (*probe.Capture, error) {
+func (m *MockRenderProbeRenderer) RenderProbe(ctx context.Context, url string, settleMs int) (*probe.Capture, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RenderProbe", ctx, url)
+	ret := m.ctrl.Call(m, "RenderProbe", ctx, url, settleMs)
 	ret0, _ := ret[0].(*probe.Capture)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RenderProbe indicates an expected call of RenderProbe.
-func (mr *MockRenderProbeRendererMockRecorder) RenderProbe(ctx, url any) *gomock.Call {
+func (mr *MockRenderProbeRendererMockRecorder) RenderProbe(ctx, url, settleMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenderProbe", reflect.TypeOf((*MockRenderProbeRenderer)(nil).RenderProbe), ctx, url)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenderProbe", reflect.TypeOf((*MockRenderProbeRenderer)(nil).RenderProbe), ctx, url, settleMs)
 }

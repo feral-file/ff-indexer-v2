@@ -484,8 +484,15 @@ type Store interface {
 	// =============================================================================
 
 	// GetURLsDueForRenderProbe returns L0-healthy HTML/animation/image URLs due for an
-	// L1 render probe (never-probed first, then HTML/animation, then oldest capture)
+	// L1 render probe, in three priority tiers: urgent re-probes (active gates and
+	// pending blank/stalled debounces), then never-probed coverage, then routine
+	// rechecks of rendered_ok URLs
 	GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error)
+	// IsStaticImageRenderClass reports whether every render-eligible signal for the URL
+	// classifies it as a static raster image (used to shorten the render settle; SVG and
+	// anything HTML/animation-flavored keeps the full window). False when no health rows
+	// exist or signals are mixed — unknown must never shorten the settle.
+	IsStaticImageRenderClass(ctx context.Context, url string) (bool, error)
 	// GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed
 	GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error)
 	// UpsertMediaRenderProbe inserts or replaces the render-probe row for probe.MediaURL;

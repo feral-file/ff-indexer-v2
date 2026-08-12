@@ -915,6 +915,21 @@ func (mr *MockStoreMockRecorder) IsAnyAddressWatched(ctx, chain, addresses any) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsAnyAddressWatched", reflect.TypeOf((*MockStore)(nil).IsAnyAddressWatched), ctx, chain, addresses)
 }
 
+// IsStaticImageRenderClass mocks base method.
+func (m *MockStore) IsStaticImageRenderClass(ctx context.Context, url string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsStaticImageRenderClass", ctx, url)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsStaticImageRenderClass indicates an expected call of IsStaticImageRenderClass.
+func (mr *MockStoreMockRecorder) IsStaticImageRenderClass(ctx, url any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsStaticImageRenderClass", reflect.TypeOf((*MockStore)(nil).IsStaticImageRenderClass), ctx, url)
+}
+
 // ListInFlightJobsWithCancelRequest mocks base method.
 func (m *MockStore) ListInFlightJobsWithCancelRequest(ctx context.Context, queue string, ids []int64) ([]*schema.Job, error) {
 	m.ctrl.T.Helper()

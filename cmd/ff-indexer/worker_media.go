@@ -174,6 +174,7 @@ func registerWorkerMedia(
 				RecheckInterval:        wcfg.RenderProbe.RecheckInterval,
 				RetryInterval:          wcfg.RenderProbe.RetryInterval,
 				BrokenRecheckInterval:  wcfg.RenderProbe.BrokenRecheckInterval,
+				ImageSettleMs:          wcfg.RenderProbe.ImageSettleMs,
 				Fingerprints:           fingerprints,
 			},
 		)

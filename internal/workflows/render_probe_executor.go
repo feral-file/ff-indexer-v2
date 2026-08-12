@@ -48,6 +48,12 @@ type RenderProbeExecutorConfig struct {
 	// BrokenRecheckInterval schedules the next probe after gating; the probe is the only
 	// healer of render-gated rows (L0 skips them), so this also bounds heal latency.
 	BrokenRecheckInterval time.Duration
+	// ImageSettleMs shortens the render settle for URLs whose every health-row signal
+	// says static raster image (IsStaticImageRenderClass). Static images paint on
+	// decode, so holding a browser slot through the full generative-work settle for the
+	// image majority of the corpus (~60% at rollout) roughly halves total render
+	// throughput for nothing. <= 0 disables the shortcut (full settle for everything).
+	ImageSettleMs int
 	// Fingerprints are known-bad render pHashes (directory listings, error pages,
 	// placeholders); a match gates immediately.
 	Fingerprints []probe.Fingerprint
@@ -163,7 +169,22 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 		row.HealthGated = prev.HealthGated
 	}
 
-	capture, renderErr := e.renderer.RenderProbe(ctx, url)
+	// Static raster images paint on decode; everything else (HTML, animation sources,
+	// SVG, mixed or unknown signals) keeps the renderer's full settle. A store failure
+	// here is infrastructure, same as the probe-row load above — fail the job rather
+	// than guess a class.
+	settleMs := 0 // renderer default
+	if e.cfg.ImageSettleMs > 0 {
+		staticImage, err := e.store.IsStaticImageRenderClass(ctx, url)
+		if err != nil {
+			return fmt.Errorf("failed to classify render class: %w", err)
+		}
+		if staticImage {
+			settleMs = e.cfg.ImageSettleMs
+		}
+	}
+
+	capture, renderErr := e.renderer.RenderProbe(ctx, url, settleMs)
 	if renderErr != nil {
 		// Job cancellation / worker shutdown says nothing about the artwork: leave all
 		// probe state untouched so the URL stays due and the next run judges it. The job

@@ -248,6 +248,10 @@ type RenderProbeConfig struct {
 	TimeoutMs int `mapstructure:"timeout_ms"`
 	// SettleMs is how long the page runs after load before capture
 	SettleMs int `mapstructure:"settle_ms"`
+	// ImageSettleMs is the shortened settle for URLs classified as static raster images
+	// (they paint on decode; the full window exists for generative works). <= 0 disables
+	// the shortcut and every class gets SettleMs
+	ImageSettleMs int `mapstructure:"image_settle_ms"`
 	// BlankVarianceThreshold: frames with normalized luminance variance below this are blank
 	BlankVarianceThreshold float64 `mapstructure:"blank_variance_threshold"`
 	// FailureGateThreshold: consecutive blank/stalled probes before viewability gates
@@ -588,6 +592,12 @@ func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQue
 	if c.BatchSize < 1 {
 		invalid = append(invalid, "render_probe.batch_size must be at least 1")
 	}
+	// A "shortened" image settle above the full window is a sign the two knobs were
+	// swapped or misunderstood; it would silently slow the image majority of the corpus.
+	// (<= 0 is valid: it disables the shortcut.)
+	if c.ImageSettleMs > 0 && c.SettleMs > 0 && c.ImageSettleMs > c.SettleMs {
+		invalid = append(invalid, "render_probe.image_settle_ms must not exceed render_probe.settle_ms")
+	}
 	if c.FailureGateThreshold < 1 {
 		invalid = append(invalid, "render_probe.failure_gate_threshold must be at least 1")
 	}
@@ -814,6 +824,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("render_probe.viewport_height", 1024)
 	v.SetDefault("render_probe.timeout_ms", 45000)
 	v.SetDefault("render_probe.settle_ms", 15000)
+	v.SetDefault("render_probe.image_settle_ms", 2000)
 	v.SetDefault("render_probe.blank_variance_threshold", 0.001)
 	v.SetDefault("render_probe.failure_gate_threshold", 2)
 	v.SetDefault("render_probe.recheck_interval", "168h")
@@ -1019,6 +1030,7 @@ func bindAllEnvVars(v *viper.Viper) {
 		"render_probe.viewport_height",
 		"render_probe.timeout_ms",
 		"render_probe.settle_ms",
+		"render_probe.image_settle_ms",
 		"render_probe.blank_variance_threshold",
 		"render_probe.failure_gate_threshold",
 		"render_probe.recheck_interval",

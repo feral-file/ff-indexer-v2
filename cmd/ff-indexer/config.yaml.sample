@@ -225,6 +225,10 @@ render_probe:
   # deterministically needs longer than this window would be gated on its second probe
   # no matter how many chances it gets.
   settle_ms: 15000
+  # Shortened settle for URLs whose every health-row signal says static raster image
+  # (they paint on decode — the full window above exists for generative works). SVG and
+  # anything animation-flavored keeps the full settle. <= 0 disables the shortcut.
+  image_settle_ms: 2000
   blank_variance_threshold: 0.001
   # Chromium runs sandboxed by default. Only set true where the runtime cannot support
   # the sandbox (no unprivileged user namespaces / restrictive seccomp) — an unsandboxed

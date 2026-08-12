@@ -147,13 +147,18 @@ type Renderer interface {
 	// Errors (navigation failure, timeout, cancellation) are the caller's "stalled"
 	// signal.
 	//
+	// settleMs overrides the configured settle window for this render; <= 0 keeps the
+	// configured default. The caller owns class knowledge (static images paint on decode
+	// and need only a fraction of the window generative works do), the renderer owns the
+	// safe default — so an override can only be deliberate, never accidental.
+	//
 	// SECURITY: chromium fetches URLs itself, outside the Go HTTP client and its SSRF
 	// RoundTripper. Every browser-initiated request — the navigation, each redirect hop,
 	// and every subresource — is paused via the CDP Fetch domain and validated against
 	// the SSRF policy before it is allowed to proceed; refused requests are failed with
 	// AccessDenied. Callers should still validate the URL up front so an obviously
 	// blocked target never launches a browser context at all.
-	RenderProbe(ctx context.Context, url string) (*Capture, error)
+	RenderProbe(ctx context.Context, url string, settleMs int) (*Capture, error)
 
 	// Close releases the browser allocator. Call during shutdown.
 	Close() error
@@ -286,7 +291,7 @@ func NewRenderer(chromedpClient adapter.ChromedpClient, cfg *RendererConfig) Ren
 }
 
 // RenderProbe implements Renderer.
-func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string) (*Capture, error) {
+func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string, settleMs int) (*Capture, error) {
 	start := time.Now()
 
 	// The browser context hangs off the allocator (which owns the chromium process
@@ -303,6 +308,11 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string) (*Captur
 
 	blocked := r.interceptRequests(browserCtx)
 
+	settle := r.settleMs
+	if settleMs > 0 {
+		settle = settleMs
+	}
+
 	var screenshot []byte
 	var userAgent string
 	actions := []chromedp.Action{
@@ -313,7 +323,7 @@ func (r *chromedpRenderer) RenderProbe(ctx context.Context, url string) (*Captur
 		// timeout and records a stalled verdict, gating healthy SVG artworks.
 		r.chromedpClient.WaitReady(":root"),
 		r.chromedpClient.Evaluate("navigator.userAgent", &userAgent),
-		r.chromedpClient.Sleep(time.Duration(r.settleMs) * time.Millisecond),
+		r.chromedpClient.Sleep(time.Duration(settle) * time.Millisecond),
 		// Viewport-bounded capture: FullScreenshot would capture the whole scrollable
 		// document, which an untrusted page can make arbitrarily tall — unbounded work,
 		// and a pHash that no longer corresponds to the recorded viewport.

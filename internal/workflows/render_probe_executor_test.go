@@ -94,7 +94,7 @@ func TestExecuteRenderProbe_renderedOK_firstCapture(t *testing.T) {
 
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(contentFrame(), nil)
 
 	m.store.EXPECT().
 		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
@@ -121,7 +121,7 @@ func TestExecuteRenderProbe_firstBlankIsDebounced(t *testing.T) {
 
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(blankFrame(), nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blankFrame(), nil)
 
 	m.store.EXPECT().
 		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
@@ -147,7 +147,7 @@ func TestExecuteRenderProbe_secondBlankGatesViewability(t *testing.T) {
 		Verdict:             schema.RenderProbeVerdictBlank,
 		ConsecutiveFailures: 1,
 	}, nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(blankFrame(), nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blankFrame(), nil)
 
 	// Gating is one atomic call: marker and health rows together, returning the tokens
 	// to recompute. Separate writes would let a token indexed in between land ungated.
@@ -187,7 +187,7 @@ func TestExecuteRenderProbe_stalledRenderCountsTowardGate(t *testing.T) {
 		Verdict:             schema.RenderProbeVerdictStalled,
 		ConsecutiveFailures: 1,
 	}, nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(nil, errors.New("context deadline exceeded"))
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
 
 	m.store.EXPECT().
 		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -217,7 +217,7 @@ func TestExecuteRenderProbe_fingerprintGatesImmediately(t *testing.T) {
 
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil) // FIRST observation
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(frame, nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(frame, nil)
 
 	// Gates on first observation — no debounce for unambiguous matches — in one atomic call.
 	m.store.EXPECT().
@@ -248,7 +248,7 @@ func TestExecuteRenderProbe_renderedOKAfterGateHeals(t *testing.T) {
 		BaselinePhash:       &baseline,
 	}, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(contentFrame(), nil)
 
 	// One atomic release: health rows and the probe marker clear together, and the
 	// affected tokens come back for the viewability recompute. A separate
@@ -339,8 +339,8 @@ func TestExecuteRenderProbe_cancellationLeavesStateUntouched(t *testing.T) {
 	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
 	m.renderer.EXPECT().
-		RenderProbe(gomock.Any(), url).
-		DoAndReturn(func(context.Context, string) (*probe.Capture, error) {
+		RenderProbe(gomock.Any(), url, 0).
+		DoAndReturn(func(context.Context, string, int) (*probe.Capture, error) {
 			cancel()
 			return nil, context.Canceled
 		})
@@ -363,7 +363,7 @@ func TestExecuteRenderProbe_healthWritesAreRenderProbeWrites(t *testing.T) {
 		ConsecutiveFailures: 1,
 	}, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(blankFrame(), nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blankFrame(), nil)
 	m.store.EXPECT().
 		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ schema.MediaRenderProbe, upd store.MediaHealthUpdate) ([]uint64, error) {
@@ -394,7 +394,7 @@ func TestExecuteRenderProbe_gateSurvivesVerdictChange(t *testing.T) {
 		HealthGated:         true,
 	}, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(nil, errors.New("context deadline exceeded"))
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(nil, errors.New("context deadline exceeded"))
 
 	// The stall lands at count 2, below the threshold of 3 — but the URL is already
 	// gated, so the marker must persist and the row stay on the broken cadence.
@@ -427,7 +427,7 @@ func TestExecuteRenderProbe_failedReleaseRetainsGate(t *testing.T) {
 		HealthGated:         true,
 	}, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(contentFrame(), nil)
 
 	m.store.EXPECT().
 		ReleaseRenderGate(gomock.Any(), gomock.Any()).
@@ -454,7 +454,7 @@ func TestExecuteRenderProbe_reconciliationFailureFailsJob(t *testing.T) {
 		ConsecutiveFailures: 1,
 	}, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(blankFrame(), nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blankFrame(), nil)
 	m.store.EXPECT().
 		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]uint64{1}, nil)
@@ -481,7 +481,7 @@ func TestExecuteRenderProbe_reconciliationFailureFailsRecovery(t *testing.T) {
 		HealthGated:         true,
 	}, nil)
 	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
-	m.renderer.EXPECT().RenderProbe(gomock.Any(), url).Return(contentFrame(), nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(contentFrame(), nil)
 	m.store.EXPECT().ReleaseRenderGate(gomock.Any(), gomock.Any()).Return([]uint64{4}, nil)
 	m.store.EXPECT().
 		BatchUpdateTokensViewability(gomock.Any(), []uint64{4}).
@@ -489,4 +489,78 @@ func TestExecuteRenderProbe_reconciliationFailureFailsRecovery(t *testing.T) {
 
 	err := exec.ExecuteRenderProbe(context.Background(), url)
 	require.Error(t, err, "the job fails so the queue retries the viewability recompute")
+}
+
+// TestExecuteRenderProbe_imageSettleShortcut pins the per-class settle contract: the
+// shortened window is used only when ImageSettleMs is configured AND the store says every
+// signal for the URL is a static raster image. Every other combination — shortcut
+// disabled, non-image class — must pass 0 so the renderer applies its full default; a
+// shortcut applied to a generative work is a manufactured blank verdict.
+func TestExecuteRenderProbe_imageSettleShortcut(t *testing.T) {
+	withImageSettle := renderProbeTestConfig
+	withImageSettle.ImageSettleMs = 2000
+
+	cases := []struct {
+		name         string
+		cfg          workflows.RenderProbeExecutorConfig
+		classLookups func(m renderProbeMocks, url string)
+		wantSettleMs int
+	}{
+		{
+			name: "static image gets the shortened settle",
+			cfg:  withImageSettle,
+			classLookups: func(m renderProbeMocks, url string) {
+				m.store.EXPECT().IsStaticImageRenderClass(gomock.Any(), url).Return(true, nil)
+			},
+			wantSettleMs: 2000,
+		},
+		{
+			name: "non-image class keeps the full settle",
+			cfg:  withImageSettle,
+			classLookups: func(m renderProbeMocks, url string) {
+				m.store.EXPECT().IsStaticImageRenderClass(gomock.Any(), url).Return(false, nil)
+			},
+			wantSettleMs: 0,
+		},
+		{
+			name:         "shortcut disabled: no class lookup at all",
+			cfg:          renderProbeTestConfig, // ImageSettleMs zero
+			classLookups: func(m renderProbeMocks, url string) {},
+			wantSettleMs: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, exec := setupRenderProbe(t, tc.cfg)
+			url := "https://example.com/classed-media"
+
+			m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+			m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
+			tc.classLookups(m, url)
+			m.renderer.EXPECT().RenderProbe(gomock.Any(), url, tc.wantSettleMs).Return(contentFrame(), nil)
+			m.store.EXPECT().UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).Return(nil)
+
+			require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+		})
+	}
+}
+
+// TestExecuteRenderProbe_classLookupFailureFailsJob pins that a store failure during
+// class lookup fails the job (queue retries) instead of guessing a class: guessing short
+// on a generative work manufactures a blank verdict, and guessing long silently costs
+// the throughput the shortcut exists to reclaim.
+func TestExecuteRenderProbe_classLookupFailureFailsJob(t *testing.T) {
+	cfg := renderProbeTestConfig
+	cfg.ImageSettleMs = 2000
+	m, exec := setupRenderProbe(t, cfg)
+	url := "https://example.com/class-lookup-fails"
+
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(nil, nil)
+	m.store.EXPECT().IsStaticImageRenderClass(gomock.Any(), url).Return(false, assert.AnError)
+
+	err := exec.ExecuteRenderProbe(context.Background(), url)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "render class")
 }
