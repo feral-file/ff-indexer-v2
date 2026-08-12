@@ -1032,6 +1032,14 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			oldImageURL = oldMetadata.ImageURL
 			oldAnimationURL = oldMetadata.AnimationURL
 		}
+		// Pre-acquire both URLs' gate locks in sorted order: role-order acquisition
+		// deadlocks against a concurrent update whose image/animation pair is reversed.
+		if err := lockChangedURLGates(tx,
+			[2]*string{oldImageURL, input.ImageURL},
+			[2]*string{oldAnimationURL, input.AnimationURL}); err != nil {
+			return err
+		}
+
 		// Handle image URL changes
 		if err := s.syncSingleMediaURL(tx, input.TokenID, oldImageURL, input.ImageURL, schema.MediaHealthSourceMetadataImage); err != nil {
 			return fmt.Errorf("failed to sync image URL: %w", err)
@@ -1156,6 +1164,13 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 		if oldEnrichmentSource != nil {
 			oldImageURL = oldEnrichmentSource.ImageURL
 			oldAnimationURL = oldEnrichmentSource.AnimationURL
+		}
+
+		// Same deadlock guard as the metadata path: sorted pre-acquisition of both gates.
+		if err := lockChangedURLGates(tx,
+			[2]*string{oldImageURL, input.ImageURL},
+			[2]*string{oldAnimationURL, input.AnimationURL}); err != nil {
+			return err
 		}
 
 		// Handle image URL changes
@@ -2748,6 +2763,56 @@ func (s *pgStore) GetTokenCountsByAddress(ctx context.Context, address string, c
 
 // syncSingleMediaURL syncs a single media URL health record
 // Only performs DB operations if the URL has changed
+// orderedChangedURLGateHashes returns the deduplicated URL-gate hashes that a following
+// sequence of syncSingleMediaURL calls will lock, in sorted order. Each change pair is
+// {oldURL, newURL}; only pairs that will actually insert a health row (new non-empty and
+// different from old) contribute a hash — matching syncSingleMediaURL's own skip logic,
+// so unchanged URLs add no gate contention.
+func orderedChangedURLGateHashes(changes ...[2]*string) []string {
+	deref := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	seen := make(map[string]bool, len(changes))
+	hashes := make([]string, 0, len(changes))
+	for _, c := range changes {
+		oldStr, newStr := deref(c[0]), deref(c[1])
+		if newStr == "" || newStr == oldStr {
+			continue
+		}
+		h := types.MD5Hash(newStr)
+		if !seen[h] {
+			seen[h] = true
+			hashes = append(hashes, h)
+		}
+	}
+	sort.Strings(hashes)
+	return hashes
+}
+
+// lockChangedURLGates pre-acquires the URL-gate advisory locks for a metadata or
+// enrichment update's changed URLs, in one deterministic global order.
+//
+// Reason: syncSingleMediaURL locks its own URL at insert time, so a transaction syncing
+// image then animation acquires two gate locks in role order. Two concurrent updates
+// whose pairs are reversed — one token's image URL is the other's animation URL — then
+// each hold their first lock while waiting for the other's, and postgres aborts one
+// transaction as a deadlock, rolling back an otherwise valid update. Sorting the hashes
+// gives every transaction the same acquisition order, which cannot cycle.
+// syncSingleMediaURL keeps its own lock call for correctness in isolation:
+// pg_advisory_xact_lock is reentrant within a transaction, so the re-acquisition is a
+// no-op.
+func lockChangedURLGates(tx *gorm.DB, changes ...[2]*string) error {
+	for _, h := range orderedChangedURLGateHashes(changes...) {
+		if err := lockURLGate(tx, h); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL *string, source schema.MediaHealthSource) error {
 	// Check if URL changed
 	oldURLStr := ""
