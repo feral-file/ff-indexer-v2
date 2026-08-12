@@ -5985,6 +5985,51 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.Less(t, idx(htmlURL), idx(imageURL), "HTML class before image class")
 	})
 
+	t.Run("a held gate excludes the URL from the L0 sweep, even over an L0-owned row", func(t *testing.T) {
+		// The failure_reason test alone cannot catch this shape: the gate was acquired
+		// while L0 owned the row as broken (http_status), so the row keeps L0's reason
+		// and looks unremarkable — but the gate blocks every non-L1 write including
+		// last_checked_at, so once selected it would be reselected every sweep forever,
+		// burning a slot of the bounded L0 batch until release.
+		l0OwnedURL := "https://example.com/sweep/gated-l0-owned.html"
+		plainBrokenURL := "https://example.com/sweep/plain-broken.html"
+		mintTokenWithMedia(t, &l0OwnedURL, nil)
+		mintTokenWithMedia(t, &plainBrokenURL, nil)
+
+		httpErr := "HTTP 502"
+		httpReason := "http_status"
+		for _, u := range []string{l0OwnedURL, plainBrokenURL} {
+			require.NoError(t, store.UpdateTokenMediaHealthByURL(ctx, u, MediaHealthUpdate{
+				Status: schema.MediaHealthStatusBroken, LastError: &httpErr, FailureReason: &httpReason,
+			}))
+		}
+		past := time.Now().UTC().Add(-time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: l0OwnedURL, Verdict: schema.RenderProbeVerdictKnownBadFingerprint,
+			ConsecutiveFailures: 1, HealthGated: true, CapturedAt: &past, NextCheckAt: past,
+		}))
+
+		due, err := store.GetURLsForChecking(ctx, 0, 500)
+		require.NoError(t, err)
+		assert.NotContains(t, due, l0OwnedURL, "L1 owns a gated URL outright; L0 must pause")
+		assert.Contains(t, due, plainBrokenURL, "an ungated broken URL keeps its L0 recheck")
+
+		// Release hands the URL back: the L0-owned row is untouched by release (its
+		// reason is not render_%) and immediately rejoins the sweep.
+		probes, err := store.GetHealthGatedRenderProbes(ctx, 500)
+		require.NoError(t, err)
+		for _, p := range probes {
+			if p.MediaURL != l0OwnedURL {
+				continue
+			}
+			_, err := store.ReleaseRenderGate(ctx, p)
+			require.NoError(t, err)
+		}
+		due, err = store.GetURLsForChecking(ctx, 0, 500)
+		require.NoError(t, err)
+		assert.Contains(t, due, l0OwnedURL, "released URL rejoins the L0 sweep")
+	})
+
 	t.Run("GetHealthGatedRenderProbes lists only held gates and release drains it", func(t *testing.T) {
 		// The rollback path: with the probe disabled, the sweeper lists held gates and
 		// releases them, because nothing else may heal a render-gated row.
@@ -6048,6 +6093,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		svgURL := "https://example.com/class/vector.svg"
 		htmlURL := "https://example.com/class/page.html"
 		animImageURL := "https://example.com/class/anim-sourced.png"
+		mixedNullURL := "https://example.com/class/mixed-null.png"
 
 		mintTokenWithMedia(t, &pngURL, nil)
 		mintTokenWithMedia(t, &svgURL, nil)
@@ -6061,6 +6107,13 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		markHealthy(t, htmlURL, "text/html")
 		markHealthy(t, animImageURL, "image/png")
 
+		// One image/png row plus a NOT-yet-probed sibling (sniffed NULL): the sibling is
+		// created AFTER the sniff write, so it stays NULL. bool_and ignores NULL inputs,
+		// so without the per-row COALESCE the png row would carry the vote alone.
+		mintTokenWithMedia(t, &mixedNullURL, nil)
+		markHealthy(t, mixedNullURL, "image/png")
+		mintTokenWithMedia(t, &mixedNullURL, nil)
+
 		cases := []struct {
 			name string
 			url  string
@@ -6070,6 +6123,7 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			{"svg is image-sniffed but can animate", svgURL, false},
 			{"html page", htmlURL, false},
 			{"image bytes but animation source on any row", animImageURL, false},
+			{"image row plus an unprobed NULL-sniff sibling", mixedNullURL, false},
 			{"no health rows at all", "https://example.com/class/unknown.bin", false},
 		}
 		for _, tc := range cases {

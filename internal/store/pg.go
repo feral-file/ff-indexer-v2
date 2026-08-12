@@ -2823,9 +2823,14 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 	cutoffTime := time.Now().Add(-recheckAfter)
 
 	var urls []string
-	// Rows gated by the L1 render probe (failure_reason 'render_%') are excluded: they
-	// would pass the byte-level ranged GET and flap back to healthy, undoing the render
-	// verdict. Healing render-gated rows is exclusively the render probe's job.
+	// Rows gated by the L1 render probe are excluded via BOTH gate signals. The
+	// failure_reason test alone leaves a hole: a gate held over an L0-owned broken row
+	// (say failure_reason=http_status) keeps L0's reason, stays eligible here, and once
+	// the bytes recover, the gate predicate in UpdateTokenMediaHealthByURL refuses the
+	// healthy write — including last_checked_at — so the same stale row is reselected
+	// every sweep, burning a slot of the bounded batch until the gate is released.
+	// While a gate is held, L1 owns the URL outright: L0 pauses, and release returns
+	// rows to unknown (or leaves L0-owned broken rows untouched), rejoining L0 then.
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("media_url").
@@ -2833,6 +2838,7 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 			cutoffTime,
 			schema.MediaHealthStatusUnknown).
 		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
+		Where("NOT EXISTS (SELECT 1 FROM media_render_probes p WHERE p.media_url_hash = token_media_health.media_url_hash AND p.health_gated = true)").
 		Group("media_url").
 		Order("MIN(last_checked_at) ASC").
 		Limit(limit).
@@ -3290,9 +3296,16 @@ func (s *pgStore) IsStaticImageRenderClass(ctx context.Context, url string) (boo
 	var staticImage bool
 	err := s.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(
-		         bool_and(h.sniffed_content_type LIKE 'image/%'
-		                  AND h.sniffed_content_type NOT LIKE 'image/svg%'
-		                  AND h.media_source NOT IN (?, ?)),
+		         -- The inner COALESCE closes a SQL NULL hole: bool_and IGNORES NULL
+		         -- inputs, so a row with sniffed_content_type NULL (newly indexed, not
+		         -- yet content-probed) would simply not vote, and one image/png sibling
+		         -- would carry the aggregate to true — the exact "unknown must degrade
+		         -- to the longer settle" case this function promises to refuse. Forcing
+		         -- each row's vote to false when the predicate is NULL makes unknown
+		         -- rows veto the shortcut instead of abstaining.
+		         bool_and(COALESCE(h.sniffed_content_type LIKE 'image/%'
+		                           AND h.sniffed_content_type NOT LIKE 'image/svg%'
+		                           AND h.media_source NOT IN (?, ?), false)),
 		         false)
 		FROM token_media_health h
 		WHERE h.media_url_hash = ?`,

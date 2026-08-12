@@ -88,7 +88,11 @@ column records only causes the probe can actually distinguish.
 
 Rows whose `failure_reason` starts with `render_` belong to the L1 render probe: the
 byte-level sweep must not re-check them (they would pass a ranged GET and flap back to
-healthy). Healing a render-gated row is exclusively the render probe's job. This rule
+healthy). The sweep additionally skips any URL whose probe row holds `health_gated` —
+the reason test alone misses a gate held over an L0-owned broken row (which keeps L0's
+reason), and such a row would be reselected every sweep because the gate blocks all
+non-L1 writes including `last_checked_at`. While a gate is held, L1 owns the URL
+outright. Healing a render-gated row is exclusively the render probe's job. This rule
 becomes load-bearing when L1 lands; L0 reserves the namespace now so the contract is
 stable.
 

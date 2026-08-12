@@ -57,6 +57,12 @@ func setupTestSweeper(t *testing.T) *testSweeperMocks {
 		RecheckAfter:   24 * time.Hour,
 	}
 
+	// These tests run with the render probe disabled, so every sweep cycle checks for
+	// orphaned render gates. None of them exercises that path, so an empty answer keeps
+	// the strict mocks focused on what each test is actually about
+	// (TestMediaHealthSweeper_ReleasesOrphanedGatesWhenProbeDisabled covers it).
+	tm.store.EXPECT().GetHealthGatedRenderProbes(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	tm.sweeper = sweeper.NewMediaHealthSweeper(
 		config,
 		tm.store,
