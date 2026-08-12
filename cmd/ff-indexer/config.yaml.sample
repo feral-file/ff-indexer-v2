@@ -217,8 +217,12 @@ render_probe:
   batch_size: 20
   viewport_width: 1024
   viewport_height: 1024
-  timeout_ms: 30000
-  settle_ms: 5000
+  timeout_ms: 45000
+  # How long the page keeps running after load before the capture. Generous on purpose:
+  # the blank debounce only protects against transient blanks — a work that
+  # deterministically needs longer than this window would be gated on its second probe
+  # no matter how many chances it gets.
+  settle_ms: 15000
   blank_variance_threshold: 0.001
   # Chromium runs sandboxed by default. Only set true where the runtime cannot support
   # the sandbox (no unprivileged user namespaces / restrictive seccomp) — an unsandboxed

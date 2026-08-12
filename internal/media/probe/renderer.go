@@ -30,12 +30,18 @@ const (
 	// a square viewport biases the capture toward neither orientation.
 	DefaultViewportWidth  = 1024
 	DefaultViewportHeight = 1024
-	// DefaultTimeoutMs bounds the whole probe (navigate + settle + screenshot).
-	DefaultTimeoutMs = 30000
-	// DefaultSettleMs is how long the page runs after load before the capture — long
-	// enough for generative works to paint their first frame, matching the rasterizer's
-	// settle behavior.
-	DefaultSettleMs = 5000
+	// DefaultTimeoutMs bounds the whole probe (navigate + settle + screenshot). Sized to
+	// leave ~30s of navigation headroom on top of the settle window: shrinking that
+	// headroom converts slow-loading (IPFS-hosted) works into stalled verdicts, the
+	// opposite of what a generous settle is for.
+	DefaultTimeoutMs = 45000
+	// DefaultSettleMs is how long the page runs after load before the capture. Generous
+	// on purpose: the blank debounce only protects against *transient* blanks, so a work
+	// that deterministically needs longer than the settle window (heavy WebGL compiling
+	// shaders under software GL, large assets fetched at runtime) would be gated on its
+	// second probe no matter how many chances it gets. Err-healthy says spend render
+	// capacity, not artworks.
+	DefaultSettleMs = 15000
 
 	// maxScreenshotBytes caps the encoded PNG accepted from the browser. A viewport
 	// capture of the default 1024x1024 is far below this; the cap exists so a hostile
