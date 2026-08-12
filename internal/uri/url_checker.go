@@ -26,9 +26,10 @@ const (
 	//
 	// This is a point-in-time sample, not a per-request playback guarantee: an origin that
 	// fails intermittently can pass a check and still fail a viewer's next request. Both the
-	// sweeper and the token-indexing path persist verdicts from this checker, so a stored
-	// healthy row is not necessarily a sweep result. It may also describe a promoted fallback
-	// gateway rather than the originally stored URL. Do not tighten callers into treating it
+	// sweeper and the token-indexing path persist verdicts from this checker — the latter on
+	// every (re-)index — so a stored healthy row is not necessarily a sweep result, and either
+	// path can overwrite the other. It may also describe a promoted fallback gateway rather
+	// than the originally stored URL. Do not tighten callers into treating it
 	// as a playback SLA without revisiting MediaHealthStatus semantics and viewability — see
 	// docs/constraints.md and #76.
 	HealthStatusHealthy HealthStatus = "healthy"
