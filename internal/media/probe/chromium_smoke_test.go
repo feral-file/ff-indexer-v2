@@ -128,6 +128,26 @@ func TestChromiumSmoke(t *testing.T) {
 			`<stop offset="1" stop-color="#f0a"/></linearGradient></defs>
 			<rect width="512" height="512" fill="url(#g)"/></svg>`))
 	})
+	mux.HandleFunc("/webgl", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		// Draws two clear passes with scissor so the frame has real variance; a lost or
+		// unavailable WebGL context leaves the black fallback div and classifies blank.
+		_, _ = w.Write([]byte(`<html><body style="margin:0;background:#000">
+			<canvas id="c" width="512" height="512" style="width:100vw;height:100vh"></canvas>
+			<script>
+			const gl = document.getElementById('c').getContext('webgl')
+				|| document.getElementById('c').getContext('experimental-webgl');
+			if (gl) {
+				gl.enable(gl.SCISSOR_TEST);
+				gl.scissor(0, 0, 256, 512);
+				gl.clearColor(0.0, 0.67, 1.0, 1.0);
+				gl.clear(gl.COLOR_BUFFER_BIT);
+				gl.scissor(256, 0, 256, 512);
+				gl.clearColor(1.0, 0.0, 0.67, 1.0);
+				gl.clear(gl.COLOR_BUFFER_BIT);
+			}
+			</script></body></html>`))
+	})
 	mux.HandleFunc("/module-worker.mjs", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
 		_, _ = w.Write([]byte(`export const ok = true; postMessage("painted");`))
@@ -239,6 +259,22 @@ func TestChromiumSmoke(t *testing.T) {
 		cls, err := probe.Classify(capture.Image, nil, 0.001)
 		require.NoError(t, err)
 		assert.Equal(t, schema.RenderProbeVerdictRenderedOK, cls.Verdict)
+	})
+
+	// Pins the launch-flag contract for WebGL: DisableGPU turns off GPU compositing,
+	// and use-angle=swiftshader keeps a software WebGL backend. An earlier revision also
+	// passed disable-software-rasterizer, which removed the SwiftShader fallback and
+	// left WebGL context creation with no backend — WebGL-only artworks painted nothing,
+	// classified blank, and were gated by the probe's own flags. The fixture paints ONLY
+	// through a WebGL context (the fallback body is uniform black), so if these flags
+	// regress, this classifies blank and fails.
+	t.Run("WebGL canvas renders through the software backend", func(t *testing.T) {
+		capture, err := renderer.RenderProbe(ctx, srv.URL+"/webgl", 0)
+		require.NoError(t, err)
+		cls, err := probe.Classify(capture.Image, nil, 0.001)
+		require.NoError(t, err)
+		assert.Equal(t, schema.RenderProbeVerdictRenderedOK, cls.Verdict,
+			"WebGL must have a usable software backend under the probe's launch flags")
 	})
 
 	// The egress guard replaces Worker; a module worker must still run, or art that

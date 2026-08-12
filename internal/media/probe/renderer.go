@@ -219,7 +219,16 @@ func allocatorOptions(noSandbox bool) []chromedp.ExecAllocatorOption {
 		chromedp.Flag("disable-features", "ServiceWorker"),
 		chromedp.Flag("disable-popup-blocking", false),
 		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("disable-software-rasterizer", true),
+		// WebGL must keep a software backend. DisableGPU above turns off GPU
+		// compositing (correct for headless capture), but combining it with
+		// disable-software-rasterizer — as an earlier revision did — removes the
+		// SwiftShader fallback too, leaving WebGL context creation with no backend at
+		// all. A WebGL-only artwork then paints nothing, classifies blank, and is gated
+		// after the debounce: healthy generative art hidden by the probe's own launch
+		// flags. Pinning ANGLE to SwiftShader makes the software path explicit instead
+		// of an implicit fallback; the chromium smoke suite proves a WebGL canvas
+		// classifies rendered_ok under exactly these flags.
+		chromedp.Flag("use-angle", "swiftshader"),
 		chromedp.Flag("disable-extensions", true),
 		chromedp.Flag("disable-background-networking", true),
 		chromedp.Flag("disable-sync", true),

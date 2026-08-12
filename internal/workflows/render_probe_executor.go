@@ -352,7 +352,10 @@ func (e *renderProbeExecutor) propagateViewability(ctx context.Context, tokenIDs
 	changes, err := e.store.BatchUpdateTokensViewability(ctx, tokenIDs)
 	if err != nil {
 		logger.ErrorCtx(ctx, err, zap.Uint64s("token_ids", tokenIDs))
-		return fmt.Errorf("viewability reconciliation failed after durable gate state (%v): %w",
+		// Both causes are wrapped: errors.As finds the RescheduleError (checked before
+		// context.Canceled in the worker's mapping, so a store error that wraps a
+		// canceled context still reschedules), and the store failure stays inspectable.
+		return fmt.Errorf("viewability reconciliation failed after durable gate state (%w); rescheduling: %w",
 			err, jobs.ErrReschedule(e.clock.Now().Add(reconcileRetryDelay)))
 	}
 
