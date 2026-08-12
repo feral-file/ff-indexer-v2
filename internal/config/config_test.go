@@ -550,14 +550,13 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 		assert.NoError(t, validateRenderProbeConfig(&cfg, true, "media_index"))
 	})
 
-	// An enabled probe with no media worker renders nothing and gates nothing; failing
-	// at startup beats a deployment that looks enabled but is a no-op.
-	t.Run("enabled without the media worker is rejected", func(t *testing.T) {
+	// enabled defaults to true, so it is not an operator statement of intent —
+	// media_enabled is. A lightweight deployment must start with the default-enabled
+	// probe inert, not fail; even a bad egress/threshold config is unreachable there.
+	t.Run("enabled without the media worker is inert, not rejected", func(t *testing.T) {
 		cfg := base
-		cfg.EgressRestricted = true
-		err := validateRenderProbeConfig(&cfg, false, "media_index")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "media_enabled")
+		assert.NoError(t, validateRenderProbeConfig(&cfg, false, "media_index"),
+			"a probe that cannot run must not block startup, even with egress unattested")
 	})
 
 	t.Run("enabled without a media queue is rejected", func(t *testing.T) {

@@ -561,22 +561,20 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 // chromium render loop at sweeper cadence is a memory/CPU burn, not a crash. A malformed
 // fingerprint pHash would never match anything (silently disabling the known-bad gate),
 // and a Hamming tolerance above 64 or below 0 is meaningless for a 64-bit hash — worse,
-// large tolerances match real art and hide it. Constraints: validated only when enabled;
-// a disabled probe's settings are inert.
+// large tolerances match real art and hide it.
+//
+// Constraints: validated only when the probe would actually run (enabled AND media
+// enabled). enabled defaults to true, so it is no longer an operator statement of
+// intent — media_enabled is the explicit signal that this deployment renders. A
+// lightweight deployment (media_enabled=false) therefore leaves a default-enabled probe
+// inert rather than failing startup; the sweeper's enqueue gate (Enabled &&
+// MediaEnabled) guarantees no jobs pile up on an unserved queue.
 func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQueue string) error {
-	if !c.Enabled {
+	if !c.Enabled || !mediaEnabled {
 		return nil
 	}
 
 	invalid := make([]string, 0)
-	// The probe only runs in the CGO media worker, and the sweeper only enqueues when
-	// media is enabled. Accepting render_probe.enabled without it would start a
-	// deployment that looks like L1 is on while nothing renders and no viewability gate
-	// is ever produced — a silent no-op is worse than a startup error.
-	if !mediaEnabled {
-		invalid = append(invalid, "render_probe.enabled requires media_enabled=true: "+
-			"render probes execute in the media worker and are enqueued only when it is running")
-	}
 	if mediaQueue == "" {
 		invalid = append(invalid, "render_probe.enabled requires jobs.media_queue to be set")
 	}
@@ -810,7 +808,7 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("rasterizer.width", 2048)
 	v.SetDefault("rasterizer.timeout_ms", 15000)
 	v.SetDefault("rasterizer.browser_fallback_enabled", false)
-	v.SetDefault("render_probe.enabled", false)
+	v.SetDefault("render_probe.enabled", true)
 	v.SetDefault("render_probe.batch_size", 20)
 	v.SetDefault("render_probe.viewport_width", 1024)
 	v.SetDefault("render_probe.viewport_height", 1024)

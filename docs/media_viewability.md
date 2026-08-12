@@ -1,6 +1,6 @@
 # Media Viewability: Content-Validated Health Checks
 
-Status: L0 and L1 implemented (L1 disabled by default via `render_probe.enabled`).
+Status: L0 and L1 implemented (L1 enabled by default; it runs only on media-enabled deployments and requires the `render_probe.egress_restricted` attestation).
 
 Context: feral-file/feral-file#3485 defines four correctness levels for artwork probes.
 This document is the indexer-side contract for Level 0 (byte-level content validation)

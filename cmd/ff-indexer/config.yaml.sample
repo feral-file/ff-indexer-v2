@@ -211,9 +211,11 @@ rasterizer:
 # image). Fingerprint matches gate immediately; blank/stalled gate only after
 # failure_gate_threshold consecutive probes.
 render_probe:
-  # Requires media_enabled: true and jobs.media_queue — probes execute in the media
-  # worker, so enabling this without one renders nothing and gates nothing.
-  enabled: false
+  # Enabled by default, but only runs where media_enabled is true (probes execute in the
+  # media worker; on lightweight deployments a default-enabled probe is simply inert).
+  # A media-enabled deployment must additionally set egress_restricted below or the
+  # process refuses to start.
+  enabled: true
   batch_size: 20
   viewport_width: 1024
   viewport_height: 1024
