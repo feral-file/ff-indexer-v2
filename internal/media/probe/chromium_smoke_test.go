@@ -288,6 +288,14 @@ func TestChromiumSmoke(t *testing.T) {
 			"the page only paints when the module worker's message arrives")
 	})
 
+	// The startup self-check is what stands between a broken runtime and a corpus-wide
+	// false gate, so it must itself be proven against real chromium: all three fixtures
+	// render and classify as designed under the production launch flags.
+	t.Run("startup self-check passes against real chromium", func(t *testing.T) {
+		require.NoError(t, probe.SelfCheck(ctx, renderer, 0.001),
+			"a failing self-check here means deploys would refuse to start with these flags")
+	})
+
 	t.Run("prevents a popup from opening a new uncovered target", func(t *testing.T) {
 		before := atomic.LoadInt32(&popupHits)
 		_, err := renderer.RenderProbe(ctx, srv.URL+"/child-popup", 0)

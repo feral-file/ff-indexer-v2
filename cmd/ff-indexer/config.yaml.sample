@@ -235,7 +235,10 @@ render_probe:
   # renderer exploit gains the media worker's process and DB access.
   no_sandbox: false
   # Required to enable the probe. Attests that the media worker cannot route to
-  # loopback/private/link-local/cloud-metadata ranges. In-browser request validation is
+  # loopback/private/link-local/cloud-metadata ranges. Partially machine-verified: at
+  # startup the worker dials the cloud metadata endpoint and refuses to start if it is
+  # reachable, and renders built-in known-good/WebGL/known-bad fixtures that must
+  # classify correctly before the probe may gate anything. In-browser request validation is
   # hostname-based, so DNS rebinding between validation and chromium's dial can only be
   # closed by network-level egress policy — this flag does not implement it, it makes
   # enabling the probe without it a deliberate choice. See docs/media_viewability.md.

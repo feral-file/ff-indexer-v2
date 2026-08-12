@@ -288,12 +288,27 @@ label. A loose tolerance matches real art and hides it — the worst failure mod
 
 ### Pre-deployment gate (requires the target runtime)
 
-Unit tests mock chromedp and CI has no chromium, so browser behavior is structurally
-unverifiable in this repo's pipeline — the verification belongs to the deployment. The
-`egress_restricted` startup requirement is the enforcement hook: the flag attests that
-the items below were done for the environment being deployed, and the process refuses to
-run the probe until someone sets it. Setting it without doing them is a false
-attestation.
+Browser behavior is verified at three layers, each catching what the previous one
+cannot:
+
+1. **CI** runs the full smoke and egress-vector suites against real chromium on every
+   PR (the `Render Probe (Chromium)` job) — catching code-level regressions in capture,
+   classification, WebGL, and interception. The runner is not the deployment image.
+2. **Startup self-verification** runs in the actual runtime, automatically, every time
+   a media worker starts with the probe enabled: built-in known-good, WebGL, and
+   known-bad fixtures must render and classify as designed (`probe.SelfCheck`), and the
+   cloud metadata endpoint must be unreachable (`probe.VerifyNoMetadataEgress` — a
+   reachable metadata service falsifies the egress attestation outright, and startup
+   fails with the docker remediation in the error). A runtime that misjudges the
+   fixtures would not error in production; it would silently misclassify artworks — so
+   it refuses to start instead.
+3. **The manual gate below** covers what neither can: the deployment's full network
+   policy and a real network-fetched artwork scenario.
+
+The `egress_restricted` startup requirement is the enforcement hook for layer 3: the
+flag attests that the items below were done for the environment being deployed, and the
+process refuses to run the probe until someone sets it — and revokes that trust at
+startup if the metadata check disproves it.
 
 `scripts/render-probe-preflight.sh` is the executable form of this gate: run it inside
 the target image, in the deployment's network position, and keep the output — a passing
@@ -314,8 +329,10 @@ Before setting `render_probe.egress_restricted: true` in an environment:
 
 2. **Probe known-good and known-bad URLs** through a worker running in the environment:
    a real HTML artwork must record `rendered_ok` with a stored pHash; a gateway error
-   page probed twice must gate its token (`viewable=false` via the API). This is the
-   scenario check that catches runtime-specific rendering differences no unit test can.
+   page probed twice must gate its token (`viewable=false` via the API). The startup
+   self-check already proves the fixtures' render/classify path in this runtime; this
+   step adds what fixtures cannot — a real network fetch through the deployment's
+   gateways and the full gate-to-API path.
 
 3. **Verify the network egress control itself** — from inside the media worker's network
    position, connections to loopback, RFC1918, link-local, and the cloud metadata range

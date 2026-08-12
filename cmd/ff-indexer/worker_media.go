@@ -50,7 +50,7 @@ func ssrfValidatorOrNil(v *ssrf.Validator) adapter.SSRFValidator {
 
 // registerWorkerMedia wires the media-indexing jobs.Worker (worker-media / media_index queue).
 func registerWorkerMedia(
-	_ context.Context,
+	ctx context.Context,
 	wcfg *config.WorkerMediaConfig,
 	db *gorm.DB,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
@@ -157,6 +157,28 @@ func registerWorkerMedia(
 			AllocatorOptions: probeAllocatorOptions(wcfg.RenderProbe.NoSandbox),
 			SSRFValidator:    ssrfValidatorOrNil(ssrfValidator),
 		})
+
+		// Startup self-verification: the probe may not activate on an unproven runtime.
+		// egress_restricted is an operator attestation; the metadata endpoint is the one
+		// destination whose reachability falsifies it outright, so it is cross-checked
+		// here (skipped when SSRF protection is disabled entirely — no policy is being
+		// attested then). The render self-check then proves the deployed image's capture
+		// path, software WebGL backend, and blank detection against built-in
+		// known-good/known-bad fixtures. Either failing fails worker startup: a runtime
+		// that misjudges the fixtures would not error in production — it would silently
+		// misclassify artworks and gate healthy media after the debounce.
+		if wcfg.Security.SSRFProtection.Enabled {
+			if err := probe.VerifyNoMetadataEgress(ctx); err != nil {
+				return nil, nil, err
+			}
+		}
+		selfCheckCtx, cancelSelfCheck := context.WithTimeout(ctx, 2*time.Minute)
+		err := probe.SelfCheck(selfCheckCtx, probeRenderer, wcfg.RenderProbe.BlankVarianceThreshold)
+		cancelSelfCheck()
+		if err != nil {
+			return nil, nil, err
+		}
+		logger.Info("Render probe self-check passed: capture path, WebGL backend, and blank detection verified in this runtime")
 
 		// ssrfValidator is nil when SSRF protection is disabled — the executor treats
 		// nil as "no policy" (chromium bypasses the Go HTTP client, so this is the only
