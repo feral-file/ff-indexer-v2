@@ -1339,18 +1339,20 @@ func TestMediaHealthSweeper_ReleasesOrphanedGatesWhenProbeDisabled(t *testing.T)
 	gatedA := schema.MediaRenderProbe{MediaURL: "https://example.com/gated-a.html", HealthGated: true}
 	gatedB := schema.MediaRenderProbe{MediaURL: "https://example.com/gated-b.html", HealthGated: true}
 
-	tm.store.EXPECT().
-		GetURLsForChecking(ctx, 24*time.Hour, 10).
-		Return([]string{}, nil).
-		MinTimes(1)
 	// Strict mock: GetURLsDueForRenderProbe and Enqueue must never be called while the
 	// probe is disabled.
 
 	released := make(chan struct{}, 1)
-	gomock.InOrder(
-		tm.store.EXPECT().GetHealthGatedRenderProbes(ctx, gomock.Any()).Return([]schema.MediaRenderProbe{gatedA, gatedB}, nil).Times(1),
-		tm.store.EXPECT().GetHealthGatedRenderProbes(ctx, gomock.Any()).Return(nil, nil).AnyTimes(),
-	)
+	// Ordering is part of the contract: the release runs BEFORE the cycle's L0 batch is
+	// selected, so released rows (now `unknown`) are eligible in the SAME cycle instead
+	// of waiting a full sweep interval behind a rollback.
+	firstGates := tm.store.EXPECT().GetHealthGatedRenderProbes(ctx, gomock.Any()).Return([]schema.MediaRenderProbe{gatedA, gatedB}, nil).Times(1)
+	tm.store.EXPECT().GetHealthGatedRenderProbes(ctx, gomock.Any()).Return(nil, nil).AnyTimes()
+	firstBatch := tm.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{}, nil).
+		MinTimes(1)
+	gomock.InOrder(firstGates, firstBatch)
 	// First release fails: it must not abort the batch, and the marker survives for the
 	// next cycle's retry.
 	tm.store.EXPECT().ReleaseRenderGate(ctx, gatedA).Return(nil, assert.AnError)

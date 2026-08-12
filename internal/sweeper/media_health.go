@@ -182,6 +182,15 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 	startTime := s.clock.Now()
 	logger.InfoCtx(ctx, "Starting sweep cycle")
 
+	// Withdraw orphaned render gates BEFORE selecting the L0 batch: released rows return
+	// to `unknown`, which makes them immediately eligible below — running the release
+	// after selection would strand every released row until the next cycle (and behind a
+	// full batch), delaying exactly the recovery a rollback to disabled/shadow exists to
+	// deliver.
+	if !s.config.RenderProbeEnabled || !s.config.RenderProbeEnforce {
+		s.releaseOrphanedRenderGates(ctx)
+	}
+
 	// Get URLs that need checking (no locking, multiple workers may get the same URLs)
 	urls, err := s.store.GetURLsForChecking(ctx, s.config.RecheckAfter, s.config.BatchSize)
 	if err != nil {
@@ -304,13 +313,7 @@ func (s *mediaHealthSweeper) sleep(ctx context.Context, duration time.Duration) 
 // Enqueue failures are logged and skipped — the URL stays due and the next cycle retries.
 func (s *mediaHealthSweeper) enqueueRenderProbes(ctx context.Context) {
 	if !s.config.RenderProbeEnabled {
-		s.releaseOrphanedRenderGates(ctx)
 		return
-	}
-	// Shadow mode observes but never hides: probes keep running below, and any gates —
-	// leftovers from an enforcing deployment — are released.
-	if !s.config.RenderProbeEnforce {
-		s.releaseOrphanedRenderGates(ctx)
 	}
 
 	urls, err := s.store.GetURLsDueForRenderProbe(ctx, s.config.RenderProbeBatchSize)

@@ -218,6 +218,12 @@ func allocatorOptions(noSandbox bool) []chromedp.ExecAllocatorOption {
 		chromedp.NoDefaultBrowserCheck,
 		chromedp.DisableGPU,
 		chromedp.Headless,
+		// Chromium cold start on a loaded shared host (CI runners, prod boxes running
+		// postgres alongside) can exceed chromedp's default 20s websocket-URL wait,
+		// failing the first render with "websocket url timeout reached" while every
+		// later one succeeds. The boot happens once per allocator; a generous wait
+		// costs nothing steady-state and removes the cold-start flake.
+		chromedp.WSURLReadTimeout(60 * time.Second),
 		// NOTE: no disable-web-security here, by design (see doc comment).
 		//
 		// Child-target containment. Fetch interception is installed on the page target;
