@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/feral-file/ff-indexer-v2/internal/media/phash"
+	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
 func TestDatabaseConfig_DSN(t *testing.T) {
@@ -108,6 +109,40 @@ tezos:
 	assert.Equal(t, "db", cfg.Database.DBName)
 }
 
+// TestModerationSweeperDefaultMatchesStoreConstant anchors the config default to
+// store.DefaultModerationRecheckInterval. Both writers read the configured
+// moderation_sweeper.initial_recheck_interval at runtime, but the constant still
+// serves as NewCoreExecutor's fallback when no value is threaded in — if the
+// viper default drifted from it, a default-config deployment and a
+// fallback-path caller would schedule first re-checks differently. Nothing but
+// this test couples the two literals.
+func TestModerationSweeperDefaultMatchesStoreConstant(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	yaml := `
+database:
+  host: localhost
+  user: u
+  password: p
+  dbname: db
+jobs:
+  token_queue: token_index
+  media_queue: media_index
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  api_url: https://api.tzkt.io
+  websocket_url: wss://ws.tzkt.io
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yaml), 0600))
+
+	cfg, err := LoadAppConfig(configPath, "")
+	require.NoError(t, err)
+	assert.Equal(t, store.DefaultModerationRecheckInterval, cfg.ModerationSweeper.InitialRecheckInterval,
+		"moderation_sweeper.initial_recheck_interval default must match store.DefaultModerationRecheckInterval")
+}
+
 func TestLoadAppConfig_requiresDatabase(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -117,8 +152,23 @@ func TestLoadAppConfig_requiresDatabase(t *testing.T) {
 	require.Error(t, err)
 }
 
+// validModerationSweeperConfig returns moderation sweeper settings that pass validation, for
+// tests that hand-build an AppConfig instead of going through LoadAppConfig (and
+// therefore never receive the viper defaults).
+func validModerationSweeperConfig() ModerationSweeperConfig {
+	return ModerationSweeperConfig{
+		BatchSize:              100,
+		InitialRecheckInterval: 24 * time.Hour,
+		MaxRecheckInterval:     720 * time.Hour,
+		FailureBackoffInitial:  time.Hour,
+		MaxConsecutiveFailures: 5,
+		Worker:                 WorkerConfig{WorkerPoolSize: 2},
+	}
+}
+
 func TestValidateRequiredConfigValues(t *testing.T) {
 	cfg := &AppConfig{
+		ModerationSweeper: validModerationSweeperConfig(),
 		Database: DatabaseConfig{
 			Host:   "localhost",
 			DBName: "ff_indexer",
@@ -142,7 +192,8 @@ func TestValidateRequiredConfigValues(t *testing.T) {
 
 func TestValidateRequiredConfigValues_MediaDisabled_EmptyMediaQueue(t *testing.T) {
 	cfg := &AppConfig{
-		MediaEnabled: false,
+		ModerationSweeper: validModerationSweeperConfig(),
+		MediaEnabled:      false,
 		Database: DatabaseConfig{
 			Host:   "localhost",
 			DBName: "ff_indexer",
@@ -166,7 +217,8 @@ func TestValidateRequiredConfigValues_MediaDisabled_EmptyMediaQueue(t *testing.T
 
 func TestValidateRequiredConfigValues_MediaEnabled_MissingMediaQueue(t *testing.T) {
 	cfg := &AppConfig{
-		MediaEnabled: true,
+		ModerationSweeper: validModerationSweeperConfig(),
+		MediaEnabled:      true,
 		Database: DatabaseConfig{
 			Host:   "localhost",
 			DBName: "ff_indexer",
@@ -192,6 +244,7 @@ func TestValidateRequiredConfigValues_MediaEnabled_MissingMediaQueue(t *testing.
 
 func TestValidateRequiredConfigValues_MissingFields(t *testing.T) {
 	cfg := &AppConfig{
+		ModerationSweeper: validModerationSweeperConfig(),
 		Database: DatabaseConfig{
 			Host: "localhost",
 		},
@@ -550,4 +603,107 @@ func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
 		cfg := RenderProbeConfig{Enabled: false}
 		assert.NoError(t, validateRenderProbeConfig(&cfg, false, ""), "a disabled probe's settings are not validated")
 	})
+}
+
+// TestValidateModerationSweeperConfig rejects settings whose failure mode is a silent
+// vendor-quota burn loop rather than a visible error: a non-positive
+// max_recheck_interval makes every successful flagged check immediately due
+// again, and a non-positive failure_backoff_initial does the same after
+// transient vendor errors. The sweeper's loop guards were fixed three times for
+// this exact shape; this pins the configuration route shut.
+func TestValidateModerationSweeperConfig(t *testing.T) {
+	valid := validModerationSweeperConfig()
+	require.NoError(t, validateModerationSweeperConfig(&valid))
+
+	cases := []struct {
+		name    string
+		mutate  func(*ModerationSweeperConfig)
+		wantErr string
+	}{
+		{
+			name:    "zero batch size",
+			mutate:  func(c *ModerationSweeperConfig) { c.BatchSize = 0 },
+			wantErr: "moderation_sweeper.batch_size",
+		},
+		{
+			name:    "zero pool size",
+			mutate:  func(c *ModerationSweeperConfig) { c.Worker.WorkerPoolSize = 0 },
+			wantErr: "moderation_sweeper.worker.pool_size",
+		},
+		{
+			name:    "zero initial recheck interval",
+			mutate:  func(c *ModerationSweeperConfig) { c.InitialRecheckInterval = 0 },
+			wantErr: "moderation_sweeper.initial_recheck_interval must be positive",
+		},
+		{
+			name:    "negative initial recheck interval",
+			mutate:  func(c *ModerationSweeperConfig) { c.InitialRecheckInterval = -time.Hour },
+			wantErr: "moderation_sweeper.initial_recheck_interval must be positive",
+		},
+		{
+			name:    "zero max recheck interval",
+			mutate:  func(c *ModerationSweeperConfig) { c.MaxRecheckInterval = 0 },
+			wantErr: "moderation_sweeper.max_recheck_interval must be positive",
+		},
+		{
+			name:    "zero failure backoff",
+			mutate:  func(c *ModerationSweeperConfig) { c.FailureBackoffInitial = 0 },
+			wantErr: "moderation_sweeper.failure_backoff_initial must be positive",
+		},
+		{
+			name:    "zero max consecutive failures",
+			mutate:  func(c *ModerationSweeperConfig) { c.MaxConsecutiveFailures = 0 },
+			wantErr: "moderation_sweeper.max_consecutive_failures",
+		},
+		{
+			name:    "initial exceeds max",
+			mutate:  func(c *ModerationSweeperConfig) { c.InitialRecheckInterval = c.MaxRecheckInterval + time.Hour },
+			wantErr: "moderation_sweeper.initial_recheck_interval must not exceed",
+		},
+		{
+			name:    "failure backoff exceeds max",
+			mutate:  func(c *ModerationSweeperConfig) { c.FailureBackoffInitial = c.MaxRecheckInterval + time.Hour },
+			wantErr: "moderation_sweeper.failure_backoff_initial must not exceed",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := validModerationSweeperConfig()
+			tc.mutate(&c)
+			err := validateModerationSweeperConfig(&c)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestLoadAppConfig_rejectsInvalidModerationSweeper pins that the validation actually
+// runs on the load path operators hit, not just as a standalone function.
+func TestLoadAppConfig_rejectsInvalidModerationSweeper(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	yaml := `
+database:
+  host: localhost
+  user: u
+  password: p
+  dbname: db
+jobs:
+  token_queue: token_index
+  media_queue: media_index
+ethereum:
+  rpc_url: https://rpc.example.com
+  websocket_url: wss://ws.example.com
+tezos:
+  api_url: https://api.tzkt.io
+  websocket_url: wss://ws.tzkt.io
+moderation_sweeper:
+  max_recheck_interval: 0s
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yaml), 0600))
+
+	_, err := LoadAppConfig(configPath, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "moderation_sweeper.max_recheck_interval")
 }

@@ -257,6 +257,39 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedStatus: uri.HealthStatusHealthy,
 		},
 		{
+			name: "valid 206 too short to classify retries unranged (err-healthy)",
+			url:  "https://example.com/one-byte-range.gif",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// A valid from-zero 206 promising a single byte of a 5MB GIF: "G"
+				// sniffs as text/plain, so validating this prefix would false-broken
+				// real media as type_mismatch. The probe must fetch the true prefix.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/one-byte-range.gif", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/gif", []byte("G"),
+						map[string]string{"Content-Range": "bytes 0-0/5000000"}), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/one-byte-range.gif", nil).
+					Return(httpResp(http.StatusOK, "image/gif", minimalGIF(10, 10), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+		},
+		{
+			name: "tiny 206 that is the complete resource is conclusive, no retry",
+			url:  "https://example.com/tiny-error.png",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				// bytes 0-9/10: the prefix IS the whole resource, so a text body for a
+				// declared image is the complete evidence, not an undersized window.
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://example.com/tiny-error.png", probeRangeHeader).
+					Return(httpResp(http.StatusPartialContent, "image/png", []byte("not found\n"),
+						map[string]string{"Content-Range": "bytes 0-9/10"}), nil)
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureTypeMismatch,
+		},
+		{
 			name: "206 delivering fewer bytes than its own range promised is truncated",
 			url:  "https://example.com/undelivered.png",
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
@@ -606,4 +639,65 @@ func TestURLChecker_redirectLimitExhaustion_markedAsSSRFBlocked(t *testing.T) {
 
 	require.Equal(t, uri.HealthStatusBroken, result.Status)
 	require.True(t, result.SSRFBlocked)
+}
+
+// TestGatewayFallbackPreservesDirectDiagnostics pins the diagnostics contract on the
+// fallback-success path: the healthy result carries the direct probe's failure reason
+// and content-type observations, so a caller whose URL promotion later fails can persist
+// the canonical URL's real diagnosis instead of a reasonless broken row.
+func TestGatewayFallbackPreservesDirectDiagnostics(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+
+	mockHTTP := mocks.NewMockHTTPClient(ctrl)
+	mockIO := mocks.NewMockIO(ctrl)
+	passthroughIO(mockIO)
+	mockHTTP.EXPECT().
+		GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+		Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
+	mockHTTP.EXPECT().
+		GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+		Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
+
+	checker := uri.NewURLChecker(mockHTTP, mockIO, defaultConfig())
+	result := checker.Check(context.Background(), "https://gateway.pinata.cloud/ipfs/"+cid)
+
+	assert.Equal(t, uri.HealthStatusHealthy, result.Status)
+	require.NotNil(t, result.WorkingURL)
+	assert.Equal(t, "https://ipfs.io/ipfs/"+cid, *result.WorkingURL)
+	assert.Equal(t, uri.FailureDirectoryListing, result.FailureReason,
+		"direct probe's diagnosis must survive fallback success")
+	assert.Equal(t, "text/html", result.ObservedContentType)
+	assert.Equal(t, "text/html", result.SniffedContentType)
+	assert.Nil(t, result.Error, "a healthy result must not carry an error message")
+	// The winning gateway's own validated observations travel separately: they belong
+	// to the promoted row, not the failed direct URL.
+	assert.Equal(t, "image/png", result.WorkingURLObserved,
+		"the promoted URL's observed type comes from the fallback probe")
+	assert.Equal(t, "image/png", result.WorkingURLSniffed,
+		"the promoted URL's sniffed type comes from the fallback probe")
+}
+
+// TestProbeWindowClampedToClassifiableFloor pins the config floor: a probe_max_bytes
+// below the sniff window would make every ranged probe an undersized prefix — the exact
+// state the undersized-206 retry exists to avoid — so positive values below the floor
+// are clamped up.
+func TestProbeWindowClampedToClassifiableFloor(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockHTTP := mocks.NewMockHTTPClient(ctrl)
+	mockIO := mocks.NewMockIO(ctrl)
+	passthroughIO(mockIO)
+	cfg := defaultConfig()
+	cfg.ProbeMaxBytes = 100 // below the floor; must be raised to 512
+	mockHTTP.EXPECT().
+		GetResponseNoRetry(gomock.Any(), "https://example.com/a.png",
+			map[string]string{"Range": "bytes=0-511"}).
+		Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
+
+	checker := uri.NewURLChecker(mockHTTP, mockIO, cfg)
+	result := checker.Check(context.Background(), "https://example.com/a.png")
+	assert.Equal(t, uri.HealthStatusHealthy, result.Status)
 }

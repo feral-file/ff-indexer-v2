@@ -202,14 +202,14 @@ type ComplexityRoot struct {
 		Release        func(childComplexity int, id Uint64) int
 		Releases       func(childComplexity int, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) int
 		SyncCollection func(childComplexity int, address string, checkpointTimestamp *time.Time, checkpointEventID *Uint64, limit *Uint8) int
-		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) int
-		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
+		Token          func(childComplexity int, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order, includeModerated *bool) int
+		Tokens         func(childComplexity int, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, includeModerated *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) int
 		WorkflowStatus func(childComplexity int, workflowID string, runID *string) int
 	}
 
 	Release struct {
 		ID                func(childComplexity int) int
-		Members           func(childComplexity int, limit *Uint8, offset *Uint64, sortOrder *types.Order) int
+		Members           func(childComplexity int, limit *Uint8, offset *Uint64, sortOrder *types.Order, includeModerated *bool) int
 		Name              func(childComplexity int) int
 		TotalMints        func(childComplexity int) int
 		Vendor            func(childComplexity int) int
@@ -255,6 +255,7 @@ type ComplexityRoot struct {
 		MediaAssets             func(childComplexity int) int
 		Metadata                func(childComplexity int) int
 		MintNumber              func(childComplexity int) int
+		ModerationStatus        func(childComplexity int) int
 		OwnerProvenances        func(childComplexity int) int
 		Owners                  func(childComplexity int) int
 		ProvenanceEvents        func(childComplexity int) int
@@ -380,8 +381,8 @@ type ProvenanceEventResolver interface {
 	Raw(ctx context.Context, obj *dto.ProvenanceEventResponse) (JSON, error)
 }
 type QueryResolver interface {
-	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order) (*dto.TokenResponse, error)
-	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
+	Token(ctx context.Context, cid string, ownersLimit *Uint8, ownersOffset *Uint64, provenanceEventsLimit *Uint8, provenanceEventsOffset *Uint64, provenanceEventsOrder *types.Order, includeModerated *bool) (*dto.TokenResponse, error)
+	Tokens(ctx context.Context, owners []string, chains []string, contractAddresses []string, tokenNumbers []string, tokenIds []Uint64, tokenCids []string, releaseID *Uint64, releaseVendor *string, releaseVendorSlug *string, mintNumbers []int, limit *Uint8, offset *Uint64, includeUnviewable *bool, includeModerated *bool, sortBy *types.TokenSortBy, sortOrder *types.Order) (*dto.TokenListResponse, error)
 	Release(ctx context.Context, id Uint64) (*dto.ReleaseResponse, error)
 	Releases(ctx context.Context, ids []Uint64, vendor *string, vendorReleaseID *string, vendorReleaseSlug *string, limit *Uint8, offset *Uint64) (*dto.ReleaseListResponse, error)
 	JobStatus(ctx context.Context, jobID int) (*dto.JobStatusResponse, error)
@@ -392,7 +393,7 @@ type QueryResolver interface {
 type ReleaseResolver interface {
 	ID(ctx context.Context, obj *dto.ReleaseResponse) (Uint64, error)
 
-	Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order) (*dto.TokenListResponse, error)
+	Members(ctx context.Context, obj *dto.ReleaseResponse, limit *Uint8, offset *Uint64, sortOrder *types.Order, includeModerated *bool) (*dto.TokenListResponse, error)
 }
 type ReleaseListResolver interface {
 	Offset(ctx context.Context, obj *dto.ReleaseListResponse) (*Uint64, error)
@@ -1083,7 +1084,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order)), true
+		return e.complexity.Query.Token(childComplexity, args["cid"].(string), args["owners_limit"].(*Uint8), args["owners_offset"].(*Uint64), args["provenance_events_limit"].(*Uint8), args["provenance_events_offset"].(*Uint64), args["provenance_events_order"].(*types.Order), args["include_moderated"].(*bool)), true
 	case "Query.tokens":
 		if e.complexity.Query.Tokens == nil {
 			break
@@ -1094,7 +1095,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["release_id"].(*Uint64), args["release_vendor"].(*string), args["release_vendor_slug"].(*string), args["mint_numbers"].([]int), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
+		return e.complexity.Query.Tokens(childComplexity, args["owners"].([]string), args["chains"].([]string), args["contract_addresses"].([]string), args["token_numbers"].([]string), args["token_ids"].([]Uint64), args["token_cids"].([]string), args["release_id"].(*Uint64), args["release_vendor"].(*string), args["release_vendor_slug"].(*string), args["mint_numbers"].([]int), args["limit"].(*Uint8), args["offset"].(*Uint64), args["include_unviewable"].(*bool), args["include_moderated"].(*bool), args["sort_by"].(*types.TokenSortBy), args["sort_order"].(*types.Order)), true
 	case "Query.workflowStatus":
 		if e.complexity.Query.WorkflowStatus == nil {
 			break
@@ -1123,7 +1124,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Release.Members(childComplexity, args["limit"].(*Uint8), args["offset"].(*Uint64), args["sort_order"].(*types.Order)), true
+		return e.complexity.Release.Members(childComplexity, args["limit"].(*Uint8), args["offset"].(*Uint64), args["sort_order"].(*types.Order), args["include_moderated"].(*bool)), true
 	case "Release.name":
 		if e.complexity.Release.Name == nil {
 			break
@@ -1309,6 +1310,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Token.MintNumber(childComplexity), true
+	case "Token.moderation_status":
+		if e.complexity.Token.ModerationStatus == nil {
+			break
+		}
+
+		return e.complexity.Token.ModerationStatus(childComplexity), true
 	case "Token.owner_provenances":
 		if e.complexity.Token.OwnerProvenances == nil {
 			break
@@ -1912,6 +1919,10 @@ type Token {
   current_owner: String
   burned: Boolean!
   viewable: Boolean!
+  # Combined moderation verdict across sources: "none" or "spam". A string enum
+  # rather than a boolean so new verdict kinds do not break the field's type.
+  # Anything but "none" is excluded from queries unless include_moderated: true.
+  moderation_status: String!
   last_provenance_timestamp: Time
   release_id: Uint64
   mint_number: Int
@@ -1963,7 +1974,12 @@ type Release {
   name: String
   # Declared max edition size from vendor; REST GET /api/v1/releases/{id} ` + "`" + `total_mints` + "`" + `.
   total_mints: Int
-  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc): TokenList!
+  # include_moderated includes moderated tokens among the members. Default
+  # false, matching every other token-returning path: ` + "`" + `members` + "`" + ` is a full
+  # TokenList a client can render directly, so it is filtered unless the caller
+  # opts in. Note members are still returned regardless of viewability — that is
+  # a transient pipeline state, whereas a moderation verdict is a content decision.
+  members(limit: Uint8 = 20, offset: Uint64 = 0, sort_order: Order = asc, include_moderated: Boolean = false): TokenList!
 }
 
 # Result of triggering indexing
@@ -2010,6 +2026,11 @@ type Query {
     provenance_events_limit: Uint8 = 10
     provenance_events_offset: Uint64 = 0
     provenance_events_order: Order = desc
+    # include_moderated returns the token even when it is moderated (OpenSea
+    # is_disabled / objkt takedown). Default false, matching the tokens list: a
+    # detail lookup is still a render path, so a moderated token resolves to null
+    # unless the caller explicitly opts in.
+    include_moderated: Boolean = false
   ): Token
 
   # List tokens with filters
@@ -2024,20 +2045,27 @@ type Query {
     token_ids: [Uint64!]
     token_cids: [String!]
     # release_id, release_vendor, and release_vendor_slug are all optional and ANDed.
-    # Any one of them is sufficient to enable sort_by=mint_number and mint_numbers.
+    # release_vendor alone is a broad vendor filter; it does NOT enable sort_by=mint_number
+    # or mint_numbers by itself because a vendor covers many releases and mint numbers repeat
+    # across them. To use mint semantics, supply release_id, or both release_vendor and
+    # release_vendor_slug together.
     release_id: Uint64
     # release_vendor filters tokens to releases from a given vendor (e.g. "artblocks").
     release_vendor: String
     # release_vendor_slug filters tokens to the release whose vendor_release_slug matches
     # (e.g. "fidenza-by-tyler-hobbs"). Case-sensitive.
+    # Must be combined with release_vendor or release_id (slug uniqueness is scoped per vendor).
     release_vendor_slug: String
     # mint_numbers is an explicit 1-based list of mint positions to include (max 50, no duplicates).
-    # Requires at least one of release_id, release_vendor, or release_vendor_slug.
+    # Requires release_id, or both release_vendor and release_vendor_slug.
     # Use this to poll for exactly the mints triggered via triggerReleaseIndexing.
     mint_numbers: [Int!]
     limit: Uint8 = 20
     offset: Uint64 = 0
     include_unviewable: Boolean = false
+    # include_moderated controls whether moderated tokens (OpenSea is_disabled /
+    # objkt takedown) are returned. Default false: filtered for every consumer.
+    include_moderated: Boolean = false
     sort_by: TokenSortBy = latest_provenance
     sort_order: Order = desc
   ): TokenList
@@ -2120,11 +2148,15 @@ type Mutation {
   # Trigger asynchronous indexing for an explicit list of mint numbers within a vendor release.
   # Equivalent to: POST /api/v1/releases/index
   # Phase 1 (CID derivation + IndexTokens fan-out) runs as a background job; poll job status with job_id.
-  # After Phase 1 succeeds, poll tokens(release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true)
+  # After Phase 1 succeeds, poll tokens(release_vendor: "...", release_vendor_slug: "...", mint_numbers: [...], include_unviewable: true, include_moderated: true)
   # with the same mint_numbers to track exactly which mints have been indexed.
+  # release_vendor is required when polling by slug (slug uniqueness is scoped per vendor).
   # vendor: one of artblocks | feralfile | fxhash | objkt (opensea not supported for release indexing)
   # Provide exactly one of vendor_release_id or vendor_release_slug.
-  # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates)
+  # mint_numbers: explicit 1-based list of mint positions (required, non-empty, max 50, no duplicates).
+  #   For fxhash and feralfile: max(mint_numbers)-min(mint_numbers) must be <= 1000 (MAX_API_VENDOR_MINT_SPAN).
+  #   Those vendors fetch the full [min,max] interval from their APIs; a wide sparse span forces many
+  #   API calls. artblocks and objkt are deterministic and not subject to this span cap.
   triggerReleaseIndexing(
     vendor: String!
     vendor_release_id: String
@@ -2168,7 +2200,7 @@ type TokenEvent {
   id: Uint64!
   # Token ID
   token_id: Uint64!
-  # Event type: acquired, released, metadata_updated, enrichment_updated, viewability_changed
+  # Event type: acquired, released, metadata_updated, enrichment_updated, viewability_changed, moderation_status_changed
   event_type: String!
   # Owner address (NULL for attribute events that broadcast to all current owners)
   owner_address: String
@@ -2457,6 +2489,11 @@ func (ec *executionContext) field_Query_token_args(ctx context.Context, rawArgs 
 		return nil, err
 	}
 	args["provenance_events_order"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "include_moderated", ec.unmarshalOBoolean2ᚖbool)
+	if err != nil {
+		return nil, err
+	}
+	args["include_moderated"] = arg6
 	return args, nil
 }
 
@@ -2528,16 +2565,21 @@ func (ec *executionContext) field_Query_tokens_args(ctx context.Context, rawArgs
 		return nil, err
 	}
 	args["include_unviewable"] = arg12
-	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "sort_by", ec.unmarshalOTokenSortBy2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐTokenSortBy)
+	arg13, err := graphql.ProcessArgField(ctx, rawArgs, "include_moderated", ec.unmarshalOBoolean2ᚖbool)
 	if err != nil {
 		return nil, err
 	}
-	args["sort_by"] = arg13
-	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "sort_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
+	args["include_moderated"] = arg13
+	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "sort_by", ec.unmarshalOTokenSortBy2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐTokenSortBy)
 	if err != nil {
 		return nil, err
 	}
-	args["sort_order"] = arg14
+	args["sort_by"] = arg14
+	arg15, err := graphql.ProcessArgField(ctx, rawArgs, "sort_order", ec.unmarshalOOrder2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋtypesᚐOrder)
+	if err != nil {
+		return nil, err
+	}
+	args["sort_order"] = arg15
 	return args, nil
 }
 
@@ -2575,6 +2617,11 @@ func (ec *executionContext) field_Release_members_args(ctx context.Context, rawA
 		return nil, err
 	}
 	args["sort_order"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "include_moderated", ec.unmarshalOBoolean2ᚖbool)
+	if err != nil {
+		return nil, err
+	}
+	args["include_moderated"] = arg3
 	return args, nil
 }
 
@@ -5368,7 +5415,7 @@ func (ec *executionContext) _Query_token(ctx context.Context, field graphql.Coll
 		ec.fieldContext_Query_token,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order))
+			return ec.resolvers.Query().Token(ctx, fc.Args["cid"].(string), fc.Args["owners_limit"].(*Uint8), fc.Args["owners_offset"].(*Uint64), fc.Args["provenance_events_limit"].(*Uint8), fc.Args["provenance_events_offset"].(*Uint64), fc.Args["provenance_events_order"].(*types.Order), fc.Args["include_moderated"].(*bool))
 		},
 		nil,
 		ec.marshalOToken2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenResponse,
@@ -5403,6 +5450,8 @@ func (ec *executionContext) fieldContext_Query_token(ctx context.Context, field 
 				return ec.fieldContext_Token_burned(ctx, field)
 			case "viewable":
 				return ec.fieldContext_Token_viewable(ctx, field)
+			case "moderation_status":
+				return ec.fieldContext_Token_moderation_status(ctx, field)
 			case "last_provenance_timestamp":
 				return ec.fieldContext_Token_last_provenance_timestamp(ctx, field)
 			case "release_id":
@@ -5453,7 +5502,7 @@ func (ec *executionContext) _Query_tokens(ctx context.Context, field graphql.Col
 		ec.fieldContext_Query_tokens,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["release_id"].(*Uint64), fc.Args["release_vendor"].(*string), fc.Args["release_vendor_slug"].(*string), fc.Args["mint_numbers"].([]int), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order))
+			return ec.resolvers.Query().Tokens(ctx, fc.Args["owners"].([]string), fc.Args["chains"].([]string), fc.Args["contract_addresses"].([]string), fc.Args["token_numbers"].([]string), fc.Args["token_ids"].([]Uint64), fc.Args["token_cids"].([]string), fc.Args["release_id"].(*Uint64), fc.Args["release_vendor"].(*string), fc.Args["release_vendor_slug"].(*string), fc.Args["mint_numbers"].([]int), fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["include_unviewable"].(*bool), fc.Args["include_moderated"].(*bool), fc.Args["sort_by"].(*types.TokenSortBy), fc.Args["sort_order"].(*types.Order))
 		},
 		nil,
 		ec.marshalOTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,
@@ -6120,7 +6169,7 @@ func (ec *executionContext) _Release_members(ctx context.Context, field graphql.
 		ec.fieldContext_Release_members,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Release().Members(ctx, obj, fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["sort_order"].(*types.Order))
+			return ec.resolvers.Release().Members(ctx, obj, fc.Args["limit"].(*Uint8), fc.Args["offset"].(*Uint64), fc.Args["sort_order"].(*types.Order), fc.Args["include_moderated"].(*bool))
 		},
 		nil,
 		ec.marshalNTokenList2ᚖgithubᚗcomᚋferalᚑfileᚋffᚑindexerᚑv2ᚋinternalᚋapiᚋsharedᚋdtoᚐTokenListResponse,
@@ -6828,6 +6877,35 @@ func (ec *executionContext) fieldContext_Token_viewable(_ context.Context, field
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Token_moderation_status(ctx context.Context, field graphql.CollectedField, obj *dto.TokenResponse) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Token_moderation_status,
+		func(ctx context.Context) (any, error) {
+			return obj.ModerationStatus, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Token_moderation_status(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Token",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
 		},
 	}
 	return fc, nil
@@ -7732,6 +7810,8 @@ func (ec *executionContext) fieldContext_TokenList_items(_ context.Context, fiel
 				return ec.fieldContext_Token_burned(ctx, field)
 			case "viewable":
 				return ec.fieldContext_Token_viewable(ctx, field)
+			case "moderation_status":
+				return ec.fieldContext_Token_moderation_status(ctx, field)
 			case "last_provenance_timestamp":
 				return ec.fieldContext_Token_last_provenance_timestamp(ctx, field)
 			case "release_id":
@@ -12258,6 +12338,11 @@ func (ec *executionContext) _Token(ctx context.Context, sel ast.SelectionSet, ob
 			}
 		case "viewable":
 			out.Values[i] = ec._Token_viewable(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "moderation_status":
+			out.Values[i] = ec._Token_moderation_status(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}

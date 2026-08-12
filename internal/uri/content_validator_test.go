@@ -3,6 +3,7 @@ package uri_test
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,26 @@ func kuboDirectoryListing() []byte {
 	return []byte(`<!DOCTYPE html><html><head><title>/ipfs/QmFoo</title></head>
 <body><h1>Index of /ipfs/QmFoo</h1>
 <table><tr><td class="ipfs-hash">QmBar</td></tr></table></body></html>`)
+}
+
+// modernKuboListingWindow is a faithful reduction of the first probe window of a Kubo
+// 0.13+ dir-index-html listing as served by ipfs.io and dweb.link (captured 2026-08-11):
+// the meta description sits at ~byte 70 and the path-as-title after the inlined favicon,
+// while the file table — every "Index of" heading and class="ipfs-hash" cell — sits
+// hundreds of KB later, past the 32KB probe window. Detection must succeed on this head
+// alone.
+func modernKuboListingWindow() []byte {
+	return []byte(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="description" content="A directory of content-addressed files hosted on IPFS.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="shortcut icon" href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAACAAAAABACAAAAAAAAAEAAA=">
+  <title>/ipfs/QmdmQXB2mzChmMeKY47C43LxUdg1NDJ5MWcKMKxDu7RgQm/</title>
+  <style>.flex{display:flex}.flex-wrap{flex-flow:wrap}.nowrap{white-space:nowrap}</style>
+</head>
+<body><main><header class="flex flex-wrap"><div><strong>`)
 }
 
 func TestContentValidator_Validate(t *testing.T) {
@@ -249,6 +270,116 @@ func TestContentValidator_Validate(t *testing.T) {
 			body:        bytes.Repeat([]byte{0x42}, 64),
 			totalLength: -1,
 			wantOK:      true,
+		},
+
+		// --- JSON error bodies are the same 200-with-error class as HTML ones ---
+		{
+			name:        "declared image but JSON error body",
+			declared:    "image/png",
+			body:        []byte(`{"error":"upstream fetch failed","status":200,"detail":"cid not found"}`),
+			totalLength: -1,
+			wantOK:      false,
+			wantReason:  uri.FailureTypeMismatch,
+		},
+		{
+			name:        "declared video but JSON error body",
+			declared:    "video/mp4",
+			body:        []byte(`{"error":"gateway timeout"}`),
+			totalLength: -1,
+			wantOK:      false,
+			wantReason:  uri.FailureTypeMismatch,
+		},
+		{
+			name:        "declared JSON with JSON body is never flagged",
+			declared:    "application/json",
+			body:        []byte(`{"name":"token #1"}`),
+			totalLength: -1,
+			wantOK:      true,
+		},
+
+		// --- text-based media subtypes are exempt from the text-body mismatch ---
+		// These verdicts must hold under ANY sniff outcome: the sniffer inspects only
+		// its own internal window (3072 bytes in the pinned mimetype version), so a
+		// text format whose distinguishing token sits past that window sniffs as
+		// text/plain, and a version bump can shift classifications. Assert verdicts,
+		// never sniffed types.
+		{
+			name:        "SVG with large preamble before the root element",
+			declared:    "image/svg+xml",
+			body:        append([]byte("<!--"+strings.Repeat("license ", 512)+"-->\n"), []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>`)...),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "SVG with XML declaration and large preamble",
+			declared:    "image/svg+xml",
+			body:        append([]byte(`<?xml version="1.0" encoding="UTF-8"?><!--`+strings.Repeat("c", 4000)+"-->"), []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`)...),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "ASCII PNM is a text image format",
+			declared:    "image/x-portable-anymap",
+			body:        []byte("P3\n2 2\n255\n255 0 0  0 255 0\n0 0 255  255 255 255\n"),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "XBM is C source text",
+			declared:    "image/x-xbitmap",
+			body:        []byte("#define img_width 8\n#define img_height 8\nstatic unsigned char img_bits[] = { 0xFF };"),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "HLS playlist is a text audio format",
+			declared:    "audio/x-mpegurl",
+			body:        []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n"),
+			totalLength: -1,
+			wantOK:      true,
+		},
+
+		// --- directory-listing detection: structural conjunction, not lone substrings ---
+		{
+			name:        "modern Kubo listing detected from the probe window alone",
+			declared:    "text/html",
+			body:        modernKuboListingWindow(),
+			totalLength: -1,
+			wantOK:      false,
+			wantReason:  uri.FailureDirectoryListing,
+		},
+		{
+			name:        "HTML artwork using an ipfs-hash class is not a listing",
+			declared:    "text/html",
+			body:        []byte(`<!DOCTYPE html><html><head><title>chain study #4</title></head><body><div class="ipfs-hash">QmSeed42</div><script>render()</script></body></html>`),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "HTML artwork mentioning index of /ipfs is not a listing",
+			declared:    "text/html",
+			body:        []byte(`<!DOCTYPE html><html><head><title>archive piece</title></head><body><p>sourced from an index of /ipfs snapshots</p></body></html>`),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			name:        "path-as-title alone is not a listing",
+			declared:    "text/html",
+			body:        []byte(`<!DOCTYPE html><html><head><title>/ipfs/QmFoo/</title></head><body><canvas></canvas></body></html>`),
+			totalLength: -1,
+			wantOK:      true,
+		},
+		{
+			// The spec mandates IHDR length exactly 13; every decoder rejects other
+			// values, so a wrong length is conclusive even with plausible dimensions.
+			name:     "PNG with invalid IHDR chunk length",
+			declared: "image/png",
+			body: append(append([]byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A},
+				0x00, 0x00, 0x00, 0x00), // IHDR length 0 (must be 13)
+				[]byte("IHDR\x00\x00\x00\x64\x00\x00\x00\x64\x08\x02\x00\x00\x00")...), // 100x100
+			totalLength: -1,
+			wantOK:      false,
+			wantReason:  uri.FailureContainerInvalid,
 		},
 	}
 

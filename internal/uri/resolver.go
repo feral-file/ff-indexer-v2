@@ -33,6 +33,14 @@ func (c *Config) probeMaxBytes() int {
 	if c.ProbeMaxBytes <= 0 {
 		return DefaultProbeMaxBytes
 	}
+	// A window below the sniff floor would make every ranged probe an undersized
+	// prefix — the exact state the undersized-206 retry exists to avoid (a few leading
+	// bytes of binary media sniff as text and false-broken real artworks). Clamp up
+	// rather than reject: a low value is a bandwidth preference, not a semantic choice,
+	// and failing the deploy over it helps nobody.
+	if c.ProbeMaxBytes < minClassifiableBytes {
+		return minClassifiableBytes
+	}
 	return c.ProbeMaxBytes
 }
 

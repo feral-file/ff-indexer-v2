@@ -198,3 +198,163 @@ func TestHandlerTriggerReleaseIndexingValidationError_InvalidJSON(t *testing.T) 
 
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }
+
+// ─── ListTokens handler ──────────────────────────────────────────────────────
+
+func TestHandlerListTokensWithIncludeModerated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	includeUnviewableFalse := false
+	includeModeratedTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			&includeUnviewableFalse, &includeModeratedTrue, gomock.Any(), gomock.Any(), gomock.Nil()).
+		Return(&dto.TokenListResponse{
+			Tokens: []dto.TokenResponse{{TokenCID: "test"}},
+		}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens?include_moderated=true", nil)
+
+	h.ListTokens(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+// ─── GetRelease handler ──────────────────────────────────────────────────────
+
+// TestHandlerGetReleaseDefaultsToExcludingSpam pins that release membership is
+// filtered like every other token-returning path. `members` is a full TokenList a
+// client can render straight from, so an exception here would be one more route
+// for a flagged token to reach a wall. Note this differs from include_unviewable,
+// which stays true: unviewability is a transient pipeline state, a moderation
+// verdict is a decision about the content.
+func TestHandlerGetReleaseDefaultsToExcludingSpam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	releaseID := uint64(42)
+	mockExec.EXPECT().
+		GetRelease(gomock.Any(), releaseID).
+		Return(&dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}, nil)
+
+	includeModeratedFalse := false
+	includeUnviewableTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			&includeUnviewableTrue, &includeModeratedFalse, gomock.Any(), gomock.Any(), gomock.Nil()).
+		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases/42", nil)
+	c.Params = append(c.Params, gin.Param{Key: "id", Value: "42"})
+
+	h.GetRelease(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestHandlerGetReleaseForwardsIncludeModerated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	releaseID := uint64(42)
+	mockExec.EXPECT().
+		GetRelease(gomock.Any(), releaseID).
+		Return(&dto.ReleaseResponse{ID: releaseID, Vendor: "artblocks"}, nil)
+
+	includeModeratedTrue := true
+	mockExec.EXPECT().
+		GetTokens(gomock.Any(), gomock.Nil(), gomock.Nil(), gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Nil(), &releaseID, gomock.Nil(),
+			gomock.Nil(), gomock.Nil(), gomock.Any(), gomock.Any(),
+			gomock.Any(), &includeModeratedTrue, gomock.Any(), gomock.Any(), gomock.Nil()).
+		Return(&dto.TokenListResponse{Tokens: []dto.TokenResponse{}}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/releases/42?include_moderated=true", nil)
+	c.Params = append(c.Params, gin.Param{Key: "id", Value: "42"})
+
+	h.GetRelease(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+// ─── GetToken handler: spam filtering ────────────────────────────────────────
+
+// TestHandlerGetTokenDefaultsToExcludingSpam pins the wiring, not the policy: the
+// executor decides what include_moderated means, but the handler has to actually pass
+// the parsed value. Without it the detail endpoint silently renders flagged
+// tokens no matter what the executor does.
+func TestHandlerGetTokenDefaultsToExcludingSpam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), false).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+cid, nil)
+	c.Params = append(c.Params, gin.Param{Key: "cid", Value: cid})
+
+	h.GetToken(c)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+func TestHandlerGetTokenForwardsIncludeModerated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockExec := mocks.NewMockAPIExecutor(ctrl)
+	h := NewHandler(false, mockExec)
+
+	const cid = "eip155:1:erc721:0x1234567890abcdef1234567890abcdef12345678:1" //nolint:gosec
+	mockExec.EXPECT().
+		GetToken(gomock.Any(), cid, gomock.Any(), gomock.Any(), gomock.Any(),
+			gomock.Any(), gomock.Any(), gomock.Any(), true).
+		Return(&dto.TokenResponse{TokenCID: cid}, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/tokens/"+cid+"?include_moderated=true", nil)
+	c.Params = append(c.Params, gin.Param{Key: "cid", Value: cid})
+
+	h.GetToken(c)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}

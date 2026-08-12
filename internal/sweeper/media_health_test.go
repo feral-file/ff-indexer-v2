@@ -236,19 +236,31 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURLPropagationFailure(t *testing
 		Return(uri.HealthCheckResult{
 			Status:     uri.HealthStatusHealthy,
 			WorkingURL: &workingURL,
+			// The checker preserves the direct probe's diagnostics on a fallback
+			// success precisely for this path.
+			FailureReason:       uri.FailureDirectoryListing,
+			ObservedContentType: "text/html",
+			SniffedContentType:  "text/html",
 		})
 
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, gomock.Nil(), gomock.Nil()).
 		Return(assert.AnError)
 
-	// The original URL is marked broken — not left as-is, not marked healthy.
+	// The original URL is marked broken — not left as-is, not marked healthy — and it
+	// keeps the direct probe's diagnosis so the per-reason breakdown stays truthful.
 	mocks.store.EXPECT().
 		UpdateTokenMediaHealthByURL(ctx, originalURL, gomock.Any()).
 		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
 			require.Equal(t, schema.MediaHealthStatusBroken, upd.Status)
 			require.NotNil(t, upd.LastError)
 			require.Contains(t, *upd.LastError, "propagation of working alternative")
+			require.NotNil(t, upd.FailureReason)
+			require.Equal(t, uri.FailureDirectoryListing.String(), *upd.FailureReason)
+			require.NotNil(t, upd.ObservedContentType)
+			require.Equal(t, "text/html", *upd.ObservedContentType)
+			require.NotNil(t, upd.SniffedContentType)
+			require.Equal(t, "text/html", *upd.SniffedContentType)
 			return nil
 		})
 
@@ -303,13 +315,17 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 	mocks.urlChecker.EXPECT().
 		Check(ctx, originalURL).
 		Return(uri.HealthCheckResult{
-			Status:     uri.HealthStatusHealthy,
-			WorkingURL: &workingURL,
+			Status:             uri.HealthStatusHealthy,
+			WorkingURL:         &workingURL,
+			WorkingURLObserved: "image/png",
+			WorkingURLSniffed:  "image/png",
 		})
 
-	// Mock Update and propagate URL
+	// Mock Update and propagate URL: the promoted row must carry the fallback
+	// gateway's own validated observations, not NULLs.
+	obs := "image/png"
 	mocks.store.EXPECT().
-		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL).
+		UpdateMediaURLAndPropagate(ctx, originalURL, workingURL, &obs, &obs).
 		Return(nil)
 
 	// Mock Batch update viewability (returns changed tokens only)

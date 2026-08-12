@@ -130,7 +130,9 @@ uri:
     - https://arweave.net
   onchfs_gateways:
     - https://onchfs.fxhash2.xyz
-  # Health probes read the first probe_max_bytes of each URL and validate the content
+  # Health probes read the first probe_max_bytes of each URL and validate the content.
+  # Positive values below 512 are clamped up to 512 — a smaller window cannot support
+  # content classification and would false-broken valid binary media.
   # (declared vs sniffed type, container headers, directory-listing/error-page markers).
   probe_max_bytes: 32768
   # Case-insensitive substrings identifying gateway error pages served with HTTP 200.

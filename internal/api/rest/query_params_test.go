@@ -660,3 +660,33 @@ func TestParseListTokensQueryReleaseVendorSlug(t *testing.T) {
 	require.NotNil(t, params.ParsedReleaseVendor)
 	assert.Equal(t, schema.VendorArtBlocks, *params.ParsedReleaseVendor)
 }
+
+// TestParseListTokensQueryIncludeModerated covers binding of the spam opt-in, including its
+// default. The default is a compatibility-relevant contract: omitting the parameter must
+// filter flagged tokens for every existing client.
+func TestParseListTokensQueryIncludeModerated(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{"omitted defaults to false", "/tokens", false},
+		{"explicit true", "/tokens?include_moderated=true", true},
+		{"explicit false", "/tokens?include_moderated=false", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest("GET", tt.query, nil)
+
+			params, err := ParseListTokensQuery(c)
+			require.NoError(t, err)
+			require.NotNil(t, params)
+			assert.Equal(t, tt.want, params.IncludeModerated)
+		})
+	}
+}

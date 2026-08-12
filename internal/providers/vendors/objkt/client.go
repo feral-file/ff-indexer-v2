@@ -36,6 +36,37 @@ type FA struct {
 	CollectionType string `json:"collection_type"`
 }
 
+// objkt moderation flag values. The enum has four states, confirmed against the
+// live API (`token(distinct_on: flag)`): none, banned, flagged, removed.
+//
+// The takedown states — "banned" and "removed" — feed the spam verdict; "flagged"
+// and "none" do not (see IsSpam). Sampling context: phishing-shaped names (claim /
+// reward / airdrop / a domain in the title) sit almost exclusively under "banned",
+// while "removed" is dominated by ordinary artwork taken down for other reasons
+// (copyright, artist request). "removed" counts as spam anyway, by decision: a
+// takedown is a takedown — if objkt no longer displays the token, neither do we,
+// whatever the stated reason — accepting that some non-scam art is hidden; the
+// verdict is reversible (tag-not-drop) and a feralfile whitelist row pins any
+// mistake visible again. "flagged" is only an unactioned report, so it hides
+// nothing.
+//
+// On the OpenSea side only is_disabled counts; is_suspicious / is_nsfw are
+// excluded (reports and content ratings, not takedowns). Re-sample before
+// changing any of this; objkt documents no semantics for the enum.
+const (
+	// FlagNone is objkt's "no moderation action" state.
+	FlagNone = "none"
+	// FlagBanned is objkt's scam/spam takedown.
+	FlagBanned = "banned"
+	// FlagFlagged marks a token as reported but not acted on — not a takedown,
+	// so not spam (see IsSpam).
+	FlagFlagged = "flagged"
+	// FlagRemoved marks a token objkt took down for reasons beyond the scam
+	// verdict (copyright, artist request). Counted as spam: a takedown is a
+	// takedown (see IsSpam).
+	FlagRemoved = "removed"
+)
+
 // Token represents a token from objkt v3 API
 type Token struct {
 	Name         *string   `json:"name"`
@@ -47,6 +78,31 @@ type Token struct {
 	Metadata     any       `json:"metadata"`
 	Creators     []Creator `json:"creators"`
 	FA           *FA       `json:"fa"`
+	// Flag is objkt's moderation state ("none", "banned", "flagged", "removed") —
+	// the moderation signal for Tezos, mapped to a verdict by IsSpam.
+	Flag *string `json:"flag"`
+}
+
+// IsSpam maps objkt's four-state moderation flag onto a spam verdict: a token
+// objkt has taken down ("banned" or "removed") is spam, everything else ("none",
+// "flagged", a missing flag, unknown future states) is clean.
+//
+// Reason: a takedown is a takedown — if objkt no longer displays the token,
+// neither do we, whatever the stated reason. Trade-offs: "removed" also covers
+// non-scam takedowns (copyright, artist request), which this mapping hides; the
+// verdict is reversible (tag-not-drop) and a feralfile whitelist row pins any
+// mistake visible again. A missing or unknown flag reads as clean (fail-open),
+// so an objkt enum change surfaces as tokens staying visible, never as real
+// assets disappearing.
+//
+// This returns a bool rather than schema.ModerationStatus deliberately: vendor
+// clients describe their own API and stay free of storage types. Callers
+// normalize at the boundary (the enricher and the moderation sweeper).
+func (t *Token) IsSpam() bool {
+	if t.Flag == nil {
+		return false
+	}
+	return *t.Flag == FlagBanned || *t.Flag == FlagRemoved
 }
 
 // Creator represents a creator/artist in objkt API
@@ -117,6 +173,7 @@ const getTokenQuery = `query GetToken($faContract: String!, $tokenId: String!) {
     artifact_uri
     description
     display_uri
+    flag
     mime
     name
     thumbnail_uri

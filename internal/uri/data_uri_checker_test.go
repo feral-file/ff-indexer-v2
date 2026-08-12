@@ -2,6 +2,7 @@ package uri_test
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,6 +54,11 @@ func TestDataURIChecker_Check(t *testing.T) {
 	// Valid SVG image
 	svgData := `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><circle cx="50" cy="50" r="40" fill="red"/></svg>`
 	validSVGBase64 := base64.StdEncoding.EncodeToString([]byte(svgData))
+
+	// Valid SVG whose root element sits past the sniffer's detection window (large
+	// license preamble): detects as text/plain, must not be flagged as a mismatch.
+	preambleSVGData := "<!--" + strings.Repeat("license ", 512) + "-->\n" + svgData
+	preambleSVGBase64 := base64.StdEncoding.EncodeToString([]byte(preambleSVGData))
 
 	// Valid GIF image (1x1 transparent pixel)
 	gifData := []byte{
@@ -113,6 +119,14 @@ func TestDataURIChecker_Check(t *testing.T) {
 			dataURI:                "data:image/svg+xml;base64," + validSVGBase64,
 			expectValid:            true,
 			expectMimeType:         "image/svg+xml",
+			expectDeclaredMimeType: "image/svg+xml",
+		},
+		{
+			// No expectMimeType: the detected type is version-sensitive (text/plain under
+			// the pinned sniffer); only the verdict is part of the contract.
+			name:                   "SVG with large preamble detects as text but is not a mismatch",
+			dataURI:                "data:image/svg+xml;base64," + preambleSVGBase64,
+			expectValid:            true,
 			expectDeclaredMimeType: "image/svg+xml",
 		},
 		{

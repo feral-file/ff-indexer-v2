@@ -48,7 +48,7 @@ make quickstart
 
 This will start:
 - **PostgreSQL** (port 5432) — application data and the **`jobs` table** (durable work queue; no separate orchestrator)
-- **ff-indexer** — one container that runs the HTTP API, chain ingestion, job workers for `token_index` (and `media_index` when built with CGO and enabled), and the media health sweeper
+- **ff-indexer** — one container that runs the HTTP API, chain ingestion, job workers for `token_index` (and `media_index` when built with CGO and enabled), the media health sweeper, and the moderation verdict sweeper
 
 The API will be available at `http://localhost:8081`
 
@@ -76,6 +76,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed local development setup.
 - **[Indexing flows](docs/indexing_flows.md)** - How chain events, address sweeps, token indexing, and metadata/media pipelines connect
 - **[Ethereum contract adapters](docs/ethereum_contract_adapters.md)** - Legacy and configured pre-ERC-721/1155 contracts (`contracts.json`, `GenericAdapter`, provenance modes)
 - **[Artist & DID resolution](docs/artist_did_resolution.md)** - How artist names and `did:pkh` identifiers are derived (on-chain JSON vs vendor enrichment)
+- **[Token Moderation](docs/token_moderation.md)** - Vendor-moderated spam filtering: verdict model, sweeper scheduling, read-path filtering
 - **[Database Schema](docs/schema.md)** - Complete database schema and migration notes
 - **[Development Guide](DEVELOPMENT.md)** - Local development setup, seed data, and scripts
 - **[Contributing Guide](CONTRIBUTING.md)** - Setup, linting, testing, and PR process
@@ -89,7 +90,8 @@ All of the following run inside the **`ff-indexer`** process (goroutines) by def
 - **Worker core** — polls the `token_index` job queue
 - **Worker media** — polls the `media_index` job queue (requires CGO / full Docker image and is disabled by default unless `FF_INDEXER_MEDIA_ENABLED=true`). Video upload to Stream is further gated by `FF_INDEXER_VIDEO_PROCESSING_ENABLED` (default `false`); see [DEVELOPMENT.md](DEVELOPMENT.md).
 - **API server** — REST and GraphQL
-- **Sweeper** — Media URL health checks
+- **Sweeper (media)** — Media URL health checks
+- **Sweeper (moderation)** — Re-checks OpenSea/objkt moderation verdicts on a per-row schedule so late takedowns and appealed reversals converge; see [Token Moderation](docs/token_moderation.md)
 
 ## Job queue
 
