@@ -3556,15 +3556,29 @@ func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.Media
 		if err := lockURLGate(tx, urlHash); err != nil {
 			return err
 		}
-		var current struct{ HealthGated bool }
+		var current struct {
+			HealthGated bool
+			NextCheckAt time.Time
+		}
 		err := tx.Model(&schema.MediaRenderProbe{}).
-			Select("health_gated").
+			Select("health_gated, next_check_at").
 			Where("media_url_hash = ?", urlHash).
 			First(&current).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("failed to read current gate marker: %w", err)
 		}
 		probe.HealthGated = current.HealthGated // false when no row exists
+		// A gated row also keeps its urgent schedule. The stale-success shape: an
+		// executor snapshots an ungated row, renders for many seconds, and meanwhile a
+		// recovered/concurrent execution gates the URL from FRESHER evidence; the stale
+		// success then lands here as an observation. Releasing on it would undo newer
+		// negative evidence — wrong direction — but letting it overwrite next_check_at
+		// with the routine recheck would postpone the gate's healing probe from hours to
+		// a week. Taking the earlier of the two preserves the urgent cadence (and never
+		// delays: an earlier observation schedule just heals sooner).
+		if current.HealthGated && current.NextCheckAt.Before(probe.NextCheckAt) {
+			probe.NextCheckAt = current.NextCheckAt
+		}
 		return upsertMediaRenderProbeTx(tx, probe)
 	})
 }

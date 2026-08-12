@@ -503,7 +503,9 @@ type Store interface {
 	// UpsertMediaRenderProbe records a probe observation for probe.MediaURL;
 	// baseline_phash is never overwritten once set, and gate state is NEVER changed —
 	// the current health_gated marker is preserved under the URL gate lock, ignoring
-	// the marker on the passed row. Gate transitions happen exclusively through
+	// the marker on the passed row, and a gated row also keeps the earlier of its
+	// current and the incoming next_check_at so a stale success cannot postpone the
+	// gate's healing probe. Gate transitions happen exclusively through
 	// AcquireRenderGate/ReleaseRenderGate, so a concurrent release cannot be undone by
 	// an in-flight observation write
 	UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error

@@ -6072,6 +6072,34 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 		assert.True(t, row.HealthGated, "an observation write must not clear a live gate")
 		assert.Equal(t, schema.RenderProbeVerdictStalled, row.Verdict, "observation fields still update")
 		assert.Equal(t, 3, row.ConsecutiveFailures)
+
+		// The stale-success shape: a routine +168h schedule from a render that started
+		// before the gate was acquired must not postpone the gate's healing probe.
+		gatedNext := row.NextCheckAt
+		farFuture := time.Now().UTC().Add(168 * time.Hour)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictRenderedOK,
+			CapturedAt: &past, NextCheckAt: farFuture,
+		}))
+		row, err = store.GetMediaRenderProbe(ctx, obsURL)
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.True(t, row.HealthGated)
+		assert.WithinDuration(t, gatedNext, row.NextCheckAt, time.Second,
+			"a stale success must not postpone a gated row's healing probe")
+
+		// The other direction is allowed: an observation schedule EARLIER than the
+		// gate's own heals sooner, never later.
+		sooner := gatedNext.Add(-30 * time.Minute)
+		require.NoError(t, store.UpsertMediaRenderProbe(ctx, schema.MediaRenderProbe{
+			MediaURL: obsURL, Verdict: schema.RenderProbeVerdictBlank,
+			ConsecutiveFailures: 1, CapturedAt: &past, NextCheckAt: sooner,
+		}))
+		row, err = store.GetMediaRenderProbe(ctx, obsURL)
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.WithinDuration(t, sooner, row.NextCheckAt, time.Second,
+			"an earlier observation schedule is kept — it only heals sooner")
 	})
 
 	t.Run("GetHealthGatedRenderProbes lists only held gates and release drains it", func(t *testing.T) {
