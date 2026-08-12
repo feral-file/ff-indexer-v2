@@ -6089,29 +6089,38 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 	t.Run("IsStaticImageRenderClass is conservative in every ambiguous direction", func(t *testing.T) {
 		// Only an unambiguous static raster image may shorten the render settle; a wrong
 		// true manufactures a blank verdict on a generative work.
-		pngURL := "https://example.com/class/plain.png"
+		jpegURL := "https://example.com/class/plain.jpg"
+		pngURL := "https://example.com/class/maybe-apng.png"
+		gifURL := "https://example.com/class/maybe-animated.gif"
+		webpURL := "https://example.com/class/maybe-animated.webp"
 		svgURL := "https://example.com/class/vector.svg"
 		htmlURL := "https://example.com/class/page.html"
-		animImageURL := "https://example.com/class/anim-sourced.png"
-		mixedNullURL := "https://example.com/class/mixed-null.png"
+		animImageURL := "https://example.com/class/anim-sourced.jpg"
+		mixedNullURL := "https://example.com/class/mixed-null.jpg"
 
+		mintTokenWithMedia(t, &jpegURL, nil)
 		mintTokenWithMedia(t, &pngURL, nil)
+		mintTokenWithMedia(t, &gifURL, nil)
+		mintTokenWithMedia(t, &webpURL, nil)
 		mintTokenWithMedia(t, &svgURL, nil)
 		mintTokenWithMedia(t, &htmlURL, nil)
 		// The same URL is also referenced as an animation source by another token: the
-		// animation signal must win even though its bytes sniff as an image.
+		// animation signal must win even though its bytes sniff as a static image.
 		mintTokenWithMedia(t, &animImageURL, &animImageURL)
 
+		markHealthy(t, jpegURL, "image/jpeg")
 		markHealthy(t, pngURL, "image/png")
+		markHealthy(t, gifURL, "image/gif")
+		markHealthy(t, webpURL, "image/webp")
 		markHealthy(t, svgURL, "image/svg+xml")
 		markHealthy(t, htmlURL, "text/html")
-		markHealthy(t, animImageURL, "image/png")
+		markHealthy(t, animImageURL, "image/jpeg")
 
-		// One image/png row plus a NOT-yet-probed sibling (sniffed NULL): the sibling is
-		// created AFTER the sniff write, so it stays NULL. bool_and ignores NULL inputs,
-		// so without the per-row COALESCE the png row would carry the vote alone.
+		// One whitelisted row plus a NOT-yet-probed sibling (sniffed NULL): the sibling
+		// is created AFTER the sniff write, so it stays NULL. bool_and ignores NULL
+		// inputs, so without the per-row COALESCE the jpeg row would carry the vote.
 		mintTokenWithMedia(t, &mixedNullURL, nil)
-		markHealthy(t, mixedNullURL, "image/png")
+		markHealthy(t, mixedNullURL, "image/jpeg")
 		mintTokenWithMedia(t, &mixedNullURL, nil)
 
 		cases := []struct {
@@ -6119,11 +6128,14 @@ func testMediaRenderProbeOperations(t *testing.T, store Store) {
 			url  string
 			want bool
 		}{
-			{"plain raster image", pngURL, true},
+			{"jpeg cannot animate", jpegURL, true},
+			{"png may be APNG under the same sniff", pngURL, false},
+			{"gif may animate", gifURL, false},
+			{"webp may animate", webpURL, false},
 			{"svg is image-sniffed but can animate", svgURL, false},
 			{"html page", htmlURL, false},
-			{"image bytes but animation source on any row", animImageURL, false},
-			{"image row plus an unprobed NULL-sniff sibling", mixedNullURL, false},
+			{"static bytes but animation source on any row", animImageURL, false},
+			{"whitelisted row plus an unprobed NULL-sniff sibling", mixedNullURL, false},
 			{"no health rows at all", "https://example.com/class/unknown.bin", false},
 		}
 		for _, tc := range cases {

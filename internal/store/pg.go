@@ -3344,18 +3344,18 @@ func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]st
 }
 
 // IsStaticImageRenderClass reports whether every render-eligible signal for the URL
-// classifies it as a static raster image.
+// classifies it as a raster image that is structurally incapable of animation.
 //
 // Reason: the render settle window exists for works that keep painting after load —
-// generative HTML, WebGL, scripted SVG. A static raster image paints on decode, so
-// holding a browser slot through the full settle for ~60% of the corpus is pure waste;
-// the caller shortens the settle when this returns true. The check is deliberately
-// conservative in every ambiguous direction: SVG is excluded (image/* by sniff, but SMIL/
-// CSS/script animation needs the full window), an animation media_source on ANY row
-// excludes the URL even if its bytes sniff as an image, and no rows or NULL sniffs return
-// false — an unknown class must degrade to the longer settle, never the shorter one. The
-// worst case of a wrong true is a false blank verdict on real art; a wrong false only
-// costs seconds.
+// generative HTML, WebGL, scripted SVG, animated rasters. A truly static image paints on
+// decode, so holding a browser slot through the full settle for it is pure waste; the
+// caller shortens the settle when this returns true. The check is a WHITELIST
+// (JPEG/BMP), deliberately conservative in every ambiguous direction: GIF and WebP
+// animate, APNG is indistinguishable from PNG by sniffed type, AVIF/HEIC carry image
+// sequences, SVG scripts — all keep the full window, as does an animation media_source
+// on ANY row, a format not on the list, no rows at all, or a NULL sniff. An unknown
+// class must degrade to the longer settle, never the shorter one: the worst case of a
+// wrong true is a false blank verdict on real art; a wrong false only costs seconds.
 func (s *pgStore) IsStaticImageRenderClass(ctx context.Context, url string) (bool, error) {
 	urlHash := types.MD5Hash(url)
 	var staticImage bool
@@ -3368,8 +3368,14 @@ func (s *pgStore) IsStaticImageRenderClass(ctx context.Context, url string) (boo
 		         -- to the longer settle" case this function promises to refuse. Forcing
 		         -- each row's vote to false when the predicate is NULL makes unknown
 		         -- rows veto the shortcut instead of abstaining.
-		         bool_and(COALESCE(h.sniffed_content_type LIKE 'image/%'
-		                           AND h.sniffed_content_type NOT LIKE 'image/svg%'
+		         -- Whitelist, not blacklist: only formats that are STRUCTURALLY
+		         -- incapable of animation may shorten the settle. GIF and WebP animate;
+		         -- APNG is indistinguishable from PNG by sniffed type; AVIF/HEIC carry
+		         -- image sequences; SVG scripts. Any of those with a blank or delayed
+		         -- first stretch would be captured mid-nothing at the short settle and
+		         -- render-gated after the debounce. A format not on this list — known
+		         -- or future — defaults to the full window, which only costs seconds.
+		         bool_and(COALESCE(h.sniffed_content_type IN ('image/jpeg', 'image/bmp')
 		                           AND h.media_source NOT IN (?, ?), false)),
 		         false)
 		FROM token_media_health h

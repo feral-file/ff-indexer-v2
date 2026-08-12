@@ -137,12 +137,13 @@ blanks, so a work that deterministically needs longer than the window would gate
 second probe no matter how many chances it gets. A static raster image paints on decode,
 and images are the majority of the corpus, so holding a browser slot through the full
 window for them roughly halves total render throughput for nothing: URLs whose every
-health-row signal says static raster image (`IsStaticImageRenderClass`) use
-`image_settle_ms` (default 2s) instead. The check is conservative in every ambiguous
-direction — SVG is excluded (image by sniff, but SMIL/CSS/script animation needs the
-full window), an animation media_source on any row excludes the URL, and unknown or
-mixed signals keep the full settle. A wrong shortcut manufactures a blank verdict on
-real art; a wrong full settle only costs seconds.
+health-row signal says structurally-static raster image (`IsStaticImageRenderClass`) use
+`image_settle_ms` (default 2s) instead. The check is a whitelist (JPEG/BMP) rather than
+a blacklist, conservative in every ambiguous direction: GIF and WebP animate, APNG is
+indistinguishable from PNG by sniffed type, AVIF/HEIC carry image sequences, SVG
+scripts — all keep the full window, as does an animation media_source on any row and
+any unknown, mixed, or unsniffed signal. A wrong shortcut manufactures a blank verdict
+on real art; a wrong full settle only costs seconds.
 
 Gating writes `token_media_health.failure_reason` (`render_blank` / `render_stalled` /
 `render_known_bad`) through the same `BatchUpdateTokensViewability` + webhook path as

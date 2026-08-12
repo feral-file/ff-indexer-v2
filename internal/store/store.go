@@ -489,9 +489,10 @@ type Store interface {
 	// rechecks of rendered_ok URLs
 	GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error)
 	// IsStaticImageRenderClass reports whether every render-eligible signal for the URL
-	// classifies it as a static raster image (used to shorten the render settle; SVG and
-	// anything HTML/animation-flavored keeps the full window). False when no health rows
-	// exist or signals are mixed — unknown must never shorten the settle.
+	// classifies it as a raster image structurally incapable of animation (used to
+	// shorten the render settle). A whitelist: JPEG/BMP only — GIF/WebP animate, APNG
+	// hides behind PNG's sniff, AVIF/HEIC carry sequences, SVG scripts. False when no
+	// health rows exist or signals are mixed — unknown must never shorten the settle.
 	IsStaticImageRenderClass(ctx context.Context, url string) (bool, error)
 	// GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed
 	GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error)
