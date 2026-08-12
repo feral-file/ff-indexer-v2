@@ -251,7 +251,13 @@ func (e *renderProbeExecutor) ExecuteRenderProbe(ctx context.Context, url string
 	case schema.RenderProbeVerdictKnownBadFingerprint:
 		errMsg := fmt.Sprintf("render matched known-bad fingerprint %q", classification.MatchedLabel)
 		row.LastError = &errMsg
-		row.ConsecutiveFailures++
+		// The counter is blank/stalled debounce state and a fingerprint match is not a
+		// blank/stalled observation, so it resets rather than increments. Incrementing
+		// bypassed the debounce after a rollback: release-on-disable preserves the probe
+		// row, so a retained fingerprint count of 1 plus one transient blank after
+		// re-enable reached the threshold and gated healthy media on a single
+		// observation.
+		row.ConsecutiveFailures = 0
 		row.NextCheckAt = now.Add(e.cfg.BrokenRecheckInterval)
 		// Unambiguous: gate immediately regardless of debounce state. The marker and the
 		// health rows are written in one locked transaction so a token indexed in between

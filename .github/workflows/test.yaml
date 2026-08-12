@@ -145,5 +145,10 @@ jobs:
           cache: true
           cache-dependency-path: ./go.sum
 
+      # The smoke binary links the adapter package's CGO dependencies (libvips), same
+      # as the main test job.
+      - name: Setup libvips
+        uses: ./.github/actions/setup-libvips
+
       - name: Run chromium smoke and egress vector suites
         run: go test -tags="cgo chromium" -count=1 -timeout 10m -v ./internal/media/probe/

@@ -224,6 +224,8 @@ func TestExecuteRenderProbe_fingerprintGatesImmediately(t *testing.T) {
 		AcquireRenderGate(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe, upd store.MediaHealthUpdate) ([]uint64, error) {
 			assert.Equal(t, schema.RenderProbeVerdictKnownBadFingerprint, row.Verdict)
+			assert.Equal(t, 0, row.ConsecutiveFailures,
+				"the counter is blank/stalled debounce state; a fingerprint match is not a blank/stalled observation")
 			require.NotNil(t, row.LastError)
 			assert.Contains(t, *row.LastError, "kubo-dir-listing")
 			require.NotNil(t, upd.FailureReason)
@@ -231,6 +233,42 @@ func TestExecuteRenderProbe_fingerprintGatesImmediately(t *testing.T) {
 			return []uint64{3}, nil
 		})
 	m.store.EXPECT().BatchUpdateTokensViewability(gomock.Any(), []uint64{3}).Return(nil, nil)
+
+	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
+}
+
+// TestExecuteRenderProbe_blankAfterReleasedFingerprintGateIsDebounced pins the rollback
+// chain the counter reset exists for: fingerprint gate -> probe disabled (the sweeper
+// releases the gate but the probe row, counter included, survives) -> probe re-enabled
+// -> one transient blank. With the old increment-on-fingerprint behavior the retained
+// count of 1 plus this single blank reached the threshold of 2 and gated healthy media
+// on one observation; the correct outcome is a recorded first failure on the debounce
+// path.
+func TestExecuteRenderProbe_blankAfterReleasedFingerprintGateIsDebounced(t *testing.T) {
+	m, exec := setupRenderProbe(t, renderProbeTestConfig)
+	url := "https://example.com/rollback-debounce.html"
+
+	m.ssrf.EXPECT().ValidateHTTPURL(gomock.Any(), url).Return(nil)
+	// The released row: fingerprint verdict retained, gate cleared by the disable-path
+	// release, counter as the fixed code leaves it (0).
+	m.store.EXPECT().GetMediaRenderProbe(gomock.Any(), url).Return(&schema.MediaRenderProbe{
+		MediaURL:    url,
+		Verdict:     schema.RenderProbeVerdictKnownBadFingerprint,
+		HealthGated: false,
+	}, nil)
+	m.renderer.EXPECT().RenderProbe(gomock.Any(), url, 0).Return(blankFrame(), nil)
+
+	// One blank after the release is a FIRST observation: recorded below the threshold,
+	// no gate. The strict mock proves AcquireRenderGate is never called.
+	m.store.EXPECT().
+		UpsertMediaRenderProbe(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, row schema.MediaRenderProbe) error {
+			assert.Equal(t, schema.RenderProbeVerdictBlank, row.Verdict)
+			assert.Equal(t, 1, row.ConsecutiveFailures, "first blank after a released fingerprint gate")
+			assert.False(t, row.HealthGated)
+			assert.Equal(t, m.now.Add(renderProbeTestConfig.RetryInterval), row.NextCheckAt, "debounce window, not a gate")
+			return nil
+		})
 
 	require.NoError(t, exec.ExecuteRenderProbe(context.Background(), url))
 }
