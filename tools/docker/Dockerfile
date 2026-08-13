@@ -74,6 +74,7 @@ RUN if [ "$CGO_ENABLED" = "1" ]; then \
           vips \
           chromium \
           chromium-chromedriver \
+          chromium-swiftshader \
           font-noto ; \
     else \
       apk add --no-cache ca-certificates libgcc ; \
