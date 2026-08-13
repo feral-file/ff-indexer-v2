@@ -54,6 +54,14 @@ func minimalJPEG() []byte {
 	return buf
 }
 
+// htmlArtworkDoc is a minimal self-contained HTML artwork document: declares and sniffs
+// text/html without matching any directory-listing or known-bad-page signature — the
+// shape of a directory artifact's index.html entry point (feral-file#3482).
+func htmlArtworkDoc() []byte {
+	return []byte(`<!DOCTYPE html><html><head><title>hello world</title></head>
+<body><canvas id="c"></canvas><script>draw();</script></body></html>`)
+}
+
 func kuboDirectoryListing() []byte {
 	return []byte(`<!DOCTYPE html><html><head><title>/ipfs/QmFoo</title></head>
 <body><h1>Index of /ipfs/QmFoo</h1>

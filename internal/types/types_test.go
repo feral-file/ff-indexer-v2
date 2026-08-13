@@ -725,6 +725,18 @@ func TestIsIPFSGatewayURL(t *testing.T) {
 			expectedCID: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
 		},
 		{
+			name:        "valid IPFS gateway URL with query directly after CID (fxhash shape, feral-file#3482)",
+			input:       "https://ipfs.io/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG?fxhash=oo123",
+			expectedOK:  true,
+			expectedCID: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG?fxhash=oo123",
+		},
+		{
+			name:        "valid IPFS gateway URL with fragment directly after CID",
+			input:       "https://ipfs.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi#seed",
+			expectedOK:  true,
+			expectedCID: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi#seed",
+		},
+		{
 			name:       "invalid IPFS URI scheme",
 			input:      "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
 			expectedOK: false,

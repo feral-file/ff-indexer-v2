@@ -60,6 +60,32 @@ The same validated probe drives gateway selection (`FindWorking*Gateway`, used b
 the health checker's fallback and the URI resolver): a gateway "works" only if its
 content validates, so a directory listing can no longer be stored as a working URL.
 
+**The gateway-relative ref keeps its query and fragment.** `types.IsIPFSGatewayURL`
+returns the CID plus any path, query, or fragment, and fallback probes that whole ref.
+A query directly after the CID (`…/ipfs/<cid>?fxhash=x`) must keep the URL recognized:
+an unrecognized URL never enters fallback, so its health row can never heal. Measured
+2026-08-13 — 3 fxhash artworks stored on `ipfs.feralfile.com` sat permanently broken for
+exactly this reason and healed to a serving gateway once recognized, `fxhash` intact so
+the promoted URL still addresses the minted iteration (same contract as OnChFS refs on
+issue #76).
+
+**Directory entry-point retry (insurance, not the main path).** When IPFS selection fails
+and some candidate served a directory listing, selection retries once with
+`<ref>/index.html`, query and fragment preserved. It has healed **0** production rows and
+is retained only for a narrow window: a gateway that lists a directory whose `index.html`
+another gateway can serve — e.g. `ipfs.feralfile.com`, which holds the directory node but
+not the child blocks. It cannot fire when any gateway serves the bare ref, because Kubo
+serves `index.html` itself when a directory contains one. Detection is limited to Kubo's
+listing template, so custom templates and JSON listings pass through undetected.
+
+The retry keys on the observed listing, not on the declared `application/x-directory` mime
+type. Mime-driven resolution would reach far more tokens (2,621 vendor-declared directories
+are stored as bare CIDs, against the 4 rows the listing signal selects) but must probe
+before storing — some directory artifacts have no `index.html`, so a blind append turns a
+listing into a hard 404. Note the declared mime survives only in the raw vendor payload:
+the normalized `mime_type` column reads `text/html` for these tokens, because it describes
+the bytes the gateway served.
+
 SSRF policy refusals are final and never trigger gateway fallback. DNS failures are
 `broken`/`dns` (not retried every tick). Failure classifications are persisted in
 `token_media_health.failure_reason` with the observed and sniffed content types

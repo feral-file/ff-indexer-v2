@@ -132,22 +132,33 @@ func GenerateSecureToken(length int) (string, error) {
 // IsIPFSGatewayURL checks if a string is a valid IPFS gateway URL
 // It matches URLs like https://ipfs.io/ipfs/Qm... or https://gateway.pinata.cloud/ipfs/bafybei...
 // The CID must follow IPFS CID v0 (Qm...) or CIDv1 patterns
-// Returns: (isValid, cidWithPath) where cidWithPath includes the CID and any path segments after it
+// Returns: (isValid, cidWithPath) where cidWithPath includes the CID and any path, query,
+// or fragment after it — the gateway-relative reference a fallback gateway must be asked
+// for.
+//
+// A query directly after the CID (…/ipfs/<cid>?fxhash=x) is part of that reference and
+// must keep the URL recognized. This is load-bearing, not defensive: the sole production
+// caller is urlChecker.Check, so an unrecognized URL never enters gateway fallback and its
+// health row can never heal, however many sweeps run. Measured 2026-08-13 — every
+// directory_listing row in production that this shape excluded (3 fxhash artworks stored
+// on ipfs.feralfile.com) healed to a serving gateway once recognized, with the fxhash
+// parameter carried through so the promoted URL still addresses the minted iteration.
 func IsIPFSGatewayURL(s string) (bool, string) {
 	// Regex pattern to match IPFS gateway URLs:
 	// - Protocol: http:// or https://
 	// - Host: valid hostname (alphanumeric, dots, hyphens, optional port)
-	// - Path: /ipfs/{CID} followed by optional path (but no more /ipfs/ segments)
+	// - Path: /ipfs/{CID} followed by an optional suffix opening with /, ? or #
+	//   (the ^-anchored host/ipfs prefix keeps /ipfs/ inside a query string unmatched)
 	// CIDv0: Qm followed by exactly 44 base58 characters (total 46 chars, fixed length)
 	// CIDv1: b followed by at least 10 base32 characters (variable length, flexible)
-	pattern := `^https?://[a-zA-Z0-9._-]+(?::[0-9]+)?/ipfs/((?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{10,}))(/.*)?$`
+	pattern := `^https?://[a-zA-Z0-9._-]+(?::[0-9]+)?/ipfs/((?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{10,}))([/?#].*)?$`
 	re := regexp.MustCompile(pattern)
 
 	matches := re.FindStringSubmatch(s)
 	if len(matches) >= 2 {
 		cid := matches[1]
 		if len(matches) >= 3 && matches[2] != "" {
-			// Include path if present
+			// Include path, query, or fragment if present
 			return true, cid + matches[2]
 		}
 		return true, cid
