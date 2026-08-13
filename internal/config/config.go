@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/media/phash"
+	"github.com/feral-file/ff-indexer-v2/internal/media/probe"
 	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 )
 
@@ -219,6 +222,73 @@ type RasterizerConfig struct {
 	BrowserFallbackEnabled bool `mapstructure:"browser_fallback_enabled"`
 }
 
+// RenderProbeFingerprintConfig identifies one known-bad render (directory listing,
+// gateway error page, placeholder) by its perceptual hash.
+type RenderProbeFingerprintConfig struct {
+	// Phash is the 64-bit DCT pHash as hex (with or without 0x prefix)
+	Phash string `mapstructure:"phash"`
+	// MaxDistance is the Hamming tolerance for a match (keep small: 4-8; a loose
+	// tolerance hides real art)
+	MaxDistance int `mapstructure:"max_distance"`
+	// Label names the fingerprint for last_error and operator triage
+	Label string `mapstructure:"label"`
+}
+
+// RenderProbeConfig holds L1 render probe configuration (media worker executes probes;
+// the media health sweeper enqueues them).
+type RenderProbeConfig struct {
+	// Enabled gates both probe execution and sweeper enqueueing (default false)
+	Enabled bool `mapstructure:"enabled"`
+	// BatchSize is how many due URLs the sweeper enqueues per cycle
+	BatchSize int `mapstructure:"batch_size"`
+	// ViewportWidth/Height define the capture viewport (square by default so neither
+	// orientation is biased); recorded with every capture
+	ViewportWidth  int `mapstructure:"viewport_width"`
+	ViewportHeight int `mapstructure:"viewport_height"`
+	// TimeoutMs bounds the whole probe (navigate + settle + screenshot)
+	TimeoutMs int `mapstructure:"timeout_ms"`
+	// Enforce turns render verdicts into viewability gates; false is shadow mode
+	// (verdicts, counters, and pHashes are recorded but nothing is ever hidden, and any
+	// existing gates are released). The production rollout watches shadow data first
+	// and flips this deliberately.
+	Enforce bool `mapstructure:"enforce"`
+	// SettleMs is how long the page runs after load before capture
+	SettleMs int `mapstructure:"settle_ms"`
+	// ImageSettleMs is the shortened settle for URLs classified as static raster images
+	// (they paint on decode; the full window exists for generative works). <= 0 disables
+	// the shortcut and every class gets SettleMs
+	ImageSettleMs int `mapstructure:"image_settle_ms"`
+	// BlankVarianceThreshold: frames with normalized luminance variance below this are blank
+	BlankVarianceThreshold float64 `mapstructure:"blank_variance_threshold"`
+	// FailureGateThreshold: consecutive blank/stalled probes before viewability gates
+	// (fingerprint matches gate immediately)
+	FailureGateThreshold int `mapstructure:"failure_gate_threshold"`
+	// RecheckInterval schedules the next probe after rendered_ok
+	RecheckInterval time.Duration `mapstructure:"recheck_interval"`
+	// RetryInterval schedules the next probe after a not-yet-gating failure (debounce window)
+	RetryInterval time.Duration `mapstructure:"retry_interval"`
+	// BrokenRecheckInterval schedules the next probe after gating (also bounds heal
+	// latency — the render probe is the only healer of render-gated rows)
+	BrokenRecheckInterval time.Duration `mapstructure:"broken_recheck_interval"`
+	// KnownBadFingerprints are pHashes of known-bad renders; matches gate immediately
+	KnownBadFingerprints []RenderProbeFingerprintConfig `mapstructure:"known_bad_fingerprints"`
+	// NoSandbox disables chromium's sandbox. Only for runtimes that cannot support it
+	// (no unprivileged user namespaces, restrictive seccomp). The probe renders
+	// untrusted remote pages, so an unsandboxed renderer exploit would gain the media
+	// worker's process access — prefer fixing the runtime over setting this.
+	NoSandbox bool `mapstructure:"no_sandbox"`
+	// EgressRestricted attests that the media worker's network egress is restricted so
+	// it cannot route to loopback, private, link-local, or cloud-metadata ranges.
+	//
+	// Required to enable the probe. In-browser request validation is hostname-based, and
+	// the hostname is resolved again by chromium when it dials — the DNS-rebinding TOCTOU
+	// the SSRF validator documents repo-wide. Only connect-time/peer-IP policy closes it,
+	// which lives in the network, not this process. This flag does not implement that
+	// control; it makes enabling the probe without it a deliberate choice rather than an
+	// oversight.
+	EgressRestricted bool `mapstructure:"egress_restricted"`
+}
+
 // TransformConfig holds configuration for image transformation
 type TransformConfig struct {
 	// Target sizes
@@ -258,13 +328,14 @@ type WorkerMediaConfig struct {
 	MediaEnabled bool           `mapstructure:"media_enabled"`
 	// VideoProcessingEnabled when true sends video/* URLs to the configured media provider (e.g. Cloudflare Stream).
 	// When false (default), video assets are skipped without upload or DB writes; image and SVG flows are unchanged.
-	VideoProcessingEnabled bool             `mapstructure:"video_processing_enabled"`
-	URI                    URIConfig        `mapstructure:"uri"`
-	Cloudflare             CloudflareConfig `mapstructure:"cloudflare"`
-	Rasterizer             RasterizerConfig `mapstructure:"rasterizer"`
-	Transform              TransformConfig  `mapstructure:"transform"`
-	MaxImageSize           int64            `mapstructure:"max_image_size"`
-	MaxVideoSize           int64            `mapstructure:"max_video_size"`
+	VideoProcessingEnabled bool              `mapstructure:"video_processing_enabled"`
+	URI                    URIConfig         `mapstructure:"uri"`
+	Cloudflare             CloudflareConfig  `mapstructure:"cloudflare"`
+	Rasterizer             RasterizerConfig  `mapstructure:"rasterizer"`
+	RenderProbe            RenderProbeConfig `mapstructure:"render_probe"`
+	Transform              TransformConfig   `mapstructure:"transform"`
+	MaxImageSize           int64             `mapstructure:"max_image_size"`
+	MaxVideoSize           int64             `mapstructure:"max_video_size"`
 }
 
 // MediaHealthSweeperConfig holds configuration for the media health sweeper
@@ -325,6 +396,11 @@ type SweeperConfig struct {
 	Jobs               JobsConfig               `mapstructure:"jobs"`
 	MediaHealthSweeper MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
 	ModerationSweeper  ModerationSweeperConfig  `mapstructure:"moderation_sweeper"`
+	// RenderProbe: the sweeper only reads Enabled and BatchSize (enqueue side); the
+	// media worker owns execution settings. MediaEnabled guards enqueueing onto a queue
+	// no worker serves in lightweight deployments.
+	RenderProbe  RenderProbeConfig `mapstructure:"render_probe"`
+	MediaEnabled bool              `mapstructure:"media_enabled"`
 }
 
 // SecurityConfig holds process-wide security controls (optional sections keyed under `security:`).
@@ -362,6 +438,7 @@ type AppConfig struct {
 	RateLimiter            RateLimiterConfig        `mapstructure:"rate_limiter"`
 	Cloudflare             CloudflareConfig         `mapstructure:"cloudflare"`
 	Rasterizer             RasterizerConfig         `mapstructure:"rasterizer"`
+	RenderProbe            RenderProbeConfig        `mapstructure:"render_probe"`
 	Transform              TransformConfig          `mapstructure:"transform"`
 	MediaHealthSweeper     MediaHealthSweeperConfig `mapstructure:"media_health_sweeper"`
 	ModerationSweeper      ModerationSweeperConfig  `mapstructure:"moderation_sweeper"`
@@ -481,7 +558,132 @@ func ValidateRequiredConfigValues(cfg *AppConfig) error {
 		return fmt.Errorf("missing required config values: %s", strings.Join(missingFields, ", "))
 	}
 
+	if err := validateRenderProbeConfig(&cfg.RenderProbe, cfg.MediaEnabled, cfg.Jobs.MediaQueue); err != nil {
+		return err
+	}
 	return validateModerationSweeperConfig(&cfg.ModerationSweeper)
+}
+
+// validateRenderProbeConfig rejects render-probe settings whose failure mode is silent
+// misbehavior rather than a visible startup error.
+//
+// Reason: a non-positive interval makes every probed URL immediately due again — a
+// chromium render loop at sweeper cadence is a memory/CPU burn, not a crash. A malformed
+// fingerprint pHash would never match anything (silently disabling the known-bad gate),
+// and a Hamming tolerance above 64 or below 0 is meaningless for a 64-bit hash — worse,
+// large tolerances match real art and hide it.
+//
+// Constraints: validated only when the probe would actually run (enabled AND media
+// enabled). enabled defaults to true, so it is no longer an operator statement of
+// intent — media_enabled is the explicit signal that this deployment renders. A
+// lightweight deployment (media_enabled=false) therefore leaves a default-enabled probe
+// inert rather than failing startup; the sweeper's enqueue gate (Enabled &&
+// MediaEnabled) guarantees no jobs pile up on an unserved queue.
+func validateRenderProbeConfig(c *RenderProbeConfig, mediaEnabled bool, mediaQueue string) error {
+	if !c.Enabled || !mediaEnabled {
+		return nil
+	}
+
+	invalid := make([]string, 0)
+	if mediaQueue == "" {
+		invalid = append(invalid, "render_probe.enabled requires jobs.media_queue to be set")
+	}
+	if !c.EgressRestricted {
+		invalid = append(invalid, "render_probe.egress_restricted must be true to enable the probe: "+
+			"the render probe navigates untrusted pages in a browser whose request validation is "+
+			"hostname-based and therefore open to DNS rebinding at dial time. Restrict the media "+
+			"worker's network egress from loopback/private/link-local/metadata ranges, then set this "+
+			"flag (see docs/media_viewability.md)")
+	}
+	if c.BatchSize < 1 {
+		invalid = append(invalid, "render_probe.batch_size must be at least 1")
+	}
+	// A "shortened" image settle above the full window is a sign the two knobs were
+	// swapped or misunderstood; it would silently slow the image majority of the corpus.
+	// (<= 0 is valid: it disables the shortcut.)
+	if c.ImageSettleMs > 0 && c.SettleMs > 0 && c.ImageSettleMs > c.SettleMs {
+		invalid = append(invalid, "render_probe.image_settle_ms must not exceed render_probe.settle_ms")
+	}
+	// The timeout bounds navigate + settle + screenshot together, so it must reserve
+	// headroom beyond the settle window — checked on EFFECTIVE values because either
+	// knob may be unset (<= 0 means the renderer's default): timeout_ms: 10000 with
+	// settle_ms unset resolves to 10s against a 15s settle, and every probe would burn
+	// its budget inside the settle sleep, record stalled, and gate healthy media after
+	// the debounce. The startup self-check cannot catch this (fixtures settle short);
+	// only this validation can.
+	effTimeout := c.TimeoutMs
+	if effTimeout <= 0 {
+		effTimeout = probe.DefaultTimeoutMs
+	}
+	effSettle := c.SettleMs
+	if effSettle <= 0 {
+		effSettle = probe.DefaultSettleMs
+	}
+	if effTimeout < effSettle+probe.MinRenderHeadroomMs {
+		invalid = append(invalid, fmt.Sprintf(
+			"render_probe.timeout_ms (effective %dms) must exceed settle_ms (effective %dms) by at least %dms: "+
+				"the timeout covers navigate + settle + screenshot, and anything less guarantees every probe "+
+				"stalls in the settle sleep and gates healthy media after the debounce",
+			effTimeout, effSettle, probe.MinRenderHeadroomMs))
+	}
+	// Viewport bounds are validated against the renderer's capture caps at startup
+	// because the failure mode of an oversized viewport is silent and severe: chromium
+	// allocates and captures the frame, the renderer rejects it post-hoc (encoded or
+	// decoded size cap), every probe records stalled — and after the debounce the gate
+	// hides perfectly healthy media. A config typo must be a startup error, not a
+	// corpus-wide false gate. <= 0 stays valid: the renderer substitutes its defaults.
+	for _, dim := range []struct {
+		name  string
+		value int
+	}{{"render_probe.viewport_width", c.ViewportWidth}, {"render_probe.viewport_height", c.ViewportHeight}} {
+		if dim.value > 0 && (dim.value < probe.MinViewportDim || dim.value > probe.MaxViewportDim) {
+			invalid = append(invalid, fmt.Sprintf("%s must be within [%d, %d]",
+				dim.name, probe.MinViewportDim, probe.MaxViewportDim))
+		}
+	}
+	if c.ViewportWidth > 0 && c.ViewportHeight > 0 && c.ViewportWidth*c.ViewportHeight > probe.MaxViewportPixels {
+		invalid = append(invalid, fmt.Sprintf(
+			"render_probe.viewport_width x viewport_height must not exceed %d pixels: larger captures can "+
+				"collide with the renderer screenshot caps, recording stalled on every probe and render-gating "+
+				"healthy media", probe.MaxViewportPixels))
+	}
+	if c.FailureGateThreshold < 1 {
+		invalid = append(invalid, "render_probe.failure_gate_threshold must be at least 1")
+	}
+	// A threshold at or above phash.MaxVariance calls every frame blank, so a mistyped
+	// value like 1 would gate the whole corpus after the debounce threshold — exactly the
+	// hide-real-art failure the probe exists to avoid. Reject it at startup instead.
+	if c.BlankVarianceThreshold < 0 || c.BlankVarianceThreshold >= phash.MaxVariance {
+		invalid = append(invalid, fmt.Sprintf(
+			"render_probe.blank_variance_threshold must be within [0, %v): variance is a normalized "+
+				"population variance, so a threshold at or above that classifies every frame as blank",
+			phash.MaxVariance))
+	}
+	if c.RecheckInterval <= 0 {
+		invalid = append(invalid, "render_probe.recheck_interval must be positive")
+	}
+	if c.RetryInterval <= 0 {
+		invalid = append(invalid, "render_probe.retry_interval must be positive")
+	}
+	if c.BrokenRecheckInterval <= 0 {
+		invalid = append(invalid, "render_probe.broken_recheck_interval must be positive")
+	}
+	for _, fp := range c.KnownBadFingerprints {
+		cleaned := strings.TrimPrefix(strings.TrimSpace(strings.ToLower(fp.Phash)), "0x")
+		if cleaned == "" || len(cleaned) > 16 {
+			invalid = append(invalid, fmt.Sprintf("render_probe.known_bad_fingerprints[%q].phash must be 1-16 hex digits", fp.Label))
+		} else if _, err := strconv.ParseUint(cleaned, 16, 64); err != nil {
+			invalid = append(invalid, fmt.Sprintf("render_probe.known_bad_fingerprints[%q].phash is not valid hex", fp.Label))
+		}
+		if fp.MaxDistance < 0 || fp.MaxDistance > 64 {
+			invalid = append(invalid, fmt.Sprintf("render_probe.known_bad_fingerprints[%q].max_distance must be 0-64", fp.Label))
+		}
+	}
+
+	if len(invalid) > 0 {
+		return fmt.Errorf("invalid render probe config: %s", strings.Join(invalid, "; "))
+	}
+	return nil
 }
 
 // validateModerationSweeperConfig rejects moderation sweeper settings whose failure mode is a
@@ -584,6 +786,7 @@ func (a *AppConfig) ToWorkerMediaConfig() *WorkerMediaConfig {
 		URI:                    a.URI,
 		Cloudflare:             a.Cloudflare,
 		Rasterizer:             a.Rasterizer,
+		RenderProbe:            a.RenderProbe,
 		Transform:              a.Transform,
 		MaxImageSize:           a.MaxImageSize,
 		MaxVideoSize:           a.MaxVideoSize,
@@ -598,6 +801,8 @@ func (a *AppConfig) ToSweeperConfig() *SweeperConfig {
 		Jobs:               a.Jobs,
 		MediaHealthSweeper: a.MediaHealthSweeper,
 		ModerationSweeper:  a.ModerationSweeper,
+		RenderProbe:        a.RenderProbe,
+		MediaEnabled:       a.MediaEnabled,
 	}
 }
 
@@ -662,6 +867,21 @@ func applyAppConfigDefaults(v *viper.Viper) {
 	v.SetDefault("rasterizer.width", 2048)
 	v.SetDefault("rasterizer.timeout_ms", 15000)
 	v.SetDefault("rasterizer.browser_fallback_enabled", false)
+	v.SetDefault("render_probe.enabled", true)
+	v.SetDefault("render_probe.enforce", false)
+	v.SetDefault("render_probe.batch_size", 20)
+	v.SetDefault("render_probe.viewport_width", 1024)
+	v.SetDefault("render_probe.viewport_height", 1024)
+	v.SetDefault("render_probe.timeout_ms", 45000)
+	v.SetDefault("render_probe.settle_ms", 15000)
+	v.SetDefault("render_probe.image_settle_ms", 2000)
+	v.SetDefault("render_probe.blank_variance_threshold", 0.001)
+	v.SetDefault("render_probe.failure_gate_threshold", 2)
+	v.SetDefault("render_probe.recheck_interval", "168h")
+	v.SetDefault("render_probe.retry_interval", "1h")
+	v.SetDefault("render_probe.broken_recheck_interval", "24h")
+	v.SetDefault("render_probe.no_sandbox", false)
+	v.SetDefault("render_probe.egress_restricted", false)
 	v.SetDefault("max_image_size", 10*1024*1024)
 	v.SetDefault("max_video_size", 300*1024*1024)
 	v.SetDefault("transform.target_image_size", int64(float64(10*1024*1024)*0.9))
@@ -854,6 +1074,21 @@ func bindAllEnvVars(v *viper.Viper) {
 		"rasterizer.width",
 		"rasterizer.timeout_ms",
 		"rasterizer.browser_fallback_enabled",
+		"render_probe.enabled",
+		"render_probe.batch_size",
+		"render_probe.viewport_width",
+		"render_probe.viewport_height",
+		"render_probe.timeout_ms",
+		"render_probe.enforce",
+		"render_probe.settle_ms",
+		"render_probe.image_settle_ms",
+		"render_probe.blank_variance_threshold",
+		"render_probe.failure_gate_threshold",
+		"render_probe.recheck_interval",
+		"render_probe.retry_interval",
+		"render_probe.broken_recheck_interval",
+		"render_probe.no_sandbox",
+		"render_probe.egress_restricted",
 		// Media Health Sweeper config
 		"media_health_sweeper.http_timeout",
 		"media_health_sweeper.batch_size",

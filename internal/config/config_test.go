@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/feral-file/ff-indexer-v2/internal/media/phash"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 )
 
@@ -106,6 +107,10 @@ tezos:
 	require.NotNil(t, cfg)
 	assert.Equal(t, "localhost", cfg.Database.Host)
 	assert.Equal(t, "db", cfg.Database.DBName)
+	// The render probe ships observing, not blocking: a default deployment must never
+	// hide a token until an operator deliberately flips enforce.
+	assert.True(t, cfg.RenderProbe.Enabled, "probe observes by default")
+	assert.False(t, cfg.RenderProbe.Enforce, "shadow mode by default — enforcement is an explicit decision")
 }
 
 // TestModerationSweeperDefaultMatchesStoreConstant anchors the config default to
@@ -518,6 +523,154 @@ func TestMediaHealthSweeperConfig_EffectiveURI(t *testing.T) {
 		assert.Equal(t, 1024, got.ProbeMaxBytes)
 		assert.Equal(t, root.ArweaveGateways, got.ArweaveGateways)
 		assert.Equal(t, root.KnownBadPageMarkers, got.KnownBadPageMarkers)
+	})
+}
+
+// TestValidateRenderProbeConfig_RequiresEgressRestriction pins the enablement gate: the
+// probe's in-browser request validation is hostname-based and therefore open to DNS
+// rebinding at dial time, which only network-level egress policy can close. Enabling the
+// probe without attesting that control must fail at startup rather than silently ship an
+// SSRF path.
+func TestValidateRenderProbeConfig_RequiresEgressRestriction(t *testing.T) {
+	base := RenderProbeConfig{
+		Enabled:               true,
+		BatchSize:             20,
+		FailureGateThreshold:  2,
+		RecheckInterval:       168 * time.Hour,
+		RetryInterval:         time.Hour,
+		BrokenRecheckInterval: 24 * time.Hour,
+	}
+
+	t.Run("enabled without egress restriction is rejected", func(t *testing.T) {
+		cfg := base
+		err := validateRenderProbeConfig(&cfg, true, "media_index")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "egress_restricted")
+	})
+
+	t.Run("enabled with egress restriction is accepted", func(t *testing.T) {
+		cfg := base
+		cfg.EgressRestricted = true
+		assert.NoError(t, validateRenderProbeConfig(&cfg, true, "media_index"))
+	})
+
+	// enabled defaults to true, so it is not an operator statement of intent —
+	// media_enabled is. A lightweight deployment must start with the default-enabled
+	// probe inert, not fail; even a bad egress/threshold config is unreachable there.
+	t.Run("enabled without the media worker is inert, not rejected", func(t *testing.T) {
+		cfg := base
+		assert.NoError(t, validateRenderProbeConfig(&cfg, false, "media_index"),
+			"a probe that cannot run must not block startup, even with egress unattested")
+	})
+
+	t.Run("enabled without a media queue is rejected", func(t *testing.T) {
+		cfg := base
+		cfg.EgressRestricted = true
+		err := validateRenderProbeConfig(&cfg, true, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "media_queue")
+	})
+
+	// A threshold at or above the metric's maximum calls every frame blank, gating the
+	// whole corpus after debounce — the hide-real-art failure mode this feature exists
+	// to prevent.
+	t.Run("blank variance threshold must sit inside the variance domain", func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			threshold float64
+			valid     bool
+		}{
+			{"negative", -0.1, false},
+			{"zero", 0, true},
+			{"typical", 0.001, true},
+			{"just below max", phash.MaxVariance - 0.0001, true},
+			{"at max", phash.MaxVariance, false},
+			{"mistyped as one", 1, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base
+				cfg.EgressRestricted = true
+				cfg.BlankVarianceThreshold = tc.threshold
+				err := validateRenderProbeConfig(&cfg, true, "media_index")
+				if tc.valid {
+					assert.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "blank_variance_threshold")
+			})
+		}
+	})
+
+	// A viewport that passes config but collides with the renderer's capture caps
+	// records stalled on every probe and gates healthy media after the debounce — a
+	// typo must be a startup error, not a corpus-wide false gate.
+	t.Run("viewport bounds are validated against the capture caps", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			w, h    int
+			valid   bool
+			wantErr string
+		}{
+			{"default square", 1024, 1024, true, ""},
+			{"zero means renderer default", 0, 0, true, ""},
+			{"typo: 5000x5000 exceeds the pixel budget", 5000, 5000, false, "must not exceed"},
+			{"oversized single edge", 8192, 100, false, "must be within"},
+			{"sub-minimum edge", 32, 1024, false, "must be within"},
+			{"widescreen inside the budget", 2048, 1024, true, ""},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base
+				cfg.EgressRestricted = true
+				cfg.ViewportWidth, cfg.ViewportHeight = tc.w, tc.h
+				err := validateRenderProbeConfig(&cfg, true, "media_index")
+				if tc.valid {
+					assert.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+			})
+		}
+	})
+
+	// A timeout that cannot contain the settle window plus fixed render costs makes
+	// every probe stall and gate healthy media at corpus scale; the self-check cannot
+	// catch it (fixtures settle short), so this must be a startup error. Validated on
+	// effective values: either knob unset resolves to the renderer default.
+	t.Run("timeout must reserve headroom beyond the effective settle", func(t *testing.T) {
+		cases := []struct {
+			name                string
+			timeoutMs, settleMs int
+			valid               bool
+		}{
+			{"defaults are consistent", 0, 0, true},
+			{"explicit production pairing", 45000, 15000, true},
+			{"timeout below the DEFAULT settle (the reported shape)", 10000, 0, false},
+			{"timeout below an explicit settle", 10000, 15000, false},
+			{"headroom squeezed under the floor", 18000, 15000, false},
+			{"exactly at the floor", 20000, 15000, true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base
+				cfg.EgressRestricted = true
+				cfg.TimeoutMs, cfg.SettleMs = tc.timeoutMs, tc.settleMs
+				err := validateRenderProbeConfig(&cfg, true, "media_index")
+				if tc.valid {
+					assert.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "timeout_ms")
+			})
+		}
+	})
+
+	t.Run("disabled probe is inert", func(t *testing.T) {
+		cfg := RenderProbeConfig{Enabled: false}
+		assert.NoError(t, validateRenderProbeConfig(&cfg, false, ""), "a disabled probe's settings are not validated")
 	})
 }
 

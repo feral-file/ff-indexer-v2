@@ -212,7 +212,7 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 | media_url | TEXT | URL being checked for health |
 | media_url_hash | TEXT | MD5 hash of media_url for efficient indexing |
 | media_source | TEXT | Source of URL (metadata_image, metadata_animation, enrichment_image, enrichment_animation) |
-| health_status | media_health_status | Health status (unknown, healthy, broken, checking) |
+| health_status | media_health_status | Health status (unknown, healthy, broken) |
 | last_checked_at | TIMESTAMPTZ | Last health check timestamp |
 | last_error | TEXT | Error message from last failed check (NULL if healthy) |
 | failure_reason | TEXT | Machine-readable broken cause: http_status, dns, ssrf, type_mismatch, container_invalid, directory_listing, known_error_page, zero_length, truncated; render_% prefix reserved for the L1 render probe. NULL when healthy/unknown |
@@ -240,6 +240,38 @@ Tracks health check status for media URLs associated with tokens. The sweeper se
 - Animation URLs have precedence over image URLs for filtering
 
 **Note**: The `media_url_hash` column uses MD5 hashing to enable efficient URL lookups without index size limitations. This is particularly important for long URLs that would otherwise exceed PostgreSQL's B-tree index size limits.
+
+### media_render_probes
+
+L1 render-probe observations, one row per media URL (keyed like `token_media_health` updates: render outcome is a property of the URL). Records what headless chromium painted and the render verdict. Viewability gating flows through `token_media_health.failure_reason` (`render_%` values); `baseline_phash` is capture-only — successive-capture drift comparison is deferred (feral-file#3485).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| media_url_hash | TEXT | Primary key; MD5 hash of media_url |
+| media_url | TEXT | URL that was rendered |
+| phash | BIGINT | 64-bit DCT perceptual hash bit pattern of the latest capture (int64; NULL when capture failed) |
+| baseline_phash | BIGINT | pHash of the first successful capture, never overwritten |
+| engine_version | TEXT | Browser identity (User-Agent) at capture time |
+| viewport | TEXT | Capture viewport as "WxH" |
+| verdict | render_probe_verdict | rendered_ok, blank, stalled, known_bad_fingerprint |
+| consecutive_failures | INT | Consecutive blank/stalled probes (debounce state; fingerprint gates immediately) |
+| health_gated | BOOLEAN | Durable marker that this probe holds a render_% gate on the URL's health rows; cleared only after a successful release |
+| last_error | TEXT | Render failure detail (NULL on rendered_ok) |
+| captured_at | TIMESTAMPTZ | Last successful screenshot time (NULL when never captured) |
+| next_check_at | TIMESTAMPTZ | Sweeper work-queue cursor |
+| created_at | TIMESTAMPTZ | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | Last update timestamp |
+
+**Indexes**:
+- `idx_media_render_probes_due` on (next_check_at) — the render probe's work queue
+
+**Purpose**:
+- Catches media that passes byte-level (L0) validation but paints nothing in a browser: gateway error pages served as valid HTML, blank canvases, pages that never finish loading
+- Holds the URL-level record of an active gate (`health_gated`), so a token that newly references an already-gated URL inherits it instead of entering the sweep as `unknown`
+- Debounces transient failures: `blank`/`stalled` gate only after `render_probe.failure_gate_threshold` consecutive probes, while a `known_bad_fingerprint` match gates immediately
+- Captures `baseline_phash` for future drift detection; nothing compares against it yet (feral-file#3485)
+
+**Note**: Rows are keyed by URL, not by token, because a render verdict is a property of the URL — one probe serves every token referencing it. Probe rows outlive the `token_media_health` rows that reference the same URL: those are deleted when the last token moves away, while the verdict (and any gate it holds) must survive.
 
 ### token_moderation_verdicts
 
@@ -622,14 +654,25 @@ Audit log of webhook delivery attempts with status tracking and response details
 
 ### media_health_status
 - `unknown` - Not yet checked
-- `checking` - Check in progress
-- `healthy` - URL is accessible
-- `broken` - URL is not accessible
+- `healthy` - URL is accessible and its bytes passed content validation
+- `broken` - URL is not accessible, or its content failed validation (see `token_media_health.failure_reason`)
+
+### render_probe_verdict
+Added in migration 023. What headless chromium painted for a media URL; see [media_viewability.md](media_viewability.md).
+- `rendered_ok` - A non-degenerate frame was captured
+- `blank` - The captured frame is near-uniform (no visible output); gates only after `render_probe.failure_gate_threshold` consecutive probes
+- `stalled` - The page failed to load or screenshot within the timeout; same debounce as `blank`
+- `known_bad_fingerprint` - The frame matched a configured known-bad pHash (gateway error page, directory listing, placeholder); gates immediately
 
 ### moderation_source
 - `opensea` - OpenSea moderation verdict (NFT API `is_disabled`)
 - `objkt` - objkt moderation verdict (token `flag` = `banned` or `removed` — both takedown states count as spam; see [token_moderation.md](token_moderation.md))
 - `feralfile` - Feral File's own moderation system (reserved; wins outright over vendor verdicts in both directions)
+
+### moderation_status
+Added in migration 021. One source's verdict in `token_moderation_verdicts.verdict`, and the materialized combination in `tokens.moderation_status`. Absence of a verdict row means "no opinion", which is deliberately distinct from a `none` verdict.
+- `none` - Not moderated
+- `spam` - Moderated as spam; excluded from read paths unless `include_moderated` is set
 
 ### vendor_type
 - `artblocks` - Art Blocks
@@ -715,7 +758,9 @@ All tables with `updated_at` columns have triggers that automatically update the
 - `update_webhook_deliveries_updated_at`
 - `update_address_indexing_jobs_updated_at`
 - `update_token_media_health_updated_at`
+- `update_token_ownership_provenance_updated_at`
 - `update_token_moderation_verdicts_updated_at` — added in migration 021
+- `update_media_render_probes_updated_at` — added in migration 023
 - `update_jobs_updated_at`
 - `update_releases_updated_at` — added in migration 018 (`releases` table only; `release_members` has no `updated_at` by design)
 

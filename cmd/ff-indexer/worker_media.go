@@ -8,25 +8,49 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/chromedp/chromedp"
 	"gorm.io/gorm"
 
 	"github.com/feral-file/ff-indexer-v2/internal/adapter"
 	"github.com/feral-file/ff-indexer-v2/internal/config"
 	"github.com/feral-file/ff-indexer-v2/internal/downloader"
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
+	"github.com/feral-file/ff-indexer-v2/internal/media/probe"
 	"github.com/feral-file/ff-indexer-v2/internal/media/processor"
 	"github.com/feral-file/ff-indexer-v2/internal/media/rasterizer"
 	"github.com/feral-file/ff-indexer-v2/internal/media/transformer"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/cloudflare"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/jobs"
+	"github.com/feral-file/ff-indexer-v2/internal/security/ssrf"
 	"github.com/feral-file/ff-indexer-v2/internal/store"
 	"github.com/feral-file/ff-indexer-v2/internal/uri"
 	"github.com/feral-file/ff-indexer-v2/internal/workflows"
 )
 
+// probeAllocatorOptions picks sandboxed or unsandboxed chromium flags for the render
+// probe, warning loudly when the sandbox is off since that is a real loss of isolation
+// for untrusted artwork.
+func probeAllocatorOptions(noSandbox bool) []chromedp.ExecAllocatorOption {
+	if noSandbox {
+		logger.Warn("Render probe chromium sandbox is DISABLED (render_probe.no_sandbox=true); untrusted artwork runs with reduced isolation")
+		return probe.AllocatorOptionsNoSandbox()
+	}
+	return probe.AllocatorOptions()
+}
+
+// ssrfValidatorOrNil converts a possibly-nil *ssrf.Validator into an interface value
+// that is untyped-nil when protection is disabled, so downstream `!= nil` checks behave
+// (a typed-nil interface would pass the check and panic on first use).
+func ssrfValidatorOrNil(v *ssrf.Validator) adapter.SSRFValidator {
+	if v == nil {
+		return nil
+	}
+	return v
+}
+
 // registerWorkerMedia wires the media-indexing jobs.Worker (worker-media / media_index queue).
 func registerWorkerMedia(
-	_ context.Context,
+	ctx context.Context,
 	wcfg *config.WorkerMediaConfig,
 	db *gorm.DB,
 ) (run func(context.Context) error, cleanup func(context.Context) error, err error) {
@@ -108,13 +132,88 @@ func registerWorkerMedia(
 	mediaExecutor := workflows.NewMediaExecutor(dataStore, mediaProcessor)
 	jobQueue := jobs.NewJobQueue(dataStore, jsonAdapter)
 
-	mediaWf := workflows.NewMediaWorkflows(mediaExecutor, jobQueue, workflows.MediaWorkflowsConfig{
+	// L1 render probe: optional, chromium-backed. A nil executor makes RenderMediaProbe
+	// jobs no-ops so a disable does not strand already-enqueued jobs.
+	var renderProbeExecutor workflows.RenderProbeExecutor
+	var probeRenderer probe.Renderer
+	if wcfg.RenderProbe.Enabled {
+		fingerprints := make([]probe.Fingerprint, 0, len(wcfg.RenderProbe.KnownBadFingerprints))
+		for _, fp := range wcfg.RenderProbe.KnownBadFingerprints {
+			parsed, err := probe.ParseFingerprint(fp.Phash, fp.MaxDistance, fp.Label)
+			if err != nil {
+				return nil, nil, fmt.Errorf("render_probe.known_bad_fingerprints: %w", err)
+			}
+			fingerprints = append(fingerprints, parsed)
+		}
+
+		probeRenderer = probe.NewRenderer(chromedpClient, &probe.RendererConfig{
+			ViewportWidth:  wcfg.RenderProbe.ViewportWidth,
+			ViewportHeight: wcfg.RenderProbe.ViewportHeight,
+			TimeoutMs:      wcfg.RenderProbe.TimeoutMs,
+			SettleMs:       wcfg.RenderProbe.SettleMs,
+			// The probe runs untrusted remote pages, so it uses its own launch flags
+			// (no disable-web-security) rather than the SVG rasterizer's, and validates
+			// every browser-initiated request against the SSRF policy.
+			AllocatorOptions: probeAllocatorOptions(wcfg.RenderProbe.NoSandbox),
+			SSRFValidator:    ssrfValidatorOrNil(ssrfValidator),
+		})
+
+		// Startup self-verification: the probe may not activate on an unproven runtime.
+		// egress_restricted is an operator attestation; the metadata endpoint is the one
+		// destination whose reachability falsifies it outright, so it is cross-checked
+		// here UNCONDITIONALLY — the attestation is required to enable the probe
+		// regardless of application-level SSRF settings, and with ssrf_protection
+		// disabled the renderer runs with a nil validator (no request interception at
+		// all), which makes the network-level restriction the ONLY control and this
+		// check more critical, not less. An earlier revision skipped it in that case;
+		// that had the logic exactly backwards. The render self-check then proves the
+		// deployed image's capture path, software WebGL backend, and blank detection
+		// against built-in known-good/known-bad fixtures. Either failing fails worker
+		// startup: a runtime that misjudges the fixtures would not error in production —
+		// it would silently misclassify artworks and gate healthy media after the
+		// debounce.
+		if err := probe.VerifyNoMetadataEgress(ctx); err != nil {
+			return nil, nil, err
+		}
+		selfCheckCtx, cancelSelfCheck := context.WithTimeout(ctx, 2*time.Minute)
+		err := probe.SelfCheck(selfCheckCtx, probeRenderer, wcfg.RenderProbe.BlankVarianceThreshold)
+		cancelSelfCheck()
+		if err != nil {
+			return nil, nil, err
+		}
+		logger.Info("Render probe self-check passed: capture path, WebGL backend, and blank detection verified in this runtime")
+
+		// ssrfValidator is nil when SSRF protection is disabled — the executor treats
+		// nil as "no policy" (chromium bypasses the Go HTTP client, so this is the only
+		// SSRF check on the render path).
+		renderProbeExecutor = workflows.NewRenderProbeExecutor(
+			dataStore,
+			probeRenderer,
+			ssrfValidatorOrNil(ssrfValidator),
+			jobQueue,
+			wcfg.Jobs.TokenQueue,
+			adapter.NewClock(),
+			workflows.RenderProbeExecutorConfig{
+				BlankVarianceThreshold: wcfg.RenderProbe.BlankVarianceThreshold,
+				FailureGateThreshold:   wcfg.RenderProbe.FailureGateThreshold,
+				RecheckInterval:        wcfg.RenderProbe.RecheckInterval,
+				RetryInterval:          wcfg.RenderProbe.RetryInterval,
+				BrokenRecheckInterval:  wcfg.RenderProbe.BrokenRecheckInterval,
+				Enforce:                wcfg.RenderProbe.Enforce,
+				ImageSettleMs:          wcfg.RenderProbe.ImageSettleMs,
+				Fingerprints:           fingerprints,
+			},
+		)
+	}
+
+	mediaWf := workflows.NewMediaWorkflows(mediaExecutor, renderProbeExecutor, jobQueue, workflows.MediaWorkflowsConfig{
 		MediaTaskQueue: wcfg.Jobs.MediaQueue,
 	})
 
 	reg := jobs.NewRegistry(jsonAdapter)
 	reg.Register("IndexMediaWorkflow", mediaWf.IndexMediaWorkflow)
 	reg.Register("IndexMultipleMediaWorkflow", mediaWf.IndexMultipleMediaWorkflow)
+	reg.Register("RenderMediaProbe", mediaWf.RenderMediaProbe)
 
 	mw := wcfg.Jobs.MediaWorker
 	jWorker := jobs.NewWorker(dataStore, reg, jobs.WorkerConfig{
@@ -133,10 +232,14 @@ func registerWorkerMedia(
 
 	cleanup = func(ctx context.Context) error {
 		_ = ctx
-		return errors.Join(
+		errs := []error{
 			imageTransformer.Close(),
 			browserRasterizer.Close(),
-		)
+		}
+		if probeRenderer != nil {
+			errs = append(errs, probeRenderer.Close())
+		}
+		return errors.Join(errs...)
 	}
 
 	return run, cleanup, nil

@@ -117,3 +117,45 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: feral-file/ff-indexer-v2
           flags: ff-indexer-v2
+
+  chromium-smoke:
+    # Real-browser verification of the render probe: the smoke suite (capture, SVG,
+    # WebGL-through-SwiftShader, startup self-check) and the egress-vector measurement
+    # both run against the Google Chrome preinstalled on GitHub's ubuntu runners. This
+    # closes the "browser behavior is unverified by CI" gap for every PR; the runner is
+    # still not the deployment image, so the target-image preflight in
+    # docs/media_viewability.md remains the per-environment gate.
+    name: Render Probe (Chromium)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: chromium-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || inputs.branch }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: true
+          cache-dependency-path: ./go.sum
+
+      # The smoke binary links the adapter package's CGO dependencies (libvips), same
+      # as the main test job.
+      - name: Setup libvips
+        uses: ./.github/actions/setup-libvips
+
+      # Ubuntu 24.04 runners restrict unprivileged user namespaces via AppArmor, which
+      # kills chromium's sandbox ("No usable sandbox!"). Lift the restriction rather
+      # than pass --no-sandbox: production runs the probe SANDBOXED, so the suite must
+      # verify the sandboxed configuration, not a weaker one.
+      - name: Allow unprivileged user namespaces (chromium sandbox)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Run chromium smoke and egress vector suites
+        run: go test -tags="cgo chromium" -count=1 -timeout 10m -v ./internal/media/probe/

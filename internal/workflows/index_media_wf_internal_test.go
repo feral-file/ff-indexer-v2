@@ -47,6 +47,7 @@ func TestIndexMediaWorkflow_PartialGETDeadlineWarnsWithoutSentryEvent(t *testing
 	expectedErr := fmt.Errorf("failed to process media file: failed to get content-type via partial GET: %w", context.DeadlineExceeded)
 	mw := NewMediaWorkflows(
 		&stubMediaExecutor{err: expectedErr},
+		nil,
 		jobs.NopQueue{},
 		MediaWorkflowsConfig{MediaTaskQueue: "media_index"},
 	)
@@ -65,6 +66,7 @@ func TestIndexMediaWorkflow_UnexpectedFailureStillSendsSentryEvent(t *testing.T)
 	expectedErr := errors.New("database unavailable")
 	mw := NewMediaWorkflows(
 		&stubMediaExecutor{err: expectedErr},
+		nil,
 		jobs.NopQueue{},
 		MediaWorkflowsConfig{MediaTaskQueue: "media_index"},
 	)
