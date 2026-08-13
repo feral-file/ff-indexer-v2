@@ -15,6 +15,7 @@ CREATE TYPE media_health_status AS ENUM ('unknown', 'healthy', 'broken');
 CREATE TYPE job_status AS ENUM ('pending', 'running', 'succeeded', 'failed', 'canceled');
 CREATE TYPE moderation_source AS ENUM ('opensea', 'objkt', 'feralfile');  -- added in migration 021
 CREATE TYPE moderation_status AS ENUM ('none', 'spam');  -- added in migration 021
+CREATE TYPE render_probe_verdict AS ENUM ('rendered_ok', 'blank', 'stalled', 'known_bad_fingerprint');  -- added in migration 023
 
 -- ============================================================================
 -- CORE TABLES
@@ -192,6 +193,27 @@ CREATE TABLE token_moderation_verdicts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (token_id, source)
+);
+
+-- Media Render Probes table - L1 render-probe observations, one row per media URL (added in migration 023)
+-- Records what headless chromium painted for the URL (phash + engine_version + viewport) and the
+-- render verdict. Gating flows through token_media_health.failure_reason ('render_%' values);
+-- baseline_phash is capture-only — successive-capture drift comparison is deferred (feral-file#3485).
+CREATE TABLE media_render_probes (
+    media_url_hash TEXT PRIMARY KEY,  -- MD5 of media_url, same keying as token_media_health
+    media_url TEXT NOT NULL,
+    phash BIGINT,                     -- 64-bit DCT pHash bit pattern of latest capture (int64; NULL when capture failed)
+    baseline_phash BIGINT,            -- first successful capture, never overwritten
+    engine_version TEXT,              -- browser identity at capture time (User-Agent)
+    viewport TEXT,                    -- capture viewport as "WxH"
+    verdict render_probe_verdict NOT NULL,
+    consecutive_failures INT NOT NULL DEFAULT 0,  -- blank/stalled debounce counter (fingerprint gates immediately)
+    health_gated BOOLEAN NOT NULL DEFAULT false,  -- durable marker that this probe gated token_media_health (added in migration 023)
+    last_error TEXT,                  -- render failure detail (NULL on rendered_ok)
+    captured_at TIMESTAMPTZ,          -- last successful screenshot time (NULL when never captured)
+    next_check_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Provenance Events table - Optional audit trail of blockchain events
@@ -440,6 +462,9 @@ CREATE INDEX idx_token_moderation_verdicts_due
     ON token_moderation_verdicts (source, next_check_at)
     WHERE next_check_at IS NOT NULL;
 
+-- Media render probes work queue (added in migration 023)
+CREATE INDEX idx_media_render_probes_due ON media_render_probes (next_check_at);
+
 -- Token Events table indexes
 -- Primary index for owner-scoped sync queries (uses created_at for consistent pagination)
 CREATE INDEX idx_token_events_owner_created ON token_events(owner_address, created_at ASC, id ASC) WHERE owner_address IS NOT NULL;
@@ -567,6 +592,11 @@ CREATE TRIGGER update_token_moderation_verdicts_updated_at
     BEFORE UPDATE ON token_moderation_verdicts
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Apply updated_at trigger to media_render_probes (added in migration 023)
+CREATE TRIGGER update_media_render_probes_updated_at
+    BEFORE UPDATE ON media_render_probes
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Apply updated_at trigger to provenance_events
 CREATE TRIGGER update_provenance_events_updated_at
     BEFORE UPDATE ON provenance_events
@@ -641,6 +671,7 @@ COMMENT ON COLUMN releases.total_mints IS 'Declared max edition size from vendor
 COMMENT ON COLUMN releases.vendor_release_slug IS 'URL slug for the release on the vendor website; nullable (backfilled via enrichment). For objkt, equals vendor_release_id (KT1 address). Unique per vendor when not null.';
 COMMENT ON TABLE media_assets IS 'Reference mapping between original URLs and provider-hosted URLs with variants. Acts as a generic media reference tracker for any uploaded media across different storage providers';
 COMMENT ON TABLE token_media_health IS 'Tracks health check status for media URLs associated with tokens. Includes source information to distinguish between metadata/enrichment and image/animation URLs. Automatically synchronized when token_metadata or enrichment_sources are updated.';
+COMMENT ON TABLE media_render_probes IS 'L1 render-probe observations, one row per media URL. Records what headless chromium painted (phash + engine_version + viewport) and the render verdict. Gating flows through token_media_health.failure_reason (render_%); baseline_phash is capture-only — drift comparison is deferred (feral-file#3485).';
 COMMENT ON TABLE token_moderation_verdicts IS 'Source of truth for token moderation: one row per (token, source). Rows exist only after a source has actually published a verdict — absence means "no opinion", which is deliberately distinct from a "none" verdict. tokens.moderation_status is the materialized combination.';
 COMMENT ON COLUMN tokens.moderation_status IS 'Materialized combined moderation verdict, recomputed from token_moderation_verdicts on every verdict write: a feralfile row wins outright, otherwise the most severe vendor verdict. An enum so new verdict kinds need no schema change; only none/spam exist today. Read paths exclude moderated tokens unless include_moderated is requested. Tag-not-drop: the row stays fully indexed for reversibility.';
 COMMENT ON TABLE provenance_events IS 'Optional audit trail of blockchain events';

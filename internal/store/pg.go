@@ -1032,6 +1032,14 @@ func (s *pgStore) UpsertTokenMetadata(ctx context.Context, input CreateTokenMeta
 			oldImageURL = oldMetadata.ImageURL
 			oldAnimationURL = oldMetadata.AnimationURL
 		}
+		// Pre-acquire both URLs' gate locks in sorted order: role-order acquisition
+		// deadlocks against a concurrent update whose image/animation pair is reversed.
+		if err := lockChangedURLGates(tx,
+			[2]*string{oldImageURL, input.ImageURL},
+			[2]*string{oldAnimationURL, input.AnimationURL}); err != nil {
+			return err
+		}
+
 		// Handle image URL changes
 		if err := s.syncSingleMediaURL(tx, input.TokenID, oldImageURL, input.ImageURL, schema.MediaHealthSourceMetadataImage); err != nil {
 			return fmt.Errorf("failed to sync image URL: %w", err)
@@ -1156,6 +1164,13 @@ func (s *pgStore) UpsertEnrichmentSource(ctx context.Context, input CreateEnrich
 		if oldEnrichmentSource != nil {
 			oldImageURL = oldEnrichmentSource.ImageURL
 			oldAnimationURL = oldEnrichmentSource.AnimationURL
+		}
+
+		// Same deadlock guard as the metadata path: sorted pre-acquisition of both gates.
+		if err := lockChangedURLGates(tx,
+			[2]*string{oldImageURL, input.ImageURL},
+			[2]*string{oldAnimationURL, input.AnimationURL}); err != nil {
+			return err
 		}
 
 		// Handle image URL changes
@@ -2748,6 +2763,56 @@ func (s *pgStore) GetTokenCountsByAddress(ctx context.Context, address string, c
 
 // syncSingleMediaURL syncs a single media URL health record
 // Only performs DB operations if the URL has changed
+// orderedChangedURLGateHashes returns the deduplicated URL-gate hashes that a following
+// sequence of syncSingleMediaURL calls will lock, in sorted order. Each change pair is
+// {oldURL, newURL}; only pairs that will actually insert a health row (new non-empty and
+// different from old) contribute a hash — matching syncSingleMediaURL's own skip logic,
+// so unchanged URLs add no gate contention.
+func orderedChangedURLGateHashes(changes ...[2]*string) []string {
+	deref := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	seen := make(map[string]bool, len(changes))
+	hashes := make([]string, 0, len(changes))
+	for _, c := range changes {
+		oldStr, newStr := deref(c[0]), deref(c[1])
+		if newStr == "" || newStr == oldStr {
+			continue
+		}
+		h := types.MD5Hash(newStr)
+		if !seen[h] {
+			seen[h] = true
+			hashes = append(hashes, h)
+		}
+	}
+	sort.Strings(hashes)
+	return hashes
+}
+
+// lockChangedURLGates pre-acquires the URL-gate advisory locks for a metadata or
+// enrichment update's changed URLs, in one deterministic global order.
+//
+// Reason: syncSingleMediaURL locks its own URL at insert time, so a transaction syncing
+// image then animation acquires two gate locks in role order. Two concurrent updates
+// whose pairs are reversed — one token's image URL is the other's animation URL — then
+// each hold their first lock while waiting for the other's, and postgres aborts one
+// transaction as a deadlock, rolling back an otherwise valid update. Sorting the hashes
+// gives every transaction the same acquisition order, which cannot cycle.
+// syncSingleMediaURL keeps its own lock call for correctness in isolation:
+// pg_advisory_xact_lock is reentrant within a transaction, so the re-acquisition is a
+// no-op.
+func lockChangedURLGates(tx *gorm.DB, changes ...[2]*string) error {
+	for _, h := range orderedChangedURLGateHashes(changes...) {
+		if err := lockURLGate(tx, h); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL *string, source schema.MediaHealthSource) error {
 	// Check if URL changed
 	oldURLStr := ""
@@ -2775,14 +2840,40 @@ func (s *pgStore) syncSingleMediaURL(tx *gorm.DB, tokenID uint64, oldURL, newURL
 
 	// URL added or changed - insert new record
 	if newURLStr != "" {
+		newURLHash := types.MD5Hash(newURLStr)
 		health := &schema.TokenMediaHealth{
 			TokenID:       tokenID,
 			MediaURL:      newURLStr,
-			MediaURLHash:  types.MD5Hash(newURLStr),
+			MediaURLHash:  newURLHash,
 			MediaSource:   source,
 			HealthStatus:  schema.MediaHealthStatusUnknown,
 			LastCheckedAt: time.Now(),
 		}
+
+		// Inherit an active URL-level render gate. A render verdict is a property of the
+		// URL, not of one token: without this, a token that newly references a gated URL
+		// enters the sweep as `unknown` with a NULL failure_reason, so the next
+		// byte-level sweep marks it healthy and serves the new token viewable despite a
+		// browser-confirmed failure.
+		//
+		// The gate is read from media_render_probes rather than from a sibling health
+		// row, because sibling rows are transient: if every token that referenced the URL
+		// has since moved away, their rows are deleted while the probe row — and its
+		// verdict — remain. media_render_probes.health_gated is the URL-level record of
+		// "L1 currently holds a gate here", and only the render probe clears it.
+		if err := lockURLGate(tx, newURLHash); err != nil {
+			return err
+		}
+		gate, err := activeRenderGate(tx, newURLHash)
+		if err != nil {
+			return err
+		}
+		if gate != nil {
+			health.HealthStatus = schema.MediaHealthStatusBroken
+			health.FailureReason = gate.Reason
+			health.LastError = gate.LastError
+		}
+
 		if err := tx.Create(health).Error; err != nil {
 			return fmt.Errorf("failed to create health record: %w", err)
 		}
@@ -2797,12 +2888,22 @@ func (s *pgStore) GetURLsForChecking(ctx context.Context, recheckAfter time.Dura
 	cutoffTime := time.Now().Add(-recheckAfter)
 
 	var urls []string
+	// Rows gated by the L1 render probe are excluded via BOTH gate signals. The
+	// failure_reason test alone leaves a hole: a gate held over an L0-owned broken row
+	// (say failure_reason=http_status) keeps L0's reason, stays eligible here, and once
+	// the bytes recover, the gate predicate in UpdateTokenMediaHealthByURL refuses the
+	// healthy write — including last_checked_at — so the same stale row is reselected
+	// every sweep, burning a slot of the bounded batch until the gate is released.
+	// While a gate is held, L1 owns the URL outright: L0 pauses, and release returns
+	// rows to unknown (or leaves L0-owned broken rows untouched), rejoining L0 then.
 	err := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
 		Select("media_url").
 		Where("last_checked_at < ? OR health_status = ?",
 			cutoffTime,
 			schema.MediaHealthStatusUnknown).
+		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
+		Where("NOT EXISTS (SELECT 1 FROM media_render_probes p WHERE p.media_url_hash = token_media_health.media_url_hash AND p.health_gated = true)").
 		Group("media_url").
 		Order("MIN(last_checked_at) ASC").
 		Limit(limit).
@@ -2884,18 +2985,138 @@ func (s *pgStore) GetTokenMediaHealthByTokenIDs(ctx context.Context, tokenIDs []
 func (s *pgStore) UpdateTokenMediaHealthByURL(ctx context.Context, url string, update MediaHealthUpdate) error {
 	urlHash := types.MD5Hash(url)
 	updates := map[string]interface{}{
-		"health_status":         update.Status,
-		"last_checked_at":       time.Now(),
-		"last_error":            nullableString(update.LastError),
-		"failure_reason":        nullableString(update.FailureReason),
-		"observed_content_type": nullableString(update.ObservedContentType),
-		"sniffed_content_type":  nullableString(update.SniffedContentType),
+		"health_status":   update.Status,
+		"last_checked_at": time.Now(),
+		"last_error":      nullableString(update.LastError),
+		"failure_reason":  nullableString(update.FailureReason),
 	}
 
-	return s.db.WithContext(ctx).
+	q := s.db.WithContext(ctx).
 		Model(&schema.TokenMediaHealth{}).
-		Where("media_url_hash = ?", urlHash).
+		Where("media_url_hash = ?", urlHash)
+
+	if update.RenderProbeWrite {
+		// The render probe owns render_% rows and never observed the bytes, so it
+		// leaves L0's content-type classification intact (the render-due query depends
+		// on it surviving a gate).
+		//
+		// L1 may only write rows it already owns or that L0 has not judged adversely:
+		// a probe job enqueued while a URL was healthy can land after L0 has marked it
+		// broken for an unrelated reason (404, wrong content type). Without this guard
+		// the render verdict would overwrite that reason with render_%, misclassifying
+		// an ordinary transport failure and — because L0 skips render_% rows — taking
+		// away its normal recovery path until the much longer broken-recheck interval.
+		//
+		// `unknown` rows are included: a token indexed between the probe job being
+		// scheduled and its gate write creates one, and leaving it out would let the
+		// next L0 sweep mark that row healthy and serve the new token viewable despite a
+		// browser-confirmed failure.
+		return q.
+			Where("health_status IN ? OR failure_reason LIKE 'render_%'",
+				[]schema.MediaHealthStatus{schema.MediaHealthStatusHealthy, schema.MediaHealthStatusUnknown}).
+			Updates(updates).Error
+	}
+
+	// L0 recovery must not outrun an active gate. A render job queued while the URL was
+	// healthy can complete after L0 marked the row broken for an ordinary reason; L1 then
+	// records health_gated=true but correctly declines to overwrite a row L0 owns. A later
+	// successful L0 check would otherwise mark that row healthy on the failure_reason test
+	// alone — making a browser-confirmed bad render viewable. The NOT EXISTS keeps the
+	// write from applying while a gate is held; once the probe releases the gate, ordinary
+	// L0 recovery resumes. Expressed in the same statement so no window opens between
+	// checking and writing.
+	if update.Status == schema.MediaHealthStatusHealthy {
+		q = q.Where(
+			"NOT EXISTS (SELECT 1 FROM media_render_probes p WHERE p.media_url_hash = ? AND p.health_gated = true)",
+			urlHash)
+	}
+
+	updates["observed_content_type"] = nullableString(update.ObservedContentType)
+	updates["sniffed_content_type"] = nullableString(update.SniffedContentType)
+
+	// L1 owns render_% rows: only a successful render probe may clear a render gate.
+	// Enforced here rather than at each call site so every present and future L0 writer
+	// — sweeper, metadata reindex, shared-URL re-checks — inherits the rule.
+	return q.
+		Where("failure_reason IS NULL OR failure_reason NOT LIKE 'render_%'").
 		Updates(updates).Error
+}
+
+// renderGate describes an active URL-level render gate.
+type renderGate struct {
+	Reason    *string
+	LastError *string
+}
+
+// lockURLGate takes a transaction-scoped advisory lock keyed by a URL hash, serializing
+// every gate transition and health-row creation for that URL.
+//
+// Reason: row locks are not enough because the contended state may not exist yet. A token
+// being indexed reads "no probe row, so no gate" and inserts an `unknown` health row;
+// concurrently the probe creates the probe row and gates the URL, but its health update
+// cannot see the not-yet-committed insert. The result is an ungated row for a URL L1 has
+// confirmed bad, which the next L0 sweep promotes to healthy. An advisory lock has no
+// such existence requirement, so both sides serialize whether or not any row is there.
+func lockURLGate(tx *gorm.DB, urlHash string) error {
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", urlHash).Error; err != nil {
+		return fmt.Errorf("failed to lock URL gate: %w", err)
+	}
+	return nil
+}
+
+// activeRenderGate reports the render gate currently held on a URL, or nil when none is.
+//
+// media_render_probes.health_gated is the authority for *whether* a gate is held: token
+// health rows are transient and are deleted when the last token stops referencing a URL,
+// while the probe row survives. The reason is taken from a sibling health row when one
+// exists — after a failed release the probe's verdict can be rendered_ok while the gate
+// is still held, so deriving from the verdict alone would relabel the gate — and derived
+// from the verdict otherwise.
+//
+// Every writer that creates or moves health rows must consult this, or it will manufacture
+// healthy rows for a URL L1 has confirmed bad.
+func activeRenderGate(tx *gorm.DB, urlHash string) (*renderGate, error) {
+	var probeRow schema.MediaRenderProbe
+	// FOR UPDATE serializes against ReleaseRenderGate, which clears the marker and the
+	// gated health rows in one transaction. Without the lock a row inserted between
+	// those two writes would inherit a gate that the release has already passed over,
+	// leaving it broken with no probe that recognizes it as gated.
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("media_url_hash = ? AND health_gated = true", urlHash).First(&probeRow).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("failed to check for an existing render gate: %w", err)
+	}
+
+	gate := &renderGate{LastError: probeRow.LastError}
+
+	var sibling schema.TokenMediaHealth
+	sibErr := tx.Where("media_url_hash = ? AND failure_reason LIKE 'render_%'", urlHash).
+		First(&sibling).Error
+	switch {
+	case sibErr == nil:
+		gate.Reason = sibling.FailureReason
+	case errors.Is(sibErr, gorm.ErrRecordNotFound):
+		gate.Reason = renderFailureReasonFor(probeRow.Verdict)
+	default:
+		return nil, fmt.Errorf("failed to read an existing render gate reason: %w", sibErr)
+	}
+	return gate, nil
+}
+
+// renderFailureReasonFor maps a render verdict to the failure reason its gate carries,
+// so an inherited gate is labeled the same way the probe would have labeled it.
+func renderFailureReasonFor(verdict schema.RenderProbeVerdict) *string {
+	reason := schema.RenderFailureBlank
+	switch verdict {
+	case schema.RenderProbeVerdictKnownBadFingerprint:
+		reason = schema.RenderFailureKnownBad
+	case schema.RenderProbeVerdictStalled:
+		reason = schema.RenderFailureStalled
+	}
+	return &reason
 }
 
 // nullableString maps a *string to a value GORM writes as the string or SQL NULL.
@@ -2914,24 +3135,52 @@ func nullableString(s *string) interface{} {
 // would falsify their documented "not yet probed" meaning and starve render-probe class
 // selection until a much later sweep. The replaced URL's failure diagnostics are always
 // cleared: they describe a different URL's probe.
+//
+// Constraint: promotion never overrides an active render gate on the target URL. A
+// fallback gateway is only known to serve valid bytes; L1 may already have confirmed
+// that those bytes render blank or as a directory listing, and promoting onto it as
+// healthy would make the token viewable for a browser-confirmed bad render until the
+// next probe. The gate is read under lockURLGate so a concurrent gate/release
+// serializes against this promotion.
 func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string, observedContentType, sniffedContentType *string) error {
 	oldHash := types.MD5Hash(oldURL)
 	newHash := types.MD5Hash(newURL)
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Update token_media_health.
+		// 1. Update token_media_health. The observation columns carry the promoted URL's
+		// own probe results; the failure diagnostics (last_error/failure_reason) are
+		// cleared because they describe the *replaced* URL's probe.
+		//
+		// Unless the promotion target is itself render-gated. The fallback gateway is
+		// only known to serve bytes; L1 may already have confirmed it renders a
+		// directory listing or a blank frame. Promoting onto it as healthy would make
+		// the token viewable for a browser-confirmed bad render until the next probe.
+		health := map[string]interface{}{
+			"media_url":             newURL,
+			"media_url_hash":        newHash,
+			"health_status":         schema.MediaHealthStatusHealthy,
+			"last_checked_at":       time.Now(),
+			"last_error":            nil,
+			"failure_reason":        nil,
+			"observed_content_type": nullableString(observedContentType),
+			"sniffed_content_type":  nullableString(sniffedContentType),
+		}
+		if err := lockURLGate(tx, newHash); err != nil {
+			return err
+		}
+		gate, err := activeRenderGate(tx, newHash)
+		if err != nil {
+			return err
+		}
+		if gate != nil {
+			health["health_status"] = schema.MediaHealthStatusBroken
+			health["failure_reason"] = nullableString(gate.Reason)
+			health["last_error"] = nullableString(gate.LastError)
+		}
+
 		if err := tx.Model(&schema.TokenMediaHealth{}).
 			Where("media_url_hash = ?", oldHash).
-			Updates(map[string]interface{}{
-				"media_url":             newURL,
-				"media_url_hash":        newHash,
-				"health_status":         schema.MediaHealthStatusHealthy,
-				"last_checked_at":       time.Now(),
-				"last_error":            nil,
-				"failure_reason":        nil,
-				"observed_content_type": nullableString(observedContentType),
-				"sniffed_content_type":  nullableString(sniffedContentType),
-			}).Error; err != nil {
+			Updates(health).Error; err != nil {
 			return fmt.Errorf("failed to update token_media_health: %w", err)
 		}
 
@@ -2979,6 +3228,387 @@ func (s *pgStore) UpdateMediaURLAndPropagate(ctx context.Context, oldURL string,
 	})
 }
 
+// GetURLsDueForRenderProbe returns L0-healthy media URLs due for an L1 render probe.
+//
+// Coverage policy (agreed on feral-file#3485 follow-up): only URLs the byte-level probe
+// confirmed healthy, in the classes a browser render can actually judge — HTML documents,
+// animation-source URLs, and images. Video/audio are excluded (the container check is the
+// meaningful probe there; a screenshot of an MP4 proves nothing).
+//
+// Ordering is three priority tiers — urgent re-probes (active gates and pending
+// blank/stalled debounces), then never-probed coverage, then routine rechecks — and the
+// tier split is load-bearing, not cosmetic. The render corpus is far larger than render
+// capacity (~356k eligible URLs at rollout against a handful of probes per minute), so
+// whatever ranks last waits weeks. Ranking re-probes last starves heals (a gated URL's
+// only healer) and debounce second looks (accumulating first-failures that then gate in
+// one indistinguishable burst when seeding drains); ranking ALL re-probes first inverts
+// it — seeded URLs coming due at RecheckInterval would monopolize capacity and stall the
+// seeding tail forever. Postponing only rendered_ok re-confirmations is the cheapest
+// resolution of that tension. Within a tier: HTML/animation before images (byte checks
+// are weakest for HTML, so render coverage matters most there), then oldest capture
+// first.
+//
+// A LEFT JOIN discovers never-probed URLs; probed URLs re-enter when next_check_at is due
+// (served by idx_media_render_probes_due). The healthy-row scan is the same trade the
+// media health sweeper makes — batch cadence keeps it acceptable.
+//
+// Constraint: a URL holding an active gate must always be re-selectable, because a
+// successful render is the only thing that can release it while L0 is locked out of
+// healing it. Eligibility therefore accepts either gate signal — the durable
+// media_render_probes.health_gated marker or a render_% health reason. Requiring the
+// health reason alone would strand a gate acquired over an L0-owned broken row (the
+// health row keeps L0's reason, so nothing in it looks render-gated) with no legal healer.
+func (s *pgStore) GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error) {
+	var urls []string
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT h.media_url
+		FROM token_media_health h
+		LEFT JOIN media_render_probes p ON p.media_url_hash = h.media_url_hash
+		WHERE (
+		        -- Never probed: L0 must have confirmed the bytes, and the class must be
+		        -- one a browser render can judge.
+		        (p.media_url_hash IS NULL
+		         AND h.health_status = ?
+		         AND (h.sniffed_content_type = 'text/html'
+		              OR h.media_source IN (?, ?)
+		              OR h.sniffed_content_type LIKE 'image/%')
+		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'video/%'
+		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'audio/%')
+		        OR
+		        -- Already probed and currently render-gated. Either signal makes the URL
+		        -- due, because either one on its own is enough to lock L0 out of healing
+		        -- it: the durable marker blocks every non-L1 healthy write, and a
+		        -- render_% reason is excluded from the L0 sweep entirely. In particular a
+		        -- gate acquired while L0 owned the row (say failure_reason=http_status)
+		        -- leaves that row untouched, so a render_% test alone would never match
+		        -- it and the URL would have no legal healer at all. Class predicates are
+		        -- deliberately not applied: a gate must not become unrecoverable because
+		        -- the L0 classification changed.
+		        (p.media_url_hash IS NOT NULL
+		         AND p.next_check_at <= now()
+		         AND (p.health_gated = true
+		              OR (h.health_status = ? AND h.failure_reason LIKE 'render_%')))
+		        OR
+		        -- Already probed and not gated: a routine re-check still requires the URL
+		        -- to be L0-healthy and renderable today. Without this, a URL that later
+		        -- failed L0 would keep consuming render capacity.
+		        (p.media_url_hash IS NOT NULL
+		         AND p.next_check_at <= now()
+		         AND h.health_status = ?
+		         AND (h.sniffed_content_type = 'text/html'
+		              OR h.media_source IN (?, ?)
+		              OR h.sniffed_content_type LIKE 'image/%')
+		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'video/%'
+		         AND COALESCE(h.sniffed_content_type, '') NOT LIKE 'audio/%')
+		      )
+		  -- Data URIs carry their bytes inline and are validated by L0; chromium
+		  -- navigation for them is refused by the SSRF policy, so they would loop as
+		  -- stalled forever. Explicitly out of L1 coverage (see docs/media_viewability.md).
+		  AND h.media_url NOT LIKE 'data:%'
+		GROUP BY h.media_url, p.media_url_hash, p.captured_at, p.health_gated, p.verdict
+		-- Three priority tiers, guarding against two starvation modes at once (both bite
+		-- when the never-probed backlog is weeks long, as it is at initial rollout):
+		--   0. Urgent re-probes: active gates (the probe is a gated URL's ONLY healer, so
+		--      queueing heals behind a 350k-URL seeding pass hides recovered tokens for
+		--      weeks) and pending blank/stalled debounces (starving the second look makes
+		--      every accumulated first-failure gate in one burst when seeding drains,
+		--      instead of spread out at the designed retry cadence).
+		--   1. Never-probed coverage.
+		--   2. Routine rechecks of rendered_ok URLs. Ranked LAST deliberately: as seeded
+		--      URLs come due again (RecheckInterval), putting any re-probe above coverage
+		--      would let the seeded prefix monopolize capacity and stall the seeding tail
+		--      indefinitely. A stale re-confirmation of a good render is the cheapest
+		--      thing on this list to postpone.
+		ORDER BY CASE
+		           WHEN p.media_url_hash IS NOT NULL
+		                AND (p.health_gated = true OR p.verdict IN ('blank', 'stalled')) THEN 0
+		           WHEN p.media_url_hash IS NULL THEN 1
+		           ELSE 2
+		         END ASC,
+		         MIN(CASE WHEN h.sniffed_content_type = 'text/html'
+		                   OR h.media_source IN (?, ?) THEN 0 ELSE 1 END) ASC,
+		         p.captured_at ASC NULLS FIRST
+		LIMIT ?`,
+		schema.MediaHealthStatusHealthy,
+		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
+		schema.MediaHealthStatusBroken,
+		schema.MediaHealthStatusHealthy,
+		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
+		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
+		limit,
+	).Scan(&urls).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get URLs due for render probe: %w", err)
+	}
+	return urls, nil
+}
+
+// IsStaticImageRenderClass reports whether every render-eligible signal for the URL
+// classifies it as a raster image that is structurally incapable of animation.
+//
+// Reason: the render settle window exists for works that keep painting after load —
+// generative HTML, WebGL, scripted SVG, animated rasters. A truly static image paints on
+// decode, so holding a browser slot through the full settle for it is pure waste; the
+// caller shortens the settle when this returns true. The check is a WHITELIST
+// (JPEG/BMP), deliberately conservative in every ambiguous direction: GIF and WebP
+// animate, APNG is indistinguishable from PNG by sniffed type, AVIF/HEIC carry image
+// sequences, SVG scripts — all keep the full window, as does an animation media_source
+// on ANY row, a format not on the list, no rows at all, or a NULL sniff. An unknown
+// class must degrade to the longer settle, never the shorter one: the worst case of a
+// wrong true is a false blank verdict on real art; a wrong false only costs seconds.
+func (s *pgStore) IsStaticImageRenderClass(ctx context.Context, url string) (bool, error) {
+	urlHash := types.MD5Hash(url)
+	var staticImage bool
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(
+		         -- The inner COALESCE closes a SQL NULL hole: bool_and IGNORES NULL
+		         -- inputs, so a row with sniffed_content_type NULL (newly indexed, not
+		         -- yet content-probed) would simply not vote, and one image/png sibling
+		         -- would carry the aggregate to true — the exact "unknown must degrade
+		         -- to the longer settle" case this function promises to refuse. Forcing
+		         -- each row's vote to false when the predicate is NULL makes unknown
+		         -- rows veto the shortcut instead of abstaining.
+		         -- Whitelist, not blacklist: only formats that are STRUCTURALLY
+		         -- incapable of animation may shorten the settle. GIF and WebP animate;
+		         -- APNG is indistinguishable from PNG by sniffed type; AVIF/HEIC carry
+		         -- image sequences; SVG scripts. Any of those with a blank or delayed
+		         -- first stretch would be captured mid-nothing at the short settle and
+		         -- render-gated after the debounce. A format not on this list — known
+		         -- or future — defaults to the full window, which only costs seconds.
+		         bool_and(COALESCE(h.sniffed_content_type IN ('image/jpeg', 'image/bmp')
+		                           AND h.media_source NOT IN (?, ?), false)),
+		         false)
+		FROM token_media_health h
+		WHERE h.media_url_hash = ?`,
+		schema.MediaHealthSourceMetadataAnimation, schema.MediaHealthSourceEnrichmentAnimation,
+		urlHash,
+	).Scan(&staticImage).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to classify render class: %w", err)
+	}
+	return staticImage, nil
+}
+
+// AcquireRenderGate sets a URL's render gate atomically: the probe row's marker and the
+// gated health rows are written in one locked transaction. It returns the token IDs whose
+// viewability the caller must recompute.
+//
+// Reason: as separate writes, a token indexed between them lands as an ungated `unknown`
+// row that the gate's health update never sees, and the next L0 sweep promotes it to
+// healthy — exposing a browser-confirmed bad render as viewable. The advisory lock covers
+// the case where no probe row exists yet, which a row lock cannot.
+//
+// The health write reaches healthy and unknown rows, plus rows L1 already owns, but never
+// rows L0 currently owns as broken for another reason.
+func (s *pgStore) AcquireRenderGate(ctx context.Context, probe schema.MediaRenderProbe, update MediaHealthUpdate) ([]uint64, error) {
+	urlHash := types.MD5Hash(probe.MediaURL)
+	probe.MediaURLHash = urlHash
+	probe.HealthGated = true
+
+	var tokenIDs []uint64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockURLGate(tx, urlHash); err != nil {
+			return err
+		}
+		if err := upsertMediaRenderProbeTx(tx, probe); err != nil {
+			return err
+		}
+
+		if err := tx.Model(&schema.TokenMediaHealth{}).
+			Where("media_url_hash = ?", urlHash).
+			Where("health_status IN ? OR failure_reason LIKE 'render_%'",
+				[]schema.MediaHealthStatus{schema.MediaHealthStatusHealthy, schema.MediaHealthStatusUnknown}).
+			Updates(map[string]interface{}{
+				"health_status":   update.Status,
+				"last_checked_at": time.Now(),
+				"last_error":      nullableString(update.LastError),
+				"failure_reason":  nullableString(update.FailureReason),
+			}).Error; err != nil {
+			return fmt.Errorf("failed to apply render gate to health rows: %w", err)
+		}
+
+		return tx.Model(&schema.TokenMediaHealth{}).
+			Distinct("token_id").
+			Where("media_url_hash = ?", urlHash).
+			Pluck("token_id", &tokenIDs).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tokenIDs, nil
+}
+
+// ReleaseRenderGate clears a URL's render gate atomically: the gated health rows return
+// to `unknown` and the probe row's marker is cleared in one transaction. It returns the
+// token IDs whose viewability the caller must recompute.
+//
+// Reason: doing these as two statements leaves a window in which a newly indexed token
+// reads health_gated=true, inherits a render_% row, and is then skipped by the release —
+// stranding it broken forever, since L0 never re-checks render_% rows and later probes
+// see no active gate. The probe row is locked FOR UPDATE so concurrent inheritance
+// (activeRenderGate) serializes: either it inherits and is then cleared by this
+// transaction, or it observes the cleared marker and never gates at all.
+//
+// Health rows are released to `unknown` rather than `healthy` deliberately: a successful
+// render says the page painted, not that the bytes pass content validation, so L0
+// re-validates before the token becomes viewable again.
+func (s *pgStore) ReleaseRenderGate(ctx context.Context, probe schema.MediaRenderProbe) ([]uint64, error) {
+	urlHash := types.MD5Hash(probe.MediaURL)
+	probe.MediaURLHash = urlHash
+	probe.HealthGated = false
+
+	var tokenIDs []uint64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockURLGate(tx, urlHash); err != nil {
+			return err
+		}
+
+		if err := tx.Model(&schema.TokenMediaHealth{}).
+			Where("media_url_hash = ? AND failure_reason LIKE 'render_%'", urlHash).
+			Updates(map[string]interface{}{
+				"health_status":   schema.MediaHealthStatusUnknown,
+				"last_checked_at": time.Now(),
+				"last_error":      nil,
+				"failure_reason":  nil,
+			}).Error; err != nil {
+			return fmt.Errorf("failed to clear render-gated health rows: %w", err)
+		}
+
+		if err := upsertMediaRenderProbeTx(tx, probe); err != nil {
+			return err
+		}
+
+		return tx.Model(&schema.TokenMediaHealth{}).
+			Distinct("token_id").
+			Where("media_url_hash = ?", urlHash).
+			Pluck("token_id", &tokenIDs).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tokenIDs, nil
+}
+
+// GetHealthGatedRenderProbes returns up to limit probe rows currently holding a render
+// gate.
+//
+// Reason: this is the sweeper's work queue for releasing gates orphaned by a disabled
+// render probe. A gate's only healer is a successful render, so turning the probe off
+// (rollback, misconfigured fingerprints, decommission) would otherwise leave every gated
+// token permanently non-viewable — L0 is locked out of render_% rows by design. Read from
+// the primary: the rows drive release transactions, not display.
+func (s *pgStore) GetHealthGatedRenderProbes(ctx context.Context, limit int) ([]schema.MediaRenderProbe, error) {
+	var probes []schema.MediaRenderProbe
+	err := s.db.WithContext(ctx).Clauses(dbresolver.Write).
+		Where("health_gated = true").
+		Order("media_url_hash ASC").
+		Limit(limit).
+		Find(&probes).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to get health-gated render probes: %w", err)
+	}
+	return probes, nil
+}
+
+// GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed.
+func (s *pgStore) GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error) {
+	var probe schema.MediaRenderProbe
+	// Read from the primary: this row drives a state transition, not a display query.
+	// The executor decides from HealthGated whether a successful render must release the
+	// gate; a stale replica read returns the pre-gate value, so the probe would write
+	// health_gated=false to the primary and skip the release, leaving the health rows
+	// render_% broken with no marker to bring them back — L0 excludes them permanently.
+	err := s.db.WithContext(ctx).
+		Clauses(dbresolver.Write).
+		Where("media_url_hash = ?", types.MD5Hash(url)).
+		First(&probe).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get media render probe: %w", err)
+	}
+	return &probe, nil
+}
+
+// UpsertMediaRenderProbe inserts or replaces the render-probe row for probe.MediaURL.
+//
+// Constraints: baseline_phash is monotone — once set it is never overwritten
+// (COALESCE(existing, new)), enforcing the capture-only baseline invariant at the DB
+// level regardless of what the caller passes.
+// UpsertMediaRenderProbe records a probe observation. It can NEVER change gate state:
+// the write locks the URL gate and preserves whatever health_gated currently is,
+// ignoring the marker on the passed row. Gate transitions happen exclusively through
+// AcquireRenderGate/ReleaseRenderGate.
+//
+// Reason: the executor loads the prior row, renders for many seconds, then writes — and
+// in shadow mode the sweeper releases gates concurrently. An upsert that wrote the
+// marker the executor loaded would restore a just-released gate without its health rows
+// or viewability reconciliation, leaving L0 locked out (its healthy write checks the
+// marker) and the media hidden until a later release cycle — violating shadow's "L1
+// hides nothing" guarantee. Reading the marker fresh under the same advisory lock the
+// release path takes closes the race in both directions, and gives every plain upsert
+// site (below-threshold failures, shadow observations, SSRF refusals) the same simple
+// contract: observations never move gates.
+func (s *pgStore) UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error {
+	urlHash := types.MD5Hash(probe.MediaURL)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockURLGate(tx, urlHash); err != nil {
+			return err
+		}
+		var current struct {
+			HealthGated bool
+			NextCheckAt time.Time
+		}
+		err := tx.Model(&schema.MediaRenderProbe{}).
+			Select("health_gated, next_check_at").
+			Where("media_url_hash = ?", urlHash).
+			First(&current).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to read current gate marker: %w", err)
+		}
+		probe.HealthGated = current.HealthGated // false when no row exists
+		// A gated row also keeps its urgent schedule. The stale-success shape: an
+		// executor snapshots an ungated row, renders for many seconds, and meanwhile a
+		// recovered/concurrent execution gates the URL from FRESHER evidence; the stale
+		// success then lands here as an observation. Releasing on it would undo newer
+		// negative evidence — wrong direction — but letting it overwrite next_check_at
+		// with the routine recheck would postpone the gate's healing probe from hours to
+		// a week. Taking the earlier of the two preserves the urgent cadence (and never
+		// delays: an earlier observation schedule just heals sooner).
+		if current.HealthGated && current.NextCheckAt.Before(probe.NextCheckAt) {
+			probe.NextCheckAt = current.NextCheckAt
+		}
+		return upsertMediaRenderProbeTx(tx, probe)
+	})
+}
+
+// upsertMediaRenderProbeTx is the upsert body, shared so ReleaseRenderGate can run it
+// inside the same transaction that clears the gated health rows.
+func upsertMediaRenderProbeTx(tx *gorm.DB, probe schema.MediaRenderProbe) error {
+	probe.MediaURLHash = types.MD5Hash(probe.MediaURL)
+	err := tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "media_url_hash"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"media_url":            probe.MediaURL,
+			"phash":                probe.Phash,
+			"baseline_phash":       gorm.Expr("COALESCE(media_render_probes.baseline_phash, EXCLUDED.baseline_phash)"),
+			"engine_version":       probe.EngineVersion,
+			"viewport":             probe.Viewport,
+			"verdict":              probe.Verdict,
+			"consecutive_failures": probe.ConsecutiveFailures,
+			"health_gated":         probe.HealthGated,
+			"last_error":           probe.LastError,
+			"captured_at":          probe.CapturedAt,
+			"next_check_at":        probe.NextCheckAt,
+		}),
+	}).Create(&probe).Error
+	if err != nil {
+		return fmt.Errorf("failed to upsert media render probe: %w", err)
+	}
+	return nil
+}
+
 // BatchUpdateTokensViewability computes and updates is_viewable for multiple tokens
 // Returns a list of tokens whose viewability actually changed
 // Emits token_events for viewability changes within the same transaction
@@ -3007,12 +3637,20 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 				SELECT 
 					t.id,
 					CASE 
-						-- Has at least one healthy animation URL
+						-- Has at least one healthy animation URL that is not render-gated.
+						-- The gate is checked here, not only on the health rows, so a URL
+						-- L1 confirmed bad can never be computed viewable even if a
+						-- concurrent L0 write momentarily left its row healthy.
 						WHEN EXISTS (
 							SELECT 1 FROM token_media_health tmh
 							WHERE tmh.token_id = t.id
 								AND tmh.health_status = $2
 								AND tmh.media_source IN ($3, $4)
+								AND NOT EXISTS (
+									SELECT 1 FROM media_render_probes p
+									WHERE p.media_url_hash = tmh.media_url_hash
+										AND p.health_gated = true
+								)
 						) THEN true
 						-- OR no animation URLs exist AND has at least one healthy image URL
 						WHEN NOT EXISTS (
@@ -3023,6 +3661,11 @@ func (s *pgStore) BatchUpdateTokensViewability(ctx context.Context, tokenIDs []u
 						AND EXISTS (
 							SELECT 1 FROM token_media_health tmh
 							WHERE tmh.token_id = t.id
+								AND NOT EXISTS (
+									SELECT 1 FROM media_render_probes p
+									WHERE p.media_url_hash = tmh.media_url_hash
+										AND p.health_gated = true
+								)
 								AND tmh.health_status = $2
 								AND tmh.media_source IN ($5, $6)
 						) THEN true

@@ -160,6 +160,19 @@ type MediaHealthUpdate struct {
 	ObservedContentType *string
 	// SniffedContentType is the magic-byte-detected type of the body; nil clears it.
 	SniffedContentType *string
+
+	// RenderProbeWrite marks this update as coming from the L1 render probe, which owns
+	// render_% rows. It has two effects:
+	//
+	//  1. Bypasses the render-gate guard. Every other (L0) writer skips rows currently
+	//     carrying a render_% failure_reason, so a byte-level healthy verdict — from a
+	//     metadata reindex, or from a URL re-entering the sweep because another token
+	//     added an unknown row for it — cannot clear a browser-confirmed gate and make
+	//     the token viewable without a successful render.
+	//  2. Leaves observed/sniffed content types untouched. A render verdict says nothing
+	//     about the bytes L0 observed, and the render-due query and API depend on that
+	//     classification surviving a gate.
+	RenderProbeWrite bool
 }
 
 // DefaultModerationRecheckInterval is the default value of
@@ -465,6 +478,47 @@ type Store interface {
 	// fallback probe (nil writes NULL); the replaced URL's diagnostics are always
 	// cleared.
 	UpdateMediaURLAndPropagate(ctx context.Context, oldURL string, newURL string, observedContentType, sniffedContentType *string) error
+
+	// =============================================================================
+	// Media Render Probe Operations (L1)
+	// =============================================================================
+
+	// GetURLsDueForRenderProbe returns L0-healthy HTML/animation/image URLs due for an
+	// L1 render probe, in three priority tiers: urgent re-probes (active gates and
+	// pending blank/stalled debounces), then never-probed coverage, then routine
+	// rechecks of rendered_ok URLs
+	GetURLsDueForRenderProbe(ctx context.Context, limit int) ([]string, error)
+	// IsStaticImageRenderClass reports whether every render-eligible signal for the URL
+	// classifies it as a raster image structurally incapable of animation (used to
+	// shorten the render settle). A whitelist: JPEG/BMP only — GIF/WebP animate, APNG
+	// hides behind PNG's sniff, AVIF/HEIC carry sequences, SVG scripts. False when no
+	// health rows exist or signals are mixed — unknown must never shorten the settle.
+	IsStaticImageRenderClass(ctx context.Context, url string) (bool, error)
+	// GetMediaRenderProbe returns the render-probe row for a URL, or nil when never probed
+	GetMediaRenderProbe(ctx context.Context, url string) (*schema.MediaRenderProbe, error)
+	// GetHealthGatedRenderProbes returns up to limit probe rows currently holding a
+	// render gate — the sweeper's work queue for releasing gates orphaned by a disabled
+	// render probe (a gate's only healer is a successful render)
+	GetHealthGatedRenderProbes(ctx context.Context, limit int) ([]schema.MediaRenderProbe, error)
+	// UpsertMediaRenderProbe records a probe observation for probe.MediaURL;
+	// baseline_phash is never overwritten once set, and gate state is NEVER changed —
+	// the current health_gated marker is preserved under the URL gate lock, ignoring
+	// the marker on the passed row, and a gated row also keeps the earlier of its
+	// current and the incoming next_check_at so a stale success cannot postpone the
+	// gate's healing probe. Gate transitions happen exclusively through
+	// AcquireRenderGate/ReleaseRenderGate, so a concurrent release cannot be undone by
+	// an in-flight observation write
+	UpsertMediaRenderProbe(ctx context.Context, probe schema.MediaRenderProbe) error
+	// AcquireRenderGate sets a URL's render gate atomically — probe marker and health
+	// rows in one locked transaction — and returns the token IDs whose viewability must
+	// be recomputed. Splitting these writes would let a token indexed in between land as
+	// an ungated row the next L0 sweep promotes to healthy.
+	AcquireRenderGate(ctx context.Context, probe schema.MediaRenderProbe, update MediaHealthUpdate) ([]uint64, error)
+	// ReleaseRenderGate clears a URL's render gate atomically — gated health rows return
+	// to unknown and the probe marker is cleared in one transaction — and returns the
+	// token IDs whose viewability must be recomputed. Splitting these writes would let a
+	// token indexed in between inherit a gate the release then skips.
+	ReleaseRenderGate(ctx context.Context, probe schema.MediaRenderProbe) ([]uint64, error)
 
 	// =============================================================================
 	// Token Viewability Operations

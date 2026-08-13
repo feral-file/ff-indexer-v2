@@ -27,6 +27,12 @@ import (
 
 const (
 	SWEEP_CYCLE_INTERVAL = 1 * time.Minute // Time to sleep between sweep cycles
+
+	// orphanedGateReleaseBatch caps how many orphaned render gates are released per
+	// sweep cycle when the render probe is disabled. Small enough to bound the
+	// per-cycle transaction and webhook work, large enough that any realistic gated
+	// set drains within minutes at sweep cadence.
+	orphanedGateReleaseBatch = 100
 )
 
 // MediaHealthSweeperConfig holds configuration for the media health sweeper
@@ -34,6 +40,18 @@ type MediaHealthSweeperConfig struct {
 	BatchSize      int           // URLs to check per batch
 	WorkerPoolSize int           // Concurrent workers
 	RecheckAfter   time.Duration // Only check URLs older than this
+
+	// RenderProbeEnabled turns on enqueueing of L1 render-probe jobs after each sweep
+	// cycle. Must only be true when a media worker serves the media queue — otherwise
+	// jobs pile up unserved (lightweight deployments run no chromium).
+	RenderProbeEnabled bool
+	// RenderProbeBatchSize caps how many due URLs are enqueued per cycle.
+	RenderProbeBatchSize int
+	// RenderProbeEnforce mirrors render_probe.enforce. While false (shadow mode) the
+	// sweeper keeps enqueueing probes — shadow still observes — but also releases any
+	// existing gates each cycle: shadow's contract is that L1 hides nothing, including
+	// leftovers from an earlier enforcing deployment.
+	RenderProbeEnforce bool
 }
 
 // mediaHealthSweeper implements the Sweeper interface for media health checking
@@ -46,12 +64,16 @@ type mediaHealthSweeper struct {
 	clock          adapter.Clock
 	jobQueue       jobs.JobQueue
 	tokenQueue     string
+	mediaQueue     string
 	running        atomic.Bool
 	stopChan       chan struct{}
 	stoppedCh      chan struct{}
 }
 
-// NewMediaHealthSweeper creates a new media health sweeper
+// NewMediaHealthSweeper creates a new media health sweeper.
+// mediaQueue names the queue the CGO media worker serves; it is only used when
+// config.RenderProbeEnabled is true (render-probe jobs are enqueued there because
+// chromium exists only in that worker).
 func NewMediaHealthSweeper(
 	config *MediaHealthSweeperConfig,
 	st store.Store,
@@ -60,6 +82,7 @@ func NewMediaHealthSweeper(
 	clock adapter.Clock,
 	jq jobs.JobQueue,
 	tokenQueue string,
+	mediaQueue string,
 ) Sweeper {
 	return &mediaHealthSweeper{
 		config:         config,
@@ -69,6 +92,7 @@ func NewMediaHealthSweeper(
 		clock:          clock,
 		jobQueue:       jq,
 		tokenQueue:     tokenQueue,
+		mediaQueue:     mediaQueue,
 		stopChan:       make(chan struct{}),
 		stoppedCh:      make(chan struct{}),
 	}
@@ -158,6 +182,15 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 	startTime := s.clock.Now()
 	logger.InfoCtx(ctx, "Starting sweep cycle")
 
+	// Withdraw orphaned render gates BEFORE selecting the L0 batch: released rows return
+	// to `unknown`, which makes them immediately eligible below — running the release
+	// after selection would strand every released row until the next cycle (and behind a
+	// full batch), delaying exactly the recovery a rollback to disabled/shadow exists to
+	// deliver.
+	if !s.config.RenderProbeEnabled || !s.config.RenderProbeEnforce {
+		s.releaseOrphanedRenderGates(ctx)
+	}
+
 	// Get URLs that need checking (no locking, multiple workers may get the same URLs)
 	urls, err := s.store.GetURLsForChecking(ctx, s.config.RecheckAfter, s.config.BatchSize)
 	if err != nil {
@@ -166,6 +199,13 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 
 	if len(urls) == 0 {
 		logger.InfoCtx(ctx, "No URLs need checking, waiting for new URLs...")
+		// L1 scheduling still runs: the render probe's cadence is its own
+		// (retry_interval / broken_recheck_interval), and render-gated rows are
+		// deliberately excluded from the L0 query above. Returning here without
+		// enqueueing would make every L1 retry — including the healing pass for a gated
+		// URL — wait for unrelated L0 work to come due.
+		s.enqueueRenderProbes(ctx)
+
 		// Sleep briefly to avoid tight loop when no URLs need checking
 		// Use context-aware sleep so we can be interrupted
 		if !s.sleep(ctx, SWEEP_CYCLE_INTERVAL) {
@@ -229,6 +269,11 @@ func (s *mediaHealthSweeper) runSweepCycle(ctx context.Context) error {
 		pond.WithContext(ctx),
 	)
 
+	// After health state settles, enqueue L1 render probes for due URLs. Runs at the end
+	// of the cycle so probes see this cycle's verdicts (a URL just marked broken is no
+	// longer due).
+	s.enqueueRenderProbes(ctx)
+
 	duration := s.clock.Since(startTime)
 	logger.InfoCtx(ctx, "Sweep cycle completed",
 		zap.Duration("duration", duration),
@@ -257,6 +302,106 @@ func (s *mediaHealthSweeper) sleep(ctx context.Context, duration time.Duration) 
 		return false // Interrupted by context cancellation
 	case <-s.stopChan:
 		return false // Interrupted by stop signal
+	}
+}
+
+// enqueueRenderProbes enqueues L1 render-probe jobs for due URLs onto the media queue.
+//
+// Reason: the sweeper owns probe scheduling (it already owns the health work queue), but
+// chromium only exists in the CGO media worker, so execution is a job, not an inline
+// call. Unique keys make double-enqueueing a no-op while a probe is pending or running.
+// Enqueue failures are logged and skipped — the URL stays due and the next cycle retries.
+func (s *mediaHealthSweeper) enqueueRenderProbes(ctx context.Context) {
+	if !s.config.RenderProbeEnabled {
+		return
+	}
+
+	urls, err := s.store.GetURLsDueForRenderProbe(ctx, s.config.RenderProbeBatchSize)
+	if err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to get URLs due for render probe: %w", err))
+		return
+	}
+	if len(urls) == 0 {
+		return
+	}
+
+	enqueued := 0
+	for _, url := range urls {
+		uk := jobs.RenderProbeUniqueKey(url)
+		if _, _, err := s.jobQueue.Enqueue(ctx, jobs.EnqueueOptions{
+			Queue:     s.mediaQueue,
+			Kind:      "RenderMediaProbe",
+			Args:      []any{url},
+			UniqueKey: &uk,
+		}); err != nil {
+			logger.WarnCtx(ctx, "Failed to enqueue render probe job",
+				zap.String("url", url),
+				zap.Error(err),
+			)
+			continue
+		}
+		enqueued++
+	}
+
+	logger.InfoCtx(ctx, "Render probe jobs enqueued",
+		zap.Int("due", len(urls)),
+		zap.Int("enqueued", enqueued),
+	)
+}
+
+// releaseOrphanedRenderGates releases active render gates when the render probe is
+// disabled or not enforcing.
+//
+// Reason: a render gate's only healer is a successful render — L0 is locked out of
+// render_% rows and the health_gated marker by design. With the probe disabled
+// (rollback, misconfigured fingerprints, decommission) nothing enqueues probes and the
+// RenderMediaProbe handler is a no-op, so without this every gated token would stay
+// non-viewable forever, false positives included. Turning the probe off withdraws the
+// browser evidence behind the gates, so the gates are withdrawn with it: health rows
+// return to unknown and the next L0 sweep re-verifies the bytes and heals what passes.
+// Shadow mode (enforce=false) gets the same treatment for the same reason: its contract
+// is that L1 hides nothing, and a gate left over from an enforcing deployment is hiding.
+// Trade-offs: released tokens become viewable again on byte evidence alone until the
+// probe is re-enabled — that is the pre-L1 status quo, and hiding art on evidence the
+// operator has switched off would be worse. Constraints: release failures are logged and
+// retried next cycle (the marker survives until a release succeeds); the batch cap
+// bounds per-cycle work.
+func (s *mediaHealthSweeper) releaseOrphanedRenderGates(ctx context.Context) {
+	probes, err := s.store.GetHealthGatedRenderProbes(ctx, orphanedGateReleaseBatch)
+	if err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to get orphaned render gates: %w", err))
+		return
+	}
+	if len(probes) == 0 {
+		return
+	}
+
+	var tokenIDs []uint64
+	released := 0
+	for _, probe := range probes {
+		ids, err := s.store.ReleaseRenderGate(ctx, probe)
+		if err != nil {
+			logger.WarnCtx(ctx, "Failed to release orphaned render gate",
+				zap.String("url", probe.MediaURL),
+				zap.Error(err),
+			)
+			continue
+		}
+		released++
+		tokenIDs = append(tokenIDs, ids...)
+	}
+
+	logger.InfoCtx(ctx, "Released render gates orphaned by disabled render probe",
+		zap.Int("gated", len(probes)),
+		zap.Int("released", released),
+	)
+
+	// Released rows are unknown, not healthy, so this rarely changes viewability by
+	// itself — the heal lands on the next L0 sweep. Still flushed for the edge where a
+	// release changes the computed result immediately, and to mirror every other gate
+	// transition (one consistent webhook stream).
+	if err := s.flushViewabilityUpdatesWithRetry(ctx, tokenIDs); err != nil {
+		logger.ErrorCtx(ctx, fmt.Errorf("failed to flush viewability after orphaned gate release: %w", err))
 	}
 }
 

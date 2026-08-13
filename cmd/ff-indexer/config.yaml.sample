@@ -130,10 +130,10 @@ uri:
     - https://arweave.net
   onchfs_gateways:
     - https://onchfs.fxhash2.xyz
-  # Health probes read the first probe_max_bytes of each URL and validate the content.
+  # Health probes read the first probe_max_bytes of each URL and validate the content
+  # (declared vs sniffed type, container headers, directory-listing/error-page markers).
   # Positive values below 512 are clamped up to 512 — a smaller window cannot support
   # content classification and would false-broken valid binary media.
-  # (declared vs sniffed type, container headers, directory-listing/error-page markers).
   probe_max_bytes: 32768
   # Case-insensitive substrings identifying gateway error pages served with HTTP 200.
   # Matched against HTML bodies only — never against declared-HTML artworks' own markup
@@ -203,6 +203,75 @@ rasterizer:
   width: 2048
   timeout_ms: 15000
   browser_fallback_enabled: false
+
+# L1 render probe: loads L0-healthy HTML/animation/image URLs in headless chromium,
+# classifies the painted frame (blank / known-bad fingerprint / rendered ok), and gates
+# token viewability on confirmed failures. The media health sweeper enqueues probe jobs;
+# the CGO media worker executes them (requires media_enabled: true and chromium in the
+# image). Fingerprint matches gate immediately; blank/stalled gate only after
+# failure_gate_threshold consecutive probes.
+render_probe:
+  # Enabled by default, but only runs where media_enabled is true (probes execute in the
+  # media worker; on lightweight deployments a default-enabled probe is simply inert).
+  # A media-enabled deployment must additionally set egress_restricted below or the
+  # process refuses to start.
+  enabled: true
+  # SHADOW MODE by default: the probe renders, classifies, and records verdicts,
+  # counters, and pHashes in media_render_probes — but never hides a token, and any
+  # existing gates are released. Watch the shadow data after deploying (sample the
+  # would-be-gated URLs by hand), then set enforce: true as a deliberate second step.
+  enforce: false
+  batch_size: 20
+  viewport_width: 1024
+  viewport_height: 1024
+  # Must exceed settle_ms by at least 5s (validated at startup): the timeout covers
+  # navigate + settle + screenshot, and less headroom guarantees stalled verdicts.
+  timeout_ms: 45000
+  # How long the page keeps running after load before the capture. Generous on purpose:
+  # the blank debounce only protects against transient blanks — a work that
+  # deterministically needs longer than this window would be gated on its second probe
+  # no matter how many chances it gets.
+  settle_ms: 15000
+  # Shortened settle for URLs whose every health-row signal says static raster image
+  # (they paint on decode — the full window above exists for generative works). SVG and
+  # anything animation-flavored keeps the full settle. <= 0 disables the shortcut.
+  image_settle_ms: 2000
+  blank_variance_threshold: 0.001
+  # Chromium runs sandboxed by default. Only set true where the runtime cannot support
+  # the sandbox (no unprivileged user namespaces / restrictive seccomp) — an unsandboxed
+  # renderer exploit gains the media worker's process and DB access.
+  no_sandbox: false
+  # Required to enable the probe. Attests that the media worker cannot route to
+  # loopback/private/link-local/cloud-metadata ranges. Partially machine-verified: at
+  # startup the worker dials the cloud metadata endpoint and refuses to start if it is
+  # reachable, and renders built-in known-good/WebGL/known-bad fixtures that must
+  # classify correctly before the probe may gate anything. In-browser request validation is
+  # hostname-based, so DNS rebinding between validation and chromium's dial can only be
+  # closed by network-level egress policy — this flag does not implement it, it makes
+  # enabling the probe without it a deliberate choice. See docs/media_viewability.md.
+  egress_restricted: false
+  failure_gate_threshold: 2
+  recheck_interval: 168h
+  retry_interval: 1h
+  broken_recheck_interval: 24h
+  # pHashes of known-bad renders (gateway error pages, directory listings, placeholders).
+  # Capture the offending page once, compute its pHash, and list it here. Keep
+  # max_distance small (4-8): a loose tolerance matches real art and hides it.
+  #
+  # The starter set below was measured against the live public gateways (2026-08-12)
+  # with this probe's own pipeline; methodology and Hamming margins are documented in
+  # docs/media_viewability.md. Kubo's pages render bit-identically across ipfs.io and
+  # dweb.link, so one entry covers every Kubo gateway. Today these pages ship with
+  # non-2xx statuses (the byte-level probe catches them first); the fingerprints are the
+  # insurance for the day a gateway or CDN serves the same body with HTTP 200 — the
+  # exact mechanism behind feral-file#3482.
+  known_bad_fingerprints:
+    - {phash: "0x9f1f2f616060687d", max_distance: 6, label: kubo-error-page-500}
+    - {phash: "0x9f1f3f7170706070", max_distance: 6, label: kubo-error-page-504}
+    - {phash: "0xcfcf6630303899d9", max_distance: 6, label: arweave-404}
+    - {phash: "0x9c1e1e1e1e1e1e1e", max_distance: 6, label: onchfs-not-found}
+    - {phash: "0x8f0f0f0f0f078787", max_distance: 6, label: onchfs-bad-uri}
+    - {phash: "0xe76f18183d697868", max_distance: 6, label: ipfs-dir-listing}
 
 transform:
   target_image_size: 9437184
