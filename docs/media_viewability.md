@@ -60,6 +60,23 @@ The same validated probe drives gateway selection (`FindWorking*Gateway`, used b
 the health checker's fallback and the URI resolver): a gateway "works" only if its
 content validates, so a directory listing can no longer be stored as a working URL.
 
+**Directory artifacts resolve to their entry point** (feral-file#3482): when IPFS
+gateway selection fails and at least one candidate served a directory listing, the ref
+addresses a directory, not a file — the standard shape of hic-et-nunc-era Tezos artworks
+(`mimeType: application/x-directory`), whose playable document is `index.html` inside
+the directory. Selection retries once with `<ref>/index.html` and stores that URL when
+it validates. Because the retry lives in gateway selection, both consumers get it: the
+URI resolver stores playable entry-point URLs for newly indexed tokens, and the health
+checker's fallback promotes the entry point over an already-stored bare directory URL,
+healing existing rows on their next sweep (`directory_listing` → healthy with a rewritten
+working URL). Only `index.html` is tried — guessing other names risks storing a non-entry
+file as the artwork. Query and fragment survive the rewrite (`<dir>?fxhash=x` →
+`<dir>/index.html?fxhash=x` — iteration-addressing parameters are load-bearing, same
+contract as OnChFS refs on #76); refs already targeting `index.html` are not retried. The
+retry keys on the listing verdict, not the token's declared `application/x-directory`
+mime type, so gateways answering directory refs with something other than a Kubo listing
+do not trigger it — mime-driven resolution is a possible follow-up.
+
 SSRF policy refusals are final and never trigger gateway fallback. DNS failures are
 `broken`/`dns` (not retried every tick). Failure classifications are persisted in
 `token_media_health.failure_reason` with the observed and sniffed content types

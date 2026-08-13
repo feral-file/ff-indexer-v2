@@ -253,12 +253,24 @@ func (p *contentProbe) gatewayProbeResult(ctx context.Context, url string) (Heal
 		return HealthCheckResult{}, result.fetchErr
 	}
 	if result.hcr.Status != HealthStatusHealthy {
-		if result.hcr.Error != nil {
-			return HealthCheckResult{}, errors.New(*result.hcr.Error)
-		}
-		return HealthCheckResult{}, fmt.Errorf("gateway probe failed with status %s", result.hcr.Status)
+		return HealthCheckResult{}, gatewayProbeError(result.hcr)
 	}
 	return result.hcr, nil
+}
+
+// gatewayProbeError converts a non-healthy probe verdict into the candidate's rejection
+// error. Directory-listing verdicts wrap errDirectoryListing so gateway selection can
+// tell "this ref is a directory" apart from ordinary gateway failures and retry the
+// directory's index.html entry point (feral-file#3482).
+func gatewayProbeError(hcr HealthCheckResult) error {
+	msg := fmt.Sprintf("gateway probe failed with status %s", hcr.Status)
+	if hcr.Error != nil {
+		msg = *hcr.Error
+	}
+	if hcr.FailureReason == FailureDirectoryListing {
+		return fmt.Errorf("%s: %w", msg, errDirectoryListing)
+	}
+	return errors.New(msg)
 }
 
 // gatewayProbe adapts gatewayProbeResult for callers that only select a candidate
@@ -412,8 +424,10 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	}
 
 	// 4. If broken or transient error, try fallback resolution for known gateway types.
-	// The fallback probes validate content too, so a directory CID does not get
-	// "rescued" by another gateway serving the same listing.
+	// The fallback probes validate content too, so a directory CID is never accepted
+	// bare: when every candidate serves a listing, IPFS selection retries the
+	// directory's index.html entry point and promotes that URL instead, healing stored
+	// bare directory URLs (feral-file#3482).
 
 	// Check if it's an IPFS gateway URL - resolve with CID
 	if isIPFS, cid := types.IsIPFSGatewayURL(url); isIPFS {

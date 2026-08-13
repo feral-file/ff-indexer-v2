@@ -53,6 +53,9 @@ type Resolver interface {
 	// Returns the canonical URL
 	// It probes candidate gateway URLs with a validated ranged GET (content must look
 	// like media, not a directory listing or error page) and returns the first that passes
+	// An ipfs:// ref whose gateways all serve directory listings is a directory artifact
+	// (application/x-directory): it is retried once with its index.html entry point, so
+	// directory artworks resolve to their playable document (feral-file#3482)
 	// If no gateway serves valid content, it returns an error
 	Resolve(ctx context.Context, uri string) (string, error)
 }
