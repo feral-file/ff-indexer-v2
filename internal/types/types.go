@@ -134,10 +134,15 @@ func GenerateSecureToken(length int) (string, error) {
 // The CID must follow IPFS CID v0 (Qm...) or CIDv1 patterns
 // Returns: (isValid, cidWithPath) where cidWithPath includes the CID and any path, query,
 // or fragment after it — the gateway-relative reference a fallback gateway must be asked
-// for. A query directly after the CID (…/ipfs/<cid>?fxhash=x) is part of that reference:
-// fxhash-style artworks address an iteration this way, and dropping the URL from
-// recognition would exempt it from gateway fallback and directory-entry-point healing
-// (feral-file#3482).
+// for.
+//
+// A query directly after the CID (…/ipfs/<cid>?fxhash=x) is part of that reference and
+// must keep the URL recognized. This is load-bearing, not defensive: the sole production
+// caller is urlChecker.Check, so an unrecognized URL never enters gateway fallback and its
+// health row can never heal, however many sweeps run. Measured 2026-08-13 — every
+// directory_listing row in production that this shape excluded (3 fxhash artworks stored
+// on ipfs.feralfile.com) healed to a serving gateway once recognized, with the fxhash
+// parameter carried through so the promoted URL still addresses the minted iteration.
 func IsIPFSGatewayURL(s string) (bool, string) {
 	// Regex pattern to match IPFS gateway URLs:
 	// - Protocol: http:// or https://

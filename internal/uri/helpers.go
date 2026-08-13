@@ -154,25 +154,35 @@ func findWorkingGateway(ctx context.Context, probe GatewayProbe, candidateURLs [
 // first whose content validates.
 //
 // When selection fails and at least one candidate served a directory listing, the ref
-// addresses an IPFS directory, not a file — the standard shape of hic-et-nunc-era Tezos
-// artworks (mimeType application/x-directory), whose playable document lives at
-// index.html inside the directory (feral-file#3482). One retry probes <ref>/index.html
-// and returns that URL when it validates, so the stored canonical URL is the artwork's
-// entry point rather than the listing.
+// addresses an IPFS directory whose playable document lives at index.html inside it. One
+// retry probes <ref>/index.html and returns that URL when it validates.
 //
-// Reason: hooking the retry here rather than in the resolver or the metadata enhancers
-// covers every caller with one mechanism — metadata resolution stores playable URLs for
-// newly indexed tokens, and the health checker's gateway fallback promotes the entry
-// point over stored bare directory URLs, healing existing rows on their next sweep.
-// Trade-offs: a directory ref costs one extra probe round, and a directory with no
-// index.html pays it on every sweep re-check — accepted as rare and cheap over
-// persisting a dedicated failure reason for it. The retry keys on the listing verdict,
-// not the token's declared application/x-directory mime type, so a gateway that answers
-// directory refs with something other than a Kubo listing (404, custom template) does
-// not trigger it; mime-driven resolution would need metadata plumbed into every caller
-// and is left as a follow-up. Constraints: index.html is the only entry point tried —
-// guessing further names risks storing a non-entry file as the artwork; refs already
-// targeting index.html are not retried.
+// THIS RETRY IS INSURANCE, NOT THE LOAD-BEARING PATH — it has never healed a production
+// row. Measured against every directory_listing row in production (2026-08-13): 0 heals
+// from the retry, while the caller's ordinary gateway fallback healed 3 of 4. Keep the
+// expectations it was written under close to the code so a later reader does not mistake
+// it for the mechanism that fixes directory artworks:
+//
+//   - It fires only when NO gateway serves the bare ref. Kubo serves index.html itself
+//     when a directory contains one, so a gateway with the complete DAG returns the
+//     artwork and this code never runs.
+//   - The window it covers is real but narrow: a gateway that lists a directory whose
+//     index.html another gateway can serve — e.g. ipfs.feralfile.com, which holds the
+//     directory node but not the child blocks, so it renders a listing while ipfs.io
+//     serves the artwork.
+//   - Detection is limited to Kubo's listing template (see kuboDirectoryListingSignature).
+//     A custom listing template or a JSON listing is not detected and never triggers it.
+//   - It keys on the observed listing, NOT the token's declared application/x-directory
+//     mime type. Mime-driven resolution would reach far more tokens (2,621 vendor-declared
+//     directories stored as bare CIDs vs the 4 rows this selects) but must still probe
+//     before storing: some directory artifacts have no index.html at all, so a blind
+//     append converts a listing into a hard 404. Left as a follow-up.
+//
+// Trade-offs: costs one extra probe round, paid only on directories already failing every
+// gateway. Constraints: index.html is the only entry point tried — guessing further names
+// risks storing a non-entry file as the artwork; refs already targeting index.html are not
+// retried. The entry point is probe-verified before it is returned, so this can never
+// invent a URL that does not serve.
 func FindWorkingIPFSGateway(ctx context.Context, probe GatewayProbe, ref string, gateways []string) (string, error) {
 	url, sawDirectoryListing, err := findWorkingGateway(ctx, probe, candidateURLs(gateways, "%s/ipfs/%s", ref), "IPFS", ref)
 	if err == nil || !sawDirectoryListing {
