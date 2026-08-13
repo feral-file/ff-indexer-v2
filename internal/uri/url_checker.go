@@ -29,8 +29,11 @@ const (
 	// sweeper and the token-indexing path persist verdicts from this checker — the latter on
 	// every (re-)index — so a stored healthy row is not necessarily a sweep result, and either
 	// path can overwrite the other. Neither persists HealthStatusTransientError, so a stored
-	// healthy row can outlive later failed checks. It may also describe a promoted fallback
-	// gateway rather than the originally stored URL. Do not tighten callers into treating it
+	// healthy row can outlive later failed checks, and neither is the only writer of that row:
+	// the L1 render probe gates it independently. This verdict is byte-level — content that
+	// validates can still render blank, which is L1's job to catch. It may also describe a
+	// promoted fallback gateway rather than the originally stored URL. Do not tighten callers
+	// into treating it
 	// as a playback SLA without revisiting MediaHealthStatus semantics and viewability — see
 	// docs/constraints.md and #76.
 	HealthStatusHealthy HealthStatus = "healthy"
