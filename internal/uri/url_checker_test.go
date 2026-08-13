@@ -475,6 +475,24 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedReason: uri.FailureDirectoryListing,
 		},
 		{
+			name: "query directly after the CID enters fallback and heals (feralfile-bot F1)",
+			url:  "https://gateway.pinata.cloud/ipfs/" + cid + "?fxhash=oo123",
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid+"?fxhash=oo123", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"?fxhash=oo123", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html", kuboDirectoryListing(), nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid+"/index.html?fxhash=oo123", probeRangeHeader).
+					Return(httpResp(http.StatusOK, "text/html", htmlArtworkDoc(), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid + "/index.html?fxhash=oo123"),
+		},
+		{
 			name: "query-bearing directory ref heals with the query preserved (fxhash shape)",
 			url:  "https://gateway.pinata.cloud/ipfs/" + cid + "/?fxhash=oo123",
 			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
