@@ -268,31 +268,48 @@ func (a *ERC721Adapter) GetTokensByOwner(
 	return trackERC721OwnershipFromLogs(a.chainID, owner, logs, blacklist), nil
 }
 
-// ParseEvent parses standard ERC-721 and EIP-4906 events.
+// ParseEvent parses standard ERC-721 and EIP-4906 events, dispatching by topic0.
 //
-// ERC20 transfers are identified and skipped BEFORE timestamp lookup to prevent
-// irrelevant ERC20 activity from tearing down the subscription when timestamp
-// lookups fail. ERC20 Transfer(address,address,uint256) has 3 topics; ERC721
-// Transfer(address,address,uint256) has 4 topics (indexed tokenId).
+// Each per-signature parser validates the log's shape before resolving the
+// block timestamp, so logs destined to be skipped never depend on the
+// BlockProvider. The live subscription filters the whole chain by topic0 with
+// no address filter, so any contract can emit a malformed log under these
+// signatures; returning a fatal error for one would crash-loop ingestion as it
+// replays the same block from the durable cursor.
+//
+// Skips are returned as (nil, nil): ERC20 Transfer logs (3 topics, versus 4 for
+// ERC721) and EIP-4906 logs whose shape carries no recoverable token range.
 func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 0 {
 		return nil, fmt.Errorf("event log has no topics")
 	}
 
-	// For Transfer events, identify and skip ERC20 BEFORE BaseEventFromLog.
-	// This prevents transient timestamp lookup failures from crashing the
-	// subscription on irrelevant ERC20 noise.
-	if vLog.Topics[0] == helpers.TransferEventSignature {
-		if len(vLog.Topics) == 3 {
-			// ERC20 Transfer - skip without error
-			logger.DebugCtx(ctx, "Skipping ERC20 transfer event (pre-parse)",
-				zap.String("contract", vLog.Address.Hex()),
-				zap.String("txHash", vLog.TxHash.Hex()))
-			return nil, nil
-		}
-		if len(vLog.Topics) != 4 {
-			return nil, fmt.Errorf("invalid Transfer event: expected 3 or 4 topics, got %d", len(vLog.Topics))
-		}
+	switch vLog.Topics[0] {
+	case helpers.TransferEventSignature:
+		return a.parseTransfer(ctx, vLog)
+	case helpers.EIP4906MetadataUpdateEventSignature,
+		helpers.EIP4906BatchMetadataUpdateEventSignature:
+		return a.parseMetadataUpdate(ctx, vLog)
+	default:
+		return nil, ErrUnknownEvent
+	}
+}
+
+// parseTransfer parses an ERC-721 Transfer log.
+//
+// ERC20 transfers are identified and skipped BEFORE the timestamp lookup to
+// prevent irrelevant ERC20 activity from tearing down the subscription when
+// lookups fail. ERC20 Transfer(address,address,uint256) has 3 topics; ERC721
+// Transfer(address,address,uint256) has 4 topics (indexed tokenId).
+func (a *ERC721Adapter) parseTransfer(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
+	if len(vLog.Topics) == 3 {
+		logger.DebugCtx(ctx, "Skipping ERC20 transfer event (pre-parse)",
+			zap.String("contract", vLog.Address.Hex()),
+			zap.String("txHash", vLog.TxHash.Hex()))
+		return nil, nil
+	}
+	if len(vLog.Topics) != 4 {
+		return nil, fmt.Errorf("invalid Transfer event: expected 3 or 4 topics, got %d", len(vLog.Topics))
 	}
 
 	base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
@@ -300,46 +317,136 @@ func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain
 		return nil, err
 	}
 
-	switch vLog.Topics[0] {
-	case helpers.TransferEventSignature:
-		// Topic count already validated above - this is ERC721
-		parsed, err := helpers.ParseERC721TransferLog(vLog, base)
-		if err != nil {
-			return nil, err
-		}
-		return parsed, nil
-	case helpers.EIP4906MetadataUpdateEventSignature:
-		if len(vLog.Topics) != 1 {
-			return nil, fmt.Errorf("invalid MetadataUpdate event: expected 1 topic, got %d", len(vLog.Topics))
-		}
-		if len(vLog.Data) < 32 {
-			return nil, fmt.Errorf("invalid MetadataUpdate event: insufficient data")
-		}
-		event := base
-		event.Standard = domain.StandardERC721
-		event.TokenNumber = new(big.Int).SetBytes(vLog.Data[0:32]).String()
-		event.EventType = domain.EventTypeMetadataUpdate
-		event.Quantity = "1"
-		return &event, nil
-	case helpers.EIP4906BatchMetadataUpdateEventSignature:
-		if len(vLog.Topics) != 1 {
-			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: expected 1 topic, got %d", len(vLog.Topics))
-		}
-		if len(vLog.Data) < 64 {
-			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: insufficient data")
-		}
-		fromTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
-		toTokenID := new(big.Int).SetBytes(vLog.Data[32:64])
-		event := base
-		event.Standard = domain.StandardERC721
-		event.TokenNumber = fromTokenID.String()
-		event.ToTokenNumber = toTokenID.String()
-		event.EventType = domain.EventTypeMetadataUpdateRange
-		event.Quantity = "1"
-		return &event, nil
-	default:
-		return nil, ErrUnknownEvent
+	return helpers.ParseERC721TransferLog(vLog, base)
+}
+
+// parseMetadataUpdate parses EIP-4906 MetadataUpdate and BatchMetadataUpdate logs.
+//
+// Reason: shape decoding runs BEFORE BaseEventFromLog so a malformed log is
+// dropped without a timestamp lookup. Ordering it the other way would let a
+// failing BlockProvider turn a log we were going to discard into a fatal parse
+// error — the same crash path, reached through the provider instead of the
+// shape check. Historical eth_getLogs results carry no BlockTimestamp, so that
+// lookup is a live dependency, not a formality.
+// Constraints: mirrors the ERC20 pre-check in parseTransfer; any new skip
+// condition belongs before the lookup for the same reason.
+func (a *ERC721Adapter) parseMetadataUpdate(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
+	decoded, ok := decodeMetadataUpdate(vLog)
+	if !ok {
+		skipMalformedEIP4906Log(ctx, metadataUpdateEventName(vLog), vLog)
+		return nil, nil
 	}
+
+	base, err := helpers.BaseEventFromLog(ctx, a.chainID, vLog, a.blockProvider)
+	if err != nil {
+		return nil, err
+	}
+
+	event := base
+	event.Standard = domain.StandardERC721
+	event.EventType = decoded.eventType
+	event.TokenNumber = decoded.tokenNumber
+	event.ToTokenNumber = decoded.toTokenNumber
+	event.Quantity = "1"
+	return &event, nil
+}
+
+// metadataUpdateFields holds the token range decoded from an EIP-4906 log.
+// Decoding is kept separate from the parsed event so shape validation can run
+// before the block-timestamp lookup.
+type metadataUpdateFields struct {
+	eventType     domain.EventType
+	tokenNumber   string
+	toTokenNumber string
+}
+
+// decodeMetadataUpdate decodes either EIP-4906 metadata-update event from its
+// log alone, returning ok=false for shapes with no recoverable token range.
+// The caller is responsible for having matched topic0 to one of the two
+// metadata-update signatures.
+func decodeMetadataUpdate(vLog types.Log) (metadataUpdateFields, bool) {
+	if vLog.Topics[0] == helpers.EIP4906MetadataUpdateEventSignature {
+		tokenID, ok := metadataUpdateTokenID(vLog)
+		if !ok {
+			return metadataUpdateFields{}, false
+		}
+		return metadataUpdateFields{
+			eventType:   domain.EventTypeMetadataUpdate,
+			tokenNumber: tokenID.String(),
+		}, true
+	}
+
+	fromTokenID, toTokenID, ok := batchMetadataUpdateRange(vLog)
+	if !ok {
+		return metadataUpdateFields{}, false
+	}
+	return metadataUpdateFields{
+		eventType:     domain.EventTypeMetadataUpdateRange,
+		tokenNumber:   fromTokenID.String(),
+		toTokenNumber: toTokenID.String(),
+	}, true
+}
+
+// metadataUpdateEventName names the event for skip logging.
+func metadataUpdateEventName(vLog types.Log) string {
+	if vLog.Topics[0] == helpers.EIP4906MetadataUpdateEventSignature {
+		return "MetadataUpdate"
+	}
+	return "BatchMetadataUpdate"
+}
+
+// metadataUpdateTokenID extracts the token id from an EIP-4906 MetadataUpdate log.
+//
+// Reason: the selector keccak("MetadataUpdate(uint256)") is the same whether or
+// not _tokenId is declared indexed, so non-conforming contracts that index the
+// parameter reach this parser alongside the spec shape. One such log at mainnet
+// block 25752049 crashed live ingestion when only the spec shape was accepted.
+//
+// A matching selector means the declaration is exactly MetadataUpdate(uint256),
+// which Solidity can encode only two ways: not indexed (1 topic, id in data) or
+// indexed (2 topics, id in topics[1], empty data). The indexed branch therefore
+// requires empty data — two topics carrying a payload is neither encoding, so
+// topics[1] cannot be trusted as a token id.
+//
+// Constraints: any other shape returns ok=false and the caller skips the log
+// before the block-timestamp lookup. The 1-topic branch keeps its pre-existing
+// tolerance for trailing data rather than tightening long-standing behavior
+// inside a fix scoped to the indexed variant.
+func metadataUpdateTokenID(vLog types.Log) (*big.Int, bool) {
+	switch {
+	case len(vLog.Topics) == 1 && len(vLog.Data) >= 32:
+		return new(big.Int).SetBytes(vLog.Data[0:32]), true
+	case len(vLog.Topics) == 2 && len(vLog.Data) == 0:
+		return new(big.Int).SetBytes(vLog.Topics[1].Bytes()), true
+	default:
+		return nil, false
+	}
+}
+
+// batchMetadataUpdateRange extracts the token range from an EIP-4906
+// BatchMetadataUpdate log. Only the spec shape (1 topic, both ids in data) is
+// parsed: with one id moved into topics the log alone cannot tell whether it is
+// _fromTokenId or _toTokenId, so indexed variants return ok=false and are
+// skipped by the caller.
+func batchMetadataUpdateRange(vLog types.Log) (from, to *big.Int, ok bool) {
+	if len(vLog.Topics) != 1 || len(vLog.Data) < 64 {
+		return nil, nil, false
+	}
+	return new(big.Int).SetBytes(vLog.Data[0:32]), new(big.Int).SetBytes(vLog.Data[32:64]), true
+}
+
+// skipMalformedEIP4906Log records a metadata-update log dropped for having an
+// unparseable shape. Warn level keeps these visible without treating them as
+// ingestion failures; metadata updates are advisory refresh hints, so dropping
+// a malformed one loses at most a re-index trigger from a non-conforming contract.
+func skipMalformedEIP4906Log(ctx context.Context, eventName string, vLog types.Log) {
+	logger.WarnCtx(ctx, "Skipping malformed EIP-4906 log",
+		zap.String("event", eventName),
+		zap.String("contract", vLog.Address.Hex()),
+		zap.Uint64("block", vLog.BlockNumber),
+		zap.Uint("logIndex", vLog.Index),
+		zap.Int("topics", len(vLog.Topics)),
+		zap.Int("dataLen", len(vLog.Data)))
 }
 
 var _ ContractAdapter = (*ERC721Adapter)(nil)

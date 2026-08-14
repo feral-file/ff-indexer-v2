@@ -402,6 +402,34 @@ func TestAdapterRegistry_ParseEvent_TimestampLookupFails(t *testing.T) {
 	require.Contains(t, err.Error(), "resolve block timestamp for block 100")
 }
 
+// TestAdapterRegistry_ParseEvent_MetadataUpdateIndexedVariant pins the routing
+// path for the non-conforming `MetadataUpdate(uint256 indexed _tokenId)` shape:
+// same topic0 as the EIP-4906 spec event, but the token id lands in topics[1]
+// with empty data. Regression test for a live poison log (mainnet block
+// 25752049 index 300) that crashed ingestion with "expected 1 topic, got 2".
+// Shape-by-shape parsing is covered in the adapters package.
+func TestAdapterRegistry_ParseEvent_MetadataUpdateIndexedVariant(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	reg := newTestRegistry(t, mockClient, testContractFS(t, `{"contracts": []}`))
+
+	vLog := types.Log{
+		Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		Topics: []common.Hash{
+			helpers.EIP4906MetadataUpdateEventSignature,
+			common.BigToHash(big.NewInt(42)),
+		},
+	}
+
+	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	require.Equal(t, domain.EventTypeMetadataUpdate, parsed.EventType)
+	require.Equal(t, "42", parsed.TokenNumber)
+}
+
 // typesLog builds a minimal ERC721 Transfer log for tests.
 func typesLog(from, to common.Address, tokenID *big.Int) types.Log {
 	return types.Log{
