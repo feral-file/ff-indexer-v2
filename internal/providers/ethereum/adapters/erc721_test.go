@@ -2,14 +2,18 @@ package adapters_test
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/feral-file/ff-indexer-v2/internal/domain"
+	"github.com/feral-file/ff-indexer-v2/internal/mocks"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/helpers"
 )
@@ -30,6 +34,98 @@ func eip4906Log(topics []common.Hash, data []byte) types.Log {
 		Topics:         topics,
 		Data:           data,
 	}
+}
+
+// transferLog builds a Transfer log with the given number of address topics.
+func transferLog(topics []common.Hash) types.Log {
+	return types.Log{
+		Address:        common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		BlockNumber:    25752049,
+		BlockTimestamp: 1_700_000_000,
+		Topics:         topics,
+	}
+}
+
+func TestERC721ParseEvent_Transfer(t *testing.T) {
+	t.Parallel()
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+
+	vLog := transferLog([]common.Hash{
+		helpers.TransferEventSignature,
+		common.BytesToHash(from.Bytes()),
+		common.BytesToHash(to.Bytes()),
+		common.BigToHash(big.NewInt(42)),
+	})
+
+	parsed, err := newERC721TestAdapter().ParseEvent(context.Background(), vLog)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	require.Equal(t, domain.StandardERC721, parsed.Standard)
+	require.Equal(t, "42", parsed.TokenNumber)
+}
+
+// TestERC721ParseEvent_ERC20TransferSkippedBeforeTimestampLookup pins the
+// pre-existing ERC20 skip and, like the EIP-4906 cases, that it happens before
+// the block-timestamp lookup.
+func TestERC721ParseEvent_ERC20TransferSkippedBeforeTimestampLookup(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	blockProvider := mocks.NewMockBlockProvider(ctrl)
+	blockProvider.EXPECT().
+		GetBlockTimestamp(gomock.Any(), gomock.Any()).
+		Return(time.Time{}, errors.New("block provider unavailable")).
+		AnyTimes()
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+
+	vLog := transferLog([]common.Hash{
+		helpers.TransferEventSignature,
+		common.BytesToHash(from.Bytes()),
+		common.BytesToHash(to.Bytes()),
+	})
+	vLog.BlockTimestamp = 0 // force the provider path
+
+	adapter := adapters.NewERC721Adapter(nil, nil, blockProvider, domain.ChainEthereumMainnet)
+	parsed, err := adapter.ParseEvent(context.Background(), vLog)
+	require.NoError(t, err)
+	require.Nil(t, parsed)
+}
+
+func TestERC721ParseEvent_TransferWithUnusableTopicCount(t *testing.T) {
+	t.Parallel()
+
+	vLog := transferLog([]common.Hash{
+		helpers.TransferEventSignature,
+		common.BytesToHash(common.HexToAddress("0x1111111111111111111111111111111111111111").Bytes()),
+	})
+
+	parsed, err := newERC721TestAdapter().ParseEvent(context.Background(), vLog)
+	require.Error(t, err)
+	require.Nil(t, parsed)
+	require.Contains(t, err.Error(), "expected 3 or 4 topics, got 2")
+}
+
+func TestERC721ParseEvent_UnknownSignature(t *testing.T) {
+	t.Parallel()
+
+	vLog := transferLog([]common.Hash{common.HexToHash("0xdeadbeef")})
+
+	parsed, err := newERC721TestAdapter().ParseEvent(context.Background(), vLog)
+	require.ErrorIs(t, err, adapters.ErrUnknownEvent)
+	require.Nil(t, parsed)
+}
+
+func TestERC721ParseEvent_NoTopics(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := newERC721TestAdapter().ParseEvent(context.Background(), transferLog(nil))
+	require.Error(t, err)
+	require.Nil(t, parsed)
+	require.Contains(t, err.Error(), "no topics")
 }
 
 func TestERC721ParseEvent_MetadataUpdateSpecShape(t *testing.T) {
@@ -113,6 +209,87 @@ func TestERC721ParseEvent_MalformedMetadataUpdateSkipped(t *testing.T) {
 			require.Nil(t, parsed)
 		})
 	}
+}
+
+// TestERC721ParseEvent_MalformedSkippedBeforeTimestampLookup pins that shape
+// validation runs before the block-timestamp lookup. Historical eth_getLogs
+// results carry no BlockTimestamp, so a malformed log would otherwise reach
+// BlockProvider.GetBlockTimestamp and surface that provider's error as fatal —
+// re-opening the crash path this PR closes, just via a failing provider rather
+// than the shape check itself.
+func TestERC721ParseEvent_MalformedSkippedBeforeTimestampLookup(t *testing.T) {
+	t.Parallel()
+
+	malformed := []struct {
+		name   string
+		topics []common.Hash
+		data   []byte
+	}{
+		{
+			name: "MetadataUpdate with too many topics",
+			topics: []common.Hash{
+				helpers.EIP4906MetadataUpdateEventSignature,
+				common.BigToHash(big.NewInt(1)),
+				common.BigToHash(big.NewInt(2)),
+			},
+		},
+		{
+			name:   "BatchMetadataUpdate with truncated data",
+			topics: []common.Hash{helpers.EIP4906BatchMetadataUpdateEventSignature},
+			data:   common.BigToHash(big.NewInt(7)).Bytes(),
+		},
+	}
+
+	for _, tt := range malformed {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			blockProvider := mocks.NewMockBlockProvider(ctrl)
+			// Optional: a correct implementation never reaches this call. If it
+			// does, the returned error propagates and the assertions below fail.
+			blockProvider.EXPECT().
+				GetBlockTimestamp(gomock.Any(), gomock.Any()).
+				Return(time.Time{}, errors.New("block provider unavailable")).
+				AnyTimes()
+
+			adapter := adapters.NewERC721Adapter(nil, nil, blockProvider, domain.ChainEthereumMainnet)
+
+			vLog := eip4906Log(tt.topics, tt.data)
+			vLog.BlockTimestamp = 0 // force the provider path
+
+			parsed, err := adapter.ParseEvent(context.Background(), vLog)
+			require.NoError(t, err)
+			require.Nil(t, parsed)
+		})
+	}
+}
+
+// TestERC721ParseEvent_WellFormedStillFailsOnTimestampError guards the other
+// side of the boundary: skipping malformed shapes early must not swallow
+// timestamp failures for logs we do intend to index.
+func TestERC721ParseEvent_WellFormedStillFailsOnTimestampError(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	blockProvider := mocks.NewMockBlockProvider(ctrl)
+	timestampErr := errors.New("block provider unavailable")
+	blockProvider.EXPECT().
+		GetBlockTimestamp(gomock.Any(), gomock.Any()).
+		Return(time.Time{}, timestampErr)
+
+	adapter := adapters.NewERC721Adapter(nil, nil, blockProvider, domain.ChainEthereumMainnet)
+
+	vLog := eip4906Log(
+		[]common.Hash{helpers.EIP4906MetadataUpdateEventSignature},
+		common.BigToHash(big.NewInt(42)).Bytes(),
+	)
+	vLog.BlockTimestamp = 0
+
+	parsed, err := adapter.ParseEvent(context.Background(), vLog)
+	require.Error(t, err)
+	require.Nil(t, parsed)
+	require.ErrorIs(t, err, timestampErr)
 }
 
 func TestERC721ParseEvent_BatchMetadataUpdateSpecShape(t *testing.T) {
