@@ -399,15 +399,24 @@ func metadataUpdateEventName(vLog types.Log) string {
 //
 // Reason: the selector keccak("MetadataUpdate(uint256)") is the same whether or
 // not _tokenId is declared indexed, so non-conforming contracts that index the
-// parameter (2 topics, id in topics[1], empty data) reach this parser alongside
-// the spec shape (1 topic, id in data). One such log at mainnet block 25752049
-// crashed live ingestion when only the spec shape was accepted.
-// Constraints: any other shape returns ok=false and the caller skips the log.
+// parameter reach this parser alongside the spec shape. One such log at mainnet
+// block 25752049 crashed live ingestion when only the spec shape was accepted.
+//
+// A matching selector means the declaration is exactly MetadataUpdate(uint256),
+// which Solidity can encode only two ways: not indexed (1 topic, id in data) or
+// indexed (2 topics, id in topics[1], empty data). The indexed branch therefore
+// requires empty data — two topics carrying a payload is neither encoding, so
+// topics[1] cannot be trusted as a token id.
+//
+// Constraints: any other shape returns ok=false and the caller skips the log
+// before the block-timestamp lookup. The 1-topic branch keeps its pre-existing
+// tolerance for trailing data rather than tightening long-standing behavior
+// inside a fix scoped to the indexed variant.
 func metadataUpdateTokenID(vLog types.Log) (*big.Int, bool) {
 	switch {
 	case len(vLog.Topics) == 1 && len(vLog.Data) >= 32:
 		return new(big.Int).SetBytes(vLog.Data[0:32]), true
-	case len(vLog.Topics) == 2:
+	case len(vLog.Topics) == 2 && len(vLog.Data) == 0:
 		return new(big.Int).SetBytes(vLog.Topics[1].Bytes()), true
 	default:
 		return nil, false

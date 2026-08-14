@@ -198,6 +198,18 @@ func TestERC721ParseEvent_MalformedMetadataUpdateSkipped(t *testing.T) {
 				common.BigToHash(big.NewInt(2)),
 			},
 		},
+		{
+			// Neither encoding of MetadataUpdate(uint256) produces this: the
+			// indexed form carries no data, the non-indexed form carries no
+			// second topic. Provenance is unknown, so topics[1] cannot be
+			// trusted as a token id.
+			name: "indexed topic count with unexpected data",
+			topics: []common.Hash{
+				helpers.EIP4906MetadataUpdateEventSignature,
+				common.BigToHash(big.NewInt(42)),
+			},
+			data: common.BigToHash(big.NewInt(99)).Bytes(),
+		},
 	}
 
 	for _, tt := range tests {
@@ -237,6 +249,14 @@ func TestERC721ParseEvent_MalformedSkippedBeforeTimestampLookup(t *testing.T) {
 			name:   "BatchMetadataUpdate with truncated data",
 			topics: []common.Hash{helpers.EIP4906BatchMetadataUpdateEventSignature},
 			data:   common.BigToHash(big.NewInt(7)).Bytes(),
+		},
+		{
+			name: "MetadataUpdate with indexed topic count and unexpected data",
+			topics: []common.Hash{
+				helpers.EIP4906MetadataUpdateEventSignature,
+				common.BigToHash(big.NewInt(42)),
+			},
+			data: common.BigToHash(big.NewInt(99)).Bytes(),
 		},
 	}
 
