@@ -316,9 +316,24 @@ func parseDataURIMetadata(metadata string) (string, map[string]string, bool) {
 	return mimeType, parameters, isBase64
 }
 
-// IsDataURI checks if a string is a valid data URI
+// IsDataURI checks if a string is a plausibly well-formed data URI (data: scheme with
+// the RFC 2397 comma separator). Use it for gates that decide whether a value should be
+// treated as usable inline content (indexing filters, display extraction). For checker
+// DISPATCH use HasDataURIScheme instead: a malformed data: value must still be routed to
+// the data URI checker so it is classified data_uri_invalid rather than judged as a
+// (hopeless) fetchable URL.
 func IsDataURI(s string) bool {
 	return strings.HasPrefix(s, "data:") && strings.Contains(s, ",")
+}
+
+// HasDataURIScheme reports whether a value claims the data: scheme at all, well-formed
+// or not. Health-check dispatch keys on this rather than IsDataURI so that ownership
+// follows the scheme: everything data: belongs to the data URI checker, which classifies
+// malformed syntax as data_uri_invalid (PR #118 review). Deliberately not a gate —
+// callers that filter which values enter indexing keep using IsDataURI, so widening
+// dispatch does not widen what gets indexed.
+func HasDataURIScheme(s string) bool {
+	return strings.HasPrefix(s, "data:")
 }
 
 // Int64FromUnsignedDecimalString parses s as an unsigned base-10 integer. After leading and

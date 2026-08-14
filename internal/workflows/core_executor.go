@@ -755,7 +755,9 @@ func (e *coreExecutor) CheckMediaURLsHealthAndUpdateViewability(ctx context.Cont
 
 				res := urlResult{url: u}
 
-				if types.IsDataURI(u) {
+				// Scheme-based dispatch (see sweeper.checkURL): malformed data: values
+				// belong to the data URI checker for data_uri_invalid classification.
+				if types.HasDataURIScheme(u) {
 					result := e.dataURIChecker.Check(u)
 					if result.Valid {
 						res.healthStatus = schema.MediaHealthStatusHealthy
