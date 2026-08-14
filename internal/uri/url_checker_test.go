@@ -170,6 +170,7 @@ func TestURLChecker_Check(t *testing.T) {
 					Return([]byte{0x89, 'P'}, io.ErrUnexpectedEOF)
 			},
 			expectedStatus: uri.HealthStatusTransientError,
+			expectedReason: uri.FailureTransport,
 		},
 		{
 			name: "206 with mid-file Content-Range retries unranged and validates the true prefix",
@@ -338,6 +339,7 @@ func TestURLChecker_Check(t *testing.T) {
 					Return(httpResp(http.StatusTooManyRequests, "", nil, nil), nil)
 			},
 			expectedStatus: uri.HealthStatusTransientError,
+			expectedReason: uri.FailureHTTPStatus,
 		},
 		{
 			name: "200 HTML error page declared as image is broken (bug #76 class)",
@@ -374,9 +376,10 @@ func TestURLChecker_Check(t *testing.T) {
 					Return(nil, &mockRetryableError{})
 			},
 			expectedStatus: uri.HealthStatusTransientError,
+			expectedReason: uri.FailureTransport,
 		},
 		{
-			name: "non-retryable transport error is broken without a reason",
+			name: "non-retryable transport error is broken with the transport reason",
 			url:  "https://example.com/dead.png",
 			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
 				m.EXPECT().
@@ -384,7 +387,7 @@ func TestURLChecker_Check(t *testing.T) {
 					Return(nil, assert.AnError)
 			},
 			expectedStatus: uri.HealthStatusBroken,
-			expectedReason: "",
+			expectedReason: uri.FailureTransport,
 		},
 		{
 			name: "DNS resolution failure is broken with dns reason, not SSRF-blocked",
@@ -404,6 +407,7 @@ func TestURLChecker_Check(t *testing.T) {
 			setupMocks: func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureInvalidURL,
 		},
 		{
 			name: "non-HTTP scheme is broken",
@@ -411,6 +415,15 @@ func TestURLChecker_Check(t *testing.T) {
 			setupMocks: func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureUnsupportedScheme,
+		},
+		{
+			name: "ipfs scheme that escaped normalization is broken with unsupported_scheme",
+			url:  "ipfs://QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH",
+			setupMocks: func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureUnsupportedScheme,
 		},
 		{
 			name: "IPFS gateway URL healthy directly - no fallback probes",
@@ -437,6 +450,27 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusHealthy,
 			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid),
+		},
+		{
+			// Regression (PR #118 review F1): a transient direct failure must still hand
+			// the fallback-success result a non-empty FailureReason, because promotion
+			// failure persists the ORIGINAL URL as broken with exactly these ride-along
+			// diagnostics — a reasonless transient here becomes a broken row with NULL
+			// failure_reason, indistinguishable from a never-probed row.
+			name: "transient direct failure with fallback win carries the direct probe's reason",
+			url:  "https://gateway.pinata.cloud/ipfs/" + cid,
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusTooManyRequests, "", nil, nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid),
+			expectedReason: uri.FailureHTTPStatus,
 		},
 		{
 			name: "stored directory CID URL heals to its index.html entry point (feral-file#3482)",
@@ -583,6 +617,12 @@ func TestURLChecker_Check(t *testing.T) {
 			}
 			if tt.expectedReason != "" {
 				assert.Equal(t, tt.expectedReason, result.FailureReason)
+			}
+			// Contract: every broken verdict carries a machine-readable reason — a
+			// persisted broken row with a NULL failure_reason (and NULL content types
+			// when no body was read) is indistinguishable from a never-probed row.
+			if tt.expectedStatus == uri.HealthStatusBroken {
+				assert.NotEmpty(t, result.FailureReason, "broken verdict must carry a failure reason")
 			}
 			if tt.expectedStatus != uri.HealthStatusHealthy {
 				require.NotNil(t, result.Error)

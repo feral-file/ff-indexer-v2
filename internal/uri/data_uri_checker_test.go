@@ -99,6 +99,7 @@ func TestDataURIChecker_Check(t *testing.T) {
 		expectError            *string
 		expectMimeType         string
 		expectDeclaredMimeType string
+		expectReason           uri.FailureReason
 	}{
 		{
 			name:                   "valid PNG with base64",
@@ -137,16 +138,18 @@ func TestDataURIChecker_Check(t *testing.T) {
 			expectDeclaredMimeType: "image/gif",
 		},
 		{
-			name:        "missing data: prefix",
-			dataURI:     "image/png;base64," + validPNGBase64,
-			expectValid: false,
-			expectError: types.StringPtr("invalid data URI: must start with 'data:'"),
+			name:         "missing data: prefix",
+			dataURI:      "image/png;base64," + validPNGBase64,
+			expectValid:  false,
+			expectError:  types.StringPtr("invalid data URI: must start with 'data:'"),
+			expectReason: uri.FailureDataURIInvalid,
 		},
 		{
-			name:        "missing comma separator",
-			dataURI:     "data:image/png;base64" + validPNGBase64,
-			expectValid: false,
-			expectError: types.StringPtr("invalid data URI format: missing comma separator"),
+			name:         "missing comma separator",
+			dataURI:      "data:image/png;base64" + validPNGBase64,
+			expectValid:  false,
+			expectError:  types.StringPtr("invalid data URI format: missing comma separator"),
+			expectReason: uri.FailureDataURIInvalid,
 		},
 		{
 			name:        "empty data",
@@ -155,10 +158,11 @@ func TestDataURIChecker_Check(t *testing.T) {
 			expectError: types.StringPtr("invalid data URI: empty data"),
 		},
 		{
-			name:        "invalid base64 encoding",
-			dataURI:     "data:image/png;base64,!!!invalid!!!",
-			expectValid: false,
-			expectError: types.StringPtr("failed to decode base64: illegal base64 data at input byte 0"),
+			name:         "invalid base64 encoding",
+			dataURI:      "data:image/png;base64,!!!invalid!!!",
+			expectValid:  false,
+			expectError:  types.StringPtr("failed to decode base64: illegal base64 data at input byte 0"),
+			expectReason: uri.FailureDataURIInvalid,
 		},
 		{
 			name:                   "unsupported mime type - text",
@@ -296,16 +300,18 @@ func TestDataURIChecker_Check(t *testing.T) {
 			expectError: types.StringPtr("invalid data URI: empty data"),
 		},
 		{
-			name:        "unsupported mime type - audio",
-			dataURI:     "data:audio/mp3;base64," + base64.StdEncoding.EncodeToString([]byte("fake audio")),
-			expectValid: false,
-			expectError: types.StringPtr("unsupported mime type: audio/mp3 (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
+			name:         "unsupported mime type - audio",
+			dataURI:      "data:audio/mp3;base64," + base64.StdEncoding.EncodeToString([]byte("fake audio")),
+			expectValid:  false,
+			expectError:  types.StringPtr("unsupported mime type: audio/mp3 (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
+			expectReason: uri.FailureUnsupportedMimeType,
 		},
 		{
-			name:        "unsupported mime type - application/xml",
-			dataURI:     "data:application/xml;base64," + base64.StdEncoding.EncodeToString([]byte("<root></root>")),
-			expectValid: false,
-			expectError: types.StringPtr("unsupported mime type: application/xml (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
+			name:         "unsupported mime type - application/xml",
+			dataURI:      "data:application/xml;base64," + base64.StdEncoding.EncodeToString([]byte("<root></root>")),
+			expectValid:  false,
+			expectError:  types.StringPtr("unsupported mime type: application/xml (supported types: image/*, video/*, text/*, application/json, application/pdf)"),
+			expectReason: uri.FailureUnsupportedMimeType,
 		},
 	}
 
@@ -330,6 +336,16 @@ func TestDataURIChecker_Check(t *testing.T) {
 
 			if tt.expectDeclaredMimeType != "" {
 				assert.Equal(t, tt.expectDeclaredMimeType, result.DeclaredMimeType, "DeclaredMimeType mismatch")
+			}
+
+			if tt.expectReason != "" {
+				assert.Equal(t, tt.expectReason, result.Reason, "Reason mismatch")
+			}
+			// Contract: every invalid verdict carries a machine-readable reason — a
+			// persisted broken row with a NULL failure_reason is indistinguishable from
+			// a never-probed one.
+			if !tt.expectValid {
+				assert.NotEmpty(t, result.Reason, "invalid verdict must carry a failure reason")
 			}
 		})
 	}

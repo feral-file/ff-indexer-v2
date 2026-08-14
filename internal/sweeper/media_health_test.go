@@ -304,6 +304,78 @@ func TestMediaHealthSweeper_CheckURL_AlternativeURLPropagationFailure(t *testing
 	require.NoError(t, err)
 }
 
+// TestMediaHealthSweeper_CheckURL_MalformedDataURIDispatch pins scheme-based checker
+// dispatch (PR #118 review F1, second round): a data: value without the RFC 2397 comma
+// separator must still be routed to the data URI checker so it is classified
+// data_uri_invalid. Before the fix, dispatch keyed on IsDataURI (prefix AND comma), so
+// malformed data URIs fell through to the URL checker and were misfiled as invalid_url.
+// The strict URLChecker mock carries no expectations here: a regression in dispatch
+// fails this test on the unexpected Check call, not just on the persisted reason.
+func TestMediaHealthSweeper_CheckURL_MalformedDataURIDispatch(t *testing.T) {
+	mocks := setupTestSweeper(t)
+	defer tearDownTestSweeper(mocks)
+
+	ctx := context.Background()
+	malformedURL := "data:image/png;base64iVBORw0KGgo" // missing comma separator
+
+	mocks.store.EXPECT().
+		GetTokenIDsByMediaURL(ctx, malformedURL).
+		Return([]uint64{1}, nil)
+
+	// The same verdict the real checker produces for a comma-less data URI (pinned by
+	// the uri package's "missing comma separator" test case).
+	parseErr := "invalid data URI format: missing comma separator"
+	mocks.dataURIChecker.EXPECT().
+		Check(malformedURL).
+		Return(uri.DataURICheckResult{
+			Valid:  false,
+			Error:  &parseErr,
+			Reason: uri.FailureDataURIInvalid,
+		})
+
+	mocks.store.EXPECT().
+		UpdateTokenMediaHealthByURL(ctx, malformedURL, gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, upd store.MediaHealthUpdate) error {
+			require.Equal(t, schema.MediaHealthStatusBroken, upd.Status)
+			require.NotNil(t, upd.FailureReason)
+			require.Equal(t, uri.FailureDataURIInvalid.String(), *upd.FailureReason)
+			return nil
+		})
+
+	mocks.store.EXPECT().
+		BatchUpdateTokensViewability(ctx, []uint64{1}).
+		Return(nil, nil)
+
+	now := time.Now()
+	mocks.clock.EXPECT().Now().Return(now).AnyTimes()
+	mocks.clock.EXPECT().Since(now).Return(time.Second).AnyTimes()
+	mocks.clock.EXPECT().After(gomock.Any()).DoAndReturn(func(d time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		return ch
+	}).AnyTimes()
+
+	mocks.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{malformedURL}, nil).
+		Times(1)
+	mocks.store.EXPECT().
+		GetURLsForChecking(ctx, 24*time.Hour, 10).
+		Return([]string{}, nil).
+		AnyTimes()
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = mocks.sweeper.Stop(ctx)
+	}()
+
+	err := mocks.sweeper.Start(ctx)
+	require.NoError(t, err)
+}
+
 func TestMediaHealthSweeper_CheckURL_AlternativeURL(t *testing.T) {
 	mocks := setupTestSweeper(t)
 	defer tearDownTestSweeper(mocks)

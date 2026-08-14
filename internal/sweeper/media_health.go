@@ -409,8 +409,10 @@ func (s *mediaHealthSweeper) releaseOrphanedRenderGates(ctx context.Context) {
 func (s *mediaHealthSweeper) checkURL(ctx context.Context, url string, healthyCount, brokenCount, transientErrorCount *atomic.Int32) {
 	logger.InfoCtx(ctx, "Checking URL", zap.String("url", url))
 
-	// Perform health check based on the URL type
-	if types.IsDataURI(url) {
+	// Perform health check based on the URL type. Dispatch on the scheme alone (not
+	// IsDataURI's well-formedness test): a malformed data: value must reach the data URI
+	// checker to be classified data_uri_invalid instead of invalid_url.
+	if types.HasDataURIScheme(url) {
 		//Perform data URI health check
 		result := s.dataURIChecker.Check(url)
 		switch result.Valid {

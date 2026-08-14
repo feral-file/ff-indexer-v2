@@ -104,11 +104,20 @@ SSRF policy refusals are final and never trigger gateway fallback. DNS failures 
 | `known_error_page` | configured error-page marker matched | validator |
 | `zero_length` | empty body | validator |
 | `truncated` | body ended before declared length | validator |
+| `invalid_url` | URL failed basic parsing; no fetch attempted | checker |
+| `unsupported_scheme` | non-HTTP(S) scheme escaped ingest normalization; no fetch attempted | checker |
+| `transport` | transport-level fetch failure with no more specific entry (TLS, protocol, non-retryable connection errors) | probe |
+| `data_uri_invalid` | data: URI failed RFC 2397 parsing | data URI checker |
+| `unsupported_mime_type` | data: URI declared a mime type outside the supported set | data URI checker |
 | `render_*` | **reserved for the L1 render probe** | render probe |
 
-`failure_reason` is NULL for healthy/unknown rows, and for broken rows whose transport
-error has no taxonomy entry (e.g. connection refused). Unclassified is honest: the
-column records only causes the probe can actually distinguish.
+`failure_reason` is NULL only for healthy and unknown rows: every broken verdict carries
+a reason. This is deliberate — a broken row with a NULL reason (and NULL content types,
+when no body was read) is indistinguishable from a never-probed row, which capped the
+"probed by L0" coverage metric below 100% and hid whole failure classes from per-reason
+breakdowns. `transport` stays deliberately coarse rather than inventing precision the
+probe does not have; `last_error` carries the specific message. Rows written before this
+contract may hold a broken/NULL combination until their next sweep re-probes them.
 
 ## L0/L1 ownership rule
 

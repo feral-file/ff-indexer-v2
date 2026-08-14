@@ -68,6 +68,20 @@ const (
 	MediaFailureZeroLength MediaFailureReason = "zero_length"
 	// MediaFailureTruncated indicates the body ended before the declared Content-Length.
 	MediaFailureTruncated MediaFailureReason = "truncated"
+	// MediaFailureInvalidURL indicates the URL failed basic parsing; no fetch attempted.
+	MediaFailureInvalidURL MediaFailureReason = "invalid_url"
+	// MediaFailureUnsupportedScheme indicates a non-HTTP(S) scheme reached the checker
+	// (a URI that escaped gateway normalization at ingest); no fetch attempted.
+	MediaFailureUnsupportedScheme MediaFailureReason = "unsupported_scheme"
+	// MediaFailureTransport indicates a transport-level fetch failure with no more
+	// specific taxonomy entry (TLS, protocol, non-retryable connection errors).
+	// Deliberately coarse; last_error carries the specific message.
+	MediaFailureTransport MediaFailureReason = "transport"
+	// MediaFailureDataURIInvalid indicates a data: URI that failed RFC 2397 parsing.
+	MediaFailureDataURIInvalid MediaFailureReason = "data_uri_invalid"
+	// MediaFailureUnsupportedMimeType indicates a data: URI declaring a mime type
+	// outside the supported set.
+	MediaFailureUnsupportedMimeType MediaFailureReason = "unsupported_mime_type"
 )
 
 // String returns the string representation of the failure reason
@@ -103,7 +117,10 @@ type TokenMediaHealth struct {
 	LastError *string `gorm:"column:last_error;type:text"`
 
 	// FailureReason is the machine-readable cause of the last broken verdict (see
-	// MediaFailureReason). NULL when healthy/unknown or not yet content-probed.
+	// MediaFailureReason). NULL only for healthy and unknown rows: every persisted
+	// broken verdict carries a reason, so NULL-with-broken cannot be confused with
+	// "not yet probed" (rows written before this contract may still hold NULL until
+	// their next sweep re-probes them).
 	FailureReason *string `gorm:"column:failure_reason;type:text"`
 
 	// ObservedContentType is the Content-Type header observed on the last probe.
