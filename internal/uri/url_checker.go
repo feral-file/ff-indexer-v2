@@ -36,7 +36,14 @@ const (
 	HealthStatusHealthy HealthStatus = "healthy"
 	// HealthStatusBroken indicates the URL is not accessible or serves invalid content
 	HealthStatusBroken HealthStatus = "broken"
-	// HealthStatusTransientError indicates a temporary error that should be retried
+	// HealthStatusTransientError indicates a temporary error that should be retried.
+	//
+	// Transient verdicts still carry a FailureReason even though no caller persists them
+	// directly: on gateway fallback the direct probe's diagnostics ride along on the
+	// healthy result (see checkGatewayFallback), and when the subsequent promotion fails
+	// both persistence paths write the ORIGINAL URL as broken using exactly those
+	// diagnostics. A reasonless transient verdict would resurface there as a broken row
+	// with a NULL failure_reason — indistinguishable from a never-probed row.
 	HealthStatusTransientError HealthStatus = "transient_error"
 )
 
@@ -230,8 +237,9 @@ func (p *contentProbe) probe(ctx context.Context, url string, withRange bool) pr
 	case resp.StatusCode == http.StatusTooManyRequests:
 		errMsg := "rate limited (429)"
 		return probeResult{hcr: HealthCheckResult{
-			Status: HealthStatusTransientError,
-			Error:  &errMsg,
+			Status:        HealthStatusTransientError,
+			Error:         &errMsg,
+			FailureReason: FailureHTTPStatus,
 		}}
 
 	default:
@@ -290,8 +298,9 @@ func (p *contentProbe) readAndValidate(resp *http.Response, promisedLength int64
 		// retried next sweep.
 		errMsg := readErr.Error()
 		return probeResult{hcr: HealthCheckResult{
-			Status: HealthStatusTransientError,
-			Error:  &errMsg,
+			Status:        HealthStatusTransientError,
+			Error:         &errMsg,
+			FailureReason: FailureTransport,
 		}}
 	}
 	// readErr with conclusive length evidence falls through: the server delivered fewer
@@ -563,8 +572,9 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	if classifyTransient && adapter.IsHTTPRetryableError(err) {
 		msg := err.Error()
 		return HealthCheckResult{
-			Status: HealthStatusTransientError,
-			Error:  &msg,
+			Status:        HealthStatusTransientError,
+			Error:         &msg,
+			FailureReason: FailureTransport,
 		}
 	}
 	msg := err.Error()

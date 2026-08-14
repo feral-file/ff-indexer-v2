@@ -170,6 +170,7 @@ func TestURLChecker_Check(t *testing.T) {
 					Return([]byte{0x89, 'P'}, io.ErrUnexpectedEOF)
 			},
 			expectedStatus: uri.HealthStatusTransientError,
+			expectedReason: uri.FailureTransport,
 		},
 		{
 			name: "206 with mid-file Content-Range retries unranged and validates the true prefix",
@@ -338,6 +339,7 @@ func TestURLChecker_Check(t *testing.T) {
 					Return(httpResp(http.StatusTooManyRequests, "", nil, nil), nil)
 			},
 			expectedStatus: uri.HealthStatusTransientError,
+			expectedReason: uri.FailureHTTPStatus,
 		},
 		{
 			name: "200 HTML error page declared as image is broken (bug #76 class)",
@@ -374,6 +376,7 @@ func TestURLChecker_Check(t *testing.T) {
 					Return(nil, &mockRetryableError{})
 			},
 			expectedStatus: uri.HealthStatusTransientError,
+			expectedReason: uri.FailureTransport,
 		},
 		{
 			name: "non-retryable transport error is broken with the transport reason",
@@ -447,6 +450,27 @@ func TestURLChecker_Check(t *testing.T) {
 			},
 			expectedStatus: uri.HealthStatusHealthy,
 			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid),
+		},
+		{
+			// Regression (PR #118 review F1): a transient direct failure must still hand
+			// the fallback-success result a non-empty FailureReason, because promotion
+			// failure persists the ORIGINAL URL as broken with exactly these ride-along
+			// diagnostics — a reasonless transient here becomes a broken row with NULL
+			// failure_reason, indistinguishable from a never-probed row.
+			name: "transient direct failure with fallback win carries the direct probe's reason",
+			url:  "https://gateway.pinata.cloud/ipfs/" + cid,
+			setupMocks: func(m *mocks.MockHTTPClient, mio *mocks.MockIO) {
+				passthroughIO(mio)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://gateway.pinata.cloud/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusTooManyRequests, "", nil, nil), nil)
+				m.EXPECT().
+					GetResponseNoRetry(gomock.Any(), "https://ipfs.io/ipfs/"+cid, probeRangeHeader).
+					Return(httpResp(http.StatusOK, "image/png", minimalPNG(32, 32), nil), nil)
+			},
+			expectedStatus: uri.HealthStatusHealthy,
+			expectedURL:    strPtr("https://ipfs.io/ipfs/" + cid),
+			expectedReason: uri.FailureHTTPStatus,
 		},
 		{
 			name: "stored directory CID URL heals to its index.html entry point (feral-file#3482)",
