@@ -402,6 +402,146 @@ func TestAdapterRegistry_ParseEvent_TimestampLookupFails(t *testing.T) {
 	require.Contains(t, err.Error(), "resolve block timestamp for block 100")
 }
 
+func TestAdapterRegistry_ParseEvent_MetadataUpdateSpecShape(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	reg := newTestRegistry(t, mockClient, testContractFS(t, `{"contracts": []}`))
+
+	vLog := types.Log{
+		Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		Topics:  []common.Hash{helpers.EIP4906MetadataUpdateEventSignature},
+		Data:    common.BigToHash(big.NewInt(42)).Bytes(),
+	}
+
+	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	require.Equal(t, domain.EventTypeMetadataUpdate, parsed.EventType)
+	require.Equal(t, "42", parsed.TokenNumber)
+}
+
+// TestAdapterRegistry_ParseEvent_MetadataUpdateIndexedVariant covers the
+// non-conforming `MetadataUpdate(uint256 indexed _tokenId)` shape: same topic0
+// as the EIP-4906 spec event, but the token id lands in topics[1] with empty
+// data. Regression test for a live poison log (mainnet block 25752049 index
+// 300) that crashed ingestion with "expected 1 topic, got 2".
+func TestAdapterRegistry_ParseEvent_MetadataUpdateIndexedVariant(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	reg := newTestRegistry(t, mockClient, testContractFS(t, `{"contracts": []}`))
+
+	vLog := types.Log{
+		Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		Topics: []common.Hash{
+			helpers.EIP4906MetadataUpdateEventSignature,
+			common.BigToHash(big.NewInt(42)),
+		},
+	}
+
+	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	require.Equal(t, domain.EventTypeMetadataUpdate, parsed.EventType)
+	require.Equal(t, "42", parsed.TokenNumber)
+}
+
+// TestAdapterRegistry_ParseEvent_MalformedMetadataUpdateSkipped verifies that
+// MetadataUpdate logs whose shape carries no recoverable token id are skipped
+// (nil, nil) instead of failing: a fatal parse error on a permanently
+// malformed log would crash-loop live ingestion from the durable cursor.
+func TestAdapterRegistry_ParseEvent_MalformedMetadataUpdateSkipped(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	reg := newTestRegistry(t, mockClient, testContractFS(t, `{"contracts": []}`))
+
+	malformed := []types.Log{
+		{
+			// Spec topic count but truncated data.
+			Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+			Topics:  []common.Hash{helpers.EIP4906MetadataUpdateEventSignature},
+			Data:    []byte{0x01},
+		},
+		{
+			// More topics than any MetadataUpdate declaration can produce.
+			Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+			Topics: []common.Hash{
+				helpers.EIP4906MetadataUpdateEventSignature,
+				common.BigToHash(big.NewInt(1)),
+				common.BigToHash(big.NewInt(2)),
+			},
+		},
+	}
+
+	for _, vLog := range malformed {
+		parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+		require.NoError(t, err)
+		require.Nil(t, parsed)
+	}
+}
+
+func TestAdapterRegistry_ParseEvent_BatchMetadataUpdateSpecShape(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	reg := newTestRegistry(t, mockClient, testContractFS(t, `{"contracts": []}`))
+
+	data := append(common.BigToHash(big.NewInt(7)).Bytes(), common.BigToHash(big.NewInt(9)).Bytes()...)
+	vLog := types.Log{
+		Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		Topics:  []common.Hash{helpers.EIP4906BatchMetadataUpdateEventSignature},
+		Data:    data,
+	}
+
+	parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	require.Equal(t, domain.EventTypeMetadataUpdateRange, parsed.EventType)
+	require.Equal(t, "7", parsed.TokenNumber)
+	require.Equal(t, "9", parsed.ToTokenNumber)
+}
+
+// TestAdapterRegistry_ParseEvent_MalformedBatchMetadataUpdateSkipped verifies
+// that indexed or truncated BatchMetadataUpdate variants are skipped rather
+// than fatal, for the same crash-loop reason as single MetadataUpdate.
+func TestAdapterRegistry_ParseEvent_MalformedBatchMetadataUpdateSkipped(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	reg := newTestRegistry(t, mockClient, testContractFS(t, `{"contracts": []}`))
+
+	malformed := []types.Log{
+		{
+			// Indexed variant: token id moved into topics, ambiguous range.
+			Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+			Topics: []common.Hash{
+				helpers.EIP4906BatchMetadataUpdateEventSignature,
+				common.BigToHash(big.NewInt(7)),
+			},
+			Data: common.BigToHash(big.NewInt(9)).Bytes(),
+		},
+		{
+			// Spec topic count but truncated data.
+			Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+			Topics:  []common.Hash{helpers.EIP4906BatchMetadataUpdateEventSignature},
+			Data:    common.BigToHash(big.NewInt(7)).Bytes(),
+		},
+	}
+
+	for _, vLog := range malformed {
+		parsed, err := reg.ParseEvent(context.Background(), vLog, domain.ChainEthereumMainnet)
+		require.NoError(t, err)
+		require.Nil(t, parsed)
+	}
+}
+
 // typesLog builds a minimal ERC721 Transfer log for tests.
 func typesLog(from, to common.Address, tokenID *big.Int) types.Log {
 	return types.Log{

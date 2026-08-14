@@ -274,6 +274,12 @@ func (a *ERC721Adapter) GetTokensByOwner(
 // irrelevant ERC20 activity from tearing down the subscription when timestamp
 // lookups fail. ERC20 Transfer(address,address,uint256) has 3 topics; ERC721
 // Transfer(address,address,uint256) has 4 topics (indexed tokenId).
+//
+// EIP-4906 logs whose shape does not match a parseable variant are skipped as
+// (nil, nil) rather than returned as errors: the live subscription filters the
+// whole chain by topic0, so any contract can emit a permanently malformed log
+// with these signatures, and a fatal parse error would crash-loop ingestion
+// replaying the same block from the durable cursor.
 func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain.BlockchainEvent, error) {
 	if len(vLog.Topics) == 0 {
 		return nil, fmt.Errorf("event log has no topics")
@@ -309,27 +315,23 @@ func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain
 		}
 		return parsed, nil
 	case helpers.EIP4906MetadataUpdateEventSignature:
-		if len(vLog.Topics) != 1 {
-			return nil, fmt.Errorf("invalid MetadataUpdate event: expected 1 topic, got %d", len(vLog.Topics))
-		}
-		if len(vLog.Data) < 32 {
-			return nil, fmt.Errorf("invalid MetadataUpdate event: insufficient data")
+		tokenID, ok := metadataUpdateTokenID(vLog)
+		if !ok {
+			skipMalformedEIP4906Log(ctx, "MetadataUpdate", vLog)
+			return nil, nil
 		}
 		event := base
 		event.Standard = domain.StandardERC721
-		event.TokenNumber = new(big.Int).SetBytes(vLog.Data[0:32]).String()
+		event.TokenNumber = tokenID.String()
 		event.EventType = domain.EventTypeMetadataUpdate
 		event.Quantity = "1"
 		return &event, nil
 	case helpers.EIP4906BatchMetadataUpdateEventSignature:
-		if len(vLog.Topics) != 1 {
-			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: expected 1 topic, got %d", len(vLog.Topics))
+		fromTokenID, toTokenID, ok := batchMetadataUpdateRange(vLog)
+		if !ok {
+			skipMalformedEIP4906Log(ctx, "BatchMetadataUpdate", vLog)
+			return nil, nil
 		}
-		if len(vLog.Data) < 64 {
-			return nil, fmt.Errorf("invalid BatchMetadataUpdate event: insufficient data")
-		}
-		fromTokenID := new(big.Int).SetBytes(vLog.Data[0:32])
-		toTokenID := new(big.Int).SetBytes(vLog.Data[32:64])
 		event := base
 		event.Standard = domain.StandardERC721
 		event.TokenNumber = fromTokenID.String()
@@ -340,6 +342,51 @@ func (a *ERC721Adapter) ParseEvent(ctx context.Context, vLog types.Log) (*domain
 	default:
 		return nil, ErrUnknownEvent
 	}
+}
+
+// metadataUpdateTokenID extracts the token id from an EIP-4906 MetadataUpdate log.
+//
+// Reason: the selector keccak("MetadataUpdate(uint256)") is the same whether or
+// not _tokenId is declared indexed, so non-conforming contracts that index the
+// parameter (2 topics, id in topics[1], empty data) reach this parser alongside
+// the spec shape (1 topic, id in data). One such log at mainnet block 25752049
+// crashed live ingestion when only the spec shape was accepted.
+// Constraints: any other shape returns ok=false and the caller skips the log.
+func metadataUpdateTokenID(vLog types.Log) (*big.Int, bool) {
+	switch {
+	case len(vLog.Topics) == 1 && len(vLog.Data) >= 32:
+		return new(big.Int).SetBytes(vLog.Data[0:32]), true
+	case len(vLog.Topics) == 2:
+		return new(big.Int).SetBytes(vLog.Topics[1].Bytes()), true
+	default:
+		return nil, false
+	}
+}
+
+// batchMetadataUpdateRange extracts the token range from an EIP-4906
+// BatchMetadataUpdate log. Only the spec shape (1 topic, both ids in data) is
+// parsed: with one id moved into topics the log alone cannot tell whether it is
+// _fromTokenId or _toTokenId, so indexed variants return ok=false and are
+// skipped by the caller.
+func batchMetadataUpdateRange(vLog types.Log) (from, to *big.Int, ok bool) {
+	if len(vLog.Topics) != 1 || len(vLog.Data) < 64 {
+		return nil, nil, false
+	}
+	return new(big.Int).SetBytes(vLog.Data[0:32]), new(big.Int).SetBytes(vLog.Data[32:64]), true
+}
+
+// skipMalformedEIP4906Log records a metadata-update log dropped for having an
+// unparseable shape. Warn level keeps these visible without treating them as
+// ingestion failures; metadata updates are advisory refresh hints, so dropping
+// a malformed one loses at most a re-index trigger from a non-conforming contract.
+func skipMalformedEIP4906Log(ctx context.Context, eventName string, vLog types.Log) {
+	logger.WarnCtx(ctx, "Skipping malformed EIP-4906 log",
+		zap.String("event", eventName),
+		zap.String("contract", vLog.Address.Hex()),
+		zap.Uint64("block", vLog.BlockNumber),
+		zap.Uint("logIndex", vLog.Index),
+		zap.Int("topics", len(vLog.Topics)),
+		zap.Int("dataLen", len(vLog.Data)))
 }
 
 var _ ContractAdapter = (*ERC721Adapter)(nil)
