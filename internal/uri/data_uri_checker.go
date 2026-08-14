@@ -15,8 +15,9 @@ type DataURICheckResult struct {
 	Error            *string
 	MimeType         string // Detected mime type from content
 	DeclaredMimeType string // Declared mime type in URI
-	// Reason is the machine-readable failure classification ("" when valid or when the
-	// failure has no taxonomy entry, e.g. an unparseable URI)
+	// Reason is the machine-readable failure classification ("" only when valid: every
+	// invalid verdict carries a reason so a persisted broken row is never
+	// indistinguishable from a never-probed one)
 	Reason FailureReason
 }
 
@@ -74,8 +75,9 @@ func (c *dataURIChecker) Check(dataURI string) DataURICheckResult {
 	if err != nil {
 		errMsg := err.Error()
 		return DataURICheckResult{
-			Valid: false,
-			Error: &errMsg,
+			Valid:  false,
+			Error:  &errMsg,
+			Reason: FailureDataURIInvalid,
 		}
 	}
 
@@ -86,6 +88,7 @@ func (c *dataURIChecker) Check(dataURI string) DataURICheckResult {
 			Valid:            false,
 			Error:            &errMsg,
 			DeclaredMimeType: parsed.MimeType,
+			Reason:           FailureUnsupportedMimeType,
 		}
 	}
 

@@ -37,6 +37,33 @@ const (
 	FailureZeroLength FailureReason = "zero_length"
 	// FailureTruncated indicates the body ended before the declared length.
 	FailureTruncated FailureReason = "truncated"
+
+	// The reasons below close the "broken with NULL failure_reason" hole: every broken
+	// verdict must carry a reason, because NULL-in-both-classification-columns is the
+	// documented "not yet probed" state (docs/media_viewability.md) and rows that break
+	// before or below content validation would otherwise be indistinguishable from
+	// never-probed rows in coverage metrics and per-reason dashboards.
+
+	// FailureInvalidURL indicates the URL failed basic parsing (no scheme or no host);
+	// no fetch was attempted.
+	FailureInvalidURL FailureReason = "invalid_url"
+	// FailureUnsupportedScheme indicates a non-HTTP(S) scheme reached the checker (an
+	// ipfs:// / ar:// / onchfs:// reference that escaped gateway normalization at
+	// ingest); no fetch was attempted. Tracked separately from invalid_url because these
+	// rows are candidates for healing by normalization, not by the origin recovering.
+	FailureUnsupportedScheme FailureReason = "unsupported_scheme"
+	// FailureTransport indicates a transport-level fetch failure with no more specific
+	// taxonomy entry (TLS handshake failure, protocol error, non-retryable connection
+	// error). Deliberately coarse: the probe cannot reliably distinguish causes inside
+	// this class, and a coarse-but-present reason keeps the receipt property without
+	// inventing precision. last_error carries the specific message.
+	FailureTransport FailureReason = "transport"
+	// FailureDataURIInvalid indicates a data: URI that failed RFC 2397 parsing.
+	FailureDataURIInvalid FailureReason = "data_uri_invalid"
+	// FailureUnsupportedMimeType indicates a data: URI whose declared mime type is
+	// outside the supported set (image/*, video/*, text/*, application/json,
+	// application/pdf).
+	FailureUnsupportedMimeType FailureReason = "unsupported_mime_type"
 )
 
 // String returns the string representation of the failure reason.

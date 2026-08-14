@@ -391,12 +391,16 @@ func NewURLChecker(httpClient adapter.HTTPClient, io adapter.IO, config *Config)
 // Check performs a health check on a URL
 // This checker only handles HTTP/HTTPS URLs, not URI schemes like ipfs://, ar://, onchfs://
 func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
-	// Validate that this is an HTTP/HTTPS URL
+	// Validate that this is an HTTP/HTTPS URL. Both pre-fetch rejections carry a
+	// FailureReason: they are persisted broken verdicts, and a reasonless broken row is
+	// indistinguishable from a never-probed one (its classification columns are all
+	// NULL), which silently capped the "probed by L0" coverage metric below 100%.
 	if !types.IsValidURL(url) {
 		errMsg := "invalid URL format"
 		return HealthCheckResult{
-			Status: HealthStatusBroken,
-			Error:  &errMsg,
+			Status:        HealthStatusBroken,
+			Error:         &errMsg,
+			FailureReason: FailureInvalidURL,
 		}
 	}
 
@@ -404,8 +408,9 @@ func (c *urlChecker) Check(ctx context.Context, url string) HealthCheckResult {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		errMsg := "only HTTP/HTTPS URLs are supported"
 		return HealthCheckResult{
-			Status: HealthStatusBroken,
-			Error:  &errMsg,
+			Status:        HealthStatusBroken,
+			Error:         &errMsg,
+			FailureReason: FailureUnsupportedScheme,
 		}
 	}
 
@@ -536,8 +541,13 @@ func healthResultFromSSRF(err error) (HealthCheckResult, bool) {
 // broken without SSRFBlocked so bad or unresolvable hosts are not retried every sweep tick
 // (scheduled sweeps can still pick the row up later). When classifyTransient is true,
 // retryable transport errors map to transient_error; when false, they stay broken (used
-// for IPFS/Arweave/OnChFS gateway aggregation). Unclassified transport errors keep an
-// empty FailureReason — the taxonomy only records causes it can actually distinguish.
+// for IPFS/Arweave/OnChFS gateway aggregation). Remaining transport errors carry the
+// deliberately coarse `transport` reason rather than an empty one: an earlier version
+// left FailureReason empty here on the argument that the taxonomy should only record
+// causes it can distinguish, but a persisted broken row with a NULL reason (and NULL
+// content types, since no body was read) is indistinguishable from a never-probed row —
+// which broke coverage metrics and hid these failures from every per-reason breakdown.
+// `transport` still refuses to invent precision; last_error carries the specific message.
 func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	if hr, ok := healthResultFromSSRF(err); ok {
 		return hr
@@ -559,7 +569,8 @@ func mapOutboundFetchErr(err error, classifyTransient bool) HealthCheckResult {
 	}
 	msg := err.Error()
 	return HealthCheckResult{
-		Status: HealthStatusBroken,
-		Error:  &msg,
+		Status:        HealthStatusBroken,
+		Error:         &msg,
+		FailureReason: FailureTransport,
 	}
 }

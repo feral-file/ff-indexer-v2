@@ -376,7 +376,7 @@ func TestURLChecker_Check(t *testing.T) {
 			expectedStatus: uri.HealthStatusTransientError,
 		},
 		{
-			name: "non-retryable transport error is broken without a reason",
+			name: "non-retryable transport error is broken with the transport reason",
 			url:  "https://example.com/dead.png",
 			setupMocks: func(m *mocks.MockHTTPClient, _ *mocks.MockIO) {
 				m.EXPECT().
@@ -384,7 +384,7 @@ func TestURLChecker_Check(t *testing.T) {
 					Return(nil, assert.AnError)
 			},
 			expectedStatus: uri.HealthStatusBroken,
-			expectedReason: "",
+			expectedReason: uri.FailureTransport,
 		},
 		{
 			name: "DNS resolution failure is broken with dns reason, not SSRF-blocked",
@@ -404,6 +404,7 @@ func TestURLChecker_Check(t *testing.T) {
 			setupMocks: func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureInvalidURL,
 		},
 		{
 			name: "non-HTTP scheme is broken",
@@ -411,6 +412,15 @@ func TestURLChecker_Check(t *testing.T) {
 			setupMocks: func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {
 			},
 			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureUnsupportedScheme,
+		},
+		{
+			name: "ipfs scheme that escaped normalization is broken with unsupported_scheme",
+			url:  "ipfs://QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH",
+			setupMocks: func(_ *mocks.MockHTTPClient, _ *mocks.MockIO) {
+			},
+			expectedStatus: uri.HealthStatusBroken,
+			expectedReason: uri.FailureUnsupportedScheme,
 		},
 		{
 			name: "IPFS gateway URL healthy directly - no fallback probes",
@@ -583,6 +593,12 @@ func TestURLChecker_Check(t *testing.T) {
 			}
 			if tt.expectedReason != "" {
 				assert.Equal(t, tt.expectedReason, result.FailureReason)
+			}
+			// Contract: every broken verdict carries a machine-readable reason — a
+			// persisted broken row with a NULL failure_reason (and NULL content types
+			// when no body was read) is indistinguishable from a never-probed row.
+			if tt.expectedStatus == uri.HealthStatusBroken {
+				assert.NotEmpty(t, result.FailureReason, "broken verdict must carry a failure reason")
 			}
 			if tt.expectedStatus != uri.HealthStatusHealthy {
 				require.NotNil(t, result.Error)
