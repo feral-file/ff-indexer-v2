@@ -289,7 +289,7 @@ func TestIndexTokens_OneTokenFails_SiblingsStillIndexed(t *testing.T) {
 	// Both siblings must still be indexed end-to-end. Each sibling waits for
 	// the bad token to fail, then gives any shared-context cancellation time to
 	// propagate before continuing. Under a fail-fast errgroup.WithContext the
-	// sibling observes its context cancelled here and dies with the bad token,
+	// sibling observes its context canceled here and dies with the bad token,
 	// which fails this test; the plain errgroup must leave it running.
 	for _, tcid := range []domain.TokenCID{tGood1, tGood2} {
 		exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).
