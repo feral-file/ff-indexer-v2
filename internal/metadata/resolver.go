@@ -133,6 +133,20 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 			return nil, nil
 		}
 
+		// TzKT's resolved metadata is a cache and can serve a stale snapshot
+		// when TzKT missed a later token_metadata big map update. Known case:
+		// fxhash gentks that TzKT still reports with the mint-time
+		// "[WAITING TO BE SIGNED]" placeholder years after the signer committed
+		// the real metadata on-chain, so the device renders the placeholder
+		// page instead of the artwork. When the cache looks like that
+		// placeholder, re-resolve from the big map, which is the on-chain
+		// source of truth.
+		if isUnsignedFxhashPlaceholder(metadata) {
+			if fresh := r.resolveFA2MetadataFromBigMap(ctx, contractAddress, tokenNumber); fresh != nil {
+				metadata = fresh
+			}
+		}
+
 		// Normalize the metadata based on TZIP-21
 		return r.normalizeTZIP21Metadata(ctx, tokenCID, metadata)
 	default:
@@ -154,6 +168,48 @@ func (r *resolver) Resolve(ctx context.Context, tokenCID domain.TokenCID) (*Norm
 
 	// Normalize the metadata based on OpenSea Metadata Standard
 	return r.normalizeOpenSeaMetadataStandard(ctx, tokenCID, metadata), nil
+}
+
+// isUnsignedFxhashPlaceholder reports whether TZIP-21 metadata is the static
+// placeholder fxhash assigns to a gentk at mint time, before its signer module
+// commits the real metadata on-chain.
+func isUnsignedFxhashPlaceholder(metadata map[string]interface{}) bool {
+	name, _ := metadata["name"].(string)
+	if strings.EqualFold(strings.TrimSpace(name), "[WAITING TO BE SIGNED]") {
+		return true
+	}
+
+	description, _ := metadata["description"].(string)
+	return strings.Contains(strings.ToLower(description), "waiting to be signed by fxhash signer")
+}
+
+// resolveFA2MetadataFromBigMap re-resolves token metadata from the contract's
+// token_metadata big map, bypassing TzKT's cached snapshot. Returns nil when
+// the authoritative document can't be found or fetched, in which case callers
+// keep the cached metadata.
+func (r *resolver) resolveFA2MetadataFromBigMap(ctx context.Context, contractAddress string, tokenNumber string) map[string]interface{} {
+	metadataURI, err := r.tzClient.GetTokenMetadataURI(ctx, contractAddress, tokenNumber)
+	if err != nil || metadataURI == "" {
+		logger.WarnCtx(ctx, "Failed to read token_metadata big map URI, keeping TzKT cached metadata",
+			zap.String("contractAddress", contractAddress),
+			zap.String("tokenNumber", tokenNumber),
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	metadata, err := r.fetchMetadataFromURI(ctx, metadataURI)
+	if err != nil {
+		logger.WarnCtx(ctx, "Failed to fetch metadata from big map URI, keeping TzKT cached metadata",
+			zap.String("contractAddress", contractAddress),
+			zap.String("tokenNumber", tokenNumber),
+			zap.String("metadataURI", metadataURI),
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	return metadata
 }
 
 // normalizeTZIP21Metadata normalizes the metadata follow the TZIP21 specs
