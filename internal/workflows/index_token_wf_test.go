@@ -265,6 +265,40 @@ func TestIndexTokens_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIndexTokens_OneTokenFails_SiblingsStillIndexed(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+	tGood1 := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	tBad := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "2")
+	tGood2 := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "3")
+
+	bl.EXPECT().IsTokenCIDBlacklisted(gomock.Any()).Return(false).Times(3)
+
+	// The bad token fails fatally (not one of the skippable error classes).
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tBad, gomock.Any()).
+		Return(errors.New("owner balance and events: rpc timeout"))
+
+	// Both siblings must still be indexed end-to-end. Under the previous
+	// fail-fast errgroup, the bad token canceled the shared context and these
+	// expectations were not reliably met.
+	for _, tcid := range []domain.TokenCID{tGood1, tGood2} {
+		exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+		exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+		exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+		exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+			Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+		exec.EXPECT().IndexTokenWithFullProvenancesByTokenCID(gomock.Any(), tcid).Return(nil)
+	}
+	exec.EXPECT().SupportsTokenProvenance(gomock.Any()).Return(true).Times(2)
+
+	err := wf.IndexTokens(ctx, []domain.TokenCID{tGood1, tBad, tGood2}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "indexed 2/3 tokens")
+	require.Contains(t, err.Error(), tBad.String())
+}
+
 func TestIndexToken_Success(t *testing.T) {
 	t.Parallel()
 	d := testTokenCore(t)

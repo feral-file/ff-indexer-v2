@@ -2,8 +2,10 @@ package workflows
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -257,21 +259,43 @@ func (w *coreWorkflows) IndexTokens(ctx context.Context, tokenCIDs []domain.Toke
 
 	// Hard cap to prevent flooding the task queue when a chunk contains a very large number of tokens
 	// (e.g., thousands of tokens minted in the same block).
-	g, gctx := errgroup.WithContext(ctx)
+	//
+	// Deliberately not errgroup.WithContext: one failing token must not cancel
+	// its siblings. With cancellation, a single token that fails ownership
+	// resolution aborts the whole chunk, the owner workflow never advances its
+	// block checkpoint, and every retry replays the same chunk into the same
+	// failure — a wallet scan that plateaus at the same small subset forever.
+	var g errgroup.Group
 	g.SetLimit(5)
+
+	var mu sync.Mutex
+	var tokenErrs []error
 
 	for _, tc := range tokenCIDs {
 		tid := tc
 		g.Go(func() error {
-			logger.InfoCtx(gctx, "Triggered token indexing workflow",
+			logger.InfoCtx(ctx, "Triggered token indexing workflow",
 				zap.String("tokenCID", tid.String()),
 			)
-			return w.IndexToken(gctx, tid, address)
+			if err := w.IndexToken(ctx, tid, address); err != nil {
+				logger.ErrorCtx(ctx,
+					fmt.Errorf("failed to index token, continuing with remaining tokens"),
+					zap.Error(err),
+					zap.String("tokenCID", tid.String()),
+				)
+				mu.Lock()
+				tokenErrs = append(tokenErrs, fmt.Errorf("index token %s: %w", tid.String(), err))
+				mu.Unlock()
+			}
+			return nil
 		})
 	}
 
-	if err := g.Wait(); err != nil {
-		return err
+	_ = g.Wait()
+
+	if len(tokenErrs) > 0 {
+		return fmt.Errorf("indexed %d/%d tokens in batch: %w",
+			len(tokenCIDs)-len(tokenErrs), len(tokenCIDs), errors.Join(tokenErrs...))
 	}
 
 	logger.InfoCtx(ctx, "Batch token indexing completed successfully",
