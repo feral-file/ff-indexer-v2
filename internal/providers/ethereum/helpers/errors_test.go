@@ -41,3 +41,33 @@ func TestIsTooManyResultsError(t *testing.T) {
 		})
 	}
 }
+
+func TestIsBlockRangeCapError(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{
+			"range cap wrapped by retry layer",
+			fmt.Errorf("ethereum operation FilterLogs failed after retries: permanent error: range 9999999 exceeds limit of 10000"),
+			true,
+		},
+		{"block range too wide", errors.New("block range is too wide"), true},
+		{"range too large", errors.New("range too large"), true},
+		// Result-count limits are data-dependent, not a fixed span cap.
+		{"alchemy result cap", errors.New("query returned more than 10000 results"), false},
+		{"generic too many results", errors.New("too many results"), false},
+		{"unrelated error", errors.New("execution reverted"), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, helpers.IsBlockRangeCapError(tc.err))
+		})
+	}
+}
