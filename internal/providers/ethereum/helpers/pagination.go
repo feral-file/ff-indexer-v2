@@ -199,7 +199,16 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 		if err == nil {
 			allLogs = append(allLogs, logs...)
 			currentFrom.SetUint64(currentTo.Uint64() + 1)
-			currentStepSize = originalStepSize
+			// Ramp the step back up gradually instead of resetting to the
+			// original. Against providers with a hard block-range cap the
+			// original step fails on every window, so a full reset re-pays
+			// the whole halving cascade (with 1s sleeps) after each success.
+			if currentStepSize < originalStepSize {
+				currentStepSize *= 2
+				if currentStepSize > originalStepSize {
+					currentStepSize = originalStepSize
+				}
+			}
 			continue
 		}
 

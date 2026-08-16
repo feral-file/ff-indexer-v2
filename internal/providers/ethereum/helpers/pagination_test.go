@@ -307,3 +307,59 @@ func TestFilterLogsWithPagination_OneBlockTooManyResultsReturnsError(t *testing.
 	require.Nil(t, logs)
 	require.Contains(t, err.Error(), "too many results in single block 100")
 }
+
+// TestFilterLogsWithPagination_RangeCappedProviderSplitsAndCompletes simulates a
+// provider that caps the queried block span (e.g. "range 9999999 exceeds limit
+// of 10000") instead of capping result counts. Pagination must recognize the
+// error, split the window down to an accepted span, and cover the whole range —
+// without re-paying the full halving cascade after every successful window.
+func TestFilterLogsWithPagination_RangeCappedProviderSplitsAndCompletes(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockClient := mocks.NewMockEthClient(ctrl)
+	mockClock := mocks.NewMockClock(ctrl)
+	mockClock.EXPECT().Sleep(gomock.Any()).AnyTimes()
+
+	const (
+		fromBlock uint64 = 0
+		toBlock   uint64 = 1000
+		spanLimit uint64 = 16
+	)
+
+	var (
+		successRanges []blockRange
+		totalCalls    int
+	)
+
+	mockClient.EXPECT().
+		FilterLogs(gomock.Any(), gomock.Any()).
+		AnyTimes().
+		DoAndReturn(func(_ context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
+			totalCalls++
+			from := query.FromBlock.Uint64()
+			to := query.ToBlock.Uint64()
+			span := to - from + 1
+			if span > spanLimit {
+				return nil, fmt.Errorf("range %d exceeds limit of %d", span, spanLimit)
+			}
+			successRanges = append(successRanges, blockRange{from: from, to: to})
+			return nil, nil
+		})
+
+	pagination := helpers.NewPaginationHelper(mockClient, mockClock, nil)
+	logs, err := pagination.FilterLogsWithPagination(context.Background(), ethereum.FilterQuery{
+		FromBlock: new(big.Int).SetUint64(fromBlock),
+		ToBlock:   new(big.Int).SetUint64(toBlock),
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, logs)
+	requireContiguousCoverage(t, successRanges, fromBlock, toBlock)
+
+	// With the step ramping up gradually after successes, covering 1001 blocks
+	// at a span cap of 16 takes on the order of 150 calls. The old behavior
+	// (reset to the original step after every success) re-paid ~17 rejected
+	// probes per window, well over 1000 calls.
+	require.Less(t, totalCalls, 400, "pagination is re-paying the halving cascade after each success")
+}
