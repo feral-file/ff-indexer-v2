@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -276,15 +277,31 @@ func TestIndexTokens_OneTokenFails_SiblingsStillIndexed(t *testing.T) {
 
 	bl.EXPECT().IsTokenCIDBlacklisted(gomock.Any()).Return(false).Times(3)
 
-	// The bad token fails fatally (not one of the skippable error classes).
+	// The bad token fails fatally (not one of the skippable error classes) and
+	// signals badDone so the siblings are ordered strictly after its failure.
+	badDone := make(chan struct{})
 	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tBad, gomock.Any()).
-		Return(errors.New("owner balance and events: rpc timeout"))
+		DoAndReturn(func(context.Context, domain.TokenCID, *string) error {
+			close(badDone)
+			return errors.New("owner balance and events: rpc timeout")
+		})
 
-	// Both siblings must still be indexed end-to-end. Under the previous
-	// fail-fast errgroup, the bad token canceled the shared context and these
-	// expectations were not reliably met.
+	// Both siblings must still be indexed end-to-end. Each sibling waits for
+	// the bad token to fail, then gives any shared-context cancellation time to
+	// propagate before continuing. Under a fail-fast errgroup.WithContext the
+	// sibling observes its context cancelled here and dies with the bad token,
+	// which fails this test; the plain errgroup must leave it running.
 	for _, tcid := range []domain.TokenCID{tGood1, tGood2} {
-		exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+		exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).
+			DoAndReturn(func(callCtx context.Context, _ domain.TokenCID, _ *string) error {
+				<-badDone
+				select {
+				case <-callCtx.Done():
+					return callCtx.Err()
+				case <-time.After(50 * time.Millisecond):
+				}
+				return nil
+			})
 		exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
 		exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
 		exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
