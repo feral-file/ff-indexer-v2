@@ -371,6 +371,175 @@ func TestResolver_Resolve_FA2(t *testing.T) {
 	assert.Equal(t, "text/plain; charset=utf-8", *result.MimeType)
 }
 
+func TestResolver_Resolve_FA2_StaleUnsignedPlaceholder_RefetchesFromBigMap(t *testing.T) {
+	mocks := setupTestResolver(t)
+	defer tearDownTestResolver(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1ABC", "59")
+
+	// TzKT's cached metadata is the pre-signing fxhash placeholder (stale
+	// snapshot: TzKT missed the signer's later big map update).
+	placeholder := map[string]interface{}{
+		"name":        "[WAITING TO BE SIGNED]",
+		"description": "This Gentk is waiting to be signed by Fxhash Signer module",
+		"displayUri":  "ipfs://QmPlaceholderDisplay",
+		"artifactUri": "ipfs://QmPlaceholderArtifact",
+	}
+	mocks.tzClient.
+		EXPECT().
+		GetTokenMetadata(gomock.Any(), "KT1ABC", "59").
+		Return(placeholder, nil)
+
+	// The big map points at the signed metadata document.
+	mocks.tzClient.
+		EXPECT().
+		GetTokenMetadataURI(gomock.Any(), "KT1ABC", "59").
+		Return("ipfs://QmSignedMeta", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmSignedMeta").
+		Return("https://ipfs.io/ipfs/QmSignedMeta", nil)
+	mocks.httpClient.
+		EXPECT().
+		GetAndUnmarshal(gomock.Any(), "https://ipfs.io/ipfs/QmSignedMeta", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, result interface{}) error {
+			*(result.(*map[string]interface{})) = map[string]interface{}{
+				"name":        "Test Gentk #59",
+				"description": "Signed metadata",
+				"displayUri":  "ipfs://QmXXX",
+				"artifactUri": "ipfs://QmYYY",
+				"creators":    []string{"tz1ABC"},
+			}
+			return nil
+		})
+
+	// From here on, normalization must run on the signed metadata, never the
+	// placeholder. Same mock choreography as TestResolver_Resolve_FA2.
+	mocks.json.
+		EXPECT().
+		Marshal(gomock.Any()).
+		Return([]byte(`["tz1ABC"]`), nil)
+	mocks.json.
+		EXPECT().
+		Unmarshal(gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmXXX").
+		Return("https://ipfs.io/ipfs/QmXXX", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmYYY").
+		Return("https://ipfs.io/ipfs/QmYYY", nil)
+
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmYYY").
+		Return("https://ipfs.io/ipfs/QmYYY", nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://ipfs.io/ipfs/QmYYY").
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmYYY", gomock.Any()).
+		Return([]byte("fake artifact data"), nil)
+
+	mocks.registry.
+		EXPECT().
+		LookupPublisherByCollection(domain.ChainTezosMainnet, "KT1ABC").
+		Return(nil)
+	mocks.registry.
+		EXPECT().
+		GetMinBlock(domain.ChainTezosMainnet).
+		Return(uint64(0), false)
+	mocks.tzClient.
+		EXPECT().
+		GetContractDeployer(gomock.Any(), "KT1ABC").
+		Return("", nil)
+	mocks.store.EXPECT().
+		SetKeyValue(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "Test Gentk #59", result.Name)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmXXX", result.Image)
+	assert.Equal(t, "https://ipfs.io/ipfs/QmYYY", result.Animation)
+}
+
+func TestResolver_Resolve_FA2_StaleUnsignedPlaceholder_BigMapUnavailable_KeepsCached(t *testing.T) {
+	mocks := setupTestResolver(t)
+	defer tearDownTestResolver(mocks)
+
+	tokenCID := domain.NewTokenCID(domain.ChainTezosMainnet, domain.StandardFA2, "KT1ABC", "59")
+
+	placeholder := map[string]interface{}{
+		"name":        "[WAITING TO BE SIGNED]",
+		"description": "This Gentk is waiting to be signed by Fxhash Signer module",
+		"displayUri":  "ipfs://QmPlaceholderDisplay",
+		"artifactUri": "ipfs://QmPlaceholderArtifact",
+	}
+	mocks.tzClient.
+		EXPECT().
+		GetTokenMetadata(gomock.Any(), "KT1ABC", "59").
+		Return(placeholder, nil)
+
+	// Big map read fails: resolution degrades to the cached metadata instead
+	// of erroring out.
+	mocks.tzClient.
+		EXPECT().
+		GetTokenMetadataURI(gomock.Any(), "KT1ABC", "59").
+		Return("", assert.AnError)
+
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmPlaceholderDisplay").
+		Return("https://ipfs.io/ipfs/QmPlaceholderDisplay", nil)
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "ipfs://QmPlaceholderArtifact").
+		Return("https://ipfs.io/ipfs/QmPlaceholderArtifact", nil)
+
+	mocks.uriResolver.
+		EXPECT().
+		Resolve(gomock.Any(), "https://ipfs.io/ipfs/QmPlaceholderArtifact").
+		Return("https://ipfs.io/ipfs/QmPlaceholderArtifact", nil)
+	mocks.httpClient.
+		EXPECT().
+		Head(gomock.Any(), "https://ipfs.io/ipfs/QmPlaceholderArtifact").
+		Return(nil, assert.AnError)
+	mocks.httpClient.
+		EXPECT().
+		GetPartialBytes(gomock.Any(), "https://ipfs.io/ipfs/QmPlaceholderArtifact", gomock.Any()).
+		Return([]byte("fake artifact data"), nil)
+
+	mocks.registry.
+		EXPECT().
+		LookupPublisherByCollection(domain.ChainTezosMainnet, "KT1ABC").
+		Return(nil)
+	mocks.registry.
+		EXPECT().
+		GetMinBlock(domain.ChainTezosMainnet).
+		Return(uint64(0), false)
+	mocks.tzClient.
+		EXPECT().
+		GetContractDeployer(gomock.Any(), "KT1ABC").
+		Return("", nil)
+	mocks.store.EXPECT().
+		SetKeyValue(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	result, err := mocks.resolver.Resolve(context.Background(), tokenCID)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "[WAITING TO BE SIGNED]", result.Name)
+}
+
 func TestResolver_Resolve_UnsupportedStandard(t *testing.T) {
 	mocks := setupTestResolver(t)
 	defer tearDownTestResolver(mocks)

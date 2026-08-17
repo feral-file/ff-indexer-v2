@@ -409,6 +409,25 @@ WHERE kind = 'IndexTokenMetadata'
 GROUP BY status;
 ```
 
+### Migration 024_reindex: heal FA2 tokens stored with the unsigned-fxhash placeholder
+
+TzKT's resolved-metadata cache can permanently serve a gentk's mint-time "[WAITING TO BE SIGNED]" snapshot. The resolver now detects the placeholder and re-resolves from the contract's `token_metadata` big map, but that path only runs inside a future `IndexTokenMetadata` execution — rows already in `token_metadata` are served from PostgreSQL and stay stale. `024_reindex.sql` enqueues that execution for every affected stored row, matched by placeholder name/description or the placeholder page's CID in `animation_url` (scoped to `standard = 'fa2'`).
+
+**⚠️ Ordering: run this AFTER deploying the new application code** — same reversal as `021_reindex`, same reason: a worker running the previous code would re-fetch the same stale TzKT cache, re-store the placeholder, and mark the jobs succeeded. Recovery: re-run `024_reindex.sql` only (finished jobs do not block re-insertion).
+
+**Idempotency:** `ON CONFLICT ... DO NOTHING` on `jobs_unique_key_active`. Safe to re-run. Genuinely unsigned gentks re-store the placeholder and would be re-enqueued by a later re-run — correct, since they are still unsigned.
+
+**Fresh installs:** Produces no rows. `db/init_pg_db.sql` does not need updating.
+
+**Verify after the queue drains** — the on-chain reproducer must no longer point at the placeholder page:
+
+```sql
+SELECT tm.name, tm.animation_url
+FROM token_metadata tm JOIN tokens t ON t.id = tm.token_id
+WHERE t.token_cid = 'tezos:mainnet:fa2:KT1KEa8z6vWXDJrVqtMrAeDVzsvxat3kHaCE:324719';
+-- animation_url must NOT contain QmdGV3UqJqX4v5x9nFcDYeekCEAm3SDXUG5SHdjKQKn4Pe
+```
+
 ### Reset Database
 
 To reset the database (WARNING: deletes all data):

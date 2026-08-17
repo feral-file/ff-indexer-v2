@@ -53,6 +53,10 @@ func (f *fakeBackfillTzKTClient) GetTokenMetadata(context.Context, string, strin
 	return nil, nil
 }
 
+func (f *fakeBackfillTzKTClient) GetTokenMetadataURI(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
 func (f *fakeBackfillTzKTClient) GetTokenTransfers(context.Context, string, string) ([]TzKTTokenTransfer, error) {
 	return nil, nil
 }

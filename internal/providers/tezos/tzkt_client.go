@@ -2,6 +2,7 @@ package tezos
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -145,6 +146,12 @@ type TzKTClient interface {
 
 	// GetTokenMetadata retrieves token metadata for a specific token
 	GetTokenMetadata(ctx context.Context, contractAddress string, tokenID string) (map[string]interface{}, error)
+
+	// GetTokenMetadataURI retrieves the authoritative TZIP-12 metadata URI for a
+	// token directly from the contract's token_metadata big map, bypassing
+	// TzKT's resolved-metadata cache. Returns "" when the big map has no entry
+	// for the token.
+	GetTokenMetadataURI(ctx context.Context, contractAddress string, tokenID string) (string, error)
 
 	// GetTokenTransfers retrieves all token transfers for a specific token
 	GetTokenTransfers(ctx context.Context, contractAddress string, tokenID string) ([]TzKTTokenTransfer, error)
@@ -330,6 +337,54 @@ func (c *tzktClient) GetTokenMetadata(ctx context.Context, contractAddress strin
 	}
 
 	return tokens[0].Metadata, nil
+}
+
+// tzktBigMapKeyEntry represents a token_metadata big map key/value entry.
+// Per TZIP-12, token_info maps "" to the hex-encoded metadata URI.
+type tzktBigMapKeyEntry struct {
+	Active bool `json:"active"`
+	Value  struct {
+		TokenID   string            `json:"token_id"`
+		TokenInfo map[string]string `json:"token_info"`
+	} `json:"value"`
+}
+
+// GetTokenMetadataURI retrieves the authoritative TZIP-12 metadata URI for a token
+// directly from the contract's token_metadata big map. TzKT's resolved metadata
+// (GetTokenMetadata) is a cache and can serve a stale snapshot when TzKT missed a
+// later big map update; the big map value is the on-chain source of truth.
+func (c *tzktClient) GetTokenMetadataURI(ctx context.Context, contractAddress string, tokenID string) (string, error) {
+	keys, err := ratelimit.Do(ctx, c.rateLimiter, PROVIDER_NAME, func(ctx context.Context) ([]tzktBigMapKeyEntry, error) {
+		// TzKT API: GET /v1/contracts/{address}/bigmaps/token_metadata/keys?key={id}
+		// Returns [] when the big map or key does not exist.
+		url := fmt.Sprintf("%s/v1/contracts/%s/bigmaps/token_metadata/keys?key=%s&limit=1", c.baseURL, contractAddress, tokenID)
+
+		var keys []tzktBigMapKeyEntry
+		if err := c.httpClient.GetAndUnmarshal(ctx, url, &keys); err != nil {
+			return nil, fmt.Errorf("failed to get token_metadata big map key for %s/%s: %w", contractAddress, tokenID, err)
+		}
+
+		return keys, nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if len(keys) == 0 {
+		return "", nil
+	}
+
+	hexURI, ok := keys[0].Value.TokenInfo[""]
+	if !ok || hexURI == "" {
+		return "", nil
+	}
+
+	rawURI, err := hex.DecodeString(hexURI)
+	if err != nil {
+		return "", fmt.Errorf("failed to hex-decode token_metadata URI for %s/%s: %w", contractAddress, tokenID, err)
+	}
+
+	return string(rawURI), nil
 }
 
 // GetTokenTransfers retrieves all token transfers for a specific token in ascending order of block number (level)
