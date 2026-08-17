@@ -173,8 +173,13 @@ func (h *PaginationHelper) calculateStepSize(ctx context.Context, query ethereum
 }
 
 func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.FilterQuery, stepSize uint64) ([]types.Log, error) {
-	originalStepSize := stepSize
 	currentStepSize := stepSize
+	// maxStepSize is the ceiling the step may ramp back up to after successes.
+	// It starts at the caller's step size and shrinks permanently when the
+	// provider reports a block-range cap: span caps are a fixed provider
+	// property, so probing above an accepted span again is a guaranteed
+	// rejection plus a one-second sleep on every window.
+	maxStepSize := stepSize
 
 	var allLogs []types.Log
 	currentFrom := new(big.Int).Set(query.FromBlock)
@@ -199,7 +204,16 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 		if err == nil {
 			allLogs = append(allLogs, logs...)
 			currentFrom.SetUint64(currentTo.Uint64() + 1)
-			currentStepSize = originalStepSize
+			// Ramp the step back up gradually instead of resetting to the
+			// original. Against providers with a hard block-range cap the
+			// original step fails on every window, so a full reset re-pays
+			// the whole halving cascade (with 1s sleeps) after each success.
+			if currentStepSize < maxStepSize {
+				currentStepSize *= 2
+				if currentStepSize > maxStepSize {
+					currentStepSize = maxStepSize
+				}
+			}
 			continue
 		}
 
@@ -219,6 +233,10 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 		currentStepSize = currentStepSize / 2
 		if currentStepSize == 0 {
 			return nil, fmt.Errorf("step size exhausted at block range [%d, %d]: %w", currentFrom.Uint64(), currentTo.Uint64(), err)
+		}
+
+		if IsBlockRangeCapError(err) {
+			maxStepSize = currentStepSize
 		}
 
 		h.clock.Sleep(time.Second)
