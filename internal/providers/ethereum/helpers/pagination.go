@@ -38,10 +38,16 @@ func NewPaginationHelper(
 // noDeadlineTimeout bounds a pagination walk whose caller set no deadline.
 // Sized for the worst legitimate case: a genesis-to-head walk against a
 // provider that caps eth_getLogs at 10k blocks (~2,300 sequential calls at
-// mainnet head ~23M blocks). The previous one-minute bound predates range-cap
-// handling — it assumed 10M-block steps and a handful of calls, and killed
-// every full-history owner scan on a capped provider before it could finish.
-const noDeadlineTimeout = 30 * time.Minute
+// mainnet head ~23M blocks), while the owner-scan legs run concurrently and
+// share the provider's rate limit — throttling backoffs (5s initial, per
+// executeWithRetry) dominate wall-clock, and a measured prod scan was still
+// walking at 30 minutes. This is a backstop against a wedged walk, not a
+// pace-setter: each RPC call is already bounded by its own retry budget
+// (~5 minutes), so a stuck walk still dies long before this fires. The
+// original one-minute bound predates range-cap handling — it assumed
+// 10M-block steps and a handful of calls, and killed every full-history
+// owner scan on a capped provider before it could finish.
+const noDeadlineTimeout = 4 * time.Hour
 
 // FilterLogsWithPagination fetches logs across a block range using adaptive pagination.
 func (h *PaginationHelper) FilterLogsWithPagination(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
@@ -205,6 +211,13 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 	var allLogs []types.Log
 	currentFrom := new(big.Int).Set(query.FromBlock)
 
+	// Pace log: long walks against a range-capped, rate-limited provider are
+	// legitimately slow (thousands of windows); without a heartbeat the only
+	// observable states are "running" and "dead at the deadline".
+	walkStart := time.Now()
+	successCount := 0
+	const paceLogEvery = 250
+
 	for currentFrom.Cmp(query.ToBlock) <= 0 {
 		select {
 		case <-ctx.Done():
@@ -225,6 +238,17 @@ func (h *PaginationHelper) getLogsWithRetry(ctx context.Context, query ethereum.
 		if err == nil {
 			allLogs = append(allLogs, logs...)
 			currentFrom.SetUint64(currentTo.Uint64() + 1)
+			successCount++
+			if successCount%paceLogEvery == 0 {
+				logger.InfoCtx(ctx, "Log pagination walk progress",
+					zap.Uint64("atBlock", currentFrom.Uint64()),
+					zap.Uint64("targetBlock", query.ToBlock.Uint64()),
+					zap.Uint64("stepSize", currentStepSize),
+					zap.Int("windowsDone", successCount),
+					zap.Int("logsCollected", len(allLogs)),
+					zap.Duration("elapsed", time.Since(walkStart)),
+				)
+			}
 			// Ramp the step back up gradually instead of resetting to the
 			// original. Against providers with a hard block-range cap the
 			// original step fails on every window, so a full reset re-pays
