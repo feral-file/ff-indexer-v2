@@ -78,3 +78,31 @@ func TestOwnerBalanceAndEvents_GuardResolvesAdapterBeforeShortcut(t *testing.T) 
 	)
 	require.ErrorIs(t, err, adapters.ErrConfiguredStandardMismatch)
 }
+
+// TestTokenBalances_FullProvenanceDisabledRefusesHistoryReplay pins the
+// addressless guard: all-holder ERC-1155 balances have no cheap current-state
+// query — the standard adapter derives them by replaying transfer history
+// (~1,000 span-capped calls per token). Under the guard the call must fail fast
+// with ErrGuardedHistoryReplay; the strict mock has no FilterLogs expectation,
+// so any replay attempt fails the test.
+func TestTokenBalances_FullProvenanceDisabledRefusesHistoryReplay(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	mockEth := mocks.NewMockEthClient(ctrl)
+	mockClock := mocks.NewMockClock(ctrl)
+
+	client, err := ethereum.NewGuardedClient(domain.ChainEthereumMainnet, mockEth, mockClock, nil, ethereum.ClientGuards{
+		FullProvenanceDisabled: true,
+	})
+	require.NoError(t, err)
+
+	balances, err := client.TokenBalances(
+		context.Background(),
+		"0x00000000000000000000000000000000000000bb",
+		"7",
+		domain.StandardERC1155,
+	)
+	require.ErrorIs(t, err, ethereum.ErrGuardedHistoryReplay)
+	require.Nil(t, balances)
+}

@@ -1150,6 +1150,11 @@ func (e *coreExecutor) fetchOwnerBalanceAndEvents(ctx context.Context, event *do
 // but ARE included for owner-specific indexing.
 // If address is provided, uses address-specific indexing for ERC1155 (efficient, partial balance + events)
 func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Context, tokenCID domain.TokenCID, address *string) error {
+	// balancesUnavailable records that the credit guard withheld all-holder
+	// balances (ErrGuardedHistoryReplay): the token is stored without balances and
+	// the balances-empty burned inference is skipped.
+	balancesUnavailable := false
+
 	// If address is not provided, verify the token exists in the database and on-chain before indexing
 	// Without address, the event logs would be huge and the indexing is inefficient for ERC1155 tokens.
 	// Otherwise, we can skip the existence check and index the token with minimal provenances, the indexing with
@@ -1310,16 +1315,20 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 			}
 
 			balances, err := e.ethClient.TokenBalances(ctx, contractAddress, tokenNumber, standard)
-			if err != nil {
-				if errors.Is(err, ethereum.ErrContractNotFound) ||
-					ethhelpers.IsExecutionRevert(err) {
-					return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
-				}
-
-				if ethhelpers.IsOutOfGas(err) {
-					return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
-				}
-
+			switch {
+			case errors.Is(err, ethereum.ErrGuardedHistoryReplay):
+				// Credit guard: all-holder ERC-1155 balances require a full
+				// transfer-history replay (~1,000 span-capped calls per token).
+				// Store the token without holder balances so metadata indexing can
+				// proceed; the deferred-provenance backfill supplies them later.
+				// Empty balances here mean "deliberately unknown", so the
+				// balances-empty burned inference below must not run.
+				balancesUnavailable = true
+			case errors.Is(err, ethereum.ErrContractNotFound), ethhelpers.IsExecutionRevert(err):
+				return fmt.Errorf("token not found on chain: %w", domain.ErrTokenNotFoundOnChain)
+			case ethhelpers.IsOutOfGas(err):
+				return fmt.Errorf("contract is unreachable: %w", domain.ErrContractUnreachable)
+			case err != nil:
 				return fmt.Errorf("failed to get token balances from Ethereum: %w", err)
 			}
 
@@ -1340,8 +1349,10 @@ func (e *coreExecutor) IndexTokenWithMinimalProvenancesByTokenCID(ctx context.Co
 		return fmt.Errorf("unsupported chain: %s", chain)
 	}
 
-	// Determine burned status from balances (if no positive balances, token is burned)
-	if len(input.Balances) == 0 {
+	// Determine burned status from balances (if no positive balances, token is burned).
+	// Skipped when the credit guard withheld the balances: empty means "unknown,
+	// backfill pending" there, not "no holders".
+	if len(input.Balances) == 0 && !balancesUnavailable {
 		input.Token.Burned = true
 	}
 

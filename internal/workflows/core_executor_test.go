@@ -20,6 +20,7 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/logger"
 	"github.com/feral-file/ff-indexer-v2/internal/metadata"
 	"github.com/feral-file/ff-indexer-v2/internal/mocks"
+	ethproviders "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum"
 	ethadapters "github.com/feral-file/ff-indexer-v2/internal/providers/ethereum/adapters"
 	"github.com/feral-file/ff-indexer-v2/internal/providers/tezos"
 	"github.com/feral-file/ff-indexer-v2/internal/registry"
@@ -5684,3 +5685,41 @@ func TestIndexTokenWithFullProvenancesByTokenCID_SingleOwnerAdapterAuthority(t *
 // moderationStatusPtr returns a pointer to a moderation status, for building
 // EnhancedMetadata fixtures where nil means "vendor publishes no signal".
 func moderationStatusPtr(s schema.ModerationStatus) *schema.ModerationStatus { return &s }
+
+// TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardWithholdsBalances
+// pins the addressless credit-guard path: when TokenBalances is refused with
+// ErrGuardedHistoryReplay (all-holder ERC-1155 balances are a full history
+// replay), the token must still be stored — with no balances and, critically,
+// WITHOUT the balances-empty burned inference: empty means "backfill pending"
+// here, not "no holders".
+func TestIndexTokenWithMinimalProvenancesByTokenCID_ERC1155_GuardWithholdsBalances(t *testing.T) {
+	mocks := setupTestExecutor(t)
+	defer tearDownTestExecutor(mocks)
+
+	ctx := context.Background()
+	contractAddress := "0x1234567890123456789012345678901234567890"
+	tokenNumber := "1"
+	tokenCID := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, contractAddress, tokenNumber)
+
+	// Token already exists in DB: skips on-chain existence verification.
+	mocks.store.EXPECT().
+		GetTokenByTokenCID(ctx, tokenCID.String()).
+		Return(&schema.Token{TokenCID: tokenCID.String()}, nil)
+
+	mocks.ethClient.EXPECT().
+		TokenBalances(ctx, contractAddress, tokenNumber, domain.StandardERC1155).
+		Return(nil, ethproviders.ErrGuardedHistoryReplay)
+
+	mocks.store.EXPECT().
+		CreateTokenWithProvenances(ctx, gomock.Any()).
+		DoAndReturn(func(ctx context.Context, input store.CreateTokenWithProvenancesInput) error {
+			assert.Equal(t, tokenCID.String(), input.Token.TokenCID)
+			assert.Empty(t, input.Balances, "guarded path must not fabricate balances")
+			assert.False(t, input.Token.Burned, "guard-withheld balances must not be inferred as burned")
+			assert.Empty(t, input.Events)
+			return nil
+		})
+
+	err := mocks.executor.IndexTokenWithMinimalProvenancesByTokenCID(ctx, tokenCID, nil)
+	assert.NoError(t, err)
+}

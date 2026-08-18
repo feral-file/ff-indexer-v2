@@ -565,3 +565,32 @@ func TestIndexToken_OrdinaryProvenanceFailureStaysBestEffort(t *testing.T) {
 	err := wf.IndexToken(ctx, tcid, nil)
 	require.NoError(t, err)
 }
+
+// TestIndexTokens_AddresslessERC1155_GuardDefersProvenance covers the
+// public-trigger route (API enqueues IndexTokens with a nil address) under the
+// credit guard: minimal indexing runs (with balances withheld at the client),
+// and the token must end up in the backfill set via the provenance gate's
+// deferral marking. The strict mock fails the test if the expensive full
+// provenance replay is attempted.
+func TestIndexTokens_AddresslessERC1155_GuardDefersProvenance(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC1155, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Nil()).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(nil)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+
+	err := wf.IndexTokens(ctx, []domain.TokenCID{tcid}, nil)
+	require.NoError(t, err)
+}

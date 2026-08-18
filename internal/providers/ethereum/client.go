@@ -127,6 +127,13 @@ type EthereumClient interface {
 	Close()
 }
 
+// ErrGuardedHistoryReplay is returned when ClientGuards.FullProvenanceDisabled
+// refuses an operation whose only implementation is a full transfer-history
+// replay (currently: all-holder ERC-1155 balances). Callers must treat it as
+// "data deliberately unavailable, backfill pending" — distinct from "the token
+// has no holders", which would otherwise be inferred as burned.
+var ErrGuardedHistoryReplay = errors.New("history replay disabled by credit guard")
+
 // ClientGuards bounds the RPC credit cost of expensive client operations against a
 // credit-metered provider. The zero value disables all guards (current behavior).
 //
@@ -300,6 +307,15 @@ func (f *ethereumClient) OwnershipModel(contractAddress string, standard domain.
 }
 
 // TokenBalances fetches all holder balances via the contract adapter registry.
+//
+// Credit guard: for the standard ERC-1155 adapter, all-holder balances are
+// derived by replaying the contract's transfer history (~1,000 span-capped
+// eth_getLogs calls per token) — there is no cheap current-state query for "all
+// holders". With FullProvenanceDisabled the call fails fast with
+// ErrGuardedHistoryReplay instead, so callers can store the token without
+// holder balances and rely on the deferred-provenance backfill to supply them.
+// As with OwnerBalanceAndEvents, the adapter is resolved first so configured
+// contracts keep their adapter path and registry validation still runs.
 func (f *ethereumClient) TokenBalances(
 	ctx context.Context,
 	contractAddress, tokenNumber string,
@@ -309,6 +325,13 @@ func (f *ethereumClient) TokenBalances(
 	if err != nil {
 		return nil, err
 	}
+
+	if f.guards.FullProvenanceDisabled {
+		if _, isStandardERC1155 := adp.(*adapters.ERC1155Adapter); isStandardERC1155 {
+			return nil, ErrGuardedHistoryReplay
+		}
+	}
+
 	return adp.GetTokenBalances(ctx, contractAddress, tokenNumber)
 }
 
