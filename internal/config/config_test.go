@@ -776,3 +776,28 @@ moderation_sweeper:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "moderation_sweeper.max_recheck_interval")
 }
+
+// TestLoadAppConfig_GuardEnvVarsReachConfig pins that the Ethereum credit-guard
+// settings load from environment variables alone (no config file), the way
+// deploy configuration reaches production. The guards fail silently if this
+// breaks: production would appear configured while performing unbounded
+// full-history scans — the incident this PR set exists to prevent.
+func TestLoadAppConfig_GuardEnvVarsReachConfig(t *testing.T) {
+	t.Setenv("FF_INDEXER_DATABASE_HOST", "localhost")
+	t.Setenv("FF_INDEXER_DATABASE_DBNAME", "ff")
+	t.Setenv("FF_INDEXER_JOBS_TOKEN_QUEUE", "token_index")
+	t.Setenv("FF_INDEXER_ETHEREUM_RPC_URL", "http://rpc.invalid")
+	t.Setenv("FF_INDEXER_ETHEREUM_WEBSOCKET_URL", "ws://rpc.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_API_URL", "http://tzkt.invalid")
+	t.Setenv("FF_INDEXER_TEZOS_WEBSOCKET_URL", "ws://tzkt.invalid")
+
+	t.Setenv("FF_INDEXER_ETHEREUM_GETLOGS_SPAN_CAP", "10000")
+	t.Setenv("FF_INDEXER_ETHEREUM_GETLOGS_CALL_BUDGET", "3000")
+	t.Setenv("FF_INDEXER_ETHEREUM_FULL_PROVENANCE_DISABLED", "true")
+
+	cfg, err := LoadAppConfig("", "")
+	require.NoError(t, err)
+	require.Equal(t, uint64(10000), cfg.Ethereum.GetLogsSpanCap)
+	require.Equal(t, 3000, cfg.Ethereum.GetLogsCallBudget)
+	require.True(t, cfg.Ethereum.FullProvenanceDisabled)
+}

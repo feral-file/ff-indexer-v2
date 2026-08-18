@@ -1028,6 +1028,9 @@ func bindAllEnvVars(v *viper.Viper) {
 		"ethereum.block_head_ttl",
 		"ethereum.block_head_stale_window",
 		"ethereum.block_flush_timeout",
+		"ethereum.getlogs_span_cap",
+		"ethereum.getlogs_call_budget",
+		"ethereum.full_provenance_disabled",
 		// Tezos
 		"tezos.api_url",
 		"tezos.websocket_url",

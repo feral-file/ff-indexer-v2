@@ -511,3 +511,57 @@ func TestIndexTokenFromEvent_ERC1155_NoGuardNoDeferral(t *testing.T) {
 	err := wf.IndexTokenFromEvent(ctx, event)
 	require.NoError(t, err)
 }
+
+// TestIndexToken_DeferralMarkingFailurePropagates pins the durability contract
+// through the IndexToken caller: provenance indexing is best-effort, but a
+// failed deferral marking under the credit guard must fail the job (so owner
+// indexing retries) instead of returning success and permanently dropping the
+// token from the operator backfill set.
+func TestIndexToken_DeferralMarkingFailurePropagates(t *testing.T) {
+	t.Parallel()
+	cfg := defaultCompactCoreWfConfig()
+	cfg.EthereumFullProvenanceDisabled = true
+	d := newCoreWfDeps(t, cfg, nil)
+	defer d.Ctrl.Finish()
+	stubJqAnyEnqueue(d.MockJQ)
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	// ERC-721 with a triggering address: shouldIndexFullProvenance is true, so
+	// the guard skip (and its marking) happens inside IndexTokenProvenances.
+	owner := "0x00000000000000000000000000000000000000aa"
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+	exec.EXPECT().MarkTokenProvenanceDeferred(gomock.Any(), tcid).Return(errors.New("db unavailable"))
+
+	err := wf.IndexToken(ctx, tcid, &owner)
+	require.ErrorIs(t, err, workflows.ErrDeferralMarkingFailed)
+}
+
+// TestIndexToken_OrdinaryProvenanceFailureStaysBestEffort pins the counterpart:
+// without the guard, a plain provenance failure is logged and IndexToken still
+// succeeds — the pre-guard best-effort contract is unchanged.
+func TestIndexToken_OrdinaryProvenanceFailureStaysBestEffort(t *testing.T) {
+	t.Parallel()
+	d := testTokenCore(t)
+	defer d.Ctrl.Finish()
+	ctx, exec, bl, wf := d.Ctx, d.Exec, d.BlMock, d.Wf
+
+	tcid := domain.NewTokenCID(domain.ChainEthereumMainnet, domain.StandardERC721, "0x1234567890123456789012345678901234567890", "1")
+	bl.EXPECT().IsTokenCIDBlacklisted(tcid).Return(false)
+	exec.EXPECT().IndexTokenWithMinimalProvenancesByTokenCID(gomock.Any(), tcid, gomock.Any()).Return(nil)
+	exec.EXPECT().SupportsTokenProvenance(tcid).Return(true)
+	exec.EXPECT().ResolveTokenMetadata(gomock.Any(), tcid).Return(nil, nil)
+	exec.EXPECT().EnhanceTokenMetadata(gomock.Any(), tcid, gomock.Any()).Return(nil, nil)
+	exec.EXPECT().CheckMediaURLsHealthAndUpdateViewability(gomock.Any(), tcid.String(), gomock.Any()).
+		Return(&workflows.MediaHealthCheckResult{IsViewable: false, HealthyURLs: nil}, nil)
+	exec.EXPECT().IndexTokenWithFullProvenancesByTokenCID(gomock.Any(), tcid).Return(errors.New("rpc flake"))
+
+	err := wf.IndexToken(ctx, tcid, nil)
+	require.NoError(t, err)
+}

@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -11,6 +12,13 @@ import (
 	"github.com/feral-file/ff-indexer-v2/internal/types"
 	"github.com/feral-file/ff-indexer-v2/internal/webhook"
 )
+
+// ErrDeferralMarkingFailed wraps a failure to persist the deferred-provenance
+// marker under the EVM credit guard. Callers that treat provenance indexing as
+// best-effort (IndexToken step 3) must still propagate THIS error: an ordinary
+// provenance failure loses recomputable history, but a lost marker permanently
+// drops the token from the operator backfill set.
+var ErrDeferralMarkingFailed = errors.New("deferred-provenance marking failed")
 
 // IndexTokenProvenances indexes all provenances (balances and events) for a token
 // address is the address that triggered the indexing operation
@@ -32,7 +40,7 @@ func (w *coreWorkflows) IndexTokenProvenances(ctx context.Context, tokenCID doma
 				zap.Error(err),
 				zap.String("tokenCID", tokenCID.String()),
 			)
-			return err
+			return fmt.Errorf("%w: %w", ErrDeferralMarkingFailed, err)
 		}
 		logger.InfoCtx(ctx, "Full provenance indexing is disabled for EVM tokens (credit guard); deferred",
 			zap.String("tokenCID", tokenCID.String()),

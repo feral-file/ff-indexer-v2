@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -374,6 +375,14 @@ func (w *coreWorkflows) IndexToken(ctx context.Context, tokenCID domain.TokenCID
 	// Step 3: Index full provenance (wait for completion).
 	if shouldIndexFullProvenance(tokenCID, address, w.executor) {
 		if err := w.IndexTokenProvenances(ctx, tokenCID, address); err != nil {
+			// Ordinary provenance failures stay best-effort (history is
+			// recomputable on a later reindex), but a failed deferral marking must
+			// fail the job: the marker is the only record that puts the token in
+			// the operator backfill, so swallowing it here would permanently drop
+			// the token from the backfill set.
+			if errors.Is(err, ErrDeferralMarkingFailed) {
+				return err
+			}
 			logger.WarnCtx(ctx, "Full provenance indexing workflow failed",
 				zap.String("tokenCID", tokenCID.String()),
 				zap.Error(err),
